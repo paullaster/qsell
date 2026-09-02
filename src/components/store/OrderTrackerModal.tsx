@@ -1,3 +1,5 @@
+'use client';
+
 import React, { useState } from 'react';
 import { 
   Search, 
@@ -15,7 +17,7 @@ import {
   ArrowRight,
   ShieldCheck
 } from 'lucide-react';
-import { Order } from '../../types/index.js';
+import { Order } from '@/types/index';
 
 interface OrderTrackerModalProps {
   isOpen: boolean;

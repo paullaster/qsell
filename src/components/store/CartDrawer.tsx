@@ -1,5 +1,7 @@
+'use client';
+
 import { X, Trash2, ShoppingBag, ArrowRight, ShieldCheck, Truck } from 'lucide-react';
-import { Product } from '../../types/index.js';
+import { Product } from '@/types/index';
 
 export interface CartItem {
   product: Product;

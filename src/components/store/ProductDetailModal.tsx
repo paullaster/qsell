@@ -1,3 +1,5 @@
+'use client';
+
 import { useState } from 'react';
 import { 
   X, 
@@ -12,7 +14,7 @@ import {
   Smartphone,
   CreditCard
 } from 'lucide-react';
-import { Product } from '../../types/index.js';
+import { Product } from '@/types/index';
 
 interface ProductDetailModalProps {
   product: Product | null;

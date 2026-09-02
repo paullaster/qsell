@@ -1,6 +1,0 @@
-{
-  "name": "OmniCommerce Enterprise & Payment Gateway",
-  "description": "Retail and wholesale e-commerce commerce platform with M-Pesa, Card and Bank payments, stock and inventory management, order fulfillment, and automated payment settlement.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}

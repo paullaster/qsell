@@ -1,6 +1,8 @@
+'use client';
+
 import React, { use, useState, useMemo } from 'react';
-import { Product } from '../../types/index.js';
-import { ProductCard } from './ProductCard.js';
+import { Product } from '@/types/index';
+import { ProductCard } from './ProductCard';
 import { Filter, SlidersHorizontal, Package, Sparkles } from 'lucide-react';
 
 interface ProductListProps {

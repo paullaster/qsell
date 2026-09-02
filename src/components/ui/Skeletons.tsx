@@ -1,3 +1,5 @@
+'use client';
+
 export function SkeletonCard() {
   return (
     <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-5 animate-pulse space-y-4">

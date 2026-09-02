@@ -1,3 +1,5 @@
+'use client';
+
 import React, { useState, useEffect } from 'react';
 import { 
   X, 
@@ -13,8 +15,8 @@ import {
   Trash2,
   CheckCircle2
 } from 'lucide-react';
-import { Product, Category, TaxCategory, ProductSpecification } from '../../types/index.js';
-import { createProductAction, updateProductAction, fetchTaxCategoriesAction } from '../../lib/serverActions.js';
+import { Product, Category, TaxCategory, ProductSpecification } from '@/types/index';
+import { createProductAction, updateProductAction, fetchTaxCategoriesAction } from '@/server/actions';
 
 interface AdminProductModalProps {
   isOpen: boolean;

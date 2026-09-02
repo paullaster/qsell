@@ -1,7 +1,9 @@
+'use client';
+
 import React, { useState, useEffect } from 'react';
 import { Smartphone, CheckCircle2, XCircle, AlertCircle, RefreshCw, Lock, ShieldCheck, X } from 'lucide-react';
-import { Order } from '../../types/index.js';
-import { simulateDarajaUserAction } from '../../lib/serverActions.js';
+import { Order } from '@/types/index';
+import { simulateDarajaUserAction } from '@/server/actions';
 
 interface MpesaStkModalProps {
   isOpen: boolean;
@@ -58,14 +60,16 @@ export function MpesaStkModal({
     try {
       const res = await simulateDarajaUserAction(checkoutRequestId, action);
       if (res.status === 'successful') {
-        setStatusMessage(`Payment Verified! M-Pesa Receipt: ${res.receipt}`);
+        const receipt = String(res.receipt || 'RECEIPT');
+        setStatusMessage(`Payment Verified! M-Pesa Receipt: ${receipt}`);
         setTimeout(() => {
-          onPaymentSuccess(res.receipt);
+          onPaymentSuccess(receipt);
         }, 1200);
       } else {
-        setStatusMessage(`Payment declined: ${res.error}`);
+        const errMsg = String(res.error || 'Payment failed');
+        setStatusMessage(`Payment declined: ${errMsg}`);
         setTimeout(() => {
-          onPaymentFailed(res.error || 'Payment failed');
+          onPaymentFailed(errMsg);
         }, 1500);
       }
     } catch (err: any) {

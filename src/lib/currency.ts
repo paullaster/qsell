@@ -1,4 +1,4 @@
-import { CurrencyConfig } from '../types/index.js';
+import { CurrencyConfig } from '@/types/index';
 
 export const DEFAULT_CURRENCIES: CurrencyConfig[] = [
   {

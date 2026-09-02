@@ -1,3 +1,5 @@
+'use client';
+
 import React, { use, useState } from 'react';
 import { 
   CreditCard, 
@@ -13,8 +15,8 @@ import {
   Radio,
   ExternalLink
 } from 'lucide-react';
-import { PaymentGatewayConfig } from '../../types/index.js';
-import { updateGatewayConfigAction } from '../../lib/serverActions.js';
+import { PaymentGatewayConfig } from '@/types/index';
+import { updateGatewayConfigAction } from '@/server/actions';
 
 interface AdminPaymentConfigProps {
   gatewaysPromise: Promise<PaymentGatewayConfig[]>;

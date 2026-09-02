@@ -1,7 +1,9 @@
+'use client';
+
 import React, { Suspense, useState } from 'react';
-import { Product } from '../../types/index.js';
-import { ProductList } from './ProductList.js';
-import { SkeletonGrid } from '../ui/Skeletons.js';
+import { Product } from '@/types/index';
+import { ProductList } from './ProductList';
+import { SkeletonGrid } from '@/components/ui/Skeletons';
 
 interface StorefrontViewProps {
   productsPromise: Promise<Product[]>;

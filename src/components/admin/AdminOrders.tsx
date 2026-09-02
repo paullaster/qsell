@@ -1,3 +1,5 @@
+'use client';
+
 import React, { use, useState } from 'react';
 import { 
   ShoppingBag, 
@@ -20,8 +22,8 @@ import {
   X,
   ExternalLink
 } from 'lucide-react';
-import { Order, OrderStatus } from '../../types/index.js';
-import { updateOrderStatusAction, cancelOrderAction } from '../../lib/serverActions.js';
+import { Order, OrderStatus } from '@/types/index';
+import { updateOrderStatusAction, cancelOrderAction } from '@/server/actions';
 
 interface AdminOrdersProps {
   ordersPromise: Promise<Order[]>;
@@ -248,9 +250,9 @@ export function AdminOrders({ ordersPromise, onRefresh }: AdminOrdersProps) {
                         <span className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 font-mono text-[10px] uppercase font-bold">
                           {o.paymentMethod}
                         </span>
-                        {o.paymentReference && (
-                          <span className="text-[9px] text-zinc-500 font-mono mt-0.5 truncate max-w-[100px]" title={o.paymentReference}>
-                            Ref: {o.paymentReference}
+                        {o.transactionReference && (
+                          <span className="text-[9px] text-zinc-500 font-mono mt-0.5 truncate max-w-[100px]" title={o.transactionReference}>
+                            Ref: {o.transactionReference}
                           </span>
                         )}
                       </div>
@@ -338,7 +340,11 @@ export function AdminOrders({ ordersPromise, onRefresh }: AdminOrdersProps) {
                     </div>
                     <div className="flex items-start gap-2 text-[11px] text-zinc-300 pt-1">
                       <MapPin className="w-3.5 h-3.5 text-zinc-500 shrink-0 mt-0.5" />
-                      <span>{selectedOrder.shippingAddress || 'Nairobi Central CBD, Kenya'}</span>
+                      <span>
+                        {selectedOrder.shippingAddress
+                          ? `${selectedOrder.shippingAddress.street}, ${selectedOrder.shippingAddress.city}, ${selectedOrder.shippingAddress.countyOrState}, ${selectedOrder.shippingAddress.country}`
+                          : 'Nairobi Central CBD, Kenya'}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -356,7 +362,7 @@ export function AdminOrders({ ordersPromise, onRefresh }: AdminOrdersProps) {
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-zinc-400">Reference:</span>
-                      <span className="font-mono text-zinc-200">{selectedOrder.paymentReference || 'N/A'}</span>
+                      <span className="font-mono text-zinc-200">{selectedOrder.transactionReference || 'N/A'}</span>
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-zinc-400">Current Status:</span>
@@ -393,13 +399,13 @@ export function AdminOrders({ ordersPromise, onRefresh }: AdminOrdersProps) {
                             <div className="text-[10px] text-zinc-400 font-mono">{item.sku}</div>
                           </td>
                           <td className="py-3 px-4 text-right font-mono">
-                            KES {item.price.toLocaleString()}
+                            KES {item.unitPrice.toLocaleString()}
                           </td>
                           <td className="py-3 px-4 text-center font-mono font-bold">
                             {item.quantity}
                           </td>
                           <td className="py-3 px-4 text-right font-mono font-bold text-white">
-                            KES {(item.price * item.quantity).toLocaleString()}
+                            KES {(item.unitPrice * item.quantity).toLocaleString()}
                           </td>
                         </tr>
                       ))}
@@ -510,13 +516,17 @@ export function AdminOrders({ ordersPromise, onRefresh }: AdminOrdersProps) {
                 <p className="font-bold text-sm">{selectedOrder.customerName}</p>
                 <p>{selectedOrder.customerPhone}</p>
                 <p>{selectedOrder.customerEmail}</p>
-                <p>{selectedOrder.shippingAddress || 'Nairobi Central CBD, Kenya'}</p>
+                <p>
+                  {selectedOrder.shippingAddress
+                    ? `${selectedOrder.shippingAddress.street}, ${selectedOrder.shippingAddress.city}, ${selectedOrder.shippingAddress.countyOrState}, ${selectedOrder.shippingAddress.country}`
+                    : 'Nairobi Central CBD, Kenya'}
+                </p>
               </div>
               <div>
                 <strong className="block text-zinc-500 uppercase text-[10px]">Dispatch Details:</strong>
                 <p>Courier: <strong>{selectedOrder.shippingCourier || 'Standard Dispatch'}</strong></p>
                 <p>Tracking: <strong className="font-mono">{selectedOrder.trackingNumber || 'PENDING'}</strong></p>
-                <p>Payment: <strong>{selectedOrder.paymentMethod} (Ref: {selectedOrder.paymentReference || 'Confirmed'})</strong></p>
+                <p>Payment: <strong>{selectedOrder.paymentMethod} (Ref: {selectedOrder.transactionReference || 'Confirmed'})</strong></p>
               </div>
             </div>
 
@@ -537,8 +547,8 @@ export function AdminOrders({ ordersPromise, onRefresh }: AdminOrdersProps) {
                       <div className="text-[10px] text-zinc-500 font-mono">{item.sku}</div>
                     </td>
                     <td className="p-2 text-center font-bold font-mono">{item.quantity}</td>
-                    <td className="p-2 text-right font-mono">KES {item.price.toLocaleString()}</td>
-                    <td className="p-2 text-right font-bold font-mono">KES {(item.price * item.quantity).toLocaleString()}</td>
+                    <td className="p-2 text-right font-mono">KES {item.unitPrice.toLocaleString()}</td>
+                    <td className="p-2 text-right font-bold font-mono">KES {(item.unitPrice * item.quantity).toLocaleString()}</td>
                   </tr>
                 ))}
               </tbody>

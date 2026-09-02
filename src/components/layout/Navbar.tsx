@@ -1,14 +1,13 @@
+'use client';
+
 import React from 'react';
+import Link from 'next/link';
 import { 
   ShoppingBag, 
   Search, 
   Truck, 
   HelpCircle, 
-  Smartphone, 
-  ShieldCheck,
-  PackageCheck,
   User,
-  Sparkles
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -44,13 +43,8 @@ export function Navbar({
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
         {/* Brand */}
         <div className="flex items-center gap-3">
-          <a 
+          <Link
             href="/"
-            onClick={(e) => {
-              e.preventDefault();
-              window.history.pushState(null, '', '/');
-              window.dispatchEvent(new PopStateEvent('popstate'));
-            }}
             className="flex items-center gap-2.5 text-left group cursor-pointer focus:outline-none"
           >
             <div className="w-9 h-9 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-bold text-lg shadow-md group-hover:bg-indigo-500 transition-colors">
@@ -64,7 +58,7 @@ export function Navbar({
                 Hardware & Electronics
               </span>
             </div>
-          </a>
+          </Link>
         </div>
 
         {/* Global Search Bar */}

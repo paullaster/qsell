@@ -1,5 +1,7 @@
+'use client';
+
 import { CheckCircle2, Package, Smartphone, ShieldCheck, Printer, ArrowRight, MapPin, Download } from 'lucide-react';
-import { Order } from '../../types/index.js';
+import { Order } from '@/types/index';
 
 interface OrderSuccessModalProps {
   isOpen: boolean;

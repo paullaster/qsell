@@ -1,6 +1,8 @@
+'use client';
+
 import React from 'react';
 import { ShoppingCart, Eye, Star, Zap, ShieldCheck, Check } from 'lucide-react';
-import { Product } from '../../types/index.js';
+import { Product } from '@/types/index';
 
 interface ProductCardProps {
   key?: React.Key;

@@ -1,3 +1,5 @@
+'use client';
+
 import React, { Suspense, useState, use } from 'react';
 import { 
   LayoutDashboard, 
@@ -24,19 +26,19 @@ import {
   DashboardAnalytics, 
   InventoryLedgerEntry, 
   UserProfile 
-} from '../../types/index.js';
-import { AdminDashboard } from './AdminDashboard.js';
-import { AdminProducts } from './AdminProducts.js';
-import { AdminCategories } from './AdminCategories.js';
-import { AdminTaxes } from './AdminTaxes.js';
-import { AdminCurrencies } from './AdminCurrencies.js';
-import { AdminInventory } from './AdminInventory.js';
-import { AdminOrders } from './AdminOrders.js';
-import { AdminPaymentConfig } from './AdminPaymentConfig.js';
-import { AdminReconciliation } from './AdminReconciliation.js';
-import { AdminAnalytics } from './AdminAnalytics.js';
-import { AdminProductModal } from './AdminProductModal.js';
-import { SkeletonMetrics, SkeletonTable } from '../ui/Skeletons.js';
+} from '@/types/index';
+import { AdminDashboard } from './AdminDashboard';
+import { AdminProducts } from './AdminProducts';
+import { AdminCategories } from './AdminCategories';
+import { AdminTaxes } from './AdminTaxes';
+import { AdminCurrencies } from './AdminCurrencies';
+import { AdminInventory } from './AdminInventory';
+import { AdminOrders } from './AdminOrders';
+import { AdminPaymentConfig } from './AdminPaymentConfig';
+import { AdminReconciliation } from './AdminReconciliation';
+import { AdminAnalytics } from './AdminAnalytics';
+import { AdminProductModal } from './AdminProductModal';
+import { SkeletonMetrics, SkeletonTable } from '@/components/ui/Skeletons';
 
 export type AdminTab = 
   | 'dashboard' 

@@ -1,3 +1,5 @@
+'use client';
+
 import React, { useState, useMemo } from 'react';
 import { 
   Percent, 
@@ -20,13 +22,13 @@ import {
   Building2,
   DollarSign
 } from 'lucide-react';
-import { TaxCategory, TaxType } from '../../types/index.js';
+import { TaxCategory, TaxType } from '@/types/index';
 import { 
   createTaxCategoryAction, 
   updateTaxCategoryAction, 
   deleteTaxCategoryAction, 
   setDefaultTaxCategoryAction 
-} from '../../lib/serverActions.js';
+} from '@/server/actions';
 
 interface AdminTaxesProps {
   taxesPromise: Promise<TaxCategory[]>;

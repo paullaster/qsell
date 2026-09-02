@@ -1,3 +1,5 @@
+'use client';
+
 import React, { use, useState } from 'react';
 import { 
   Package, 
@@ -16,11 +18,11 @@ import {
   Eye,
   ArrowUpDown
 } from 'lucide-react';
-import { Product, Category } from '../../types/index.js';
+import { Product, Category } from '@/types/index';
 import { 
   deleteProductAction, 
   updateProductAction 
-} from '../../lib/serverActions.js';
+} from '@/server/actions';
 
 interface AdminProductsProps {
   productsPromise: Promise<Product[]>;

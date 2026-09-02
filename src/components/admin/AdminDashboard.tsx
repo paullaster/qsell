@@ -1,3 +1,5 @@
+'use client';
+
 import { use } from 'react';
 import { 
   TrendingUp, 
@@ -13,7 +15,7 @@ import {
   Zap,
   Activity
 } from 'lucide-react';
-import { DashboardAnalytics } from '../../types/index.js';
+import { DashboardAnalytics } from '@/types/index';
 
 interface AdminDashboardProps {
   analyticsPromise: Promise<DashboardAnalytics>;

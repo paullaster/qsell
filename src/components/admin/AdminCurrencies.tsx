@@ -1,3 +1,5 @@
+'use client';
+
 import React, { useState, useMemo } from 'react';
 import { 
   Coins, 
@@ -18,14 +20,14 @@ import {
   Percent,
   Sliders
 } from 'lucide-react';
-import { CurrencyConfig } from '../../types/index.js';
+import { CurrencyConfig } from '@/types/index';
 import { 
   createCurrencyAction, 
   updateCurrencyAction, 
   deleteCurrencyAction, 
   setBaseCurrencyAction 
-} from '../../lib/serverActions.js';
-import { formatPriceWithCurrency } from '../../lib/currency.js';
+} from '@/server/actions';
+import { formatPriceWithCurrency } from '@/lib/currency';
 
 interface AdminCurrenciesProps {
   currenciesPromise: Promise<CurrencyConfig[]>;

@@ -1,3 +1,5 @@
+'use client';
+
 import React, { useState, useEffect } from 'react';
 import { 
   X, 
@@ -31,7 +33,7 @@ import {
   CustomerAddress, 
   Order, 
   PaymentProvider 
-} from '../../types/index.js';
+} from '@/types/index';
 import { 
   fetchCustomerAccountAction, 
   fetchAllCustomersAction, 
@@ -41,7 +43,7 @@ import {
   deleteCustomerAddressAction, 
   setDefaultAddressAction, 
   customerLoginAction 
-} from '../../lib/serverActions.js';
+} from '@/server/actions';
 
 interface CustomerAccountModalProps {
   isOpen: boolean;
@@ -867,7 +869,7 @@ export function CustomerAccountModal({
                                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
                                     order.status === 'delivered' || order.status === 'completed'
                                       ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                                      : order.status === 'processing' || order.status === 'confirmed'
+                                      : order.status === 'processing' || order.status === 'shipped'
                                       ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20'
                                       : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
                                   }`}>

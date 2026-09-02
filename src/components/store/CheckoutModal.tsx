@@ -1,8 +1,10 @@
+'use client';
+
 import React, { useState, useEffect } from 'react';
 import { X, Smartphone, CreditCard, ShieldCheck, Lock, MapPin, User, Mail, Phone, ArrowRight, Building, Check } from 'lucide-react';
-import { Product, PaymentProvider, Order, CustomerAccount, CustomerAddress } from '../../types/index.js';
-import { CartItem } from './CartDrawer.js';
-import { fetchCustomerAccountAction } from '../../lib/serverActions.js';
+import { Product, PaymentProvider, Order, CustomerAccount, CustomerAddress } from '@/types/index';
+import { CartItem } from './CartDrawer';
+import { fetchCustomerAccountAction } from '@/server/actions';
 
 interface CheckoutModalProps {
   isOpen: boolean;

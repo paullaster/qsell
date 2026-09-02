@@ -1,0 +1,336 @@
+'use client';
+
+import React, { useState, useCallback, useEffect, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Navbar } from '@/components/layout/Navbar';
+import { Footer } from '@/components/layout/Footer';
+import { StorefrontView } from '@/components/store/StorefrontView';
+import { CartDrawer, type CartItem } from '@/components/store/CartDrawer';
+import { CheckoutModal } from '@/components/store/CheckoutModal';
+import { MpesaStkModal } from '@/components/store/MpesaStkModal';
+import { PesapalCheckoutModal } from '@/components/store/PesapalCheckoutModal';
+import { OrderSuccessModal } from '@/components/store/OrderSuccessModal';
+import { OrderTrackerModal } from '@/components/store/OrderTrackerModal';
+import { CustomerHelpModal } from '@/components/store/CustomerHelpModal';
+import { CustomerAccountModal } from '@/components/customer/CustomerAccountModal';
+import { Toast, type ToastNotification } from '@/components/ui/Toast';
+import { useRealtimeEvents } from '@/lib/realtime';
+import {
+  createOrderAction,
+  initiateDarajaStkAction,
+  initiatePesapalPaymentAction,
+  ensureAdminSessionAction,
+  getSessionAction,
+} from '@/server/actions';
+import type { Product, Order, PaymentProvider } from '@/types/index';
+
+interface StorefrontPageClientProps {
+  productsPromise: Promise<Product[]>;
+  ordersPromise: Promise<Order[]>;
+}
+
+export function StorefrontPageClient({
+  productsPromise,
+  ordersPromise,
+}: StorefrontPageClientProps) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const [toasts, setToasts] = useState<ToastNotification[]>([]);
+  const addToast = useCallback((toast: Omit<ToastNotification, 'id'>) => {
+    const newId = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    setToasts((prev) => [...prev, { ...toast, id: newId }]);
+  }, []);
+  const removeToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const refresh = useCallback(() => router.refresh(), [router]);
+
+  useRealtimeEvents(() => {
+    refresh();
+  });
+
+  useEffect(() => {
+    getSessionAction().catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (searchParams.get('admin') === '1') {
+      ensureAdminSessionAction()
+        .then(() => router.replace('/admin'))
+        .catch(() => {});
+    }
+  }, [searchParams, router]);
+
+  const [cart, setCart] = useState<CartItem[]>([]);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('omnicommerce_cart');
+      if (saved) setCart(JSON.parse(saved));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  useEffect(() => {
+    try {
+      localStorage.setItem('omnicommerce_cart', JSON.stringify(cart));
+    } catch {
+      /* ignore */
+    }
+  }, [cart]);
+
+  const [isCartOpen, setIsCartOpen] = useState(false);
+  const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
+  const [isCheckoutSubmitting, setIsCheckoutSubmitting] = useState(false);
+  const [isTrackOrderOpen, setIsTrackOrderOpen] = useState(false);
+  const [isAccountOpen, setIsAccountOpen] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('All');
+
+  const [isMpesaModalOpen, setIsMpesaModalOpen] = useState(false);
+  const [activeOrder, setActiveOrder] = useState<Order | null>(null);
+  const [mpesaCheckoutRequestId, setMpesaCheckoutRequestId] = useState('');
+  const [isPesapalModalOpen, setIsPesapalModalOpen] = useState(false);
+  const [pesapalTrackingId, setPesapalTrackingId] = useState('');
+  const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false);
+  const [completedOrder, setCompletedOrder] = useState<Order | null>(null);
+
+  const handleAddToCart = useCallback(
+    (product: Product, quantity = 1) => {
+      setCart((prev) => {
+        const existing = prev.find((item) => item.product.id === product.id);
+        const available = product.stockQuantity - product.reservedQuantity;
+        if (existing) {
+          const newQty = Math.min(existing.quantity + quantity, available);
+          return prev.map((item) =>
+            item.product.id === product.id ? { ...item, quantity: newQty } : item
+          );
+        }
+        return [...prev, { product, quantity: Math.min(quantity, Math.max(1, available)) }];
+      });
+      addToast({
+        type: 'success',
+        title: 'Added to Cart',
+        message: `${product.name} added to your checkout bag.`,
+      });
+    },
+    [addToast]
+  );
+
+  const handleQuickBuy = useCallback(
+    (product: Product) => {
+      handleAddToCart(product, 1);
+      setIsCartOpen(false);
+      setIsCheckoutOpen(true);
+    },
+    [handleAddToCart]
+  );
+
+  const handleCheckoutSubmit = async (checkoutData: {
+    customerName: string;
+    customerEmail: string;
+    customerPhone: string;
+    shippingAddress: {
+      street: string;
+      city: string;
+      countyOrState: string;
+      country: string;
+    };
+    paymentMethod: PaymentProvider;
+  }) => {
+    if (cart.length === 0) return;
+    try {
+      setIsCheckoutSubmitting(true);
+      const order = await createOrderAction({
+        customerName: checkoutData.customerName,
+        customerEmail: checkoutData.customerEmail,
+        customerPhone: checkoutData.customerPhone,
+        shippingAddress: checkoutData.shippingAddress,
+        items: cart.map((c) => ({ productId: c.product.id, quantity: c.quantity })),
+        paymentMethod: checkoutData.paymentMethod,
+      });
+      setActiveOrder(order);
+      setIsCheckoutOpen(false);
+
+      if (checkoutData.paymentMethod === 'mpesa_daraja') {
+        const stkRes = await initiateDarajaStkAction(order.id, checkoutData.customerPhone);
+        setMpesaCheckoutRequestId(stkRes.checkoutRequestId);
+        setIsMpesaModalOpen(true);
+        addToast({
+          type: 'info',
+          title: 'M-Pesa STK Push Sent',
+          message: `Safaricom prompt dispatched to ${checkoutData.customerPhone}`,
+        });
+      } else {
+        const pesapalRes = await initiatePesapalPaymentAction(order.id);
+        setPesapalTrackingId(pesapalRes.orderTrackingId);
+        setIsPesapalModalOpen(true);
+        addToast({
+          type: 'info',
+          title: 'Pesapal Gateway Initialized',
+          message: `Pesapal v3.0 Order Reference: ${pesapalRes.merchantReference}`,
+        });
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Unable to place order';
+      addToast({ type: 'error', title: 'Checkout Failed', message });
+      throw err;
+    } finally {
+      setIsCheckoutSubmitting(false);
+    }
+  };
+
+  const handlePaymentSuccess = (receipt: string) => {
+    setIsMpesaModalOpen(false);
+    setIsPesapalModalOpen(false);
+    if (activeOrder) {
+      setCompletedOrder({
+        ...activeOrder,
+        paymentStatus: 'reconciled',
+        status: 'completed',
+        mpesaReceiptNumber: receipt,
+      });
+      setIsSuccessModalOpen(true);
+      setCart([]);
+      refresh();
+      addToast({
+        type: 'success',
+        title: 'Payment Successful',
+        message: `Confirmed: ${receipt}`,
+      });
+    }
+  };
+
+  const handlePaymentFailed = (error: string) => {
+    setIsMpesaModalOpen(false);
+    setIsPesapalModalOpen(false);
+    refresh();
+    addToast({ type: 'error', title: 'Payment Declined', message: error });
+  };
+
+  const goAdmin = async () => {
+    await ensureAdminSessionAction();
+    router.push('/admin');
+  };
+
+  const cartItemsCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+
+  return (
+    <div className="min-h-screen bg-black text-zinc-300 flex flex-col">
+      <Toast toasts={toasts} onDismiss={removeToast} />
+      <Navbar
+        cartItemCount={cartItemsCount}
+        onOpenCart={() => setIsCartOpen(true)}
+        onOpenTrackOrder={() => setIsTrackOrderOpen(true)}
+        onOpenHelp={() => setIsHelpOpen(true)}
+        onOpenAccount={() => setIsAccountOpen(true)}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        selectedCategory={selectedCategory}
+        onSelectCategory={setSelectedCategory}
+      />
+
+      <div className="max-w-7xl w-full mx-auto px-4 pt-2 flex justify-end">
+        <button
+          type="button"
+          onClick={goAdmin}
+          className="text-[11px] uppercase tracking-wider text-zinc-500 hover:text-indigo-400"
+        >
+          Admin console
+        </button>
+      </div>
+
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-2">
+        <StorefrontView
+          productsPromise={productsPromise}
+          onSelectProduct={(p) => router.push(`/product/${p.id}`)}
+          onAddToCart={(p) => handleAddToCart(p, 1)}
+          onQuickBuy={handleQuickBuy}
+          onRefresh={refresh}
+          searchQuery={searchQuery}
+          selectedCategory={selectedCategory}
+        />
+      </main>
+
+      <Footer
+        onOpenTrackOrder={() => setIsTrackOrderOpen(true)}
+        onOpenHelp={() => setIsHelpOpen(true)}
+      />
+
+      <CartDrawer
+        isOpen={isCartOpen}
+        onClose={() => setIsCartOpen(false)}
+        items={cart}
+        onUpdateQuantity={(productId, quantity) =>
+          setCart((prev) =>
+            prev.map((item) => (item.product.id === productId ? { ...item, quantity } : item))
+          )
+        }
+        onRemoveItem={(productId) =>
+          setCart((prev) => prev.filter((item) => item.product.id !== productId))
+        }
+        onProceedToCheckout={() => {
+          setIsCartOpen(false);
+          setIsCheckoutOpen(true);
+        }}
+      />
+
+      <CheckoutModal
+        isOpen={isCheckoutOpen}
+        onClose={() => setIsCheckoutOpen(false)}
+        items={cart}
+        onSubmitCheckout={handleCheckoutSubmit}
+        isLoading={isCheckoutSubmitting}
+      />
+
+      <MpesaStkModal
+        isOpen={isMpesaModalOpen}
+        onClose={() => setIsMpesaModalOpen(false)}
+        order={activeOrder}
+        checkoutRequestId={mpesaCheckoutRequestId}
+        onPaymentSuccess={handlePaymentSuccess}
+        onPaymentFailed={handlePaymentFailed}
+      />
+
+      <PesapalCheckoutModal
+        isOpen={isPesapalModalOpen}
+        onClose={() => setIsPesapalModalOpen(false)}
+        order={activeOrder}
+        orderTrackingId={pesapalTrackingId}
+        onPaymentSuccess={handlePaymentSuccess}
+        onPaymentFailed={handlePaymentFailed}
+      />
+
+      <OrderSuccessModal
+        isOpen={isSuccessModalOpen}
+        onClose={() => setIsSuccessModalOpen(false)}
+        order={completedOrder}
+        onContinueShopping={() => setIsSuccessModalOpen(false)}
+      />
+
+      <OrderTrackerModal
+        isOpen={isTrackOrderOpen}
+        onClose={() => setIsTrackOrderOpen(false)}
+        ordersPromise={ordersPromise}
+      />
+
+      <CustomerHelpModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
+
+      <CustomerAccountModal
+        isOpen={isAccountOpen}
+        onClose={() => setIsAccountOpen(false)}
+        onRefreshGlobalData={refresh}
+      />
+    </div>
+  );
+}
+
+export function StorefrontPageClientBoundary(props: StorefrontPageClientProps) {
+  return (
+    <Suspense fallback={null}>
+      <StorefrontPageClient {...props} />
+    </Suspense>
+  );
+}

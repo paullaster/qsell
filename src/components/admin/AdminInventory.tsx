@@ -1,3 +1,5 @@
+'use client';
+
 import React, { use, useState } from 'react';
 import { 
   Layers, 
@@ -18,13 +20,13 @@ import {
   RefreshCw,
   DollarSign
 } from 'lucide-react';
-import { Product, InventoryLedgerEntry, InventoryChangeType } from '../../types/index.js';
+import { Product, InventoryLedgerEntry, InventoryChangeType } from '@/types/index';
 import { 
   updateProductStockAction, 
   receiveStockAction, 
   writeOffStockAction, 
   auditStockCountAction 
-} from '../../lib/serverActions.js';
+} from '@/server/actions';
 
 interface AdminInventoryProps {
   productsPromise: Promise<Product[]>;
@@ -492,22 +494,22 @@ export function AdminInventory({
                   </tr>
                 ) : (
                   ledger.map((entry) => {
-                    const isPositive = entry.delta > 0;
+                    const isPositive = entry.changeAmount > 0;
                     return (
                       <tr key={entry.id} className="hover:bg-zinc-800/40 font-mono">
                         <td className="py-3 px-4 text-zinc-400 text-[11px]">
                           {new Date(entry.timestamp).toLocaleString()}
                         </td>
                         <td className="py-3 px-4 font-semibold text-white">
-                          {entry.sku}
+                          {entry.productName}
                         </td>
                         <td className="py-3 px-4">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-sans font-bold uppercase tracking-wider ${
-                            entry.changeType === 'STOCK_IN_PO'
+                            entry.changeType === 'purchase_order_receipt'
                               ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
-                              : entry.changeType === 'DAMAGE_WRITE_OFF'
+                              : entry.changeType === 'damage_writeoff'
                               ? 'bg-red-950 text-red-300 border border-red-800'
-                              : entry.changeType === 'ORDER_FULFILLED'
+                              : entry.changeType === 'order_fulfillment'
                               ? 'bg-blue-950 text-blue-300 border border-blue-800'
                               : 'bg-zinc-800 text-zinc-300'
                           }`}>
@@ -515,16 +517,16 @@ export function AdminInventory({
                           </span>
                         </td>
                         <td className={`py-3 px-4 text-center font-bold ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}>
-                          {isPositive ? `+${entry.delta}` : entry.delta}
+                          {isPositive ? `+${entry.changeAmount}` : entry.changeAmount}
                         </td>
                         <td className="py-3 px-4 text-center text-zinc-400">
-                          {entry.priorStock} &rarr; <strong className="text-white">{entry.newStock}</strong>
+                          {entry.previousStock} &rarr; <strong className="text-white">{entry.newStock}</strong>
                         </td>
                         <td className="py-3 px-4 text-zinc-300">
                           {entry.actor}
                         </td>
-                        <td className="py-3 px-4 font-sans text-zinc-400 max-w-xs truncate" title={entry.reason}>
-                          {entry.reason}
+                        <td className="py-3 px-4 font-sans text-zinc-400 max-w-xs truncate" title={entry.note}>
+                          {entry.note}
                         </td>
                       </tr>
                     );

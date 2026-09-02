@@ -1,3 +1,5 @@
+'use client';
+
 import React, { use, useState } from 'react';
 import { 
   ShieldCheck, 
@@ -13,8 +15,8 @@ import {
   XCircle,
   HelpCircle
 } from 'lucide-react';
-import { ReconciliationLog } from '../../types/index.js';
-import { runBatchReconciliationAction, resolveDiscrepancyAction } from '../../lib/serverActions.js';
+import { ReconciliationLog } from '@/types/index';
+import { runBatchReconciliationAction, resolveDiscrepancyAction } from '@/server/actions';
 
 interface AdminReconciliationProps {
   reconciliationLogsPromise: Promise<ReconciliationLog[]>;

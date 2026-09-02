@@ -1,3 +1,5 @@
+'use client';
+
 import { use, useState } from 'react';
 import { 
   Users, 
@@ -11,7 +13,7 @@ import {
   Smartphone,
   CreditCard
 } from 'lucide-react';
-import { DashboardAnalytics, UserProfile } from '../../types/index.js';
+import { DashboardAnalytics, UserProfile } from '@/types/index';
 
 interface AdminAnalyticsProps {
   analyticsPromise: Promise<DashboardAnalytics>;

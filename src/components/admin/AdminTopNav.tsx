@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import { 
   Menu, 
@@ -5,7 +7,7 @@ import {
   Store, 
   ExternalLink
 } from 'lucide-react';
-import { AdminTab } from './AdminView.js';
+import { AdminTab } from './AdminView';
 
 interface AdminTopNavProps {
   activeTab: AdminTab;

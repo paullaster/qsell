@@ -1,7 +1,9 @@
+'use client';
+
 import { useState } from 'react';
 import { CreditCard, ShieldCheck, X, RefreshCw, Smartphone, Landmark, CheckCircle2 } from 'lucide-react';
-import { Order } from '../../types/index.js';
-import { simulatePesapalPaymentAction } from '../../lib/serverActions.js';
+import { Order } from '@/types/index';
+import { simulatePesapalPaymentAction } from '@/server/actions';
 
 interface PesapalCheckoutModalProps {
   isOpen: boolean;

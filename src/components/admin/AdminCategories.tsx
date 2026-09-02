@@ -1,3 +1,5 @@
+'use client';
+
 import React, { use, useState } from 'react';
 import { 
   FolderTree, 
@@ -12,12 +14,12 @@ import {
   ArrowUpDown,
   Tag
 } from 'lucide-react';
-import { Category, Product } from '../../types/index.js';
+import { Category, Product } from '@/types/index';
 import { 
   createCategoryAction, 
   updateCategoryAction, 
   deleteCategoryAction 
-} from '../../lib/serverActions.js';
+} from '@/server/actions';
 
 interface AdminCategoriesProps {
   categoriesPromise: Promise<Category[]>;
