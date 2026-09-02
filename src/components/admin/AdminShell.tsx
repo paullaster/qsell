@@ -1,44 +1,53 @@
 'use client';
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Menu, RefreshCw, Store } from 'lucide-react';
 import { AdminSidebar } from './AdminSidebar';
-import type { AdminTab } from './AdminView';
 import { useRealtimeEvents } from '@/lib/realtime';
-
-function pathToTab(pathname: string): AdminTab {
-  if (pathname.startsWith('/admin/products')) return 'products';
-  if (pathname.startsWith('/admin/categories')) return 'categories';
-  if (pathname.startsWith('/admin/taxes')) return 'taxes';
-  if (pathname.startsWith('/admin/currencies')) return 'currencies';
-  if (pathname.startsWith('/admin/inventory')) return 'inventory';
-  if (pathname.startsWith('/admin/orders')) return 'orders';
-  if (pathname.startsWith('/admin/gateways')) return 'gateways';
-  if (pathname.startsWith('/admin/reconciliation')) return 'reconciliation';
-  if (pathname.startsWith('/admin/analytics')) return 'analytics';
-  return 'dashboard';
-}
-
-const TITLES: Record<AdminTab, string> = {
-  dashboard: 'Business Overview',
-  products: 'Product Catalog',
-  categories: 'Categories',
-  taxes: 'Tax & Compliance',
-  currencies: 'Currencies & FX',
-  inventory: 'Stock & Warehouse',
-  orders: 'Customer Orders',
-  gateways: 'Payment Methods',
-  reconciliation: 'Reconciliation',
-  analytics: 'Customer Analytics',
-};
+import { ensureAdminSessionAction } from '@/server/domains/auth/actions';
+import { getCompanySettingsAction } from '@/server/domains/company/actions';
+import { getAdminPageMeta } from '@/config/admin-nav';
+import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-  const activeTab = pathToTab(pathname);
+  const [sessionReady, setSessionReady] = useState(false);
+  const [company, setCompany] = useState<Pick<
+    CompanySettingsRow,
+    'tradingName' | 'tagline' | 'logoUrl' | 'accentColor'
+  > | null>(null);
+
+  const pageMeta = useMemo(() => getAdminPageMeta(pathname), [pathname]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void ensureAdminSessionAction()
+      .then(() => {
+        if (!cancelled) setSessionReady(true);
+      })
+      .catch(() => {
+        if (!cancelled) setSessionReady(true);
+      });
+    void getCompanySettingsAction()
+      .then((row) => {
+        if (!cancelled) {
+          setCompany({
+            tradingName: row.tradingName,
+            tagline: row.tagline,
+            logoUrl: row.logoUrl,
+            accentColor: row.accentColor,
+          });
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const onRefreshAll = useCallback(() => {
     router.refresh();
@@ -50,50 +59,61 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
 
   const { isConnected } = useRealtimeEvents(handleRealtime);
 
+  if (!sessionReady) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-black text-sm text-zinc-400">
+        Preparing admin session…
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-black text-zinc-300 flex">
+    <div className="flex min-h-screen bg-black text-zinc-300">
       <AdminSidebar
         isOpen={isMobileSidebarOpen}
         onClose={() => setIsMobileSidebarOpen(false)}
         onRefreshAll={onRefreshAll}
         isRealtimeConnected={isConnected}
+        company={company}
       />
 
-      <div className="flex-1 lg:pl-72 flex flex-col min-w-0">
-        <header className="sticky top-0 z-30 h-16 border-b border-zinc-800 bg-zinc-950/95 backdrop-blur-md px-4 sm:px-6 flex items-center gap-3">
+      <div className="flex min-w-0 flex-1 flex-col lg:pl-72">
+        <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-zinc-800 bg-zinc-950/95 px-4 backdrop-blur-md sm:px-6">
           <button
             type="button"
-            className="lg:hidden p-2 rounded-lg text-zinc-400 hover:bg-zinc-900"
+            className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-900 lg:hidden"
             onClick={() => setIsMobileSidebarOpen(true)}
           >
-            <Menu className="w-5 h-5" />
+            <Menu className="h-5 w-5" />
           </button>
-          <div className="flex-1 min-w-0">
-            <h1 className="text-sm font-semibold text-white truncate">{TITLES[activeTab]}</h1>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-wider">Admin Console</p>
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-sm font-semibold text-white">{pageMeta.title}</h1>
+            <p className="truncate text-[10px] tracking-wider text-zinc-500 uppercase">
+              {pageMeta.subtitle}
+            </p>
           </div>
           <button
             type="button"
             onClick={onRefreshAll}
-            className="p-2 rounded-lg text-zinc-400 hover:bg-zinc-900 hover:text-white"
+            className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-900 hover:text-white"
             title="Refresh"
           >
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className="h-4 w-4" />
           </button>
           <Link
             href="/"
-            className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-zinc-400 hover:bg-zinc-900 hover:text-white"
+            className="hidden items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-900 hover:text-white sm:inline-flex"
           >
-            <Store className="w-3.5 h-3.5" />
+            <Store className="h-3.5 w-3.5" />
             Store
           </Link>
           <span
-            className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500' : 'bg-zinc-600'}`}
+            className={`h-2 w-2 rounded-full ${isConnected ? 'bg-emerald-500' : 'bg-zinc-600'}`}
             title={isConnected ? 'Realtime connected' : 'Realtime offline'}
           />
         </header>
 
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto space-y-6">
+        <main className="mx-auto w-full max-w-7xl flex-1 space-y-6 p-4 sm:p-6 lg:p-8">
           {children}
         </main>
       </div>

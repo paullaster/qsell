@@ -1,6 +1,7 @@
 /**
  * Domain action barrel — re-exports all server actions for UI imports.
  * Prefer importing from domain modules directly in new code.
+ * Do not add "use server" here: re-exports are invalid in use-server files.
  */
 
 export {
@@ -112,3 +113,15 @@ export { listInventoryLedgerAction as fetchInventoryLedgerAction } from '@/serve
 export { getCustomerAccountAction as fetchCustomerAccountAction } from '@/server/domains/customers/actions';
 export { switchRoleAction as switchUserRoleAction } from '@/server/domains/auth/actions';
 export { getSessionAction as fetchSessionAction } from '@/server/domains/auth/actions';
+
+export {
+  getCompanySettingsAction,
+  updateCompanySettingsAction,
+  uploadCompanyLogoAction,
+} from '@/server/domains/company/actions';
+
+export {
+  generateInvoicePdfAction,
+  emailInvoiceAction,
+} from '@/server/domains/invoices/actions';
+

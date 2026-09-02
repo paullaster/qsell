@@ -24,7 +24,7 @@ export class InventoryDomainService {
     poNumber: string,
     unitCost?: number,
     notes?: string,
-    actor = 'admin'
+    actor = 'admin',
   ): Product {
     return db.receiveStock(productId, quantity, supplier, poNumber, unitCost, notes, actor);
   }
@@ -39,18 +39,23 @@ export class InventoryDomainService {
       | 'shrinkage_loss'
       | 'sample_marketing',
     notes?: string,
-    actor = 'admin'
+    actor = 'admin',
   ): Product {
     return db.writeOffStock(productId, quantity, reasonCode, notes, actor);
   }
 
-  static audit(productId: string, countedQuantity: number, notes?: string, actor = 'inventory_auditor') {
+  static audit(
+    productId: string,
+    countedQuantity: number,
+    notes?: string,
+    actor = 'inventory_auditor',
+  ) {
     return db.physicalStockAudit(productId, countedQuantity, notes, actor);
   }
 
   static batchAdjust(
     adjustments: { productId: string; newQuantity: number; reason: string }[],
-    actor = 'admin'
+    actor = 'admin',
   ): Product[] {
     return db.batchStockAdjust(adjustments, actor);
   }
@@ -60,7 +65,7 @@ export class InventoryDomainService {
     status: OrderStatus,
     shippingCourier?: string,
     trackingNumber?: string,
-    internalNotes?: string
+    internalNotes?: string,
   ): Order {
     return db.updateOrderStatus(orderId, status, shippingCourier, trackingNumber, internalNotes);
   }

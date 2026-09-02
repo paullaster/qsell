@@ -24,11 +24,11 @@ export class DarajaService {
   private static formatPhoneNumber(phone: string): string {
     let clean = phone.replace(/[^0-9]/g, '');
     if (clean.startsWith('0')) {
-      clean = '254' + clean.slice(1);
+      clean = `254${clean.slice(1)}`;
     } else if (clean.startsWith('+254')) {
       clean = clean.slice(1);
     } else if (!clean.startsWith('254') && clean.length === 9) {
-      clean = '254' + clean;
+      clean = `254${clean}`;
     }
     return clean;
   }
@@ -38,18 +38,21 @@ export class DarajaService {
     if (!order) throw new Error(`Order ${params.orderId} not found`);
 
     const gateway = db.paymentGateways.get('gw_mpesa_daraja');
-    if (!gateway || !gateway.isEnabled) {
+    if (!gateway?.isEnabled) {
       throw new Error('M-Pesa Daraja payment gateway is currently disabled by administrator');
     }
 
     const formattedPhone = this.formatPhoneNumber(params.phoneNumber);
     if (formattedPhone.length !== 12 || !formattedPhone.startsWith('254')) {
       throw new Error(
-        'Invalid Kenyan phone number. Please enter a valid Safaricom number, e.g., 0712345678 or 254712345678'
+        'Invalid Kenyan phone number. Please enter a valid Safaricom number, e.g., 0712345678 or 254712345678',
       );
     }
 
-    const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
+    const timestamp = new Date()
+      .toISOString()
+      .replace(/[^0-9]/g, '')
+      .slice(0, 14);
     const checkoutRequestId = `ws_CO_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const merchantRequestId = `${Math.floor(10000 + Math.random() * 90000)}-${Date.now()}-1`;
     const transactionId = `tx_${Date.now()}_mpesa`;
@@ -69,7 +72,7 @@ export class DarajaService {
       requestPayload: {
         BusinessShortCode: gateway.credentials.shortcode || '174379',
         Password: Buffer.from(
-          `${gateway.credentials.shortcode || '174379'}${gateway.credentials.passkey || ''}${timestamp}`
+          `${gateway.credentials.shortcode || '174379'}${gateway.credentials.passkey || ''}${timestamp}`,
         ).toString('base64'),
         Timestamp: timestamp,
         TransactionType: 'CustomerPayBillOnline',
@@ -119,7 +122,9 @@ export class DarajaService {
     };
   }
 
-  static async processCallback(callbackPayload: unknown): Promise<{ success: boolean; message: string }> {
+  static async processCallback(
+    callbackPayload: unknown,
+  ): Promise<{ success: boolean; message: string }> {
     const payload = callbackPayload as {
       Body?: { stkCallback?: Record<string, unknown> };
     } & Record<string, unknown>;
@@ -134,7 +139,7 @@ export class DarajaService {
     const resultDesc = stkCallback?.ResultDesc || 'No description';
 
     const transaction = Array.from(db.transactions.values()).find(
-      (tx) => tx.transactionReference === checkoutRequestId
+      (tx) => tx.transactionReference === checkoutRequestId,
     );
 
     if (!transaction) {
@@ -165,7 +170,7 @@ export class DarajaService {
         order.updatedAt = new Date().toISOString();
         db.atomicFulfillStock(
           order.items.map((i) => ({ productId: i.productId, quantity: i.quantity })),
-          order.id
+          order.id,
         );
         ReconciliationEngine.reconcileSingleTransaction(transaction, order);
       }
@@ -193,7 +198,7 @@ export class DarajaService {
       order.updatedAt = new Date().toISOString();
       db.atomicReleaseReservation(
         order.items.map((i) => ({ productId: i.productId, quantity: i.quantity })),
-        order.id
+        order.id,
       );
     }
 
@@ -210,10 +215,10 @@ export class DarajaService {
 
   static async simulateUserStkAction(
     checkoutRequestId: string,
-    action: 'accept' | 'cancel' | 'wrong_pin' | 'timeout'
+    action: 'accept' | 'cancel' | 'wrong_pin' | 'timeout',
   ) {
     const transaction = Array.from(db.transactions.values()).find(
-      (tx) => tx.transactionReference === checkoutRequestId
+      (tx) => tx.transactionReference === checkoutRequestId,
     );
     if (!transaction) throw new Error(`Checkout Request ID ${checkoutRequestId} not found.`);
 
@@ -233,7 +238,10 @@ export class DarajaService {
                 { Name: 'Balance', Value: 0 },
                 {
                   Name: 'TransactionDate',
-                  Value: new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14),
+                  Value: new Date()
+                    .toISOString()
+                    .replace(/[^0-9]/g, '')
+                    .slice(0, 14),
                 },
                 { Name: 'PhoneNumber', Value: transaction.customerPhone || '254712345678' },
               ],

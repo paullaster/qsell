@@ -6,21 +6,46 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "tsc --noEmit"
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix --max-warnings 0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run lint && npm run format:check",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio",
+    "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
+    "drizzle-orm": "^0.45.2",
     "lucide-react": "^0.546.0",
     "motion": "^12.43.0",
     "next": "16.3.4",
+    "nodemailer": "^9.1.1",
+    "pdfkit": "^0.20.2",
+    "postgres": "^3.4.9",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@tailwindcss/postcss": "^4.1.14",
     "@types/node": "^22.14.0",
+    "@types/nodemailer": "^8.0.1",
+    "@types/pdfkit": "^0.17.6",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
+    "dotenv": "^17.4.2",
+    "drizzle-kit": "^0.31.10",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "16.3.4",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^16.5.0",
+    "prettier": "^3.6.2",
+    "prettier-plugin-tailwindcss": "^0.6.14",
     "tailwindcss": "^4.1.14",
-    "typescript": "~5.8.2"
+    "tsx": "^4.23.13",
+    "typescript": "~5.8.2",
+    "typescript-eslint": "^8.46.2"
   }
 }

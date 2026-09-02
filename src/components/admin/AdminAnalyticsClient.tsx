@@ -11,9 +11,6 @@ export function AdminAnalyticsClient({
   userProfilesPromise: Promise<UserProfile[]>;
 }) {
   return (
-    <AdminAnalytics
-      analyticsPromise={analyticsPromise}
-      userProfilesPromise={userProfilesPromise}
-    />
+    <AdminAnalytics analyticsPromise={analyticsPromise} userProfilesPromise={userProfilesPromise} />
   );
 }

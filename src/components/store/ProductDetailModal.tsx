@@ -1,20 +1,20 @@
 'use client';
 
 import { useState } from 'react';
-import { 
-  X, 
-  ShoppingCart, 
-  Star, 
-  ShieldCheck, 
-  Truck, 
-  RotateCcw, 
-  Zap, 
-  CheckCircle2, 
-  Tag, 
+import {
+  X,
+  ShoppingCart,
+  Star,
+  ShieldCheck,
+  Truck,
+  RotateCcw,
+  Zap,
+  CheckCircle2,
+  Tag,
   Smartphone,
-  CreditCard
+  CreditCard,
 } from 'lucide-react';
-import { Product } from '@/types/index';
+import { type Product } from '@/types/index';
 
 interface ProductDetailModalProps {
   product: Product | null;
@@ -23,7 +23,12 @@ interface ProductDetailModalProps {
   onQuickBuy?: (product: Product) => void;
 }
 
-export function ProductDetailModal({ product, onClose, onAddToCart, onQuickBuy }: ProductDetailModalProps) {
+export function ProductDetailModal({
+  product,
+  onClose,
+  onAddToCart,
+  onQuickBuy,
+}: ProductDetailModalProps) {
   if (!product) return null;
 
   const [quantity, setQuantity] = useState<number>(1);
@@ -31,61 +36,66 @@ export function ProductDetailModal({ product, onClose, onAddToCart, onQuickBuy }
   const isOutOfStock = availableStock <= 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-      <div className="relative w-full max-w-3xl bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl flex flex-col md:flex-row max-h-[90vh]">
+    <div className="animate-fade-in fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+      <div className="relative flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl md:flex-row">
         {/* Close Button */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 z-10 p-2 rounded-lg bg-zinc-950/80 text-zinc-400 hover:text-white border border-zinc-800 transition-colors cursor-pointer"
+          className="absolute top-4 right-4 z-10 cursor-pointer rounded-lg border border-zinc-800 bg-zinc-950/80 p-2 text-zinc-400 transition-colors hover:text-white"
         >
-          <X className="w-5 h-5" />
+          <X className="h-5 w-5" />
         </button>
 
         {/* Product Image & SKU Badge */}
-        <div className="md:w-1/2 bg-zinc-950 p-6 flex flex-col items-center justify-center relative overflow-hidden">
+        <div className="relative flex flex-col items-center justify-center overflow-hidden bg-zinc-950 p-6 md:w-1/2">
           <img
             src={product.imageUrl}
             alt={product.name}
-            className="w-full h-auto max-h-80 object-cover rounded-xl shadow-md"
+            className="h-auto max-h-80 w-full rounded-xl object-cover shadow-md"
             referrerPolicy="no-referrer"
           />
           <div className="absolute top-4 left-4">
-            <span className="px-2.5 py-1 rounded-md bg-zinc-900/90 text-zinc-300 border border-zinc-700 text-xs font-mono">
+            <span className="rounded-md border border-zinc-700 bg-zinc-900/90 px-2.5 py-1 font-mono text-xs text-zinc-300">
               SKU: {product.sku}
             </span>
           </div>
         </div>
 
         {/* Product Details */}
-        <div className="md:w-1/2 p-6 flex flex-col justify-between overflow-y-auto space-y-4">
+        <div className="flex flex-col justify-between space-y-4 overflow-y-auto p-6 md:w-1/2">
           <div className="space-y-3">
             {/* Category & Rating */}
             <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-indigo-400 uppercase tracking-wider">
+              <span className="text-xs font-semibold tracking-wider text-indigo-400 uppercase">
                 {product.category}
               </span>
-              <div className="flex items-center text-amber-400 text-xs font-semibold">
-                <Star className="w-3.5 h-3.5 fill-amber-400 mr-1" />
-                {product.rating.toFixed(1)} <span className="text-zinc-500 font-normal ml-1">({product.reviewCount} reviews)</span>
+              <div className="flex items-center text-xs font-semibold text-amber-400">
+                <Star className="mr-1 h-3.5 w-3.5 fill-amber-400" />
+                {product.rating.toFixed(1)}{' '}
+                <span className="ml-1 font-normal text-zinc-500">
+                  ({product.reviewCount} reviews)
+                </span>
               </div>
             </div>
 
-            <h2 className="text-lg sm:text-xl font-bold text-white leading-snug">{product.name}</h2>
+            <h2 className="text-lg leading-snug font-bold text-white sm:text-xl">{product.name}</h2>
 
             {/* Price Box */}
-            <div className="p-3.5 rounded-xl bg-zinc-950 border border-zinc-800 flex items-center justify-between">
+            <div className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-950 p-3.5">
               <div>
-                <span className="text-[10px] text-zinc-400 block uppercase tracking-wider">Price</span>
-                <span className="text-2xl font-bold text-white font-mono">
+                <span className="block text-[10px] tracking-wider text-zinc-400 uppercase">
+                  Price
+                </span>
+                <span className="font-mono text-2xl font-bold text-white">
                   KES {product.price.toLocaleString()}
                 </span>
               </div>
               {product.compareAtPrice && product.compareAtPrice > product.price && (
                 <div className="text-right">
-                  <span className="text-[10px] text-emerald-400 font-semibold block">
+                  <span className="block text-[10px] font-semibold text-emerald-400">
                     Save KES {(product.compareAtPrice - product.price).toLocaleString()}
                   </span>
-                  <span className="text-xs text-zinc-500 line-through font-mono">
+                  <span className="font-mono text-xs text-zinc-500 line-through">
                     KES {product.compareAtPrice.toLocaleString()}
                   </span>
                 </div>
@@ -93,16 +103,16 @@ export function ProductDetailModal({ product, onClose, onAddToCart, onQuickBuy }
             </div>
 
             {/* Stock Availability */}
-            <div className="flex items-center justify-between text-xs py-1">
-              <span className="text-zinc-400 font-medium">Availability:</span>
+            <div className="flex items-center justify-between py-1 text-xs">
+              <span className="font-medium text-zinc-400">Availability:</span>
               {isOutOfStock ? (
-                <span className="text-red-400 font-semibold flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-red-400"></span>
+                <span className="flex items-center gap-1.5 font-semibold text-red-400">
+                  <span className="h-2 w-2 rounded-full bg-red-400" />
                   Out of Stock
                 </span>
               ) : (
-                <span className="text-emerald-400 font-semibold flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                <span className="flex items-center gap-1.5 font-semibold text-emerald-400">
+                  <span className="h-2 w-2 rounded-full bg-emerald-400" />
                   In Stock ({availableStock} units)
                 </span>
               )}
@@ -111,27 +121,29 @@ export function ProductDetailModal({ product, onClose, onAddToCart, onQuickBuy }
             {/* Description */}
             <div className="space-y-1.5">
               <span className="text-xs font-semibold text-zinc-300">Description:</span>
-              <p className="text-zinc-300 text-xs leading-relaxed">{product.description}</p>
+              <p className="text-xs leading-relaxed text-zinc-300">{product.description}</p>
             </div>
           </div>
 
           {/* Action & Quantity */}
-          <div className="space-y-3 pt-3 border-t border-zinc-800">
+          <div className="space-y-3 border-t border-zinc-800 pt-3">
             <div className="flex items-center justify-between">
-              <span className="text-xs text-zinc-400 font-medium">Quantity:</span>
-              <div className="flex items-center bg-zinc-950 rounded-lg p-1 border border-zinc-800">
+              <span className="text-xs font-medium text-zinc-400">Quantity:</span>
+              <div className="flex items-center rounded-lg border border-zinc-800 bg-zinc-950 p-1">
                 <button
                   onClick={() => setQuantity(Math.max(1, quantity - 1))}
                   disabled={quantity <= 1 || isOutOfStock}
-                  className="w-7 h-7 flex items-center justify-center rounded text-zinc-300 hover:bg-zinc-800 font-bold disabled:opacity-40 cursor-pointer text-xs"
+                  className="flex h-7 w-7 cursor-pointer items-center justify-center rounded text-xs font-bold text-zinc-300 hover:bg-zinc-800 disabled:opacity-40"
                 >
                   -
                 </button>
-                <span className="w-8 text-center font-mono text-xs text-white font-semibold">{quantity}</span>
+                <span className="w-8 text-center font-mono text-xs font-semibold text-white">
+                  {quantity}
+                </span>
                 <button
                   onClick={() => setQuantity(Math.min(availableStock, quantity + 1))}
                   disabled={quantity >= availableStock || isOutOfStock}
-                  className="w-7 h-7 flex items-center justify-center rounded text-zinc-300 hover:bg-zinc-800 font-bold disabled:opacity-40 cursor-pointer text-xs"
+                  className="flex h-7 w-7 cursor-pointer items-center justify-center rounded text-xs font-bold text-zinc-300 hover:bg-zinc-800 disabled:opacity-40"
                 >
                   +
                 </button>
@@ -145,9 +157,9 @@ export function ProductDetailModal({ product, onClose, onAddToCart, onQuickBuy }
                   onClose();
                 }}
                 disabled={isOutOfStock}
-                className="py-2.5 px-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-semibold text-xs flex items-center justify-center gap-1.5 border border-zinc-700 transition-colors disabled:opacity-50 cursor-pointer"
+                className="flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-xs font-semibold text-zinc-100 transition-colors hover:bg-zinc-700 disabled:opacity-50"
               >
-                <ShoppingCart className="w-4 h-4 text-indigo-400" />
+                <ShoppingCart className="h-4 w-4 text-indigo-400" />
                 <span>Add to Cart</span>
               </button>
 
@@ -159,9 +171,9 @@ export function ProductDetailModal({ product, onClose, onAddToCart, onQuickBuy }
                   }
                 }}
                 disabled={isOutOfStock}
-                className="py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-indigo-600/20 transition-all disabled:opacity-50 cursor-pointer"
+                className="flex cursor-pointer items-center justify-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2.5 text-xs font-bold text-white shadow-lg shadow-indigo-600/20 transition-all hover:bg-indigo-500 disabled:opacity-50"
               >
-                <Zap className="w-4 h-4" />
+                <Zap className="h-4 w-4" />
                 <span>Buy Now</span>
               </button>
             </div>

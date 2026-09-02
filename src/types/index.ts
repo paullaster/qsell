@@ -46,7 +46,8 @@ export interface Product {
   updatedAt: string;
 }
 
-export type TaxType = 'vat' | 'sales_tax' | 'gst' | 'excise' | 'custom' | 'exempt' | 'digital_service';
+export type TaxType =
+  'vat' | 'sales_tax' | 'gst' | 'excise' | 'custom' | 'exempt' | 'digital_service';
 
 export interface TaxCategory {
   id: string;
@@ -78,16 +79,16 @@ export interface CurrencyConfig {
   updatedAt: string;
 }
 
-export type InventoryChangeType = 
+export type InventoryChangeType =
   | 'purchase_order_receipt'
   | 'damage_writeoff'
   | 'loss_shrinkage'
   | 'physical_audit'
-  | 'order_reservation' 
-  | 'order_fulfillment' 
-  | 'restock' 
-  | 'manual_adjustment' 
-  | 'reconciliation_correction' 
+  | 'order_reservation'
+  | 'order_fulfillment'
+  | 'restock'
+  | 'manual_adjustment'
+  | 'reconciliation_correction'
   | 'order_cancellation_release';
 
 export interface InventoryLedgerEntry {
@@ -125,8 +126,17 @@ export interface PaymentGatewayConfig {
   description: string;
 }
 
-export type OrderStatus = 'pending' | 'processing' | 'shipped' | 'delivered' | 'completed' | 'failed' | 'cancelled' | 'refunded';
-export type PaymentStatus = 'unpaid' | 'pending_verification' | 'paid' | 'reconciled' | 'discrepancy' | 'failed';
+export type OrderStatus =
+  | 'pending'
+  | 'processing'
+  | 'shipped'
+  | 'delivered'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'refunded';
+export type PaymentStatus =
+  'unpaid' | 'pending_verification' | 'paid' | 'reconciled' | 'discrepancy' | 'failed';
 
 export interface OrderItem {
   productId: string;

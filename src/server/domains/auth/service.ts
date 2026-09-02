@@ -7,14 +7,15 @@ export const SESSION_COOKIE = 'omni_session';
 export class AuthService {
   static createSession(
     role: 'admin' | 'manager' | 'customer',
-    email: string = 'paullasterokoth98@gmail.com',
-    name: string = 'Paul Laster Okoth',
-    phone: string = '0712345678'
+    email = 'paullasterokoth98@gmail.com',
+    name = 'Paul Laster Okoth',
+    phone = '0712345678',
   ): UserSession {
     let userId = role === 'admin' ? 'usr_admin_001' : '';
 
     if (role === 'customer') {
-      let existingCustomer = db.getCustomerByEmailOrPhone(email) || db.getCustomerByEmailOrPhone(phone);
+      let existingCustomer =
+        db.getCustomerByEmailOrPhone(email) || db.getCustomerByEmailOrPhone(phone);
       if (!existingCustomer) {
         existingCustomer = db.createCustomer({
           name,
@@ -120,7 +121,8 @@ export class AuthService {
     }
 
     let resolvedUserId = params.userId;
-    let customer = db.getCustomerById(params.userId) || db.getCustomerByEmailOrPhone(params.customerEmail);
+    let customer =
+      db.getCustomerById(params.userId) || db.getCustomerByEmailOrPhone(params.customerEmail);
     if (!customer) {
       customer = db.createCustomer({
         name: params.customerName,

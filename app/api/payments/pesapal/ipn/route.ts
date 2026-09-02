@@ -7,10 +7,7 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({}));
     const url = new URL(request.url);
     const orderTrackingId =
-      body.OrderTrackingId ||
-      body.orderTrackingId ||
-      url.searchParams.get('OrderTrackingId') ||
-      '';
+      body.OrderTrackingId || body.orderTrackingId || url.searchParams.get('OrderTrackingId') || '';
     const merchantReference =
       body.OrderMerchantReference ||
       body.merchantReference ||
@@ -21,7 +18,7 @@ export async function POST(request: Request) {
     const result = await PesapalService.processIpn(
       String(orderTrackingId),
       String(merchantReference),
-      String(status)
+      String(status),
     );
     return Response.json(result);
   } catch (error: unknown) {
@@ -31,5 +28,5 @@ export async function POST(request: Request) {
 }
 
 export async function GET(request: Request) {
-  return POST(request);
+  return await POST(request);
 }

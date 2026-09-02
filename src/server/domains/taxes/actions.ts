@@ -9,7 +9,7 @@ export async function listTaxCategoriesAction(): Promise<TaxCategory[]> {
 }
 
 export async function createTaxCategoryAction(
-  data: Omit<TaxCategory, 'id' | 'createdAt' | 'updatedAt' | 'productCount'>
+  data: Omit<TaxCategory, 'id' | 'createdAt' | 'updatedAt' | 'productCount'>,
 ): Promise<TaxCategory> {
   const tax = TaxDomainService.create(data);
   revalidatePath('/admin/taxes');
@@ -18,7 +18,7 @@ export async function createTaxCategoryAction(
 
 export async function updateTaxCategoryAction(
   id: string,
-  updates: Partial<TaxCategory>
+  updates: Partial<TaxCategory>,
 ): Promise<TaxCategory> {
   const tax = TaxDomainService.update(id, updates);
   revalidatePath('/admin/taxes');

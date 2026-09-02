@@ -1,13 +1,8 @@
 'use client';
 
 import React from 'react';
-import { 
-  Menu, 
-  RefreshCw, 
-  Store, 
-  ExternalLink
-} from 'lucide-react';
-import { AdminTab } from './AdminView';
+import { Menu, RefreshCw, Store, ExternalLink } from 'lucide-react';
+import { type AdminTab } from './AdminView';
 
 interface AdminTopNavProps {
   activeTab: AdminTab;
@@ -21,73 +16,76 @@ export function AdminTopNav({
   activeTab,
   onOpenMobileSidebar,
   onRefreshAll,
-  onNavigateToStore
+  onNavigateToStore,
 }: AdminTopNavProps) {
   const tabTitles: Record<AdminTab, { title: string; subtitle: string }> = {
-    dashboard: { 
-      title: 'Business Overview & Sales Performance', 
-      subtitle: 'Real-time sales revenue, customer order volume, and payment collections' 
+    dashboard: {
+      title: 'Business Overview & Sales Performance',
+      subtitle: 'Real-time sales revenue, customer order volume, and payment collections',
     },
     products: {
       title: 'Product Catalog & Pricing',
-      subtitle: 'Manage items, cost prices, retail selling prices, and gross margins'
+      subtitle: 'Manage items, cost prices, retail selling prices, and gross margins',
     },
     categories: {
       title: 'Categories & Departments',
-      subtitle: 'Organize your store catalog into easy-to-browse shopping departments'
+      subtitle: 'Organize your store catalog into easy-to-browse shopping departments',
     },
     taxes: {
       title: 'Tax Rates & Fiscal Compliance',
-      subtitle: 'Configure dynamic VAT, sales taxes, and duty schedules with live inclusive and exclusive calculators'
+      subtitle:
+        'Configure dynamic VAT, sales taxes, and duty schedules with live inclusive and exclusive calculators',
     },
     currencies: {
       title: 'Multi-Market Currency & Global FX Rates',
-      subtitle: 'Manage cross-border currencies, exchange rate multipliers, and international pricing matrices'
+      subtitle:
+        'Manage cross-border currencies, exchange rate multipliers, and international pricing matrices',
     },
-    inventory: { 
-      title: 'Stock Control & Warehouse Management', 
-      subtitle: 'Receive supplier goods (PO), write off damaged stock, and conduct physical audits' 
+    inventory: {
+      title: 'Stock Control & Warehouse Management',
+      subtitle: 'Receive supplier goods (PO), write off damaged stock, and conduct physical audits',
     },
-    orders: { 
-      title: 'Customer Orders & Shipments', 
-      subtitle: 'Process orders, track courier dispatches, and print warehouse packing slips' 
+    orders: {
+      title: 'Customer Orders & Shipments',
+      subtitle: 'Process orders, track courier dispatches, and print warehouse packing slips',
     },
-    gateways: { 
-      title: 'Payment Methods & Settings', 
-      subtitle: 'Configure M-Pesa (Till/Paybill) and Card payment options for customer checkout' 
+    gateways: {
+      title: 'Payment Methods & Settings',
+      subtitle: 'Configure M-Pesa (Till/Paybill) and Card payment options for customer checkout',
     },
-    reconciliation: { 
-      title: 'Payment Reconciliation & Settlement', 
-      subtitle: 'Match received customer payments against sales orders to verify bank and mobile money deposits' 
+    reconciliation: {
+      title: 'Payment Reconciliation & Settlement',
+      subtitle:
+        'Match received customer payments against sales orders to verify bank and mobile money deposits',
     },
-    analytics: { 
-      title: 'Customer Accounts & Sales Insights', 
-      subtitle: 'Track customer buying patterns, repeat purchase rates, and customer accounts' 
-    }
+    analytics: {
+      title: 'Customer Accounts & Sales Insights',
+      subtitle: 'Track customer buying patterns, repeat purchase rates, and customer accounts',
+    },
   };
 
   const currentInfo = tabTitles[activeTab] || tabTitles.dashboard;
 
   return (
-    <header className="sticky top-0 z-30 w-full bg-zinc-950/90 backdrop-blur-md border-b border-zinc-800 px-4 sm:px-6 py-3.5">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+    <header className="sticky top-0 z-30 w-full border-b border-zinc-800 bg-zinc-950/90 px-4 py-3.5 backdrop-blur-md sm:px-6">
+      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
         {/* Left: Mobile Menu Trigger + Breadcrumb */}
         <div className="flex items-center gap-3">
           <button
             onClick={onOpenMobileSidebar}
-            className="p-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white lg:hidden cursor-pointer"
+            className="cursor-pointer rounded-lg border border-zinc-800 bg-zinc-900 p-2 text-zinc-400 hover:text-white lg:hidden"
             aria-label="Open Admin Menu"
           >
-            <Menu className="w-5 h-5" />
+            <Menu className="h-5 w-5" />
           </button>
 
           <div>
-            <div className="flex items-center gap-2 text-[11px] font-mono text-zinc-400">
+            <div className="flex items-center gap-2 font-mono text-[11px] text-zinc-400">
               <span>Admin Workspace</span>
               <span>/</span>
-              <span className="text-indigo-400 font-semibold uppercase">{activeTab}</span>
+              <span className="font-semibold text-indigo-400 uppercase">{activeTab}</span>
             </div>
-            <h1 className="text-base sm:text-lg font-bold text-white tracking-tight leading-tight">
+            <h1 className="text-base leading-tight font-bold tracking-tight text-white sm:text-lg">
               {currentInfo.title}
             </h1>
           </div>
@@ -98,21 +96,21 @@ export function AdminTopNav({
           {/* Refresh Action */}
           <button
             onClick={onRefreshAll}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-white border border-zinc-800 transition-colors cursor-pointer text-xs"
+            className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-white"
             title="Refresh records"
           >
-            <RefreshCw className="w-3.5 h-3.5" />
+            <RefreshCw className="h-3.5 w-3.5" />
             <span>Sync</span>
           </button>
 
           {/* Quick Exit to Store */}
           <button
             onClick={onNavigateToStore}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600/10 hover:bg-indigo-600/20 border border-indigo-500/30 text-indigo-300 text-xs font-semibold transition-colors cursor-pointer"
+            className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-indigo-500/30 bg-indigo-600/10 px-3 py-1.5 text-xs font-semibold text-indigo-300 transition-colors hover:bg-indigo-600/20"
           >
-            <Store className="w-3.5 h-3.5" />
+            <Store className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Storefront</span>
-            <ExternalLink className="w-3 h-3 text-indigo-400" />
+            <ExternalLink className="h-3 w-3 text-indigo-400" />
           </button>
         </div>
       </div>

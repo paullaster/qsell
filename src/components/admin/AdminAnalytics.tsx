@@ -1,19 +1,19 @@
 'use client';
 
 import { use, useState } from 'react';
-import { 
-  Users, 
-  TrendingUp, 
-  DollarSign, 
-  ShoppingBag, 
-  Star, 
-  Award, 
-  ShieldCheck, 
-  Search, 
+import {
+  Users,
+  TrendingUp,
+  DollarSign,
+  ShoppingBag,
+  Star,
+  Award,
+  ShieldCheck,
+  Search,
   Smartphone,
-  CreditCard
+  CreditCard,
 } from 'lucide-react';
-import { DashboardAnalytics, UserProfile } from '@/types/index';
+import { type DashboardAnalytics, type UserProfile } from '@/types/index';
 
 interface AdminAnalyticsProps {
   analyticsPromise: Promise<DashboardAnalytics>;
@@ -37,55 +37,56 @@ export function AdminAnalytics({ analyticsPromise, userProfilesPromise }: AdminA
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="p-5 rounded-xl bg-zinc-900 border border-zinc-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div className="flex flex-col items-start justify-between gap-4 rounded-xl border border-zinc-800 bg-zinc-900 p-5 sm:flex-row sm:items-center">
         <div>
-          <h2 className="font-bold text-base text-white flex items-center gap-2">
-            <Users className="w-5 h-5 text-indigo-400" />
+          <h2 className="flex items-center gap-2 text-base font-bold text-white">
+            <Users className="h-5 w-5 text-indigo-400" />
             Customer Accounts & Sales Insights
           </h2>
-          <p className="text-xs text-zinc-400 mt-0.5">
-            Customer purchase history, repeat buyer rates, total spend, and customer contact profiles.
+          <p className="mt-0.5 text-xs text-zinc-400">
+            Customer purchase history, repeat buyer rates, total spend, and customer contact
+            profiles.
           </p>
         </div>
 
         <div className="relative w-full sm:w-72">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+          <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-zinc-500" />
           <input
             type="text"
             placeholder="Search Customer or Phone..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-9 pr-4 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+            className="w-full rounded-lg border border-zinc-800 bg-zinc-950 py-1.5 pr-4 pl-9 text-xs text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
           />
         </div>
       </div>
 
       {/* Cohort Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="p-5 rounded-xl bg-zinc-900 border border-zinc-800 space-y-2">
-          <span className="text-xs text-zinc-400 font-semibold uppercase">Total Tracked Profiles</span>
-          <div className="text-2xl font-bold font-mono text-white">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
+          <span className="text-xs font-semibold text-zinc-400 uppercase">
+            Total Tracked Profiles
+          </span>
+          <div className="font-mono text-2xl font-bold text-white">
             {users.length} <span className="text-xs font-normal text-zinc-500">customers</span>
           </div>
-          <div className="text-[11px] text-emerald-400">
-            100% Kenyan Mobile Verified
-          </div>
+          <div className="text-[11px] text-emerald-400">100% Kenyan Mobile Verified</div>
         </div>
 
-        <div className="p-5 rounded-xl bg-zinc-900 border border-zinc-800 space-y-2">
-          <span className="text-xs text-zinc-400 font-semibold uppercase">Average Customer LTV</span>
-          <div className="text-2xl font-bold font-mono text-white">
+        <div className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
+          <span className="text-xs font-semibold text-zinc-400 uppercase">
+            Average Customer LTV
+          </span>
+          <div className="font-mono text-2xl font-bold text-white">
             KES {analytics.averageOrderValue.toLocaleString()}
           </div>
-          <div className="text-[11px] text-zinc-400">
-            High repeat rate on tech accessories
-          </div>
+          <div className="text-[11px] text-zinc-400">High repeat rate on tech accessories</div>
         </div>
 
-        <div className="p-5 rounded-xl bg-zinc-900 border border-zinc-800 space-y-2">
-          <span className="text-xs text-zinc-400 font-semibold uppercase">Preferred Rail</span>
-          <div className="text-2xl font-bold text-white flex items-center gap-2">
-            <Smartphone className="w-6 h-6 text-emerald-400" /> M-Pesa (85%)
+        <div className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
+          <span className="text-xs font-semibold text-zinc-400 uppercase">Preferred Rail</span>
+          <div className="flex items-center gap-2 text-2xl font-bold text-white">
+            <Smartphone className="h-6 w-6 text-emerald-400" /> M-Pesa (85%)
           </div>
           <div className="text-[11px] text-zinc-400">
             Pesapal Card handles 15% high-ticket orders
@@ -96,59 +97,61 @@ export function AdminAnalytics({ analyticsPromise, userProfilesPromise }: AdminA
       {/* Customer Profiles Table */}
       <div className="overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-900 shadow-lg">
         <table className="w-full text-left text-xs">
-          <thead className="bg-zinc-950 text-zinc-400 uppercase font-semibold text-[10px] tracking-wider border-b border-zinc-800">
+          <thead className="border-b border-zinc-800 bg-zinc-950 text-[10px] font-semibold tracking-wider text-zinc-400 uppercase">
             <tr>
-              <th className="py-3 px-4">Customer Name & Phone</th>
-              <th className="py-3 px-3">Email Address</th>
-              <th className="py-3 px-3">Role / Segment</th>
-              <th className="py-3 px-3">Total Orders</th>
-              <th className="py-3 px-3">Lifetime Spend</th>
-              <th className="py-3 px-3">Preferred Gateway</th>
-              <th className="py-3 px-4 text-right">Account Created</th>
+              <th className="px-4 py-3">Customer Name & Phone</th>
+              <th className="px-3 py-3">Email Address</th>
+              <th className="px-3 py-3">Role / Segment</th>
+              <th className="px-3 py-3">Total Orders</th>
+              <th className="px-3 py-3">Lifetime Spend</th>
+              <th className="px-3 py-3">Preferred Gateway</th>
+              <th className="px-4 py-3 text-right">Account Created</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-800">
             {filteredUsers.map((u) => (
-              <tr key={u.id} className="hover:bg-zinc-800/40 transition-colors">
-                <td className="py-3.5 px-4">
+              <tr key={u.id} className="transition-colors hover:bg-zinc-800/40">
+                <td className="px-4 py-3.5">
                   <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-full bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 font-bold text-xs">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-full border border-indigo-500/30 bg-indigo-600/20 text-xs font-bold text-indigo-400">
                       {u.name.charAt(0)}
                     </div>
                     <div>
-                      <span className="font-semibold text-white block">{u.name}</span>
-                      <span className="text-[10px] font-mono text-zinc-500">{u.phone}</span>
+                      <span className="block font-semibold text-white">{u.name}</span>
+                      <span className="font-mono text-[10px] text-zinc-500">{u.phone}</span>
                     </div>
                   </div>
                 </td>
-                <td className="py-3.5 px-3 text-zinc-300 font-mono text-[11px]">{u.email}</td>
-                <td className="py-3.5 px-3">
-                  <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase ${
-                    u.role === 'admin'
-                      ? 'bg-indigo-500/10 text-indigo-300 border border-indigo-500/20'
-                      : 'bg-zinc-800 text-zinc-300 border border-zinc-700/50'
-                  }`}>
+                <td className="px-3 py-3.5 font-mono text-[11px] text-zinc-300">{u.email}</td>
+                <td className="px-3 py-3.5">
+                  <span
+                    className={`rounded-md px-2 py-0.5 text-[10px] font-bold uppercase ${
+                      u.role === 'admin'
+                        ? 'border border-indigo-500/20 bg-indigo-500/10 text-indigo-300'
+                        : 'border border-zinc-700/50 bg-zinc-800 text-zinc-300'
+                    }`}
+                  >
                     {u.role}
                   </span>
                 </td>
-                <td className="py-3.5 px-3 font-mono text-white font-bold">{u.totalOrders}</td>
-                <td className="py-3.5 px-3 font-mono font-bold text-white">
+                <td className="px-3 py-3.5 font-mono font-bold text-white">{u.totalOrders}</td>
+                <td className="px-3 py-3.5 font-mono font-bold text-white">
                   KES {u.totalSpend.toLocaleString()}
                 </td>
-                <td className="py-3.5 px-3">
+                <td className="px-3 py-3.5">
                   <span className="flex items-center gap-1 text-[11px] font-medium text-zinc-300">
                     {u.preferredPaymentMethod === 'mpesa_daraja' ? (
                       <>
-                        <Smartphone className="w-3.5 h-3.5 text-emerald-400" /> M-Pesa
+                        <Smartphone className="h-3.5 w-3.5 text-emerald-400" /> M-Pesa
                       </>
                     ) : (
                       <>
-                        <CreditCard className="w-3.5 h-3.5 text-indigo-400" /> Pesapal
+                        <CreditCard className="h-3.5 w-3.5 text-indigo-400" /> Pesapal
                       </>
                     )}
                   </span>
                 </td>
-                <td className="py-3.5 px-4 text-right font-mono text-zinc-500 text-[11px]">
+                <td className="px-4 py-3.5 text-right font-mono text-[11px] text-zinc-500">
                   {new Date(u.createdAt).toLocaleDateString()}
                 </td>
               </tr>

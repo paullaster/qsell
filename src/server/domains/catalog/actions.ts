@@ -13,7 +13,7 @@ export async function getProductAction(id: string): Promise<Product | null> {
 }
 
 export async function createProductAction(
-  productData: Omit<Product, 'id' | 'createdAt' | 'updatedAt' | 'reservedQuantity'>
+  productData: Omit<Product, 'id' | 'createdAt' | 'updatedAt' | 'reservedQuantity'>,
 ): Promise<Product> {
   const product = CatalogService.createProduct(productData);
   revalidatePath('/admin/products');
@@ -41,7 +41,7 @@ export async function listCategoriesAction(): Promise<Category[]> {
 }
 
 export async function createCategoryAction(
-  data: Omit<Category, 'id' | 'createdAt' | 'updatedAt' | 'productCount'>
+  data: Omit<Category, 'id' | 'createdAt' | 'updatedAt' | 'productCount'>,
 ): Promise<Category> {
   const category = CatalogService.createCategory(data);
   revalidatePath('/admin/categories');
@@ -49,7 +49,10 @@ export async function createCategoryAction(
   return category;
 }
 
-export async function updateCategoryAction(id: string, updates: Partial<Category>): Promise<Category> {
+export async function updateCategoryAction(
+  id: string,
+  updates: Partial<Category>,
+): Promise<Category> {
   const category = CatalogService.updateCategory(id, updates);
   revalidatePath('/admin/categories');
   revalidatePath('/');

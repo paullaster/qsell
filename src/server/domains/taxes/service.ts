@@ -10,7 +10,9 @@ export class TaxDomainService {
     return db.getTaxCategoryById(id);
   }
 
-  static create(data: Omit<TaxCategory, 'id' | 'createdAt' | 'updatedAt' | 'productCount'>): TaxCategory {
+  static create(
+    data: Omit<TaxCategory, 'id' | 'createdAt' | 'updatedAt' | 'productCount'>,
+  ): TaxCategory {
     return db.createTaxCategory(data);
   }
 

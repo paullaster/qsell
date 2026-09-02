@@ -1,4 +1,4 @@
-import { CurrencyConfig } from '@/types/index';
+import { type CurrencyConfig } from '@/types/index';
 
 export const DEFAULT_CURRENCIES: CurrencyConfig[] = [
   {
@@ -11,7 +11,7 @@ export const DEFAULT_CURRENCIES: CurrencyConfig[] = [
     symbolPosition: 'prefix',
     isEnabled: true,
     flagEmoji: '🇰🇪',
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
   },
   {
     code: 'USD',
@@ -23,7 +23,7 @@ export const DEFAULT_CURRENCIES: CurrencyConfig[] = [
     symbolPosition: 'prefix',
     isEnabled: true,
     flagEmoji: '🇺🇸',
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
   },
   {
     code: 'EUR',
@@ -35,7 +35,7 @@ export const DEFAULT_CURRENCIES: CurrencyConfig[] = [
     symbolPosition: 'prefix',
     isEnabled: true,
     flagEmoji: '🇪🇺',
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
   },
   {
     code: 'GBP',
@@ -47,7 +47,7 @@ export const DEFAULT_CURRENCIES: CurrencyConfig[] = [
     symbolPosition: 'prefix',
     isEnabled: true,
     flagEmoji: '🇬🇧',
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
   },
   {
     code: 'UGX',
@@ -59,7 +59,7 @@ export const DEFAULT_CURRENCIES: CurrencyConfig[] = [
     symbolPosition: 'prefix',
     isEnabled: true,
     flagEmoji: '🇺🇬',
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
   },
   {
     code: 'TZS',
@@ -71,7 +71,7 @@ export const DEFAULT_CURRENCIES: CurrencyConfig[] = [
     symbolPosition: 'prefix',
     isEnabled: true,
     flagEmoji: '🇹🇿',
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
   },
   {
     code: 'ZAR',
@@ -83,7 +83,7 @@ export const DEFAULT_CURRENCIES: CurrencyConfig[] = [
     symbolPosition: 'prefix',
     isEnabled: true,
     flagEmoji: '🇿🇦',
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
   },
   {
     code: 'AED',
@@ -95,28 +95,30 @@ export const DEFAULT_CURRENCIES: CurrencyConfig[] = [
     symbolPosition: 'prefix',
     isEnabled: true,
     flagEmoji: '🇦🇪',
-    updatedAt: new Date().toISOString()
-  }
+    updatedAt: new Date().toISOString(),
+  },
 ];
 
 export function formatPriceWithCurrency(
   baseAmountKes: number,
   currency: CurrencyConfig | string = 'KES',
-  customCurrencies: CurrencyConfig[] = DEFAULT_CURRENCIES
+  customCurrencies: CurrencyConfig[] = DEFAULT_CURRENCIES,
 ): string {
   if (baseAmountKes === undefined || baseAmountKes === null || isNaN(baseAmountKes)) {
     return '0';
   }
 
-  const currConfig: CurrencyConfig = typeof currency === 'string'
-    ? customCurrencies.find(c => c.code.toUpperCase() === currency.toUpperCase()) || DEFAULT_CURRENCIES[0]
-    : currency;
+  const currConfig: CurrencyConfig =
+    typeof currency === 'string'
+      ? customCurrencies.find((c) => c.code.toUpperCase() === currency.toUpperCase()) ||
+        DEFAULT_CURRENCIES[0]
+      : currency;
 
   const converted = baseAmountKes * currConfig.exchangeRate;
-  
+
   const formattedNumber = converted.toLocaleString(undefined, {
     minimumFractionDigits: currConfig.decimalDigits,
-    maximumFractionDigits: currConfig.decimalDigits
+    maximumFractionDigits: currConfig.decimalDigits,
   });
 
   if (currConfig.symbolPosition === 'suffix') {

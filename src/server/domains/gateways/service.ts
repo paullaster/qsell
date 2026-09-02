@@ -8,7 +8,7 @@ export class AdminService {
 
   static updatePaymentGateway(
     id: string,
-    updates: Partial<PaymentGatewayConfig>
+    updates: Partial<PaymentGatewayConfig>,
   ): PaymentGatewayConfig {
     const existing = db.paymentGateways.get(id);
     if (!existing) throw new Error(`Payment Gateway ${id} not found`);
@@ -29,13 +29,13 @@ export class AdminService {
 
   static getAllOrders(): Order[] {
     return Array.from(db.orders.values()).sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     );
   }
 
   static getAllTransactions(): TransactionRecord[] {
     return Array.from(db.transactions.values()).sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     );
   }
 }

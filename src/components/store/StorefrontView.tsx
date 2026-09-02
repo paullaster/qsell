@@ -1,7 +1,7 @@
 'use client';
 
 import React, { Suspense, useState } from 'react';
-import { Product } from '@/types/index';
+import { type Product } from '@/types/index';
 import { ProductList } from './ProductList';
 import { SkeletonGrid } from '@/components/ui/Skeletons';
 
@@ -22,7 +22,7 @@ export function StorefrontView({
   onQuickBuy,
   onRefresh,
   searchQuery = '',
-  selectedCategory = 'All'
+  selectedCategory = 'All',
 }: StorefrontViewProps) {
   return (
     <div className="space-y-4 pb-16">

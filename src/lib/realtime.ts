@@ -9,7 +9,9 @@ export interface RealtimeEventPayload {
 
 export function useRealtimeSync(onEvent?: (event: string, data: any) => void) {
   const [isConnected, setIsConnected] = useState<boolean>(false);
-  const [lastEvent, setLastEvent] = useState<{ event: string; data: any; time: number } | null>(null);
+  const [lastEvent, setLastEvent] = useState<{ event: string; data: any; time: number } | null>(
+    null,
+  );
   const onEventRef = useRef(onEvent);
 
   useEffect(() => {
@@ -41,11 +43,19 @@ export function useRealtimeSync(onEvent?: (event: string, data: any) => void) {
         };
 
         eventSource.onmessage = (e) => handleAnyMessage(e, 'message');
-        eventSource.addEventListener('inventory_update', (e) => handleAnyMessage(e as MessageEvent, 'inventory_update'));
-        eventSource.addEventListener('transaction_event', (e) => handleAnyMessage(e as MessageEvent, 'transaction_event'));
-        eventSource.addEventListener('order_event', (e) => handleAnyMessage(e as MessageEvent, 'order_event'));
-        eventSource.addEventListener('reconciliation_event', (e) => handleAnyMessage(e as MessageEvent, 'reconciliation_event'));
-        eventSource.addEventListener('payment_gateway_updated', (e) => handleAnyMessage(e as MessageEvent, 'payment_gateway_updated'));
+        eventSource.addEventListener('inventory_update', (e) =>
+          handleAnyMessage(e, 'inventory_update'),
+        );
+        eventSource.addEventListener('transaction_event', (e) =>
+          handleAnyMessage(e, 'transaction_event'),
+        );
+        eventSource.addEventListener('order_event', (e) => handleAnyMessage(e, 'order_event'));
+        eventSource.addEventListener('reconciliation_event', (e) =>
+          handleAnyMessage(e, 'reconciliation_event'),
+        );
+        eventSource.addEventListener('payment_gateway_updated', (e) =>
+          handleAnyMessage(e, 'payment_gateway_updated'),
+        );
 
         eventSource.onerror = () => {
           setIsConnected(false);
@@ -76,4 +86,3 @@ export function useRealtimeEvents(onEvent?: (event: { type: string; data: any })
     }
   });
 }
-

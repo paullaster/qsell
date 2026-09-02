@@ -2,15 +2,12 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { 
-  ShoppingBag, 
-  Search, 
-  Truck, 
-  HelpCircle, 
-  User,
-} from 'lucide-react';
+import { ShoppingBag, Search, Truck, User } from 'lucide-react';
+import { CompanyBrand } from '@/components/ui/CompanyBrand';
+import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
 
 interface NavbarProps {
+  company: Pick<CompanySettingsRow, 'tradingName' | 'tagline' | 'logoUrl' | 'accentColor'>;
   cartItemCount?: number;
   onOpenCart: () => void;
   onOpenTrackOrder: () => void;
@@ -24,58 +21,43 @@ interface NavbarProps {
 }
 
 export function Navbar({
+  company,
   cartItemCount = 0,
   onOpenCart,
   onOpenTrackOrder,
-  onOpenHelp,
   onOpenAccount,
   activeCustomerName = 'Paul Laster',
   searchQuery = '',
   onSearchChange,
-  onSelectCategory,
-  selectedCategory = 'All'
 }: NavbarProps) {
-  const categories = ['All', 'Electronics', 'Audio', 'Phones', 'Wearables', 'Drones & Cameras'];
-
   return (
-    <header className="sticky top-0 z-40 w-full backdrop-blur-md bg-zinc-950/95 border-b border-zinc-800">
-      {/* Main Nav Header */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-        {/* Brand */}
+    <header className="sticky top-0 z-40 w-full border-b border-zinc-800 bg-zinc-950/95 backdrop-blur-md">
+      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
         <div className="flex items-center gap-3">
-          <Link
-            href="/"
-            className="flex items-center gap-2.5 text-left group cursor-pointer focus:outline-none"
-          >
-            <div className="w-9 h-9 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-bold text-lg shadow-md group-hover:bg-indigo-500 transition-colors">
-              C
-            </div>
-            <div>
-              <span className="text-base font-bold tracking-tight text-white flex items-center gap-1.5">
-                CoreCommerce
-              </span>
-              <span className="block text-[10px] uppercase tracking-wider text-zinc-500 -mt-0.5">
-                Hardware & Electronics
-              </span>
-            </div>
+          <Link href="/" className="group cursor-pointer text-left focus:outline-none">
+            <CompanyBrand
+              tradingName={company.tradingName}
+              tagline={company.tagline}
+              logoUrl={company.logoUrl}
+              accentColor={company.accentColor}
+            />
           </Link>
         </div>
 
-        {/* Global Search Bar */}
-        <div className="flex items-center flex-1 max-w-md mx-2 sm:mx-6">
+        <div className="mx-2 flex max-w-md flex-1 items-center sm:mx-6">
           <div className="relative w-full">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+            <Search className="absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2 text-zinc-500" />
             <input
               type="text"
               placeholder="Search products, brands, or SKU..."
               value={searchQuery}
               onChange={(e) => onSearchChange?.(e.target.value)}
-              className="w-full bg-zinc-900 border border-zinc-800 rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all"
+              className="w-full rounded-xl border border-zinc-800 bg-zinc-900 py-2 pr-8 pl-9 text-xs text-white placeholder-zinc-500 transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 focus:outline-none"
             />
             {searchQuery && (
               <button
                 onClick={() => onSearchChange?.('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400 hover:text-white cursor-pointer"
+                className="absolute top-1/2 right-3 -translate-y-1/2 cursor-pointer text-xs text-zinc-400 hover:text-white"
               >
                 Clear
               </button>
@@ -83,41 +65,39 @@ export function Navbar({
           </div>
         </div>
 
-        {/* Navigation Action Buttons */}
         <div className="flex items-center gap-2 sm:gap-3">
-          {/* Customer Account Trigger */}
           {onOpenAccount && (
             <button
               onClick={onOpenAccount}
-              className="flex items-center gap-2 px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-300 hover:text-white text-xs font-medium transition-all cursor-pointer group"
+              className="group flex cursor-pointer items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-300 transition-all hover:border-zinc-700 hover:text-white"
               title="Manage Customer Account & Address Book"
             >
-              <div className="w-5 h-5 rounded-full bg-indigo-600/30 text-indigo-400 flex items-center justify-center text-[10px] font-bold group-hover:bg-indigo-600 group-hover:text-white transition-colors">
-                <User className="w-3 h-3" />
+              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-indigo-600/30 text-[10px] font-bold text-indigo-400 transition-colors group-hover:bg-indigo-600 group-hover:text-white">
+                <User className="h-3 w-3" />
               </div>
-              <span className="hidden md:inline max-w-[100px] truncate">{activeCustomerName || 'My Account'}</span>
+              <span className="hidden max-w-[100px] truncate md:inline">
+                {activeCustomerName || 'My Account'}
+              </span>
             </button>
           )}
 
-          {/* Track Order */}
           <button
             onClick={onOpenTrackOrder}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-300 hover:text-white text-xs font-medium transition-all cursor-pointer"
+            className="flex cursor-pointer items-center gap-1.5 rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-300 transition-all hover:border-zinc-700 hover:text-white"
           >
-            <Truck className="w-3.5 h-3.5 text-indigo-400" />
+            <Truck className="h-3.5 w-3.5 text-indigo-400" />
             <span className="hidden sm:inline">Track Order</span>
           </button>
 
-          {/* Cart Trigger */}
           <button
             onClick={onOpenCart}
-            className="relative flex items-center justify-center py-2 px-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/20 transition-all cursor-pointer group"
+            className="group relative flex cursor-pointer items-center justify-center rounded-xl bg-indigo-600 px-3.5 py-2 text-white shadow-md shadow-indigo-600/20 transition-all hover:bg-indigo-500"
             aria-label="Shopping Cart"
           >
-            <ShoppingBag className="w-4 h-4 group-hover:scale-105 transition-transform" />
-            <span className="hidden sm:inline ml-2 text-xs font-semibold">Cart</span>
+            <ShoppingBag className="h-4 w-4 transition-transform group-hover:scale-105" />
+            <span className="ml-2 hidden text-xs font-semibold sm:inline">Cart</span>
             {cartItemCount > 0 && (
-              <span className="sm:ml-1.5 bg-white text-indigo-600 font-extrabold text-[10px] w-5 h-5 rounded-full flex items-center justify-center shadow">
+              <span className="ml-0 flex h-5 w-5 items-center justify-center rounded-full bg-white text-[10px] font-extrabold text-indigo-600 shadow sm:ml-1.5">
                 {cartItemCount}
               </span>
             )}

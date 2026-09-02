@@ -54,7 +54,7 @@ export async function switchRoleAction(role: 'admin' | 'customer'): Promise<{
 export async function customerLoginAction(
   identifierOrInput: string | { identifier: string; name?: string; phone?: string },
   name?: string,
-  phone?: string
+  phone?: string,
 ): Promise<{ session: UserSession; customer: CustomerAccount }> {
   const input =
     typeof identifierOrInput === 'string'
@@ -81,7 +81,7 @@ export async function customerLoginAction(
     'customer',
     customer.email,
     customer.name,
-    customer.phone
+    customer.phone,
   );
   await setSessionCookie(session.token);
   return { session, customer };
@@ -92,7 +92,12 @@ export async function ensureAdminSessionAction(): Promise<UserSession> {
   if (existing?.role === 'admin' || existing?.role === 'manager') {
     return existing;
   }
-  const session = AuthService.createSession('admin', 'admin@omnicommerce.ke', 'Admin Paul', '0700000000');
+  const session = AuthService.createSession(
+    'admin',
+    'admin@omnicommerce.ke',
+    'Admin Paul',
+    '0700000000',
+  );
   await setSessionCookie(session.token);
   return session;
 }

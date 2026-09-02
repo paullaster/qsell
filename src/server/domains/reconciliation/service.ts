@@ -5,13 +5,13 @@ export class ReconciliationEngine {
   static reconcileSingleTransaction(
     transaction: TransactionRecord,
     order: Order,
-    actor: string = 'auto_realtime'
+    actor = 'auto_realtime',
   ): ReconciliationLog {
     const isSuccess = transaction.status === 'successful';
     const amountDifference = Number(transaction.amount) - Number(order.totalAmount);
     let discrepancyFound = false;
-    let discrepancyType: 'none' | 'underpayment' | 'overpayment' | 'status_mismatch' | 'orphan_payment' =
-      'none';
+    let discrepancyType:
+      'none' | 'underpayment' | 'overpayment' | 'status_mismatch' | 'orphan_payment' = 'none';
     let status: 'matched' | 'corrected' | 'flagged_for_review' = 'matched';
     let details = '';
 
@@ -86,7 +86,7 @@ export class ReconciliationEngine {
 
     for (const order of orders) {
       const txs = transactions.filter(
-        (t) => t.orderId === order.id || t.orderNumber === order.orderNumber
+        (t) => t.orderId === order.id || t.orderNumber === order.orderNumber,
       );
       if (txs.length === 0) {
         if (order.paymentStatus === 'paid') {
@@ -139,7 +139,7 @@ export class ReconciliationEngine {
   static resolveDiscrepancy(
     logId: string,
     resolutionAction: 'force_match' | 'mark_refund_required' | 'cancel_order',
-    notes: string
+    notes: string,
   ): ReconciliationLog {
     const log = db.reconciliationLogs.find((l) => l.id === logId);
     if (!log) throw new Error(`Reconciliation log ${logId} not found`);
@@ -157,7 +157,7 @@ export class ReconciliationEngine {
         order.paymentStatus = 'failed';
         db.atomicReleaseReservation(
           order.items.map((i) => ({ productId: i.productId, quantity: i.quantity })),
-          order.id
+          order.id,
         );
       }
       order.updatedAt = new Date().toISOString();

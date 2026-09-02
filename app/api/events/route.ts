@@ -10,15 +10,13 @@ export async function GET() {
   const stream = new ReadableStream({
     start(controller) {
       const send = (event: string, data: unknown) => {
-        controller.enqueue(
-          encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
-        );
+        controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
       };
 
       controller.enqueue(
         encoder.encode(
-          `data: ${JSON.stringify({ type: 'connected', time: new Date().toISOString() })}\n\n`
-        )
+          `data: ${JSON.stringify({ type: 'connected', time: new Date().toISOString() })}\n\n`,
+        ),
       );
 
       cleanup = db.subscribeSSE((event, data) => {

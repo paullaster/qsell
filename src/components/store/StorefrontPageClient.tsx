@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useCallback, useEffect, Suspense } from 'react';
+import React, { useState, useCallback, useEffect, Suspense, use } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Navbar } from '@/components/layout/Navbar';
 import { Footer } from '@/components/layout/Footer';
@@ -19,22 +19,26 @@ import {
   createOrderAction,
   initiateDarajaStkAction,
   initiatePesapalPaymentAction,
-  ensureAdminSessionAction,
   getSessionAction,
+  ensureAdminSessionAction,
 } from '@/server/actions';
 import type { Product, Order, PaymentProvider } from '@/types/index';
+import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
 
 interface StorefrontPageClientProps {
   productsPromise: Promise<Product[]>;
   ordersPromise: Promise<Order[]>;
+  companyPromise: Promise<CompanySettingsRow>;
 }
 
 export function StorefrontPageClient({
   productsPromise,
   ordersPromise,
+  companyPromise,
 }: StorefrontPageClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const company = use(companyPromise);
 
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
   const addToast = useCallback((toast: Omit<ToastNotification, 'id'>) => {
@@ -56,11 +60,16 @@ export function StorefrontPageClient({
   }, []);
 
   useEffect(() => {
-    if (searchParams.get('admin') === '1') {
-      ensureAdminSessionAction()
-        .then(() => router.replace('/admin'))
-        .catch(() => {});
-    }
+    if (searchParams.get('admin') !== '1') return;
+    let cancelled = false;
+    void ensureAdminSessionAction()
+      .then(() => {
+        if (!cancelled) router.replace('/admin');
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, [searchParams, router]);
 
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -105,7 +114,7 @@ export function StorefrontPageClient({
         if (existing) {
           const newQty = Math.min(existing.quantity + quantity, available);
           return prev.map((item) =>
-            item.product.id === product.id ? { ...item, quantity: newQty } : item
+            item.product.id === product.id ? { ...item, quantity: newQty } : item,
           );
         }
         return [...prev, { product, quantity: Math.min(quantity, Math.max(1, available)) }];
@@ -116,7 +125,7 @@ export function StorefrontPageClient({
         message: `${product.name} added to your checkout bag.`,
       });
     },
-    [addToast]
+    [addToast],
   );
 
   const handleQuickBuy = useCallback(
@@ -125,7 +134,7 @@ export function StorefrontPageClient({
       setIsCartOpen(false);
       setIsCheckoutOpen(true);
     },
-    [handleAddToCart]
+    [handleAddToCart],
   );
 
   const handleCheckoutSubmit = async (checkoutData: {
@@ -210,17 +219,13 @@ export function StorefrontPageClient({
     addToast({ type: 'error', title: 'Payment Declined', message: error });
   };
 
-  const goAdmin = async () => {
-    await ensureAdminSessionAction();
-    router.push('/admin');
-  };
-
   const cartItemsCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
   return (
-    <div className="min-h-screen bg-black text-zinc-300 flex flex-col">
+    <div className="flex min-h-screen flex-col bg-black text-zinc-300">
       <Toast toasts={toasts} onDismiss={removeToast} />
       <Navbar
+        company={company}
         cartItemCount={cartItemsCount}
         onOpenCart={() => setIsCartOpen(true)}
         onOpenTrackOrder={() => setIsTrackOrderOpen(true)}
@@ -232,17 +237,7 @@ export function StorefrontPageClient({
         onSelectCategory={setSelectedCategory}
       />
 
-      <div className="max-w-7xl w-full mx-auto px-4 pt-2 flex justify-end">
-        <button
-          type="button"
-          onClick={goAdmin}
-          className="text-[11px] uppercase tracking-wider text-zinc-500 hover:text-indigo-400"
-        >
-          Admin console
-        </button>
-      </div>
-
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-2">
+      <main className="mx-auto w-full max-w-7xl flex-1 px-4 pt-4 sm:px-6 lg:px-8">
         <StorefrontView
           productsPromise={productsPromise}
           onSelectProduct={(p) => router.push(`/product/${p.id}`)}
@@ -255,6 +250,7 @@ export function StorefrontPageClient({
       </main>
 
       <Footer
+        company={company}
         onOpenTrackOrder={() => setIsTrackOrderOpen(true)}
         onOpenHelp={() => setIsHelpOpen(true)}
       />
@@ -265,7 +261,7 @@ export function StorefrontPageClient({
         items={cart}
         onUpdateQuantity={(productId, quantity) =>
           setCart((prev) =>
-            prev.map((item) => (item.product.id === productId ? { ...item, quantity } : item))
+            prev.map((item) => (item.product.id === productId ? { ...item, quantity } : item)),
           )
         }
         onRemoveItem={(productId) =>

@@ -16,7 +16,7 @@ export async function createCurrencyAction(data: CurrencyConfig): Promise<Curren
 
 export async function updateCurrencyAction(
   code: string,
-  updates: Partial<CurrencyConfig>
+  updates: Partial<CurrencyConfig>,
 ): Promise<CurrencyConfig> {
   const currency = CurrencyDomainService.update(code, updates);
   revalidatePath('/admin/currencies');

@@ -1,18 +1,18 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
-import { 
-  Percent, 
-  Plus, 
-  Search, 
-  CheckCircle, 
-  ShieldCheck, 
-  Globe, 
-  Calculator, 
-  Edit2, 
-  Trash2, 
-  Star, 
-  Info, 
+import React, { use, useState, useMemo, useEffect } from 'react';
+import {
+  Percent,
+  Plus,
+  Search,
+  CheckCircle,
+  ShieldCheck,
+  Globe,
+  Calculator,
+  Edit2,
+  Trash2,
+  Star,
+  Info,
   Sparkles,
   ArrowRight,
   FileSpreadsheet,
@@ -20,14 +20,14 @@ import {
   X,
   RefreshCw,
   Building2,
-  DollarSign
+  DollarSign,
 } from 'lucide-react';
-import { TaxCategory, TaxType } from '@/types/index';
-import { 
-  createTaxCategoryAction, 
-  updateTaxCategoryAction, 
-  deleteTaxCategoryAction, 
-  setDefaultTaxCategoryAction 
+import { type TaxCategory, type TaxType } from '@/types/index';
+import {
+  createTaxCategoryAction,
+  updateTaxCategoryAction,
+  deleteTaxCategoryAction,
+  setDefaultTaxCategoryAction,
 } from '@/server/actions';
 
 interface AdminTaxesProps {
@@ -36,8 +36,8 @@ interface AdminTaxesProps {
 }
 
 export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
-  const [taxCategories, setTaxCategories] = useState<TaxCategory[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const resolvedTaxes = use(taxesPromise);
+  const [taxCategories, setTaxCategories] = useState<TaxCategory[]>(resolvedTaxes);
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [inclusionFilter, setInclusionFilter] = useState<string>('all');
@@ -63,28 +63,20 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
     description: '',
     isInclusive: true,
     isDefault: false,
-    isActive: true
+    isActive: true,
   });
 
-  // Load Initial Tax Categories
-  React.useEffect(() => {
-    let isMounted = true;
-    setIsLoading(true);
-    taxesPromise
-      .then((data) => {
-        if (isMounted) {
-          setTaxCategories(data);
-          setIsLoading(false);
-          const def = data.find(t => t.isDefault) || data[0];
-          if (def && !simTaxId) setSimTaxId(def.id);
-        }
-      })
-      .catch((err) => {
-        console.error('Failed to load tax categories:', err);
-        if (isMounted) setIsLoading(false);
-      });
-    return () => { isMounted = false; };
-  }, [taxesPromise]);
+  useEffect(() => {
+    setTaxCategories(resolvedTaxes);
+  }, [resolvedTaxes]);
+
+  useEffect(() => {
+    if (simTaxId) return;
+    const def = resolvedTaxes.find((t) => t.isDefault) ?? resolvedTaxes[0];
+    if (def) {
+      setSimTaxId(def.id);
+    }
+  }, [resolvedTaxes, simTaxId]);
 
   // Open Modal for Create or Edit
   const handleOpenModal = (tax?: TaxCategory) => {
@@ -101,7 +93,7 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
         description: tax.description || '',
         isInclusive: tax.isInclusive,
         isDefault: tax.isDefault,
-        isActive: tax.isActive
+        isActive: tax.isActive,
       });
     } else {
       setEditingTax(null);
@@ -115,7 +107,7 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
         description: '',
         isInclusive: true,
         isDefault: false,
-        isActive: true
+        isActive: true,
       });
     }
     setIsModalOpen(true);
@@ -138,10 +130,14 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
     try {
       if (editingTax) {
         const updated = await updateTaxCategoryAction(editingTax.id, formData);
-        setTaxCategories(prev => prev.map(t => t.id === updated.id ? updated : (formData.isDefault ? { ...t, isDefault: false } : t)));
+        setTaxCategories((prev) =>
+          prev.map((t) =>
+            t.id === updated.id ? updated : formData.isDefault ? { ...t, isDefault: false } : t,
+          ),
+        );
       } else {
         const created = await createTaxCategoryAction(formData);
-        setTaxCategories(prev => [...prev, created]);
+        setTaxCategories((prev) => [...prev, created]);
       }
       setIsModalOpen(false);
       onRefreshAll();
@@ -153,13 +149,17 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
   };
 
   const handleDeleteTax = async (id: string, name: string) => {
-    if (!window.confirm(`Are you sure you want to delete "${name}"? Products currently linked will be reassigned.`)) {
+    if (
+      !window.confirm(
+        `Are you sure you want to delete "${name}"? Products currently linked will be reassigned.`,
+      )
+    ) {
       return;
     }
 
     try {
       await deleteTaxCategoryAction(id);
-      setTaxCategories(prev => prev.filter(t => t.id !== id));
+      setTaxCategories((prev) => prev.filter((t) => t.id !== id));
       onRefreshAll();
     } catch (err: any) {
       alert(err.message || 'Failed to delete tax category');
@@ -169,10 +169,12 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
   const handleSetDefault = async (id: string) => {
     try {
       await setDefaultTaxCategoryAction(id);
-      setTaxCategories(prev => prev.map(t => ({
-        ...t,
-        isDefault: t.id === id
-      })));
+      setTaxCategories((prev) =>
+        prev.map((t) => ({
+          ...t,
+          isDefault: t.id === id,
+        })),
+      );
       onRefreshAll();
     } catch (err: any) {
       alert(err.message || 'Failed to set default tax category');
@@ -181,15 +183,15 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
 
   // Filtered Tax Categories
   const filteredTaxes = useMemo(() => {
-    return taxCategories.filter(t => {
-      const matchesSearch = 
+    return taxCategories.filter((t) => {
+      const matchesSearch =
         t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         t.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
         t.countryName.toLowerCase().includes(searchQuery.toLowerCase());
-      
+
       const matchesType = typeFilter === 'all' || t.type === typeFilter;
-      const matchesInclusion = 
-        inclusionFilter === 'all' || 
+      const matchesInclusion =
+        inclusionFilter === 'all' ||
         (inclusionFilter === 'inclusive' && t.isInclusive) ||
         (inclusionFilter === 'exclusive' && !t.isInclusive);
 
@@ -198,8 +200,8 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
   }, [taxCategories, searchQuery, typeFilter, inclusionFilter]);
 
   // Selected Simulation Tax
-  const simTax = taxCategories.find(t => t.id === simTaxId) || taxCategories[0];
-  
+  const simTax = taxCategories.find((t) => t.id === simTaxId) || taxCategories[0];
+
   // Tax calculations for simulator
   const simCalculations = useMemo(() => {
     if (!simTax) return { netPrice: 0, taxAmount: 0, grossPrice: 0 };
@@ -213,7 +215,7 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
       return {
         netPrice: net,
         taxAmount: tax,
-        grossPrice: amount
+        grossPrice: amount,
       };
     } else {
       // Tax is exclusive, added on top
@@ -222,28 +224,31 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
       return {
         netPrice: amount,
         taxAmount: tax,
-        grossPrice: gross
+        grossPrice: gross,
       };
     }
   }, [simTax, simAmount]);
 
-  const defaultCategory = taxCategories.find(t => t.isDefault);
-  const activeRulesCount = taxCategories.filter(t => t.isActive).length;
-  const crossBorderCount = taxCategories.filter(t => t.countryCode !== 'KE').length;
+  const defaultCategory = taxCategories.find((t) => t.isDefault);
+  const activeRulesCount = taxCategories.filter((t) => t.isActive).length;
+  const crossBorderCount = taxCategories.filter((t) => t.countryCode !== 'KE').length;
 
   return (
     <div className="space-y-6">
       {/* Header Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-zinc-900 border border-zinc-800 rounded-xl p-6 shadow-xl">
+      <div className="flex flex-col justify-between gap-4 rounded-xl border border-zinc-800 bg-zinc-900 p-6 shadow-xl sm:flex-row sm:items-center">
         <div>
           <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              <Percent className="w-6 h-6" />
+            <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-2.5 text-emerald-400">
+              <Percent className="h-6 w-6" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-white tracking-tight">Tax & Compliance Management</h1>
-              <p className="text-xs text-zinc-400 mt-0.5">
-                Configure dynamic VAT schedules, digital services levies, and international cross-border tax jurisdictions.
+              <h1 className="text-xl font-bold tracking-tight text-white">
+                Tax & Compliance Management
+              </h1>
+              <p className="mt-0.5 text-xs text-zinc-400">
+                Configure dynamic VAT schedules, digital services levies, and international
+                cross-border tax jurisdictions.
               </p>
             </div>
           </div>
@@ -253,73 +258,77 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
           <button
             onClick={() => handleOpenModal()}
             id="btn-add-tax-category"
-            className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/25 transition-all cursor-pointer"
+            className="flex cursor-pointer items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-semibold text-white shadow-lg shadow-indigo-600/25 transition-all hover:bg-indigo-500"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="h-4 w-4" />
             <span>Add Tax Rule</span>
           </button>
         </div>
       </div>
 
       {/* KPI Metric Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-zinc-900/80 border border-zinc-800 p-4 rounded-xl">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/80 p-4">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-zinc-400">Default Fiscal Rate</span>
-            <ShieldCheck className="w-4 h-4 text-emerald-400" />
+            <ShieldCheck className="h-4 w-4 text-emerald-400" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
             <span className="text-2xl font-bold text-white">
               {defaultCategory ? `${defaultCategory.rate}%` : '16%'}
             </span>
-            <span className="text-xs text-emerald-400 font-medium">
+            <span className="text-xs font-medium text-emerald-400">
               {defaultCategory?.name || 'KRA Standard VAT'}
             </span>
           </div>
-          <p className="text-[11px] text-zinc-500 mt-1">Applied to standard catalog items automatically</p>
+          <p className="mt-1 text-[11px] text-zinc-500">
+            Applied to standard catalog items automatically
+          </p>
         </div>
 
-        <div className="bg-zinc-900/80 border border-zinc-800 p-4 rounded-xl">
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/80 p-4">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-zinc-400">Active Tax Schedules</span>
-            <FileSpreadsheet className="w-4 h-4 text-indigo-400" />
+            <FileSpreadsheet className="h-4 w-4 text-indigo-400" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
             <span className="text-2xl font-bold text-white">{activeRulesCount}</span>
             <span className="text-xs text-zinc-400">/ {taxCategories.length} Total Rules</span>
           </div>
-          <p className="text-[11px] text-zinc-500 mt-1">Configured for statutory compliance</p>
+          <p className="mt-1 text-[11px] text-zinc-500">Configured for statutory compliance</p>
         </div>
 
-        <div className="bg-zinc-900/80 border border-zinc-800 p-4 rounded-xl">
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/80 p-4">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-zinc-400">Price Display Model</span>
-            <Building2 className="w-4 h-4 text-amber-400" />
+            <Building2 className="h-4 w-4 text-amber-400" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
             <span className="text-2xl font-bold text-white">Tax-Inclusive</span>
           </div>
-          <p className="text-[11px] text-zinc-500 mt-1">Standard retail pricing includes fiscal VAT</p>
+          <p className="mt-1 text-[11px] text-zinc-500">
+            Standard retail pricing includes fiscal VAT
+          </p>
         </div>
 
-        <div className="bg-zinc-900/80 border border-zinc-800 p-4 rounded-xl">
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/80 p-4">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-zinc-400">Cross-Border Jurisdictions</span>
-            <Globe className="w-4 h-4 text-cyan-400" />
+            <Globe className="h-4 w-4 text-cyan-400" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
             <span className="text-2xl font-bold text-white">{crossBorderCount}</span>
-            <span className="text-xs text-cyan-400 font-medium">International Markets</span>
+            <span className="text-xs font-medium text-cyan-400">International Markets</span>
           </div>
-          <p className="text-[11px] text-zinc-500 mt-1">Export, US Sales Tax & EU OSS VAT ready</p>
+          <p className="mt-1 text-[11px] text-zinc-500">Export, US Sales Tax & EU OSS VAT ready</p>
         </div>
       </div>
 
       {/* Live Interactive Tax Calculator / Simulator */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 shadow-lg">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-4 border-b border-zinc-800">
+      <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-5 shadow-lg">
+        <div className="flex flex-col justify-between gap-3 border-b border-zinc-800 pb-4 md:flex-row md:items-center">
           <div className="flex items-center gap-2">
-            <Calculator className="w-4 h-4 text-emerald-400" />
+            <Calculator className="h-4 w-4 text-emerald-400" />
             <h2 className="text-sm font-bold text-white">Live Retail Tax Computation Simulator</h2>
           </div>
           <span className="text-xs text-zinc-400">
@@ -327,28 +336,34 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
           </span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4 items-end">
+        <div className="mt-4 grid grid-cols-1 items-end gap-4 md:grid-cols-4">
           <div>
-            <label className="block text-xs font-medium text-zinc-400 mb-1.5">Sample Retail Price (KES)</label>
+            <label className="mb-1.5 block text-xs font-medium text-zinc-400">
+              Sample Retail Price (KES)
+            </label>
             <div className="relative">
-              <span className="absolute left-3 top-2.5 text-xs text-zinc-500 font-semibold">KSh</span>
+              <span className="absolute top-2.5 left-3 text-xs font-semibold text-zinc-500">
+                KSh
+              </span>
               <input
                 type="number"
                 value={simAmount}
                 onChange={(e) => setSimAmount(Number(e.target.value) || 0)}
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg pl-12 pr-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-800 py-2 pr-3 pl-12 text-sm text-white focus:border-indigo-500 focus:outline-none"
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-zinc-400 mb-1.5">Select Tax Schedule</label>
+            <label className="mb-1.5 block text-xs font-medium text-zinc-400">
+              Select Tax Schedule
+            </label>
             <select
               value={simTaxId}
               onChange={(e) => setSimTaxId(e.target.value)}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
             >
-              {taxCategories.map(t => (
+              {taxCategories.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name} ({t.rate}%) - {t.isInclusive ? 'Inclusive' : 'Exclusive'}
                 </option>
@@ -356,23 +371,32 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
             </select>
           </div>
 
-          <div className="md:col-span-2 grid grid-cols-3 gap-2 bg-zinc-950/60 p-3 rounded-lg border border-zinc-800">
+          <div className="grid grid-cols-3 gap-2 rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 md:col-span-2">
             <div>
-              <span className="block text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Net Amount</span>
+              <span className="block text-[10px] font-bold tracking-wider text-zinc-500 uppercase">
+                Net Amount
+              </span>
               <span className="text-xs font-semibold text-zinc-200">
-                KSh {simCalculations.netPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                KSh{' '}
+                {simCalculations.netPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}
               </span>
             </div>
             <div>
-              <span className="block text-[10px] uppercase font-bold text-emerald-400 tracking-wider">Tax ({simTax?.rate}%)</span>
+              <span className="block text-[10px] font-bold tracking-wider text-emerald-400 uppercase">
+                Tax ({simTax?.rate}%)
+              </span>
               <span className="text-xs font-semibold text-emerald-400">
-                KSh {simCalculations.taxAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                KSh{' '}
+                {simCalculations.taxAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
               </span>
             </div>
             <div>
-              <span className="block text-[10px] uppercase font-bold text-indigo-400 tracking-wider">Gross Total</span>
+              <span className="block text-[10px] font-bold tracking-wider text-indigo-400 uppercase">
+                Gross Total
+              </span>
               <span className="text-xs font-bold text-indigo-400">
-                KSh {simCalculations.grossPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                KSh{' '}
+                {simCalculations.grossPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}
               </span>
             </div>
           </div>
@@ -380,15 +404,15 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
       </div>
 
       {/* Filter & Search Bar */}
-      <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+      <div className="flex flex-col items-stretch justify-between gap-3 md:flex-row md:items-center">
         <div className="relative flex-1">
-          <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-3" />
+          <Search className="absolute top-3 left-3 h-4 w-4 text-zinc-500" />
           <input
             type="text"
             placeholder="Search by tax rule name, statutory code (e.g. VAT_16), or jurisdiction..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-9 pr-4 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+            className="w-full rounded-lg border border-zinc-800 bg-zinc-900 py-2 pr-4 pl-9 text-xs text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
           />
         </div>
 
@@ -396,7 +420,7 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
           <select
             value={typeFilter}
             onChange={(e) => setTypeFilter(e.target.value)}
-            className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-300 focus:outline-none focus:border-indigo-500 cursor-pointer"
+            className="cursor-pointer rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs text-zinc-300 focus:border-indigo-500 focus:outline-none"
           >
             <option value="all">All Tax Types</option>
             <option value="vat">Value Added Tax (VAT)</option>
@@ -408,7 +432,7 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
           <select
             value={inclusionFilter}
             onChange={(e) => setInclusionFilter(e.target.value)}
-            className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-300 focus:outline-none focus:border-indigo-500 cursor-pointer"
+            className="cursor-pointer rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs text-zinc-300 focus:border-indigo-500 focus:outline-none"
           >
             <option value="all">All Pricing Models</option>
             <option value="inclusive">Price Inclusive</option>
@@ -418,19 +442,19 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
       </div>
 
       {/* Tax Categories List / Table */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden shadow-xl">
+      <div className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 shadow-xl">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
-            <thead className="bg-zinc-950/70 border-b border-zinc-800 text-zinc-400 uppercase tracking-wider font-semibold">
+            <thead className="border-b border-zinc-800 bg-zinc-950/70 font-semibold tracking-wider text-zinc-400 uppercase">
               <tr>
-                <th className="py-3 px-4">Tax Schedule & Jurisdiction</th>
-                <th className="py-3 px-4">Tax Code</th>
-                <th className="py-3 px-4">Rate (%)</th>
-                <th className="py-3 px-4">Type</th>
-                <th className="py-3 px-4">Pricing Model</th>
-                <th className="py-3 px-4">Catalog Products</th>
-                <th className="py-3 px-4">Status</th>
-                <th className="py-3 px-4 text-right">Actions</th>
+                <th className="px-4 py-3">Tax Schedule & Jurisdiction</th>
+                <th className="px-4 py-3">Tax Code</th>
+                <th className="px-4 py-3">Rate (%)</th>
+                <th className="px-4 py-3">Type</th>
+                <th className="px-4 py-3">Pricing Model</th>
+                <th className="px-4 py-3">Catalog Products</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800/60 text-zinc-300">
@@ -443,70 +467,78 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
               ) : (
                 filteredTaxes.map((tax) => {
                   return (
-                    <tr key={tax.id} className="hover:bg-zinc-800/40 transition-colors">
-                      <td className="py-3.5 px-4">
+                    <tr key={tax.id} className="transition-colors hover:bg-zinc-800/40">
+                      <td className="px-4 py-3.5">
                         <div className="flex items-center gap-2.5">
                           <div className="flex-1">
                             <div className="flex items-center gap-2">
                               <span className="font-semibold text-white">{tax.name}</span>
                               {tax.isDefault && (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                                  <Star className="w-3 h-3 fill-amber-400" />
+                                <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-400">
+                                  <Star className="h-3 w-3 fill-amber-400" />
                                   Default
                                 </span>
                               )}
                             </div>
-                            <div className="flex items-center gap-2 mt-0.5 text-zinc-400 text-[11px]">
-                              <span>{tax.countryName} ({tax.countryCode})</span>
+                            <div className="mt-0.5 flex items-center gap-2 text-[11px] text-zinc-400">
+                              <span>
+                                {tax.countryName} ({tax.countryCode})
+                              </span>
                               {tax.description && <span>• {tax.description}</span>}
                             </div>
                           </div>
                         </div>
                       </td>
-                      <td className="py-3.5 px-4">
-                        <span className="font-mono px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700/50">
+                      <td className="px-4 py-3.5">
+                        <span className="rounded border border-zinc-700/50 bg-zinc-800 px-2 py-0.5 font-mono text-zinc-300">
                           {tax.code}
                         </span>
                       </td>
-                      <td className="py-3.5 px-4">
-                        <span className="text-sm font-bold text-emerald-400">
-                          {tax.rate}%
-                        </span>
+                      <td className="px-4 py-3.5">
+                        <span className="text-sm font-bold text-emerald-400">{tax.rate}%</span>
                       </td>
-                      <td className="py-3.5 px-4">
-                        <span className="capitalize px-2 py-0.5 rounded-full text-[10px] font-medium bg-zinc-800 text-zinc-300 border border-zinc-700">
+                      <td className="px-4 py-3.5">
+                        <span className="rounded-full border border-zinc-700 bg-zinc-800 px-2 py-0.5 text-[10px] font-medium text-zinc-300 capitalize">
                           {tax.type.replace('_', ' ')}
                         </span>
                       </td>
-                      <td className="py-3.5 px-4">
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
-                          tax.isInclusive 
-                            ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' 
-                            : 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
-                        }`}>
+                      <td className="px-4 py-3.5">
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                            tax.isInclusive
+                              ? 'border border-blue-500/20 bg-blue-500/10 text-blue-400'
+                              : 'border border-purple-500/20 bg-purple-500/10 text-purple-400'
+                          }`}
+                        >
                           {tax.isInclusive ? 'Tax-Inclusive' : 'Tax-Exclusive'}
                         </span>
                       </td>
-                      <td className="py-3.5 px-4">
-                        <span className="text-zinc-400 font-medium">
-                          {tax.productCount !== undefined ? `${tax.productCount} products` : 'Standard'}
+                      <td className="px-4 py-3.5">
+                        <span className="font-medium text-zinc-400">
+                          {tax.productCount !== undefined
+                            ? `${tax.productCount} products`
+                            : 'Standard'}
                         </span>
                       </td>
-                      <td className="py-3.5 px-4">
-                        <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${
-                          tax.isActive ? 'text-emerald-400' : 'text-zinc-500'
-                        }`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${tax.isActive ? 'bg-emerald-400' : 'bg-zinc-500'}`} />
+                      <td className="px-4 py-3.5">
+                        <span
+                          className={`inline-flex items-center gap-1 text-[11px] font-medium ${
+                            tax.isActive ? 'text-emerald-400' : 'text-zinc-500'
+                          }`}
+                        >
+                          <span
+                            className={`h-1.5 w-1.5 rounded-full ${tax.isActive ? 'bg-emerald-400' : 'bg-zinc-500'}`}
+                          />
                           {tax.isActive ? 'Active' : 'Disabled'}
                         </span>
                       </td>
-                      <td className="py-3.5 px-4 text-right">
+                      <td className="px-4 py-3.5 text-right">
                         <div className="flex items-center justify-end gap-1.5">
                           {!tax.isDefault && (
                             <button
                               onClick={() => handleSetDefault(tax.id)}
                               title="Set as store default tax schedule"
-                              className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-amber-400 text-[11px] font-medium transition-colors cursor-pointer border border-zinc-700/50"
+                              className="cursor-pointer rounded border border-zinc-700/50 bg-zinc-800 px-2 py-1 text-[11px] font-medium text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-amber-400"
                             >
                               Make Default
                             </button>
@@ -514,17 +546,17 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
                           <button
                             onClick={() => handleOpenModal(tax)}
                             title="Edit tax rule"
-                            className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors cursor-pointer"
+                            className="cursor-pointer rounded bg-zinc-800 p-1.5 text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-white"
                           >
-                            <Edit2 className="w-3.5 h-3.5" />
+                            <Edit2 className="h-3.5 w-3.5" />
                           </button>
                           {!tax.isDefault && (
                             <button
                               onClick={() => handleDeleteTax(tax.id, tax.name)}
                               title="Delete tax rule"
-                              className="p-1.5 rounded bg-zinc-800 hover:bg-red-900/40 text-zinc-400 hover:text-red-400 transition-colors cursor-pointer"
+                              className="cursor-pointer rounded bg-zinc-800 p-1.5 text-zinc-400 transition-colors hover:bg-red-900/40 hover:text-red-400"
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
+                              <Trash2 className="h-3.5 w-3.5" />
                             </button>
                           )}
                         </div>
@@ -540,33 +572,33 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
 
       {/* Tax Category Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl max-w-xl w-full p-6 shadow-2xl overflow-y-auto max-h-[90vh]">
-            <div className="flex items-center justify-between pb-4 border-b border-zinc-800">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
               <div className="flex items-center gap-2.5">
-                <Percent className="w-5 h-5 text-indigo-400" />
+                <Percent className="h-5 w-5 text-indigo-400" />
                 <h3 className="text-base font-bold text-white">
                   {editingTax ? 'Edit Tax Schedule' : 'Create Tax Schedule & Category'}
                 </h3>
               </div>
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors cursor-pointer"
+                className="cursor-pointer rounded-lg bg-zinc-800 p-1.5 text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-white"
               >
-                <X className="w-4 h-4" />
+                <X className="h-4 w-4" />
               </button>
             </div>
 
             {formError && (
-              <div className="mt-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2">
-                <Info className="w-4 h-4 shrink-0" />
+              <div className="mt-4 flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-400">
+                <Info className="h-4 w-4 shrink-0" />
                 <span>{formError}</span>
               </div>
             )}
 
-            <form onSubmit={handleSaveTax} className="space-y-4 mt-4">
+            <form onSubmit={handleSaveTax} className="mt-4 space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                <label className="mb-1 block text-xs font-semibold text-zinc-300">
                   Tax Schedule / Category Name *
                 </label>
                 <input
@@ -574,14 +606,14 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
                   placeholder="e.g. Standard VAT (16%), Zero Rated Exports, Digital Services Tax"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-xs text-white focus:border-indigo-500 focus:outline-none"
                   required
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                  <label className="mb-1 block text-xs font-semibold text-zinc-300">
                     Tax Statutory Code *
                   </label>
                   <input
@@ -589,12 +621,12 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
                     placeholder="e.g. VAT_16, ZERO_0, DST_1_5"
                     value={formData.code}
                     onChange={(e) => setFormData({ ...formData, code: e.target.value })}
-                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
+                    className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-white focus:border-indigo-500 focus:outline-none"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                  <label className="mb-1 block text-xs font-semibold text-zinc-300">
                     Tax Rate (%) *
                   </label>
                   <input
@@ -603,8 +635,10 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
                     min="0"
                     placeholder="16.0"
                     value={formData.rate}
-                    onChange={(e) => setFormData({ ...formData, rate: parseFloat(e.target.value) || 0 })}
-                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white font-semibold focus:outline-none focus:border-indigo-500"
+                    onChange={(e) =>
+                      setFormData({ ...formData, rate: parseFloat(e.target.value) || 0 })
+                    }
+                    className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-xs font-semibold text-white focus:border-indigo-500 focus:outline-none"
                     required
                   />
                 </div>
@@ -612,13 +646,13 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                  <label className="mb-1 block text-xs font-semibold text-zinc-300">
                     Fiscal Tax Type
                   </label>
                   <select
                     value={formData.type}
                     onChange={(e) => setFormData({ ...formData, type: e.target.value as TaxType })}
-                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                    className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-xs text-white focus:border-indigo-500 focus:outline-none"
                   >
                     <option value="vat">Value Added Tax (VAT)</option>
                     <option value="sales_tax">Sales Tax</option>
@@ -630,7 +664,7 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                  <label className="mb-1 block text-xs font-semibold text-zinc-300">
                     Country / Jurisdiction
                   </label>
                   <div className="grid grid-cols-3 gap-1">
@@ -639,30 +673,34 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
                       placeholder="KE"
                       maxLength={2}
                       value={formData.countryCode}
-                      onChange={(e) => setFormData({ ...formData, countryCode: e.target.value.toUpperCase() })}
-                      className="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-2 text-xs text-white font-mono text-center focus:outline-none focus:border-indigo-500"
+                      onChange={(e) =>
+                        setFormData({ ...formData, countryCode: e.target.value.toUpperCase() })
+                      }
+                      className="rounded-lg border border-zinc-700 bg-zinc-800 px-2 py-2 text-center font-mono text-xs text-white focus:border-indigo-500 focus:outline-none"
                     />
                     <input
                       type="text"
                       placeholder="Kenya"
                       value={formData.countryName}
                       onChange={(e) => setFormData({ ...formData, countryName: e.target.value })}
-                      className="col-span-2 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                      className="col-span-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-xs text-white focus:border-indigo-500 focus:outline-none"
                     />
                   </div>
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                <label className="mb-1 block text-xs font-semibold text-zinc-300">
                   Pricing Inclusion Model
                 </label>
                 <div className="grid grid-cols-2 gap-3">
-                  <label className={`flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors ${
-                    formData.isInclusive 
-                      ? 'bg-indigo-600/15 border-indigo-500 text-white' 
-                      : 'bg-zinc-800/60 border-zinc-700 text-zinc-400'
-                  }`}>
+                  <label
+                    className={`flex cursor-pointer items-center gap-2 rounded-lg border p-3 transition-colors ${
+                      formData.isInclusive
+                        ? 'border-indigo-500 bg-indigo-600/15 text-white'
+                        : 'border-zinc-700 bg-zinc-800/60 text-zinc-400'
+                    }`}
+                  >
                     <input
                       type="radio"
                       name="pricingModel"
@@ -672,15 +710,19 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
                     />
                     <div>
                       <div className="text-xs font-semibold">Tax-Inclusive</div>
-                      <div className="text-[10px] text-zinc-400">Product price includes tax (e.g. Kenya standard)</div>
+                      <div className="text-[10px] text-zinc-400">
+                        Product price includes tax (e.g. Kenya standard)
+                      </div>
                     </div>
                   </label>
 
-                  <label className={`flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors ${
-                    !formData.isInclusive 
-                      ? 'bg-indigo-600/15 border-indigo-500 text-white' 
-                      : 'bg-zinc-800/60 border-zinc-700 text-zinc-400'
-                  }`}>
+                  <label
+                    className={`flex cursor-pointer items-center gap-2 rounded-lg border p-3 transition-colors ${
+                      !formData.isInclusive
+                        ? 'border-indigo-500 bg-indigo-600/15 text-white'
+                        : 'border-zinc-700 bg-zinc-800/60 text-zinc-400'
+                    }`}
+                  >
                     <input
                       type="radio"
                       name="pricingModel"
@@ -690,14 +732,16 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
                     />
                     <div>
                       <div className="text-xs font-semibold">Tax-Exclusive</div>
-                      <div className="text-[10px] text-zinc-400">Tax added on top of price at checkout (e.g. US/EU export)</div>
+                      <div className="text-[10px] text-zinc-400">
+                        Tax added on top of price at checkout (e.g. US/EU export)
+                      </div>
                     </div>
                   </label>
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                <label className="mb-1 block text-xs font-semibold text-zinc-300">
                   Statutory / Legal Note & Description
                 </label>
                 <textarea
@@ -705,49 +749,51 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   rows={2}
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-xs text-white focus:border-indigo-500 focus:outline-none"
                 />
               </div>
 
               <div className="flex items-center gap-4 pt-2">
-                <label className="flex items-center gap-2 cursor-pointer">
+                <label className="flex cursor-pointer items-center gap-2">
                   <input
                     type="checkbox"
                     checked={formData.isDefault}
                     onChange={(e) => setFormData({ ...formData, isDefault: e.target.checked })}
-                    className="rounded bg-zinc-800 border-zinc-700 text-indigo-600 focus:ring-indigo-500"
+                    className="rounded border-zinc-700 bg-zinc-800 text-indigo-600 focus:ring-indigo-500"
                   />
-                  <span className="text-xs text-zinc-300 font-medium">Set as Default Store Tax Rule</span>
+                  <span className="text-xs font-medium text-zinc-300">
+                    Set as Default Store Tax Rule
+                  </span>
                 </label>
 
-                <label className="flex items-center gap-2 cursor-pointer">
+                <label className="flex cursor-pointer items-center gap-2">
                   <input
                     type="checkbox"
                     checked={formData.isActive}
                     onChange={(e) => setFormData({ ...formData, isActive: e.target.checked })}
-                    className="rounded bg-zinc-800 border-zinc-700 text-indigo-600 focus:ring-indigo-500"
+                    className="rounded border-zinc-700 bg-zinc-800 text-indigo-600 focus:ring-indigo-500"
                   />
-                  <span className="text-xs text-zinc-300 font-medium">Rule Active</span>
+                  <span className="text-xs font-medium text-zinc-300">Rule Active</span>
                 </label>
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-zinc-800">
+              <div className="flex items-center justify-end gap-3 border-t border-zinc-800 pt-4">
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition-colors cursor-pointer"
+                  className="cursor-pointer rounded-lg bg-zinc-800 px-4 py-2 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-700"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSaving}
-                  className="flex items-center gap-2 px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/25 transition-all cursor-pointer disabled:opacity-50"
+                  className="flex cursor-pointer items-center gap-2 rounded-lg bg-indigo-600 px-5 py-2 text-xs font-semibold text-white shadow-lg shadow-indigo-600/25 transition-all hover:bg-indigo-500 disabled:opacity-50"
                 >
                   {isSaving ? (
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
                   ) : (
-                    <Check className="w-3.5 h-3.5" />
+                    <Check className="h-3.5 w-3.5" />
                   )}
                   <span>{editingTax ? 'Update Tax Rule' : 'Save Tax Rule'}</span>
                 </button>

@@ -1,7 +1,22 @@
 'use client';
 
-import { CheckCircle2, Package, Smartphone, ShieldCheck, Printer, ArrowRight, MapPin, Download } from 'lucide-react';
-import { Order } from '@/types/index';
+import { useState } from 'react';
+import {
+  CheckCircle2,
+  Package,
+  Smartphone,
+  ShieldCheck,
+  Printer,
+  ArrowRight,
+  MapPin,
+  Mail,
+} from 'lucide-react';
+import { type Order } from '@/types/index';
+import {
+  generateInvoicePdfAction,
+  emailInvoiceAction,
+} from '@/server/domains/invoices/actions';
+import { downloadPdfBase64 } from '@/lib/downloadPdf';
 
 interface OrderSuccessModalProps {
   isOpen: boolean;
@@ -14,126 +29,133 @@ export function OrderSuccessModal({
   isOpen,
   onClose,
   order,
-  onContinueShopping
+  onContinueShopping,
 }: OrderSuccessModalProps) {
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
   if (!isOpen || !order) return null;
 
+  const runTaxInvoice = async (mode: 'download' | 'email') => {
+    try {
+      setBusy(true);
+      setError(null);
+      const result =
+        mode === 'email'
+          ? await emailInvoiceAction(order.id, 'tax_invoice')
+          : await generateInvoicePdfAction(order.id, 'tax_invoice');
+      downloadPdfBase64(result.pdfBase64, result.filename);
+      setNotice(
+        mode === 'email'
+          ? `Posted tax invoice ${result.invoiceNumber} emailed to ${order.customerEmail}.`
+          : `Posted tax invoice ${result.invoiceNumber} downloaded.`,
+      );
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Invoice action failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/85 backdrop-blur-md p-4 sm:p-6 flex items-center justify-center">
-      <div className="relative w-full max-w-2xl bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl flex flex-col my-8">
-        {/* Header Ribbon */}
-        <div className="bg-zinc-950 p-6 sm:p-8 text-center border-b border-zinc-800 relative">
-          <div className="w-16 h-16 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mx-auto text-emerald-400 mb-3 shadow-lg">
-            <CheckCircle2 className="w-9 h-9" />
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/85 p-4 backdrop-blur-md sm:p-6">
+      <div className="relative my-8 flex w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl">
+        <div className="relative border-b border-zinc-800 bg-zinc-950 p-6 text-center sm:p-8">
+          <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full border border-emerald-500/20 bg-emerald-500/10 text-emerald-400 shadow-lg">
+            <CheckCircle2 className="h-9 w-9" />
           </div>
-          <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
+          <h2 className="text-xl font-bold tracking-tight text-white sm:text-2xl">
             Order Successfully Placed & Confirmed!
           </h2>
-          <p className="text-xs text-zinc-400 mt-1">
-            Payment verified • Warehouse packaging and delivery dispatched
+          <p className="mt-2 text-sm text-zinc-400">
+            Order <span className="font-mono text-white">{order.orderNumber}</span> is confirmed.
           </p>
         </div>
 
-        {/* Invoice & Order Summary */}
-        <div className="p-6 sm:p-8 space-y-6 bg-zinc-900">
-          {/* Metadata Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-            <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
-              <span className="text-zinc-500 block text-[10px]">Order Number</span>
-              <span className="font-mono font-bold text-white">{order.orderNumber}</span>
+        <div className="space-y-5 p-6">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+              <div className="mb-1 flex items-center gap-2 text-[11px] tracking-wider text-zinc-500 uppercase">
+                <Package className="h-3.5 w-3.5" /> Fulfillment
+              </div>
+              <p className="text-sm text-zinc-200">Status: {order.status}</p>
             </div>
-            <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
-              <span className="text-zinc-500 block text-[10px]">Payment Method</span>
-              <span className="font-semibold text-indigo-400 uppercase text-[11px]">
-                {order.paymentMethod === 'mpesa_daraja' ? 'M-Pesa STK' : 'Pesapal v3'}
-              </span>
-            </div>
-            <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
-              <span className="text-zinc-500 block text-[10px]">Receipt Ref</span>
-              <span className="font-mono font-bold text-emerald-400">
-                {order.mpesaReceiptNumber || order.pesapalTrackingId?.slice(0, 10) || 'CONFIRMED'}
-              </span>
-            </div>
-            <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
-              <span className="text-zinc-500 block text-[10px]">Status</span>
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold text-[10px]">
-                RECONCILED
-              </span>
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+              <div className="mb-1 flex items-center gap-2 text-[11px] tracking-wider text-zinc-500 uppercase">
+                <Smartphone className="h-3.5 w-3.5" /> Payment
+              </div>
+              <p className="text-sm text-zinc-200">{order.paymentMethod}</p>
             </div>
           </div>
 
-          {/* Delivery Details */}
-          <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800 space-y-2 text-xs">
-            <div className="flex items-center gap-2 text-zinc-300 font-semibold">
-              <MapPin className="w-4 h-4 text-indigo-400" />
-              Delivery Destination
+          <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+            <div className="mb-1 flex items-center gap-2 text-[11px] tracking-wider text-zinc-500 uppercase">
+              <MapPin className="h-3.5 w-3.5" /> Deliver to
             </div>
-            <p className="text-zinc-400 text-[11px] leading-relaxed">
-              {order.customerName} ({order.customerPhone})<br />
-              {order.shippingAddress.street}, {order.shippingAddress.city}, {order.shippingAddress.countyOrState}, {order.shippingAddress.country}
+            <p className="text-sm text-zinc-200">
+              {order.shippingAddress.street}, {order.shippingAddress.city},{' '}
+              {order.shippingAddress.countyOrState}
             </p>
           </div>
 
-          {/* Items Purchased */}
-          <div className="space-y-3">
-            <h4 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-              Purchased Items
-            </h4>
-            <div className="divide-y divide-zinc-800 rounded-xl bg-zinc-950 border border-zinc-800 p-3">
-              {order.items.map((item) => (
-                <div key={item.productId} className="py-2.5 first:pt-0 last:pb-0 flex items-center justify-between gap-3 text-xs">
-                  <div className="flex items-center gap-3">
-                    <img
-                      src={item.imageUrl}
-                      alt={item.productName}
-                      className="w-10 h-10 object-cover rounded-lg bg-zinc-900"
-                      referrerPolicy="no-referrer"
-                    />
-                    <div>
-                      <span className="text-white font-medium block truncate max-w-xs">{item.productName}</span>
-                      <span className="text-[10px] text-zinc-500 font-mono">Qty: {item.quantity} × KES {item.unitPrice.toLocaleString()}</span>
-                    </div>
-                  </div>
-                  <span className="font-mono font-semibold text-white">
-                    KES {item.totalPrice.toLocaleString()}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Total Box */}
-          <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800 flex items-center justify-between">
+          <div className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-950 p-4">
             <div>
-              <span className="text-xs text-zinc-400 block">Total Paid (VAT & Shipping Inclusive)</span>
-              <span className="text-xl font-bold text-white font-mono">KES {order.totalAmount.toLocaleString()}</span>
+              <span className="block text-xs text-zinc-400">Total Paid</span>
+              <span className="font-mono text-xl font-bold text-white">
+                {order.currency} {order.totalAmount.toLocaleString()}
+              </span>
             </div>
             <div className="text-right">
-              <span className="text-[11px] text-emerald-400 font-mono block">eTIMS PIN: P051892011Z</span>
-              <span className="text-[10px] text-zinc-500">Electronic Tax Invoice</span>
+              <span className="flex items-center justify-end gap-1 font-mono text-[11px] text-emerald-400">
+                <ShieldCheck className="h-3.5 w-3.5" /> Posted tax invoice available
+              </span>
             </div>
           </div>
 
-          {/* Actions */}
-          <div className="flex flex-col sm:flex-row gap-3 pt-2">
+          {notice ? (
+            <div className="rounded-lg border border-emerald-800 bg-emerald-950/50 px-3 py-2 text-sm text-emerald-200">
+              {notice}
+            </div>
+          ) : null}
+          {error ? (
+            <div className="rounded-lg border border-red-800 bg-red-950/50 px-3 py-2 text-sm text-red-200">
+              {error}
+            </div>
+          ) : null}
+
+          <div className="grid grid-cols-1 gap-3 pt-2 sm:grid-cols-2">
             <button
-              onClick={() => window.print()}
-              className="flex-1 py-3 px-4 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold flex items-center justify-center gap-2 border border-zinc-700 transition-colors cursor-pointer"
+              type="button"
+              disabled={busy}
+              onClick={() => void runTaxInvoice('download')}
+              className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-3 text-xs font-semibold text-zinc-200 transition-colors hover:bg-zinc-700 disabled:opacity-50"
             >
-              <Printer className="w-4 h-4" />
-              Print Official Receipt
+              <Printer className="h-4 w-4" />
+              {busy ? 'Working…' : 'Download Tax Invoice'}
             </button>
             <button
-              onClick={() => {
-                onClose();
-                onContinueShopping();
-              }}
-              className="flex-1 py-3 px-4 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20 transition-colors cursor-pointer"
+              type="button"
+              disabled={busy}
+              onClick={() => void runTaxInvoice('email')}
+              className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-indigo-700/50 bg-indigo-600/20 px-4 py-3 text-xs font-semibold text-indigo-200 transition-colors hover:bg-indigo-600/30 disabled:opacity-50"
             >
-              Continue Shopping
-              <ArrowRight className="w-4 h-4" />
+              <Mail className="h-4 w-4" />
+              Email Tax Invoice
             </button>
           </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onContinueShopping();
+            }}
+            className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-3 text-xs font-bold text-white shadow-lg shadow-indigo-600/20 transition-colors hover:bg-indigo-500"
+          >
+            Continue Shopping
+            <ArrowRight className="h-4 w-4" />
+          </button>
         </div>
       </div>
     </div>

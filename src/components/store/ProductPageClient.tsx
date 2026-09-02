@@ -18,10 +18,10 @@ export function ProductPageClient({
 
   if (!product) {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
-        <div className="text-center space-y-3">
+      <div className="flex min-h-screen items-center justify-center bg-black">
+        <div className="space-y-3 text-center">
           <p className="text-zinc-400">Product not found</p>
-          <Link href="/" className="text-indigo-400 text-sm hover:underline">
+          <Link href="/" className="text-sm text-indigo-400 hover:underline">
             Back to store
           </Link>
         </div>
@@ -42,7 +42,7 @@ export function ProductPageClient({
 
   return (
     <div className="min-h-screen bg-black">
-      <div className="max-w-7xl mx-auto px-4 py-6">
+      <div className="mx-auto max-w-7xl px-4 py-6">
         <Link href="/" className="text-sm text-zinc-500 hover:text-indigo-400">
           ← Back to store
         </Link>

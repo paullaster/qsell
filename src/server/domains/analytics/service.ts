@@ -8,7 +8,7 @@ export class AnalyticsService {
     const reconciliationLogs = db.reconciliationLogs;
 
     const paidOrders = orders.filter(
-      (o) => o.paymentStatus === 'paid' || o.paymentStatus === 'reconciled'
+      (o) => o.paymentStatus === 'paid' || o.paymentStatus === 'reconciled',
     );
     const totalRevenue = paidOrders.reduce((sum, o) => sum + o.totalAmount, 0);
     const totalOrders = orders.length;

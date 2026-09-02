@@ -11,7 +11,7 @@ export async function listCustomersAction(): Promise<CustomerAccount[]> {
 export const fetchUserProfilesAction = listCustomersAction;
 
 export async function getCustomerAccountAction(
-  customerId?: string
+  customerId?: string,
 ): Promise<{ customer: CustomerAccount; orders: Order[] }> {
   const session = await AuthService.getSessionFromCookies();
   const id = customerId || session?.userId;
@@ -25,14 +25,14 @@ export async function getCustomerAccountAction(
 
 export async function updateCustomerProfileAction(
   customerId: string,
-  updates: Partial<CustomerAccount>
+  updates: Partial<CustomerAccount>,
 ): Promise<CustomerAccount> {
   return db.updateCustomer(customerId, updates);
 }
 
 export async function addCustomerAddressAction(
   customerId: string,
-  addressData: Omit<CustomerAddress, 'id'>
+  addressData: Omit<CustomerAddress, 'id'>,
 ): Promise<{ address: CustomerAddress; customer: CustomerAccount }> {
   const address = db.addCustomerAddress(customerId, addressData);
   const customer = db.getCustomerById(customerId)!;
@@ -42,7 +42,7 @@ export async function addCustomerAddressAction(
 export async function updateCustomerAddressAction(
   customerId: string,
   addressId: string,
-  updates: Partial<CustomerAddress>
+  updates: Partial<CustomerAddress>,
 ): Promise<{ address: CustomerAddress; customer: CustomerAccount }> {
   const address = db.updateCustomerAddress(customerId, addressId, updates);
   const customer = db.getCustomerById(customerId)!;
@@ -51,7 +51,7 @@ export async function updateCustomerAddressAction(
 
 export async function deleteCustomerAddressAction(
   customerId: string,
-  addressId: string
+  addressId: string,
 ): Promise<{ success: boolean; customer: CustomerAccount }> {
   db.deleteCustomerAddress(customerId, addressId);
   const customer = db.getCustomerById(customerId)!;
@@ -60,7 +60,7 @@ export async function deleteCustomerAddressAction(
 
 export async function setDefaultAddressAction(
   customerId: string,
-  addressId: string
+  addressId: string,
 ): Promise<CustomerAccount> {
   return db.setDefaultAddress(customerId, addressId);
 }

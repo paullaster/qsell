@@ -24,7 +24,7 @@ export class PesapalService {
     if (!order) throw new Error(`Order ${params.orderId} not found`);
 
     const gateway = db.paymentGateways.get('gw_pesapal_v3');
-    if (!gateway || !gateway.isEnabled) {
+    if (!gateway?.isEnabled) {
       throw new Error('Pesapal payment gateway is disabled by administrator');
     }
 
@@ -93,11 +93,11 @@ export class PesapalService {
   static async processIpn(
     orderTrackingId: string,
     merchantReference: string,
-    status: string = 'COMPLETED'
+    status = 'COMPLETED',
   ) {
     const transaction = Array.from(db.transactions.values()).find(
       (tx) =>
-        tx.externalReference === orderTrackingId || tx.transactionReference === merchantReference
+        tx.externalReference === orderTrackingId || tx.transactionReference === merchantReference,
     );
 
     if (!transaction) {
@@ -118,7 +118,7 @@ export class PesapalService {
         order.updatedAt = new Date().toISOString();
         db.atomicFulfillStock(
           order.items.map((i) => ({ productId: i.productId, quantity: i.quantity })),
-          order.id
+          order.id,
         );
         ReconciliationEngine.reconcileSingleTransaction(transaction, order);
       }
@@ -145,7 +145,7 @@ export class PesapalService {
       order.updatedAt = new Date().toISOString();
       db.atomicReleaseReservation(
         order.items.map((i) => ({ productId: i.productId, quantity: i.quantity })),
-        order.id
+        order.id,
       );
     }
 
@@ -155,9 +155,9 @@ export class PesapalService {
   static async simulatePesapalPayment(
     orderTrackingId: string,
     success: boolean,
-    _paymentChannel: 'VISA' | 'MASTERCARD' | 'AIRTEL_MONEY' | 'EQUITY_BANK' = 'VISA'
+    _paymentChannel: 'VISA' | 'MASTERCARD' | 'AIRTEL_MONEY' | 'EQUITY_BANK' = 'VISA',
   ) {
     const status = success ? 'COMPLETED' : 'FAILED';
-    return this.processIpn(orderTrackingId, '', status);
+    return await this.processIpn(orderTrackingId, '', status);
   }
 }

@@ -15,7 +15,7 @@ export class CatalogService {
   }
 
   static createProduct(
-    productData: Omit<Product, 'id' | 'createdAt' | 'updatedAt' | 'reservedQuantity'>
+    productData: Omit<Product, 'id' | 'createdAt' | 'updatedAt' | 'reservedQuantity'>,
   ): Product {
     const id = `prod_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const newProduct: Product = {
@@ -94,7 +94,7 @@ export class CatalogService {
   }
 
   static createCategory(
-    data: Omit<Category, 'id' | 'createdAt' | 'updatedAt' | 'productCount'>
+    data: Omit<Category, 'id' | 'createdAt' | 'updatedAt' | 'productCount'>,
   ): Category {
     return db.createCategory(data);
   }

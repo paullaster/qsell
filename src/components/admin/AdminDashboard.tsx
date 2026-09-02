@@ -1,21 +1,21 @@
 'use client';
 
 import { use } from 'react';
-import { 
-  TrendingUp, 
-  DollarSign, 
-  ShoppingBag, 
-  AlertTriangle, 
-  CheckCircle2, 
-  Smartphone, 
-  CreditCard, 
-  Layers, 
+import {
+  TrendingUp,
+  DollarSign,
+  ShoppingBag,
+  AlertTriangle,
+  CheckCircle2,
+  Smartphone,
+  CreditCard,
+  Layers,
   ArrowUpRight,
   ShieldCheck,
   Zap,
-  Activity
+  Activity,
 } from 'lucide-react';
-import { DashboardAnalytics } from '@/types/index';
+import { type DashboardAnalytics } from '@/types/index';
 
 interface AdminDashboardProps {
   analyticsPromise: Promise<DashboardAnalytics>;
@@ -28,97 +28,112 @@ export function AdminDashboard({ analyticsPromise, onNavigateTab }: AdminDashboa
   return (
     <div className="space-y-6">
       {/* KPI Cards Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {/* Total GMV Revenue */}
-        <div className="p-5 rounded-xl bg-zinc-900 border border-zinc-800 space-y-3 shadow-lg flex flex-col justify-between">
+        <div className="flex flex-col justify-between space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-5 shadow-lg">
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Gross Revenue</span>
-            <div className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
-              <DollarSign className="w-3.5 h-3.5" />
+            <span className="text-[10px] font-bold tracking-widest text-zinc-500 uppercase">
+              Gross Revenue
+            </span>
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-emerald-500/20 bg-emerald-500/10 text-emerald-400">
+              <DollarSign className="h-3.5 w-3.5" />
             </div>
           </div>
           <div>
-            <div className="text-2xl font-bold font-mono text-white">
+            <div className="font-mono text-2xl font-bold text-white">
               KES {analytics.totalRevenue.toLocaleString()}
             </div>
-            <div className="flex items-center gap-1 text-[11px] text-emerald-400 mt-1">
-              <TrendingUp className="w-3 h-3" /> +14.2% vs previous period
+            <div className="mt-1 flex items-center gap-1 text-[11px] text-emerald-400">
+              <TrendingUp className="h-3 w-3" /> +14.2% vs previous period
             </div>
           </div>
         </div>
 
         {/* Total Orders */}
-        <div className="p-5 rounded-xl bg-zinc-900 border border-zinc-800 space-y-3 shadow-lg flex flex-col justify-between">
+        <div className="flex flex-col justify-between space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-5 shadow-lg">
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Orders Processed</span>
-            <div className="w-7 h-7 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
-              <ShoppingBag className="w-3.5 h-3.5" />
+            <span className="text-[10px] font-bold tracking-widest text-zinc-500 uppercase">
+              Orders Processed
+            </span>
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-indigo-500/20 bg-indigo-500/10 text-indigo-400">
+              <ShoppingBag className="h-3.5 w-3.5" />
             </div>
           </div>
           <div>
-            <div className="text-2xl font-bold font-mono text-white">
-              {analytics.totalOrders} <span className="text-xs font-normal text-zinc-500">orders</span>
+            <div className="font-mono text-2xl font-bold text-white">
+              {analytics.totalOrders}{' '}
+              <span className="text-xs font-normal text-zinc-500">orders</span>
             </div>
-            <div className="text-[11px] text-zinc-400 mt-1">
-              Avg Order: <span className="font-mono text-zinc-200">KES {analytics.averageOrderValue.toLocaleString()}</span>
+            <div className="mt-1 text-[11px] text-zinc-400">
+              Avg Order:{' '}
+              <span className="font-mono text-zinc-200">
+                KES {analytics.averageOrderValue.toLocaleString()}
+              </span>
             </div>
           </div>
         </div>
 
         {/* Real-time Reconciliation Match Rate */}
-        <div className="p-5 rounded-xl bg-zinc-900 border border-zinc-800 space-y-3 shadow-lg flex flex-col justify-between">
+        <div className="flex flex-col justify-between space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-5 shadow-lg">
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Reconciliation Rate</span>
-            <div className="w-7 h-7 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
-              <ShieldCheck className="w-3.5 h-3.5" />
+            <span className="text-[10px] font-bold tracking-widest text-zinc-500 uppercase">
+              Reconciliation Rate
+            </span>
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-indigo-500/20 bg-indigo-500/10 text-indigo-400">
+              <ShieldCheck className="h-3.5 w-3.5" />
             </div>
           </div>
           <div>
-            <div className="text-2xl font-bold font-mono text-indigo-400">
+            <div className="font-mono text-2xl font-bold text-indigo-400">
               {analytics.reconciliationRate}%
             </div>
-            <div className="flex items-center gap-1 text-[11px] text-emerald-400 mt-1">
-              <CheckCircle2 className="w-3 h-3" /> Zero unresolved discrepancies
+            <div className="mt-1 flex items-center gap-1 text-[11px] text-emerald-400">
+              <CheckCircle2 className="h-3 w-3" /> Zero unresolved discrepancies
             </div>
           </div>
         </div>
 
         {/* Low Stock Alerts */}
-        <div 
+        <div
           onClick={() => onNavigateTab('inventory')}
-          className="p-5 rounded-xl bg-zinc-900 border border-zinc-800 space-y-3 shadow-lg cursor-pointer hover:border-zinc-700 transition-colors group flex flex-col justify-between"
+          className="group flex cursor-pointer flex-col justify-between space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-5 shadow-lg transition-colors hover:border-zinc-700"
         >
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Low Stock SKUs</span>
-            <div className="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
-              <AlertTriangle className="w-3.5 h-3.5" />
+            <span className="text-[10px] font-bold tracking-widest text-zinc-500 uppercase">
+              Low Stock SKUs
+            </span>
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-amber-500/20 bg-amber-500/10 text-amber-400 transition-transform group-hover:scale-110">
+              <AlertTriangle className="h-3.5 w-3.5" />
             </div>
           </div>
           <div>
-            <div className="text-2xl font-bold font-mono text-amber-400">
-              {analytics.lowStockAlertsCount} <span className="text-xs font-normal text-zinc-500">alerts</span>
+            <div className="font-mono text-2xl font-bold text-amber-400">
+              {analytics.lowStockAlertsCount}{' '}
+              <span className="text-xs font-normal text-zinc-500">alerts</span>
             </div>
-            <div className="text-[11px] text-indigo-400 mt-1 flex items-center gap-1 group-hover:underline">
-              Manage inventory <ArrowUpRight className="w-3 h-3" />
+            <div className="mt-1 flex items-center gap-1 text-[11px] text-indigo-400 group-hover:underline">
+              Manage inventory <ArrowUpRight className="h-3 w-3" />
             </div>
           </div>
         </div>
       </div>
 
       {/* Analytics Breakdown */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
         {/* Payment Gateways Performance */}
-        <div className="lg:col-span-6 p-6 rounded-xl bg-zinc-900 border border-zinc-800 space-y-5">
+        <div className="space-y-5 rounded-xl border border-zinc-800 bg-zinc-900 p-6 lg:col-span-6">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="font-bold text-sm text-white">Payment Method Distribution</h3>
-              <p className="text-xs text-zinc-500">Daraja LNMO vs Pesapal v3 Settlement Breakdown</p>
+              <h3 className="text-sm font-bold text-white">Payment Method Distribution</h3>
+              <p className="text-xs text-zinc-500">
+                Daraja LNMO vs Pesapal v3 Settlement Breakdown
+              </p>
             </div>
             <button
               onClick={() => onNavigateTab('gateways')}
-              className="text-xs text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1 cursor-pointer"
+              className="flex cursor-pointer items-center gap-1 text-xs font-medium text-indigo-400 hover:text-indigo-300"
             >
-              Config <ArrowUpRight className="w-3 h-3" />
+              Config <ArrowUpRight className="h-3 w-3" />
             </button>
           </div>
 
@@ -127,22 +142,30 @@ export function AdminDashboard({ analyticsPromise, onNavigateTab }: AdminDashboa
               const isMpesa = method.provider === 'mpesa_daraja';
               const isPesapal = method.provider === 'pesapal_v3';
               const Icon = isMpesa ? Smartphone : CreditCard;
-              const barColor = isMpesa ? 'bg-emerald-500' : isPesapal ? 'bg-indigo-600' : 'bg-indigo-400';
+              const barColor = isMpesa
+                ? 'bg-emerald-500'
+                : isPesapal
+                  ? 'bg-indigo-600'
+                  : 'bg-indigo-400';
 
               return (
                 <div key={method.provider} className="space-y-1.5">
                   <div className="flex items-center justify-between text-xs">
                     <div className="flex items-center gap-2">
-                      <Icon className={`w-3.5 h-3.5 ${isMpesa ? 'text-emerald-400' : 'text-indigo-400'}`} />
-                      <span className="text-zinc-200 font-medium">{method.name}</span>
-                      <span className="text-[10px] text-zinc-500 font-mono">({method.count} orders)</span>
+                      <Icon
+                        className={`h-3.5 w-3.5 ${isMpesa ? 'text-emerald-400' : 'text-indigo-400'}`}
+                      />
+                      <span className="font-medium text-zinc-200">{method.name}</span>
+                      <span className="font-mono text-[10px] text-zinc-500">
+                        ({method.count} orders)
+                      </span>
                     </div>
                     <div className="font-mono text-zinc-200">
                       KES {method.amount.toLocaleString()} ({method.percentage}%)
                     </div>
                   </div>
                   {/* Progress Bar */}
-                  <div className="w-full h-2 rounded-full bg-zinc-800 overflow-hidden">
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-800">
                     <div
                       className={`h-full rounded-full ${barColor}`}
                       style={{ width: `${Math.max(4, method.percentage)}%` }}
@@ -155,23 +178,27 @@ export function AdminDashboard({ analyticsPromise, onNavigateTab }: AdminDashboa
         </div>
 
         {/* Real-time Hourly Velocity */}
-        <div className="lg:col-span-6 p-6 rounded-xl bg-zinc-900 border border-zinc-800 space-y-5">
+        <div className="space-y-5 rounded-xl border border-zinc-800 bg-zinc-900 p-6 lg:col-span-6">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="font-bold text-sm text-white">Intraday Sales Velocity</h3>
+              <h3 className="text-sm font-bold text-white">Intraday Sales Velocity</h3>
               <p className="text-xs text-zinc-500">Real-time hourly volume & transaction flow</p>
             </div>
-            <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 text-[10px] font-mono border border-emerald-500/20">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#10b981]"></span> LIVE
+            <div className="flex items-center gap-1.5 rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-0.5 font-mono text-[10px] text-emerald-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#10b981]" />{' '}
+              LIVE
             </div>
           </div>
 
           <div className="space-y-3">
             <div className="grid grid-cols-6 gap-2 text-center">
               {analytics.recentHourlySales.map((h) => (
-                <div key={h.time} className="p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 space-y-1">
-                  <div className="text-[10px] font-mono text-zinc-500">{h.time}</div>
-                  <div className="text-xs font-bold text-white font-mono">
+                <div
+                  key={h.time}
+                  className="space-y-1 rounded-lg border border-zinc-800 bg-zinc-950 p-2.5"
+                >
+                  <div className="font-mono text-[10px] text-zinc-500">{h.time}</div>
+                  <div className="font-mono text-xs font-bold text-white">
                     KES {(h.sales / 1000).toFixed(0)}k
                   </div>
                   <div className="text-[9px] text-zinc-500">{h.orders} orders</div>
@@ -179,11 +206,13 @@ export function AdminDashboard({ analyticsPromise, onNavigateTab }: AdminDashboa
               ))}
             </div>
 
-            <div className="p-3.5 rounded-lg bg-zinc-950 border border-zinc-800 flex items-center justify-between text-xs">
-              <span className="text-zinc-400 flex items-center gap-1.5">
-                <Zap className="w-3.5 h-3.5 text-amber-400" /> Payment Verification:
+            <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-950 p-3.5 text-xs">
+              <span className="flex items-center gap-1.5 text-zinc-400">
+                <Zap className="h-3.5 w-3.5 text-amber-400" /> Payment Verification:
               </span>
-              <span className="font-mono text-emerald-400 font-semibold">Active (Automatic Settlement)</span>
+              <span className="font-mono font-semibold text-emerald-400">
+                Active (Automatic Settlement)
+              </span>
             </div>
           </div>
         </div>

@@ -8,7 +8,7 @@ import { db } from '@/server/db/store';
 export async function initiateDarajaStkAction(
   orderIdOrParams: string | { orderId: string; phoneNumber: string; amount?: number },
   phoneNumber?: string,
-  amount?: number
+  amount?: number,
 ) {
   const payload =
     typeof orderIdOrParams === 'string'
@@ -27,7 +27,7 @@ export async function initiateDarajaStkAction(
 
 export async function simulateDarajaUserAction(
   checkoutRequestId: string,
-  action: 'accept' | 'cancel' | 'wrong_pin' | 'timeout'
+  action: 'accept' | 'cancel' | 'wrong_pin' | 'timeout',
 ) {
   const result = await DarajaService.simulateUserStkAction(checkoutRequestId, action);
   revalidatePath('/admin/orders');
@@ -38,7 +38,7 @@ export async function simulateDarajaUserAction(
 
 export async function initiatePesapalPaymentAction(
   orderIdOrParams: string | { orderId: string; amount?: number; currency?: 'KES' | 'USD' },
-  amount?: number
+  amount?: number,
 ) {
   const payload =
     typeof orderIdOrParams === 'string'
@@ -60,12 +60,12 @@ export const submitPesapalOrderAction = initiatePesapalPaymentAction;
 export async function simulatePesapalPaymentAction(
   orderTrackingId: string,
   success: boolean,
-  paymentChannel?: 'VISA' | 'MASTERCARD' | 'AIRTEL_MONEY' | 'EQUITY_BANK'
+  paymentChannel?: 'VISA' | 'MASTERCARD' | 'AIRTEL_MONEY' | 'EQUITY_BANK',
 ) {
   const result = await PesapalService.simulatePesapalPayment(
     orderTrackingId,
     success,
-    paymentChannel
+    paymentChannel,
   );
   revalidatePath('/admin/orders');
   revalidatePath('/admin/reconciliation');

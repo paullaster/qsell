@@ -1,31 +1,31 @@
 'use client';
 
 import React, { Suspense, useState, use } from 'react';
-import { 
-  LayoutDashboard, 
-  Package, 
-  FolderTree, 
-  Layers, 
-  CreditCard, 
-  ShieldCheck, 
-  ShoppingBag, 
+import {
+  LayoutDashboard,
+  Package,
+  FolderTree,
+  Layers,
+  CreditCard,
+  ShieldCheck,
+  ShoppingBag,
   Users,
   RefreshCw,
   Percent,
-  Coins
+  Coins,
 } from 'lucide-react';
-import { 
-  Product, 
-  Category,
-  TaxCategory,
-  CurrencyConfig,
-  PaymentGatewayConfig, 
-  Order, 
-  TransactionRecord, 
-  ReconciliationLog, 
-  DashboardAnalytics, 
-  InventoryLedgerEntry, 
-  UserProfile 
+import {
+  type Product,
+  type Category,
+  type TaxCategory,
+  type CurrencyConfig,
+  type PaymentGatewayConfig,
+  type Order,
+  type TransactionRecord,
+  type ReconciliationLog,
+  type DashboardAnalytics,
+  type InventoryLedgerEntry,
+  type UserProfile,
 } from '@/types/index';
 import { AdminDashboard } from './AdminDashboard';
 import { AdminProducts } from './AdminProducts';
@@ -39,18 +39,20 @@ import { AdminReconciliation } from './AdminReconciliation';
 import { AdminAnalytics } from './AdminAnalytics';
 import { AdminProductModal } from './AdminProductModal';
 import { SkeletonMetrics, SkeletonTable } from '@/components/ui/Skeletons';
+import { getCompanySettingsAction } from '@/server/domains/company/actions';
 
-export type AdminTab = 
-  | 'dashboard' 
-  | 'products' 
-  | 'categories' 
+export type AdminTab =
+  | 'dashboard'
+  | 'products'
+  | 'categories'
   | 'taxes'
   | 'currencies'
-  | 'inventory' 
-  | 'orders' 
-  | 'gateways' 
-  | 'reconciliation' 
-  | 'analytics';
+  | 'inventory'
+  | 'orders'
+  | 'gateways'
+  | 'reconciliation'
+  | 'analytics'
+  | 'company';
 
 interface AdminViewProps {
   analyticsPromise: Promise<DashboardAnalytics>;
@@ -79,11 +81,12 @@ export function AdminView({
   reconciliationLogsPromise,
   inventoryLedgerPromise,
   userProfilesPromise,
-  onRefreshAll
+  onRefreshAll,
 }: AdminViewProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
   const [productToEdit, setProductToEdit] = useState<Product | null>(null);
+  const [companyPromise] = useState(() => getCompanySettingsAction());
 
   // We can safely read categories & taxes via Suspense inside the modal or pass an empty fallback
   const [cachedCategories, setCachedCategories] = useState<Category[]>([]);
@@ -91,11 +94,11 @@ export function AdminView({
 
   // When promises resolve, cache for the modal
   React.useEffect(() => {
-    categoriesPromise.then(setCachedCategories).catch(() => {});
+    void Promise.resolve(categoriesPromise).then(setCachedCategories).catch(() => {});
   }, [categoriesPromise]);
 
   React.useEffect(() => {
-    taxesPromise.then(setCachedTaxes).catch(() => {});
+    void Promise.resolve(taxesPromise).then(setCachedTaxes).catch(() => {});
   }, [taxesPromise]);
 
   const tabs: { id: AdminTab; label: string; icon: any }[] = [
@@ -108,14 +111,14 @@ export function AdminView({
     { id: 'currencies', label: 'Currencies & FX', icon: Coins },
     { id: 'reconciliation', label: 'Payment Reconciliation', icon: ShieldCheck },
     { id: 'gateways', label: 'Payment Methods', icon: CreditCard },
-    { id: 'analytics', label: 'Customer Accounts', icon: Users }
+    { id: 'analytics', label: 'Customer Accounts', icon: Users },
   ];
 
   return (
     <div className="space-y-6 pb-20">
       {/* Admin Navigation Ribbon */}
-      <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4 p-2 bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl">
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 lg:pb-0 scrollbar-none">
+      <div className="flex flex-col items-stretch justify-between gap-4 rounded-xl border border-zinc-800 bg-zinc-900 p-2 shadow-xl lg:flex-row lg:items-center">
+        <div className="flex scrollbar-none items-center gap-1.5 overflow-x-auto pb-1 lg:pb-0">
           {tabs.map((t) => {
             const Icon = t.icon;
             const isActive = activeTab === t.id;
@@ -123,13 +126,13 @@ export function AdminView({
               <button
                 key={t.id}
                 onClick={() => setActiveTab(t.id)}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                className={`flex cursor-pointer items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-semibold whitespace-nowrap transition-all ${
                   isActive
                     ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
-                    : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+                    : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'
                 }`}
               >
-                <Icon className="w-4 h-4" />
+                <Icon className="h-4 w-4" />
                 <span>{t.label}</span>
               </button>
             );
@@ -139,10 +142,10 @@ export function AdminView({
         <div className="flex items-center justify-end gap-2 px-2">
           <button
             onClick={onRefreshAll}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-medium transition-colors cursor-pointer border border-zinc-700/50"
+            className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-700/50 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-white"
             title="Refresh all admin data"
           >
-            <RefreshCw className="w-3.5 h-3.5" />
+            <RefreshCw className="h-3.5 w-3.5" />
             <span>Sync Data</span>
           </button>
         </div>
@@ -188,19 +191,13 @@ export function AdminView({
 
       {activeTab === 'taxes' && (
         <Suspense fallback={<SkeletonTable />}>
-          <AdminTaxes
-            taxesPromise={taxesPromise}
-            onRefreshAll={onRefreshAll}
-          />
+          <AdminTaxes taxesPromise={taxesPromise} onRefreshAll={onRefreshAll} />
         </Suspense>
       )}
 
       {activeTab === 'currencies' && (
         <Suspense fallback={<SkeletonTable />}>
-          <AdminCurrencies
-            currenciesPromise={currenciesPromise}
-            onRefreshAll={onRefreshAll}
-          />
+          <AdminCurrencies currenciesPromise={currenciesPromise} onRefreshAll={onRefreshAll} />
         </Suspense>
       )}
 
@@ -218,6 +215,7 @@ export function AdminView({
         <Suspense fallback={<SkeletonTable />}>
           <AdminOrders
             ordersPromise={ordersPromise}
+            companyPromise={companyPromise}
             onRefresh={onRefreshAll}
           />
         </Suspense>
@@ -225,10 +223,7 @@ export function AdminView({
 
       {activeTab === 'gateways' && (
         <Suspense fallback={<SkeletonTable />}>
-          <AdminPaymentConfig
-            gatewaysPromise={gatewaysPromise}
-            onRefresh={onRefreshAll}
-          />
+          <AdminPaymentConfig gatewaysPromise={gatewaysPromise} onRefresh={onRefreshAll} />
         </Suspense>
       )}
 

@@ -1,31 +1,31 @@
 'use client';
 
 import React, { use, useState } from 'react';
-import { 
-  Layers, 
-  Search, 
-  ArrowDownRight, 
-  ArrowUpRight, 
-  AlertTriangle, 
-  Plus, 
-  Minus, 
-  History, 
-  FileText, 
-  CheckCircle2, 
-  Truck, 
-  ShieldAlert, 
-  ClipboardCheck, 
+import {
+  Layers,
+  Search,
+  ArrowDownRight,
+  ArrowUpRight,
+  AlertTriangle,
+  Plus,
+  Minus,
+  History,
+  FileText,
+  CheckCircle2,
+  Truck,
+  ShieldAlert,
+  ClipboardCheck,
   Download,
   Filter,
   RefreshCw,
-  DollarSign
+  DollarSign,
 } from 'lucide-react';
-import { Product, InventoryLedgerEntry, InventoryChangeType } from '@/types/index';
-import { 
-  updateProductStockAction, 
-  receiveStockAction, 
-  writeOffStockAction, 
-  auditStockCountAction 
+import { type Product, type InventoryLedgerEntry, InventoryChangeType } from '@/types/index';
+import {
+  updateProductStockAction,
+  receiveStockAction,
+  writeOffStockAction,
+  auditStockCountAction,
 } from '@/server/actions';
 
 interface AdminInventoryProps {
@@ -34,15 +34,13 @@ interface AdminInventoryProps {
   onRefresh: () => void;
 }
 
-export function AdminInventory({
-  productsPromise,
-  ledgerPromise,
-  onRefresh
-}: AdminInventoryProps) {
+export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: AdminInventoryProps) {
   const products = use(productsPromise);
   const ledger = use(ledgerPromise);
 
-  const [activeTab, setActiveTab] = useState<'stock_levels' | 'receive_po' | 'write_off' | 'audit_count' | 'ledger' | 'reorder_plan'>('stock_levels');
+  const [activeTab, setActiveTab] = useState<
+    'stock_levels' | 'receive_po' | 'write_off' | 'audit_count' | 'ledger' | 'reorder_plan'
+  >('stock_levels');
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
 
@@ -62,7 +60,13 @@ export function AdminInventory({
 
   // Form states for Write-off
   const [writeOffQty, setWriteOffQty] = useState<number>(1);
-  const [writeOffReason, setWriteOffReason] = useState<'damage_transit' | 'defective_return' | 'warehouse_damage' | 'shrinkage_loss' | 'sample_marketing'>('warehouse_damage');
+  const [writeOffReason, setWriteOffReason] = useState<
+    | 'damage_transit'
+    | 'defective_return'
+    | 'warehouse_damage'
+    | 'shrinkage_loss'
+    | 'sample_marketing'
+  >('warehouse_damage');
   const [writeOffNotes, setWriteOffNotes] = useState('');
 
   // Form states for Physical Audit
@@ -71,18 +75,27 @@ export function AdminInventory({
 
   // Filtered Products
   const filteredProducts = products.filter((p) => {
-    const matchesSearch = p.name.toLowerCase().includes(search.toLowerCase()) || p.sku.toLowerCase().includes(search.toLowerCase());
-    const matchesCategory = categoryFilter === 'all' || p.category.toLowerCase() === categoryFilter.toLowerCase();
+    const matchesSearch =
+      p.name.toLowerCase().includes(search.toLowerCase()) ||
+      p.sku.toLowerCase().includes(search.toLowerCase());
+    const matchesCategory =
+      categoryFilter === 'all' || p.category.toLowerCase() === categoryFilter.toLowerCase();
     return matchesSearch && matchesCategory;
   });
 
-  const lowStockItems = products.filter((p) => (p.stockQuantity - p.reservedQuantity) <= p.lowStockThreshold);
+  const lowStockItems = products.filter(
+    (p) => p.stockQuantity - p.reservedQuantity <= p.lowStockThreshold,
+  );
 
   // Quick Delta Adjust
   const handleQuickAdjust = async (product: Product, delta: number) => {
     const newQty = Math.max(0, product.stockQuantity + delta);
     try {
-      await updateProductStockAction(product.id, newQty, `Quick adjustment by ${delta > 0 ? '+' : ''}${delta}`);
+      await updateProductStockAction(
+        product.id,
+        newQty,
+        `Quick adjustment by ${delta > 0 ? '+' : ''}${delta}`,
+      );
       onRefresh();
     } catch (err: any) {
       alert(`Adjustment error: ${err.message}`);
@@ -131,7 +144,7 @@ export function AdminInventory({
         supplier: supplierName.trim(),
         poNumber: poNumber.trim(),
         unitCost: Number(unitCost),
-        notes: receiveNotes.trim()
+        notes: receiveNotes.trim(),
       });
       setActionSuccess(`Successfully received ${receiveQty} units for ${selectedProduct.sku}`);
       setTimeout(() => {
@@ -156,7 +169,7 @@ export function AdminInventory({
         productId: selectedProduct.id,
         quantity: Number(writeOffQty),
         reasonCode: writeOffReason,
-        notes: writeOffNotes.trim()
+        notes: writeOffNotes.trim(),
       });
       setActionSuccess(`Successfully written off ${writeOffQty} units for ${selectedProduct.sku}`);
       setTimeout(() => {
@@ -180,9 +193,11 @@ export function AdminInventory({
       const res = await auditStockCountAction({
         productId: selectedProduct.id,
         countedQuantity: Number(auditCountedQty),
-        notes: auditNotes.trim()
+        notes: auditNotes.trim(),
       });
-      setActionSuccess(`Audit reconciled. Discrepancy: ${res.discrepancy >= 0 ? '+' : ''}${res.discrepancy} units.`);
+      setActionSuccess(
+        `Audit reconciled. Discrepancy: ${res.discrepancy >= 0 ? '+' : ''}${res.discrepancy} units.`,
+      );
       setTimeout(() => {
         setModalType(null);
         onRefresh();
@@ -197,47 +212,52 @@ export function AdminInventory({
   return (
     <div className="space-y-6">
       {/* Header Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-xl bg-zinc-900 border border-zinc-800">
+      <div className="flex flex-col justify-between gap-4 rounded-xl border border-zinc-800 bg-zinc-900 p-5 sm:flex-row sm:items-center">
         <div>
-          <h2 className="font-bold text-base text-white flex items-center gap-2">
-            <Layers className="w-5 h-5 text-indigo-400" />
+          <h2 className="flex items-center gap-2 text-base font-bold text-white">
+            <Layers className="h-5 w-5 text-indigo-400" />
             Stock Control & Warehouse Management
           </h2>
-          <p className="text-xs text-zinc-400 mt-0.5">
-            Receive supplier goods (PO), record damaged stock write-offs, conduct physical stock audits, and view stock movement history.
+          <p className="mt-0.5 text-xs text-zinc-400">
+            Receive supplier goods (PO), record damaged stock write-offs, conduct physical stock
+            audits, and view stock movement history.
           </p>
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex items-center gap-1 bg-zinc-950 p-1 rounded-xl border border-zinc-800 overflow-x-auto">
+        <div className="flex items-center gap-1 overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-950 p-1">
           <button
             onClick={() => setActiveTab('stock_levels')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
-              activeTab === 'stock_levels' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:text-white'
+            className={`cursor-pointer rounded-lg px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors ${
+              activeTab === 'stock_levels'
+                ? 'bg-indigo-600 text-white'
+                : 'text-zinc-400 hover:text-white'
             }`}
           >
             Current Stock Levels
           </button>
           <button
             onClick={() => setActiveTab('reorder_plan')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer flex items-center gap-1.5 ${
-              activeTab === 'reorder_plan' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:text-white'
+            className={`flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors ${
+              activeTab === 'reorder_plan'
+                ? 'bg-indigo-600 text-white'
+                : 'text-zinc-400 hover:text-white'
             }`}
           >
             Low Stock Alerts
             {lowStockItems.length > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full bg-red-500 text-white text-[10px] font-bold font-mono">
+              <span className="py-0.2 rounded-full bg-red-500 px-1.5 font-mono text-[10px] font-bold text-white">
                 {lowStockItems.length}
               </span>
             )}
           </button>
           <button
             onClick={() => setActiveTab('ledger')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer flex items-center gap-1.5 ${
+            className={`flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors ${
               activeTab === 'ledger' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:text-white'
             }`}
           >
-            <History className="w-3.5 h-3.5" />
+            <History className="h-3.5 w-3.5" />
             Stock Movement History ({ledger.length})
           </button>
         </div>
@@ -247,44 +267,45 @@ export function AdminInventory({
       {activeTab === 'stock_levels' && (
         <div className="space-y-4">
           {/* Filter Bar */}
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-4 rounded-xl bg-zinc-900 border border-zinc-800 text-xs">
+          <div className="flex flex-col items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-900 p-4 text-xs sm:flex-row">
             <div className="relative w-full sm:w-80">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+              <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-zinc-500" />
               <input
                 type="text"
                 placeholder="Search by SKU or item title..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-9 pr-4 py-1.5 text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+                className="w-full rounded-lg border border-zinc-800 bg-zinc-950 py-1.5 pr-4 pl-9 text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
               />
             </div>
 
-            <div className="flex items-center gap-4 w-full sm:w-auto justify-between sm:justify-end">
+            <div className="flex w-full items-center justify-between gap-4 sm:w-auto sm:justify-end">
               <span className="text-zinc-400">
-                Low Stock Critical: <strong className="text-amber-400">{lowStockItems.length} items</strong>
+                Low Stock Critical:{' '}
+                <strong className="text-amber-400">{lowStockItems.length} items</strong>
               </span>
               <button
                 onClick={onRefresh}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors cursor-pointer"
+                className="flex cursor-pointer items-center gap-1 rounded-lg bg-zinc-800 px-3 py-1.5 text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-white"
               >
-                <RefreshCw className="w-3 h-3" />
+                <RefreshCw className="h-3 w-3" />
                 Refresh
               </button>
             </div>
           </div>
 
           {/* Warehouse Table */}
-          <div className="rounded-xl bg-zinc-900 border border-zinc-800 overflow-hidden shadow-xl">
+          <div className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 shadow-xl">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
-                <thead className="bg-zinc-950 text-zinc-400 font-semibold border-b border-zinc-800">
+                <thead className="border-b border-zinc-800 bg-zinc-950 font-semibold text-zinc-400">
                   <tr>
-                    <th className="py-3 px-4">SKU & Item</th>
-                    <th className="py-3 px-4 text-center">On-Hand Total</th>
-                    <th className="py-3 px-4 text-center">Reserved</th>
-                    <th className="py-3 px-4 text-center">Available</th>
-                    <th className="py-3 px-4 text-center">Quick Adjust</th>
-                    <th className="py-3 px-4 text-right">Warehouse Operations</th>
+                    <th className="px-4 py-3">SKU & Item</th>
+                    <th className="px-4 py-3 text-center">On-Hand Total</th>
+                    <th className="px-4 py-3 text-center">Reserved</th>
+                    <th className="px-4 py-3 text-center">Available</th>
+                    <th className="px-4 py-3 text-center">Quick Adjust</th>
+                    <th className="px-4 py-3 text-right">Warehouse Operations</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800 text-zinc-300">
@@ -294,88 +315,90 @@ export function AdminInventory({
                     const isOut = available <= 0;
 
                     return (
-                      <tr key={p.id} className="hover:bg-zinc-800/40 transition-colors">
-                        <td className="py-3.5 px-4">
+                      <tr key={p.id} className="transition-colors hover:bg-zinc-800/40">
+                        <td className="px-4 py-3.5">
                           <div className="font-semibold text-white">{p.name}</div>
-                          <div className="text-[11px] text-zinc-400 font-mono flex items-center gap-2 mt-0.5">
-                            <span className="text-indigo-400 font-bold">{p.sku}</span>
+                          <div className="mt-0.5 flex items-center gap-2 font-mono text-[11px] text-zinc-400">
+                            <span className="font-bold text-indigo-400">{p.sku}</span>
                             <span>• {p.category}</span>
                             <span>• Threshold: {p.lowStockThreshold}</span>
                           </div>
                         </td>
-                        <td className="py-3.5 px-4 text-center font-mono font-bold text-white">
+                        <td className="px-4 py-3.5 text-center font-mono font-bold text-white">
                           {p.stockQuantity}
                         </td>
-                        <td className="py-3.5 px-4 text-center font-mono text-zinc-400">
+                        <td className="px-4 py-3.5 text-center font-mono text-zinc-400">
                           {p.reservedQuantity}
                         </td>
-                        <td className="py-3.5 px-4 text-center">
-                          <span className={`px-2.5 py-0.5 rounded-full font-mono font-bold text-[11px] ${
-                            isOut
-                              ? 'bg-red-950 text-red-400 border border-red-800'
-                              : isLow
-                              ? 'bg-amber-950 text-amber-300 border border-amber-800'
-                              : 'bg-emerald-950/80 text-emerald-300 border border-emerald-800'
-                          }`}>
+                        <td className="px-4 py-3.5 text-center">
+                          <span
+                            className={`rounded-full px-2.5 py-0.5 font-mono text-[11px] font-bold ${
+                              isOut
+                                ? 'border border-red-800 bg-red-950 text-red-400'
+                                : isLow
+                                  ? 'border border-amber-800 bg-amber-950 text-amber-300'
+                                  : 'border border-emerald-800 bg-emerald-950/80 text-emerald-300'
+                            }`}
+                          >
                             {available} {isOut ? '(Out of Stock)' : isLow ? '(Low Stock)' : 'Units'}
                           </span>
                         </td>
-                        <td className="py-3.5 px-4 text-center">
-                          <div className="inline-flex items-center gap-1 bg-zinc-950 p-1 rounded-lg border border-zinc-800">
+                        <td className="px-4 py-3.5 text-center">
+                          <div className="inline-flex items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-950 p-1">
                             <button
                               onClick={() => handleQuickAdjust(p, -5)}
-                              className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[10px] cursor-pointer"
+                              className="cursor-pointer rounded bg-zinc-800 px-2 py-0.5 font-mono text-[10px] text-zinc-300 hover:bg-zinc-700"
                               title="Decrease 5"
                             >
                               -5
                             </button>
                             <button
                               onClick={() => handleQuickAdjust(p, -1)}
-                              className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[10px] cursor-pointer"
+                              className="cursor-pointer rounded bg-zinc-800 px-2 py-0.5 font-mono text-[10px] text-zinc-300 hover:bg-zinc-700"
                               title="Decrease 1"
                             >
                               -1
                             </button>
                             <button
                               onClick={() => handleQuickAdjust(p, 1)}
-                              className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[10px] cursor-pointer"
+                              className="cursor-pointer rounded bg-zinc-800 px-2 py-0.5 font-mono text-[10px] text-zinc-300 hover:bg-zinc-700"
                               title="Increase 1"
                             >
                               +1
                             </button>
                             <button
                               onClick={() => handleQuickAdjust(p, 5)}
-                              className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[10px] cursor-pointer"
+                              className="cursor-pointer rounded bg-zinc-800 px-2 py-0.5 font-mono text-[10px] text-zinc-300 hover:bg-zinc-700"
                               title="Increase 5"
                             >
                               +5
                             </button>
                           </div>
                         </td>
-                        <td className="py-3.5 px-4 text-right">
+                        <td className="px-4 py-3.5 text-right">
                           <div className="flex items-center justify-end gap-1.5">
                             <button
                               onClick={() => openReceiveModal(p)}
-                              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800/80 font-medium text-[11px] cursor-pointer transition-colors"
+                              className="flex cursor-pointer items-center gap-1 rounded-lg border border-emerald-800/80 bg-emerald-950 px-2.5 py-1 text-[11px] font-medium text-emerald-300 transition-colors hover:bg-emerald-900"
                               title="Receive Goods from Purchase Order"
                             >
-                              <Truck className="w-3 h-3" />
+                              <Truck className="h-3 w-3" />
                               Receive PO
                             </button>
                             <button
                               onClick={() => openWriteOffModal(p)}
-                              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-950 hover:bg-red-900 text-red-300 border border-red-800/80 font-medium text-[11px] cursor-pointer transition-colors"
+                              className="flex cursor-pointer items-center gap-1 rounded-lg border border-red-800/80 bg-red-950 px-2.5 py-1 text-[11px] font-medium text-red-300 transition-colors hover:bg-red-900"
                               title="Record Damaged or Lost Stock"
                             >
-                              <ShieldAlert className="w-3 h-3" />
+                              <ShieldAlert className="h-3 w-3" />
                               Write-Off
                             </button>
                             <button
                               onClick={() => openAuditModal(p)}
-                              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 font-medium text-[11px] cursor-pointer transition-colors"
+                              className="flex cursor-pointer items-center gap-1 rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-[11px] font-medium text-zinc-200 transition-colors hover:bg-zinc-700"
                               title="Physical Count Audit"
                             >
-                              <ClipboardCheck className="w-3 h-3" />
+                              <ClipboardCheck className="h-3 w-3" />
                               Audit
                             </button>
                           </div>
@@ -393,67 +416,78 @@ export function AdminInventory({
       {/* TAB 2: Reorder Alerts & Purchase Planning */}
       {activeTab === 'reorder_plan' && (
         <div className="space-y-4">
-          <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <div className="flex flex-col justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-900 p-4 text-xs sm:flex-row sm:items-center">
             <div>
-              <h3 className="font-bold text-white text-sm">Automated Inventory Replenishment Plan</h3>
+              <h3 className="text-sm font-bold text-white">
+                Automated Inventory Replenishment Plan
+              </h3>
               <p className="text-zinc-400">
-                Products currently at or below their safety stock threshold requiring immediate purchase orders.
+                Products currently at or below their safety stock threshold requiring immediate
+                purchase orders.
               </p>
             </div>
-            <div className="font-mono text-zinc-300 bg-zinc-950 px-3 py-1.5 rounded-lg border border-zinc-800">
-              Total Recommended Restock: <strong>{lowStockItems.reduce((acc, p) => acc + (p.lowStockThreshold * 3 - (p.stockQuantity - p.reservedQuantity)), 0)} units</strong>
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 font-mono text-zinc-300">
+              Total Recommended Restock:{' '}
+              <strong>
+                {lowStockItems.reduce(
+                  (acc, p) =>
+                    acc + (p.lowStockThreshold * 3 - (p.stockQuantity - p.reservedQuantity)),
+                  0,
+                )}{' '}
+                units
+              </strong>
             </div>
           </div>
 
-          <div className="rounded-xl bg-zinc-900 border border-zinc-800 overflow-hidden shadow-xl">
+          <div className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 shadow-xl">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
-                <thead className="bg-zinc-950 text-zinc-400 font-semibold border-b border-zinc-800">
+                <thead className="border-b border-zinc-800 bg-zinc-950 font-semibold text-zinc-400">
                   <tr>
-                    <th className="py-3 px-4">SKU & Item</th>
-                    <th className="py-3 px-4 text-center">Available Stock</th>
-                    <th className="py-3 px-4 text-center">Safety Threshold</th>
-                    <th className="py-3 px-4 text-center">Suggested PO Qty</th>
-                    <th className="py-3 px-4 text-right">Est. Cost (KES)</th>
-                    <th className="py-3 px-4 text-right">Action</th>
+                    <th className="px-4 py-3">SKU & Item</th>
+                    <th className="px-4 py-3 text-center">Available Stock</th>
+                    <th className="px-4 py-3 text-center">Safety Threshold</th>
+                    <th className="px-4 py-3 text-center">Suggested PO Qty</th>
+                    <th className="px-4 py-3 text-right">Est. Cost (KES)</th>
+                    <th className="px-4 py-3 text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800 text-zinc-300">
                   {lowStockItems.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="py-10 text-center text-emerald-400 font-medium">
+                      <td colSpan={6} className="py-10 text-center font-medium text-emerald-400">
                         All products are currently well above safety stock thresholds!
                       </td>
                     </tr>
                   ) : (
                     lowStockItems.map((p) => {
                       const available = p.stockQuantity - p.reservedQuantity;
-                      const suggestedQty = Math.max(10, (p.lowStockThreshold * 3) - available);
+                      const suggestedQty = Math.max(10, p.lowStockThreshold * 3 - available);
                       const unitCostEst = p.costPrice || Math.round(p.price * 0.75);
                       const totalCostEst = suggestedQty * unitCostEst;
 
                       return (
                         <tr key={p.id} className="hover:bg-zinc-800/40">
-                          <td className="py-3.5 px-4">
+                          <td className="px-4 py-3.5">
                             <div className="font-semibold text-white">{p.name}</div>
-                            <div className="text-[11px] text-zinc-400 font-mono">{p.sku}</div>
+                            <div className="font-mono text-[11px] text-zinc-400">{p.sku}</div>
                           </td>
-                          <td className="py-3.5 px-4 text-center font-mono font-bold text-red-400">
+                          <td className="px-4 py-3.5 text-center font-mono font-bold text-red-400">
                             {available} units
                           </td>
-                          <td className="py-3.5 px-4 text-center font-mono text-zinc-400">
+                          <td className="px-4 py-3.5 text-center font-mono text-zinc-400">
                             {p.lowStockThreshold} units
                           </td>
-                          <td className="py-3.5 px-4 text-center font-mono font-bold text-indigo-400">
+                          <td className="px-4 py-3.5 text-center font-mono font-bold text-indigo-400">
                             +{suggestedQty} units
                           </td>
-                          <td className="py-3.5 px-4 text-right font-mono text-zinc-200">
+                          <td className="px-4 py-3.5 text-right font-mono text-zinc-200">
                             KES {totalCostEst.toLocaleString()}
                           </td>
-                          <td className="py-3.5 px-4 text-right">
+                          <td className="px-4 py-3.5 text-right">
                             <button
                               onClick={() => openReceiveModal(p)}
-                              className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-[11px] cursor-pointer"
+                              className="cursor-pointer rounded-lg bg-indigo-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-indigo-500"
                             >
                               Draft PO
                             </button>
@@ -471,18 +505,18 @@ export function AdminInventory({
 
       {/* TAB 3: Immutable Audit Ledger */}
       {activeTab === 'ledger' && (
-        <div className="rounded-xl bg-zinc-900 border border-zinc-800 overflow-hidden shadow-xl">
+        <div className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 shadow-xl">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
-              <thead className="bg-zinc-950 text-zinc-400 font-semibold border-b border-zinc-800">
+              <thead className="border-b border-zinc-800 bg-zinc-950 font-semibold text-zinc-400">
                 <tr>
-                  <th className="py-3 px-4">Timestamp</th>
-                  <th className="py-3 px-4">SKU / Item</th>
-                  <th className="py-3 px-4">Change Type</th>
-                  <th className="py-3 px-4 text-center">Delta</th>
-                  <th className="py-3 px-4 text-center">Prior &rarr; New</th>
-                  <th className="py-3 px-4">Actor</th>
-                  <th className="py-3 px-4">Reason / Notes</th>
+                  <th className="px-4 py-3">Timestamp</th>
+                  <th className="px-4 py-3">SKU / Item</th>
+                  <th className="px-4 py-3">Change Type</th>
+                  <th className="px-4 py-3 text-center">Delta</th>
+                  <th className="px-4 py-3 text-center">Prior &rarr; New</th>
+                  <th className="px-4 py-3">Actor</th>
+                  <th className="px-4 py-3">Reason / Notes</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800 text-zinc-300">
@@ -496,36 +530,40 @@ export function AdminInventory({
                   ledger.map((entry) => {
                     const isPositive = entry.changeAmount > 0;
                     return (
-                      <tr key={entry.id} className="hover:bg-zinc-800/40 font-mono">
-                        <td className="py-3 px-4 text-zinc-400 text-[11px]">
+                      <tr key={entry.id} className="font-mono hover:bg-zinc-800/40">
+                        <td className="px-4 py-3 text-[11px] text-zinc-400">
                           {new Date(entry.timestamp).toLocaleString()}
                         </td>
-                        <td className="py-3 px-4 font-semibold text-white">
-                          {entry.productName}
-                        </td>
-                        <td className="py-3 px-4">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-sans font-bold uppercase tracking-wider ${
-                            entry.changeType === 'purchase_order_receipt'
-                              ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
-                              : entry.changeType === 'damage_writeoff'
-                              ? 'bg-red-950 text-red-300 border border-red-800'
-                              : entry.changeType === 'order_fulfillment'
-                              ? 'bg-blue-950 text-blue-300 border border-blue-800'
-                              : 'bg-zinc-800 text-zinc-300'
-                          }`}>
+                        <td className="px-4 py-3 font-semibold text-white">{entry.productName}</td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={`rounded px-2 py-0.5 font-sans text-[10px] font-bold tracking-wider uppercase ${
+                              entry.changeType === 'purchase_order_receipt'
+                                ? 'border border-emerald-800 bg-emerald-950 text-emerald-300'
+                                : entry.changeType === 'damage_writeoff'
+                                  ? 'border border-red-800 bg-red-950 text-red-300'
+                                  : entry.changeType === 'order_fulfillment'
+                                    ? 'border border-blue-800 bg-blue-950 text-blue-300'
+                                    : 'bg-zinc-800 text-zinc-300'
+                            }`}
+                          >
                             {entry.changeType.replace(/_/g, ' ')}
                           </span>
                         </td>
-                        <td className={`py-3 px-4 text-center font-bold ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}>
+                        <td
+                          className={`px-4 py-3 text-center font-bold ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}
+                        >
                           {isPositive ? `+${entry.changeAmount}` : entry.changeAmount}
                         </td>
-                        <td className="py-3 px-4 text-center text-zinc-400">
-                          {entry.previousStock} &rarr; <strong className="text-white">{entry.newStock}</strong>
+                        <td className="px-4 py-3 text-center text-zinc-400">
+                          {entry.previousStock} &rarr;{' '}
+                          <strong className="text-white">{entry.newStock}</strong>
                         </td>
-                        <td className="py-3 px-4 text-zinc-300">
-                          {entry.actor}
-                        </td>
-                        <td className="py-3 px-4 font-sans text-zinc-400 max-w-xs truncate" title={entry.note}>
+                        <td className="px-4 py-3 text-zinc-300">{entry.actor}</td>
+                        <td
+                          className="max-w-xs truncate px-4 py-3 font-sans text-zinc-400"
+                          title={entry.note}
+                        >
                           {entry.note}
                         </td>
                       </tr>
@@ -540,105 +578,119 @@ export function AdminInventory({
 
       {/* MODAL 1: Receive Stock from PO */}
       {modalType === 'receive' && selectedProduct && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/80 backdrop-blur-sm p-4 flex items-center justify-center">
-          <div className="relative w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl my-8">
-            <div className="p-5 border-b border-zinc-800 flex items-center justify-between bg-zinc-950">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/80 p-4 backdrop-blur-sm">
+          <div className="relative my-8 w-full max-w-lg overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-950 p-5">
               <div className="flex items-center gap-2">
-                <Truck className="w-5 h-5 text-emerald-400" />
-                <h3 className="font-bold text-base text-white">Receive Goods (Purchase Order Inward)</h3>
+                <Truck className="h-5 w-5 text-emerald-400" />
+                <h3 className="text-base font-bold text-white">
+                  Receive Goods (Purchase Order Inward)
+                </h3>
               </div>
-              <button onClick={() => setModalType(null)} className="text-zinc-400 hover:text-white p-1">
+              <button
+                onClick={() => setModalType(null)}
+                className="p-1 text-zinc-400 hover:text-white"
+              >
                 &times;
               </button>
             </div>
 
-            <form onSubmit={handleReceiveSubmit} className="p-6 space-y-4 text-xs">
+            <form onSubmit={handleReceiveSubmit} className="space-y-4 p-6 text-xs">
               {actionError && (
-                <div className="p-3 rounded-lg bg-red-950 border border-red-800 text-red-200">
+                <div className="rounded-lg border border-red-800 bg-red-950 p-3 text-red-200">
                   {actionError}
                 </div>
               )}
               {actionSuccess && (
-                <div className="p-3 rounded-lg bg-emerald-950 border border-emerald-800 text-emerald-200">
+                <div className="rounded-lg border border-emerald-800 bg-emerald-950 p-3 text-emerald-200">
                   {actionSuccess}
                 </div>
               )}
 
-              <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
-                <span className="text-zinc-500 block text-[10px] uppercase">Product Receiving Into</span>
-                <span className="text-white font-bold text-sm">{selectedProduct.name}</span>
-                <div className="text-zinc-400 font-mono mt-0.5">
-                  SKU: {selectedProduct.sku} | Current On-Hand: {selectedProduct.stockQuantity} units
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
+                <span className="block text-[10px] text-zinc-500 uppercase">
+                  Product Receiving Into
+                </span>
+                <span className="text-sm font-bold text-white">{selectedProduct.name}</span>
+                <div className="mt-0.5 font-mono text-zinc-400">
+                  SKU: {selectedProduct.sku} | Current On-Hand: {selectedProduct.stockQuantity}{' '}
+                  units
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block font-semibold text-zinc-300 mb-1">Quantity Received *</label>
+                  <label className="mb-1 block font-semibold text-zinc-300">
+                    Quantity Received *
+                  </label>
                   <input
                     type="number"
                     min={1}
                     value={receiveQty}
                     onChange={(e) => setReceiveQty(Number(e.target.value))}
                     required
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-white font-mono font-bold focus:border-emerald-500"
+                    className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono font-bold text-white focus:border-emerald-500"
                   />
                 </div>
 
                 <div>
-                  <label className="block font-semibold text-zinc-300 mb-1">Unit Cost (KES)</label>
+                  <label className="mb-1 block font-semibold text-zinc-300">Unit Cost (KES)</label>
                   <input
                     type="number"
                     min={0}
                     value={unitCost}
                     onChange={(e) => setUnitCost(Number(e.target.value))}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-white font-mono focus:border-emerald-500"
+                    className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono text-white focus:border-emerald-500"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block font-semibold text-zinc-300 mb-1">Supplier / Distributor</label>
+                <label className="mb-1 block font-semibold text-zinc-300">
+                  Supplier / Distributor
+                </label>
                 <input
                   type="text"
                   value={supplierName}
                   onChange={(e) => setSupplierName(e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-white focus:border-emerald-500"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-white focus:border-emerald-500"
                 />
               </div>
 
               <div>
-                <label className="block font-semibold text-zinc-300 mb-1">PO / Delivery Note Reference #</label>
+                <label className="mb-1 block font-semibold text-zinc-300">
+                  PO / Delivery Note Reference #
+                </label>
                 <input
                   type="text"
                   value={poNumber}
                   onChange={(e) => setPoNumber(e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-white font-mono focus:border-emerald-500"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono text-white focus:border-emerald-500"
                 />
               </div>
 
               <div>
-                <label className="block font-semibold text-zinc-300 mb-1">Internal Notes</label>
+                <label className="mb-1 block font-semibold text-zinc-300">Internal Notes</label>
                 <input
                   type="text"
                   value={receiveNotes}
                   onChange={(e) => setReceiveNotes(e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-white focus:border-emerald-500"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-white focus:border-emerald-500"
                 />
               </div>
 
-              <div className="pt-4 border-t border-zinc-800 flex items-center justify-end gap-3">
+              <div className="flex items-center justify-end gap-3 border-t border-zinc-800 pt-4">
                 <button
                   type="button"
                   onClick={() => setModalType(null)}
-                  className="px-4 py-2 rounded-lg bg-zinc-800 text-zinc-300"
+                  className="rounded-lg bg-zinc-800 px-4 py-2 text-zinc-300"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold"
+                  className="rounded-lg bg-emerald-600 px-5 py-2 font-bold text-white hover:bg-emerald-500"
                 >
                   {isSubmitting ? 'Processing...' : 'Confirm Stock Receipt'}
                 </button>
@@ -650,41 +702,47 @@ export function AdminInventory({
 
       {/* MODAL 2: Write-off Damaged / Shrinkage Stock */}
       {modalType === 'writeoff' && selectedProduct && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/80 backdrop-blur-sm p-4 flex items-center justify-center">
-          <div className="relative w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl my-8">
-            <div className="p-5 border-b border-zinc-800 flex items-center justify-between bg-zinc-950">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/80 p-4 backdrop-blur-sm">
+          <div className="relative my-8 w-full max-w-lg overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-950 p-5">
               <div className="flex items-center gap-2">
-                <ShieldAlert className="w-5 h-5 text-red-400" />
-                <h3 className="font-bold text-base text-white">Stock Loss & Damage Write-Off</h3>
+                <ShieldAlert className="h-5 w-5 text-red-400" />
+                <h3 className="text-base font-bold text-white">Stock Loss & Damage Write-Off</h3>
               </div>
-              <button onClick={() => setModalType(null)} className="text-zinc-400 hover:text-white p-1">
+              <button
+                onClick={() => setModalType(null)}
+                className="p-1 text-zinc-400 hover:text-white"
+              >
                 &times;
               </button>
             </div>
 
-            <form onSubmit={handleWriteOffSubmit} className="p-6 space-y-4 text-xs">
+            <form onSubmit={handleWriteOffSubmit} className="space-y-4 p-6 text-xs">
               {actionError && (
-                <div className="p-3 rounded-lg bg-red-950 border border-red-800 text-red-200">
+                <div className="rounded-lg border border-red-800 bg-red-950 p-3 text-red-200">
                   {actionError}
                 </div>
               )}
               {actionSuccess && (
-                <div className="p-3 rounded-lg bg-emerald-950 border border-emerald-800 text-emerald-200">
+                <div className="rounded-lg border border-emerald-800 bg-emerald-950 p-3 text-emerald-200">
                   {actionSuccess}
                 </div>
               )}
 
-              <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
-                <span className="text-zinc-500 block text-[10px] uppercase">Selected Product</span>
-                <span className="text-white font-bold text-sm">{selectedProduct.name}</span>
-                <div className="text-zinc-400 font-mono mt-0.5">
-                  SKU: {selectedProduct.sku} | Available: {selectedProduct.stockQuantity - selectedProduct.reservedQuantity} units
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
+                <span className="block text-[10px] text-zinc-500 uppercase">Selected Product</span>
+                <span className="text-sm font-bold text-white">{selectedProduct.name}</span>
+                <div className="mt-0.5 font-mono text-zinc-400">
+                  SKU: {selectedProduct.sku} | Available:{' '}
+                  {selectedProduct.stockQuantity - selectedProduct.reservedQuantity} units
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block font-semibold text-zinc-300 mb-1">Quantity to Write Off *</label>
+                  <label className="mb-1 block font-semibold text-zinc-300">
+                    Quantity to Write Off *
+                  </label>
                   <input
                     type="number"
                     min={1}
@@ -692,16 +750,16 @@ export function AdminInventory({
                     value={writeOffQty}
                     onChange={(e) => setWriteOffQty(Number(e.target.value))}
                     required
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-white font-mono font-bold focus:border-red-500"
+                    className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono font-bold text-white focus:border-red-500"
                   />
                 </div>
 
                 <div>
-                  <label className="block font-semibold text-zinc-300 mb-1">Reason Code *</label>
+                  <label className="mb-1 block font-semibold text-zinc-300">Reason Code *</label>
                   <select
                     value={writeOffReason}
                     onChange={(e) => setWriteOffReason(e.target.value as any)}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-white focus:border-red-500 cursor-pointer"
+                    className="w-full cursor-pointer rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-white focus:border-red-500"
                   >
                     <option value="warehouse_damage">Warehouse Damage</option>
                     <option value="damage_transit">Courier Transit Damage</option>
@@ -713,28 +771,30 @@ export function AdminInventory({
               </div>
 
               <div>
-                <label className="block font-semibold text-zinc-300 mb-1">Incident Details / Explanation</label>
+                <label className="mb-1 block font-semibold text-zinc-300">
+                  Incident Details / Explanation
+                </label>
                 <textarea
                   value={writeOffNotes}
                   onChange={(e) => setWriteOffNotes(e.target.value)}
                   rows={2}
                   placeholder="Explain why this item is being removed from inventory..."
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-white focus:border-red-500"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-white focus:border-red-500"
                 />
               </div>
 
-              <div className="pt-4 border-t border-zinc-800 flex items-center justify-end gap-3">
+              <div className="flex items-center justify-end gap-3 border-t border-zinc-800 pt-4">
                 <button
                   type="button"
                   onClick={() => setModalType(null)}
-                  className="px-4 py-2 rounded-lg bg-zinc-800 text-zinc-300"
+                  className="rounded-lg bg-zinc-800 px-4 py-2 text-zinc-300"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="px-5 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold"
+                  className="rounded-lg bg-red-600 px-5 py-2 font-bold text-white hover:bg-red-500"
                 >
                   {isSubmitting ? 'Writing off...' : 'Confirm Write-Off'}
                 </button>
@@ -746,87 +806,97 @@ export function AdminInventory({
 
       {/* MODAL 3: Physical Count Audit */}
       {modalType === 'audit' && selectedProduct && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/80 backdrop-blur-sm p-4 flex items-center justify-center">
-          <div className="relative w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl my-8">
-            <div className="p-5 border-b border-zinc-800 flex items-center justify-between bg-zinc-950">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/80 p-4 backdrop-blur-sm">
+          <div className="relative my-8 w-full max-w-lg overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-950 p-5">
               <div className="flex items-center gap-2">
-                <ClipboardCheck className="w-5 h-5 text-indigo-400" />
-                <h3 className="font-bold text-base text-white">Physical Stock Count Audit</h3>
+                <ClipboardCheck className="h-5 w-5 text-indigo-400" />
+                <h3 className="text-base font-bold text-white">Physical Stock Count Audit</h3>
               </div>
-              <button onClick={() => setModalType(null)} className="text-zinc-400 hover:text-white p-1">
+              <button
+                onClick={() => setModalType(null)}
+                className="p-1 text-zinc-400 hover:text-white"
+              >
                 &times;
               </button>
             </div>
 
-            <form onSubmit={handleAuditSubmit} className="p-6 space-y-4 text-xs">
+            <form onSubmit={handleAuditSubmit} className="space-y-4 p-6 text-xs">
               {actionError && (
-                <div className="p-3 rounded-lg bg-red-950 border border-red-800 text-red-200">
+                <div className="rounded-lg border border-red-800 bg-red-950 p-3 text-red-200">
                   {actionError}
                 </div>
               )}
               {actionSuccess && (
-                <div className="p-3 rounded-lg bg-emerald-950 border border-emerald-800 text-emerald-200">
+                <div className="rounded-lg border border-emerald-800 bg-emerald-950 p-3 text-emerald-200">
                   {actionSuccess}
                 </div>
               )}
 
-              <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
-                <span className="text-zinc-500 block text-[10px] uppercase">Auditing SKU</span>
-                <span className="text-white font-bold text-sm">{selectedProduct.name}</span>
-                <div className="text-zinc-400 font-mono mt-0.5">
-                  SKU: {selectedProduct.sku} | System Current Stock: <strong>{selectedProduct.stockQuantity}</strong>
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
+                <span className="block text-[10px] text-zinc-500 uppercase">Auditing SKU</span>
+                <span className="text-sm font-bold text-white">{selectedProduct.name}</span>
+                <div className="mt-0.5 font-mono text-zinc-400">
+                  SKU: {selectedProduct.sku} | System Current Stock:{' '}
+                  <strong>{selectedProduct.stockQuantity}</strong>
                 </div>
               </div>
 
               <div>
-                <label className="block font-semibold text-zinc-300 mb-1">Physical Shelf Count *</label>
+                <label className="mb-1 block font-semibold text-zinc-300">
+                  Physical Shelf Count *
+                </label>
                 <input
                   type="number"
                   min={0}
                   value={auditCountedQty}
                   onChange={(e) => setAuditCountedQty(Number(e.target.value))}
                   required
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-white font-mono font-bold text-sm focus:border-indigo-500"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono text-sm font-bold text-white focus:border-indigo-500"
                 />
               </div>
 
               {/* Live Discrepancy indicator */}
-              <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800 flex items-center justify-between font-mono">
+              <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-950 p-3 font-mono">
                 <span className="text-zinc-400">Calculated Variance:</span>
-                <span className={`font-bold ${
-                  auditCountedQty - selectedProduct.stockQuantity === 0
-                    ? 'text-emerald-400'
-                    : auditCountedQty - selectedProduct.stockQuantity > 0
-                    ? 'text-indigo-400'
-                    : 'text-red-400'
-                }`}>
+                <span
+                  className={`font-bold ${
+                    auditCountedQty - selectedProduct.stockQuantity === 0
+                      ? 'text-emerald-400'
+                      : auditCountedQty - selectedProduct.stockQuantity > 0
+                        ? 'text-indigo-400'
+                        : 'text-red-400'
+                  }`}
+                >
                   {auditCountedQty - selectedProduct.stockQuantity > 0 ? '+' : ''}
                   {auditCountedQty - selectedProduct.stockQuantity} units
                 </span>
               </div>
 
               <div>
-                <label className="block font-semibold text-zinc-300 mb-1">Audit Notes / Location</label>
+                <label className="mb-1 block font-semibold text-zinc-300">
+                  Audit Notes / Location
+                </label>
                 <input
                   type="text"
                   value={auditNotes}
                   onChange={(e) => setAuditNotes(e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-white focus:border-indigo-500"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-white focus:border-indigo-500"
                 />
               </div>
 
-              <div className="pt-4 border-t border-zinc-800 flex items-center justify-end gap-3">
+              <div className="flex items-center justify-end gap-3 border-t border-zinc-800 pt-4">
                 <button
                   type="button"
                   onClick={() => setModalType(null)}
-                  className="px-4 py-2 rounded-lg bg-zinc-800 text-zinc-300"
+                  className="rounded-lg bg-zinc-800 px-4 py-2 text-zinc-300"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold"
+                  className="rounded-lg bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-500"
                 >
                   {isSubmitting ? 'Recording...' : 'Reconcile Count'}
                 </button>

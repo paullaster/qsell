@@ -5,9 +5,6 @@ export default async function AdminProductsPage() {
   const productsPromise = listProductsAction();
   const categoriesPromise = listCategoriesAction();
   return (
-    <AdminProductsClient
-      productsPromise={productsPromise}
-      categoriesPromise={categoriesPromise}
-    />
+    <AdminProductsClient productsPromise={productsPromise} categoriesPromise={categoriesPromise} />
   );
 }

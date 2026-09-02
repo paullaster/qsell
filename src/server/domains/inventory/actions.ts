@@ -15,7 +15,7 @@ export async function listLowStockAction(): Promise<Product[]> {
 export async function adjustStockAction(
   productId: string,
   newQuantity: number,
-  reason: string
+  reason: string,
 ): Promise<Product> {
   const product = InventoryDomainService.adjust(productId, newQuantity, reason);
   revalidatePath('/admin/inventory');
@@ -27,7 +27,7 @@ export async function adjustStockAction(
 export async function updateProductStockAction(
   productId: string,
   newQuantity: number,
-  reason: string
+  reason: string,
 ): Promise<Product> {
   return adjustStockAction(productId, newQuantity, reason);
 }
@@ -46,7 +46,7 @@ export async function receiveStockAction(payload: {
     payload.supplier,
     payload.poNumber,
     payload.unitCost,
-    payload.notes
+    payload.notes,
   );
   revalidatePath('/admin/inventory');
   revalidatePath('/');
@@ -68,7 +68,7 @@ export async function writeOffStockAction(payload: {
     payload.productId,
     payload.quantity,
     payload.reasonCode,
-    payload.notes
+    payload.notes,
   );
   revalidatePath('/admin/inventory');
   revalidatePath('/');
@@ -83,7 +83,7 @@ export async function auditStockCountAction(payload: {
   const result = InventoryDomainService.audit(
     payload.productId,
     payload.countedQuantity,
-    payload.notes
+    payload.notes,
   );
   revalidatePath('/admin/inventory');
   revalidatePath('/');
@@ -91,7 +91,7 @@ export async function auditStockCountAction(payload: {
 }
 
 export async function batchAdjustStockAction(
-  adjustments: { productId: string; newQuantity: number; reason: string }[]
+  adjustments: { productId: string; newQuantity: number; reason: string }[],
 ): Promise<Product[]> {
   const products = InventoryDomainService.batchAdjust(adjustments);
   revalidatePath('/admin/inventory');
@@ -106,14 +106,14 @@ export async function updateOrderStatusAction(
     shippingCourier?: string;
     trackingNumber?: string;
     internalNotes?: string;
-  }
+  },
 ): Promise<Order> {
   const order = InventoryDomainService.updateOrderStatus(
     orderId,
     payload.status,
     payload.shippingCourier,
     payload.trackingNumber,
-    payload.internalNotes
+    payload.internalNotes,
   );
   revalidatePath('/admin/orders');
   return order;

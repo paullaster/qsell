@@ -10,7 +10,7 @@ export async function listGatewaysAction(): Promise<PaymentGatewayConfig[]> {
 
 export async function updateGatewayConfigAction(
   gatewayId: string,
-  updates: Partial<PaymentGatewayConfig>
+  updates: Partial<PaymentGatewayConfig>,
 ): Promise<PaymentGatewayConfig> {
   const gateway = AdminService.updatePaymentGateway(gatewayId, updates);
   revalidatePath('/admin/gateways');

@@ -1,22 +1,31 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { 
-  X, 
-  Plus, 
-  Package, 
-  DollarSign, 
-  Image as ImageIcon, 
-  Tag, 
-  Save, 
+import {
+  X,
+  Plus,
+  Package,
+  DollarSign,
+  Image as ImageIcon,
+  Tag,
+  Save,
   AlertTriangle,
   Percent,
   Layers,
   Trash2,
-  CheckCircle2
+  CheckCircle2,
 } from 'lucide-react';
-import { Product, Category, TaxCategory, ProductSpecification } from '@/types/index';
-import { createProductAction, updateProductAction, fetchTaxCategoriesAction } from '@/server/actions';
+import {
+  type Product,
+  type Category,
+  type TaxCategory,
+  type ProductSpecification,
+} from '@/types/index';
+import {
+  createProductAction,
+  updateProductAction,
+  fetchTaxCategoriesAction,
+} from '@/server/actions';
 
 interface AdminProductModalProps {
   isOpen: boolean;
@@ -33,11 +42,11 @@ export function AdminProductModal({
   productToEdit,
   categories,
   taxCategories: initialTaxCategories,
-  onSuccess
+  onSuccess,
 }: AdminProductModalProps) {
   if (!isOpen) return null;
 
-  const isEditing = !!productToEdit;
+  const isEditing = Boolean(productToEdit);
 
   // Basic Information
   const [name, setName] = useState('');
@@ -45,7 +54,7 @@ export function AdminProductModal({
   const [slug, setSlug] = useState('');
   const [category, setCategory] = useState('Electronics');
   const [brand, setBrand] = useState('');
-  
+
   // Tax Categories & Selection
   const [taxCategories, setTaxCategories] = useState<TaxCategory[]>(initialTaxCategories || []);
   const [selectedTaxId, setSelectedTaxId] = useState<string>('');
@@ -54,12 +63,12 @@ export function AdminProductModal({
   const [price, setPrice] = useState<number>(10000);
   const [compareAtPrice, setCompareAtPrice] = useState<number>(12000);
   const [costPrice, setCostPrice] = useState<number>(7500);
-  
+
   // Inventory & Logistics
   const [stockQuantity, setStockQuantity] = useState<number>(20);
   const [lowStockThreshold, setLowStockThreshold] = useState<number>(5);
   const [weight, setWeight] = useState<number>(1.2);
-  
+
   // Media & Description
   const [imageUrl, setImageUrl] = useState('');
   const [description, setDescription] = useState('');
@@ -69,7 +78,7 @@ export function AdminProductModal({
   // Dynamic Specifications (key-value pairs)
   const [specifications, setSpecifications] = useState<ProductSpecification[]>([
     { key: 'Warranty', value: '1 Year Official Warranty' },
-    { key: 'Condition', value: 'Brand New Sealed' }
+    { key: 'Condition', value: 'Brand New Sealed' },
   ]);
   const [newSpecKey, setNewSpecKey] = useState('');
   const [newSpecValue, setNewSpecValue] = useState('');
@@ -81,7 +90,7 @@ export function AdminProductModal({
   useEffect(() => {
     if (!initialTaxCategories || initialTaxCategories.length === 0) {
       fetchTaxCategoriesAction()
-        .then(taxes => setTaxCategories(taxes))
+        .then((taxes) => setTaxCategories(taxes))
         .catch(() => {});
     }
   }, [initialTaxCategories]);
@@ -110,12 +119,12 @@ export function AdminProductModal({
           ? productToEdit.specifications
           : [
               { key: 'Warranty', value: '1 Year Official Warranty' },
-              { key: 'Condition', value: 'Brand New Sealed' }
-            ]
+              { key: 'Condition', value: 'Brand New Sealed' },
+            ],
       );
     } else {
       const defaultCategory = categories.length > 0 ? categories[0].name : 'Electronics';
-      const defaultTax = taxCategories.find(t => t.isDefault) || taxCategories[0];
+      const defaultTax = taxCategories.find((t) => t.isDefault) || taxCategories[0];
       setName('');
       setSku(`SKU-${Math.floor(1000 + Math.random() * 9000)}`);
       setSlug('');
@@ -128,40 +137,51 @@ export function AdminProductModal({
       setStockQuantity(15);
       setLowStockThreshold(4);
       setWeight(1.5);
-      setImageUrl('https://images.unsplash.com/photo-1526738549149-8e07eca6c147?auto=format&fit=crop&w=1000&q=80');
-      setDescription('Premium grade electronic device with exceptional build quality, high reliability, and standard manufacturer support.');
+      setImageUrl(
+        'https://images.unsplash.com/photo-1526738549149-8e07eca6c147?auto=format&fit=crop&w=1000&q=80',
+      );
+      setDescription(
+        'Premium grade electronic device with exceptional build quality, high reliability, and standard manufacturer support.',
+      );
       setTagsInput('Electronics, Flagship, In-Demand');
       setIsActive(true);
       setSpecifications([
         { key: 'Warranty', value: '1 Year Official Warranty' },
-        { key: 'Condition', value: 'Brand New Sealed' }
+        { key: 'Condition', value: 'Brand New Sealed' },
       ]);
     }
   }, [productToEdit, isOpen, categories, taxCategories]);
 
   // Selected Tax details
-  const activeTax = taxCategories.find(t => t.id === selectedTaxId) || taxCategories.find(t => t.isDefault) || taxCategories[0];
+  const activeTax =
+    taxCategories.find((t) => t.id === selectedTaxId) ||
+    taxCategories.find((t) => t.isDefault) ||
+    taxCategories[0];
   const taxRate = activeTax ? activeTax.rate : 16.0;
   const isTaxInclusive = activeTax ? activeTax.isInclusive : true;
 
   // Fiscal Calculations
   const effectivePrice = Number(price) || 0;
-  const netSellingPrice = isTaxInclusive 
-    ? (taxRate > 0 ? effectivePrice / (1 + taxRate / 100) : effectivePrice)
+  const netSellingPrice = isTaxInclusive
+    ? taxRate > 0
+      ? effectivePrice / (1 + taxRate / 100)
+      : effectivePrice
     : effectivePrice;
   const taxAmountPerUnit = isTaxInclusive
-    ? (effectivePrice - netSellingPrice)
-    : (effectivePrice * (taxRate / 100));
-  const grossTotalPerUnit = isTaxInclusive
-    ? effectivePrice
-    : (effectivePrice + taxAmountPerUnit);
+    ? effectivePrice - netSellingPrice
+    : effectivePrice * (taxRate / 100);
+  const grossTotalPerUnit = isTaxInclusive ? effectivePrice : effectivePrice + taxAmountPerUnit;
 
   const unitGrossProfit = netSellingPrice - (costPrice || 0);
-  const grossMarginPct = netSellingPrice > 0 ? ((unitGrossProfit / netSellingPrice) * 100).toFixed(1) : '0.0';
+  const grossMarginPct =
+    netSellingPrice > 0 ? ((unitGrossProfit / netSellingPrice) * 100).toFixed(1) : '0.0';
 
   const handleAddSpec = () => {
     if (newSpecKey.trim() && newSpecValue.trim()) {
-      setSpecifications([...specifications, { key: newSpecKey.trim(), value: newSpecValue.trim() }]);
+      setSpecifications([
+        ...specifications,
+        { key: newSpecKey.trim(), value: newSpecValue.trim() },
+      ]);
       setNewSpecKey('');
       setNewSpecValue('');
     }
@@ -189,7 +209,10 @@ export function AdminProductModal({
     setIsSubmitting(true);
     setError(null);
 
-    const tags = tagsInput.split(',').map((t) => t.trim()).filter(Boolean);
+    const tags = tagsInput
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean);
     const autoSlug = slug.trim() || name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
 
     try {
@@ -213,7 +236,7 @@ export function AdminProductModal({
         imageUrl: imageUrl.trim(),
         description: description.trim(),
         tags,
-        isActive
+        isActive,
       };
 
       if (isEditing && productToEdit) {
@@ -222,7 +245,7 @@ export function AdminProductModal({
         await createProductAction({
           ...productPayload,
           rating: 5.0,
-          reviewCount: 0
+          reviewCount: 0,
         });
       }
       onSuccess();
@@ -235,50 +258,54 @@ export function AdminProductModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/80 backdrop-blur-md p-4 sm:p-6 flex items-center justify-center">
-      <div className="relative w-full max-w-3xl bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl flex flex-col my-8 max-h-[92vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/80 p-4 backdrop-blur-md sm:p-6">
+      <div className="relative my-8 flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl">
         {/* Modal Header */}
-        <div className="p-5 border-b border-zinc-800 flex items-center justify-between bg-zinc-950">
+        <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-950 p-5">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
-              <Package className="w-4 h-4" />
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-indigo-500/30 bg-indigo-600/20 text-indigo-400">
+              <Package className="h-4 w-4" />
             </div>
             <div>
-              <h3 className="font-bold text-base text-white">
-                {isEditing ? `Edit Product: ${productToEdit.sku}` : 'Create New Product Record'}
+              <h3 className="text-base font-bold text-white">
+                {isEditing
+                  ? `Edit Product: ${productToEdit?.sku ?? ''}`
+                  : 'Create New Product Record'}
               </h3>
               <p className="text-[11px] text-zinc-400">
-                {isEditing ? 'Update pricing, margins, stock thresholds, and specifications.' : 'Add a new catalog item with complete pricing and inventory tracking.'}
+                {isEditing
+                  ? 'Update pricing, margins, stock thresholds, and specifications.'
+                  : 'Add a new catalog item with complete pricing and inventory tracking.'}
               </p>
             </div>
           </div>
-          <button 
-            onClick={onClose} 
-            className="text-zinc-400 hover:text-white p-1 rounded-lg cursor-pointer"
+          <button
+            onClick={onClose}
+            className="cursor-pointer rounded-lg p-1 text-zinc-400 hover:text-white"
           >
-            <X className="w-5 h-5" />
+            <X className="h-5 w-5" />
           </button>
         </div>
 
         {/* Form Content */}
-        <form onSubmit={handleSubmit} className="p-6 overflow-y-auto space-y-6 flex-1 text-xs">
+        <form onSubmit={handleSubmit} className="flex-1 space-y-6 overflow-y-auto p-6 text-xs">
           {error && (
-            <div className="p-3.5 rounded-lg bg-red-950/80 border border-red-800 text-red-200 flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+            <div className="flex items-center gap-2 rounded-lg border border-red-800 bg-red-950/80 p-3.5 text-red-200">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-red-400" />
               <span>{error}</span>
             </div>
           )}
 
           {/* Section 1: Basic Information */}
           <div className="space-y-4">
-            <h4 className="font-bold text-white text-xs uppercase tracking-wider text-zinc-400 border-b border-zinc-800 pb-1.5 flex items-center gap-1.5">
-              <Package className="w-3.5 h-3.5 text-indigo-400" />
+            <h4 className="flex items-center gap-1.5 border-b border-zinc-800 pb-1.5 text-xs font-bold tracking-wider text-white text-zinc-400 uppercase">
+              <Package className="h-3.5 w-3.5 text-indigo-400" />
               General Catalog Information
             </h4>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div className="sm:col-span-2">
-                <label className="block font-semibold text-zinc-300 mb-1">Product Title *</label>
+                <label className="mb-1 block font-semibold text-zinc-300">Product Title *</label>
                 <input
                   type="text"
                   value={name}
@@ -290,28 +317,28 @@ export function AdminProductModal({
                   }}
                   required
                   placeholder="e.g. Sony WH-1000XM5 Wireless Headphones"
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="block font-semibold text-zinc-300 mb-1">SKU Code *</label>
+                <label className="mb-1 block font-semibold text-zinc-300">SKU Code *</label>
                 <input
                   type="text"
                   value={sku}
                   onChange={(e) => setSku(e.target.value.toUpperCase())}
                   required
                   placeholder="e.g. SNY-WH1000XM5"
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-white placeholder-zinc-500 font-mono focus:outline-none focus:border-indigo-500"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="block font-semibold text-zinc-300 mb-1">Category *</label>
+                <label className="mb-1 block font-semibold text-zinc-300">Category *</label>
                 <select
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-white focus:outline-none focus:border-indigo-500 cursor-pointer"
+                  className="w-full cursor-pointer rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-white focus:border-indigo-500 focus:outline-none"
                 >
                   {categories.map((c) => (
                     <option key={c.id} value={c.name}>
@@ -331,24 +358,26 @@ export function AdminProductModal({
               </div>
 
               <div>
-                <label className="block font-semibold text-zinc-300 mb-1">Brand / Manufacturer</label>
+                <label className="mb-1 block font-semibold text-zinc-300">
+                  Brand / Manufacturer
+                </label>
                 <input
                   type="text"
                   value={brand}
                   onChange={(e) => setBrand(e.target.value)}
                   placeholder="e.g. Sony, Apple, Samsung"
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="block font-semibold text-zinc-300 mb-1">URL Slug</label>
+                <label className="mb-1 block font-semibold text-zinc-300">URL Slug</label>
                 <input
                   type="text"
                   value={slug}
                   onChange={(e) => setSlug(e.target.value)}
                   placeholder="sony-wh-1000xm5"
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-white placeholder-zinc-500 font-mono focus:outline-none focus:border-indigo-500"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
                 />
               </div>
             </div>
@@ -356,30 +385,32 @@ export function AdminProductModal({
 
           {/* Section 2: Pricing & Profit Margins */}
           <div className="space-y-4">
-            <h4 className="font-bold text-white text-xs uppercase tracking-wider text-zinc-400 border-b border-zinc-800 pb-1.5 flex items-center gap-1.5">
-              <DollarSign className="w-3.5 h-3.5 text-emerald-400" />
+            <h4 className="flex items-center gap-1.5 border-b border-zinc-800 pb-1.5 text-xs font-bold tracking-wider text-white text-zinc-400 uppercase">
+              <DollarSign className="h-3.5 w-3.5 text-emerald-400" />
               Pricing, Tax Category & Profitability
             </h4>
 
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
               <div>
-                <label className="block font-semibold text-zinc-300 mb-1">Selling Price (KES) *</label>
+                <label className="mb-1 block font-semibold text-zinc-300">
+                  Selling Price (KES) *
+                </label>
                 <input
                   type="number"
                   min={1}
                   value={price}
                   onChange={(e) => setPrice(Number(e.target.value))}
                   required
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-white font-mono font-bold focus:outline-none focus:border-indigo-500"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono font-bold text-white focus:border-indigo-500 focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="block font-semibold text-zinc-300 mb-1">Tax Category *</label>
+                <label className="mb-1 block font-semibold text-zinc-300">Tax Category *</label>
                 <select
                   value={selectedTaxId}
                   onChange={(e) => setSelectedTaxId(e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-indigo-500 cursor-pointer"
+                  className="w-full cursor-pointer rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-white focus:border-indigo-500 focus:outline-none"
                 >
                   {taxCategories.map((t) => (
                     <option key={t.id} value={t.id}>
@@ -390,56 +421,66 @@ export function AdminProductModal({
               </div>
 
               <div>
-                <label className="block font-semibold text-zinc-300 mb-1">Compare-at Price (KES)</label>
+                <label className="mb-1 block font-semibold text-zinc-300">
+                  Compare-at Price (KES)
+                </label>
                 <input
                   type="number"
                   min={0}
                   value={compareAtPrice}
                   onChange={(e) => setCompareAtPrice(Number(e.target.value))}
                   placeholder="Original MSRP"
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-white font-mono focus:outline-none focus:border-indigo-500"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono text-white focus:border-indigo-500 focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="block font-semibold text-zinc-300 mb-1">Cost of Goods (KES)</label>
+                <label className="mb-1 block font-semibold text-zinc-300">
+                  Cost of Goods (KES)
+                </label>
                 <input
                   type="number"
                   min={0}
                   value={costPrice}
                   onChange={(e) => setCostPrice(Number(e.target.value))}
                   placeholder="Supplier unit cost"
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-white font-mono focus:outline-none focus:border-indigo-500"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono text-white focus:border-indigo-500 focus:outline-none"
                 />
               </div>
             </div>
 
             {/* Profit & Fiscal Margin Calculator Card */}
-            <div className="p-3.5 rounded-xl bg-zinc-950 border border-zinc-800 grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 gap-3 rounded-xl border border-zinc-800 bg-zinc-950 p-3.5 sm:grid-cols-4">
               <div>
-                <span className="text-[10px] text-zinc-500 block uppercase">Net (Excl. Tax)</span>
-                <span className="text-xs font-semibold text-zinc-200 font-mono">
+                <span className="block text-[10px] text-zinc-500 uppercase">Net (Excl. Tax)</span>
+                <span className="font-mono text-xs font-semibold text-zinc-200">
                   KES {Math.round(netSellingPrice).toLocaleString()}
                 </span>
               </div>
 
               <div>
-                <span className="text-[10px] text-emerald-400 block uppercase">Tax ({taxRate}%)</span>
-                <span className="text-xs font-semibold text-emerald-400 font-mono">
+                <span className="block text-[10px] text-emerald-400 uppercase">
+                  Tax ({taxRate}%)
+                </span>
+                <span className="font-mono text-xs font-semibold text-emerald-400">
                   KES {Math.round(taxAmountPerUnit).toLocaleString()}
                 </span>
               </div>
 
               <div>
-                <span className="text-[10px] text-zinc-500 block uppercase">Unit Profit</span>
-                <span className={`text-xs font-bold font-mono ${unitGrossProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                <span className="block text-[10px] text-zinc-500 uppercase">Unit Profit</span>
+                <span
+                  className={`font-mono text-xs font-bold ${unitGrossProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}
+                >
                   KES {Math.round(unitGrossProfit).toLocaleString()}
                 </span>
               </div>
 
               <div>
-                <span className="text-[10px] text-zinc-500 block uppercase">Profit Margin</span>
-                <span className={`text-xs font-bold font-mono ${Number(grossMarginPct) >= 20 ? 'text-indigo-400' : 'text-amber-400'}`}>
+                <span className="block text-[10px] text-zinc-500 uppercase">Profit Margin</span>
+                <span
+                  className={`font-mono text-xs font-bold ${Number(grossMarginPct) >= 20 ? 'text-indigo-400' : 'text-amber-400'}`}
+                >
                   {grossMarginPct}% ({isTaxInclusive ? 'Inclusive' : 'Exclusive'})
                 </span>
               </div>
@@ -448,45 +489,51 @@ export function AdminProductModal({
 
           {/* Section 3: Inventory & Logistics */}
           <div className="space-y-4">
-            <h4 className="font-bold text-white text-xs uppercase tracking-wider text-zinc-400 border-b border-zinc-800 pb-1.5 flex items-center gap-1.5">
-              <Layers className="w-3.5 h-3.5 text-indigo-400" />
+            <h4 className="flex items-center gap-1.5 border-b border-zinc-800 pb-1.5 text-xs font-bold tracking-wider text-white text-zinc-400 uppercase">
+              <Layers className="h-3.5 w-3.5 text-indigo-400" />
               Inventory & Warehouse Settings
             </h4>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div>
-                <label className="block font-semibold text-zinc-300 mb-1">Current On-Hand Stock *</label>
+                <label className="mb-1 block font-semibold text-zinc-300">
+                  Current On-Hand Stock *
+                </label>
                 <input
                   type="number"
                   min={0}
                   value={stockQuantity}
                   onChange={(e) => setStockQuantity(Number(e.target.value))}
                   required
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-white font-mono font-bold focus:outline-none focus:border-indigo-500"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono font-bold text-white focus:border-indigo-500 focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="block font-semibold text-zinc-300 mb-1">Low Stock Threshold *</label>
+                <label className="mb-1 block font-semibold text-zinc-300">
+                  Low Stock Threshold *
+                </label>
                 <input
                   type="number"
                   min={1}
                   value={lowStockThreshold}
                   onChange={(e) => setLowStockThreshold(Number(e.target.value))}
                   required
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-white font-mono focus:outline-none focus:border-indigo-500"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono text-white focus:border-indigo-500 focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="block font-semibold text-zinc-300 mb-1">Shipping Weight (kg)</label>
+                <label className="mb-1 block font-semibold text-zinc-300">
+                  Shipping Weight (kg)
+                </label>
                 <input
                   type="number"
                   step="0.1"
                   min={0.1}
                   value={weight}
                   onChange={(e) => setWeight(Number(e.target.value))}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-white font-mono focus:outline-none focus:border-indigo-500"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono text-white focus:border-indigo-500 focus:outline-none"
                 />
               </div>
             </div>
@@ -494,22 +541,25 @@ export function AdminProductModal({
 
           {/* Section 4: Specifications */}
           <div className="space-y-3">
-            <h4 className="font-bold text-white text-xs uppercase tracking-wider text-zinc-400 border-b border-zinc-800 pb-1.5 flex items-center gap-1.5">
-              <Tag className="w-3.5 h-3.5 text-indigo-400" />
+            <h4 className="flex items-center gap-1.5 border-b border-zinc-800 pb-1.5 text-xs font-bold tracking-wider text-white text-zinc-400 uppercase">
+              <Tag className="h-3.5 w-3.5 text-indigo-400" />
               Technical Specifications & Key Attributes
             </h4>
 
             <div className="space-y-2">
               {specifications.map((spec, idx) => (
-                <div key={idx} className="flex items-center gap-2 p-2 rounded-lg bg-zinc-950 border border-zinc-800">
-                  <span className="font-semibold text-white w-32 truncate">{spec.key}</span>
-                  <span className="text-zinc-400 flex-1 truncate">{spec.value}</span>
+                <div
+                  key={idx}
+                  className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950 p-2"
+                >
+                  <span className="w-32 truncate font-semibold text-white">{spec.key}</span>
+                  <span className="flex-1 truncate text-zinc-400">{spec.value}</span>
                   <button
                     type="button"
                     onClick={() => handleRemoveSpec(idx)}
-                    className="text-zinc-500 hover:text-red-400 p-1 cursor-pointer"
+                    className="cursor-pointer p-1 text-zinc-500 hover:text-red-400"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
+                    <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </div>
               ))}
@@ -520,19 +570,19 @@ export function AdminProductModal({
                   placeholder="Attribute (e.g. RAM, Storage, Color)"
                   value={newSpecKey}
                   onChange={(e) => setNewSpecKey(e.target.value)}
-                  className="w-1/3 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-1.5 text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+                  className="w-1/3 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
                 />
                 <input
                   type="text"
                   placeholder="Value (e.g. 16GB Unified Memory)"
                   value={newSpecValue}
                   onChange={(e) => setNewSpecValue(e.target.value)}
-                  className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-1.5 text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+                  className="flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
                 />
                 <button
                   type="button"
                   onClick={handleAddSpec}
-                  className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white font-medium cursor-pointer"
+                  className="cursor-pointer rounded-lg bg-zinc-800 px-3 py-1.5 font-medium text-white hover:bg-zinc-700"
                 >
                   Add Spec
                 </button>
@@ -542,51 +592,56 @@ export function AdminProductModal({
 
           {/* Section 5: Media & Details */}
           <div className="space-y-4">
-            <h4 className="font-bold text-white text-xs uppercase tracking-wider text-zinc-400 border-b border-zinc-800 pb-1.5 flex items-center gap-1.5">
-              <ImageIcon className="w-3.5 h-3.5 text-indigo-400" />
+            <h4 className="flex items-center gap-1.5 border-b border-zinc-800 pb-1.5 text-xs font-bold tracking-wider text-white text-zinc-400 uppercase">
+              <ImageIcon className="h-3.5 w-3.5 text-indigo-400" />
               Media & Storefront Visibility
             </h4>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="sm:col-span-2 space-y-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div className="space-y-4 sm:col-span-2">
                 <div>
-                  <label className="block font-semibold text-zinc-300 mb-1">Primary Image URL *</label>
+                  <label className="mb-1 block font-semibold text-zinc-300">
+                    Primary Image URL *
+                  </label>
                   <input
                     type="url"
                     value={imageUrl}
                     onChange={(e) => setImageUrl(e.target.value)}
                     required
                     placeholder="https://..."
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-white placeholder-zinc-500 font-mono focus:outline-none focus:border-indigo-500"
+                    className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
                   />
                 </div>
 
                 <div>
-                  <label className="block font-semibold text-zinc-300 mb-1">Tags (comma-separated)</label>
+                  <label className="mb-1 block font-semibold text-zinc-300">
+                    Tags (comma-separated)
+                  </label>
                   <input
                     type="text"
                     value={tagsInput}
                     onChange={(e) => setTagsInput(e.target.value)}
                     placeholder="e.g. Apple, ANC, Gaming, Wireless"
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+                    className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
                   />
                 </div>
               </div>
 
-              <div className="flex flex-col items-center justify-center p-3 rounded-xl bg-zinc-950 border border-zinc-800">
-                <span className="text-[10px] text-zinc-500 mb-2 uppercase">Image Preview</span>
+              <div className="flex flex-col items-center justify-center rounded-xl border border-zinc-800 bg-zinc-950 p-3">
+                <span className="mb-2 text-[10px] text-zinc-500 uppercase">Image Preview</span>
                 {imageUrl ? (
                   <img
                     src={imageUrl}
                     alt="Product Preview"
-                    className="w-24 h-24 object-cover rounded-lg border border-zinc-800"
+                    className="h-24 w-24 rounded-lg border border-zinc-800 object-cover"
                     referrerPolicy="no-referrer"
                     onError={(e) => {
-                      (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1526738549149-8e07eca6c147?auto=format&fit=crop&w=300&q=80';
+                      (e.target as HTMLImageElement).src =
+                        'https://images.unsplash.com/photo-1526738549149-8e07eca6c147?auto=format&fit=crop&w=300&q=80';
                     }}
                   />
                 ) : (
-                  <div className="w-24 h-24 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-600">
+                  <div className="flex h-24 w-24 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-600">
                     No Image
                   </div>
                 )}
@@ -594,22 +649,22 @@ export function AdminProductModal({
             </div>
 
             <div>
-              <label className="block font-semibold text-zinc-300 mb-1">Full Description</label>
+              <label className="mb-1 block font-semibold text-zinc-300">Full Description</label>
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 rows={3}
                 placeholder="Detailed marketing description, packaging details, and warranty specifications..."
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+                className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
               />
             </div>
 
             <div>
-              <label className="block font-semibold text-zinc-300 mb-1">Publishing Status</label>
+              <label className="mb-1 block font-semibold text-zinc-300">Publishing Status</label>
               <select
                 value={isActive ? 'active' : 'draft'}
                 onChange={(e) => setIsActive(e.target.value === 'active')}
-                className="w-full sm:w-60 bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-white focus:outline-none focus:border-indigo-500 cursor-pointer"
+                className="w-full cursor-pointer rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-white focus:border-indigo-500 focus:outline-none sm:w-60"
               >
                 <option value="active">Active (Published on Storefront)</option>
                 <option value="draft">Draft (Hidden from Catalog)</option>
@@ -618,20 +673,20 @@ export function AdminProductModal({
           </div>
 
           {/* Modal Footer */}
-          <div className="pt-4 border-t border-zinc-800 flex items-center justify-end gap-3">
+          <div className="flex items-center justify-end gap-3 border-t border-zinc-800 pt-4">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium cursor-pointer"
+              className="cursor-pointer rounded-lg bg-zinc-800 px-4 py-2 font-medium text-zinc-300 hover:bg-zinc-700"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isSubmitting}
-              className="flex items-center gap-1.5 px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold shadow-lg shadow-indigo-600/20 disabled:opacity-50 cursor-pointer"
+              className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-indigo-600 px-5 py-2 font-bold text-white shadow-lg shadow-indigo-600/20 hover:bg-indigo-500 disabled:opacity-50"
             >
-              <Save className="w-4 h-4" />
+              <Save className="h-4 w-4" />
               {isSubmitting ? 'Saving...' : isEditing ? 'Save Product Changes' : 'Create Product'}
             </button>
           </div>

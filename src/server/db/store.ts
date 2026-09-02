@@ -1,33 +1,33 @@
-import { 
-  Product, 
-  Category,
-  TaxCategory,
-  CurrencyConfig,
-  CustomerAccount,
-  CustomerAddress,
-  InventoryLedgerEntry, 
-  PaymentGatewayConfig, 
-  Order, 
-  OrderStatus,
-  TransactionRecord, 
-  ReconciliationLog, 
-  UserSession 
+import {
+  type Product,
+  type Category,
+  type TaxCategory,
+  type CurrencyConfig,
+  type CustomerAccount,
+  type CustomerAddress,
+  type InventoryLedgerEntry,
+  type PaymentGatewayConfig,
+  type Order,
+  type OrderStatus,
+  type TransactionRecord,
+  type ReconciliationLog,
+  type UserSession,
 } from '@/types/index';
 
 // In-Memory Transactional Store with atomic operations & seed records
 class PostgresStore {
-  public categories: Map<string, Category> = new Map();
-  public taxCategories: Map<string, TaxCategory> = new Map();
-  public currencies: Map<string, CurrencyConfig> = new Map();
-  public products: Map<string, Product> = new Map();
+  public categories = new Map<string, Category>();
+  public taxCategories = new Map<string, TaxCategory>();
+  public currencies = new Map<string, CurrencyConfig>();
+  public products = new Map<string, Product>();
   public inventoryLedger: InventoryLedgerEntry[] = [];
-  public paymentGateways: Map<string, PaymentGatewayConfig> = new Map();
-  public orders: Map<string, Order> = new Map();
-  public transactions: Map<string, TransactionRecord> = new Map();
+  public paymentGateways = new Map<string, PaymentGatewayConfig>();
+  public orders = new Map<string, Order>();
+  public transactions = new Map<string, TransactionRecord>();
   public reconciliationLogs: ReconciliationLog[] = [];
-  public customers: Map<string, CustomerAccount> = new Map();
-  public userSessions: Map<string, UserSession> = new Map();
-  public sseClients: Set<(event: string, data: any) => void> = new Set();
+  public customers = new Map<string, CustomerAccount>();
+  public userSessions = new Map<string, UserSession>();
+  public sseClients = new Set<(event: string, data: any) => void>();
 
   constructor() {
     this.seedInitialData();
@@ -62,7 +62,7 @@ class PostgresStore {
         isActive: true,
         displayOrder: 1,
         createdAt: new Date(Date.now() - 86400000 * 60).toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         id: 'cat_audio',
@@ -72,7 +72,7 @@ class PostgresStore {
         isActive: true,
         displayOrder: 2,
         createdAt: new Date(Date.now() - 86400000 * 60).toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         id: 'cat_phones',
@@ -82,7 +82,7 @@ class PostgresStore {
         isActive: true,
         displayOrder: 3,
         createdAt: new Date(Date.now() - 86400000 * 60).toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         id: 'cat_wearables',
@@ -92,7 +92,7 @@ class PostgresStore {
         isActive: true,
         displayOrder: 4,
         createdAt: new Date(Date.now() - 86400000 * 60).toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         id: 'cat_drones_cameras',
@@ -102,7 +102,7 @@ class PostgresStore {
         isActive: true,
         displayOrder: 5,
         createdAt: new Date(Date.now() - 86400000 * 60).toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         id: 'cat_accessories',
@@ -112,8 +112,8 @@ class PostgresStore {
         isActive: true,
         displayOrder: 6,
         createdAt: new Date(Date.now() - 86400000 * 60).toISOString(),
-        updatedAt: new Date().toISOString()
-      }
+        updatedAt: new Date().toISOString(),
+      },
     ];
 
     for (const cat of initialCategories) {
@@ -130,12 +130,13 @@ class PostgresStore {
         type: 'vat',
         countryCode: 'KE',
         countryName: 'Kenya',
-        description: 'Standard 16% Value Added Tax on consumer goods and electronics under KRA eTIMS regulations.',
+        description:
+          'Standard 16% Value Added Tax on consumer goods and electronics under KRA eTIMS regulations.',
         isInclusive: true,
         isDefault: true,
         isActive: true,
         createdAt: new Date(Date.now() - 86400000 * 90).toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         id: 'tax_zero_rated',
@@ -145,12 +146,13 @@ class PostgresStore {
         type: 'exempt',
         countryCode: 'KE',
         countryName: 'Kenya',
-        description: '0% Tax Rate on qualifying educational, assistive technology, and export supplies.',
+        description:
+          '0% Tax Rate on qualifying educational, assistive technology, and export supplies.',
         isInclusive: true,
         isDefault: false,
         isActive: true,
         createdAt: new Date(Date.now() - 86400000 * 90).toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         id: 'tax_exempt',
@@ -165,7 +167,7 @@ class PostgresStore {
         isDefault: false,
         isActive: true,
         createdAt: new Date(Date.now() - 86400000 * 90).toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         id: 'tax_dst_1_5',
@@ -175,12 +177,13 @@ class PostgresStore {
         type: 'digital_service',
         countryCode: 'KE',
         countryName: 'Kenya',
-        description: 'Digital Marketplace and Electronic Services levy on cross-border merchant platforms.',
+        description:
+          'Digital Marketplace and Electronic Services levy on cross-border merchant platforms.',
         isInclusive: true,
         isDefault: false,
         isActive: true,
         createdAt: new Date(Date.now() - 86400000 * 80).toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         id: 'tax_reduced_8',
@@ -190,12 +193,13 @@ class PostgresStore {
         type: 'vat',
         countryCode: 'KE',
         countryName: 'Kenya',
-        description: 'Special reduced VAT rate applicable to qualifying energy supplies and green hardware.',
+        description:
+          'Special reduced VAT rate applicable to qualifying energy supplies and green hardware.',
         isInclusive: true,
         isDefault: false,
         isActive: true,
         createdAt: new Date(Date.now() - 86400000 * 70).toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         id: 'tax_us_sales_8_25',
@@ -205,12 +209,13 @@ class PostgresStore {
         type: 'sales_tax',
         countryCode: 'US',
         countryName: 'United States',
-        description: 'State & Local benchmark sales tax rate for North American international export orders.',
+        description:
+          'State & Local benchmark sales tax rate for North American international export orders.',
         isInclusive: false,
         isDefault: false,
         isActive: true,
         createdAt: new Date(Date.now() - 86400000 * 60).toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         id: 'tax_eu_vat_20',
@@ -220,12 +225,13 @@ class PostgresStore {
         type: 'vat',
         countryCode: 'EU',
         countryName: 'European Union',
-        description: 'European Union one-stop-shop (OSS) standard VAT benchmark for European exports.',
+        description:
+          'European Union one-stop-shop (OSS) standard VAT benchmark for European exports.',
         isInclusive: false,
         isDefault: false,
         isActive: true,
         createdAt: new Date(Date.now() - 86400000 * 50).toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         id: 'tax_gcc_vat_5',
@@ -235,13 +241,14 @@ class PostgresStore {
         type: 'vat',
         countryCode: 'AE',
         countryName: 'United Arab Emirates / GCC',
-        description: 'Federal Tax Authority (FTA) 5% VAT rate for UAE and Middle East export consignments.',
+        description:
+          'Federal Tax Authority (FTA) 5% VAT rate for UAE and Middle East export consignments.',
         isInclusive: true,
         isDefault: false,
         isActive: true,
         createdAt: new Date(Date.now() - 86400000 * 40).toISOString(),
-        updatedAt: new Date().toISOString()
-      }
+        updatedAt: new Date().toISOString(),
+      },
     ];
 
     for (const tax of initialTaxes) {
@@ -260,7 +267,7 @@ class PostgresStore {
         symbolPosition: 'prefix',
         isEnabled: true,
         flagEmoji: '🇰🇪',
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         code: 'USD',
@@ -272,7 +279,7 @@ class PostgresStore {
         symbolPosition: 'prefix',
         isEnabled: true,
         flagEmoji: '🇺🇸',
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         code: 'EUR',
@@ -284,7 +291,7 @@ class PostgresStore {
         symbolPosition: 'prefix',
         isEnabled: true,
         flagEmoji: '🇪🇺',
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         code: 'GBP',
@@ -296,7 +303,7 @@ class PostgresStore {
         symbolPosition: 'prefix',
         isEnabled: true,
         flagEmoji: '🇬🇧',
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         code: 'UGX',
@@ -308,7 +315,7 @@ class PostgresStore {
         symbolPosition: 'prefix',
         isEnabled: true,
         flagEmoji: '🇺🇬',
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         code: 'TZS',
@@ -320,7 +327,7 @@ class PostgresStore {
         symbolPosition: 'prefix',
         isEnabled: true,
         flagEmoji: '🇹🇿',
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         code: 'ZAR',
@@ -332,7 +339,7 @@ class PostgresStore {
         symbolPosition: 'prefix',
         isEnabled: true,
         flagEmoji: '🇿🇦',
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         code: 'AED',
@@ -344,8 +351,8 @@ class PostgresStore {
         symbolPosition: 'prefix',
         isEnabled: true,
         flagEmoji: '🇦🇪',
-        updatedAt: new Date().toISOString()
-      }
+        updatedAt: new Date().toISOString(),
+      },
     ];
 
     for (const cur of initialCurrencies) {
@@ -368,7 +375,7 @@ class PostgresStore {
       },
       supportedCurrencies: ['KES'],
       icon: 'smartphone',
-      description: 'Instant Mobile Money STK Prompt via Safaricom Daraja 2.0 API'
+      description: 'Instant Mobile Money STK Prompt via Safaricom Daraja 2.0 API',
     };
 
     const pesapalGateway: PaymentGatewayConfig = {
@@ -384,7 +391,7 @@ class PostgresStore {
       },
       supportedCurrencies: ['KES', 'USD'],
       icon: 'credit-card',
-      description: 'Visa, Mastercard, Airtel Money & Direct Bank Transfer via Pesapal v3.0'
+      description: 'Visa, Mastercard, Airtel Money & Direct Bank Transfer via Pesapal v3.0',
     };
 
     const cardGateway: PaymentGatewayConfig = {
@@ -398,7 +405,7 @@ class PostgresStore {
       },
       supportedCurrencies: ['KES', 'USD'],
       icon: 'shield-check',
-      description: 'Instant 3DS2 Compliant Visa / Mastercard processing'
+      description: 'Instant 3DS2 Compliant Visa / Mastercard processing',
     };
 
     this.paymentGateways.set(mpesaGateway.id, mpesaGateway);
@@ -412,7 +419,8 @@ class PostgresStore {
         sku: 'APL-MBP16-M3M',
         name: 'MacBook Pro 16" M3 Max (36GB / 1TB SSD)',
         slug: 'macbook-pro-16-m3-max',
-        description: 'Engineered for extreme pro workflows. Featuring the powerful 14-core CPU, 30-core GPU Apple Silicon chip, Liquid Retina XDR display with ProMotion 120Hz.',
+        description:
+          'Engineered for extreme pro workflows. Featuring the powerful 14-core CPU, 30-core GPU Apple Silicon chip, Liquid Retina XDR display with ProMotion 120Hz.',
         category: 'Electronics',
         price: 435000,
         compareAtPrice: 475000,
@@ -420,19 +428,21 @@ class PostgresStore {
         reservedQuantity: 1,
         lowStockThreshold: 4,
         isActive: true,
-        imageUrl: 'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=1000&q=80',
+        imageUrl:
+          'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=1000&q=80',
         rating: 4.9,
         reviewCount: 38,
         tags: ['Apple', 'Laptops', 'Pro Workstations', 'M3 Max'],
         createdAt: new Date(Date.now() - 86400000 * 30).toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         id: 'prod_102',
         sku: 'SNY-WH1000XM5-BLK',
         name: 'Sony WH-1000XM5 Noise-Cancelling Headphones',
         slug: 'sony-wh-1000xm5-black',
-        description: 'Industry-leading noise canceling with two processors and 8 microphones. Crystal clear hands-free calling with 4 beamforming microphones and LDAC high-res audio.',
+        description:
+          'Industry-leading noise canceling with two processors and 8 microphones. Crystal clear hands-free calling with 4 beamforming microphones and LDAC high-res audio.',
         category: 'Audio',
         price: 48500,
         compareAtPrice: 56000,
@@ -440,19 +450,21 @@ class PostgresStore {
         reservedQuantity: 2,
         lowStockThreshold: 5,
         isActive: true,
-        imageUrl: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=1000&q=80',
+        imageUrl:
+          'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=1000&q=80',
         rating: 4.8,
         reviewCount: 94,
         tags: ['Sony', 'Wireless', 'ANC', 'Hi-Res'],
         createdAt: new Date(Date.now() - 86400000 * 25).toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         id: 'prod_103',
         sku: 'SMG-S24U-512GB-TI',
         name: 'Samsung Galaxy S24 Ultra 512GB Titanium Gray',
         slug: 'samsung-galaxy-s24-ultra-512gb',
-        description: 'Welcome to the era of Galaxy AI. Meet the 200MP camera, Snapdragon 8 Gen 3 for Galaxy, titanium frame, and built-in S Pen.',
+        description:
+          'Welcome to the era of Galaxy AI. Meet the 200MP camera, Snapdragon 8 Gen 3 for Galaxy, titanium frame, and built-in S Pen.',
         category: 'Phones',
         price: 184000,
         compareAtPrice: 205000,
@@ -460,19 +472,21 @@ class PostgresStore {
         reservedQuantity: 0,
         lowStockThreshold: 5,
         isActive: true,
-        imageUrl: 'https://images.unsplash.com/photo-1610945265064-0e34e5519bbf?auto=format&fit=crop&w=1000&q=80',
+        imageUrl:
+          'https://images.unsplash.com/photo-1610945265064-0e34e5519bbf?auto=format&fit=crop&w=1000&q=80',
         rating: 4.9,
         reviewCount: 67,
         tags: ['Samsung', '5G', 'Galaxy AI', 'Smartphones'],
         createdAt: new Date(Date.now() - 86400000 * 20).toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         id: 'prod_104',
         sku: 'GAR-EPIX-PRO-51MM',
         name: 'Garmin Epix Pro Gen 2 Sapphire 51mm Smartwatch',
         slug: 'garmin-epix-pro-gen-2-sapphire',
-        description: 'Premium multisport GPS smartwatch with stunning AMOLED display, built-in LED flashlight, endurance score, and up to 31 days battery life in smartwatch mode.',
+        description:
+          'Premium multisport GPS smartwatch with stunning AMOLED display, built-in LED flashlight, endurance score, and up to 31 days battery life in smartwatch mode.',
         category: 'Wearables',
         price: 138000,
         compareAtPrice: 155000,
@@ -480,19 +494,21 @@ class PostgresStore {
         reservedQuantity: 1,
         lowStockThreshold: 5,
         isActive: true,
-        imageUrl: 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=1000&q=80',
+        imageUrl:
+          'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=1000&q=80',
         rating: 4.9,
         reviewCount: 42,
         tags: ['Garmin', 'Fitness', 'GPS', 'Smartwatch', 'Outdoor'],
         createdAt: new Date(Date.now() - 86400000 * 18).toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         id: 'prod_105',
         sku: 'DJI-MAV3-PRO-CINE',
         name: 'DJI Mavic 3 Pro Cine Drone with RC Pro Remote',
         slug: 'dji-mavic-3-pro-cine',
-        description: 'Triple-camera flagship system with 4/3 CMOS Hasselblad camera, dual telephoto cameras, 43-min flight time, and Apple ProRes 422 HQ recording.',
+        description:
+          'Triple-camera flagship system with 4/3 CMOS Hasselblad camera, dual telephoto cameras, 43-min flight time, and Apple ProRes 422 HQ recording.',
         category: 'Drones & Cameras',
         price: 520000,
         compareAtPrice: 560000,
@@ -500,19 +516,21 @@ class PostgresStore {
         reservedQuantity: 0,
         lowStockThreshold: 2,
         isActive: true,
-        imageUrl: 'https://images.unsplash.com/photo-1527977966376-1c8408f9f108?auto=format&fit=crop&w=1000&q=80',
+        imageUrl:
+          'https://images.unsplash.com/photo-1527977966376-1c8408f9f108?auto=format&fit=crop&w=1000&q=80',
         rating: 5.0,
         reviewCount: 19,
         tags: ['DJI', 'Drones', '4K Video', 'Pro Photography'],
         createdAt: new Date(Date.now() - 86400000 * 15).toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         id: 'prod_106',
         sku: 'KYC-MECH-RGB-K3',
         name: 'Keychron Q3 Max Custom Wireless Mechanical Keyboard',
         slug: 'keychron-q3-max-custom-wireless',
-        description: 'Full CNC aluminum body, double-gasket design, 2.4 GHz wireless & Bluetooth 5.1, hot-swappable Gateron Jupiter switches, and acoustic foam padding.',
+        description:
+          'Full CNC aluminum body, double-gasket design, 2.4 GHz wireless & Bluetooth 5.1, hot-swappable Gateron Jupiter switches, and acoustic foam padding.',
         category: 'Accessories',
         price: 26500,
         compareAtPrice: 32000,
@@ -520,19 +538,21 @@ class PostgresStore {
         reservedQuantity: 0,
         lowStockThreshold: 8,
         isActive: true,
-        imageUrl: 'https://images.unsplash.com/photo-1587829741301-dc798b83add3?auto=format&fit=crop&w=1000&q=80',
+        imageUrl:
+          'https://images.unsplash.com/photo-1587829741301-dc798b83add3?auto=format&fit=crop&w=1000&q=80',
         rating: 4.7,
         reviewCount: 81,
         tags: ['Keychron', 'Mechanical Keyboard', 'Workstation', 'Custom'],
         createdAt: new Date(Date.now() - 86400000 * 12).toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         id: 'prod_107',
         sku: 'BOS-SND-REV-PLUS',
         name: 'Bose SoundLink Max Portable Bluetooth Speaker',
         slug: 'bose-soundlink-max-portable-speaker',
-        description: 'Epic stereo sound, deep bass, removable soft rope handle, IP67 waterproof and dustproof, up to 20 hours battery life on a single charge.',
+        description:
+          'Epic stereo sound, deep bass, removable soft rope handle, IP67 waterproof and dustproof, up to 20 hours battery life on a single charge.',
         category: 'Audio',
         price: 54000,
         compareAtPrice: 62000,
@@ -540,19 +560,21 @@ class PostgresStore {
         reservedQuantity: 0,
         lowStockThreshold: 5,
         isActive: true,
-        imageUrl: 'https://images.unsplash.com/photo-1545454675-3531b543be5d?auto=format&fit=crop&w=1000&q=80',
+        imageUrl:
+          'https://images.unsplash.com/photo-1545454675-3531b543be5d?auto=format&fit=crop&w=1000&q=80',
         rating: 4.8,
         reviewCount: 52,
         tags: ['Bose', 'Bluetooth', 'Outdoor', 'Bass'],
         createdAt: new Date(Date.now() - 86400000 * 10).toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         id: 'prod_108',
         sku: 'ANK-737-PWRBK-24K',
         name: 'Anker Prime 24,000mAh Power Bank (140W GaN 3-Port)',
         slug: 'anker-prime-24000mah-power-bank',
-        description: 'Ultra-powerful 140W two-way fast charging with Smart Digital Display, charges a 16" MacBook Pro to 50% in just 40 minutes.',
+        description:
+          'Ultra-powerful 140W two-way fast charging with Smart Digital Display, charges a 16" MacBook Pro to 50% in just 40 minutes.',
         category: 'Accessories',
         price: 19500,
         compareAtPrice: 24000,
@@ -560,13 +582,14 @@ class PostgresStore {
         reservedQuantity: 0,
         lowStockThreshold: 6,
         isActive: true,
-        imageUrl: 'https://images.unsplash.com/photo-1609081219090-a6d81d3085bf?auto=format&fit=crop&w=1000&q=80',
+        imageUrl:
+          'https://images.unsplash.com/photo-1609081219090-a6d81d3085bf?auto=format&fit=crop&w=1000&q=80',
         rating: 4.9,
         reviewCount: 110,
         tags: ['Anker', 'PowerBank', 'USB-C', 'Fast Charging'],
         createdAt: new Date(Date.now() - 86400000 * 5).toISOString(),
-        updatedAt: new Date().toISOString()
-      }
+        updatedAt: new Date().toISOString(),
+      },
     ];
 
     for (const prod of initialProducts) {
@@ -583,7 +606,7 @@ class PostgresStore {
         referenceId: 'INITIAL_IMPORT_PO_001',
         actor: 'system_admin',
         note: 'Initial catalog stock import to PostgreSQL storage',
-        timestamp: new Date(Date.now() - 86400000 * 7).toISOString()
+        timestamp: new Date(Date.now() - 86400000 * 7).toISOString(),
       });
     }
 
@@ -600,7 +623,7 @@ class PostgresStore {
         city: 'Nairobi',
         countyOrState: 'Nairobi County',
         postalCode: '00100',
-        country: 'Kenya'
+        country: 'Kenya',
       },
       items: [
         {
@@ -610,8 +633,9 @@ class PostgresStore {
           quantity: 1,
           unitPrice: 48500,
           totalPrice: 48500,
-          imageUrl: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=1000&q=80'
-        }
+          imageUrl:
+            'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=1000&q=80',
+        },
       ],
       subtotal: 48500,
       tax: 7760,
@@ -624,7 +648,7 @@ class PostgresStore {
       transactionReference: 'ws_CO_01092026114532890',
       mpesaReceiptNumber: 'SHK7892KLM',
       createdAt: new Date(Date.now() - 3600000 * 5).toISOString(),
-      updatedAt: new Date(Date.now() - 3600000 * 5).toISOString()
+      updatedAt: new Date(Date.now() - 3600000 * 5).toISOString(),
     };
 
     const sampleOrder2: Order = {
@@ -639,7 +663,7 @@ class PostgresStore {
         city: 'Nairobi',
         countyOrState: 'Nairobi County',
         postalCode: '00100',
-        country: 'Kenya'
+        country: 'Kenya',
       },
       items: [
         {
@@ -649,8 +673,9 @@ class PostgresStore {
           quantity: 2,
           unitPrice: 26500,
           totalPrice: 53000,
-          imageUrl: 'https://images.unsplash.com/photo-1587829741301-dc798b83add3?auto=format&fit=crop&w=1000&q=80'
-        }
+          imageUrl:
+            'https://images.unsplash.com/photo-1587829741301-dc798b83add3?auto=format&fit=crop&w=1000&q=80',
+        },
       ],
       subtotal: 53000,
       tax: 8480,
@@ -663,7 +688,7 @@ class PostgresStore {
       transactionReference: 'pesa_ref_9921_bc401',
       pesapalTrackingId: '7f91a0c4-9876-412e-901a-88bcfe231011',
       createdAt: new Date(Date.now() - 3600000 * 2).toISOString(),
-      updatedAt: new Date(Date.now() - 3600000 * 2).toISOString()
+      updatedAt: new Date(Date.now() - 3600000 * 2).toISOString(),
     };
 
     this.orders.set(sampleOrder1.id, sampleOrder1);
@@ -689,19 +714,19 @@ class PostgresStore {
         PartyB: '174379',
         PhoneNumber: '254712345678',
         CallBackURL: 'https://omnicommerce.ke/api/payments/daraja/callback',
-        AccountReference: 'ORD-2026-8801'
+        AccountReference: 'ORD-2026-8801',
       },
       responsePayload: {
         MerchantRequestID: '29115-34620561-1',
         CheckoutRequestID: 'ws_CO_01092026114532890',
         ResponseCode: '0',
         ResponseDescription: 'Success. Request accepted for processing',
-        CustomerMessage: 'Success. Request accepted for processing'
+        CustomerMessage: 'Success. Request accepted for processing',
       },
       ipnStatus: 'delivered',
       reconciliationStatus: 'reconciled',
       createdAt: sampleOrder1.createdAt,
-      updatedAt: sampleOrder1.updatedAt
+      updatedAt: sampleOrder1.updatedAt,
     };
 
     const tx2: TransactionRecord = {
@@ -721,18 +746,19 @@ class PostgresStore {
         amount: 61980,
         description: 'OmniCommerce Order ORD-2026-8802',
         callback_url: 'https://omnicommerce.ke/api/payments/pesapal/ipn',
-        billing_address: sampleOrder2.shippingAddress
+        billing_address: sampleOrder2.shippingAddress,
       },
       responsePayload: {
         order_tracking_id: '7f91a0c4-9876-412e-901a-88bcfe231011',
         merchant_reference: 'pesa_ref_9921_bc401',
-        redirect_url: 'https://cybqa.pesapal.com/pesapalv3/api/Payment/Redirect?orderTrackingId=7f91a0c4',
-        status: '200'
+        redirect_url:
+          'https://cybqa.pesapal.com/pesapalv3/api/Payment/Redirect?orderTrackingId=7f91a0c4',
+        status: '200',
       },
       ipnStatus: 'delivered',
       reconciliationStatus: 'reconciled',
       createdAt: sampleOrder2.createdAt,
-      updatedAt: sampleOrder2.updatedAt
+      updatedAt: sampleOrder2.updatedAt,
     };
 
     this.transactions.set(tx1.id, tx1);
@@ -751,8 +777,9 @@ class PostgresStore {
       discrepancyFound: false,
       discrepancyType: 'none',
       status: 'matched',
-      details: 'Instant M-Pesa IPN matched order ORD-2026-8801 total (KES 56,260.00) perfectly with Daraja LNMO receipt SHK7892KLM.',
-      timestamp: sampleOrder1.updatedAt
+      details:
+        'Instant M-Pesa IPN matched order ORD-2026-8801 total (KES 56,260.00) perfectly with Daraja LNMO receipt SHK7892KLM.',
+      timestamp: sampleOrder1.updatedAt,
     });
 
     // 5.1 Seed Additional Historical Order for Paul Laster Okoth
@@ -768,7 +795,7 @@ class PostgresStore {
         city: 'Nairobi',
         countyOrState: 'Nairobi County',
         postalCode: '00100',
-        country: 'Kenya'
+        country: 'Kenya',
       },
       items: [
         {
@@ -778,8 +805,9 @@ class PostgresStore {
           quantity: 1,
           unitPrice: 420000,
           totalPrice: 420000,
-          imageUrl: 'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=1000&q=80'
-        }
+          imageUrl:
+            'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=1000&q=80',
+        },
       ],
       subtotal: 420000,
       tax: 67200,
@@ -796,7 +824,7 @@ class PostgresStore {
       deliveredAt: new Date(Date.now() - 86400000 * 3).toISOString(),
       shippedAt: new Date(Date.now() - 86400000 * 4).toISOString(),
       createdAt: new Date(Date.now() - 86400000 * 5).toISOString(),
-      updatedAt: new Date(Date.now() - 86400000 * 3).toISOString()
+      updatedAt: new Date(Date.now() - 86400000 * 3).toISOString(),
     };
 
     this.orders.set(sampleOrder0.id, sampleOrder0);
@@ -821,7 +849,7 @@ class PostgresStore {
             countyOrState: 'Nairobi County',
             postalCode: '00100',
             country: 'Kenya',
-            isDefault: true
+            isDefault: true,
           },
           {
             id: 'addr_paul_02',
@@ -833,18 +861,18 @@ class PostgresStore {
             countyOrState: 'Nairobi County',
             postalCode: '00100',
             country: 'Kenya',
-            isDefault: false
-          }
+            isDefault: false,
+          },
         ],
         paymentPreferences: {
           preferredMethod: 'mpesa_daraja',
-          defaultMpesaPhone: '254712345678'
+          defaultMpesaPhone: '254712345678',
         },
         totalOrders: 2,
         totalSpend: 543460,
         lastOrderDate: sampleOrder1.createdAt,
         createdAt: new Date(Date.now() - 86400000 * 30).toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         id: 'usr_jane_wambui',
@@ -864,18 +892,18 @@ class PostgresStore {
             countyOrState: 'Nairobi County',
             postalCode: '00100',
             country: 'Kenya',
-            isDefault: true
-          }
+            isDefault: true,
+          },
         ],
         paymentPreferences: {
           preferredMethod: 'pesapal_v3',
-          defaultCardLast4: '4242'
+          defaultCardLast4: '4242',
         },
         totalOrders: 1,
         totalSpend: 61980,
         lastOrderDate: sampleOrder2.createdAt,
         createdAt: new Date(Date.now() - 86400000 * 20).toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         id: 'usr_faith_wanjiku',
@@ -895,18 +923,18 @@ class PostgresStore {
             countyOrState: 'Nairobi County',
             postalCode: '00100',
             country: 'Kenya',
-            isDefault: true
-          }
+            isDefault: true,
+          },
         ],
         paymentPreferences: {
           preferredMethod: 'mpesa_daraja',
-          defaultMpesaPhone: '254722998877'
+          defaultMpesaPhone: '254722998877',
         },
         totalOrders: 3,
         totalSpend: 285000,
         lastOrderDate: new Date(Date.now() - 86400000 * 2).toISOString(),
         createdAt: new Date(Date.now() - 86400000 * 45).toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
       {
         id: 'usr_brian_kiprop',
@@ -926,19 +954,19 @@ class PostgresStore {
             countyOrState: 'Uasin Gishu County',
             postalCode: '30100',
             country: 'Kenya',
-            isDefault: true
-          }
+            isDefault: true,
+          },
         ],
         paymentPreferences: {
           preferredMethod: 'mpesa_daraja',
-          defaultMpesaPhone: '254701443322'
+          defaultMpesaPhone: '254701443322',
         },
         totalOrders: 1,
         totalSpend: 84900,
         lastOrderDate: new Date(Date.now() - 86400000 * 4).toISOString(),
         createdAt: new Date(Date.now() - 86400000 * 15).toISOString(),
-        updatedAt: new Date().toISOString()
-      }
+        updatedAt: new Date().toISOString(),
+      },
     ];
 
     for (const customer of initialCustomers) {
@@ -951,7 +979,7 @@ class PostgresStore {
   // ==========================================================================
   public getAllCustomers(): CustomerAccount[] {
     return Array.from(this.customers.values()).sort(
-      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
     );
   }
 
@@ -968,7 +996,11 @@ class PostgresStore {
       if (cust.email.toLowerCase() === clean) return cust;
       if (cust.id.toLowerCase() === clean) return cust;
       const custPhone = cust.phone.replace(/\D/g, '');
-      if (custPhone && phoneClean && (custPhone.includes(phoneClean) || phoneClean.includes(custPhone))) {
+      if (
+        custPhone &&
+        phoneClean &&
+        (custPhone.includes(phoneClean) || phoneClean.includes(custPhone))
+      ) {
         return cust;
       }
     }
@@ -990,13 +1022,13 @@ class PostgresStore {
       addresses: data.addresses || [],
       paymentPreferences: data.paymentPreferences || {
         preferredMethod: 'mpesa_daraja',
-        defaultMpesaPhone: data.phone || '254700000000'
+        defaultMpesaPhone: data.phone || '254700000000',
       },
       totalOrders: data.totalOrders || 0,
       totalSpend: data.totalSpend || 0,
       lastOrderDate: data.lastOrderDate,
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
     };
 
     this.customers.set(id, customer);
@@ -1015,9 +1047,9 @@ class PostgresStore {
       ...updates,
       paymentPreferences: {
         ...customer.paymentPreferences,
-        ...(updates.paymentPreferences || {})
+        ...(updates.paymentPreferences || {}),
       },
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
     };
 
     this.customers.set(id, updated);
@@ -1025,7 +1057,10 @@ class PostgresStore {
     return updated;
   }
 
-  public addCustomerAddress(customerId: string, addressData: Omit<CustomerAddress, 'id'>): CustomerAddress {
+  public addCustomerAddress(
+    customerId: string,
+    addressData: Omit<CustomerAddress, 'id'>,
+  ): CustomerAddress {
     const customer = this.customers.get(customerId);
     if (!customer) {
       throw new Error(`Customer with ID ${customerId} not found`);
@@ -1036,13 +1071,15 @@ class PostgresStore {
     const isDefault = addressData.isDefault || isFirst;
 
     if (isDefault) {
-      customer.addresses.forEach(a => { a.isDefault = false; });
+      customer.addresses.forEach((a) => {
+        a.isDefault = false;
+      });
     }
 
     const newAddress: CustomerAddress = {
       ...addressData,
       id: addressId,
-      isDefault
+      isDefault,
     };
 
     customer.addresses.push(newAddress);
@@ -1051,25 +1088,31 @@ class PostgresStore {
     return newAddress;
   }
 
-  public updateCustomerAddress(customerId: string, addressId: string, updates: Partial<CustomerAddress>): CustomerAddress {
+  public updateCustomerAddress(
+    customerId: string,
+    addressId: string,
+    updates: Partial<CustomerAddress>,
+  ): CustomerAddress {
     const customer = this.customers.get(customerId);
     if (!customer) {
       throw new Error(`Customer with ID ${customerId} not found`);
     }
 
-    const idx = customer.addresses.findIndex(a => a.id === addressId);
+    const idx = customer.addresses.findIndex((a) => a.id === addressId);
     if (idx === -1) {
       throw new Error(`Address ${addressId} not found for customer ${customerId}`);
     }
 
     if (updates.isDefault) {
-      customer.addresses.forEach(a => { a.isDefault = false; });
+      customer.addresses.forEach((a) => {
+        a.isDefault = false;
+      });
     }
 
     const existing = customer.addresses[idx];
     const updated: CustomerAddress = {
       ...existing,
-      ...updates
+      ...updates,
     };
 
     customer.addresses[idx] = updated;
@@ -1083,10 +1126,10 @@ class PostgresStore {
     if (!customer) return false;
 
     const initialLen = customer.addresses.length;
-    customer.addresses = customer.addresses.filter(a => a.id !== addressId);
+    customer.addresses = customer.addresses.filter((a) => a.id !== addressId);
 
     if (customer.addresses.length < initialLen) {
-      if (customer.addresses.length > 0 && !customer.addresses.some(a => a.isDefault)) {
+      if (customer.addresses.length > 0 && !customer.addresses.some((a) => a.isDefault)) {
         customer.addresses[0].isDefault = true;
       }
       customer.updatedAt = new Date().toISOString();
@@ -1102,7 +1145,7 @@ class PostgresStore {
       throw new Error(`Customer with ID ${customerId} not found`);
     }
 
-    customer.addresses.forEach(a => {
+    customer.addresses.forEach((a) => {
       a.isDefault = a.id === addressId;
     });
 
@@ -1114,15 +1157,20 @@ class PostgresStore {
   public getCustomerOrders(customerIdOrEmail: string): Order[] {
     const clean = customerIdOrEmail.toLowerCase().trim();
     return Array.from(this.orders.values())
-      .filter(o => 
-        (o.userId && o.userId.toLowerCase() === clean) || 
-        (o.customerEmail && o.customerEmail.toLowerCase() === clean)
+      .filter(
+        (o) =>
+          (o.userId && o.userId.toLowerCase() === clean) ||
+          (o.customerEmail && o.customerEmail.toLowerCase() === clean),
       )
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
 
   // Transactional Atomic Inventory Reservation
-  public atomicReserveStock(items: { productId: string; quantity: number }[], orderId: string, actor: string = 'customer_checkout'): { success: boolean; error?: string } {
+  public atomicReserveStock(
+    items: { productId: string; quantity: number }[],
+    orderId: string,
+    actor = 'customer_checkout',
+  ): { success: boolean; error?: string } {
     // 1. Validate all items exist and have sufficient available stock (stockQuantity - reservedQuantity)
     for (const item of items) {
       const prod = this.products.get(item.productId);
@@ -1131,9 +1179,9 @@ class PostgresStore {
       }
       const available = prod.stockQuantity - prod.reservedQuantity;
       if (available < item.quantity) {
-        return { 
-          success: false, 
-          error: `Insufficient inventory for "${prod.name}". Available: ${available}, Requested: ${item.quantity}.` 
+        return {
+          success: false,
+          error: `Insufficient inventory for "${prod.name}". Available: ${available}, Requested: ${item.quantity}.`,
         };
       }
     }
@@ -1155,7 +1203,7 @@ class PostgresStore {
         referenceId: orderId,
         actor,
         note: `Reserved ${item.quantity} units for pending order ${orderId}`,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
     }
 
@@ -1163,14 +1211,17 @@ class PostgresStore {
     this.broadcast('inventory_update', {
       type: 'reservation',
       orderId,
-      products: Array.from(this.products.values())
+      products: Array.from(this.products.values()),
     });
 
     return { success: true };
   }
 
   // Transactional Inventory Fulfillment on Payment Success
-  public atomicFulfillStock(items: { productId: string; quantity: number }[], orderId: string): void {
+  public atomicFulfillStock(
+    items: { productId: string; quantity: number }[],
+    orderId: string,
+  ): void {
     for (const item of items) {
       const prod = this.products.get(item.productId);
       if (prod) {
@@ -1190,7 +1241,7 @@ class PostgresStore {
           referenceId: orderId,
           actor: 'payment_reconciliation_engine',
           note: `Fulfilled and finalized stock deduction of ${item.quantity} units for order ${orderId}`,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
       }
     }
@@ -1198,12 +1249,15 @@ class PostgresStore {
     this.broadcast('inventory_update', {
       type: 'fulfillment',
       orderId,
-      products: Array.from(this.products.values())
+      products: Array.from(this.products.values()),
     });
   }
 
   // Release stock if payment fails or expires
-  public atomicReleaseReservation(items: { productId: string; quantity: number }[], orderId: string): void {
+  public atomicReleaseReservation(
+    items: { productId: string; quantity: number }[],
+    orderId: string,
+  ): void {
     for (const item of items) {
       const prod = this.products.get(item.productId);
       if (prod) {
@@ -1221,7 +1275,7 @@ class PostgresStore {
           referenceId: orderId,
           actor: 'system_timeout_releaser',
           note: `Released reservation of ${item.quantity} units due to order cancellation or timeout for ${orderId}`,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
       }
     }
@@ -1229,7 +1283,7 @@ class PostgresStore {
     this.broadcast('inventory_update', {
       type: 'release',
       orderId,
-      products: Array.from(this.products.values())
+      products: Array.from(this.products.values()),
     });
   }
 
@@ -1237,10 +1291,14 @@ class PostgresStore {
   // Category Management CRUD
   // ==========================================================================
   public getAllCategories(): Category[] {
-    const list = Array.from(this.categories.values()).sort((a, b) => a.displayOrder - b.displayOrder);
+    const list = Array.from(this.categories.values()).sort(
+      (a, b) => a.displayOrder - b.displayOrder,
+    );
     // Count products per category
-    return list.map(cat => {
-      const count = Array.from(this.products.values()).filter(p => p.category.toLowerCase() === cat.name.toLowerCase()).length;
+    return list.map((cat) => {
+      const count = Array.from(this.products.values()).filter(
+        (p) => p.category.toLowerCase() === cat.name.toLowerCase(),
+      ).length;
       return { ...cat, productCount: count };
     });
   }
@@ -1249,7 +1307,9 @@ class PostgresStore {
     return this.categories.get(id);
   }
 
-  public createCategory(data: Omit<Category, 'id' | 'createdAt' | 'updatedAt' | 'productCount'>): Category {
+  public createCategory(
+    data: Omit<Category, 'id' | 'createdAt' | 'updatedAt' | 'productCount'>,
+  ): Category {
     const id = `cat_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const newCategory: Category = {
       ...data,
@@ -1258,7 +1318,7 @@ class PostgresStore {
       displayOrder: data.displayOrder || this.categories.size + 1,
       isActive: data.isActive !== undefined ? data.isActive : true,
       createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
     };
 
     this.categories.set(id, newCategory);
@@ -1274,7 +1334,7 @@ class PostgresStore {
       ...existing,
       ...updates,
       id,
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
     };
 
     this.categories.set(id, updated);
@@ -1288,7 +1348,7 @@ class PostgresStore {
 
     // Check if products exist in category
     const productsInCat = Array.from(this.products.values()).filter(
-      p => p.category.toLowerCase() === existing.name.toLowerCase()
+      (p) => p.category.toLowerCase() === existing.name.toLowerCase(),
     );
 
     if (productsInCat.length > 0) {
@@ -1312,8 +1372,10 @@ class PostgresStore {
   public getAllTaxCategories(): TaxCategory[] {
     const list = Array.from(this.taxCategories.values());
     // Calculate products assigned to each tax category
-    return list.map(tax => {
-      const count = Array.from(this.products.values()).filter(p => p.taxCategoryId === tax.id).length;
+    return list.map((tax) => {
+      const count = Array.from(this.products.values()).filter(
+        (p) => p.taxCategoryId === tax.id,
+      ).length;
       return { ...tax, productCount: count };
     });
   }
@@ -1322,9 +1384,11 @@ class PostgresStore {
     return this.taxCategories.get(id);
   }
 
-  public createTaxCategory(data: Omit<TaxCategory, 'id' | 'createdAt' | 'updatedAt' | 'productCount'>): TaxCategory {
+  public createTaxCategory(
+    data: Omit<TaxCategory, 'id' | 'createdAt' | 'updatedAt' | 'productCount'>,
+  ): TaxCategory {
     const id = `tax_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    
+
     // If set as default, unset others
     if (data.isDefault) {
       for (const tax of this.taxCategories.values()) {
@@ -1338,10 +1402,10 @@ class PostgresStore {
       code: (data.code || data.name).toUpperCase().replace(/[^A-Z0-9_]+/g, '_'),
       rate: Number(data.rate) || 0,
       isInclusive: data.isInclusive !== undefined ? data.isInclusive : true,
-      isDefault: !!data.isDefault,
+      isDefault: Boolean(data.isDefault),
       isActive: data.isActive !== undefined ? data.isActive : true,
       createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
     };
 
     this.taxCategories.set(id, newTax);
@@ -1364,7 +1428,7 @@ class PostgresStore {
       ...updates,
       id,
       rate: updates.rate !== undefined ? Number(updates.rate) : existing.rate,
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
     };
 
     this.taxCategories.set(id, updated);
@@ -1390,11 +1454,15 @@ class PostgresStore {
 
     // Check if it's default
     if (existing.isDefault) {
-      throw new Error('Cannot delete the default tax category. Set another category as default first.');
+      throw new Error(
+        'Cannot delete the default tax category. Set another category as default first.',
+      );
     }
 
     // Reassign products to standard default or remove taxCategoryId
-    const defaultTax = Array.from(this.taxCategories.values()).find(t => t.isDefault && t.id !== id);
+    const defaultTax = Array.from(this.taxCategories.values()).find(
+      (t) => t.isDefault && t.id !== id,
+    );
     for (const prod of this.products.values()) {
       if (prod.taxCategoryId === id) {
         if (defaultTax) {
@@ -1464,7 +1532,7 @@ class PostgresStore {
       decimalDigits: data.decimalDigits !== undefined ? Number(data.decimalDigits) : 2,
       symbolPosition: data.symbolPosition || 'prefix',
       isEnabled: data.isEnabled !== undefined ? data.isEnabled : true,
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
     };
 
     this.currencies.set(code, newCurrency);
@@ -1487,8 +1555,9 @@ class PostgresStore {
       ...existing,
       ...updates,
       code: upperCode,
-      exchangeRate: updates.exchangeRate !== undefined ? Number(updates.exchangeRate) : existing.exchangeRate,
-      updatedAt: new Date().toISOString()
+      exchangeRate:
+        updates.exchangeRate !== undefined ? Number(updates.exchangeRate) : existing.exchangeRate,
+      updatedAt: new Date().toISOString(),
     };
 
     this.currencies.set(upperCode, updated);
@@ -1502,7 +1571,9 @@ class PostgresStore {
     if (!existing) return false;
 
     if (existing.isBaseCurrency) {
-      throw new Error('Cannot delete the primary base currency. Designate another base currency first.');
+      throw new Error(
+        'Cannot delete the primary base currency. Designate another base currency first.',
+      );
     }
 
     const deleted = this.currencies.delete(upperCode);
@@ -1529,16 +1600,16 @@ class PostgresStore {
   // ==========================================================================
   // Enterprise Inventory Operations (Receive, Write-off, Cycle Count Audit)
   // ==========================================================================
-  
+
   // Stock In / PO Receiving
   public receiveStock(
-    productId: string, 
-    quantity: number, 
-    supplier: string, 
-    poNumber: string, 
-    unitCost?: number, 
-    notes?: string, 
-    actor: string = 'admin'
+    productId: string,
+    quantity: number,
+    supplier: string,
+    poNumber: string,
+    unitCost?: number,
+    notes?: string,
+    actor = 'admin',
   ): Product {
     const prod = this.products.get(productId);
     if (!prod) throw new Error(`Product ${productId} not found`);
@@ -1562,13 +1633,13 @@ class PostgresStore {
       referenceId: poNumber || `PO-${Date.now()}`,
       actor,
       note: `Received ${quantity} units from supplier "${supplier || 'Standard Supplier'}". ${notes || ''}`.trim(),
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
 
     this.broadcast('inventory_update', {
       type: 'stock_received',
       productId: prod.id,
-      products: Array.from(this.products.values())
+      products: Array.from(this.products.values()),
     });
 
     return prod;
@@ -1576,16 +1647,24 @@ class PostgresStore {
 
   // Stock Out / Damage, Loss, Shrinkage Write-off
   public writeOffStock(
-    productId: string, 
-    quantity: number, 
-    reasonCode: 'damage_transit' | 'defective_return' | 'warehouse_damage' | 'shrinkage_loss' | 'sample_marketing', 
-    notes?: string, 
-    actor: string = 'admin'
+    productId: string,
+    quantity: number,
+    reasonCode:
+      | 'damage_transit'
+      | 'defective_return'
+      | 'warehouse_damage'
+      | 'shrinkage_loss'
+      | 'sample_marketing',
+    notes?: string,
+    actor = 'admin',
   ): Product {
     const prod = this.products.get(productId);
     if (!prod) throw new Error(`Product ${productId} not found`);
     if (quantity <= 0) throw new Error('Write-off quantity must be greater than 0');
-    if (quantity > prod.stockQuantity) throw new Error(`Cannot write off ${quantity} units; only ${prod.stockQuantity} currently on hand.`);
+    if (quantity > prod.stockQuantity)
+      throw new Error(
+        `Cannot write off ${quantity} units; only ${prod.stockQuantity} currently on hand.`,
+      );
 
     const prevStock = prod.stockQuantity;
     prod.stockQuantity -= quantity;
@@ -1596,7 +1675,7 @@ class PostgresStore {
       defective_return: 'Defective Customer Return',
       warehouse_damage: 'Damaged in Warehouse Storage',
       shrinkage_loss: 'Inventory Shrinkage / Missing Item',
-      sample_marketing: 'Promotional / Demo Unit'
+      sample_marketing: 'Promotional / Demo Unit',
     };
 
     this.inventoryLedger.push({
@@ -1610,13 +1689,13 @@ class PostgresStore {
       referenceId: `WRITEOFF-${Date.now()}`,
       actor,
       note: `Stock Write-off (${reasonLabelMap[reasonCode] || reasonCode}). ${notes || ''}`.trim(),
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
 
     this.broadcast('inventory_update', {
       type: 'stock_writeoff',
       productId: prod.id,
-      products: Array.from(this.products.values())
+      products: Array.from(this.products.values()),
     });
 
     return prod;
@@ -1624,10 +1703,10 @@ class PostgresStore {
 
   // Physical Stock Count / Cycle Audit
   public physicalStockAudit(
-    productId: string, 
-    countedQuantity: number, 
-    notes?: string, 
-    actor: string = 'inventory_auditor'
+    productId: string,
+    countedQuantity: number,
+    notes?: string,
+    actor = 'inventory_auditor',
   ): { product: Product; discrepancy: number } {
     const prod = this.products.get(productId);
     if (!prod) throw new Error(`Product ${productId} not found`);
@@ -1649,13 +1728,13 @@ class PostgresStore {
       referenceId: `AUDIT-${Date.now()}`,
       actor,
       note: `Physical Shelf Count Audit: Counted ${countedQuantity} (Discrepancy: ${discrepancy >= 0 ? '+' : ''}${discrepancy}). ${notes || ''}`.trim(),
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
 
     this.broadcast('inventory_update', {
       type: 'audit_completed',
       productId: prod.id,
-      products: Array.from(this.products.values())
+      products: Array.from(this.products.values()),
     });
 
     return { product: prod, discrepancy };
@@ -1665,8 +1744,8 @@ class PostgresStore {
   public manualAdjustStock(
     productId: string,
     newQuantity: number,
-    reason: string = 'Manual Adjustment',
-    actor: string = 'admin'
+    reason = 'Manual Adjustment',
+    actor = 'admin',
   ): Product {
     const prod = this.products.get(productId);
     if (!prod) throw new Error(`Product ${productId} not found`);
@@ -1688,13 +1767,13 @@ class PostgresStore {
       referenceId: `ADJ-${Date.now()}`,
       actor,
       note: reason,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
 
     this.broadcast('inventory_update', {
       type: 'stock_adjusted',
       productId: prod.id,
-      products: Array.from(this.products.values())
+      products: Array.from(this.products.values()),
     });
 
     return prod;
@@ -1702,8 +1781,8 @@ class PostgresStore {
 
   // Batch Stock Adjust
   public batchStockAdjust(
-    adjustments: { productId: string; newQuantity: number; reason: string }[], 
-    actor: string = 'admin'
+    adjustments: { productId: string; newQuantity: number; reason: string }[],
+    actor = 'admin',
   ): Product[] {
     const updated: Product[] = [];
     for (const adj of adjustments) {
@@ -1717,11 +1796,11 @@ class PostgresStore {
   // Order Fulfillment & Lifecycle Operations
   // ==========================================================================
   public updateOrderStatus(
-    orderId: string, 
-    status: OrderStatus, 
-    shippingCourier?: string, 
-    trackingNumber?: string, 
-    internalNotes?: string
+    orderId: string,
+    status: OrderStatus,
+    shippingCourier?: string,
+    trackingNumber?: string,
+    internalNotes?: string,
   ): Order {
     const order = this.orders.get(orderId);
     if (!order) throw new Error(`Order ${orderId} not found`);
@@ -1746,7 +1825,7 @@ class PostgresStore {
     return order;
   }
 
-  public cancelOrderAndRestock(orderId: string, reason: string, actor: string = 'admin'): Order {
+  public cancelOrderAndRestock(orderId: string, reason: string, actor = 'admin'): Order {
     const order = this.orders.get(orderId);
     if (!order) throw new Error(`Order ${orderId} not found`);
 
@@ -1773,20 +1852,20 @@ class PostgresStore {
           referenceId: order.orderNumber,
           actor,
           note: `Restocked ${item.quantity} units due to cancellation of order ${order.orderNumber}. Reason: ${reason || 'Admin Cancelled'}`,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
       }
     }
 
     order.status = 'cancelled';
-    order.internalNotes = `${order.internalNotes ? order.internalNotes + '\n' : ''}[Cancelled by ${actor}: ${reason}]`;
+    order.internalNotes = `${order.internalNotes ? `${order.internalNotes}\n` : ''}[Cancelled by ${actor}: ${reason}]`;
     order.updatedAt = new Date().toISOString();
 
     this.broadcast('order_updated', order);
     this.broadcast('inventory_update', {
       type: 'order_cancelled_restock',
       orderId,
-      products: Array.from(this.products.values())
+      products: Array.from(this.products.values()),
     });
 
     return order;

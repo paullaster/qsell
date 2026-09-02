@@ -1,7 +1,7 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
 @layer base {
   body {
-    @apply bg-black text-zinc-300 font-sans antialiased selection:bg-indigo-600 selection:text-white;
+    @apply bg-black font-sans text-zinc-300 antialiased selection:bg-indigo-600 selection:text-white;
   }
 }
