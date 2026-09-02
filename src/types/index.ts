@@ -1,0 +1,286 @@
+export interface Category {
+  id: string;
+  name: string;
+  slug: string;
+  description: string;
+  imageUrl?: string;
+  isActive: boolean;
+  displayOrder: number;
+  productCount?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProductSpecification {
+  key: string;
+  value: string;
+}
+
+export interface Product {
+  id: string;
+  sku: string;
+  name: string;
+  slug: string;
+  description: string;
+  category: string;
+  brand?: string;
+  price: number;
+  compareAtPrice?: number;
+  costPrice?: number;
+  taxCategoryId?: string;
+  taxCategoryName?: string;
+  taxRate?: number;
+  isTaxInclusive?: boolean;
+  weight?: number; // kg
+  specifications?: ProductSpecification[];
+  stockQuantity: number;
+  reservedQuantity: number;
+  lowStockThreshold: number;
+  isActive: boolean;
+  imageUrl: string;
+  additionalImages?: string[];
+  rating: number;
+  reviewCount: number;
+  tags: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type TaxType = 'vat' | 'sales_tax' | 'gst' | 'excise' | 'custom' | 'exempt' | 'digital_service';
+
+export interface TaxCategory {
+  id: string;
+  name: string;
+  code: string;
+  rate: number; // percentage (e.g. 16 for 16%)
+  type: TaxType;
+  countryCode: string;
+  countryName: string;
+  description: string;
+  isInclusive: boolean; // whether selling prices are inclusive of this tax
+  isDefault: boolean;
+  isActive: boolean;
+  productCount?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CurrencyConfig {
+  code: string; // e.g. "KES", "USD", "EUR", "GBP", "UGX", "TZS", "ZAR", "AED"
+  name: string;
+  symbol: string;
+  exchangeRate: number; // multiplier against store base currency
+  isBaseCurrency: boolean;
+  decimalDigits: number;
+  symbolPosition: 'prefix' | 'suffix';
+  isEnabled: boolean;
+  flagEmoji?: string;
+  updatedAt: string;
+}
+
+export type InventoryChangeType = 
+  | 'purchase_order_receipt'
+  | 'damage_writeoff'
+  | 'loss_shrinkage'
+  | 'physical_audit'
+  | 'order_reservation' 
+  | 'order_fulfillment' 
+  | 'restock' 
+  | 'manual_adjustment' 
+  | 'reconciliation_correction' 
+  | 'order_cancellation_release';
+
+export interface InventoryLedgerEntry {
+  id: string;
+  productId: string;
+  productName: string;
+  changeAmount: number;
+  previousStock: number;
+  newStock: number;
+  changeType: InventoryChangeType;
+  referenceId: string;
+  actor: string;
+  note: string;
+  timestamp: string;
+}
+
+export type PaymentProvider = 'mpesa_daraja' | 'pesapal_v3' | 'card_direct';
+
+export interface PaymentGatewayConfig {
+  id: string;
+  provider: PaymentProvider;
+  name: string;
+  isEnabled: boolean;
+  environment: 'sandbox' | 'production';
+  credentials: {
+    consumerKey?: string;
+    consumerSecret?: string;
+    passkey?: string;
+    shortcode?: string;
+    ipnId?: string;
+    accountReference?: string;
+  };
+  supportedCurrencies: string[];
+  icon: string;
+  description: string;
+}
+
+export type OrderStatus = 'pending' | 'processing' | 'shipped' | 'delivered' | 'completed' | 'failed' | 'cancelled' | 'refunded';
+export type PaymentStatus = 'unpaid' | 'pending_verification' | 'paid' | 'reconciled' | 'discrepancy' | 'failed';
+
+export interface OrderItem {
+  productId: string;
+  productName: string;
+  sku: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+  imageUrl: string;
+}
+
+export interface Order {
+  id: string;
+  orderNumber: string;
+  userId: string;
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
+  shippingAddress: {
+    street: string;
+    city: string;
+    countyOrState: string;
+    postalCode?: string;
+    country: string;
+  };
+  items: OrderItem[];
+  subtotal: number;
+  tax: number;
+  shippingFee: number;
+  totalAmount: number;
+  currency: 'KES' | 'USD';
+  status: OrderStatus;
+  paymentStatus: PaymentStatus;
+  paymentMethod: PaymentProvider;
+  shippingCourier?: string;
+  trackingNumber?: string;
+  internalNotes?: string;
+  shippedAt?: string;
+  deliveredAt?: string;
+  transactionReference?: string;
+  mpesaReceiptNumber?: string;
+  pesapalTrackingId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TransactionRecord {
+  id: string;
+  orderId: string;
+  orderNumber: string;
+  gatewayProvider: PaymentProvider;
+  transactionReference: string;
+  externalReference?: string;
+  amount: number;
+  currency: string;
+  status: 'initiated' | 'pending' | 'successful' | 'failed' | 'flagged';
+  customerPhone?: string;
+  customerEmail?: string;
+  requestPayload: any;
+  responsePayload: any;
+  ipnStatus: 'pending' | 'delivered' | 'failed';
+  reconciliationStatus: 'pending' | 'reconciled' | 'discrepancy';
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReconciliationLog {
+  id: string;
+  transactionId: string;
+  orderId: string;
+  orderNumber: string;
+  provider: PaymentProvider;
+  reconciliationType: 'auto_realtime' | 'scheduled_batch' | 'manual_override';
+  orderTotal: number;
+  receivedAmount: number;
+  discrepancyFound: boolean;
+  discrepancyType?: 'none' | 'underpayment' | 'overpayment' | 'status_mismatch' | 'orphan_payment';
+  status: 'matched' | 'corrected' | 'flagged_for_review';
+  details: string;
+  timestamp: string;
+}
+
+export interface UserSession {
+  userId: string;
+  email: string;
+  name: string;
+  role: 'admin' | 'manager' | 'customer';
+  token: string;
+  createdAt: string;
+}
+
+export interface CustomerAddress {
+  id: string;
+  label: string; // e.g. "Primary Home", "Nairobi Office", "Warehouse Dispatch"
+  recipientName: string;
+  recipientPhone: string;
+  street: string;
+  city: string;
+  countyOrState: string;
+  postalCode?: string;
+  country: string;
+  isDefault: boolean;
+}
+
+export interface CustomerPaymentPreferences {
+  preferredMethod: PaymentProvider;
+  defaultMpesaPhone?: string;
+  defaultCardLast4?: string;
+}
+
+export interface CustomerAccount {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  avatarUrl?: string;
+  role: 'admin' | 'customer' | 'manager';
+  status: 'active' | 'suspended' | 'verified';
+  addresses: CustomerAddress[];
+  paymentPreferences: CustomerPaymentPreferences;
+  totalOrders: number;
+  totalSpend: number;
+  lastOrderDate?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserProfile extends CustomerAccount {
+  preferredPaymentMethod: PaymentProvider;
+}
+
+export interface DashboardAnalytics {
+  totalRevenue: number;
+  totalOrders: number;
+  averageOrderValue: number;
+  reconciliationRate: number;
+  activeStockSkus: number;
+  lowStockAlertsCount: number;
+  todaySalesKes: number;
+  salesByPaymentMethod: {
+    provider: string;
+    name: string;
+    amount: number;
+    count: number;
+    percentage: number;
+  }[];
+  recentHourlySales: {
+    time: string;
+    sales: number;
+    orders: number;
+  }[];
+  categorySales: {
+    category: string;
+    sales: number;
+  }[];
+}
