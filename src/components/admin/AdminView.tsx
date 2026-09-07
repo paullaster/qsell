@@ -251,6 +251,7 @@ export function AdminView({
         onClose={() => setIsProductModalOpen(false)}
         productToEdit={productToEdit}
         categories={cachedCategories}
+        itemTypes={[]}
         taxCategories={cachedTaxes}
         onSuccess={() => {
           onRefreshAll();

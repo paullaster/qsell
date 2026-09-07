@@ -6,6 +6,7 @@
 
 export {
   listProductsAction,
+  listSellableProductsAction,
   getProductAction,
   createProductAction,
   updateProductAction,
@@ -14,6 +15,11 @@ export {
   createCategoryAction,
   updateCategoryAction,
   deleteCategoryAction,
+  listItemTypesAction,
+  createItemTypeAction,
+  updateItemTypeAction,
+  setDefaultItemTypeAction,
+  deleteItemTypeAction,
 } from '@/server/domains/catalog/actions';
 
 export {
@@ -64,6 +70,12 @@ export {
   initiatePesapalPaymentAction,
   submitPesapalOrderAction,
   simulatePesapalPaymentAction,
+  listBranchesAction,
+  listPaymentConfigsAction,
+  savePaymentConfigAction,
+  listEnabledCheckoutProvidersAction,
+  initiateBranchPaymentAction,
+  getPaymentAttemptStatusAction,
 } from '@/server/domains/payments/actions';
 
 export {
@@ -84,6 +96,9 @@ export {
   switchRoleAction,
   customerLoginAction,
   ensureAdminSessionAction,
+  loginAction,
+  logoutAction,
+  registerCustomerAction,
 } from '@/server/domains/auth/actions';
 
 export {
@@ -116,6 +131,7 @@ export { getSessionAction as fetchSessionAction } from '@/server/domains/auth/ac
 
 export {
   getCompanySettingsAction,
+  getCompanyUiConfigAction,
   updateCompanySettingsAction,
   uploadCompanyLogoAction,
 } from '@/server/domains/company/actions';

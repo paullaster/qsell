@@ -1,5 +1,6 @@
 import { db } from '@/server/db/store';
 import type { PaymentGatewayConfig, Order, TransactionRecord } from '@/types/index';
+import { getContainer } from '@/server/di/container';
 
 export class AdminService {
   static getPaymentGateways(): PaymentGatewayConfig[] {
@@ -27,10 +28,8 @@ export class AdminService {
     return updated;
   }
 
-  static getAllOrders(): Order[] {
-    return Array.from(db.orders.values()).sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-    );
+  static async getAllOrders(): Promise<Order[]> {
+    return getContainer().orders.listAll();
   }
 
   static getAllTransactions(): TransactionRecord[] {

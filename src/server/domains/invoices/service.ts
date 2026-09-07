@@ -4,7 +4,7 @@ import { communicationOutbox, invoiceDocuments } from '@/server/db/drizzle/schem
 import type { CompanySettingsRepository } from '@/server/domains/company/repository';
 import type { EmailPort, InvoicePayload, InvoicePdfPort } from '@/server/ports/communications';
 import type { Order } from '@/types/index';
-import { AdminService } from '@/server/domains/gateways/service';
+import { getContainer } from '@/server/di/container';
 
 export type InvoiceDocumentType = 'tax_invoice' | 'proforma';
 
@@ -239,8 +239,8 @@ export class InvoiceService {
     };
   }
 
-  private resolveOrder(orderId: string): Order {
-    const order = AdminService.getAllOrders().find((o) => o.id === orderId);
+  private async resolveOrder(orderId: string): Promise<Order> {
+    const order = await getContainer().orders.getById(orderId);
     if (!order) {
       throw new Error(`Order ${orderId} not found`);
     }
@@ -260,7 +260,7 @@ export class InvoiceService {
     orderId: string,
     documentType: InvoiceDocumentType = 'tax_invoice',
   ): Promise<GeneratedInvoice> {
-    const order = this.resolveOrder(orderId);
+    const order = await this.resolveOrder(orderId);
     this.assertProformaAllowed(order, documentType);
     const company = await this.deps.companySettings.getProfile();
     const prefix = documentType === 'proforma' ? 'PRO' : company.invoicePrefix;
@@ -311,7 +311,7 @@ export class InvoiceService {
     documentType: InvoiceDocumentType = 'tax_invoice',
   ): Promise<GeneratedInvoice> {
     const generated = await this.generatePdf(orderId, documentType);
-    const order = this.resolveOrder(orderId);
+    const order = await this.resolveOrder(orderId);
     const company = await this.deps.companySettings.getProfile();
     const labels = documentLabels(documentType);
     const pdfBuffer = Buffer.from(generated.pdfBase64, 'base64');

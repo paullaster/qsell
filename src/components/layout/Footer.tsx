@@ -26,7 +26,7 @@ interface FooterProps {
 export function Footer({ company, onOpenTrackOrder, onOpenHelp }: FooterProps) {
   return (
     <footer className="mt-16 w-full border-t border-zinc-800 bg-zinc-950 py-10 text-xs text-zinc-400">
-      <div className="mx-auto max-w-7xl space-y-8 px-4 sm:px-6 lg:px-8">
+      <div className="storefront-shell space-y-8">
         <div className="grid grid-cols-1 gap-8 md:grid-cols-3">
           <div className="space-y-3 md:col-span-1">
             <CompanyBrand

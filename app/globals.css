@@ -1,7 +1,30 @@
 @import 'tailwindcss';
 
+/*
+ * Company runtime theme:
+ * Root layout sets --company-primary / --company-primary-hover / --company-accent on <html>.
+ * Button fill tokens (indigo-500/600) map to primary so CTAs follow company branding
+ * without rewriting every component. Soft text tokens (indigo-300/400) stay default
+ * so labels remain readable on dark surfaces when primary is a dark document color.
+ */
+@theme inline {
+  --color-indigo-600: var(--company-primary, #4f46e5);
+  --color-indigo-500: var(--company-primary-hover, #6366f1);
+}
+
 @layer base {
   body {
     @apply bg-black font-sans text-zinc-300 antialiased selection:bg-indigo-600 selection:text-white;
+  }
+}
+
+@layer utilities {
+  /* Near-full viewport; only caps on ultra-wide / TV sizes */
+  .storefront-shell {
+    box-sizing: border-box;
+    width: 99%;
+    max-width: 2560px;
+    margin-inline: auto;
+    padding-inline: clamp(0.35rem, 0.5vw, 0.75rem);
   }
 }

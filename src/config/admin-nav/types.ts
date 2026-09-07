@@ -19,7 +19,13 @@ export type AdminNavIconName =
   | 'Building2'
   | 'Store'
   | 'Wallet'
-  | 'Boxes';
+  | 'Boxes'
+  | 'Palette'
+  | 'LayoutGrid'
+  | 'Tags'
+  | 'Shapes'
+  | 'Settings'
+  | 'GitBranch';
 
 export interface AdminNavItem {
   /** Stable unique id across the whole tree */

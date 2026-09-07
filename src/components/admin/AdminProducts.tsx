@@ -141,8 +141,8 @@ export function AdminProducts({
       p.sku,
       `"${p.name.replace(/"/g, '""')}"`,
       p.category,
-      p.price,
-      p.costPrice || '',
+      p.price ?? '',
+      p.costPrice ?? '',
       p.stockQuantity,
       p.reservedQuantity,
       p.lowStockThreshold,
@@ -328,9 +328,12 @@ export function AdminProducts({
                   const isLow = available <= p.lowStockThreshold && available > 0;
                   const isOut = available <= 0;
                   const isSelected = selectedProductIds.has(p.id);
-                  const cost = p.costPrice || Math.round(p.price * 0.75);
+                  const cost = p.costPrice;
+                  const sellPrice = p.price;
                   const marginPct =
-                    p.price > 0 ? (((p.price - cost) / p.price) * 100).toFixed(0) : '0';
+                    sellPrice != null && sellPrice > 0 && cost != null
+                      ? (((sellPrice - cost) / sellPrice) * 100).toFixed(0)
+                      : null;
 
                   return (
                     <tr
@@ -377,20 +380,36 @@ export function AdminProducts({
                         </span>
                       </td>
                       <td className="px-4 py-3.5 text-right font-mono font-semibold text-white">
-                        KES {p.price.toLocaleString()}
-                        {p.compareAtPrice && p.compareAtPrice > p.price && (
-                          <div className="text-[10px] text-zinc-500 line-through">
-                            KES {p.compareAtPrice.toLocaleString()}
-                          </div>
+                        {sellPrice != null ? (
+                          <>
+                            KES {sellPrice.toLocaleString()}
+                            {p.compareAtPrice != null && p.compareAtPrice > sellPrice && (
+                              <div className="text-[10px] text-zinc-500 line-through">
+                                KES {p.compareAtPrice.toLocaleString()}
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-zinc-500">—</span>
                         )}
                       </td>
                       <td className="px-4 py-3.5 text-right font-mono text-[11px]">
-                        <span className="block text-zinc-400">KES {cost.toLocaleString()}</span>
-                        <span
-                          className={`font-semibold ${Number(marginPct) >= 20 ? 'text-emerald-400' : 'text-amber-400'}`}
-                        >
-                          {marginPct}% margin
-                        </span>
+                        {cost != null ? (
+                          <>
+                            <span className="block text-zinc-400">KES {cost.toLocaleString()}</span>
+                            {marginPct != null ? (
+                              <span
+                                className={`font-semibold ${Number(marginPct) >= 20 ? 'text-emerald-400' : 'text-amber-400'}`}
+                              >
+                                {marginPct}% margin
+                              </span>
+                            ) : (
+                              <span className="text-zinc-500">No margin</span>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-zinc-500">—</span>
+                        )}
                       </td>
                       <td className="px-4 py-3.5 text-center">
                         <div className="inline-flex flex-col items-center">

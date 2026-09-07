@@ -9,19 +9,26 @@ import { useRealtimeEvents } from '@/lib/realtime';
 import { ensureAdminSessionAction } from '@/server/domains/auth/actions';
 import { getCompanySettingsAction } from '@/server/domains/company/actions';
 import { getAdminPageMeta } from '@/config/admin-nav';
+import { resolveCompanyUiConfig } from '@/config/company-ui';
+import { useCompanyUiConfig } from '@/components/company/CompanyUiConfigProvider';
 import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const uiConfig = useCompanyUiConfig();
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
   const [company, setCompany] = useState<Pick<
     CompanySettingsRow,
     'tradingName' | 'tagline' | 'logoUrl' | 'accentColor'
   > | null>(null);
+  const [moduleLabels, setModuleLabels] = useState(uiConfig.moduleLabels);
 
-  const pageMeta = useMemo(() => getAdminPageMeta(pathname), [pathname]);
+  const pageMeta = useMemo(
+    () => getAdminPageMeta(pathname, moduleLabels),
+    [pathname, moduleLabels],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -41,6 +48,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
             logoUrl: row.logoUrl,
             accentColor: row.accentColor,
           });
+          setModuleLabels(resolveCompanyUiConfig(row.uiConfig).moduleLabels);
         }
       })
       .catch(() => {});
@@ -75,6 +83,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
         onRefreshAll={onRefreshAll}
         isRealtimeConnected={isConnected}
         company={company}
+        moduleLabels={moduleLabels}
       />
 
       <div className="flex min-w-0 flex-1 flex-col lg:pl-72">

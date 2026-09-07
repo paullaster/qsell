@@ -3,7 +3,10 @@
 import React, { use, useState, useMemo } from 'react';
 import { type Product } from '@/types/index';
 import { ProductCard } from './ProductCard';
-import { Filter, SlidersHorizontal, Package, Sparkles } from 'lucide-react';
+import { Package } from 'lucide-react';
+import { productGridClassName } from '@/config/company-ui';
+import { useCompanyUiConfig } from '@/components/company/CompanyUiConfigProvider';
+import { productDescriptionPlainText } from '@/lib/productDescription';
 
 interface ProductListProps {
   productsPromise: Promise<Product[]>;
@@ -12,6 +15,7 @@ interface ProductListProps {
   onSelectProduct?: (product: Product) => void;
   onQuickBuy?: (product: Product) => void;
   selectedCategory?: string;
+  onSelectCategory?: (category: string) => void;
   searchQuery?: string;
 }
 
@@ -22,10 +26,12 @@ export function ProductList({
   onSelectProduct,
   onQuickBuy,
   selectedCategory: externalSelectedCategory,
+  onSelectCategory,
   searchQuery: externalSearchQuery = '',
 }: ProductListProps) {
-  // React 19 `use` hook resolves the promise passed from the server action / parent
   const products = use(productsPromise);
+  const { productGrid } = useCompanyUiConfig();
+  const gridClassName = productGridClassName(productGrid.desktopColumns);
 
   const [internalCategory, setInternalCategory] = useState<string>('All');
   const [stockFilter, setStockFilter] = useState<'all' | 'in_stock' | 'low_stock'>('all');
@@ -33,28 +39,37 @@ export function ProductList({
     'featured',
   );
 
-  const selectedCategory = externalSelectedCategory || internalCategory;
+  // Controlled when parent passes selectedCategory (incl. "All"); never use || with "All".
+  const selectedCategory =
+    externalSelectedCategory !== undefined ? externalSelectedCategory : internalCategory;
   const searchQuery = externalSearchQuery;
+
+  const setCategory = (cat: string) => {
+    if (onSelectCategory) onSelectCategory(cat);
+    else setInternalCategory(cat);
+  };
 
   const handleInspect = (product: Product) => {
     if (onSelectProduct) onSelectProduct(product);
     else if (onQuickView) onQuickView(product);
   };
 
-  // Extract unique categories
   const categories = useMemo(() => {
-    const set = new Set(products.map((p) => p.category));
-    return ['All', ...Array.from(set)];
+    const set = new Set(products.map((p) => p.category).filter(Boolean));
+    return ['All', ...Array.from(set).sort((a, b) => a.localeCompare(b))];
   }, [products]);
 
-  // Filtered & Sorted Products
   const filteredProducts = useMemo(() => {
     return products
       .filter((p) => {
-        const matchesCat = selectedCategory === 'All' || p.category === selectedCategory;
+        const matchesCat =
+          selectedCategory === 'All' ||
+          p.category.toLowerCase() === selectedCategory.toLowerCase();
         const matchesSearch =
           p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          p.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          productDescriptionPlainText(p.description)
+            .toLowerCase()
+            .includes(searchQuery.toLowerCase()) ||
           p.sku.toLowerCase().includes(searchQuery.toLowerCase()) ||
           p.tags.some((t) => t.toLowerCase().includes(searchQuery.toLowerCase()));
 
@@ -67,118 +82,157 @@ export function ProductList({
         return matchesCat && matchesSearch && matchesStock;
       })
       .sort((a, b) => {
-        if (sortBy === 'price_asc') return a.price - b.price;
-        if (sortBy === 'price_desc') return b.price - a.price;
+        if (sortBy === 'price_asc') return (a.price ?? 0) - (b.price ?? 0);
+        if (sortBy === 'price_desc') return (b.price ?? 0) - (a.price ?? 0);
         if (sortBy === 'rating') return b.rating - a.rating;
-        return 0; // featured default
+        return 0;
       });
   }, [products, selectedCategory, searchQuery, stockFilter, sortBy]);
 
-  return (
-    <div className="space-y-6">
-      {/* Category Pills & Filters Bar */}
-      <div className="flex flex-col justify-between gap-4 rounded-xl border border-zinc-800 bg-zinc-900 p-4 lg:flex-row lg:items-center">
-        {/* Categories */}
-        <div className="flex scrollbar-none items-center gap-2 overflow-x-auto pb-2 lg:pb-0">
-          {categories.map((cat) => (
-            <button
-              key={cat}
-              onClick={() => setInternalCategory(cat)}
-              className={`cursor-pointer rounded-lg px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-all ${
-                selectedCategory === cat
-                  ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
-                  : 'border border-zinc-800 bg-zinc-950 text-zinc-400 hover:bg-zinc-800 hover:text-white'
-              }`}
-            >
-              {cat}
-            </button>
-          ))}
-        </div>
+  const categoryButtonClass = (cat: string, layout: 'rail' | 'pill') => {
+    const active = selectedCategory === cat;
+    const base =
+      layout === 'rail'
+        ? 'w-full cursor-pointer rounded-lg px-3 py-2 text-left text-xs font-medium transition-all'
+        : 'cursor-pointer rounded-lg px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-all';
+    return `${base} ${
+      active
+        ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
+        : 'border border-zinc-800 bg-zinc-950 text-zinc-400 hover:bg-zinc-800 hover:text-white'
+    }`;
+  };
 
-        {/* Filter controls */}
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Stock filter */}
-          <div className="flex items-center rounded-lg border border-zinc-800 bg-zinc-950 p-1 text-xs">
-            <button
-              onClick={() => setStockFilter('all')}
-              className={`cursor-pointer rounded-md px-2.5 py-1 transition-colors ${
-                stockFilter === 'all'
-                  ? 'bg-zinc-800 font-semibold text-white'
-                  : 'text-zinc-400 hover:text-zinc-200'
-              }`}
-            >
-              All Items ({products.length})
-            </button>
-            <button
-              onClick={() => setStockFilter('in_stock')}
-              className={`cursor-pointer rounded-md px-2.5 py-1 transition-colors ${
-                stockFilter === 'in_stock'
-                  ? 'bg-indigo-600 font-semibold text-white shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-200'
-              }`}
-            >
-              In Stock
-            </button>
-            <button
-              onClick={() => setStockFilter('low_stock')}
-              className={`cursor-pointer rounded-md px-2.5 py-1 transition-colors ${
-                stockFilter === 'low_stock'
-                  ? 'bg-amber-600 font-semibold text-white shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-200'
-              }`}
-            >
-              Low Stock
-            </button>
-          </div>
+  const categoryNav = (layout: 'rail' | 'pill') => (
+    <nav
+      aria-label="Product categories"
+      className={
+        layout === 'rail'
+          ? 'flex flex-col gap-1.5'
+          : 'flex scrollbar-none items-center gap-2 overflow-x-auto pb-1'
+      }
+    >
+      {categories.map((cat) => (
+        <button
+          key={cat}
+          type="button"
+          onClick={() => setCategory(cat)}
+          className={categoryButtonClass(cat, layout)}
+        >
+          {cat}
+        </button>
+      ))}
+    </nav>
+  );
 
-          {/* Sort selection */}
-          <select
-            value={sortBy}
-            onChange={(e: any) => setSortBy(e.target.value)}
-            className="cursor-pointer rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none"
-          >
-            <option value="featured">Sort: Featured First</option>
-            <option value="price_asc">Price: Low to High</option>
-            <option value="price_desc">Price: High to Low</option>
-            <option value="rating">Highest Rated</option>
-          </select>
-        </div>
+  const filtersBar = (
+    <div className="flex flex-wrap items-center gap-3">
+      <div className="flex items-center rounded-lg border border-zinc-800 bg-zinc-950 p-1 text-xs">
+        <button
+          type="button"
+          onClick={() => setStockFilter('all')}
+          className={`cursor-pointer rounded-md px-2.5 py-1 transition-colors ${
+            stockFilter === 'all'
+              ? 'bg-zinc-800 font-semibold text-white'
+              : 'text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          All Items ({products.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setStockFilter('in_stock')}
+          className={`cursor-pointer rounded-md px-2.5 py-1 transition-colors ${
+            stockFilter === 'in_stock'
+              ? 'bg-indigo-600 font-semibold text-white shadow-sm'
+              : 'text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          In Stock
+        </button>
+        <button
+          type="button"
+          onClick={() => setStockFilter('low_stock')}
+          className={`cursor-pointer rounded-md px-2.5 py-1 transition-colors ${
+            stockFilter === 'low_stock'
+              ? 'bg-amber-600 font-semibold text-white shadow-sm'
+              : 'text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          Low Stock
+        </button>
       </div>
 
-      {/* Products Grid */}
-      {filteredProducts.length > 0 ? (
-        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {filteredProducts.map((product) => (
-            <ProductCard
-              key={product.id}
-              product={product}
-              onAddToCart={onAddToCart}
-              onQuickView={handleInspect}
-              onQuickBuy={onQuickBuy}
-            />
-          ))}
-        </div>
-      ) : (
-        <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-12 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-zinc-800 text-zinc-400">
-            <Package className="h-6 w-6" />
-          </div>
-          <h3 className="text-base font-semibold text-white">No products found</h3>
-          <p className="mx-auto max-w-sm text-xs text-zinc-400">
-            We couldn't find any products matching your search criteria or category filter. Try
-            clearing filters or searching for another keyword.
+      <select
+        value={sortBy}
+        onChange={(e) =>
+          setSortBy(e.target.value as 'featured' | 'price_asc' | 'price_desc' | 'rating')
+        }
+        className="cursor-pointer rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none"
+      >
+        <option value="featured">Sort: Featured First</option>
+        <option value="price_asc">Price: Low to High</option>
+        <option value="price_desc">Price: High to Low</option>
+        <option value="rating">Highest Rated</option>
+      </select>
+    </div>
+  );
+
+  return (
+    <div className="min-[1000px]:flex min-[1000px]:items-start min-[1000px]:gap-6">
+      {/* Vertical category rail — far left from 1000px up */}
+      <aside className="sticky top-20 hidden w-48 shrink-0 min-[1000px]:block lg:w-52">
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-3">
+          <p className="mb-2 px-1 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+            Categories
           </p>
-          <button
-            onClick={() => {
-              setInternalCategory('All');
-              setStockFilter('all');
-            }}
-            className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-indigo-600/20 transition-colors hover:bg-indigo-500"
-          >
-            Reset Filters
-          </button>
+          {categoryNav('rail')}
         </div>
-      )}
+      </aside>
+
+      <div className="min-w-0 flex-1 space-y-6">
+        {/* Mobile / tablet: horizontal categories + filters */}
+        <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-4 min-[1000px]:space-y-0">
+          <div className="min-[1000px]:hidden">{categoryNav('pill')}</div>
+          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+            {filtersBar}
+          </div>
+        </div>
+
+        {filteredProducts.length > 0 ? (
+          <div className={gridClassName}>
+            {filteredProducts.map((product) => (
+              <ProductCard
+                key={product.id}
+                product={product}
+                onAddToCart={onAddToCart}
+                onQuickView={handleInspect}
+                onQuickBuy={onQuickBuy}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-12 text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-zinc-800 text-zinc-400">
+              <Package className="h-6 w-6" />
+            </div>
+            <h3 className="text-base font-semibold text-white">No products found</h3>
+            <p className="mx-auto max-w-sm text-xs text-zinc-400">
+              We couldn&apos;t find any products matching your search criteria or category filter.
+              Try clearing filters or searching for another keyword.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setCategory('All');
+                setStockFilter('all');
+              }}
+              className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-indigo-600/20 transition-colors hover:bg-indigo-500"
+            >
+              Reset Filters
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

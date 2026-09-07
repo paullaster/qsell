@@ -3,21 +3,20 @@
 import React, { useState, useEffect } from 'react';
 import {
   X,
-  Plus,
   Package,
   DollarSign,
   Image as ImageIcon,
   Tag,
   Save,
   AlertTriangle,
-  Percent,
   Layers,
   Trash2,
-  CheckCircle2,
+  AlignLeft,
 } from 'lucide-react';
 import {
   type Product,
   type Category,
+  type ItemType,
   type TaxCategory,
   type ProductSpecification,
 } from '@/types/index';
@@ -25,13 +24,27 @@ import {
   createProductAction,
   updateProductAction,
   fetchTaxCategoriesAction,
+  listItemTypesAction,
 } from '@/server/actions';
+import { ProductDescriptionEditor } from '@/components/admin/ProductDescriptionEditor';
+
+type ProductFormTab = 'basics' | 'pricing' | 'inventory' | 'specs' | 'description' | 'media';
+
+const TABS: { id: ProductFormTab; label: string; icon: typeof Package }[] = [
+  { id: 'basics', label: 'Basics', icon: Package },
+  { id: 'pricing', label: 'Pricing', icon: DollarSign },
+  { id: 'inventory', label: 'Stock', icon: Layers },
+  { id: 'specs', label: 'Specs', icon: Tag },
+  { id: 'description', label: 'Description', icon: AlignLeft },
+  { id: 'media', label: 'Media', icon: ImageIcon },
+];
 
 interface AdminProductModalProps {
   isOpen: boolean;
   onClose: () => void;
   productToEdit: Product | null;
   categories: Category[];
+  itemTypes?: ItemType[];
   taxCategories?: TaxCategory[];
   onSuccess: () => void;
 }
@@ -41,33 +54,35 @@ export function AdminProductModal({
   onClose,
   productToEdit,
   categories,
+  itemTypes: initialItemTypes,
   taxCategories: initialTaxCategories,
   onSuccess,
 }: AdminProductModalProps) {
-  if (!isOpen) return null;
-
   const isEditing = Boolean(productToEdit);
+  const [tab, setTab] = useState<ProductFormTab>('basics');
 
   // Basic Information
   const [name, setName] = useState('');
   const [sku, setSku] = useState('');
   const [slug, setSlug] = useState('');
-  const [category, setCategory] = useState('Electronics');
+  const [category, setCategory] = useState('');
   const [brand, setBrand] = useState('');
+  const [itemTypeId, setItemTypeId] = useState('');
 
-  // Tax Categories & Selection
+  // Item types & taxes
+  const [itemTypes, setItemTypes] = useState<ItemType[]>(initialItemTypes || []);
   const [taxCategories, setTaxCategories] = useState<TaxCategory[]>(initialTaxCategories || []);
   const [selectedTaxId, setSelectedTaxId] = useState<string>('');
 
-  // Pricing & Financials
-  const [price, setPrice] = useState<number>(10000);
-  const [compareAtPrice, setCompareAtPrice] = useState<number>(12000);
-  const [costPrice, setCostPrice] = useState<number>(7500);
+  // Pricing & Financials (strings so create form can stay empty with placeholders)
+  const [price, setPrice] = useState('');
+  const [compareAtPrice, setCompareAtPrice] = useState('');
+  const [costPrice, setCostPrice] = useState('');
 
   // Inventory & Logistics
-  const [stockQuantity, setStockQuantity] = useState<number>(20);
-  const [lowStockThreshold, setLowStockThreshold] = useState<number>(5);
-  const [weight, setWeight] = useState<number>(1.2);
+  const [stockQuantity, setStockQuantity] = useState('');
+  const [lowStockThreshold, setLowStockThreshold] = useState('');
+  const [weight, setWeight] = useState('');
 
   // Media & Description
   const [imageUrl, setImageUrl] = useState('');
@@ -76,92 +91,105 @@ export function AdminProductModal({
   const [isActive, setIsActive] = useState(true);
 
   // Dynamic Specifications (key-value pairs)
-  const [specifications, setSpecifications] = useState<ProductSpecification[]>([
-    { key: 'Warranty', value: '1 Year Official Warranty' },
-    { key: 'Condition', value: 'Brand New Sealed' },
-  ]);
+  const [specifications, setSpecifications] = useState<ProductSpecification[]>([]);
   const [newSpecKey, setNewSpecKey] = useState('');
   const [newSpecValue, setNewSpecValue] = useState('');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Load taxes if not provided
+  // Load taxes / item types if not provided
   useEffect(() => {
+    if (!isOpen) return;
     if (!initialTaxCategories || initialTaxCategories.length === 0) {
       fetchTaxCategoriesAction()
         .then((taxes) => setTaxCategories(taxes))
         .catch(() => {});
+    } else {
+      setTaxCategories(initialTaxCategories);
     }
-  }, [initialTaxCategories]);
+    if (!initialItemTypes || initialItemTypes.length === 0) {
+      listItemTypesAction()
+        .then((types) => setItemTypes(types))
+        .catch(() => {});
+    } else {
+      setItemTypes(initialItemTypes);
+    }
+  }, [initialTaxCategories, initialItemTypes, isOpen]);
 
-  // Initialize form state
+  // Initialize form state — create mode uses empty values + placeholders only
   useEffect(() => {
+    if (!isOpen) return;
+    setTab('basics');
+    setError(null);
+
     if (productToEdit) {
       setName(productToEdit.name);
       setSku(productToEdit.sku);
       setSlug(productToEdit.slug);
       setCategory(productToEdit.category);
       setBrand(productToEdit.brand || '');
-      setPrice(productToEdit.price);
-      setCompareAtPrice(productToEdit.compareAtPrice || 0);
-      setCostPrice(productToEdit.costPrice || Math.round(productToEdit.price * 0.75));
+      setItemTypeId(productToEdit.itemTypeId || '');
+      setPrice(productToEdit.price != null ? String(productToEdit.price) : '');
+      setCompareAtPrice(
+        productToEdit.compareAtPrice != null ? String(productToEdit.compareAtPrice) : '',
+      );
+      setCostPrice(productToEdit.costPrice != null ? String(productToEdit.costPrice) : '');
       setSelectedTaxId(productToEdit.taxCategoryId || '');
-      setStockQuantity(productToEdit.stockQuantity);
-      setLowStockThreshold(productToEdit.lowStockThreshold);
-      setWeight(productToEdit.weight || 1.0);
-      setImageUrl(productToEdit.imageUrl);
-      setDescription(productToEdit.description);
+      setStockQuantity(String(productToEdit.stockQuantity));
+      setLowStockThreshold(String(productToEdit.lowStockThreshold));
+      setWeight(productToEdit.weight != null ? String(productToEdit.weight) : '');
+      setImageUrl(productToEdit.imageUrl || '');
+      setDescription(productToEdit.description || '');
       setTagsInput(productToEdit.tags?.join(', ') || '');
       setIsActive(productToEdit.isActive);
       setSpecifications(
         productToEdit.specifications && productToEdit.specifications.length > 0
           ? productToEdit.specifications
-          : [
-              { key: 'Warranty', value: '1 Year Official Warranty' },
-              { key: 'Condition', value: 'Brand New Sealed' },
-            ],
+          : [],
       );
     } else {
-      const defaultCategory = categories.length > 0 ? categories[0].name : 'Electronics';
-      const defaultTax = taxCategories.find((t) => t.isDefault) || taxCategories[0];
+      const defaultType =
+        itemTypes.find((t) => t.isDefault && t.isActive) ||
+        itemTypes.find((t) => t.isDefault) ||
+        itemTypes[0];
       setName('');
-      setSku(`SKU-${Math.floor(1000 + Math.random() * 9000)}`);
+      setSku('');
       setSlug('');
-      setCategory(defaultCategory);
+      setCategory('');
       setBrand('');
-      setPrice(25000);
-      setCompareAtPrice(30000);
-      setCostPrice(18000);
-      if (defaultTax) setSelectedTaxId(defaultTax.id);
-      setStockQuantity(15);
-      setLowStockThreshold(4);
-      setWeight(1.5);
-      setImageUrl(
-        'https://images.unsplash.com/photo-1526738549149-8e07eca6c147?auto=format&fit=crop&w=1000&q=80',
-      );
-      setDescription(
-        'Premium grade electronic device with exceptional build quality, high reliability, and standard manufacturer support.',
-      );
-      setTagsInput('Electronics, Flagship, In-Demand');
+      setItemTypeId(defaultType?.id || '');
+      setPrice('');
+      setCompareAtPrice('');
+      setCostPrice('');
+      setSelectedTaxId('');
+      setStockQuantity('');
+      setLowStockThreshold('');
+      setWeight('');
+      setImageUrl('');
+      setDescription('');
+      setTagsInput('');
       setIsActive(true);
-      setSpecifications([
-        { key: 'Warranty', value: '1 Year Official Warranty' },
-        { key: 'Condition', value: 'Brand New Sealed' },
-      ]);
+      setSpecifications([]);
     }
-  }, [productToEdit, isOpen, categories, taxCategories]);
+  }, [productToEdit, isOpen, itemTypes]);
+
+  const activeItemType =
+    itemTypes.find((t) => t.id === itemTypeId) ||
+    itemTypes.find((t) => t.isDefault) ||
+    itemTypes[0];
 
   // Selected Tax details
   const activeTax =
     taxCategories.find((t) => t.id === selectedTaxId) ||
     taxCategories.find((t) => t.isDefault) ||
     taxCategories[0];
-  const taxRate = activeTax ? activeTax.rate : 16.0;
+  const taxRate = activeTax ? activeTax.rate : 0;
   const isTaxInclusive = activeTax ? activeTax.isInclusive : true;
 
   // Fiscal Calculations
-  const effectivePrice = Number(price) || 0;
+  const effectivePrice = price.trim() === '' ? 0 : Number(price) || 0;
+  const costNumber = costPrice.trim() === '' ? NaN : Number(costPrice);
   const netSellingPrice = isTaxInclusive
     ? taxRate > 0
       ? effectivePrice / (1 + taxRate / 100)
@@ -170,9 +198,9 @@ export function AdminProductModal({
   const taxAmountPerUnit = isTaxInclusive
     ? effectivePrice - netSellingPrice
     : effectivePrice * (taxRate / 100);
-  const grossTotalPerUnit = isTaxInclusive ? effectivePrice : effectivePrice + taxAmountPerUnit;
-
-  const unitGrossProfit = netSellingPrice - (costPrice || 0);
+  const unitGrossProfit = Number.isFinite(costNumber)
+    ? netSellingPrice - costNumber
+    : netSellingPrice;
   const grossMarginPct =
     netSellingPrice > 0 ? ((unitGrossProfit / netSellingPrice) * 100).toFixed(1) : '0.0';
 
@@ -191,18 +219,70 @@ export function AdminProductModal({
     setSpecifications(specifications.filter((_, i) => i !== index));
   };
 
+  const focusTabForError = (message: string) => {
+    const m = message.toLowerCase();
+    if (m.includes('title') || m.includes('sku') || m.includes('category') || m.includes('item type')) {
+      setTab('basics');
+    } else if (m.includes('price') || m.includes('selling') || m.includes('cost')) {
+      setTab('pricing');
+    } else if (m.includes('stock') || m.includes('weight')) {
+      setTab('inventory');
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
-      setError('Product title is required.');
+      const msg = 'Product title is required.';
+      setError(msg);
+      focusTabForError(msg);
       return;
     }
     if (!sku.trim()) {
-      setError('SKU code is required.');
+      const msg = 'SKU code is required.';
+      setError(msg);
+      focusTabForError(msg);
       return;
     }
-    if (price <= 0) {
-      setError('Selling price must be greater than 0.');
+    if (!category.trim()) {
+      const msg =
+        categories.length === 0
+          ? 'Create a category first, then assign it to this product.'
+          : 'Category is required.';
+      setError(msg);
+      focusTabForError(msg);
+      return;
+    }
+    if (!itemTypeId.trim() || !activeItemType) {
+      const msg =
+        itemTypes.length === 0
+          ? 'Create an item type first, then assign it to this product.'
+          : 'Item type is required.';
+      setError(msg);
+      focusTabForError(msg);
+      return;
+    }
+
+    const sellable = activeItemType.isSellable;
+
+    if (sellable) {
+      if (price.trim() === '' || !Number.isFinite(Number(price)) || Number(price) <= 0) {
+        const msg = 'Selling price is required for sellable item types.';
+        setError(msg);
+        focusTabForError(msg);
+        return;
+      }
+    } else if (price.trim() !== '' && (!Number.isFinite(Number(price)) || Number(price) < 0)) {
+      const msg = 'Selling price must be 0 or greater when provided.';
+      setError(msg);
+      focusTabForError(msg);
+      return;
+    }
+
+    if (costPrice.trim() === '' || !Number.isFinite(Number(costPrice)) || Number(costPrice) < 0) {
+      const msg = 'Cost of goods is required and must be 0 or greater.';
+      setError(msg);
+      focusTabForError(msg);
       return;
     }
 
@@ -214,6 +294,10 @@ export function AdminProductModal({
       .map((t) => t.trim())
       .filter(Boolean);
     const autoSlug = slug.trim() || name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const stock = stockQuantity.trim() === '' ? 0 : Number(stockQuantity);
+    const lowThreshold =
+      lowStockThreshold.trim() === '' ? 0 : Number(lowStockThreshold);
+    const weightValue = weight.trim() === '' ? undefined : Number(weight);
 
     try {
       const productPayload = {
@@ -222,16 +306,23 @@ export function AdminProductModal({
         slug: autoSlug,
         category,
         brand: brand.trim() || undefined,
-        price: Number(price),
-        compareAtPrice: Number(compareAtPrice) > 0 ? Number(compareAtPrice) : undefined,
-        costPrice: Number(costPrice) > 0 ? Number(costPrice) : undefined,
+        itemTypeId: activeItemType.id,
+        itemTypeName: activeItemType.name,
+        itemTypeCode: activeItemType.code,
+        isSellable: sellable,
+        price: price.trim() === '' ? undefined : Number(price),
+        compareAtPrice:
+          compareAtPrice.trim() !== '' && Number(compareAtPrice) > 0
+            ? Number(compareAtPrice)
+            : undefined,
+        costPrice: Number(costPrice),
         taxCategoryId: activeTax?.id,
         taxCategoryName: activeTax?.name,
-        taxRate: activeTax ? activeTax.rate : 16.0,
+        taxRate: activeTax ? activeTax.rate : 0,
         isTaxInclusive: activeTax ? activeTax.isInclusive : true,
-        stockQuantity: Number(stockQuantity),
-        lowStockThreshold: Number(lowStockThreshold),
-        weight: Number(weight) || 1.0,
+        stockQuantity: Number.isFinite(stock) ? stock : 0,
+        lowStockThreshold: Number.isFinite(lowThreshold) ? lowThreshold : 0,
+        weight: weightValue != null && Number.isFinite(weightValue) ? weightValue : undefined,
         specifications,
         imageUrl: imageUrl.trim(),
         description: description.trim(),
@@ -244,451 +335,491 @@ export function AdminProductModal({
       } else {
         await createProductAction({
           ...productPayload,
-          rating: 5.0,
+          rating: 0,
           reviewCount: 0,
         });
       }
       onSuccess();
       onClose();
-    } catch (err: any) {
-      setError(err.message || 'Operation failed');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Operation failed');
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  if (!isOpen) return null;
+
+  const fieldClass =
+    'w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none';
+  const labelClass = 'mb-1 block text-[11px] font-semibold text-zinc-400';
+
+  const tabIndex = TABS.findIndex((t) => t.id === tab);
+  const goNext = () => {
+    const next = TABS[tabIndex + 1];
+    if (next) setTab(next.id);
+  };
+  const goPrev = () => {
+    const prev = TABS[tabIndex - 1];
+    if (prev) setTab(prev.id);
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/80 p-4 backdrop-blur-md sm:p-6">
-      <div className="relative my-8 flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl">
-        {/* Modal Header */}
-        <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-950 p-5">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-indigo-500/30 bg-indigo-600/20 text-indigo-400">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 backdrop-blur-md sm:p-5">
+      <div className="relative flex h-[min(720px,90vh)] w-[90vw] max-w-6xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl">
+        {/* Header */}
+        <div className="flex shrink-0 items-center justify-between border-b border-zinc-800 bg-zinc-950 px-4 py-3 sm:px-5">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-indigo-500/30 bg-indigo-600/20 text-indigo-400">
               <Package className="h-4 w-4" />
             </div>
-            <div>
-              <h3 className="text-base font-bold text-white">
+            <div className="min-w-0">
+              <h3 className="truncate text-sm font-bold text-white sm:text-base">
                 {isEditing
                   ? `Edit Product: ${productToEdit?.sku ?? ''}`
-                  : 'Create New Product Record'}
+                  : 'Create New Product'}
               </h3>
-              <p className="text-[11px] text-zinc-400">
+              <p className="truncate text-[11px] text-zinc-400">
                 {isEditing
-                  ? 'Update pricing, margins, stock thresholds, and specifications.'
-                  : 'Add a new catalog item with complete pricing and inventory tracking.'}
+                  ? 'Update catalog, pricing, stock, and media.'
+                  : 'Fill each step — save from any tab when ready.'}
               </p>
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="cursor-pointer rounded-lg p-1 text-zinc-400 hover:text-white"
+            aria-label="Close"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        {/* Form Content */}
-        <form onSubmit={handleSubmit} className="flex-1 space-y-6 overflow-y-auto p-6 text-xs">
-          {error && (
-            <div className="flex items-center gap-2 rounded-lg border border-red-800 bg-red-950/80 p-3.5 text-red-200">
-              <AlertTriangle className="h-4 w-4 shrink-0 text-red-400" />
-              <span>{error}</span>
-            </div>
-          )}
+        {/* Tabs */}
+        <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-zinc-800 bg-zinc-950/80 px-3 py-2 sm:px-4">
+          {TABS.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setTab(id)}
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors sm:px-3 ${
+                tab === id
+                  ? 'bg-indigo-600 text-white'
+                  : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'
+              }`}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {label}
+            </button>
+          ))}
+        </div>
 
-          {/* Section 1: Basic Information */}
-          <div className="space-y-4">
-            <h4 className="flex items-center gap-1.5 border-b border-zinc-800 pb-1.5 text-xs font-bold tracking-wider text-white text-zinc-400 uppercase">
-              <Package className="h-3.5 w-3.5 text-indigo-400" />
-              General Catalog Information
-            </h4>
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div className="sm:col-span-2">
-                <label className="mb-1 block font-semibold text-zinc-300">Product Title *</label>
-                <input
-                  type="text"
-                  value={name}
-                  onChange={(e) => {
-                    setName(e.target.value);
-                    if (!isEditing) {
-                      setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
-                    }
-                  }}
-                  required
-                  placeholder="e.g. Sony WH-1000XM5 Wireless Headphones"
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
-                />
+        <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 text-xs sm:px-5">
+            {error ? (
+              <div className="mb-4 flex items-center gap-2 rounded-lg border border-red-800 bg-red-950/80 p-3 text-red-200">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-red-400" />
+                <span>{error}</span>
               </div>
+            ) : null}
 
-              <div>
-                <label className="mb-1 block font-semibold text-zinc-300">SKU Code *</label>
-                <input
-                  type="text"
-                  value={sku}
-                  onChange={(e) => setSku(e.target.value.toUpperCase())}
-                  required
-                  placeholder="e.g. SNY-WH1000XM5"
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block font-semibold text-zinc-300">Category *</label>
-                <select
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                  className="w-full cursor-pointer rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-white focus:border-indigo-500 focus:outline-none"
-                >
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.name}>
-                      {c.name}
-                    </option>
-                  ))}
-                  {categories.length === 0 && (
-                    <>
-                      <option value="Electronics">Electronics</option>
-                      <option value="Audio">Audio</option>
-                      <option value="Phones">Phones</option>
-                      <option value="Wearables">Wearables</option>
-                      <option value="Accessories">Accessories</option>
-                    </>
-                  )}
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-1 block font-semibold text-zinc-300">
-                  Brand / Manufacturer
-                </label>
-                <input
-                  type="text"
-                  value={brand}
-                  onChange={(e) => setBrand(e.target.value)}
-                  placeholder="e.g. Sony, Apple, Samsung"
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block font-semibold text-zinc-300">URL Slug</label>
-                <input
-                  type="text"
-                  value={slug}
-                  onChange={(e) => setSlug(e.target.value)}
-                  placeholder="sony-wh-1000xm5"
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Section 2: Pricing & Profit Margins */}
-          <div className="space-y-4">
-            <h4 className="flex items-center gap-1.5 border-b border-zinc-800 pb-1.5 text-xs font-bold tracking-wider text-white text-zinc-400 uppercase">
-              <DollarSign className="h-3.5 w-3.5 text-emerald-400" />
-              Pricing, Tax Category & Profitability
-            </h4>
-
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
-              <div>
-                <label className="mb-1 block font-semibold text-zinc-300">
-                  Selling Price (KES) *
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  value={price}
-                  onChange={(e) => setPrice(Number(e.target.value))}
-                  required
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono font-bold text-white focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block font-semibold text-zinc-300">Tax Category *</label>
-                <select
-                  value={selectedTaxId}
-                  onChange={(e) => setSelectedTaxId(e.target.value)}
-                  className="w-full cursor-pointer rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-white focus:border-indigo-500 focus:outline-none"
-                >
-                  {taxCategories.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name} ({t.rate}% - {t.isInclusive ? 'Inclusive' : 'Exclusive'})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-1 block font-semibold text-zinc-300">
-                  Compare-at Price (KES)
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  value={compareAtPrice}
-                  onChange={(e) => setCompareAtPrice(Number(e.target.value))}
-                  placeholder="Original MSRP"
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono text-white focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block font-semibold text-zinc-300">
-                  Cost of Goods (KES)
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  value={costPrice}
-                  onChange={(e) => setCostPrice(Number(e.target.value))}
-                  placeholder="Supplier unit cost"
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono text-white focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
-            </div>
-
-            {/* Profit & Fiscal Margin Calculator Card */}
-            <div className="grid grid-cols-2 gap-3 rounded-xl border border-zinc-800 bg-zinc-950 p-3.5 sm:grid-cols-4">
-              <div>
-                <span className="block text-[10px] text-zinc-500 uppercase">Net (Excl. Tax)</span>
-                <span className="font-mono text-xs font-semibold text-zinc-200">
-                  KES {Math.round(netSellingPrice).toLocaleString()}
-                </span>
-              </div>
-
-              <div>
-                <span className="block text-[10px] text-emerald-400 uppercase">
-                  Tax ({taxRate}%)
-                </span>
-                <span className="font-mono text-xs font-semibold text-emerald-400">
-                  KES {Math.round(taxAmountPerUnit).toLocaleString()}
-                </span>
-              </div>
-
-              <div>
-                <span className="block text-[10px] text-zinc-500 uppercase">Unit Profit</span>
-                <span
-                  className={`font-mono text-xs font-bold ${unitGrossProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}
-                >
-                  KES {Math.round(unitGrossProfit).toLocaleString()}
-                </span>
-              </div>
-
-              <div>
-                <span className="block text-[10px] text-zinc-500 uppercase">Profit Margin</span>
-                <span
-                  className={`font-mono text-xs font-bold ${Number(grossMarginPct) >= 20 ? 'text-indigo-400' : 'text-amber-400'}`}
-                >
-                  {grossMarginPct}% ({isTaxInclusive ? 'Inclusive' : 'Exclusive'})
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Section 3: Inventory & Logistics */}
-          <div className="space-y-4">
-            <h4 className="flex items-center gap-1.5 border-b border-zinc-800 pb-1.5 text-xs font-bold tracking-wider text-white text-zinc-400 uppercase">
-              <Layers className="h-3.5 w-3.5 text-indigo-400" />
-              Inventory & Warehouse Settings
-            </h4>
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div>
-                <label className="mb-1 block font-semibold text-zinc-300">
-                  Current On-Hand Stock *
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  value={stockQuantity}
-                  onChange={(e) => setStockQuantity(Number(e.target.value))}
-                  required
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono font-bold text-white focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block font-semibold text-zinc-300">
-                  Low Stock Threshold *
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  value={lowStockThreshold}
-                  onChange={(e) => setLowStockThreshold(Number(e.target.value))}
-                  required
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono text-white focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block font-semibold text-zinc-300">
-                  Shipping Weight (kg)
-                </label>
-                <input
-                  type="number"
-                  step="0.1"
-                  min={0.1}
-                  value={weight}
-                  onChange={(e) => setWeight(Number(e.target.value))}
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono text-white focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Section 4: Specifications */}
-          <div className="space-y-3">
-            <h4 className="flex items-center gap-1.5 border-b border-zinc-800 pb-1.5 text-xs font-bold tracking-wider text-white text-zinc-400 uppercase">
-              <Tag className="h-3.5 w-3.5 text-indigo-400" />
-              Technical Specifications & Key Attributes
-            </h4>
-
-            <div className="space-y-2">
-              {specifications.map((spec, idx) => (
-                <div
-                  key={idx}
-                  className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950 p-2"
-                >
-                  <span className="w-32 truncate font-semibold text-white">{spec.key}</span>
-                  <span className="flex-1 truncate text-zinc-400">{spec.value}</span>
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveSpec(idx)}
-                    className="cursor-pointer p-1 text-zinc-500 hover:text-red-400"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              ))}
-
-              <div className="flex items-center gap-2 pt-1">
-                <input
-                  type="text"
-                  placeholder="Attribute (e.g. RAM, Storage, Color)"
-                  value={newSpecKey}
-                  onChange={(e) => setNewSpecKey(e.target.value)}
-                  className="w-1/3 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
-                />
-                <input
-                  type="text"
-                  placeholder="Value (e.g. 16GB Unified Memory)"
-                  value={newSpecValue}
-                  onChange={(e) => setNewSpecValue(e.target.value)}
-                  className="flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={handleAddSpec}
-                  className="cursor-pointer rounded-lg bg-zinc-800 px-3 py-1.5 font-medium text-white hover:bg-zinc-700"
-                >
-                  Add Spec
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Section 5: Media & Details */}
-          <div className="space-y-4">
-            <h4 className="flex items-center gap-1.5 border-b border-zinc-800 pb-1.5 text-xs font-bold tracking-wider text-white text-zinc-400 uppercase">
-              <ImageIcon className="h-3.5 w-3.5 text-indigo-400" />
-              Media & Storefront Visibility
-            </h4>
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div className="space-y-4 sm:col-span-2">
-                <div>
-                  <label className="mb-1 block font-semibold text-zinc-300">
-                    Primary Image URL *
-                  </label>
-                  <input
-                    type="url"
-                    value={imageUrl}
-                    onChange={(e) => setImageUrl(e.target.value)}
-                    required
-                    placeholder="https://..."
-                    className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block font-semibold text-zinc-300">
-                    Tags (comma-separated)
-                  </label>
+            {tab === 'basics' ? (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="sm:col-span-2">
+                  <label className={labelClass}>Product Title *</label>
                   <input
                     type="text"
-                    value={tagsInput}
-                    onChange={(e) => setTagsInput(e.target.value)}
-                    placeholder="e.g. Apple, ANC, Gaming, Wireless"
-                    className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+                    value={name}
+                    onChange={(e) => {
+                      setName(e.target.value);
+                      if (!isEditing) {
+                        setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
+                      }
+                    }}
+                    placeholder="e.g. Sony WH-1000XM5 Wireless Headphones"
+                    className={fieldClass}
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>SKU Code *</label>
+                  <input
+                    type="text"
+                    value={sku}
+                    onChange={(e) => setSku(e.target.value.toUpperCase())}
+                    placeholder="e.g. SNY-WH1000XM5"
+                    className={`${fieldClass} font-mono`}
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>Item Type *</label>
+                  <select
+                    value={itemTypeId}
+                    onChange={(e) => setItemTypeId(e.target.value)}
+                    className={`${fieldClass} cursor-pointer`}
+                    disabled={itemTypes.length === 0}
+                  >
+                    <option value="">
+                      {itemTypes.length === 0 ? 'No item types yet' : 'Select item type'}
+                    </option>
+                    {itemTypes.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.code} — {t.name}
+                        {t.isDefault ? ' (default)' : ''}
+                        {!t.isSellable ? ' · not sellable' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {itemTypes.length === 0 ? (
+                    <p className="mt-1 text-[11px] text-amber-400">
+                      Create an item type under Products &amp; Inventory first.
+                    </p>
+                  ) : null}
+                </div>
+                <div>
+                  <label className={labelClass}>Category *</label>
+                  <select
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value)}
+                    className={`${fieldClass} cursor-pointer`}
+                    disabled={categories.length === 0}
+                  >
+                    <option value="">
+                      {categories.length === 0 ? 'No categories yet' : 'Select category'}
+                    </option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.name}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                  {categories.length === 0 ? (
+                    <p className="mt-1 text-[11px] text-amber-400">
+                      Create a category under Catalog before adding products.
+                    </p>
+                  ) : null}
+                </div>
+                <div>
+                  <label className={labelClass}>Brand / Manufacturer</label>
+                  <input
+                    type="text"
+                    value={brand}
+                    onChange={(e) => setBrand(e.target.value)}
+                    placeholder="e.g. Sony, Apple, Samsung"
+                    className={fieldClass}
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>URL Slug</label>
+                  <input
+                    type="text"
+                    value={slug}
+                    onChange={(e) => setSlug(e.target.value)}
+                    placeholder="sony-wh-1000xm5"
+                    className={`${fieldClass} font-mono`}
                   />
                 </div>
               </div>
+            ) : null}
 
-              <div className="flex flex-col items-center justify-center rounded-xl border border-zinc-800 bg-zinc-950 p-3">
-                <span className="mb-2 text-[10px] text-zinc-500 uppercase">Image Preview</span>
-                {imageUrl ? (
-                  <img
-                    src={imageUrl}
-                    alt="Product Preview"
-                    className="h-24 w-24 rounded-lg border border-zinc-800 object-cover"
-                    referrerPolicy="no-referrer"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).src =
-                        'https://images.unsplash.com/photo-1526738549149-8e07eca6c147?auto=format&fit=crop&w=300&q=80';
-                    }}
-                  />
-                ) : (
-                  <div className="flex h-24 w-24 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-600">
-                    No Image
+            {tab === 'pricing' ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className={labelClass}>
+                      Selling Price (KES)
+                      {activeItemType?.isSellable !== false ? ' *' : ''}
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      step="any"
+                      value={price}
+                      onChange={(e) => setPrice(e.target.value)}
+                      placeholder="Leave empty for none"
+                      className={`${fieldClass} font-mono font-bold`}
+                    />
+                    {activeItemType && !activeItemType.isSellable ? (
+                      <p className="mt-1 text-[11px] text-zinc-500">
+                        Optional for non-sellable item types.
+                      </p>
+                    ) : null}
                   </div>
-                )}
+                  <div>
+                    <label className={labelClass}>Tax Category</label>
+                    <select
+                      value={selectedTaxId}
+                      onChange={(e) => setSelectedTaxId(e.target.value)}
+                      className={`${fieldClass} cursor-pointer`}
+                    >
+                      <option value="">Select tax category</option>
+                      {taxCategories.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name} ({t.rate}% - {t.isInclusive ? 'Inclusive' : 'Exclusive'})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className={labelClass}>Compare-at Price (KES)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      step="any"
+                      value={compareAtPrice}
+                      onChange={(e) => setCompareAtPrice(e.target.value)}
+                      placeholder="Leave empty for none"
+                      className={`${fieldClass} font-mono`}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Cost of Goods (KES) *</label>
+                    <input
+                      type="number"
+                      min={0}
+                      step="any"
+                      value={costPrice}
+                      onChange={(e) => setCostPrice(e.target.value)}
+                      placeholder="Leave empty for none"
+                      className={`${fieldClass} font-mono`}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 rounded-xl border border-zinc-800 bg-zinc-950 p-3 sm:grid-cols-4">
+                  <div>
+                    <span className="block text-[10px] text-zinc-500 uppercase">Net (Excl. Tax)</span>
+                    <span className="font-mono text-xs font-semibold text-zinc-200">
+                      KES {Math.round(netSellingPrice).toLocaleString()}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-[10px] text-emerald-400 uppercase">
+                      Tax ({taxRate}%)
+                    </span>
+                    <span className="font-mono text-xs font-semibold text-emerald-400">
+                      KES {Math.round(taxAmountPerUnit).toLocaleString()}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-[10px] text-zinc-500 uppercase">Unit Profit</span>
+                    <span
+                      className={`font-mono text-xs font-bold ${unitGrossProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}
+                    >
+                      KES {Math.round(unitGrossProfit).toLocaleString()}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-[10px] text-zinc-500 uppercase">Profit Margin</span>
+                    <span
+                      className={`font-mono text-xs font-bold ${Number(grossMarginPct) >= 20 ? 'text-indigo-400' : 'text-amber-400'}`}
+                    >
+                      {grossMarginPct}% ({isTaxInclusive ? 'Incl.' : 'Excl.'})
+                    </span>
+                  </div>
+                </div>
               </div>
-            </div>
+            ) : null}
 
-            <div>
-              <label className="mb-1 block font-semibold text-zinc-300">Full Description</label>
-              <textarea
+            {tab === 'inventory' ? (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div>
+                  <label className={labelClass}>On-Hand Stock</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={stockQuantity}
+                    onChange={(e) => setStockQuantity(e.target.value)}
+                    placeholder="e.g. 15"
+                    className={`${fieldClass} font-mono font-bold`}
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>Low Stock Threshold</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={lowStockThreshold}
+                    onChange={(e) => setLowStockThreshold(e.target.value)}
+                    placeholder="e.g. 5"
+                    className={`${fieldClass} font-mono`}
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>Shipping Weight (kg)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min={0}
+                    value={weight}
+                    onChange={(e) => setWeight(e.target.value)}
+                    placeholder="e.g. 1.5"
+                    className={`${fieldClass} font-mono`}
+                  />
+                </div>
+              </div>
+            ) : null}
+
+            {tab === 'specs' ? (
+              <div className="flex h-full min-h-0 flex-col gap-3">
+                <div className="min-h-0 max-h-[280px] space-y-2 overflow-y-auto pr-1">
+                  {specifications.length === 0 ? (
+                    <p className="rounded-lg border border-dashed border-zinc-800 px-3 py-6 text-center text-zinc-500">
+                      No specifications yet. Add key attributes below.
+                    </p>
+                  ) : (
+                    specifications.map((spec, idx) => (
+                      <div
+                        key={`${spec.key}-${idx}`}
+                        className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950 p-2"
+                      >
+                        <span className="w-28 truncate font-semibold text-white sm:w-36">
+                          {spec.key}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-zinc-400">{spec.value}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveSpec(idx)}
+                          className="cursor-pointer p-1 text-zinc-500 hover:text-red-400"
+                          aria-label={`Remove ${spec.key}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <input
+                    type="text"
+                    placeholder="Attribute (e.g. RAM)"
+                    value={newSpecKey}
+                    onChange={(e) => setNewSpecKey(e.target.value)}
+                    className={`${fieldClass} sm:w-1/3`}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Value (e.g. 16GB)"
+                    value={newSpecValue}
+                    onChange={(e) => setNewSpecValue(e.target.value)}
+                    className={`${fieldClass} flex-1`}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddSpec}
+                    className="cursor-pointer rounded-lg bg-zinc-800 px-3 py-2 font-medium text-white hover:bg-zinc-700"
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {tab === 'description' ? (
+              <ProductDescriptionEditor
+                key={productToEdit?.id ?? 'new-product'}
                 value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                rows={3}
-                placeholder="Detailed marketing description, packaging details, and warranty specifications..."
-                className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+                onChange={setDescription}
               />
-            </div>
+            ) : null}
 
-            <div>
-              <label className="mb-1 block font-semibold text-zinc-300">Publishing Status</label>
-              <select
-                value={isActive ? 'active' : 'draft'}
-                onChange={(e) => setIsActive(e.target.value === 'active')}
-                className="w-full cursor-pointer rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-white focus:border-indigo-500 focus:outline-none sm:w-60"
-              >
-                <option value="active">Active (Published on Storefront)</option>
-                <option value="draft">Draft (Hidden from Catalog)</option>
-              </select>
-            </div>
+            {tab === 'media' ? (
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto]">
+                  <div className="space-y-3">
+                    <div>
+                      <label className={labelClass}>Primary Image URL *</label>
+                      <input
+                        type="url"
+                        value={imageUrl}
+                        onChange={(e) => setImageUrl(e.target.value)}
+                        placeholder="https://..."
+                        className={`${fieldClass} font-mono`}
+                      />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Tags (comma-separated)</label>
+                      <input
+                        type="text"
+                        value={tagsInput}
+                        onChange={(e) => setTagsInput(e.target.value)}
+                        placeholder="e.g. Apple, ANC, Gaming"
+                        className={fieldClass}
+                      />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Publishing Status</label>
+                      <select
+                        value={isActive ? 'active' : 'draft'}
+                        onChange={(e) => setIsActive(e.target.value === 'active')}
+                        className={`${fieldClass} cursor-pointer sm:max-w-xs`}
+                      >
+                        <option value="active">Active (Published)</option>
+                        <option value="draft">Draft (Hidden)</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-center justify-center rounded-xl border border-zinc-800 bg-zinc-950 p-3 sm:w-32">
+                    <span className="mb-2 text-[10px] text-zinc-500 uppercase">Preview</span>
+                    {imageUrl ? (
+                      <img
+                        src={imageUrl}
+                        alt="Product Preview"
+                        className="h-24 w-24 rounded-lg border border-zinc-800 object-cover"
+                        referrerPolicy="no-referrer"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).src =
+                            'https://images.unsplash.com/photo-1526738549149-8e07eca6c147?auto=format&fit=crop&w=300&q=80';
+                        }}
+                      />
+                    ) : (
+                      <div className="flex h-24 w-24 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-600">
+                        No Image
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </div>
 
-          {/* Modal Footer */}
-          <div className="flex items-center justify-end gap-3 border-t border-zinc-800 pt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="cursor-pointer rounded-lg bg-zinc-800 px-4 py-2 font-medium text-zinc-300 hover:bg-zinc-700"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-indigo-600 px-5 py-2 font-bold text-white shadow-lg shadow-indigo-600/20 hover:bg-indigo-500 disabled:opacity-50"
-            >
-              <Save className="h-4 w-4" />
-              {isSubmitting ? 'Saving...' : isEditing ? 'Save Product Changes' : 'Create Product'}
-            </button>
+          {/* Sticky footer */}
+          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-zinc-800 bg-zinc-950 px-4 py-3 sm:px-5">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={goPrev}
+                disabled={tabIndex === 0}
+                className="cursor-pointer rounded-lg bg-zinc-800 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                onClick={goNext}
+                disabled={tabIndex === TABS.length - 1}
+                className="cursor-pointer rounded-lg bg-zinc-800 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="cursor-pointer rounded-lg bg-zinc-800 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-zinc-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-indigo-600/20 hover:bg-indigo-500 disabled:opacity-50"
+              >
+                <Save className="h-3.5 w-3.5" />
+                {isSubmitting ? 'Saving…' : isEditing ? 'Save Changes' : 'Create Product'}
+              </button>
+            </div>
           </div>
         </form>
       </div>

@@ -106,7 +106,10 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
   const openReceiveModal = (product: Product) => {
     setSelectedProduct(product);
     setReceiveQty(10);
-    setUnitCost(product.costPrice || Math.round(product.price * 0.75));
+    setUnitCost(
+      product.costPrice ??
+        (product.price != null ? Math.round(product.price * 0.75) : 0),
+    );
     setPoNumber(`PO-2026-${Math.floor(100 + Math.random() * 900)}`);
     setActionError(null);
     setActionSuccess(null);
@@ -463,7 +466,9 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
                     lowStockItems.map((p) => {
                       const available = p.stockQuantity - p.reservedQuantity;
                       const suggestedQty = Math.max(10, p.lowStockThreshold * 3 - available);
-                      const unitCostEst = p.costPrice || Math.round(p.price * 0.75);
+                      const unitCostEst =
+                        p.costPrice ??
+                        (p.price != null ? Math.round(p.price * 0.75) : 0);
                       const totalCostEst = suggestedQty * unitCostEst;
 
                       return (

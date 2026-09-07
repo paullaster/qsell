@@ -3,6 +3,7 @@
 import React from 'react';
 import { ShoppingCart, Eye, Star, Zap, ShieldCheck, Check } from 'lucide-react';
 import { type Product } from '@/types/index';
+import { productDescriptionPlainText } from '@/lib/productDescription';
 
 interface ProductCardProps {
   key?: React.Key;
@@ -82,7 +83,7 @@ export function ProductCard({ product, onAddToCart, onQuickView, onQuickBuy }: P
 
           {/* Description snippet */}
           <p className="line-clamp-2 text-xs leading-relaxed text-zinc-400">
-            {product.description}
+            {productDescriptionPlainText(product.description)}
           </p>
         </div>
 
@@ -92,11 +93,11 @@ export function ProductCard({ product, onAddToCart, onQuickView, onQuickBuy }: P
             <div>
               <span className="-mb-0.5 block text-xs text-zinc-400">Price</span>
               <div className="font-mono text-base font-bold text-white">
-                KES {product.price.toLocaleString()}
+                KES {(product.price ?? 0).toLocaleString()}
               </div>
             </div>
 
-            {product.compareAtPrice && product.compareAtPrice > product.price && (
+            {product.compareAtPrice && product.price != null && product.compareAtPrice > product.price && (
               <div className="text-right">
                 <span className="block text-[10px] font-semibold text-emerald-400">
                   Save KES {(product.compareAtPrice - product.price).toLocaleString()}

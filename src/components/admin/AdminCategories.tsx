@@ -117,21 +117,31 @@ export function AdminCategories({
   };
 
   const handleDelete = async (cat: Category) => {
-    const count = products.filter(
+    const attached = products.filter(
       (p) => p.category.toLowerCase() === cat.name.toLowerCase(),
-    ).length;
-    const confirmMessage =
-      count > 0
-        ? `Category "${cat.name}" has ${count} associated products. Deleting it will reassign these products to "Electronics". Proceed with deletion?`
-        : `Are you sure you want to delete category "${cat.name}"?`;
+    );
+    const otherCategories = categories
+      .filter((c) => c.id !== cat.id)
+      .sort(
+        (a, b) =>
+          Number(b.isActive) - Number(a.isActive) || a.displayOrder - b.displayOrder,
+      );
+    const fallbackName = otherCategories[0]?.name ?? null;
 
-    if (window.confirm(confirmMessage)) {
-      try {
-        await deleteCategoryAction(cat.id);
-        onRefresh();
-      } catch (err: any) {
-        alert(`Delete failed: ${err.message}`);
-      }
+    let confirmMessage = `Delete category "${cat.name}"?`;
+    if (attached.length > 0) {
+      confirmMessage = fallbackName
+        ? `Delete "${cat.name}"? Its ${attached.length} product${attached.length === 1 ? '' : 's'} will move to "${fallbackName}".`
+        : `Delete "${cat.name}"? Its ${attached.length} product${attached.length === 1 ? '' : 's'} will have no category until you assign one.`;
+    }
+
+    if (!window.confirm(confirmMessage)) return;
+
+    try {
+      await deleteCategoryAction(cat.id);
+      onRefresh();
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Delete failed');
     }
   };
 

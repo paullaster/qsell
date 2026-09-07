@@ -2,16 +2,22 @@
 
 import { revalidatePath } from 'next/cache';
 import { OrdersService } from './service';
-import { AdminService } from '@/server/domains/gateways/service';
+import { getContainer } from '@/server/di/container';
 import type { Order, PaymentProvider } from '@/types/index';
 
 export async function listOrdersAction(): Promise<Order[]> {
-  return AdminService.getAllOrders();
+  return getContainer().orders.listAll();
 }
 
 export async function getOrderAction(id: string): Promise<Order | null> {
-  const orders = AdminService.getAllOrders();
-  return orders.find((o) => o.id === id) ?? null;
+  return getContainer().orders.getById(id);
+}
+
+export async function lookupOrderAction(
+  orderNumber: string,
+  contact: string,
+): Promise<Order | null> {
+  return getContainer().orders.findByNumberAndContact(orderNumber, contact);
 }
 
 export async function createOrderAction(orderPayload: {

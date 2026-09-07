@@ -23,6 +23,7 @@ interface AdminSidebarProps {
     CompanySettingsRow,
     'tradingName' | 'tagline' | 'logoUrl' | 'accentColor'
   > | null;
+  moduleLabels?: Record<string, string> | null;
 }
 
 /** Deepest node on the active trail that owns children — keeps accordion in sync with the URL. */
@@ -40,10 +41,11 @@ export function AdminSidebar({
   onRefreshAll,
   isRealtimeConnected,
   company,
+  moduleLabels,
 }: AdminSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const nav = useMemo(() => getAdminNav(), []);
+  const nav = useMemo(() => getAdminNav(moduleLabels), [moduleLabels]);
 
   const match = useMemo(() => findActiveNavMatch(pathname, nav), [pathname, nav]);
   const trailIds = useMemo(() => new Set(match?.trailIds ?? []), [match]);

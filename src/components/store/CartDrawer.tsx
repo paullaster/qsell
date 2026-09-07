@@ -27,7 +27,7 @@ export function CartDrawer({
 }: CartDrawerProps) {
   if (!isOpen) return null;
 
-  const subtotal = items.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
+  const subtotal = items.reduce((sum, item) => sum + (item.product.price ?? 0) * item.quantity, 0);
   const tax = Math.round(subtotal * 0.16); // 16% VAT
   const shippingFee = subtotal > 100000 || subtotal === 0 ? 0 : 500;
   const total = subtotal + tax + shippingFee;
@@ -101,7 +101,7 @@ export function CartDrawer({
                       </h4>
                       <div className="font-mono text-[11px] text-zinc-500">SKU: {product.sku}</div>
                       <div className="font-mono text-xs font-bold text-white">
-                        KES {(product.price * quantity).toLocaleString()}
+                        KES {((product.price ?? 0) * quantity).toLocaleString()}
                       </div>
 
                       {/* Quantity Controls */}

@@ -1,7 +1,9 @@
-import { getCompanySettingsAction } from '@/server/domains/company/actions';
-import { AdminCompanyClient } from '@/components/admin/AdminCompanyClient';
+import { notFound } from 'next/navigation';
+import { findNavItemById } from '@/config/admin-nav';
+import { AdminNavHub } from '@/components/admin/nav/AdminNavHub';
 
-export default async function AdminCompanyPage() {
-  const settingsPromise = getCompanySettingsAction();
-  return <AdminCompanyClient settingsPromise={settingsPromise} />;
+export default function AdminCompanyHubPage() {
+  const section = findNavItemById('company');
+  if (!section) notFound();
+  return <AdminNavHub section={section} />;
 }

@@ -1,6 +1,7 @@
 import {
   type Product,
   type Category,
+  type ItemType,
   type TaxCategory,
   type CurrencyConfig,
   type CustomerAccount,
@@ -17,6 +18,7 @@ import {
 // In-Memory Transactional Store with atomic operations & seed records
 class PostgresStore {
   public categories = new Map<string, Category>();
+  public itemTypes = new Map<string, ItemType>();
   public taxCategories = new Map<string, TaxCategory>();
   public currencies = new Map<string, CurrencyConfig>();
   public products = new Map<string, Product>();
@@ -52,73 +54,7 @@ class PostgresStore {
   }
 
   private seedInitialData() {
-    // 0. Seed Categories
-    const initialCategories: Category[] = [
-      {
-        id: 'cat_electronics',
-        name: 'Electronics',
-        slug: 'electronics',
-        description: 'Laptops, Pro Workstations, Displays, and Core Computing Gear',
-        isActive: true,
-        displayOrder: 1,
-        createdAt: new Date(Date.now() - 86400000 * 60).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 'cat_audio',
-        name: 'Audio',
-        slug: 'audio',
-        description: 'Studio Monitors, Hi-Res ANC Headphones, and DAC Amplifiers',
-        isActive: true,
-        displayOrder: 2,
-        createdAt: new Date(Date.now() - 86400000 * 60).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 'cat_phones',
-        name: 'Phones',
-        slug: 'phones',
-        description: 'Flagship Smartphones, 5G Modems, and Mobile Power Solutions',
-        isActive: true,
-        displayOrder: 3,
-        createdAt: new Date(Date.now() - 86400000 * 60).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 'cat_wearables',
-        name: 'Wearables',
-        slug: 'wearables',
-        description: 'GPS Multisport Watches, Smart Rings, and Health Monitors',
-        isActive: true,
-        displayOrder: 4,
-        createdAt: new Date(Date.now() - 86400000 * 60).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 'cat_drones_cameras',
-        name: 'Drones & Cameras',
-        slug: 'drones-cameras',
-        description: '4K Cinema Drones, Mirrorless Cameras, and Stabilized Gimbals',
-        isActive: true,
-        displayOrder: 5,
-        createdAt: new Date(Date.now() - 86400000 * 60).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 'cat_accessories',
-        name: 'Accessories',
-        slug: 'accessories',
-        description: 'GaN Chargers, Thunderbolt Cables, Ergonomic Stands & Hubs',
-        isActive: true,
-        displayOrder: 6,
-        createdAt: new Date(Date.now() - 86400000 * 60).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-    ];
-
-    for (const cat of initialCategories) {
-      this.categories.set(cat.id, cat);
-    }
+    // Categories start empty — create them in admin.
 
     // 0.1 Seed Global & Regional Tax Categories
     const initialTaxes: TaxCategory[] = [
@@ -412,422 +348,8 @@ class PostgresStore {
     this.paymentGateways.set(pesapalGateway.id, pesapalGateway);
     this.paymentGateways.set(cardGateway.id, cardGateway);
 
-    // 2. Initial Products Catalog with accurate KES pricing and inventory
-    const initialProducts: Product[] = [
-      {
-        id: 'prod_101',
-        sku: 'APL-MBP16-M3M',
-        name: 'MacBook Pro 16" M3 Max (36GB / 1TB SSD)',
-        slug: 'macbook-pro-16-m3-max',
-        description:
-          'Engineered for extreme pro workflows. Featuring the powerful 14-core CPU, 30-core GPU Apple Silicon chip, Liquid Retina XDR display with ProMotion 120Hz.',
-        category: 'Electronics',
-        price: 435000,
-        compareAtPrice: 475000,
-        stockQuantity: 14,
-        reservedQuantity: 1,
-        lowStockThreshold: 4,
-        isActive: true,
-        imageUrl:
-          'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=1000&q=80',
-        rating: 4.9,
-        reviewCount: 38,
-        tags: ['Apple', 'Laptops', 'Pro Workstations', 'M3 Max'],
-        createdAt: new Date(Date.now() - 86400000 * 30).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 'prod_102',
-        sku: 'SNY-WH1000XM5-BLK',
-        name: 'Sony WH-1000XM5 Noise-Cancelling Headphones',
-        slug: 'sony-wh-1000xm5-black',
-        description:
-          'Industry-leading noise canceling with two processors and 8 microphones. Crystal clear hands-free calling with 4 beamforming microphones and LDAC high-res audio.',
-        category: 'Audio',
-        price: 48500,
-        compareAtPrice: 56000,
-        stockQuantity: 28,
-        reservedQuantity: 2,
-        lowStockThreshold: 5,
-        isActive: true,
-        imageUrl:
-          'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=1000&q=80',
-        rating: 4.8,
-        reviewCount: 94,
-        tags: ['Sony', 'Wireless', 'ANC', 'Hi-Res'],
-        createdAt: new Date(Date.now() - 86400000 * 25).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 'prod_103',
-        sku: 'SMG-S24U-512GB-TI',
-        name: 'Samsung Galaxy S24 Ultra 512GB Titanium Gray',
-        slug: 'samsung-galaxy-s24-ultra-512gb',
-        description:
-          'Welcome to the era of Galaxy AI. Meet the 200MP camera, Snapdragon 8 Gen 3 for Galaxy, titanium frame, and built-in S Pen.',
-        category: 'Phones',
-        price: 184000,
-        compareAtPrice: 205000,
-        stockQuantity: 9,
-        reservedQuantity: 0,
-        lowStockThreshold: 5,
-        isActive: true,
-        imageUrl:
-          'https://images.unsplash.com/photo-1610945265064-0e34e5519bbf?auto=format&fit=crop&w=1000&q=80',
-        rating: 4.9,
-        reviewCount: 67,
-        tags: ['Samsung', '5G', 'Galaxy AI', 'Smartphones'],
-        createdAt: new Date(Date.now() - 86400000 * 20).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 'prod_104',
-        sku: 'GAR-EPIX-PRO-51MM',
-        name: 'Garmin Epix Pro Gen 2 Sapphire 51mm Smartwatch',
-        slug: 'garmin-epix-pro-gen-2-sapphire',
-        description:
-          'Premium multisport GPS smartwatch with stunning AMOLED display, built-in LED flashlight, endurance score, and up to 31 days battery life in smartwatch mode.',
-        category: 'Wearables',
-        price: 138000,
-        compareAtPrice: 155000,
-        stockQuantity: 3, // Low stock on purpose
-        reservedQuantity: 1,
-        lowStockThreshold: 5,
-        isActive: true,
-        imageUrl:
-          'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=1000&q=80',
-        rating: 4.9,
-        reviewCount: 42,
-        tags: ['Garmin', 'Fitness', 'GPS', 'Smartwatch', 'Outdoor'],
-        createdAt: new Date(Date.now() - 86400000 * 18).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 'prod_105',
-        sku: 'DJI-MAV3-PRO-CINE',
-        name: 'DJI Mavic 3 Pro Cine Drone with RC Pro Remote',
-        slug: 'dji-mavic-3-pro-cine',
-        description:
-          'Triple-camera flagship system with 4/3 CMOS Hasselblad camera, dual telephoto cameras, 43-min flight time, and Apple ProRes 422 HQ recording.',
-        category: 'Drones & Cameras',
-        price: 520000,
-        compareAtPrice: 560000,
-        stockQuantity: 6,
-        reservedQuantity: 0,
-        lowStockThreshold: 2,
-        isActive: true,
-        imageUrl:
-          'https://images.unsplash.com/photo-1527977966376-1c8408f9f108?auto=format&fit=crop&w=1000&q=80',
-        rating: 5.0,
-        reviewCount: 19,
-        tags: ['DJI', 'Drones', '4K Video', 'Pro Photography'],
-        createdAt: new Date(Date.now() - 86400000 * 15).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 'prod_106',
-        sku: 'KYC-MECH-RGB-K3',
-        name: 'Keychron Q3 Max Custom Wireless Mechanical Keyboard',
-        slug: 'keychron-q3-max-custom-wireless',
-        description:
-          'Full CNC aluminum body, double-gasket design, 2.4 GHz wireless & Bluetooth 5.1, hot-swappable Gateron Jupiter switches, and acoustic foam padding.',
-        category: 'Accessories',
-        price: 26500,
-        compareAtPrice: 32000,
-        stockQuantity: 35,
-        reservedQuantity: 0,
-        lowStockThreshold: 8,
-        isActive: true,
-        imageUrl:
-          'https://images.unsplash.com/photo-1587829741301-dc798b83add3?auto=format&fit=crop&w=1000&q=80',
-        rating: 4.7,
-        reviewCount: 81,
-        tags: ['Keychron', 'Mechanical Keyboard', 'Workstation', 'Custom'],
-        createdAt: new Date(Date.now() - 86400000 * 12).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 'prod_107',
-        sku: 'BOS-SND-REV-PLUS',
-        name: 'Bose SoundLink Max Portable Bluetooth Speaker',
-        slug: 'bose-soundlink-max-portable-speaker',
-        description:
-          'Epic stereo sound, deep bass, removable soft rope handle, IP67 waterproof and dustproof, up to 20 hours battery life on a single charge.',
-        category: 'Audio',
-        price: 54000,
-        compareAtPrice: 62000,
-        stockQuantity: 19,
-        reservedQuantity: 0,
-        lowStockThreshold: 5,
-        isActive: true,
-        imageUrl:
-          'https://images.unsplash.com/photo-1545454675-3531b543be5d?auto=format&fit=crop&w=1000&q=80',
-        rating: 4.8,
-        reviewCount: 52,
-        tags: ['Bose', 'Bluetooth', 'Outdoor', 'Bass'],
-        createdAt: new Date(Date.now() - 86400000 * 10).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 'prod_108',
-        sku: 'ANK-737-PWRBK-24K',
-        name: 'Anker Prime 24,000mAh Power Bank (140W GaN 3-Port)',
-        slug: 'anker-prime-24000mah-power-bank',
-        description:
-          'Ultra-powerful 140W two-way fast charging with Smart Digital Display, charges a 16" MacBook Pro to 50% in just 40 minutes.',
-        category: 'Accessories',
-        price: 19500,
-        compareAtPrice: 24000,
-        stockQuantity: 2, // Low stock on purpose
-        reservedQuantity: 0,
-        lowStockThreshold: 6,
-        isActive: true,
-        imageUrl:
-          'https://images.unsplash.com/photo-1609081219090-a6d81d3085bf?auto=format&fit=crop&w=1000&q=80',
-        rating: 4.9,
-        reviewCount: 110,
-        tags: ['Anker', 'PowerBank', 'USB-C', 'Fast Charging'],
-        createdAt: new Date(Date.now() - 86400000 * 5).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-    ];
-
-    for (const prod of initialProducts) {
-      this.products.set(prod.id, prod);
-      // Seed initial ledger
-      this.inventoryLedger.push({
-        id: `ledger_${prod.id}_init`,
-        productId: prod.id,
-        productName: prod.name,
-        changeAmount: prod.stockQuantity,
-        previousStock: 0,
-        newStock: prod.stockQuantity,
-        changeType: 'restock',
-        referenceId: 'INITIAL_IMPORT_PO_001',
-        actor: 'system_admin',
-        note: 'Initial catalog stock import to PostgreSQL storage',
-        timestamp: new Date(Date.now() - 86400000 * 7).toISOString(),
-      });
-    }
-
-    // 3. Seed Existing Orders with M-Pesa & Pesapal
-    const sampleOrder1: Order = {
-      id: 'ord_9901',
-      orderNumber: 'ORD-2026-8801',
-      userId: 'usr_paullaster',
-      customerName: 'Paul Laster Okoth',
-      customerEmail: 'paullasterokoth98@gmail.com',
-      customerPhone: '254712345678',
-      shippingAddress: {
-        street: 'Riverside Drive, Delta Corner Suite 4A',
-        city: 'Nairobi',
-        countyOrState: 'Nairobi County',
-        postalCode: '00100',
-        country: 'Kenya',
-      },
-      items: [
-        {
-          productId: 'prod_102',
-          productName: 'Sony WH-1000XM5 Noise-Cancelling Headphones',
-          sku: 'SNY-WH1000XM5-BLK',
-          quantity: 1,
-          unitPrice: 48500,
-          totalPrice: 48500,
-          imageUrl:
-            'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=1000&q=80',
-        },
-      ],
-      subtotal: 48500,
-      tax: 7760,
-      shippingFee: 0,
-      totalAmount: 56260,
-      currency: 'KES',
-      status: 'completed',
-      paymentStatus: 'reconciled',
-      paymentMethod: 'mpesa_daraja',
-      transactionReference: 'ws_CO_01092026114532890',
-      mpesaReceiptNumber: 'SHK7892KLM',
-      createdAt: new Date(Date.now() - 3600000 * 5).toISOString(),
-      updatedAt: new Date(Date.now() - 3600000 * 5).toISOString(),
-    };
-
-    const sampleOrder2: Order = {
-      id: 'ord_9902',
-      orderNumber: 'ORD-2026-8802',
-      userId: 'usr_jane_wambui',
-      customerName: 'Jane Wambui',
-      customerEmail: 'jane.wambui@techhub.co.ke',
-      customerPhone: '254722998877',
-      shippingAddress: {
-        street: 'Kilimani, Wood Avenue Apt 12',
-        city: 'Nairobi',
-        countyOrState: 'Nairobi County',
-        postalCode: '00100',
-        country: 'Kenya',
-      },
-      items: [
-        {
-          productId: 'prod_106',
-          productName: 'Keychron Q3 Max Custom Wireless Mechanical Keyboard',
-          sku: 'KYC-MECH-RGB-K3',
-          quantity: 2,
-          unitPrice: 26500,
-          totalPrice: 53000,
-          imageUrl:
-            'https://images.unsplash.com/photo-1587829741301-dc798b83add3?auto=format&fit=crop&w=1000&q=80',
-        },
-      ],
-      subtotal: 53000,
-      tax: 8480,
-      shippingFee: 500,
-      totalAmount: 61980,
-      currency: 'KES',
-      status: 'processing',
-      paymentStatus: 'reconciled',
-      paymentMethod: 'pesapal_v3',
-      transactionReference: 'pesa_ref_9921_bc401',
-      pesapalTrackingId: '7f91a0c4-9876-412e-901a-88bcfe231011',
-      createdAt: new Date(Date.now() - 3600000 * 2).toISOString(),
-      updatedAt: new Date(Date.now() - 3600000 * 2).toISOString(),
-    };
-
-    this.orders.set(sampleOrder1.id, sampleOrder1);
-    this.orders.set(sampleOrder2.id, sampleOrder2);
-
-    // 4. Seed Transactions
-    const tx1: TransactionRecord = {
-      id: 'tx_001_mpesa',
-      orderId: sampleOrder1.id,
-      orderNumber: sampleOrder1.orderNumber,
-      gatewayProvider: 'mpesa_daraja',
-      transactionReference: 'ws_CO_01092026114532890',
-      externalReference: 'SHK7892KLM',
-      amount: 56260,
-      currency: 'KES',
-      status: 'successful',
-      customerPhone: '254712345678',
-      requestPayload: {
-        BusinessShortCode: '174379',
-        TransactionType: 'CustomerPayBillOnline',
-        Amount: 56260,
-        PartyA: '254712345678',
-        PartyB: '174379',
-        PhoneNumber: '254712345678',
-        CallBackURL: 'https://omnicommerce.ke/api/payments/daraja/callback',
-        AccountReference: 'ORD-2026-8801',
-      },
-      responsePayload: {
-        MerchantRequestID: '29115-34620561-1',
-        CheckoutRequestID: 'ws_CO_01092026114532890',
-        ResponseCode: '0',
-        ResponseDescription: 'Success. Request accepted for processing',
-        CustomerMessage: 'Success. Request accepted for processing',
-      },
-      ipnStatus: 'delivered',
-      reconciliationStatus: 'reconciled',
-      createdAt: sampleOrder1.createdAt,
-      updatedAt: sampleOrder1.updatedAt,
-    };
-
-    const tx2: TransactionRecord = {
-      id: 'tx_002_pesapal',
-      orderId: sampleOrder2.id,
-      orderNumber: sampleOrder2.orderNumber,
-      gatewayProvider: 'pesapal_v3',
-      transactionReference: 'pesa_ref_9921_bc401',
-      externalReference: '7f91a0c4-9876-412e-901a-88bcfe231011',
-      amount: 61980,
-      currency: 'KES',
-      status: 'successful',
-      customerEmail: sampleOrder2.customerEmail,
-      requestPayload: {
-        id: 'pesa_ref_9921_bc401',
-        currency: 'KES',
-        amount: 61980,
-        description: 'OmniCommerce Order ORD-2026-8802',
-        callback_url: 'https://omnicommerce.ke/api/payments/pesapal/ipn',
-        billing_address: sampleOrder2.shippingAddress,
-      },
-      responsePayload: {
-        order_tracking_id: '7f91a0c4-9876-412e-901a-88bcfe231011',
-        merchant_reference: 'pesa_ref_9921_bc401',
-        redirect_url:
-          'https://cybqa.pesapal.com/pesapalv3/api/Payment/Redirect?orderTrackingId=7f91a0c4',
-        status: '200',
-      },
-      ipnStatus: 'delivered',
-      reconciliationStatus: 'reconciled',
-      createdAt: sampleOrder2.createdAt,
-      updatedAt: sampleOrder2.updatedAt,
-    };
-
-    this.transactions.set(tx1.id, tx1);
-    this.transactions.set(tx2.id, tx2);
-
-    // 5. Seed Reconciliation Logs
-    this.reconciliationLogs.push({
-      id: 'recon_001',
-      transactionId: tx1.id,
-      orderId: sampleOrder1.id,
-      orderNumber: sampleOrder1.orderNumber,
-      provider: 'mpesa_daraja',
-      reconciliationType: 'auto_realtime',
-      orderTotal: 56260,
-      receivedAmount: 56260,
-      discrepancyFound: false,
-      discrepancyType: 'none',
-      status: 'matched',
-      details:
-        'Instant M-Pesa IPN matched order ORD-2026-8801 total (KES 56,260.00) perfectly with Daraja LNMO receipt SHK7892KLM.',
-      timestamp: sampleOrder1.updatedAt,
-    });
-
-    // 5.1 Seed Additional Historical Order for Paul Laster Okoth
-    const sampleOrder0: Order = {
-      id: 'ord_9899',
-      orderNumber: 'ORD-2026-8790',
-      userId: 'usr_paullaster',
-      customerName: 'Paul Laster Okoth',
-      customerEmail: 'paullasterokoth98@gmail.com',
-      customerPhone: '254712345678',
-      shippingAddress: {
-        street: 'Riverside Drive, Delta Corner Suite 4A',
-        city: 'Nairobi',
-        countyOrState: 'Nairobi County',
-        postalCode: '00100',
-        country: 'Kenya',
-      },
-      items: [
-        {
-          productId: 'prod_101',
-          productName: 'Apple MacBook Pro 16" (M3 Max, 36GB, 1TB SSD)',
-          sku: 'APL-MBP16-M3MAX',
-          quantity: 1,
-          unitPrice: 420000,
-          totalPrice: 420000,
-          imageUrl:
-            'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=1000&q=80',
-        },
-      ],
-      subtotal: 420000,
-      tax: 67200,
-      shippingFee: 0,
-      totalAmount: 487200,
-      currency: 'KES',
-      status: 'delivered',
-      paymentStatus: 'reconciled',
-      paymentMethod: 'mpesa_daraja',
-      transactionReference: 'ws_CO_28082026093012111',
-      mpesaReceiptNumber: 'SGL9821XYZ',
-      shippingCourier: 'Fargo Courier Kenya',
-      trackingNumber: 'FRG-NBO-882910',
-      deliveredAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-      shippedAt: new Date(Date.now() - 86400000 * 4).toISOString(),
-      createdAt: new Date(Date.now() - 86400000 * 5).toISOString(),
-      updatedAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-    };
-
-    this.orders.set(sampleOrder0.id, sampleOrder0);
+    // Products, sample orders, and product-linked transactions start empty.
+    // Catalog is created entirely through admin.
 
     // 6. Seed Operational Customer Accounts
     const initialCustomers: CustomerAccount[] = [
@@ -868,9 +390,9 @@ class PostgresStore {
           preferredMethod: 'mpesa_daraja',
           defaultMpesaPhone: '254712345678',
         },
-        totalOrders: 2,
-        totalSpend: 543460,
-        lastOrderDate: sampleOrder1.createdAt,
+        totalOrders: 0,
+        totalSpend: 0,
+        lastOrderDate: undefined,
         createdAt: new Date(Date.now() - 86400000 * 30).toISOString(),
         updatedAt: new Date().toISOString(),
       },
@@ -899,9 +421,9 @@ class PostgresStore {
           preferredMethod: 'pesapal_v3',
           defaultCardLast4: '4242',
         },
-        totalOrders: 1,
-        totalSpend: 61980,
-        lastOrderDate: sampleOrder2.createdAt,
+        totalOrders: 0,
+        totalSpend: 0,
+        lastOrderDate: undefined,
         createdAt: new Date(Date.now() - 86400000 * 20).toISOString(),
         updatedAt: new Date().toISOString(),
       },
@@ -930,9 +452,9 @@ class PostgresStore {
           preferredMethod: 'mpesa_daraja',
           defaultMpesaPhone: '254722998877',
         },
-        totalOrders: 3,
-        totalSpend: 285000,
-        lastOrderDate: new Date(Date.now() - 86400000 * 2).toISOString(),
+        totalOrders: 0,
+        totalSpend: 0,
+        lastOrderDate: undefined,
         createdAt: new Date(Date.now() - 86400000 * 45).toISOString(),
         updatedAt: new Date().toISOString(),
       },
@@ -961,9 +483,9 @@ class PostgresStore {
           preferredMethod: 'mpesa_daraja',
           defaultMpesaPhone: '254701443322',
         },
-        totalOrders: 1,
-        totalSpend: 84900,
-        lastOrderDate: new Date(Date.now() - 86400000 * 4).toISOString(),
+        totalOrders: 0,
+        totalSpend: 0,
+        lastOrderDate: undefined,
         createdAt: new Date(Date.now() - 86400000 * 15).toISOString(),
         updatedAt: new Date().toISOString(),
       },
@@ -1330,6 +852,7 @@ class PostgresStore {
     const existing = this.categories.get(id);
     if (!existing) throw new Error(`Category ${id} not found`);
 
+    const previousName = existing.name;
     const updated: Category = {
       ...existing,
       ...updates,
@@ -1338,30 +861,277 @@ class PostgresStore {
     };
 
     this.categories.set(id, updated);
+
+    // Keep product.category in sync when the category is renamed.
+    if (updates.name && updates.name !== previousName) {
+      const now = new Date().toISOString();
+      for (const prod of this.products.values()) {
+        if (prod.category.toLowerCase() === previousName.toLowerCase()) {
+          this.products.set(prod.id, {
+            ...prod,
+            category: updated.name,
+            updatedAt: now,
+          });
+        }
+      }
+      this.broadcast('inventory_update', {
+        type: 'products_reassigned',
+        products: Array.from(this.products.values()),
+      });
+    }
+
     this.broadcast('category_update', { type: 'updated', category: updated });
     return updated;
   }
 
-  public deleteCategory(id: string): boolean {
+  public deleteCategory(id: string): {
+    deleted: boolean;
+    reassignedCount: number;
+    fallbackName: string | null;
+  } {
     const existing = this.categories.get(id);
-    if (!existing) return false;
+    if (!existing) {
+      throw new Error(`Category ${id} not found`);
+    }
 
-    // Check if products exist in category
     const productsInCat = Array.from(this.products.values()).filter(
       (p) => p.category.toLowerCase() === existing.name.toLowerCase(),
     );
 
+    let fallbackName: string | null = null;
+
     if (productsInCat.length > 0) {
-      // Reassign to General / Electronics or update
+      const others = Array.from(this.categories.values())
+        .filter((c) => c.id !== id)
+        .sort(
+          (a, b) =>
+            Number(b.isActive) - Number(a.isActive) || a.displayOrder - b.displayOrder,
+        );
+
+      // Prefer another real category. Never invent a hardcoded label.
+      fallbackName = others[0]?.name ?? '';
+
+      const now = new Date().toISOString();
       for (const prod of productsInCat) {
-        prod.category = 'Electronics';
-        prod.updatedAt = new Date().toISOString();
+        this.products.set(prod.id, {
+          ...prod,
+          category: fallbackName,
+          updatedAt: now,
+        });
       }
     }
 
     const deleted = this.categories.delete(id);
     if (deleted) {
-      this.broadcast('category_update', { type: 'deleted', categoryId: id });
+      this.broadcast('category_update', {
+        type: 'deleted',
+        categoryId: id,
+        reassignedCount: productsInCat.length,
+        fallbackName,
+      });
+      if (productsInCat.length > 0) {
+        this.broadcast('inventory_update', {
+          type: 'products_reassigned',
+          products: Array.from(this.products.values()),
+        });
+      }
+    }
+
+    return {
+      deleted,
+      reassignedCount: productsInCat.length,
+      fallbackName,
+    };
+  }
+
+  // ==========================================================================
+  // Item Type Management (raw material, finished good, … — user-defined)
+  // ==========================================================================
+
+  public getAllItemTypes(): ItemType[] {
+    return Array.from(this.itemTypes.values())
+      .sort((a, b) => a.code - b.code || a.name.localeCompare(b.name))
+      .map((type) => ({
+        ...type,
+        productCount: Array.from(this.products.values()).filter((p) => p.itemTypeId === type.id)
+          .length,
+      }));
+  }
+
+  public getItemTypeById(id: string): ItemType | undefined {
+    return this.itemTypes.get(id);
+  }
+
+  public getDefaultItemType(): ItemType | undefined {
+    return Array.from(this.itemTypes.values()).find((t) => t.isDefault && t.isActive)
+      || Array.from(this.itemTypes.values()).find((t) => t.isDefault)
+      || Array.from(this.itemTypes.values())[0];
+  }
+
+  public createItemType(data: {
+    name: string;
+    code: number;
+    isSellable: boolean;
+    isDefault?: boolean;
+    isActive?: boolean;
+  }): ItemType {
+    const name = data.name.trim();
+    if (!name) throw new Error('Item type name is required');
+
+    if (data.code === null || data.code === undefined || Number.isNaN(Number(data.code))) {
+      throw new Error('Item type code is required (tax authority integer code)');
+    }
+    const code = Math.trunc(Number(data.code));
+    if (!Number.isInteger(Number(data.code)) || !Number.isFinite(code) || code < 0) {
+      throw new Error('Item type code must be a non-negative integer from the tax authority');
+    }
+    const clash = Array.from(this.itemTypes.values()).find((t) => t.code === code);
+    if (clash) throw new Error(`Item type code ${code} is already in use`);
+
+    const isFirst = this.itemTypes.size === 0;
+    const makeDefault = isFirst || Boolean(data.isDefault);
+
+    if (makeDefault) {
+      for (const type of this.itemTypes.values()) {
+        if (type.isDefault) {
+          this.itemTypes.set(type.id, {
+            ...type,
+            isDefault: false,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      }
+    }
+
+    const id = `itype_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const now = new Date().toISOString();
+    const created: ItemType = {
+      id,
+      code,
+      name,
+      isSellable: Boolean(data.isSellable),
+      isDefault: makeDefault,
+      isActive: data.isActive !== undefined ? Boolean(data.isActive) : true,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.itemTypes.set(id, created);
+    this.broadcast('item_type_update', { type: 'created', itemType: created });
+    return created;
+  }
+
+  public updateItemType(
+    id: string,
+    updates: Partial<Pick<ItemType, 'name' | 'code' | 'isSellable' | 'isDefault' | 'isActive'>>,
+  ): ItemType {
+    const existing = this.itemTypes.get(id);
+    if (!existing) throw new Error(`Item type ${id} not found`);
+
+    let nextCode = existing.code;
+    if (updates.code !== undefined) {
+      nextCode = Math.trunc(Number(updates.code));
+      if (
+        !Number.isInteger(Number(updates.code)) ||
+        !Number.isFinite(nextCode) ||
+        nextCode < 0
+      ) {
+        throw new Error('Item type code must be a non-negative integer from the tax authority');
+      }
+      const clash = Array.from(this.itemTypes.values()).find(
+        (t) => t.id !== id && t.code === nextCode,
+      );
+      if (clash) throw new Error(`Item type code ${nextCode} is already in use`);
+    }
+
+    const nextName =
+      updates.name !== undefined ? String(updates.name).trim() : existing.name;
+    if (!nextName) throw new Error('Item type name is required');
+
+    if (updates.isDefault === true) {
+      for (const type of this.itemTypes.values()) {
+        if (type.id !== id && type.isDefault) {
+          this.itemTypes.set(type.id, {
+            ...type,
+            isDefault: false,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      }
+    }
+
+    if (updates.isDefault === false && existing.isDefault) {
+      throw new Error('Set another item type as default before unsetting this one');
+    }
+
+    const updated: ItemType = {
+      ...existing,
+      name: nextName,
+      code: nextCode,
+      isSellable:
+        updates.isSellable !== undefined ? Boolean(updates.isSellable) : existing.isSellable,
+      isDefault: updates.isDefault !== undefined ? Boolean(updates.isDefault) : existing.isDefault,
+      isActive: updates.isActive !== undefined ? Boolean(updates.isActive) : existing.isActive,
+      updatedAt: new Date().toISOString(),
+    };
+    this.itemTypes.set(id, updated);
+
+    // Keep denormalized product fields in sync
+    const now = new Date().toISOString();
+    for (const prod of this.products.values()) {
+      if (prod.itemTypeId === id) {
+        this.products.set(prod.id, {
+          ...prod,
+          itemTypeName: updated.name,
+          itemTypeCode: updated.code,
+          isSellable: updated.isSellable,
+          updatedAt: now,
+        });
+      }
+    }
+
+    this.broadcast('item_type_update', { type: 'updated', itemType: updated });
+    this.broadcast('inventory_update', {
+      type: 'products_reassigned',
+      products: Array.from(this.products.values()),
+    });
+    return updated;
+  }
+
+  public setDefaultItemType(id: string): ItemType {
+    const target = this.itemTypes.get(id);
+    if (!target) throw new Error(`Item type ${id} not found`);
+
+    const now = new Date().toISOString();
+    for (const type of this.itemTypes.values()) {
+      this.itemTypes.set(type.id, {
+        ...type,
+        isDefault: type.id === id,
+        updatedAt: now,
+      });
+    }
+    const updated = this.itemTypes.get(id)!;
+    this.broadcast('item_type_update', { type: 'default_changed', defaultId: id });
+    return updated;
+  }
+
+  public deleteItemType(id: string): boolean {
+    const existing = this.itemTypes.get(id);
+    if (!existing) return false;
+
+    const inUse = Array.from(this.products.values()).some((p) => p.itemTypeId === id);
+    if (inUse) {
+      throw new Error(
+        'Cannot delete an item type that is assigned to products. Reassign those products first.',
+      );
+    }
+
+    if (existing.isDefault) {
+      throw new Error('Cannot delete the default item type. Set another type as default first.');
+    }
+
+    const deleted = this.itemTypes.delete(id);
+    if (deleted) {
+      this.broadcast('item_type_update', { type: 'deleted', itemTypeId: id });
     }
     return deleted;
   }

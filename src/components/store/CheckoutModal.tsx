@@ -23,7 +23,8 @@ import {
   type CustomerAddress,
 } from '@/types/index';
 import { type CartItem } from './CartDrawer';
-import { fetchCustomerAccountAction } from '@/server/actions';
+import { fetchCustomerAccountAction, listEnabledCheckoutProvidersAction } from '@/server/actions';
+import type { PaymentProviderCode } from '@/server/domains/payments/types';
 
 interface CheckoutModalProps {
   isOpen: boolean;
@@ -51,22 +52,25 @@ export function CheckoutModal({
   onSubmitCheckout,
   isLoading,
 }: CheckoutModalProps) {
-  if (!isOpen) return null;
-
   const [customer, setCustomer] = useState<CustomerAccount | null>(null);
-  const [customerName, setCustomerName] = useState('Paul Laster Okoth');
-  const [customerEmail, setCustomerEmail] = useState('paullasterokoth98@gmail.com');
-  const [customerPhone, setCustomerPhone] = useState('0712345678');
-  const [street, setStreet] = useState('Riverside Drive, Delta Corner Suite 4A');
-  const [city, setCity] = useState('Nairobi');
-  const [countyOrState, setCountyOrState] = useState('Nairobi County');
+  const [customerName, setCustomerName] = useState('');
+  const [customerEmail, setCustomerEmail] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [street, setStreet] = useState('');
+  const [city, setCity] = useState('');
+  const [countyOrState, setCountyOrState] = useState('');
   const [country, setCountry] = useState('Kenya');
-  const [paymentMethod, setPaymentMethod] = useState<PaymentProvider>('mpesa_daraja');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentProvider | ''>('');
+  const [enabledProviders, setEnabledProviders] = useState<
+    { code: PaymentProviderCode; label: string; description: string }[]
+  >([]);
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
 
   // Load customer profile to autofill addresses and payment rails
   useEffect(() => {
+    if (!isOpen) return;
+
     fetchCustomerAccountAction()
       .then(({ customer }) => {
         if (customer) {
@@ -74,9 +78,6 @@ export function CheckoutModal({
           setCustomerName(customer.name);
           setCustomerEmail(customer.email);
           setCustomerPhone(customer.phone);
-          if (customer.paymentPreferences?.preferredMethod) {
-            setPaymentMethod(customer.paymentPreferences.preferredMethod);
-          }
           if (customer.addresses && customer.addresses.length > 0) {
             const def = customer.addresses.find((a) => a.isDefault) || customer.addresses[0];
             setSelectedAddressId(def.id);
@@ -88,7 +89,19 @@ export function CheckoutModal({
         }
       })
       .catch(() => {});
-  }, []);
+
+    listEnabledCheckoutProvidersAction()
+      .then((providers) => {
+        setEnabledProviders(providers);
+        setPaymentMethod((current) => {
+          if (current && providers.some((p) => p.code === current)) return current;
+          return (providers[0]?.code as PaymentProvider) || '';
+        });
+      })
+      .catch(() => setEnabledProviders([]));
+  }, [isOpen]);
+
+  if (!isOpen) return null;
 
   const handleSelectSavedAddress = (addr: CustomerAddress) => {
     setSelectedAddressId(addr.id);
@@ -100,7 +113,8 @@ export function CheckoutModal({
     if (addr.recipientPhone) setCustomerPhone(addr.recipientPhone);
   };
 
-  const subtotal = items.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
+  const subtotal = items.reduce((sum, item) => sum + (item.product.price ?? 0) * item.quantity, 0);
+  // Rough display estimate — server recomputes authoritative tax from product tax categories
   const tax = Math.round(subtotal * 0.16);
   const shippingFee = subtotal > 100000 ? 0 : 500;
   const total = subtotal + tax + shippingFee;
@@ -111,6 +125,10 @@ export function CheckoutModal({
 
     if (!customerName || !customerEmail || !customerPhone || !street || !city) {
       setFormError('Please fill in all mandatory billing and shipping fields.');
+      return;
+    }
+    if (!paymentMethod) {
+      setFormError('No payment method is available. Enable a provider in Settings → Payments.');
       return;
     }
 
@@ -316,79 +334,55 @@ export function CheckoutModal({
               </div>
             </div>
 
-            {/* Payment Method Selector */}
+            {/* Payment Method Selector — only branch-enabled providers */}
             <div className="space-y-3 pt-2">
               <h3 className="flex items-center gap-2 text-xs font-semibold tracking-wider text-indigo-400 uppercase">
                 <CreditCard className="h-4 w-4" /> 3. Select Payment Gateway
               </h3>
-              <div className="space-y-2.5">
-                {/* M-Pesa Option */}
-                <label
-                  onClick={() => setPaymentMethod('mpesa_daraja')}
-                  className={`flex cursor-pointer items-start gap-3.5 rounded-xl border p-3.5 transition-all ${
-                    paymentMethod === 'mpesa_daraja'
-                      ? 'border-emerald-500/50 bg-emerald-950/30 shadow-md shadow-emerald-950/30'
-                      : 'border-zinc-800 bg-zinc-950 hover:border-zinc-700'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="payment_provider"
-                    checked={paymentMethod === 'mpesa_daraja'}
-                    onChange={() => setPaymentMethod('mpesa_daraja')}
-                    className="mt-1 text-emerald-500 focus:ring-emerald-500"
-                  />
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Smartphone className="h-4 w-4 text-emerald-400" />
-                        <span className="text-xs font-bold text-white">M-Pesa Express</span>
-                      </div>
-                      <span className="rounded border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
-                        INSTANT PHONE PROMPT
-                      </span>
-                    </div>
-                    <p className="mt-1 text-[11px] text-zinc-400">
-                      A payment prompt will be sent directly to{' '}
-                      <span className="font-mono text-emerald-300">{customerPhone}</span> to enter
-                      your M-Pesa PIN.
-                    </p>
-                  </div>
-                </label>
-
-                {/* Card / Bank Option */}
-                <label
-                  onClick={() => setPaymentMethod('pesapal_v3')}
-                  className={`flex cursor-pointer items-start gap-3.5 rounded-xl border p-3.5 transition-all ${
-                    paymentMethod === 'pesapal_v3'
-                      ? 'border-indigo-500/50 bg-indigo-950/30 shadow-md shadow-indigo-950/30'
-                      : 'border-zinc-800 bg-zinc-950 hover:border-zinc-700'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="payment_provider"
-                    checked={paymentMethod === 'pesapal_v3'}
-                    onChange={() => setPaymentMethod('pesapal_v3')}
-                    className="mt-1 text-indigo-500 focus:ring-indigo-500"
-                  />
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <CreditCard className="h-4 w-4 text-indigo-400" />
-                        <span className="text-xs font-bold text-white">Cards & Bank Transfer</span>
-                      </div>
-                      <span className="rounded border border-indigo-500/20 bg-indigo-500/10 px-2 py-0.5 text-[10px] font-bold text-indigo-300">
-                        VISA / MASTERCARD
-                      </span>
-                    </div>
-                    <p className="mt-1 text-[11px] text-zinc-400">
-                      Pay securely with Visa, Mastercard, Airtel Money, or direct Bank transfer with
-                      instant verification.
-                    </p>
-                  </div>
-                </label>
-              </div>
+              {enabledProviders.length === 0 ? (
+                <p className="rounded-lg border border-amber-800/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
+                  No payment methods are enabled for this branch. Configure credentials under Admin →
+                  Settings → Payments.
+                </p>
+              ) : (
+                <div className="space-y-2.5">
+                  {enabledProviders.map((provider) => {
+                    const selected = paymentMethod === provider.code;
+                    return (
+                      <label
+                        key={provider.code}
+                        onClick={() => setPaymentMethod(provider.code)}
+                        className={`flex cursor-pointer items-start gap-3.5 rounded-xl border p-3.5 transition-all ${
+                          selected
+                            ? 'border-indigo-500/50 bg-indigo-950/30 shadow-md shadow-indigo-950/30'
+                            : 'border-zinc-800 bg-zinc-950 hover:border-zinc-700'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="payment_provider"
+                          checked={selected}
+                          onChange={() => setPaymentMethod(provider.code)}
+                          className="mt-1 text-indigo-500 focus:ring-indigo-500"
+                        />
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            {provider.code === 'mpesa_daraja' || provider.code === 'kcb_buni' ? (
+                              <Smartphone className="h-4 w-4 text-emerald-400" />
+                            ) : provider.code === 'jenga_hq' ? (
+                              <Building className="h-4 w-4 text-amber-400" />
+                            ) : (
+                              <CreditCard className="h-4 w-4 text-indigo-400" />
+                            )}
+                            <span className="text-xs font-bold text-white">{provider.label}</span>
+                          </div>
+                          <p className="mt-1 text-[11px] text-zinc-400">{provider.description}</p>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
 
@@ -414,12 +408,12 @@ export function CheckoutModal({
                           {product.name}
                         </div>
                         <div className="text-[10px] text-zinc-500">
-                          Qty: {quantity} × KES {product.price.toLocaleString()}
+                          Qty: {quantity} × KES {(product.price ?? 0).toLocaleString()}
                         </div>
                       </div>
                     </div>
                     <span className="shrink-0 font-mono text-zinc-200">
-                      KES {(product.price * quantity).toLocaleString()}
+                      KES {((product.price ?? 0) * quantity).toLocaleString()}
                     </span>
                   </div>
                 ))}

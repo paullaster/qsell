@@ -34,6 +34,8 @@ const DEFAULT_COMPANY: Omit<CompanySettingsInsert, 'id' | 'createdAt' | 'updated
   logoUrl: null,
   primaryColor: '#111827',
   accentColor: '#4F46E5',
+  publicBaseUrl: null,
+  uiConfig: {},
   isActive: true,
 };
 
@@ -67,18 +69,37 @@ export function toCompanyProfile(row: CompanySettingsRow): CompanyProfile {
   };
 }
 
+function dbErrorMessage(err: unknown): string {
+  if (!(err instanceof Error)) return 'Unknown database error';
+  const cause = (err as Error & { cause?: unknown }).cause;
+  if (cause instanceof Error && cause.message) {
+    return `${err.message} (${cause.message})`;
+  }
+  if (typeof cause === 'string' && cause.trim()) {
+    return `${err.message} (${cause})`;
+  }
+  return err.message;
+}
+
 export class CompanySettingsRepository {
   constructor(private readonly db: DrizzleDb) {}
 
   async ensureSeeded(): Promise<CompanySettingsRow> {
-    const existing = await this.getActive();
-    if (existing) return existing;
+    try {
+      const existing = await this.getActive();
+      if (existing) return existing;
 
-    const [created] = await this.db.insert(companySettings).values(DEFAULT_COMPANY).returning();
-    if (!created) {
-      throw new Error('Failed to seed company settings');
+      const [created] = await this.db.insert(companySettings).values(DEFAULT_COMPANY).returning();
+      if (!created) {
+        throw new Error('Failed to seed company settings');
+      }
+      return created;
+    } catch (err) {
+      throw new Error(
+        `Company settings unavailable. If you recently changed the schema, run \`npm run db:push\`. ${dbErrorMessage(err)}`,
+        { cause: err },
+      );
     }
-    return created;
   }
 
   async getActive(): Promise<CompanySettingsRow | null> {

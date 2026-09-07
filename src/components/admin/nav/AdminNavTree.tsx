@@ -16,6 +16,12 @@ import {
   Store,
   Wallet,
   Boxes,
+  Palette,
+  LayoutGrid,
+  Tags,
+  Shapes,
+  Settings,
+  GitBranch,
   ChevronDown,
   type LucideIcon,
 } from 'lucide-react';
@@ -37,6 +43,12 @@ const ICONS: Record<AdminNavIconName, LucideIcon> = {
   Store,
   Wallet,
   Boxes,
+  Palette,
+  LayoutGrid,
+  Tags,
+  Shapes,
+  Settings,
+  GitBranch,
 };
 
 function NavIcon({ name }: { name?: AdminNavIconName }) {

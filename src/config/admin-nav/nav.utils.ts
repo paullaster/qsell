@@ -1,5 +1,6 @@
 import { ADMIN_NAV_MAX_DEPTH, type AdminNavActiveMatch, type AdminNavItem } from './types';
 import { ADMIN_NAV } from './nav.config';
+import { applyModuleLabels } from '@/config/company-ui';
 
 function isInstalled(item: AdminNavItem): boolean {
   return item.installed !== false;
@@ -50,8 +51,12 @@ export function normalizeAdminNav(
 }
 
 /** Canonical nav tree used by UI (always normalized). */
-export function getAdminNav(): AdminNavItem[] {
-  return normalizeAdminNav(ADMIN_NAV);
+export function getAdminNav(
+  moduleLabels?: Record<string, string> | null,
+): AdminNavItem[] {
+  const base = normalizeAdminNav(ADMIN_NAV);
+  if (!moduleLabels || Object.keys(moduleLabels).length === 0) return base;
+  return applyModuleLabels(base, moduleLabels);
 }
 
 function pathScore(href: string, pathname: string): number {
@@ -120,8 +125,11 @@ export function hasSubLinks(item: AdminNavItem): boolean {
 }
 
 /** Header title/subtitle for the current route. */
-export function getAdminPageMeta(pathname: string): { title: string; subtitle: string } {
-  const match = findActiveNavMatch(pathname);
+export function getAdminPageMeta(
+  pathname: string,
+  moduleLabels?: Record<string, string> | null,
+): { title: string; subtitle: string } {
+  const match = findActiveNavMatch(pathname, getAdminNav(moduleLabels));
   if (!match) {
     return { title: 'Admin', subtitle: 'Console' };
   }

@@ -5,17 +5,32 @@ import path from 'node:path';
 import { revalidatePath } from 'next/cache';
 import { getContainer } from '@/server/di/container';
 import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
+import {
+  resolveCompanyUiConfig,
+  toCompanyUiConfigRaw,
+  type CompanyUiConfig,
+  type CompanyUiConfigRaw,
+} from '@/config/company-ui';
 
 function revalidateCompanySurfaces() {
   revalidatePath('/');
   revalidatePath('/admin');
   revalidatePath('/admin/company');
+  revalidatePath('/admin/company/profile');
+  revalidatePath('/admin/company/appearance');
+  revalidatePath('/admin/company/modules');
   revalidatePath('/admin/orders');
 }
 
 export async function getCompanySettingsAction(): Promise<CompanySettingsRow> {
   const { companySettings } = getContainer();
   return companySettings.ensureSeeded();
+}
+
+/** Resolved UI config with defaults — safe for storefront/admin consumers. */
+export async function getCompanyUiConfigAction(): Promise<CompanyUiConfig> {
+  const row = await getCompanySettingsAction();
+  return resolveCompanyUiConfig(row.uiConfig);
 }
 
 export async function updateCompanySettingsAction(
@@ -45,10 +60,16 @@ export async function updateCompanySettingsAction(
     logoUrl: string | null;
     primaryColor: string;
     accentColor: string;
+    uiConfig: CompanyUiConfigRaw;
   }>,
 ): Promise<CompanySettingsRow> {
   const { companySettings } = getContainer();
-  const updated = await companySettings.update(updates);
+  const payload = { ...updates };
+  if (updates.uiConfig !== undefined) {
+    // Persist only the sanitized/resolved shape so bad client data cannot accumulate.
+    payload.uiConfig = toCompanyUiConfigRaw(resolveCompanyUiConfig(updates.uiConfig));
+  }
+  const updated = await companySettings.update(payload);
   revalidateCompanySurfaces();
   return updated;
 }

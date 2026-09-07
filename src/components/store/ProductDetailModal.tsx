@@ -15,6 +15,7 @@ import {
   CreditCard,
 } from 'lucide-react';
 import { type Product } from '@/types/index';
+import { ProductDescriptionView } from '@/components/ui/ProductDescriptionView';
 
 interface ProductDetailModalProps {
   product: Product | null;
@@ -87,10 +88,10 @@ export function ProductDetailModal({
                   Price
                 </span>
                 <span className="font-mono text-2xl font-bold text-white">
-                  KES {product.price.toLocaleString()}
+                  KES {(product.price ?? 0).toLocaleString()}
                 </span>
               </div>
-              {product.compareAtPrice && product.compareAtPrice > product.price && (
+              {product.compareAtPrice && product.price != null && product.compareAtPrice > product.price && (
                 <div className="text-right">
                   <span className="block text-[10px] font-semibold text-emerald-400">
                     Save KES {(product.compareAtPrice - product.price).toLocaleString()}
@@ -121,7 +122,7 @@ export function ProductDetailModal({
             {/* Description */}
             <div className="space-y-1.5">
               <span className="text-xs font-semibold text-zinc-300">Description:</span>
-              <p className="text-xs leading-relaxed text-zinc-300">{product.description}</p>
+              <ProductDescriptionView description={product.description} dense />
             </div>
           </div>
 

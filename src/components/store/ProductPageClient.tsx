@@ -42,7 +42,7 @@ export function ProductPageClient({
 
   return (
     <div className="min-h-screen bg-black">
-      <div className="mx-auto max-w-7xl px-4 py-6">
+      <div className="storefront-shell py-6">
         <Link href="/" className="text-sm text-zinc-500 hover:text-indigo-400">
           ← Back to store
         </Link>

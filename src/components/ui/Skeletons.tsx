@@ -1,5 +1,8 @@
 'use client';
 
+import { productGridClassName } from '@/config/company-ui';
+import { useCompanyUiConfig } from '@/components/company/CompanyUiConfigProvider';
+
 export function SkeletonCard() {
   return (
     <div className="animate-pulse space-y-4 rounded-2xl border border-slate-800/80 bg-slate-900/60 p-5">
@@ -18,8 +21,9 @@ export function SkeletonCard() {
 }
 
 export function SkeletonGrid({ count = 6 }: { count?: number }) {
+  const { productGrid } = useCompanyUiConfig();
   return (
-    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+    <div className={productGridClassName(productGrid.desktopColumns)}>
       {Array.from({ length: count }).map((_, i) => (
         <SkeletonCard key={i} />
       ))}

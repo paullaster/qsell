@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 import { db } from '@/server/db/store';
-import type { UserSession, Order, OrderItem, PaymentProvider } from '@/types/index';
+import type { UserSession, Order, PaymentProvider } from '@/types/index';
+import { OrderWriteService } from '@/server/domains/orders/write-service';
 
 export const SESSION_COOKIE = 'omni_session';
 
@@ -72,8 +73,9 @@ export class AuthService {
     return this.getSession(cookieStore.get(SESSION_COOKIE)?.value);
   }
 
+  /** @deprecated Prefer OrdersService.createCheckout / OrderWriteService */
   static createOrder(params: {
-    userId: string;
+    userId?: string | null;
     customerName: string;
     customerEmail: string;
     customerPhone: string;
@@ -87,95 +89,7 @@ export class AuthService {
     items: { productId: string; quantity: number }[];
     currency: 'KES' | 'USD';
     paymentMethod: PaymentProvider;
-  }): { success: boolean; order?: Order; error?: string } {
-    const orderItems: OrderItem[] = [];
-    let subtotal = 0;
-
-    for (const item of params.items) {
-      const prod = db.products.get(item.productId);
-      if (!prod) {
-        return { success: false, error: `Product ID ${item.productId} does not exist.` };
-      }
-      const itemTotal = prod.price * item.quantity;
-      subtotal += itemTotal;
-      orderItems.push({
-        productId: prod.id,
-        productName: prod.name,
-        sku: prod.sku,
-        quantity: item.quantity,
-        unitPrice: prod.price,
-        totalPrice: itemTotal,
-        imageUrl: prod.imageUrl,
-      });
-    }
-
-    const tax = Math.round(subtotal * 0.16);
-    const shippingFee = subtotal > 100000 ? 0 : 500;
-    const totalAmount = subtotal + tax + shippingFee;
-    const orderId = `ord_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    const orderNumber = `ORD-2026-${Math.floor(1000 + Math.random() * 9000)}`;
-
-    const reservation = db.atomicReserveStock(params.items, orderId, params.customerEmail);
-    if (!reservation.success) {
-      return { success: false, error: reservation.error };
-    }
-
-    let resolvedUserId = params.userId;
-    let customer =
-      db.getCustomerById(params.userId) || db.getCustomerByEmailOrPhone(params.customerEmail);
-    if (!customer) {
-      customer = db.createCustomer({
-        name: params.customerName,
-        email: params.customerEmail,
-        phone: params.customerPhone,
-        addresses: [
-          {
-            id: `addr_${Date.now()}`,
-            label: 'Home / Delivery',
-            recipientName: params.customerName,
-            recipientPhone: params.customerPhone,
-            ...params.shippingAddress,
-            isDefault: true,
-          },
-        ],
-        paymentPreferences: {
-          preferredMethod: params.paymentMethod,
-          defaultMpesaPhone: params.customerPhone,
-        },
-      });
-      resolvedUserId = customer.id;
-    } else {
-      resolvedUserId = customer.id;
-      customer.totalOrders = (customer.totalOrders || 0) + 1;
-      customer.lastOrderDate = new Date().toISOString();
-      customer.updatedAt = new Date().toISOString();
-      db.broadcast('customer_updated', customer);
-    }
-
-    const order: Order = {
-      id: orderId,
-      orderNumber,
-      userId: resolvedUserId,
-      customerName: params.customerName,
-      customerEmail: params.customerEmail,
-      customerPhone: params.customerPhone,
-      shippingAddress: params.shippingAddress,
-      items: orderItems,
-      subtotal,
-      tax,
-      shippingFee,
-      totalAmount,
-      currency: params.currency,
-      status: 'pending',
-      paymentStatus: 'unpaid',
-      paymentMethod: params.paymentMethod,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    db.orders.set(orderId, order);
-    db.broadcast('order_event', { type: 'order_created', order });
-
-    return { success: true, order };
+  }): Promise<{ success: boolean; order?: Order; error?: string }> {
+    return OrderWriteService.createOrder(params);
   }
 }

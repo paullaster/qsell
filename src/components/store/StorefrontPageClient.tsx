@@ -17,10 +17,8 @@ import { Toast, type ToastNotification } from '@/components/ui/Toast';
 import { useRealtimeEvents } from '@/lib/realtime';
 import {
   createOrderAction,
-  initiateDarajaStkAction,
-  initiatePesapalPaymentAction,
+  initiateBranchPaymentAction,
   getSessionAction,
-  ensureAdminSessionAction,
 } from '@/server/actions';
 import type { Product, Order, PaymentProvider } from '@/types/index';
 import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
@@ -56,21 +54,16 @@ export function StorefrontPageClient({
   });
 
   useEffect(() => {
-    getSessionAction().catch(() => {});
-  }, []);
-
-  useEffect(() => {
     if (searchParams.get('admin') !== '1') return;
-    let cancelled = false;
-    void ensureAdminSessionAction()
-      .then(() => {
-        if (!cancelled) router.replace('/admin');
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
+    router.replace('/login?callbackUrl=/admin');
   }, [searchParams, router]);
+
+  const [sessionName, setSessionName] = useState<string | null>(null);
+  useEffect(() => {
+    getSessionAction()
+      .then(({ session }) => setSessionName(session?.name || null))
+      .catch(() => setSessionName(null));
+  }, []);
 
   const [cart, setCart] = useState<CartItem[]>([]);
   useEffect(() => {
@@ -163,23 +156,61 @@ export function StorefrontPageClient({
       setActiveOrder(order);
       setIsCheckoutOpen(false);
 
-      if (checkoutData.paymentMethod === 'mpesa_daraja') {
-        const stkRes = await initiateDarajaStkAction(order.id, checkoutData.customerPhone);
-        setMpesaCheckoutRequestId(stkRes.checkoutRequestId);
+      if (
+        checkoutData.paymentMethod === 'mpesa_daraja' ||
+        checkoutData.paymentMethod === 'kcb_buni'
+      ) {
+        const payRes = await initiateBranchPaymentAction({
+          orderId: order.id,
+          providerCode: checkoutData.paymentMethod,
+        });
+        if (payRes.status === 'failed') {
+          throw new Error(payRes.errorMessage || 'Payment initiation failed');
+        }
+        setMpesaCheckoutRequestId(payRes.attemptId);
         setIsMpesaModalOpen(true);
         addToast({
           type: 'info',
-          title: 'M-Pesa STK Push Sent',
-          message: `Safaricom prompt dispatched to ${checkoutData.customerPhone}`,
+          title: 'Payment prompt sent',
+          message:
+            payRes.customerMessage ||
+            `Complete payment on ${checkoutData.customerPhone}`,
         });
-      } else {
-        const pesapalRes = await initiatePesapalPaymentAction(order.id);
-        setPesapalTrackingId(pesapalRes.orderTrackingId);
+      } else if (checkoutData.paymentMethod === 'jenga_hq') {
+        const payRes = await initiateBranchPaymentAction({
+          orderId: order.id,
+          providerCode: 'jenga_hq',
+        });
+        if (payRes.status === 'failed') {
+          throw new Error(payRes.errorMessage || 'Jenga payment failed');
+        }
+        if (payRes.redirectUrl) {
+          window.open(payRes.redirectUrl, '_blank', 'noopener,noreferrer');
+        }
+        setPesapalTrackingId(payRes.attemptId);
         setIsPesapalModalOpen(true);
         addToast({
           type: 'info',
-          title: 'Pesapal Gateway Initialized',
-          message: `Pesapal v3.0 Order Reference: ${pesapalRes.merchantReference}`,
+          title: 'Jenga checkout started',
+          message: payRes.customerMessage || 'Complete payment in the Jenga window',
+        });
+      } else {
+        const payRes = await initiateBranchPaymentAction({
+          orderId: order.id,
+          providerCode: 'pesapal_v3',
+        });
+        if (payRes.status === 'failed') {
+          throw new Error(payRes.errorMessage || 'Pesapal payment failed');
+        }
+        if (payRes.redirectUrl) {
+          window.open(payRes.redirectUrl, '_blank', 'noopener,noreferrer');
+        }
+        setPesapalTrackingId(payRes.attemptId);
+        setIsPesapalModalOpen(true);
+        addToast({
+          type: 'info',
+          title: 'Pesapal checkout started',
+          message: `Complete payment in the Pesapal window`,
         });
       }
     } catch (err: unknown) {
@@ -231,13 +262,14 @@ export function StorefrontPageClient({
         onOpenTrackOrder={() => setIsTrackOrderOpen(true)}
         onOpenHelp={() => setIsHelpOpen(true)}
         onOpenAccount={() => setIsAccountOpen(true)}
+        activeCustomerName={sessionName || undefined}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         selectedCategory={selectedCategory}
         onSelectCategory={setSelectedCategory}
       />
 
-      <main className="mx-auto w-full max-w-7xl flex-1 px-4 pt-4 sm:px-6 lg:px-8">
+      <main className="storefront-shell flex-1 pt-4">
         <StorefrontView
           productsPromise={productsPromise}
           onSelectProduct={(p) => router.push(`/product/${p.id}`)}
@@ -246,6 +278,7 @@ export function StorefrontPageClient({
           onRefresh={refresh}
           searchQuery={searchQuery}
           selectedCategory={selectedCategory}
+          onSelectCategory={setSelectedCategory}
         />
       </main>
 

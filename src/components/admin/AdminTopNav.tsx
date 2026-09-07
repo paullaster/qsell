@@ -62,6 +62,10 @@ export function AdminTopNav({
       title: 'Customer Accounts & Sales Insights',
       subtitle: 'Track customer buying patterns, repeat purchase rates, and customer accounts',
     },
+    company: {
+      title: 'Company Setup',
+      subtitle: 'Legal identity, branding, storefront UI, and module names',
+    },
   };
 
   const currentInfo = tabTitles[activeTab] || tabTitles.dashboard;

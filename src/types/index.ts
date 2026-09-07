@@ -11,6 +11,20 @@ export interface Category {
   updatedAt: string;
 }
 
+/** User-defined item classification (raw material, finished good, etc.). */
+export interface ItemType {
+  id: string;
+  /** Integer code from the tax authority (tax compliance / e-invoicing) */
+  code: number;
+  name: string;
+  isSellable: boolean;
+  isDefault: boolean;
+  isActive: boolean;
+  productCount?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ProductSpecification {
   key: string;
   value: string;
@@ -24,9 +38,16 @@ export interface Product {
   description: string;
   category: string;
   brand?: string;
-  price: number;
+  itemTypeId: string;
+  itemTypeName: string;
+  itemTypeCode: number;
+  /** Denormalized from item type — storefront uses this to hide non-sellable items */
+  isSellable: boolean;
+  /** Required when item type is sellable; omit/null when not sellable */
+  price?: number;
   compareAtPrice?: number;
-  costPrice?: number;
+  /** Required unit cost of goods (form defaults empty until set) */
+  costPrice: number;
   taxCategoryId?: string;
   taxCategoryName?: string;
   taxRate?: number;
@@ -105,7 +126,12 @@ export interface InventoryLedgerEntry {
   timestamp: string;
 }
 
-export type PaymentProvider = 'mpesa_daraja' | 'pesapal_v3' | 'card_direct';
+export type PaymentProvider =
+  | 'mpesa_daraja'
+  | 'pesapal_v3'
+  | 'jenga_hq'
+  | 'kcb_buni'
+  | 'card_direct';
 
 export interface PaymentGatewayConfig {
   id: string;
