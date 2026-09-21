@@ -15,7 +15,7 @@ import {
   type UserSession,
 } from '@/types/index';
 
-// In-Memory Transactional Store with atomic operations & seed records
+// In-Memory Transactional Store with atomic operations
 class PostgresStore {
   public categories = new Map<string, Category>();
   public itemTypes = new Map<string, ItemType>();
@@ -32,7 +32,8 @@ class PostgresStore {
   public sseClients = new Set<(event: string, data: any) => void>();
 
   constructor() {
-    this.seedInitialData();
+    // Catalog, taxes, currencies, gateways, and customers start empty.
+    // Super-admin is seeded separately via auth (env).
   }
 
   // Subscribe SSE clients for real-time inventory updates
@@ -50,449 +51,6 @@ class PostgresStore {
       } catch (err) {
         // ignore closed
       }
-    }
-  }
-
-  private seedInitialData() {
-    // Categories start empty — create them in admin.
-
-    // 0.1 Seed Global & Regional Tax Categories
-    const initialTaxes: TaxCategory[] = [
-      {
-        id: 'tax_kra_vat_16',
-        name: 'Standard VAT (16% Kenya KRA)',
-        code: 'VAT_16',
-        rate: 16.0,
-        type: 'vat',
-        countryCode: 'KE',
-        countryName: 'Kenya',
-        description:
-          'Standard 16% Value Added Tax on consumer goods and electronics under KRA eTIMS regulations.',
-        isInclusive: true,
-        isDefault: true,
-        isActive: true,
-        createdAt: new Date(Date.now() - 86400000 * 90).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 'tax_zero_rated',
-        name: 'Zero Rated (0% KRA Schedule 1)',
-        code: 'ZERO_0',
-        rate: 0.0,
-        type: 'exempt',
-        countryCode: 'KE',
-        countryName: 'Kenya',
-        description:
-          '0% Tax Rate on qualifying educational, assistive technology, and export supplies.',
-        isInclusive: true,
-        isDefault: false,
-        isActive: true,
-        createdAt: new Date(Date.now() - 86400000 * 90).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 'tax_exempt',
-        name: 'Exempt Supplies (KRA Schedule 2)',
-        code: 'EXEMPT',
-        rate: 0.0,
-        type: 'exempt',
-        countryCode: 'KE',
-        countryName: 'Kenya',
-        description: 'Fully exempt supplies not subject to VAT deduction or levy.',
-        isInclusive: true,
-        isDefault: false,
-        isActive: true,
-        createdAt: new Date(Date.now() - 86400000 * 90).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 'tax_dst_1_5',
-        name: 'Digital Services Tax (1.5% e-Commerce)',
-        code: 'DST_1_5',
-        rate: 1.5,
-        type: 'digital_service',
-        countryCode: 'KE',
-        countryName: 'Kenya',
-        description:
-          'Digital Marketplace and Electronic Services levy on cross-border merchant platforms.',
-        isInclusive: true,
-        isDefault: false,
-        isActive: true,
-        createdAt: new Date(Date.now() - 86400000 * 80).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 'tax_reduced_8',
-        name: 'Reduced Rate / Petroleum & Energy (8%)',
-        code: 'REDUCED_8',
-        rate: 8.0,
-        type: 'vat',
-        countryCode: 'KE',
-        countryName: 'Kenya',
-        description:
-          'Special reduced VAT rate applicable to qualifying energy supplies and green hardware.',
-        isInclusive: true,
-        isDefault: false,
-        isActive: true,
-        createdAt: new Date(Date.now() - 86400000 * 70).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 'tax_us_sales_8_25',
-        name: 'US Standard Sales Tax (8.25% Cross-Border)',
-        code: 'US_SALES_8_25',
-        rate: 8.25,
-        type: 'sales_tax',
-        countryCode: 'US',
-        countryName: 'United States',
-        description:
-          'State & Local benchmark sales tax rate for North American international export orders.',
-        isInclusive: false,
-        isDefault: false,
-        isActive: true,
-        createdAt: new Date(Date.now() - 86400000 * 60).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 'tax_eu_vat_20',
-        name: 'EU Standard VAT (20% Cross-Border)',
-        code: 'EU_VAT_20',
-        rate: 20.0,
-        type: 'vat',
-        countryCode: 'EU',
-        countryName: 'European Union',
-        description:
-          'European Union one-stop-shop (OSS) standard VAT benchmark for European exports.',
-        isInclusive: false,
-        isDefault: false,
-        isActive: true,
-        createdAt: new Date(Date.now() - 86400000 * 50).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 'tax_gcc_vat_5',
-        name: 'GCC UAE Standard VAT (5%)',
-        code: 'GCC_VAT_5',
-        rate: 5.0,
-        type: 'vat',
-        countryCode: 'AE',
-        countryName: 'United Arab Emirates / GCC',
-        description:
-          'Federal Tax Authority (FTA) 5% VAT rate for UAE and Middle East export consignments.',
-        isInclusive: true,
-        isDefault: false,
-        isActive: true,
-        createdAt: new Date(Date.now() - 86400000 * 40).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-    ];
-
-    for (const tax of initialTaxes) {
-      this.taxCategories.set(tax.id, tax);
-    }
-
-    // 0.2 Seed Multi-Market Currencies
-    const initialCurrencies: CurrencyConfig[] = [
-      {
-        code: 'KES',
-        name: 'Kenyan Shilling',
-        symbol: 'KSh',
-        exchangeRate: 1.0,
-        isBaseCurrency: true,
-        decimalDigits: 0,
-        symbolPosition: 'prefix',
-        isEnabled: true,
-        flagEmoji: '🇰🇪',
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        code: 'USD',
-        name: 'US Dollar',
-        symbol: '$',
-        exchangeRate: 0.0077,
-        isBaseCurrency: false,
-        decimalDigits: 2,
-        symbolPosition: 'prefix',
-        isEnabled: true,
-        flagEmoji: '🇺🇸',
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        code: 'EUR',
-        name: 'Euro',
-        symbol: '€',
-        exchangeRate: 0.0071,
-        isBaseCurrency: false,
-        decimalDigits: 2,
-        symbolPosition: 'prefix',
-        isEnabled: true,
-        flagEmoji: '🇪🇺',
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        code: 'GBP',
-        name: 'British Pound',
-        symbol: '£',
-        exchangeRate: 0.0061,
-        isBaseCurrency: false,
-        decimalDigits: 2,
-        symbolPosition: 'prefix',
-        isEnabled: true,
-        flagEmoji: '🇬🇧',
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        code: 'UGX',
-        name: 'Ugandan Shilling',
-        symbol: 'USh',
-        exchangeRate: 28.5,
-        isBaseCurrency: false,
-        decimalDigits: 0,
-        symbolPosition: 'prefix',
-        isEnabled: true,
-        flagEmoji: '🇺🇬',
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        code: 'TZS',
-        name: 'Tanzanian Shilling',
-        symbol: 'TSh',
-        exchangeRate: 20.0,
-        isBaseCurrency: false,
-        decimalDigits: 0,
-        symbolPosition: 'prefix',
-        isEnabled: true,
-        flagEmoji: '🇹🇿',
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        code: 'ZAR',
-        name: 'South African Rand',
-        symbol: 'R',
-        exchangeRate: 0.14,
-        isBaseCurrency: false,
-        decimalDigits: 2,
-        symbolPosition: 'prefix',
-        isEnabled: true,
-        flagEmoji: '🇿🇦',
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        code: 'AED',
-        name: 'UAE Dirham',
-        symbol: 'AED',
-        exchangeRate: 0.028,
-        isBaseCurrency: false,
-        decimalDigits: 2,
-        symbolPosition: 'prefix',
-        isEnabled: true,
-        flagEmoji: '🇦🇪',
-        updatedAt: new Date().toISOString(),
-      },
-    ];
-
-    for (const cur of initialCurrencies) {
-      this.currencies.set(cur.code, cur);
-    }
-
-    // 1. Payment Gateways
-    const mpesaGateway: PaymentGatewayConfig = {
-      id: 'gw_mpesa_daraja',
-      provider: 'mpesa_daraja',
-      name: 'M-Pesa Express (Daraja STK Push)',
-      isEnabled: true,
-      environment: 'sandbox',
-      credentials: {
-        consumerKey: 'cNd3A8vK4jQ1LzX9wE2rP6yT7uI5oM0s',
-        consumerSecret: '9vK4jQ1LzX9wE2rP6yT7uI5oM0scNd3A8',
-        shortcode: '174379',
-        passkey: 'bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919',
-        accountReference: 'OMNICOMMERCE',
-      },
-      supportedCurrencies: ['KES'],
-      icon: 'smartphone',
-      description: 'Instant Mobile Money STK Prompt via Safaricom Daraja 2.0 API',
-    };
-
-    const pesapalGateway: PaymentGatewayConfig = {
-      id: 'gw_pesapal_v3',
-      provider: 'pesapal_v3',
-      name: 'Pesapal v3 (Card, Bank & Mobile)',
-      isEnabled: true,
-      environment: 'sandbox',
-      credentials: {
-        consumerKey: 'qk1sv5F5Xk9876ZxcVbN0123456789aA',
-        consumerSecret: 'pEsApAlSeCrEt_v3_9876543210',
-        ipnId: 'ipn_88fa7b49-21dc-49ef-941f-cb70f90c7932',
-      },
-      supportedCurrencies: ['KES', 'USD'],
-      icon: 'credit-card',
-      description: 'Visa, Mastercard, Airtel Money & Direct Bank Transfer via Pesapal v3.0',
-    };
-
-    const cardGateway: PaymentGatewayConfig = {
-      id: 'gw_card_direct',
-      provider: 'card_direct',
-      name: 'Direct Card Checkout (3D Secure)',
-      isEnabled: true,
-      environment: 'sandbox',
-      credentials: {
-        consumerKey: 'pk_test_direct_card_9941a8',
-      },
-      supportedCurrencies: ['KES', 'USD'],
-      icon: 'shield-check',
-      description: 'Instant 3DS2 Compliant Visa / Mastercard processing',
-    };
-
-    this.paymentGateways.set(mpesaGateway.id, mpesaGateway);
-    this.paymentGateways.set(pesapalGateway.id, pesapalGateway);
-    this.paymentGateways.set(cardGateway.id, cardGateway);
-
-    // Products, sample orders, and product-linked transactions start empty.
-    // Catalog is created entirely through admin.
-
-    // 6. Seed Operational Customer Accounts
-    const initialCustomers: CustomerAccount[] = [
-      {
-        id: 'usr_paullaster',
-        name: 'Paul Laster Okoth',
-        email: 'paullasterokoth98@gmail.com',
-        phone: '0712345678',
-        role: 'customer',
-        status: 'verified',
-        addresses: [
-          {
-            id: 'addr_paul_01',
-            label: 'Office (Delta Corner)',
-            recipientName: 'Paul Laster Okoth',
-            recipientPhone: '0712345678',
-            street: 'Riverside Drive, Delta Corner Suite 4A',
-            city: 'Nairobi',
-            countyOrState: 'Nairobi County',
-            postalCode: '00100',
-            country: 'Kenya',
-            isDefault: true,
-          },
-          {
-            id: 'addr_paul_02',
-            label: 'Home Residence',
-            recipientName: 'Paul Laster Okoth',
-            recipientPhone: '0712345678',
-            street: 'Kilimani, Wood Avenue Court B-4',
-            city: 'Nairobi',
-            countyOrState: 'Nairobi County',
-            postalCode: '00100',
-            country: 'Kenya',
-            isDefault: false,
-          },
-        ],
-        paymentPreferences: {
-          preferredMethod: 'mpesa_daraja',
-          defaultMpesaPhone: '254712345678',
-        },
-        totalOrders: 0,
-        totalSpend: 0,
-        lastOrderDate: undefined,
-        createdAt: new Date(Date.now() - 86400000 * 30).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 'usr_jane_wambui',
-        name: 'Jane Wambui',
-        email: 'jane.wambui@techhub.co.ke',
-        phone: '254722998877',
-        role: 'customer',
-        status: 'verified',
-        addresses: [
-          {
-            id: 'addr_jane_01',
-            label: 'Tech Hub Office',
-            recipientName: 'Jane Wambui',
-            recipientPhone: '254722998877',
-            street: 'Kilimani, Wood Avenue Apt 12',
-            city: 'Nairobi',
-            countyOrState: 'Nairobi County',
-            postalCode: '00100',
-            country: 'Kenya',
-            isDefault: true,
-          },
-        ],
-        paymentPreferences: {
-          preferredMethod: 'pesapal_v3',
-          defaultCardLast4: '4242',
-        },
-        totalOrders: 0,
-        totalSpend: 0,
-        lastOrderDate: undefined,
-        createdAt: new Date(Date.now() - 86400000 * 20).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 'usr_faith_wanjiku',
-        name: 'Faith Wanjiku Mwangi',
-        email: 'faith.wanjiku@kenyabiz.co.ke',
-        phone: '0722998877',
-        role: 'customer',
-        status: 'verified',
-        addresses: [
-          {
-            id: 'addr_faith_01',
-            label: 'HQ Sameer Park',
-            recipientName: 'Faith Wanjiku Mwangi',
-            recipientPhone: '0722998877',
-            street: 'Mombasa Road, Sameer Business Park Block C',
-            city: 'Nairobi',
-            countyOrState: 'Nairobi County',
-            postalCode: '00100',
-            country: 'Kenya',
-            isDefault: true,
-          },
-        ],
-        paymentPreferences: {
-          preferredMethod: 'mpesa_daraja',
-          defaultMpesaPhone: '254722998877',
-        },
-        totalOrders: 0,
-        totalSpend: 0,
-        lastOrderDate: undefined,
-        createdAt: new Date(Date.now() - 86400000 * 45).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 'usr_brian_kiprop',
-        name: 'Brian Kiprop',
-        email: 'brian.kiprop@eldoretinnovations.com',
-        phone: '0701443322',
-        role: 'customer',
-        status: 'active',
-        addresses: [
-          {
-            id: 'addr_brian_01',
-            label: 'Eldoret Tech Campus',
-            recipientName: 'Brian Kiprop',
-            recipientPhone: '0701443322',
-            street: 'Uganda Road, Rupa Mills Mall 2nd Floor',
-            city: 'Eldoret',
-            countyOrState: 'Uasin Gishu County',
-            postalCode: '30100',
-            country: 'Kenya',
-            isDefault: true,
-          },
-        ],
-        paymentPreferences: {
-          preferredMethod: 'mpesa_daraja',
-          defaultMpesaPhone: '254701443322',
-        },
-        totalOrders: 0,
-        totalSpend: 0,
-        lastOrderDate: undefined,
-        createdAt: new Date(Date.now() - 86400000 * 15).toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-    ];
-
-    for (const customer of initialCustomers) {
-      this.customers.set(customer.id, customer);
     }
   }
 
@@ -535,17 +93,14 @@ class PostgresStore {
 
     const customer: CustomerAccount = {
       id,
-      name: data.name || 'New Customer',
-      email: data.email || `customer_${Date.now()}@example.com`,
-      phone: data.phone || '0700000000',
+      name: data.name?.trim() || 'Customer',
+      email: data.email?.trim() || '',
+      phone: data.phone?.trim() || '',
       avatarUrl: data.avatarUrl,
       role: data.role || 'customer',
       status: data.status || 'verified',
       addresses: data.addresses || [],
-      paymentPreferences: data.paymentPreferences || {
-        preferredMethod: 'mpesa_daraja',
-        defaultMpesaPhone: data.phone || '254700000000',
-      },
+      paymentPreferences: data.paymentPreferences || {},
       totalOrders: data.totalOrders || 0,
       totalSpend: data.totalSpend || 0,
       lastOrderDate: data.lastOrderDate,
@@ -807,6 +362,73 @@ class PostgresStore {
       orderId,
       products: Array.from(this.products.values()),
     });
+  }
+
+  private inventorySettled = new Set<string>();
+
+  /** Present on instances created before this field existed (dev hot reload). */
+  private settledOrderIds(): Set<string> {
+    if (!(this.inventorySettled instanceof Set)) {
+      this.inventorySettled = new Set();
+    }
+    return this.inventorySettled;
+  }
+
+  /** Drop a checkout reservation when payment never succeeds. Idempotent. */
+  public releaseOrderReservation(orderId: string): void {
+    const settled = this.settledOrderIds();
+    if (settled.has(orderId)) return;
+    const order = this.orders.get(orderId);
+    if (!order) {
+      settled.add(orderId);
+      return;
+    }
+    const alreadyReleased = this.inventoryLedger.some(
+      (entry) =>
+        entry.referenceId === orderId &&
+        (entry.changeType === 'order_cancellation_release' ||
+          entry.changeType === 'order_fulfillment'),
+    );
+    if (!alreadyReleased && order.items.length > 0) {
+      this.atomicReleaseReservation(
+        order.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+        orderId,
+      );
+    }
+    settled.add(orderId);
+  }
+
+  /** Turn a reservation into a real stock deduction after payment succeeds. Idempotent. */
+  public fulfillOrderReservation(orderId: string): void {
+    const settled = this.settledOrderIds();
+    if (settled.has(orderId)) return;
+    const order = this.orders.get(orderId);
+    if (!order) {
+      settled.add(orderId);
+      return;
+    }
+    const alreadyFulfilled = this.inventoryLedger.some(
+      (entry) => entry.referenceId === orderId && entry.changeType === 'order_fulfillment',
+    );
+    if (!alreadyFulfilled && order.items.length > 0) {
+      this.atomicFulfillStock(
+        order.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+        orderId,
+      );
+    }
+    settled.add(orderId);
+  }
+
+  /**
+   * Orders whose payment already failed still hold reserved units. Put that stock back.
+   * Pending payments are left alone so an in-flight prompt still holds its quantity.
+   */
+  public releaseFailedPaymentReservations(): void {
+    for (const order of this.orders.values()) {
+      if (order.paymentMethod === 'on_account') continue;
+      if (order.paymentStatus !== 'failed') continue;
+      this.releaseOrderReservation(order.id);
+    }
   }
 
   // ==========================================================================
@@ -1152,6 +774,13 @@ class PostgresStore {
 
   public getTaxCategoryById(id: string): TaxCategory | undefined {
     return this.taxCategories.get(id);
+  }
+
+  /** Wipe all tax categories (in-memory store has no Postgres tax table). */
+  public clearTaxCategories(): number {
+    const n = this.taxCategories.size;
+    this.taxCategories.clear();
+    return n;
   }
 
   public createTaxCategory(
@@ -1647,5 +1276,7 @@ const globalForDb = globalThis as unknown as { omniDb?: PostgresStore };
 export const db = globalForDb.omniDb ?? new PostgresStore();
 
 if (process.env.NODE_ENV !== 'production') {
+  // Dev hot reload reuses this object, which was constructed from an older class.
+  Object.setPrototypeOf(db, PostgresStore.prototype);
   globalForDb.omniDb = db;
 }

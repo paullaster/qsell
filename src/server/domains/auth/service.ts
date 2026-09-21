@@ -7,12 +7,12 @@ export const SESSION_COOKIE = 'omni_session';
 
 export class AuthService {
   static createSession(
-    role: 'admin' | 'manager' | 'customer',
-    email = 'paullasterokoth98@gmail.com',
-    name = 'Paul Laster Okoth',
-    phone = '0712345678',
+    role: 'super_admin' | 'admin' | 'manager' | 'customer',
+    email: string,
+    name: string,
+    phone: string,
   ): UserSession {
-    let userId = role === 'admin' ? 'usr_admin_001' : '';
+    let userId = '';
 
     if (role === 'customer') {
       let existingCustomer =
@@ -24,28 +24,13 @@ export class AuthService {
           phone,
           role: 'customer',
           status: 'verified',
-          addresses: [
-            {
-              id: `addr_${Date.now()}`,
-              label: 'Primary Delivery Address',
-              recipientName: name,
-              recipientPhone: phone,
-              street: 'Riverside Drive, Delta Corner Suite 4A',
-              city: 'Nairobi',
-              countyOrState: 'Nairobi County',
-              country: 'Kenya',
-              isDefault: true,
-            },
-          ],
-          paymentPreferences: {
-            preferredMethod: 'mpesa_daraja',
-            defaultMpesaPhone: phone,
-          },
+          addresses: [],
+          paymentPreferences: {},
         });
       }
       userId = existingCustomer.id;
     } else {
-      userId = 'usr_admin_001';
+      userId = `usr_${role}`;
     }
 
     const token = `bff_sec_${Buffer.from(`${userId}:${role}:${Date.now()}`).toString('base64')}`;

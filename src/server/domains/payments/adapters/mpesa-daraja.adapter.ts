@@ -6,6 +6,7 @@ import type {
   PaymentPort,
 } from '../port';
 import type { MpesaDarajaCredentials } from '../types';
+import { extractPaymentReference } from '../payment-reference';
 
 function formatPhoneKe(phone: string): string {
   let clean = phone.replace(/[^0-9]/g, '');
@@ -16,6 +17,16 @@ function formatPhoneKe(phone: string): string {
   return clean;
 }
 
+type CachedDarajaToken = { token: string; expiresAt: number };
+
+/** In-process cache. Daraja access tokens last about an hour. */
+const darajaTokenCache = new Map<string, CachedDarajaToken>();
+const TOKEN_EXPIRY_BUFFER_MS = 60_000;
+
+function darajaTokenCacheKey(apiBaseUrl: string, consumerKey: string): string {
+  return `${apiBaseUrl.replace(/\/$/, '')}|${consumerKey}`;
+}
+
 export class MpesaDarajaAdapter implements PaymentPort {
   readonly code = 'mpesa_daraja' as const;
 
@@ -23,20 +34,44 @@ export class MpesaDarajaAdapter implements PaymentPort {
     apiBaseUrl: string,
     creds: MpesaDarajaCredentials,
   ): Promise<string> {
-    const auth = Buffer.from(`${creds.consumerKey}:${creds.consumerSecret}`).toString('base64');
-    const res = await fetch(
-      `${apiBaseUrl}/oauth/v1/generate?grant_type=client_credentials`,
-      {
-        method: 'GET',
-        headers: { Authorization: `Basic ${auth}` },
-      },
-    );
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Daraja OAuth failed (${res.status}): ${text}`);
+    const consumerKey = creds.consumerKey.trim();
+    const consumerSecret = creds.consumerSecret.trim();
+    const cacheKey = darajaTokenCacheKey(apiBaseUrl, consumerKey);
+    const cached = darajaTokenCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.token;
     }
-    const data = (await res.json()) as { access_token?: string };
+
+    const auth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
+    const res = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/oauth/v1/generate?grant_type=client_credentials`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Basic ${auth}`,
+        Accept: 'application/json',
+      },
+    });
+    if (!res.ok) {
+      const text = (await res.text()).trim();
+      darajaTokenCache.delete(cacheKey);
+      const requestId = res.headers.get('x-request-id');
+      const blockedByGateway = !text && (res.headers.get('x-cdn') || '').toLowerCase() === 'imperva';
+      const detail = text
+        ? text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 240)
+        : blockedByGateway
+          ? `Safaricom's sandbox gateway blocked the token request before issuing one${requestId ? ` (request ${requestId})` : ''}. In the Daraja portal, copy this app's sandbox consumer key and secret again, confirm the app is active, and save them under Settings → Payments. The base URL must be https://sandbox.safaricom.co.ke.`
+          : `Daraja OAuth failed (${res.status}) with an empty body${requestId ? ` (request ${requestId})` : ''}.`;
+      throw new Error(text ? `Daraja OAuth failed (${res.status}): ${detail}` : detail);
+    }
+    const data = (await res.json()) as { access_token?: string; expires_in?: string | number };
     if (!data.access_token) throw new Error('Daraja OAuth response missing access_token');
+
+    const expiresInSec = Number(data.expires_in);
+    const lifetimeMs =
+      Number.isFinite(expiresInSec) && expiresInSec > 0 ? expiresInSec * 1000 : 3_600_000;
+    darajaTokenCache.set(cacheKey, {
+      token: data.access_token,
+      expiresAt: Date.now() + Math.max(30_000, lifetimeMs - TOKEN_EXPIRY_BUFFER_MS),
+    });
     return data.access_token;
   }
 
@@ -47,7 +82,9 @@ export class MpesaDarajaAdapter implements PaymentPort {
     apiBaseUrl: string,
   ): Promise<InitiatePaymentResult> {
     const creds = credentials as MpesaDarajaCredentials;
-    if (!creds.consumerKey || !creds.consumerSecret || !creds.shortcode || !creds.passkey) {
+    const shortcode = creds.shortcode?.trim();
+    const passkey = creds.passkey?.trim();
+    if (!creds.consumerKey?.trim() || !creds.consumerSecret?.trim() || !shortcode || !passkey) {
       return {
         status: 'failed',
         errorMessage: 'M-Pesa Daraja credentials are incomplete. Configure them in admin.',
@@ -60,20 +97,18 @@ export class MpesaDarajaAdapter implements PaymentPort {
         .toISOString()
         .replace(/[^0-9]/g, '')
         .slice(0, 14);
-      const password = Buffer.from(`${creds.shortcode}${creds.passkey}${timestamp}`).toString(
-        'base64',
-      );
+      const password = Buffer.from(`${shortcode}${passkey}${timestamp}`).toString('base64');
       const phone = formatPhoneKe(input.customerPhone);
       const amount = Math.round(input.amount);
 
       const body = {
-        BusinessShortCode: creds.shortcode,
+        BusinessShortCode: shortcode,
         Password: password,
         Timestamp: timestamp,
         TransactionType: creds.transactionType || 'CustomerPayBillOnline',
         Amount: amount,
         PartyA: phone,
-        PartyB: creds.shortcode,
+        PartyB: shortcode,
         PhoneNumber: phone,
         CallBackURL: input.callbackUrl,
         AccountReference: input.orderNumber.slice(0, 12),
@@ -134,8 +169,7 @@ export class MpesaDarajaAdapter implements PaymentPort {
     }
 
     const resultCode = Number(cb.ResultCode);
-    const items = cb.CallbackMetadata?.Item || [];
-    const receipt = items.find((i) => i.Name === 'MpesaReceiptNumber')?.Value;
+    const receipt = extractPaymentReference('mpesa_daraja', body);
 
     if (resultCode === 0) {
       return {
@@ -143,7 +177,7 @@ export class MpesaDarajaAdapter implements PaymentPort {
         status: 'successful',
         providerReference: cb.CheckoutRequestID,
         externalReference: cb.MerchantRequestID,
-        receiptNumber: receipt != null ? String(receipt) : undefined,
+        receiptNumber: receipt ?? undefined,
         raw: body as Record<string, unknown>,
       };
     }

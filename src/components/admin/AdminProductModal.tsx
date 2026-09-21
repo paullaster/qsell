@@ -27,6 +27,13 @@ import {
   listItemTypesAction,
 } from '@/server/actions';
 import { ProductDescriptionEditor } from '@/components/admin/ProductDescriptionEditor';
+import {
+  CATALOG_SHORTCUT_CREATED,
+  CatalogCreateShortcut,
+  mergeById,
+  type CatalogShortcutDetail,
+} from '@/components/admin/catalog-shortcuts';
+import { AppImage, PRODUCT_IMAGE_FALLBACK } from '@/components/ui/AppImage';
 
 type ProductFormTab = 'basics' | 'pricing' | 'inventory' | 'specs' | 'description' | 'media';
 
@@ -69,7 +76,8 @@ export function AdminProductModal({
   const [brand, setBrand] = useState('');
   const [itemTypeId, setItemTypeId] = useState('');
 
-  // Item types & taxes
+  // Item types & taxes — local copies so a shortcut create can append without resetting the form
+  const [categoryOptions, setCategoryOptions] = useState<Category[]>(categories);
   const [itemTypes, setItemTypes] = useState<ItemType[]>(initialItemTypes || []);
   const [taxCategories, setTaxCategories] = useState<TaxCategory[]>(initialTaxCategories || []);
   const [selectedTaxId, setSelectedTaxId] = useState<string>('');
@@ -98,24 +106,59 @@ export function AdminProductModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Load taxes / item types if not provided
+  useEffect(() => {
+    setCategoryOptions((current) => mergeById(current, categories));
+  }, [categories]);
+
+  // Load taxes / item types if not provided. Merge so a just-created option is not dropped.
   useEffect(() => {
     if (!isOpen) return;
     if (!initialTaxCategories || initialTaxCategories.length === 0) {
       fetchTaxCategoriesAction()
-        .then((taxes) => setTaxCategories(taxes))
+        .then((taxes) => setTaxCategories((current) => mergeById(current, taxes)))
         .catch(() => {});
     } else {
-      setTaxCategories(initialTaxCategories);
+      setTaxCategories((current) => mergeById(current, initialTaxCategories));
     }
     if (!initialItemTypes || initialItemTypes.length === 0) {
       listItemTypesAction()
-        .then((types) => setItemTypes(types))
+        .then((types) => setItemTypes((current) => mergeById(current, types)))
         .catch(() => {});
     } else {
-      setItemTypes(initialItemTypes);
+      setItemTypes((current) => mergeById(current, initialItemTypes));
     }
   }, [initialTaxCategories, initialItemTypes, isOpen]);
+
+  useEffect(() => {
+    const onCreated = (event: Event) => {
+      const detail = (event as CustomEvent<CatalogShortcutDetail>).detail;
+      if (!detail) return;
+      if (detail.kind === 'category') {
+        setCategoryOptions((current) => mergeById(current, [detail.category]));
+        setCategory(detail.category.name);
+        return;
+      }
+      if (detail.kind === 'tax') {
+        setTaxCategories((current) => {
+          const cleared = detail.tax.isDefault
+            ? current.map((tax) => ({ ...tax, isDefault: false }))
+            : current;
+          return mergeById(cleared, [detail.tax]);
+        });
+        setSelectedTaxId(detail.tax.id);
+        return;
+      }
+      setItemTypes((current) => {
+        const cleared = detail.itemType.isDefault
+          ? current.map((type) => ({ ...type, isDefault: false }))
+          : current;
+        return mergeById(cleared, [detail.itemType]);
+      });
+      setItemTypeId(detail.itemType.id);
+    };
+    window.addEventListener(CATALOG_SHORTCUT_CREATED, onCreated);
+    return () => window.removeEventListener(CATALOG_SHORTCUT_CREATED, onCreated);
+  }, []);
 
   // Initialize form state — create mode uses empty values + placeholders only
   useEffect(() => {
@@ -149,16 +192,12 @@ export function AdminProductModal({
           : [],
       );
     } else {
-      const defaultType =
-        itemTypes.find((t) => t.isDefault && t.isActive) ||
-        itemTypes.find((t) => t.isDefault) ||
-        itemTypes[0];
       setName('');
       setSku('');
       setSlug('');
       setCategory('');
       setBrand('');
-      setItemTypeId(defaultType?.id || '');
+      setItemTypeId('');
       setPrice('');
       setCompareAtPrice('');
       setCostPrice('');
@@ -172,7 +211,16 @@ export function AdminProductModal({
       setIsActive(true);
       setSpecifications([]);
     }
-  }, [productToEdit, isOpen, itemTypes]);
+  }, [productToEdit, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || productToEdit || itemTypeId) return;
+    const defaultType =
+      itemTypes.find((t) => t.isDefault && t.isActive) ||
+      itemTypes.find((t) => t.isDefault) ||
+      itemTypes[0];
+    if (defaultType) setItemTypeId(defaultType.id);
+  }, [isOpen, productToEdit, itemTypes, itemTypeId]);
 
   const activeItemType =
     itemTypes.find((t) => t.id === itemTypeId) ||
@@ -221,7 +269,12 @@ export function AdminProductModal({
 
   const focusTabForError = (message: string) => {
     const m = message.toLowerCase();
-    if (m.includes('title') || m.includes('sku') || m.includes('category') || m.includes('item type')) {
+    if (
+      m.includes('title') ||
+      m.includes('sku') ||
+      m.includes('category') ||
+      m.includes('item type')
+    ) {
       setTab('basics');
     } else if (m.includes('price') || m.includes('selling') || m.includes('cost')) {
       setTab('pricing');
@@ -246,7 +299,7 @@ export function AdminProductModal({
     }
     if (!category.trim()) {
       const msg =
-        categories.length === 0
+        categoryOptions.length === 0
           ? 'Create a category first, then assign it to this product.'
           : 'Category is required.';
       setError(msg);
@@ -295,8 +348,7 @@ export function AdminProductModal({
       .filter(Boolean);
     const autoSlug = slug.trim() || name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const stock = stockQuantity.trim() === '' ? 0 : Number(stockQuantity);
-    const lowThreshold =
-      lowStockThreshold.trim() === '' ? 0 : Number(lowStockThreshold);
+    const lowThreshold = lowStockThreshold.trim() === '' ? 0 : Number(lowStockThreshold);
     const weightValue = weight.trim() === '' ? undefined : Number(weight);
 
     try {
@@ -375,9 +427,7 @@ export function AdminProductModal({
             </div>
             <div className="min-w-0">
               <h3 className="truncate text-sm font-bold text-white sm:text-base">
-                {isEditing
-                  ? `Edit Product: ${productToEdit?.sku ?? ''}`
-                  : 'Create New Product'}
+                {isEditing ? `Edit Product: ${productToEdit?.sku ?? ''}` : 'Create New Product'}
               </h3>
               <p className="truncate text-[11px] text-zinc-400">
                 {isEditing
@@ -452,7 +502,14 @@ export function AdminProductModal({
                   />
                 </div>
                 <div>
-                  <label className={labelClass}>Item Type *</label>
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <label className="text-[11px] font-semibold text-zinc-400">Item Type *</label>
+                    {itemTypes.length > 0 ? (
+                      <CatalogCreateShortcut href="/admin/item-types/new">
+                        New
+                      </CatalogCreateShortcut>
+                    ) : null}
+                  </div>
                   <select
                     value={itemTypeId}
                     onChange={(e) => setItemTypeId(e.target.value)}
@@ -472,30 +529,43 @@ export function AdminProductModal({
                   </select>
                   {itemTypes.length === 0 ? (
                     <p className="mt-1 text-[11px] text-amber-400">
-                      Create an item type under Products &amp; Inventory first.
+                      Create an item type under Products &amp; Inventory first.{' '}
+                      <CatalogCreateShortcut href="/admin/item-types/new">
+                        New
+                      </CatalogCreateShortcut>
                     </p>
                   ) : null}
                 </div>
                 <div>
-                  <label className={labelClass}>Category *</label>
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <label className="text-[11px] font-semibold text-zinc-400">Category *</label>
+                    {categoryOptions.length > 0 ? (
+                      <CatalogCreateShortcut href="/admin/categories/new">
+                        New
+                      </CatalogCreateShortcut>
+                    ) : null}
+                  </div>
                   <select
                     value={category}
                     onChange={(e) => setCategory(e.target.value)}
                     className={`${fieldClass} cursor-pointer`}
-                    disabled={categories.length === 0}
+                    disabled={categoryOptions.length === 0}
                   >
                     <option value="">
-                      {categories.length === 0 ? 'No categories yet' : 'Select category'}
+                      {categoryOptions.length === 0 ? 'No categories yet' : 'Select category'}
                     </option>
-                    {categories.map((c) => (
+                    {categoryOptions.map((c) => (
                       <option key={c.id} value={c.name}>
                         {c.name}
                       </option>
                     ))}
                   </select>
-                  {categories.length === 0 ? (
+                  {categoryOptions.length === 0 ? (
                     <p className="mt-1 text-[11px] text-amber-400">
-                      Create a category under Catalog before adding products.
+                      Create a category under Catalog before adding products.{' '}
+                      <CatalogCreateShortcut href="/admin/categories/new">
+                        New
+                      </CatalogCreateShortcut>
                     </p>
                   ) : null}
                 </div>
@@ -546,19 +616,37 @@ export function AdminProductModal({
                     ) : null}
                   </div>
                   <div>
-                    <label className={labelClass}>Tax Category</label>
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <label className="text-[11px] font-semibold text-zinc-400">
+                        Tax Category
+                      </label>
+                      {taxCategories.length > 0 ? (
+                        <CatalogCreateShortcut href="/admin/taxes/new">New</CatalogCreateShortcut>
+                      ) : null}
+                    </div>
                     <select
                       value={selectedTaxId}
                       onChange={(e) => setSelectedTaxId(e.target.value)}
                       className={`${fieldClass} cursor-pointer`}
+                      disabled={taxCategories.length === 0}
                     >
-                      <option value="">Select tax category</option>
+                      <option value="">
+                        {taxCategories.length === 0
+                          ? 'No tax categories yet'
+                          : 'Select tax category'}
+                      </option>
                       {taxCategories.map((t) => (
                         <option key={t.id} value={t.id}>
                           {t.name} ({t.rate}% - {t.isInclusive ? 'Inclusive' : 'Exclusive'})
                         </option>
                       ))}
                     </select>
+                    {taxCategories.length === 0 ? (
+                      <p className="mt-1 text-[11px] text-amber-400">
+                        Create a tax category under Finance &amp; Compliance first.{' '}
+                        <CatalogCreateShortcut href="/admin/taxes/new">New</CatalogCreateShortcut>
+                      </p>
+                    ) : null}
                   </div>
                   <div>
                     <label className={labelClass}>Compare-at Price (KES)</label>
@@ -588,7 +676,9 @@ export function AdminProductModal({
 
                 <div className="grid grid-cols-2 gap-3 rounded-xl border border-zinc-800 bg-zinc-950 p-3 sm:grid-cols-4">
                   <div>
-                    <span className="block text-[10px] text-zinc-500 uppercase">Net (Excl. Tax)</span>
+                    <span className="block text-[10px] text-zinc-500 uppercase">
+                      Net (Excl. Tax)
+                    </span>
                     <span className="font-mono text-xs font-semibold text-zinc-200">
                       KES {Math.round(netSellingPrice).toLocaleString()}
                     </span>
@@ -662,7 +752,7 @@ export function AdminProductModal({
 
             {tab === 'specs' ? (
               <div className="flex h-full min-h-0 flex-col gap-3">
-                <div className="min-h-0 max-h-[280px] space-y-2 overflow-y-auto pr-1">
+                <div className="max-h-[280px] min-h-0 space-y-2 overflow-y-auto pr-1">
                   {specifications.length === 0 ? (
                     <p className="rounded-lg border border-dashed border-zinc-800 px-3 py-6 text-center text-zinc-500">
                       No specifications yet. Add key attributes below.
@@ -762,15 +852,15 @@ export function AdminProductModal({
                   <div className="flex flex-col items-center justify-center rounded-xl border border-zinc-800 bg-zinc-950 p-3 sm:w-32">
                     <span className="mb-2 text-[10px] text-zinc-500 uppercase">Preview</span>
                     {imageUrl ? (
-                      <img
+                      <AppImage
                         src={imageUrl}
-                        alt="Product Preview"
+                        alt="Product preview"
+                        width={96}
+                        height={96}
+                        sizes="96px"
+                        fallbackSrc={PRODUCT_IMAGE_FALLBACK}
                         className="h-24 w-24 rounded-lg border border-zinc-800 object-cover"
                         referrerPolicy="no-referrer"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).src =
-                            'https://images.unsplash.com/photo-1526738549149-8e07eca6c147?auto=format&fit=crop&w=300&q=80';
-                        }}
                       />
                     ) : (
                       <div className="flex h-24 w-24 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-600">

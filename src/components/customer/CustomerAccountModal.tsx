@@ -34,6 +34,8 @@ import {
   type Order,
   type PaymentProvider,
 } from '@/types/index';
+import { AppImage } from '@/components/ui/AppImage';
+import { shownPaymentReference } from '@/lib/paymentReference';
 import {
   fetchCustomerAccountAction,
   fetchAllCustomersAction,
@@ -711,6 +713,16 @@ export function CustomerAccountModal({
                       </form>
                     ) : (
                       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        {customer?.customerNumber ? (
+                          <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/60 p-3.5 sm:col-span-2">
+                            <span className="mb-1 block text-[10px] font-semibold text-zinc-500 uppercase">
+                              Customer Number
+                            </span>
+                            <span className="font-mono text-xs font-medium text-zinc-200">
+                              {customer.customerNumber}
+                            </span>
+                          </div>
+                        ) : null}
                         <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/60 p-3.5">
                           <span className="mb-1 block text-[10px] font-semibold text-zinc-500 uppercase">
                             Full Name
@@ -1018,9 +1030,12 @@ export function CustomerAccountModal({
                                 className="flex items-center justify-between gap-3 text-xs"
                               >
                                 <div className="flex items-center gap-3">
-                                  <img
+                                  <AppImage
                                     src={item.imageUrl}
                                     alt={item.productName}
+                                    width={40}
+                                    height={40}
+                                    sizes="40px"
                                     className="h-10 w-10 rounded-lg border border-zinc-800 bg-zinc-900 object-cover"
                                   />
                                   <div>
@@ -1028,8 +1043,7 @@ export function CustomerAccountModal({
                                       {item.productName}
                                     </p>
                                     <p className="text-[11px] text-zinc-500">
-                                      SKU: {item.sku} • Qty: {item.quantity} × KES{' '}
-                                      {item.unitPrice.toLocaleString()}
+                                      Qty: {item.quantity} × KES {item.unitPrice.toLocaleString()}
                                     </p>
                                   </div>
                                 </div>
@@ -1046,9 +1060,7 @@ export function CustomerAccountModal({
                                   <span>
                                     M-Pesa Ref:{' '}
                                     <strong className="text-zinc-300">
-                                      {order.mpesaReceiptNumber ||
-                                        order.transactionReference ||
-                                        'N/A'}
+                                      {shownPaymentReference(order) || 'N/A'}
                                     </strong>
                                   </span>
                                 ) : (
@@ -1056,7 +1068,7 @@ export function CustomerAccountModal({
                                     Pesapal Ref:{' '}
                                     <strong className="text-zinc-300">
                                       {order.pesapalTrackingId ||
-                                        order.transactionReference ||
+                                        shownPaymentReference(order) ||
                                         'N/A'}
                                     </strong>
                                   </span>
@@ -1436,7 +1448,6 @@ export function CustomerAccountModal({
                       <tr key={i} className="text-zinc-300">
                         <td className="p-2.5">
                           <p className="font-medium text-white">{item.productName}</p>
-                          <span className="text-[10px] text-zinc-500">{item.sku}</span>
                         </td>
                         <td className="p-2.5 text-center">{item.quantity}</td>
                         <td className="p-2.5 text-right">KES {item.unitPrice.toLocaleString()}</td>
@@ -1482,9 +1493,7 @@ export function CustomerAccountModal({
                       ? 'Safaricom Daraja'
                       : 'Pesapal v3'}{' '}
                     • Ref:{' '}
-                    {selectedReceiptOrder.mpesaReceiptNumber ||
-                      selectedReceiptOrder.transactionReference ||
-                      'TX-8821'}
+                    {shownPaymentReference(selectedReceiptOrder) || 'N/A'}
                   </span>
                 </div>
                 <CheckCircle2 className="h-5 w-5 flex-shrink-0 text-emerald-400" />

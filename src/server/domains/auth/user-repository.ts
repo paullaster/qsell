@@ -2,8 +2,23 @@ import { eq } from 'drizzle-orm';
 import { drizzleDb } from '@/server/db/drizzle/client';
 import { users, type UserRow } from '@/server/db/drizzle/schema';
 import { hash, compare } from 'bcryptjs';
+import type { AppRole } from './roles';
 
-export type AppRole = 'admin' | 'manager' | 'customer';
+export type { AppRole };
+
+function superAdminEnv() {
+  const email = (
+    process.env.SUPER_ADMIN_EMAIL ||
+    process.env.ADMIN_EMAIL ||
+    'superadmin@omnicommerce.ke'
+  )
+    .toLowerCase()
+    .trim();
+  const password =
+    process.env.SUPER_ADMIN_PASSWORD || process.env.ADMIN_PASSWORD || 'ChangeMeSuperAdmin123!';
+  const name = process.env.SUPER_ADMIN_NAME || process.env.ADMIN_NAME || 'Super Admin';
+  return { email, password, name };
+}
 
 export class UserRepository {
   constructor(private readonly db = drizzleDb) {}
@@ -52,17 +67,58 @@ export class UserRepository {
     return ok ? user : null;
   }
 
-  async ensureAdminSeed(): Promise<UserRow> {
-    const email = (process.env.ADMIN_EMAIL || 'admin@omnicommerce.ke').toLowerCase();
+  /**
+   * Always ensure the deployment super-admin exists from env.
+   * Re-asserts role, active flag, name, and password hash from env on every call
+   * so credentials stay the source of truth across deployments.
+   */
+  async ensureSuperAdminSeed(): Promise<UserRow> {
+    const { email, password, name } = superAdminEnv();
+    if (!email || !password) {
+      throw new Error('SUPER_ADMIN_EMAIL and SUPER_ADMIN_PASSWORD must be set');
+    }
+
     const existing = await this.findByEmail(email);
-    if (existing) return existing;
-    const password = process.env.ADMIN_PASSWORD || 'ChangeMeAdmin123!';
-    return this.create({
-      email,
-      password,
-      name: process.env.ADMIN_NAME || 'Admin',
-      phone: '0700000000',
-      role: 'admin',
-    });
+
+    if (!existing) {
+      return this.create({
+        email,
+        password,
+        name,
+        phone: '0700000000',
+        role: 'super_admin',
+      });
+    }
+
+    const passwordMatches = await compare(password, existing.passwordHash);
+    const needsUpdate =
+      existing.role !== 'super_admin' ||
+      !existing.isActive ||
+      existing.name !== name ||
+      !passwordMatches;
+
+    if (!needsUpdate) return existing;
+
+    const passwordHash = passwordMatches
+      ? existing.passwordHash
+      : await hash(password, 12);
+
+    const [row] = await this.db
+      .update(users)
+      .set({
+        role: 'super_admin',
+        name,
+        passwordHash,
+        isActive: true,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, existing.id))
+      .returning();
+    return row!;
+  }
+
+  /** @deprecated use ensureSuperAdminSeed */
+  async ensureAdminSeed(): Promise<UserRow> {
+    return this.ensureSuperAdminSeed();
   }
 }

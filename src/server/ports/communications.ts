@@ -51,6 +51,7 @@ export interface InvoicePayload {
     name: string;
     email: string;
     phone: string;
+    kraPin?: string | null;
     shippingAddress: {
       street: string;
       city: string;

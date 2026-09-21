@@ -1,5 +1,7 @@
 'use client';
 
+import { AppImage } from '@/components/ui/AppImage';
+
 export interface CompanyBrandProps {
   tradingName: string;
   tagline?: string | null;
@@ -30,8 +32,13 @@ export function CompanyBrand({
         <span
           className={`relative ${mark} overflow-hidden rounded-lg bg-white/5 ring-1 ring-zinc-700`}
         >
-          {/* eslint-disable-next-line @next/next/no-img-element -- uploaded runtime assets */}
-          <img src={logoUrl} alt={`${tradingName} logo`} className="h-full w-full object-contain" />
+          <AppImage
+            src={logoUrl}
+            alt={`${tradingName} logo`}
+            fill
+            sizes="36px"
+            className="object-contain"
+          />
         </span>
       ) : (
         <div

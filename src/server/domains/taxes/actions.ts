@@ -13,6 +13,7 @@ export async function createTaxCategoryAction(
 ): Promise<TaxCategory> {
   const tax = TaxDomainService.create(data);
   revalidatePath('/admin/taxes');
+  revalidatePath('/admin/products');
   return tax;
 }
 
@@ -35,4 +36,10 @@ export async function setDefaultTaxCategoryAction(id: string): Promise<TaxCatego
   const tax = TaxDomainService.setDefault(id);
   revalidatePath('/admin/taxes');
   return tax;
+}
+
+export async function clearTaxCategoriesAction(): Promise<{ cleared: number }> {
+  const cleared = TaxDomainService.clearAll();
+  revalidatePath('/admin/taxes');
+  return { cleared };
 }

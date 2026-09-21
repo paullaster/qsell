@@ -24,6 +24,7 @@ export async function createOrderAction(orderPayload: {
   customerName: string;
   customerEmail: string;
   customerPhone: string;
+  buyerKraPin?: string | null;
   shippingAddress: {
     street: string;
     city: string;
@@ -34,9 +35,14 @@ export async function createOrderAction(orderPayload: {
   items: { productId: string; quantity: number }[];
   paymentMethod: PaymentProvider;
   currency?: 'KES' | 'USD';
+  dimensionFields?: Record<string, string | null | undefined> | {
+    global: Record<string, string>;
+    shortcut: Record<string, string>;
+  };
 }): Promise<Order> {
   const order = await OrdersService.createCheckout(orderPayload);
   revalidatePath('/admin/orders');
+  revalidatePath('/admin/customers');
   revalidatePath('/admin/inventory');
   revalidatePath('/');
   return order;

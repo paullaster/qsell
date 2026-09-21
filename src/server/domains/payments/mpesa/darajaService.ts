@@ -1,6 +1,7 @@
 import { db } from '@/server/db/store';
 import type { TransactionRecord } from '@/types/index';
 import { ReconciliationEngine } from '@/server/domains/reconciliation/service';
+import { extractPaymentReference } from '@/server/domains/payments/payment-reference';
 
 export interface StkPushRequest {
   orderId: string;
@@ -99,7 +100,6 @@ export class DarajaService {
 
     db.transactions.set(transactionId, transaction);
     order.paymentStatus = 'pending_verification';
-    order.transactionReference = checkoutRequestId;
     order.updatedAt = new Date().toISOString();
 
     db.broadcast('transaction_event', {
@@ -149,12 +149,12 @@ export class DarajaService {
     const order = db.orders.get(transaction.orderId);
 
     if (resultCode === 0) {
-      let mpesaReceiptNumber = `QHD${Math.floor(100000 + Math.random() * 900000)}`;
-      const items = stkCallback?.CallbackMetadata?.Item;
-      if (Array.isArray(items)) {
-        for (const item of items) {
-          if (item.Name === 'MpesaReceiptNumber') mpesaReceiptNumber = String(item.Value);
-        }
+      const mpesaReceiptNumber = extractPaymentReference('mpesa_daraja', callbackPayload);
+      if (!mpesaReceiptNumber) {
+        return {
+          success: false,
+          message: 'Successful payment callback had no transaction reference.',
+        };
       }
 
       transaction.status = 'successful';
@@ -167,6 +167,7 @@ export class DarajaService {
         order.paymentStatus = 'paid';
         order.status = 'completed';
         order.mpesaReceiptNumber = mpesaReceiptNumber;
+        order.transactionReference = mpesaReceiptNumber;
         order.updatedAt = new Date().toISOString();
         db.atomicFulfillStock(
           order.items.map((i) => ({ productId: i.productId, quantity: i.quantity })),

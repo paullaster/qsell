@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   pgTable,
   text,
@@ -9,6 +10,7 @@ import {
   numeric,
   uniqueIndex,
   index,
+  type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import type { CompanyUiConfigRaw } from '@/config/company-ui';
 import type {
@@ -195,14 +197,28 @@ export const paymentCallbackEvents = pgTable(
     providerCode: text('provider_code').$type<PaymentProviderCode>().notNull(),
     httpMethod: text('http_method').notNull().default('POST'),
     headers: jsonb('headers').$type<Record<string, string>>().default({}),
+    /** Raw provider payload dump — never mutated after insert. */
     rawBody: jsonb('raw_body').$type<unknown>(),
+    /**
+     * Exact status the provider sent in the callback payload.
+     * M-Pesa / KCB: stkCallback.ResultCode ("0" is the only success).
+     * Pesapal / Jenga: their status text.
+     * Fallbacks that are not provider statuses: received | unmatched_token | error.
+     */
     processingStatus: text('processing_status').notNull().default('received'),
+    /**
+     * Derived from processing_status by the callback rulebook.
+     * M-Pesa: ResultCode 0 = successful, any other value = failed.
+     * successful | failed | pending | unclassified
+     */
+    outcome: text('outcome').notNull().default('unclassified'),
     processingError: text('processing_error'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index('payment_callback_events_token_idx').on(t.callbackToken),
     index('payment_callback_events_attempt_idx').on(t.paymentAttemptId),
+    index('payment_callback_events_outcome_idx').on(t.outcome),
   ],
 );
 
@@ -252,7 +268,7 @@ export const users = pgTable(
     passwordHash: text('password_hash').notNull(),
     name: text('name').notNull(),
     phone: text('phone'),
-    role: text('role').notNull().default('customer'), // admin | manager | customer
+    role: text('role').notNull().default('customer'), // super_admin | admin | manager | customer
     customerStoreId: text('customer_store_id'),
     branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
     isActive: boolean('is_active').notNull().default(true),
@@ -297,6 +313,19 @@ export const orders = pgTable(
     transactionReference: text('transaction_reference'),
     mpesaReceiptNumber: text('mpesa_receipt_number'),
     pesapalTrackingId: text('pesapal_tracking_id'),
+    dimensionSetId: uuid('dimension_set_id').references((): AnyPgColumn => dimensionSets.id, {
+      onDelete: 'set null',
+    }),
+    dimensionCodes: jsonb('dimension_codes')
+      .$type<{ global: Record<string, string>; shortcut: Record<string, string> }>()
+      .notNull()
+      .default({ global: {}, shortcut: {} }),
+    tradeCustomerId: uuid('trade_customer_id').references((): AnyPgColumn => customers.id, {
+      onDelete: 'set null',
+    }),
+    customerAccountType: text('customer_account_type'),
+    transmitInvoicesToKra: boolean('transmit_invoices_to_kra').notNull().default(false),
+    kraTransmissionStatus: text('kra_transmission_status').notNull().default('not_applicable'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -305,6 +334,180 @@ export const orders = pgTable(
     index('orders_customer_email_idx').on(t.customerEmail),
     index('orders_status_idx').on(t.status),
     index('orders_created_at_idx').on(t.createdAt),
+    index('orders_dimension_set_idx').on(t.dimensionSetId),
+    index('orders_trade_customer_idx').on(t.tradeCustomerId),
+  ],
+);
+
+/**
+ * Reusable customer configuration (BC customer template).
+ * Cash and credit are both first-class. KRA transmission is chosen here and can be overridden per customer.
+ */
+export const customerProfiles = pgTable(
+  'customer_profiles',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    description: text('description'),
+    accountType: text('account_type').notNull(),
+    creditLimit: numeric('credit_limit', { precision: 14, scale: 2 }).notNull().default('0'),
+    paymentTermDays: integer('payment_term_days').notNull().default(0),
+    transmitInvoicesToKra: boolean('transmit_invoices_to_kra').notNull().default(false),
+    dimensionCodes: jsonb('dimension_codes')
+      .$type<{ global: Record<string, string>; shortcut: Record<string, string> }>()
+      .notNull()
+      .default({ global: {}, shortcut: {} }),
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('customer_profiles_company_code_uidx').on(t.companyId, t.code),
+    index('customer_profiles_company_idx').on(t.companyId),
+  ],
+);
+
+/** Sell-to customer card. Account type is required at creation — cash or credit. */
+export const customers = pgTable(
+  'customers',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    profileId: uuid('profile_id').references(() => customerProfiles.id, {
+      onDelete: 'set null',
+    }),
+    number: text('number').notNull(),
+    name: text('name').notNull(),
+    email: text('email'),
+    phone: text('phone'),
+    street: text('street'),
+    city: text('city'),
+    countyOrState: text('county_or_state'),
+    postalCode: text('postal_code'),
+    country: text('country'),
+    accountType: text('account_type').notNull(),
+    creditLimit: numeric('credit_limit', { precision: 14, scale: 2 }).notNull().default('0'),
+    paymentTermDays: integer('payment_term_days').notNull().default(0),
+    /** none | ship | invoice | all */
+    blocked: text('blocked').notNull().default('none'),
+    transmitInvoicesToKra: boolean('transmit_invoices_to_kra').notNull().default(false),
+    buyerKraPin: text('buyer_kra_pin'),
+    dimensionSetId: uuid('dimension_set_id').references(() => dimensionSets.id, {
+      onDelete: 'set null',
+    }),
+    dimensionCodes: jsonb('dimension_codes')
+      .$type<{ global: Record<string, string>; shortcut: Record<string, string> }>()
+      .notNull()
+      .default({ global: {}, shortcut: {} }),
+    /** Open receivable. Cash customers stay at 0. */
+    balance: numeric('balance', { precision: 14, scale: 2 }).notNull().default('0'),
+    isActive: boolean('is_active').notNull().default(true),
+    notes: text('notes'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('customers_company_number_uidx').on(t.companyId, t.number),
+    index('customers_company_idx').on(t.companyId),
+    index('customers_company_email_idx').on(t.companyId, t.email),
+    index('customers_profile_idx').on(t.profileId),
+  ],
+);
+
+/**
+ * Delivery / bill-to addresses for a trade customer.
+ * Exactly one row per customer may have isDefault = true (partial unique index).
+ * Customer card street/city/… fields are a denormalized mirror of the default address.
+ */
+export const customerAddresses = pgTable(
+  'customer_addresses',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    customerId: uuid('customer_id')
+      .notNull()
+      .references(() => customers.id, { onDelete: 'cascade' }),
+    label: text('label').notNull(),
+    recipientName: text('recipient_name').notNull(),
+    recipientPhone: text('recipient_phone').notNull(),
+    street: text('street').notNull(),
+    city: text('city').notNull(),
+    countyOrState: text('county_or_state').notNull(),
+    postalCode: text('postal_code'),
+    country: text('country').notNull(),
+    isDefault: boolean('is_default').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('customer_addresses_customer_idx').on(t.customerId),
+    uniqueIndex('customer_addresses_one_default_uidx')
+      .on(t.customerId)
+      .where(sql`${t.isDefault} = true`),
+  ],
+);
+
+/** Posted customer ledger: invoices increase what a credit customer owes; payments apply to the oldest open invoice. */
+export const customerLedgerEntries = pgTable(
+  'customer_ledger_entries',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    customerId: uuid('customer_id')
+      .notNull()
+      .references(() => customers.id, { onDelete: 'cascade' }),
+    orderId: text('order_id'),
+    documentType: text('document_type').notNull(),
+    documentNo: text('document_no').notNull(),
+    description: text('description'),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    remainingAmount: numeric('remaining_amount', { precision: 14, scale: 2 }).notNull(),
+    dueDate: timestamp('due_date', { withTimezone: true }),
+    kraTransmissionStatus: text('kra_transmission_status').notNull().default('not_applicable'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('customer_ledger_customer_idx').on(t.customerId),
+    index('customer_ledger_order_idx').on(t.orderId),
+  ],
+);
+
+/**
+ * Financial journal. Rows are inserted only by TransactionLedgerService.
+ * Invoices post a debit; payments post a credit. Entries are not edited in place.
+ */
+export const transactionLedgerEntries = pgTable(
+  'transaction_ledger_entries',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    customerId: uuid('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+    orderId: text('order_id'),
+    documentType: text('document_type').notNull(),
+    documentNo: text('document_no').notNull(),
+    description: text('description'),
+    /** debit | credit. Exactly one side is posted; amount is always positive. */
+    direction: text('direction').notNull(),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    currency: text('currency').notNull(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    /** Provider payment reference. Required on payment credits. Null on invoice debits. */
+    transactionReference: text('transaction_reference'),
+    postedAt: timestamp('posted_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('transaction_ledger_idempotency_uidx').on(t.idempotencyKey),
+    index('transaction_ledger_company_posted_idx').on(t.companyId, t.postedAt),
+    index('transaction_ledger_order_idx').on(t.orderId),
   ],
 );
 
@@ -326,6 +529,120 @@ export const orderItems = pgTable(
   (t) => [index('order_items_order_idx').on(t.orderId)],
 );
 
+/**
+ * User-defined classification axes for identifying any record.
+ * option_string is a closed catalog validated in application code.
+ */
+export const dimensions = pgTable(
+  'dimensions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    description: text('description'),
+    parentId: uuid('parent_id').references((): AnyPgColumn => dimensions.id, {
+      onDelete: 'set null',
+    }),
+    dimensionNo: integer('dimension_no'),
+    isGlobal: boolean('is_global').notNull().default(false),
+    isDefault: boolean('is_default').notNull().default(false),
+    isShortcut: boolean('is_shortcut').notNull().default(false),
+    optionString: text('option_string'),
+    isActive: boolean('is_active').notNull().default(true),
+    blocked: boolean('blocked').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('dimensions_company_code_uidx').on(t.companyId, t.code),
+    uniqueIndex('dimensions_company_option_uidx').on(t.companyId, t.optionString),
+    uniqueIndex('dimensions_company_no_uidx').on(t.companyId, t.dimensionNo),
+    index('dimensions_company_idx').on(t.companyId),
+    index('dimensions_parent_idx').on(t.parentId),
+  ],
+);
+
+export const dimensionValues = pgTable(
+  'dimension_values',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    dimensionId: uuid('dimension_id')
+      .notNull()
+      .references(() => dimensions.id, { onDelete: 'cascade' }),
+    dimensionCode: text('dimension_code').notNull(),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    description: text('description'),
+    parentId: uuid('parent_id').references((): AnyPgColumn => dimensionValues.id, {
+      onDelete: 'set null',
+    }),
+    /** When parent dimension has option_string=branch, links the operational branches row. */
+    linkedBranchId: uuid('linked_branch_id').references(() => branches.id, {
+      onDelete: 'set null',
+    }),
+    isActive: boolean('is_active').notNull().default(true),
+    blocked: boolean('blocked').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('dimension_values_dim_code_uidx').on(t.dimensionId, t.code),
+    index('dimension_values_dimension_idx').on(t.dimensionId),
+    index('dimension_values_parent_idx').on(t.parentId),
+    index('dimension_values_dimension_code_idx').on(t.dimensionCode),
+    index('dimension_values_linked_branch_idx').on(t.linkedBranchId),
+  ],
+);
+
+/**
+ * Unique combination of dimension values (BC-style set).
+ * Records reference dimension_set_id; dimension_codes jsonb is a rebuildable projection.
+ */
+export const dimensionSets = pgTable(
+  'dimension_sets',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    /** Sorted dimension_value ids joined — lookup key for get-or-create. */
+    contentHash: text('content_hash').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('dimension_sets_company_hash_uidx').on(t.companyId, t.contentHash),
+    index('dimension_sets_company_idx').on(t.companyId),
+  ],
+);
+
+export const dimensionSetEntries = pgTable(
+  'dimension_set_entries',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    dimensionSetId: uuid('dimension_set_id')
+      .notNull()
+      .references(() => dimensionSets.id, { onDelete: 'cascade' }),
+    dimensionId: uuid('dimension_id')
+      .notNull()
+      .references(() => dimensions.id, { onDelete: 'restrict' }),
+    dimensionValueId: uuid('dimension_value_id')
+      .notNull()
+      .references(() => dimensionValues.id, { onDelete: 'restrict' }),
+    dimensionCode: text('dimension_code').notNull(),
+    dimensionValueCode: text('dimension_value_code').notNull(),
+    dimensionNo: integer('dimension_no'),
+    isGlobal: boolean('is_global').notNull().default(false),
+    isShortcut: boolean('is_shortcut').notNull().default(false),
+  },
+  (t) => [
+    uniqueIndex('dimension_set_entries_set_dim_uidx').on(t.dimensionSetId, t.dimensionId),
+    index('dimension_set_entries_set_idx').on(t.dimensionSetId),
+  ],
+);
+
 export type OrganizationRow = typeof organizations.$inferSelect;
 export type CompanySettingsRow = typeof companySettings.$inferSelect;
 export type CompanySettingsInsert = typeof companySettings.$inferInsert;
@@ -333,7 +650,23 @@ export type BranchRow = typeof branches.$inferSelect;
 export type BranchInsert = typeof branches.$inferInsert;
 export type PaymentProviderConfigRow = typeof paymentProviderConfigs.$inferSelect;
 export type PaymentAttemptRow = typeof paymentAttempts.$inferSelect;
+export type PaymentCallbackEventRow = typeof paymentCallbackEvents.$inferSelect;
 export type InvoiceDocumentRow = typeof invoiceDocuments.$inferSelect;
 export type UserRow = typeof users.$inferSelect;
 export type OrderRow = typeof orders.$inferSelect;
 export type OrderItemRow = typeof orderItems.$inferSelect;
+export type DimensionRow = typeof dimensions.$inferSelect;
+export type DimensionInsert = typeof dimensions.$inferInsert;
+export type DimensionValueRow = typeof dimensionValues.$inferSelect;
+export type DimensionValueInsert = typeof dimensionValues.$inferInsert;
+export type DimensionSetRow = typeof dimensionSets.$inferSelect;
+export type DimensionSetEntryRow = typeof dimensionSetEntries.$inferSelect;
+export type DimensionCodesProjection = {
+  global: Record<string, string>;
+  shortcut: Record<string, string>;
+};
+export type CustomerProfileRow = typeof customerProfiles.$inferSelect;
+export type CustomerRow = typeof customers.$inferSelect;
+export type CustomerAddressRow = typeof customerAddresses.$inferSelect;
+export type CustomerLedgerEntryRow = typeof customerLedgerEntries.$inferSelect;
+export type TransactionLedgerEntryRow = typeof transactionLedgerEntries.$inferSelect;

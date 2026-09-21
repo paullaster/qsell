@@ -6,6 +6,7 @@ import type {
   PaymentPort,
 } from '../port';
 import type { KcbBuniCredentials } from '../types';
+import { extractPaymentReference } from '../payment-reference';
 
 function formatPhoneKe(phone: string): string {
   let clean = phone.replace(/[^0-9]/g, '');
@@ -122,7 +123,7 @@ export class KcbBuniAdapter implements PaymentPort {
         providerReference: String(
           nested?.CheckoutRequestID || body.CheckoutRequestID || body.checkoutRequestID || '',
         ),
-        receiptNumber: String(body.MpesaReceiptNumber || body.receiptNumber || ''),
+        receiptNumber: extractPaymentReference('kcb_buni', body) ?? undefined,
         raw: body,
       };
     }

@@ -26,13 +26,18 @@ interface AdminSidebarProps {
   moduleLabels?: Record<string, string> | null;
 }
 
-/** Deepest node on the active trail that owns children — keeps accordion in sync with the URL. */
-function resolveExpandedFromTrail(trail: AdminNavItem[]): string | null {
-  for (let i = trail.length - 1; i >= 0; i -= 1) {
-    const node = trail[i];
-    if (node && hasSubLinks(node)) return node.id;
+/** Branch nodes on the active route — these stay open after a refresh. */
+function openIdsFromTrail(trail: AdminNavItem[] | undefined): Set<string> {
+  const ids = new Set<string>();
+  for (const node of trail ?? []) {
+    if (hasSubLinks(node)) ids.add(node.id);
   }
-  return null;
+  return ids;
+}
+
+function collectBranchIds(item: AdminNavItem, into: Set<string>) {
+  into.add(item.id);
+  for (const child of item.subLinks ?? []) collectBranchIds(child, into);
 }
 
 export function AdminSidebar({
@@ -50,19 +55,37 @@ export function AdminSidebar({
   const match = useMemo(() => findActiveNavMatch(pathname, nav), [pathname, nav]);
   const trailIds = useMemo(() => new Set(match?.trailIds ?? []), [match]);
   const activeId = match?.item.id ?? null;
+  const trailKey = match?.trailIds.join('/') ?? '';
 
-  const [expandedId, setExpandedId] = useState<string | null>(() =>
-    match ? resolveExpandedFromTrail(match.trail) : null,
-  );
+  const [openIds, setOpenIds] = useState<Set<string>>(() => openIdsFromTrail(match?.trail));
 
-  // Keep a single open branch aligned with the current route.
+  // A refresh or a real navigation reopens the branch that owns this URL.
+  // Collapsing the same branch does not change the path, so it stays closed.
   useEffect(() => {
-    if (!match) {
-      setExpandedId(null);
-      return;
-    }
-    setExpandedId(resolveExpandedFromTrail(match.trail));
-  }, [match]);
+    setOpenIds(openIdsFromTrail(match?.trail));
+  }, [trailKey, match]);
+
+  const toggleBranch = (item: AdminNavItem, open: boolean) => {
+    setOpenIds((prev) => {
+      const next = new Set(prev);
+      if (open) {
+        next.add(item.id);
+        // Re-opening the branch that owns this URL shows its nested trail again.
+        const trail = match?.trail ?? [];
+        const index = trail.findIndex((node) => node.id === item.id);
+        if (index >= 0) {
+          for (const node of trail.slice(index)) {
+            if (hasSubLinks(node)) next.add(node.id);
+          }
+        }
+        return next;
+      }
+      const drop = new Set<string>();
+      collectBranchIds(item, drop);
+      for (const id of drop) next.delete(id);
+      return next;
+    });
+  };
 
   return (
     <>
@@ -99,8 +122,8 @@ export function AdminSidebar({
             items={nav}
             trailIds={trailIds}
             activeId={activeId}
-            expandedId={expandedId}
-            onExpand={setExpandedId}
+            openIds={openIds}
+            onToggle={toggleBranch}
             onNavigate={onClose}
           />
         </nav>

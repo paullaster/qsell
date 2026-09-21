@@ -9,6 +9,7 @@ export class OrdersService {
     customerName: string;
     customerEmail: string;
     customerPhone: string;
+    buyerKraPin?: string | null;
     shippingAddress: {
       street: string;
       city: string;
@@ -20,6 +21,10 @@ export class OrdersService {
     paymentMethod: PaymentProvider;
     currency?: 'KES' | 'USD';
     userId?: string;
+    dimensionFields?: Record<string, string | null | undefined> | {
+      global: Record<string, string>;
+      shortcut: Record<string, string>;
+    };
   }): Promise<Order> {
     const session = await auth();
     const { organizations, companySettings, branches } = getContainer();
@@ -40,10 +45,12 @@ export class OrdersService {
       customerName: params.customerName,
       customerEmail: params.customerEmail,
       customerPhone: params.customerPhone,
+      buyerKraPin: params.buyerKraPin,
       shippingAddress: params.shippingAddress,
       items: params.items,
       currency: params.currency || 'KES',
       paymentMethod: params.paymentMethod,
+      dimensionFields: params.dimensionFields,
     });
 
     if (!result.success || !result.order) {

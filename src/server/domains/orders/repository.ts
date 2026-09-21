@@ -33,6 +33,13 @@ export function mapOrderRow(row: OrderRow, items: OrderItem[]): Order {
     transactionReference: row.transactionReference || undefined,
     mpesaReceiptNumber: row.mpesaReceiptNumber || undefined,
     pesapalTrackingId: row.pesapalTrackingId || undefined,
+    dimensionSetId: row.dimensionSetId || null,
+    dimensionCodes: row.dimensionCodes || { global: {}, shortcut: {} },
+    tradeCustomerId: row.tradeCustomerId || null,
+    customerAccountType: (row.customerAccountType as 'cash' | 'credit' | null) || null,
+    transmitInvoicesToKra: row.transmitInvoicesToKra,
+    kraTransmissionStatus:
+      (row.kraTransmissionStatus as 'not_applicable' | 'pending' | 'skipped') || 'not_applicable',
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -65,6 +72,12 @@ export class OrderRepository {
       transactionReference: order.transactionReference,
       mpesaReceiptNumber: order.mpesaReceiptNumber,
       pesapalTrackingId: order.pesapalTrackingId,
+      dimensionSetId: order.dimensionSetId || null,
+      dimensionCodes: order.dimensionCodes || { global: {}, shortcut: {} },
+      tradeCustomerId: order.tradeCustomerId || null,
+      customerAccountType: order.customerAccountType || null,
+      transmitInvoicesToKra: order.transmitInvoicesToKra ?? false,
+      kraTransmissionStatus: order.kraTransmissionStatus || 'not_applicable',
     });
 
     if (order.items.length) {

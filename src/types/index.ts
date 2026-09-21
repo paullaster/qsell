@@ -131,7 +131,8 @@ export type PaymentProvider =
   | 'pesapal_v3'
   | 'jenga_hq'
   | 'kcb_buni'
-  | 'card_direct';
+  | 'card_direct'
+  | 'on_account';
 
 export interface PaymentGatewayConfig {
   id: string;
@@ -205,6 +206,16 @@ export interface Order {
   transactionReference?: string;
   mpesaReceiptNumber?: string;
   pesapalTrackingId?: string;
+  dimensionSetId?: string | null;
+  /** Rebuildable projection: global["1"] → value code, shortcut["5"] → value code */
+  dimensionCodes?: {
+    global: Record<string, string>;
+    shortcut: Record<string, string>;
+  };
+  tradeCustomerId?: string | null;
+  customerAccountType?: 'cash' | 'credit' | null;
+  transmitInvoicesToKra?: boolean;
+  kraTransmissionStatus?: 'not_applicable' | 'pending' | 'skipped';
   createdAt: string;
   updatedAt: string;
 }
@@ -250,7 +261,7 @@ export interface UserSession {
   userId: string;
   email: string;
   name: string;
-  role: 'admin' | 'manager' | 'customer';
+  role: 'super_admin' | 'admin' | 'manager' | 'customer';
   token: string;
   createdAt: string;
 }
@@ -269,7 +280,7 @@ export interface CustomerAddress {
 }
 
 export interface CustomerPaymentPreferences {
-  preferredMethod: PaymentProvider;
+  preferredMethod?: PaymentProvider;
   defaultMpesaPhone?: string;
   defaultCardLast4?: string;
 }
@@ -279,6 +290,11 @@ export interface CustomerAccount {
   name: string;
   email: string;
   phone: string;
+  /** Postgres trade-customer card id (sell-to). */
+  tradeCustomerId?: string;
+  /** BC-style customer number on the trade card (e.g. C00001). */
+  customerNumber?: string;
+  buyerKraPin?: string | null;
   avatarUrl?: string;
   role: 'admin' | 'customer' | 'manager';
   status: 'active' | 'suspended' | 'verified';

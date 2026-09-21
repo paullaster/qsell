@@ -3,7 +3,9 @@
 import { AuthError } from 'next-auth';
 import { auth, signIn, signOut } from '@/auth';
 import { UserRepository } from '@/server/domains/auth/user-repository';
+import { isStaffRole } from '@/server/domains/auth/roles';
 import { db } from '@/server/db/store';
+import { getContainer } from '@/server/di/container';
 import type { UserSession, CustomerAccount } from '@/types/index';
 import { AuthService, SESSION_COOKIE } from './service';
 import { cookies } from 'next/headers';
@@ -65,7 +67,46 @@ export async function getSessionAction(): Promise<{
           : null)
       : null;
 
-  return { session: shaped, customer };
+  if (!customer || session.user.role !== 'customer') {
+    return { session: shaped, customer };
+  }
+
+  try {
+    const container = getContainer();
+    const company = await container.companySettings.ensureSeeded();
+    const trade = await container.customers.ensureStorefrontCustomer(company.id, {
+      name: customer.name || session.user.name || session.user.email,
+      email: customer.email || session.user.email,
+      phone: customer.phone || session.user.phone,
+    });
+    const addresses = await container.customers.listAddresses(trade.id);
+    return {
+      session: shaped,
+      customer: {
+        ...customer,
+        name: trade.name || customer.name,
+        email: trade.email || customer.email,
+        phone: trade.phone || customer.phone,
+        tradeCustomerId: trade.id,
+        customerNumber: trade.number,
+        buyerKraPin: trade.buyerKraPin,
+        addresses: addresses.map((row) => ({
+          id: row.id,
+          label: row.label,
+          recipientName: row.recipientName,
+          recipientPhone: row.recipientPhone,
+          street: row.street,
+          city: row.city,
+          countyOrState: row.countyOrState,
+          postalCode: row.postalCode || undefined,
+          country: row.country,
+          isDefault: row.isDefault,
+        })),
+      },
+    };
+  } catch {
+    return { session: shaped, customer };
+  }
 }
 
 async function clearStaleAuthSessionCookies(): Promise<void> {
@@ -117,6 +158,18 @@ export async function registerCustomerAction(input: {
     customerStoreId: customer.id,
   });
 
+  try {
+    const container = getContainer();
+    const company = await container.companySettings.ensureSeeded();
+    await container.customers.ensureStorefrontCustomer(company.id, {
+      name: input.name.trim(),
+      email,
+      phone: input.phone?.trim() || null,
+    });
+  } catch {
+    /* trade card is created on first account/checkout load if this fails */
+  }
+
   await signIn('credentials', {
     email,
     password: input.password,
@@ -132,14 +185,20 @@ export async function loginAction(input: {
 }): Promise<{ ok: true; role: string }> {
   try {
     const users = new UserRepository();
-    await users.ensureAdminSeed();
+    await users.ensureSuperAdminSeed();
+    const verified = await users.verifyPassword(input.email, input.password);
+    if (!verified) {
+      throw new Error('Invalid email or password.');
+    }
     await signIn('credentials', {
       email: input.email,
       password: input.password,
       redirect: false,
     });
+    // Prefer DB-verified role — auth() in the same request often lacks the new session cookie.
     const session = await auth();
-    return { ok: true, role: session?.user?.role || 'customer' };
+    const role = verified.role || session?.user?.role || 'customer';
+    return { ok: true, role };
   } catch (err) {
     if (err instanceof AuthError) {
       throw new Error('Invalid email or password.');
@@ -184,7 +243,7 @@ export async function customerLoginAction(
       role: 'customer',
       status: 'verified',
       addresses: [],
-      paymentPreferences: { preferredMethod: 'mpesa_daraja', defaultMpesaPhone: input.phone },
+      paymentPreferences: {},
     });
   }
 
@@ -207,19 +266,19 @@ export async function customerLoginAction(
 
 export async function ensureAdminSessionAction(): Promise<UserSession> {
   const session = await auth();
-  if (session?.user?.role === 'admin' || session?.user?.role === 'manager') {
+  if (isStaffRole(session?.user?.role)) {
     return toSessionShape({
-      id: session.user.id,
-      email: session.user.email!,
-      name: session.user.name || 'Admin',
-      role: session.user.role,
+      id: session!.user.id,
+      email: session!.user.email!,
+      name: session!.user.name || 'Admin',
+      role: session!.user.role,
     });
   }
 
-  // Seed admin and require proper login — do not auto-elevate anonymous users.
+  // Seed super-admin from env; require proper login — do not auto-elevate anonymous users.
   const users = new UserRepository();
-  await users.ensureAdminSeed();
-  throw new Error('Admin login required. Sign in at /login with an admin account.');
+  await users.ensureSuperAdminSeed();
+  throw new Error('Admin login required. Sign in at /login with a staff account.');
 }
 
 export async function switchRoleAction(_role: 'admin' | 'customer'): Promise<{

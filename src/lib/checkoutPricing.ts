@@ -1,6 +1,7 @@
 /**
  * Shared storefront + server order pricing.
- * Tax comes from each product's taxRate / isTaxInclusive; never trust client totals alone.
+ * Tax comes from each product's taxRate / isTaxInclusive.
+ * Shipping is charged only when a caller passes an explicit fee — there is no built-in rate.
  */
 
 export type PricedLine = {
@@ -12,21 +13,18 @@ export type PricedLine = {
 };
 
 export type CheckoutTotals = {
-  subtotal: number; // net of tax (ex-VAT basis for display consistency)
+  subtotal: number;
   tax: number;
   shippingFee: number;
   totalAmount: number;
 };
 
-const FREE_SHIPPING_THRESHOLD = 100_000;
-const DEFAULT_SHIPPING_FEE = 500;
-
 export function computeCheckoutTotals(
   lines: PricedLine[],
   options?: { shippingFee?: number; freeShippingThreshold?: number },
 ): CheckoutTotals {
-  const freeAt = options?.freeShippingThreshold ?? FREE_SHIPPING_THRESHOLD;
-  const flatShip = options?.shippingFee ?? DEFAULT_SHIPPING_FEE;
+  const flatShip = options?.shippingFee ?? 0;
+  const freeAt = options?.freeShippingThreshold;
 
   let net = 0;
   let tax = 0;
@@ -47,7 +45,8 @@ export function computeCheckoutTotals(
   const subtotal = Math.round(net);
   const taxRounded = Math.round(tax);
   const goodsTotal = subtotal + taxRounded;
-  const shippingFee = goodsTotal >= freeAt || goodsTotal === 0 ? 0 : flatShip;
+  const shippingFee =
+    flatShip <= 0 || goodsTotal === 0 || (freeAt != null && goodsTotal >= freeAt) ? 0 : flatShip;
 
   return {
     subtotal,

@@ -27,4 +27,8 @@ export class TaxDomainService {
   static setDefault(id: string): TaxCategory {
     return db.setDefaultTaxCategory(id);
   }
+
+  static clearAll(): number {
+    return db.clearTaxCategories();
+  }
 }

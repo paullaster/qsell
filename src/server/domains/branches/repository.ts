@@ -27,6 +27,15 @@ export class BranchRepository {
     return rows[0] ?? null;
   }
 
+  async getByCode(companyId: string, code: string): Promise<BranchRow | null> {
+    const rows = await this.db
+      .select()
+      .from(branches)
+      .where(and(eq(branches.companyId, companyId), eq(branches.code, code)))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
   async getDefault(companyId: string): Promise<BranchRow | null> {
     const defaults = await this.db
       .select()

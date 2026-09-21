@@ -6,8 +6,11 @@ import { PaymentRegistry } from './registry';
 import { PaymentAttemptRepository, PaymentConfigRepository } from './repository';
 import { decryptCredentials } from './crypto';
 import { PAYMENT_PROVIDER_META, type PaymentProviderCode } from './types';
+import { classifyCallbackPayload } from './callback-status';
+import { extractPaymentReference } from './payment-reference';
 import type { CallbackResult } from './port';
 import { OrderRepository } from '@/server/domains/orders/repository';
+import { getContainer } from '@/server/di/container';
 import { db as memoryDb } from '@/server/db/store';
 import type { PaymentProvider } from '@/types/index';
 
@@ -32,7 +35,7 @@ export class PaymentService {
   }
 
   async resolvePublicBaseUrl(branch: BranchRow): Promise<string> {
-    if (branch.publicBaseUrl?.trim()) return branch.publicBaseUrl.replace(/\/$/, '');
+    if (branch?.publicBaseUrl?.trim()) return branch.publicBaseUrl.replace(/\/$/, '');
     const companies = await this.db
       .select()
       .from(companySettings)
@@ -141,16 +144,20 @@ export class PaymentService {
 
     await this.orderRepo.update(params.orderId, {
       paymentStatus: status === 'failed' ? 'failed' : 'pending_verification',
+      ...(status === 'failed' ? { status: 'failed' as const } : {}),
       paymentMethod: params.providerCode as PaymentProvider,
-      transactionReference: result.providerReference ?? null,
     });
 
     const mem = memoryDb.orders.get(params.orderId);
     if (mem) {
       mem.paymentStatus = status === 'failed' ? 'failed' : 'pending_verification';
+      if (status === 'failed') mem.status = 'failed';
       mem.paymentMethod = params.providerCode as PaymentProvider;
-      mem.transactionReference = result.providerReference || mem.transactionReference;
       mem.updatedAt = new Date().toISOString();
+    }
+
+    if (status === 'failed') {
+      memoryDb.releaseOrderReservation(params.orderId);
     }
 
     return { attempt: updated, result };
@@ -170,14 +177,20 @@ export class PaymentService {
       body = { raw: text };
     }
 
-    await this.attempts.recordCallbackEvent({
+    // Dump the payload as sent. processing_status is the provider's own status
+    // (M-Pesa: stkCallback.ResultCode). outcome is derived from that status.
+    const verdict = classifyCallbackPayload(params.providerCode, body);
+    const dumpStatus = verdict.rawStatus ?? (attempt ? 'received' : 'unmatched_token');
+    const dumpOutcome = verdict.rawStatus ? verdict.outcome : 'unclassified';
+    const dump = await this.attempts.recordCallbackEvent({
       paymentAttemptId: attempt?.id ?? null,
       callbackToken: params.callbackToken,
       providerCode: params.providerCode,
       httpMethod: params.request.method,
       headers: headersToRecord(params.request.headers),
       rawBody: body,
-      processingStatus: attempt ? 'received' : 'unmatched_token',
+      processingStatus: dumpStatus,
+      outcome: dumpOutcome,
       processingError: attempt ? null : 'No payment attempt for callback token',
     });
 
@@ -190,6 +203,11 @@ export class PaymentService {
     }
 
     if (attempt.providerCode !== params.providerCode) {
+      await this.attempts.updateCallbackEvent(dump.id, {
+        processingStatus: verdict.rawStatus ?? 'error',
+        outcome: verdict.rawStatus ? verdict.outcome : 'failed',
+        processingError: 'Provider mismatch',
+      });
       return {
         httpStatus: 400,
         body: { ResultCode: 1, ResultDesc: 'Provider mismatch' },
@@ -200,69 +218,100 @@ export class PaymentService {
     const config = await this.configs.getById(attempt.providerConfigId);
     const credentials = decryptCredentials(config?.credentialsEncrypted) || {};
     const adapter = this.registry.resolve(params.providerCode);
-    const callback = await adapter.handleCallback(
-      {
-        callbackToken: params.callbackToken,
-        headers: headersToRecord(params.request.headers),
-        body,
-        rawBodyText: text,
-      },
-      credentials,
-      (config?.settings as Record<string, unknown>) || {},
-    );
+    let callback: CallbackResult;
+    try {
+      callback = await adapter.handleCallback(
+        {
+          callbackToken: params.callbackToken,
+          headers: headersToRecord(params.request.headers),
+          body,
+          rawBodyText: text,
+        },
+        credentials,
+        (config?.settings as Record<string, unknown>) || {},
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Callback classification failed';
+      await this.attempts.updateCallbackEvent(dump.id, {
+        processingStatus: verdict.rawStatus ?? 'error',
+        outcome: verdict.rawStatus ? verdict.outcome : 'unclassified',
+        processingError: message,
+      });
+      throw err;
+    }
+
+    // The rulebook decides success vs failure from the provider status.
+    // The adapter still supplies the receipt and references.
+    const outcome = verdict.rawStatus ? verdict.outcome : callback.status;
+    await this.attempts.updateCallbackEvent(dump.id, {
+      processingStatus: verdict.rawStatus ?? callback.status,
+      outcome,
+      processingError: callback.errorMessage ?? null,
+    });
 
     const nextStatus =
-      callback.status === 'successful'
-        ? 'successful'
-        : callback.status === 'failed'
-          ? 'failed'
-          : 'pending';
+      outcome === 'successful' ? 'successful' : outcome === 'failed' ? 'failed' : 'pending';
+
+    const paymentReference =
+      outcome === 'successful'
+        ? callback.receiptNumber?.trim() ||
+          extractPaymentReference(params.providerCode, body) ||
+          ''
+        : '';
+    if (outcome === 'successful' && !paymentReference) {
+      await this.attempts.updateCallbackEvent(dump.id, {
+        processingStatus: verdict.rawStatus ?? callback.status,
+        outcome,
+        processingError: 'Successful payment callback had no transaction reference.',
+      });
+    }
 
     await this.attempts.update(attempt.id, {
-      status: nextStatus,
+      status: outcome === 'successful' && !paymentReference ? 'pending' : nextStatus,
       providerReference: callback.providerReference || attempt.providerReference,
       externalReference: callback.externalReference || attempt.externalReference,
       responsePayload: callback.raw || {},
-      errorMessage: callback.errorMessage ?? null,
-      paidAt: callback.status === 'successful' ? new Date() : null,
+      errorMessage:
+        outcome === 'successful' && !paymentReference
+          ? 'Successful payment callback had no transaction reference.'
+          : (callback.errorMessage ?? null),
+      paidAt: outcome === 'successful' && paymentReference ? new Date() : null,
     });
 
-    if (callback.status === 'successful') {
+    if (outcome === 'successful' && paymentReference) {
+      const receiptProviders = params.providerCode === 'mpesa_daraja' || params.providerCode === 'kcb_buni';
       await this.orderRepo.update(attempt.orderId, {
         paymentStatus: 'paid',
         status: 'processing',
-        mpesaReceiptNumber: callback.receiptNumber ?? null,
-        transactionReference: callback.providerReference ?? null,
+        mpesaReceiptNumber: receiptProviders ? paymentReference : null,
+        transactionReference: paymentReference,
       });
-    } else if (callback.status === 'failed') {
+      memoryDb.fulfillOrderReservation(attempt.orderId);
+      await getContainer().customers.applyOrderPayment(attempt.orderId);
+    } else if (outcome === 'failed') {
       await this.orderRepo.update(attempt.orderId, {
         paymentStatus: 'failed',
+        status: 'failed',
       });
+      memoryDb.releaseOrderReservation(attempt.orderId);
     }
 
     const mem = memoryDb.orders.get(attempt.orderId);
     if (mem) {
-      if (callback.status === 'successful') {
+      if (outcome === 'successful' && paymentReference) {
         mem.paymentStatus = 'paid';
         mem.status = mem.status === 'pending' ? 'processing' : mem.status;
-        mem.mpesaReceiptNumber = callback.receiptNumber || mem.mpesaReceiptNumber;
-        mem.transactionReference = callback.providerReference || mem.transactionReference;
-      } else if (callback.status === 'failed') {
+        mem.mpesaReceiptNumber =
+          params.providerCode === 'mpesa_daraja' || params.providerCode === 'kcb_buni'
+            ? paymentReference
+            : mem.mpesaReceiptNumber;
+        mem.transactionReference = paymentReference;
+      } else if (outcome === 'failed') {
         mem.paymentStatus = 'failed';
+        mem.status = 'failed';
       }
       mem.updatedAt = new Date().toISOString();
     }
-
-    await this.attempts.recordCallbackEvent({
-      paymentAttemptId: attempt.id,
-      callbackToken: params.callbackToken,
-      providerCode: params.providerCode,
-      httpMethod: params.request.method,
-      headers: headersToRecord(params.request.headers),
-      rawBody: body,
-      processingStatus: callback.status,
-      processingError: callback.errorMessage ?? null,
-    });
 
     return {
       httpStatus: 200,

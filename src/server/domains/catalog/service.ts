@@ -3,10 +3,12 @@ import type { Product, Category, ItemType } from '@/types/index';
 
 export class CatalogService {
   static getAllProducts(): Product[] {
+    db.releaseFailedPaymentReservations();
     return Array.from(db.products.values());
   }
 
   static getSellableProducts(): Product[] {
+    db.releaseFailedPaymentReservations();
     return Array.from(db.products.values()).filter((p) => p.isActive && p.isSellable !== false);
   }
 

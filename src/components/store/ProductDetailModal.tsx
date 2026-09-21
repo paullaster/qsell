@@ -15,6 +15,7 @@ import {
   CreditCard,
 } from 'lucide-react';
 import { type Product } from '@/types/index';
+import { AppImage } from '@/components/ui/AppImage';
 import { ProductDescriptionView } from '@/components/ui/ProductDescriptionView';
 
 interface ProductDetailModalProps {
@@ -49,9 +50,12 @@ export function ProductDetailModal({
 
         {/* Product Image & SKU Badge */}
         <div className="relative flex flex-col items-center justify-center overflow-hidden bg-zinc-950 p-6 md:w-1/2">
-          <img
+          <AppImage
             src={product.imageUrl}
             alt={product.name}
+            width={800}
+            height={600}
+            sizes="(max-width: 768px) 100vw, 50vw"
             className="h-auto max-h-80 w-full rounded-xl object-cover shadow-md"
             referrerPolicy="no-referrer"
           />

@@ -17,6 +17,12 @@ import {
 } from '@/server/domains/payments/repository';
 import { OrderRepository } from '@/server/domains/orders/repository';
 import { UserRepository } from '@/server/domains/auth/user-repository';
+import { DimensionRepository } from '@/server/domains/dimensions/repository';
+import { DimensionSetService } from '@/server/domains/dimensions/set-service';
+import { CustomerMasterService } from '@/server/domains/customers/master-service';
+import { TransactionLedgerService } from '@/server/domains/transactions/ledger-service';
+import { TransactionReconcileService } from '@/server/domains/transactions/reconcile-service';
+import { PaymentCallbackService } from '@/server/domains/payments/callback-service';
 
 export interface AppContainer {
   db: DrizzleDb;
@@ -32,6 +38,12 @@ export interface AppContainer {
   payments: PaymentService;
   orders: OrderRepository;
   users: UserRepository;
+  dimensions: DimensionRepository;
+  dimensionSets: DimensionSetService;
+  customers: CustomerMasterService;
+  transactionLedger: TransactionLedgerService;
+  transactionReconcile: TransactionReconcileService;
+  paymentCallbacks: PaymentCallbackService;
 }
 
 function createEmailPort(): EmailPort {
@@ -68,6 +80,21 @@ export function getContainer(): AppContainer {
   const payments = new PaymentService(drizzleDb, paymentRegistry, paymentConfigs, paymentAttempts);
   const orders = new OrderRepository(drizzleDb);
   const users = new UserRepository(drizzleDb);
+  // Ensure deployment super-admin exists on first container boot.
+  void users.ensureSuperAdminSeed().catch((err) => {
+    console.error('[auth] super admin seed failed', err);
+  });
+  const dimensions = new DimensionRepository(drizzleDb);
+  const dimensionSets = new DimensionSetService(drizzleDb, dimensions);
+  const transactionLedger = new TransactionLedgerService(drizzleDb);
+  const transactionReconcile = new TransactionReconcileService(drizzleDb, transactionLedger);
+  const customers = new CustomerMasterService(drizzleDb, dimensionSets, transactionLedger);
+  const paymentCallbacks = new PaymentCallbackService(
+    drizzleDb,
+    paymentRegistry,
+    paymentConfigs,
+    paymentAttempts,
+  );
 
   container = {
     db: drizzleDb,
@@ -83,6 +110,12 @@ export function getContainer(): AppContainer {
     payments,
     orders,
     users,
+    dimensions,
+    dimensionSets,
+    customers,
+    transactionLedger,
+    transactionReconcile,
+    paymentCallbacks,
   };
 
   return container;

@@ -2,6 +2,7 @@ import NextAuth from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 import type { NextAuthConfig } from 'next-auth';
 import { UserRepository } from '@/server/domains/auth/user-repository';
+import { isStaffRole } from '@/server/domains/auth/roles';
 
 declare module 'next-auth' {
   interface User {
@@ -65,7 +66,7 @@ const authConfig = {
         if (!email || !password) return null;
 
         const users = new UserRepository();
-        await users.ensureAdminSeed();
+        await users.ensureSuperAdminSeed();
         const user = await users.verifyPassword(email, password);
         if (!user) return null;
 
@@ -84,8 +85,7 @@ const authConfig = {
     authorized({ auth, request }) {
       const path = request.nextUrl.pathname;
       if (path.startsWith('/admin')) {
-        const role = auth?.user?.role;
-        return role === 'admin' || role === 'manager';
+        return isStaffRole(auth?.user?.role);
       }
       return true;
     },

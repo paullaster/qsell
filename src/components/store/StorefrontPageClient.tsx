@@ -19,8 +19,11 @@ import {
   createOrderAction,
   initiateBranchPaymentAction,
   getSessionAction,
+  listCurrenciesAction,
+  listEnabledCheckoutProvidersAction,
 } from '@/server/actions';
-import type { Product, Order, PaymentProvider } from '@/types/index';
+import type { Product, Order, PaymentProvider, CurrencyConfig } from '@/types/index';
+import { resolveBaseCurrency } from '@/lib/cartMoney';
 import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
 
 interface StorefrontPageClientProps {
@@ -59,10 +62,18 @@ export function StorefrontPageClient({
   }, [searchParams, router]);
 
   const [sessionName, setSessionName] = useState<string | null>(null);
+  const [currency, setCurrency] = useState<CurrencyConfig | null>(null);
+  const [paymentLabels, setPaymentLabels] = useState<string[]>([]);
   useEffect(() => {
     getSessionAction()
       .then(({ session }) => setSessionName(session?.name || null))
       .catch(() => setSessionName(null));
+    listCurrenciesAction()
+      .then((currencies) => setCurrency(resolveBaseCurrency(currencies)))
+      .catch(() => setCurrency(null));
+    listEnabledCheckoutProvidersAction()
+      .then((providers) => setPaymentLabels(providers.map((provider) => provider.label)))
+      .catch(() => setPaymentLabels([]));
   }, []);
 
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -134,6 +145,7 @@ export function StorefrontPageClient({
     customerName: string;
     customerEmail: string;
     customerPhone: string;
+    buyerKraPin?: string;
     shippingAddress: {
       street: string;
       city: string;
@@ -149,12 +161,23 @@ export function StorefrontPageClient({
         customerName: checkoutData.customerName,
         customerEmail: checkoutData.customerEmail,
         customerPhone: checkoutData.customerPhone,
+        buyerKraPin: checkoutData.buyerKraPin,
         shippingAddress: checkoutData.shippingAddress,
         items: cart.map((c) => ({ productId: c.product.id, quantity: c.quantity })),
         paymentMethod: checkoutData.paymentMethod,
       });
       setActiveOrder(order);
       setIsCheckoutOpen(false);
+
+      if (checkoutData.paymentMethod === 'on_account') {
+        addToast({
+          type: 'success',
+          title: 'Order placed on account',
+          message: `${order.orderNumber} is an open invoice for ${checkoutData.customerName}.`,
+        });
+        setCart([]);
+        return;
+      }
 
       if (
         checkoutData.paymentMethod === 'mpesa_daraja' ||
@@ -172,9 +195,7 @@ export function StorefrontPageClient({
         addToast({
           type: 'info',
           title: 'Payment prompt sent',
-          message:
-            payRes.customerMessage ||
-            `Complete payment on ${checkoutData.customerPhone}`,
+          message: payRes.customerMessage || `Complete payment on ${checkoutData.customerPhone}`,
         });
       } else if (checkoutData.paymentMethod === 'jenga_hq') {
         const payRes = await initiateBranchPaymentAction({
@@ -292,6 +313,8 @@ export function StorefrontPageClient({
         isOpen={isCartOpen}
         onClose={() => setIsCartOpen(false)}
         items={cart}
+        currency={currency}
+        paymentLabels={paymentLabels}
         onUpdateQuantity={(productId, quantity) =>
           setCart((prev) =>
             prev.map((item) => (item.product.id === productId ? { ...item, quantity } : item)),
@@ -310,6 +333,8 @@ export function StorefrontPageClient({
         isOpen={isCheckoutOpen}
         onClose={() => setIsCheckoutOpen(false)}
         items={cart}
+        currency={currency}
+        defaultCountry={company.country}
         onSubmitCheckout={handleCheckoutSubmit}
         isLoading={isCheckoutSubmitting}
       />

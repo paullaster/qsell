@@ -190,6 +190,7 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
         payload.customer.name,
         payload.customer.email,
         payload.customer.phone,
+        payload.customer.kraPin ? `Tax PIN: ${payload.customer.kraPin}` : null,
       ]);
       doc.fillColor(ink).font('Helvetica-Bold').fontSize(10);
       doc.text(billLines[0] ?? '', M, billY, { width: halfW, lineBreak: false });
@@ -225,8 +226,7 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
       y = Math.max(billY, shipY) + 18;
 
       const cols = {
-        sku: { x: M, w: 72 },
-        desc: { x: M + 72, w: 210 },
+        desc: { x: M, w: 282 },
         qty: { x: M + 282, w: 36 },
         unit: { x: M + 318, w: 90 },
         amount: { x: M + 408, w: CONTENT_W - 408 },
@@ -235,11 +235,7 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
       const drawTableHeader = (atY: number) => {
         doc.rect(M, atY, CONTENT_W, 22).fill(primary);
         doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(8);
-        doc.text('SKU', cols.sku.x + 6, atY + 7, {
-          width: cols.sku.w - 8,
-          lineBreak: false,
-        });
-        doc.text('DESCRIPTION', cols.desc.x + 4, atY + 7, {
+        doc.text('DESCRIPTION', cols.desc.x + 6, atY + 7, {
           width: cols.desc.w - 8,
           lineBreak: false,
         });
@@ -287,11 +283,7 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
 
         const textY = y + 6;
         doc.fillColor(ink).font('Helvetica').fontSize(8);
-        doc.text(item.sku, cols.sku.x + 6, textY, {
-          width: cols.sku.w - 8,
-          lineBreak: false,
-        });
-        doc.text(item.name, cols.desc.x + 4, textY, {
+        doc.text(item.name, cols.desc.x + 6, textY, {
           width: cols.desc.w - 8,
         });
         doc.text(String(item.quantity), cols.qty.x, textY, {

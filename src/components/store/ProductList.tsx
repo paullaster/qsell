@@ -200,10 +200,11 @@ export function ProductList({
 
         {filteredProducts.length > 0 ? (
           <div className={gridClassName}>
-            {filteredProducts.map((product) => (
+            {filteredProducts.map((product, index) => (
               <ProductCard
                 key={product.id}
                 product={product}
+                preloadImage={index === 0}
                 onAddToCart={onAddToCart}
                 onQuickView={handleInspect}
                 onQuickBuy={onQuickBuy}

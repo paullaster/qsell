@@ -52,6 +52,7 @@ export async function createCategoryAction(
 ): Promise<Category> {
   const category = CatalogService.createCategory(data);
   revalidatePath('/admin/categories');
+  revalidatePath('/admin/products');
   revalidatePath('/');
   return category;
 }

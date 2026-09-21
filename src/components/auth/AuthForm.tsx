@@ -4,6 +4,7 @@ import React, { useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { loginAction, registerCustomerAction } from '@/server/domains/auth/actions';
+import { isStaffRole } from '@/server/domains/auth/roles';
 
 export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
   const router = useRouter();
@@ -33,10 +34,13 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
           callbackUrl && callbackUrl.startsWith('/') && !callbackUrl.startsWith('//')
             ? callbackUrl
             : null;
-        if (safeCallback) {
+        if (isStaffRole(res.role)) {
+          // Staff must land in admin — ignore storefront callback leftovers (e.g. "/").
+          router.push(safeCallback?.startsWith('/admin') ? safeCallback : '/admin');
+        } else if (safeCallback) {
           router.push(safeCallback);
         } else {
-          router.push(res.role === 'admin' || res.role === 'manager' ? '/admin' : '/');
+          router.push('/');
         }
         router.refresh();
       } catch (err) {

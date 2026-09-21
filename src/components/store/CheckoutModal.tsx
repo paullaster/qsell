@@ -21,19 +21,25 @@ import {
   Order,
   type CustomerAccount,
   type CustomerAddress,
+  type CurrencyConfig,
 } from '@/types/index';
 import { type CartItem } from './CartDrawer';
-import { fetchCustomerAccountAction, listEnabledCheckoutProvidersAction } from '@/server/actions';
+import { fetchCustomerAccountAction, listEnabledCheckoutProvidersAction, lookupCheckoutCustomerAction, addCustomerAddressAction } from '@/server/actions';
 import type { PaymentProviderCode } from '@/server/domains/payments/types';
+import { cartTaxRows, cartTotals, formatCartAmount } from '@/lib/cartMoney';
+import { AppImage } from '@/components/ui/AppImage';
 
 interface CheckoutModalProps {
   isOpen: boolean;
   onClose: () => void;
   items: CartItem[];
+  currency: CurrencyConfig | null;
+  defaultCountry: string;
   onSubmitCheckout: (checkoutData: {
     customerName: string;
     customerEmail: string;
     customerPhone: string;
+    buyerKraPin?: string;
     shippingAddress: {
       street: string;
       city: string;
@@ -49,6 +55,8 @@ export function CheckoutModal({
   isOpen,
   onClose,
   items,
+  currency,
+  defaultCountry,
   onSubmitCheckout,
   isLoading,
 }: CheckoutModalProps) {
@@ -56,39 +64,94 @@ export function CheckoutModal({
   const [customerName, setCustomerName] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  const [buyerKraPin, setBuyerKraPin] = useState('');
   const [street, setStreet] = useState('');
   const [city, setCity] = useState('');
   const [countyOrState, setCountyOrState] = useState('');
-  const [country, setCountry] = useState('Kenya');
+  const [country, setCountry] = useState(defaultCountry);
   const [paymentMethod, setPaymentMethod] = useState<PaymentProvider | ''>('');
   const [enabledProviders, setEnabledProviders] = useState<
     { code: PaymentProviderCode; label: string; description: string }[]
   >([]);
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
+  const [useNewAddress, setUseNewAddress] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [accountCustomer, setAccountCustomer] = useState<{
+    found: boolean;
+    accountType: 'cash' | 'credit' | null;
+    name: string | null;
+    blocked: boolean;
+    creditLimit: number;
+    balance: number;
+    transmitInvoicesToKra: boolean;
+  } | null>(null);
+
+  const isSignedIn = Boolean(customer?.email);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const email = customerEmail.trim();
+    if (!email.includes('@')) {
+      setAccountCustomer(null);
+      return;
+    }
+    const handle = window.setTimeout(() => {
+      lookupCheckoutCustomerAction(email)
+        .then(setAccountCustomer)
+        .catch(() => setAccountCustomer(null));
+    }, 300);
+    return () => window.clearTimeout(handle);
+  }, [isOpen, customerEmail]);
+
+  useEffect(() => {
+    if (paymentMethod !== 'on_account') return;
+    const available =
+      accountCustomer?.accountType === 'credit'
+        ? accountCustomer.creditLimit - accountCustomer.balance
+        : 0;
+    const allowed =
+      accountCustomer?.found === true &&
+      accountCustomer.accountType === 'credit' &&
+      !accountCustomer.blocked &&
+      available >= cartTotals(items).totalAmount;
+    if (!allowed) {
+      setPaymentMethod((enabledProviders[0]?.code as PaymentProvider) || '');
+    }
+  }, [accountCustomer, paymentMethod, items, enabledProviders]);
 
   // Load customer profile to autofill addresses and payment rails
   useEffect(() => {
     if (!isOpen) return;
 
     fetchCustomerAccountAction()
-      .then(({ customer }) => {
-        if (customer) {
-          setCustomer(customer);
-          setCustomerName(customer.name);
-          setCustomerEmail(customer.email);
-          setCustomerPhone(customer.phone);
-          if (customer.addresses && customer.addresses.length > 0) {
-            const def = customer.addresses.find((a) => a.isDefault) || customer.addresses[0];
+      .then(({ customer: account }) => {
+        if (account) {
+          setCustomer(account);
+          setCustomerName(account.name);
+          setCustomerEmail(account.email);
+          setCustomerPhone(account.phone);
+          setBuyerKraPin(account.buyerKraPin || '');
+          if (account.addresses && account.addresses.length > 0) {
+            const def = account.addresses.find((a) => a.isDefault) || account.addresses[0];
             setSelectedAddressId(def.id);
+            setUseNewAddress(false);
             setStreet(def.street);
             setCity(def.city);
             setCountyOrState(def.countyOrState);
             setCountry(def.country);
+          } else {
+            setUseNewAddress(true);
+            setSelectedAddressId(null);
           }
+        } else {
+          setCustomer(null);
+          setUseNewAddress(true);
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        setCustomer(null);
+        setUseNewAddress(true);
+      });
 
     listEnabledCheckoutProvidersAction()
       .then((providers) => {
@@ -105,6 +168,7 @@ export function CheckoutModal({
 
   const handleSelectSavedAddress = (addr: CustomerAddress) => {
     setSelectedAddressId(addr.id);
+    setUseNewAddress(false);
     setStreet(addr.street);
     setCity(addr.city);
     setCountyOrState(addr.countyOrState);
@@ -113,18 +177,34 @@ export function CheckoutModal({
     if (addr.recipientPhone) setCustomerPhone(addr.recipientPhone);
   };
 
-  const subtotal = items.reduce((sum, item) => sum + (item.product.price ?? 0) * item.quantity, 0);
-  // Rough display estimate — server recomputes authoritative tax from product tax categories
-  const tax = Math.round(subtotal * 0.16);
-  const shippingFee = subtotal > 100000 ? 0 : 500;
-  const total = subtotal + tax + shippingFee;
+  const totals = cartTotals(items);
+  const taxRows = cartTaxRows(items);
+  const money = (amount: number) => formatCartAmount(amount, currency);
+  const selectedProvider = enabledProviders.find((provider) => provider.code === paymentMethod);
+  const creditAvailable =
+    accountCustomer?.accountType === 'credit'
+      ? accountCustomer.creditLimit - accountCustomer.balance
+      : 0;
+  const canPayOnAccount =
+    accountCustomer?.found === true &&
+    accountCustomer.accountType === 'credit' &&
+    !accountCustomer.blocked &&
+    creditAvailable >= totals.totalAmount;
+  const payLabel =
+    paymentMethod === 'on_account' ? 'On account' : selectedProvider?.label;
+  const hasSavedAddresses = Boolean(customer?.addresses && customer.addresses.length > 0);
+  const showAddressFields = !isSignedIn || useNewAddress || !hasSavedAddresses;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
 
     if (!customerName || !customerEmail || !customerPhone || !street || !city) {
-      setFormError('Please fill in all mandatory billing and shipping fields.');
+      setFormError(
+        isSignedIn && !hasSavedAddresses
+          ? 'Add a delivery address to continue.'
+          : 'Please fill in all mandatory billing and shipping fields.',
+      );
       return;
     }
     if (!paymentMethod) {
@@ -133,10 +213,25 @@ export function CheckoutModal({
     }
 
     try {
+      if (isSignedIn && customer && (useNewAddress || !hasSavedAddresses)) {
+        const { customer: updated } = await addCustomerAddressAction(customer.id, {
+          label: hasSavedAddresses ? 'Delivery' : 'Primary',
+          recipientName: customerName,
+          recipientPhone: customerPhone,
+          street,
+          city,
+          countyOrState,
+          country,
+          isDefault: !hasSavedAddresses,
+        });
+        setCustomer(updated);
+      }
+
       await onSubmitCheckout({
         customerName,
         customerEmail,
         customerPhone,
+        buyerKraPin: buyerKraPin.trim() || undefined,
         shippingAddress: {
           street,
           city,
@@ -162,7 +257,9 @@ export function CheckoutModal({
             <div>
               <h2 className="text-lg font-bold text-white">Secure Checkout</h2>
               <p className="text-xs text-zinc-400">
-                Pay via Safaricom M-Pesa STK Push or Credit/Debit Card
+                {enabledProviders.length > 0
+                  ? enabledProviders.map((provider) => provider.label).join(' · ')
+                  : 'Choose a payment method to continue'}
               </p>
             </div>
           </div>
@@ -192,76 +289,109 @@ export function CheckoutModal({
               <h3 className="flex items-center gap-2 text-xs font-semibold tracking-wider text-indigo-400 uppercase">
                 <User className="h-4 w-4" /> 1. Customer & Identification
               </h3>
-              <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-zinc-300">
-                    Full Legal Name
-                  </label>
-                  <input
-                    type="text"
-                    value={customerName}
-                    onChange={(e) => setCustomerName(e.target.value)}
-                    required
-                    className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
-                    placeholder="e.g. Paul Laster Okoth"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-zinc-300">
-                    Email (eTIMS Receipt)
-                  </label>
-                  <input
-                    type="email"
-                    value={customerEmail}
-                    onChange={(e) => setCustomerEmail(e.target.value)}
-                    required
-                    className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
-                    placeholder="paullasterokoth98@gmail.com"
-                  />
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="mb-1 block text-xs font-medium text-zinc-300">
-                    Kenyan Mobile Phone{' '}
-                    <span className="font-normal text-emerald-400">(For M-Pesa STK Prompt)</span>
-                  </label>
-                  <div className="relative">
-                    <Phone className="absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2 text-emerald-400" />
+              {isSignedIn ? (
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950/80 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-white">{customerName}</p>
+                      <p className="mt-0.5 text-xs text-zinc-400">{customerEmail}</p>
+                      <p className="mt-0.5 font-mono text-xs text-zinc-300">{customerPhone}</p>
+                    </div>
+                    {customer?.customerNumber ? (
+                      <span className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-[11px] text-zinc-300">
+                        {customer.customerNumber}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="mt-3">
+                    <label className="mb-1 block text-xs font-medium text-zinc-300">Tax PIN</label>
                     <input
                       type="text"
-                      value={customerPhone}
-                      onChange={(e) => setCustomerPhone(e.target.value)}
-                      required
-                      className="w-full rounded-lg border border-zinc-800 bg-zinc-950 py-2 pr-4 pl-10 font-mono text-xs text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
-                      placeholder="0712345678 or 254712345678"
+                      value={buyerKraPin}
+                      onChange={(e) => setBuyerKraPin(e.target.value)}
+                      className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3.5 py-2 font-mono text-xs text-white uppercase placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+                      placeholder="Optional KRA PIN"
                     />
                   </div>
                 </div>
-              </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-zinc-300">
+                      Full Legal Name
+                    </label>
+                    <input
+                      type="text"
+                      value={customerName}
+                      onChange={(e) => setCustomerName(e.target.value)}
+                      required
+                      className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+                      placeholder="Full name"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-zinc-300">Email</label>
+                    <input
+                      type="email"
+                      value={customerEmail}
+                      onChange={(e) => setCustomerEmail(e.target.value)}
+                      required
+                      className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+                      placeholder="you@example.com"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="mb-1 block text-xs font-medium text-zinc-300">
+                      Mobile phone
+                    </label>
+                    <div className="relative">
+                      <Phone className="absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2 text-emerald-400" />
+                      <input
+                        type="text"
+                        value={customerPhone}
+                        onChange={(e) => setCustomerPhone(e.target.value)}
+                        required
+                        className="w-full rounded-lg border border-zinc-800 bg-zinc-950 py-2 pr-4 pl-10 font-mono text-xs text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+                        placeholder="Phone number"
+                      />
+                    </div>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="mb-1 block text-xs font-medium text-zinc-300">Tax PIN</label>
+                    <input
+                      type="text"
+                      value={buyerKraPin}
+                      onChange={(e) => setBuyerKraPin(e.target.value)}
+                      className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono text-xs text-white uppercase placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+                      placeholder="Optional KRA PIN"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Shipping Address */}
             <div className="space-y-4 pt-2">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <h3 className="flex items-center gap-2 text-xs font-semibold tracking-wider text-indigo-400 uppercase">
                   <MapPin className="h-4 w-4" /> 2. Delivery & Dispatch Address
                 </h3>
-                {customer?.addresses && customer.addresses.length > 0 && (
+                {hasSavedAddresses ? (
                   <span className="text-[11px] text-zinc-400">
-                    {customer.addresses.length} saved addresses
+                    {customer!.addresses.length} saved addresses
                   </span>
-                )}
+                ) : null}
               </div>
 
-              {/* Saved Address Quick-Pick Cards */}
-              {customer?.addresses && customer.addresses.length > 0 && (
+              {hasSavedAddresses ? (
                 <div className="mb-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  {customer.addresses.map((addr) => (
+                  {customer!.addresses.map((addr) => (
                     <button
                       key={addr.id}
                       type="button"
                       onClick={() => handleSelectSavedAddress(addr)}
                       className={`flex cursor-pointer items-start justify-between gap-2 rounded-xl border p-2.5 text-left text-xs transition-all ${
-                        selectedAddressId === addr.id
+                        !useNewAddress && selectedAddressId === addr.id
                           ? 'border-indigo-500 bg-indigo-600/10 text-white shadow-sm'
                           : 'border-zinc-800 bg-zinc-950/60 text-zinc-300 hover:border-zinc-700'
                       }`}
@@ -271,7 +401,7 @@ export function CheckoutModal({
                           <Building className="h-3 w-3 flex-shrink-0 text-indigo-400" />
                           <span className="truncate">{addr.label}</span>
                           {addr.isDefault && (
-                            <span className="py-0.2 rounded bg-emerald-500/10 px-1.5 text-[9px] text-emerald-400">
+                            <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] text-emerald-400">
                               Default
                             </span>
                           )}
@@ -281,57 +411,92 @@ export function CheckoutModal({
                           {addr.city}, {addr.countyOrState}
                         </p>
                       </div>
-                      {selectedAddressId === addr.id && (
+                      {!useNewAddress && selectedAddressId === addr.id ? (
                         <div className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full bg-indigo-600">
                           <Check className="h-2.5 w-2.5 stroke-[3] text-white" />
                         </div>
-                      )}
+                      ) : null}
                     </button>
                   ))}
                 </div>
-              )}
+              ) : null}
 
-              <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
-                <div className="sm:col-span-2">
-                  <label className="mb-1 block text-xs font-medium text-zinc-300">
-                    Street / Building / Office
-                  </label>
-                  <input
-                    type="text"
-                    value={street}
-                    onChange={(e) => setStreet(e.target.value)}
-                    required
-                    className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
-                    placeholder="e.g. Riverside Drive, Delta Corner Suite 4A"
-                  />
+              {isSignedIn ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (useNewAddress && hasSavedAddresses) {
+                      const fallback =
+                        customer!.addresses.find((a) => a.id === selectedAddressId) ||
+                        customer!.addresses.find((a) => a.isDefault) ||
+                        customer!.addresses[0]!;
+                      handleSelectSavedAddress(fallback);
+                      return;
+                    }
+                    setUseNewAddress(true);
+                    setSelectedAddressId(null);
+                    setStreet('');
+                    setCity('');
+                    setCountyOrState('');
+                    setCountry(defaultCountry);
+                  }}
+                  className={`w-full cursor-pointer rounded-xl border px-3 py-2 text-left text-xs transition-colors ${
+                    useNewAddress
+                      ? 'border-indigo-500 bg-indigo-600/10 text-white'
+                      : 'border-zinc-800 bg-zinc-950/60 text-zinc-300 hover:border-zinc-700'
+                  }`}
+                >
+                  {useNewAddress && hasSavedAddresses
+                    ? 'Cancel — use a saved address'
+                    : hasSavedAddresses
+                      ? 'Deliver to a new address'
+                      : 'Add your first delivery address'}
+                </button>
+              ) : null}
+
+              {showAddressFields ? (
+                <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+                  <div className="sm:col-span-2">
+                    <label className="mb-1 block text-xs font-medium text-zinc-300">
+                      Street / Building / Office
+                    </label>
+                    <input
+                      type="text"
+                      value={street}
+                      onChange={(e) => setStreet(e.target.value)}
+                      required={showAddressFields}
+                      className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+                      placeholder="Street address"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-zinc-300">
+                      City / Town
+                    </label>
+                    <input
+                      type="text"
+                      value={city}
+                      onChange={(e) => setCity(e.target.value)}
+                      required={showAddressFields}
+                      className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+                      placeholder="City"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-zinc-300">
+                      County / Region
+                    </label>
+                    <input
+                      type="text"
+                      value={countyOrState}
+                      onChange={(e) => setCountyOrState(e.target.value)}
+                      required={showAddressFields}
+                      className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+                      placeholder="Region"
+                    />
+                  </div>
                 </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-zinc-300">
-                    City / Town
-                  </label>
-                  <input
-                    type="text"
-                    value={city}
-                    onChange={(e) => setCity(e.target.value)}
-                    required
-                    className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
-                    placeholder="Nairobi"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-zinc-300">
-                    County / Region
-                  </label>
-                  <input
-                    type="text"
-                    value={countyOrState}
-                    onChange={(e) => setCountyOrState(e.target.value)}
-                    required
-                    className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
-                    placeholder="Nairobi County"
-                  />
-                </div>
-              </div>
+              ) : null}
             </div>
 
             {/* Payment Method Selector — only branch-enabled providers */}
@@ -339,13 +504,39 @@ export function CheckoutModal({
               <h3 className="flex items-center gap-2 text-xs font-semibold tracking-wider text-indigo-400 uppercase">
                 <CreditCard className="h-4 w-4" /> 3. Select Payment Gateway
               </h3>
-              {enabledProviders.length === 0 ? (
+              {enabledProviders.length === 0 && !canPayOnAccount ? (
                 <p className="rounded-lg border border-amber-800/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
-                  No payment methods are enabled for this branch. Configure credentials under Admin →
-                  Settings → Payments.
+                  No payment methods are enabled for this branch. Configure credentials under Admin
+                  → Settings → Payments, or use a credit customer to pay on account.
                 </p>
               ) : (
                 <div className="space-y-2.5">
+                  {canPayOnAccount ? (
+                    <label
+                      className={`flex cursor-pointer items-start gap-3.5 rounded-xl border p-3.5 transition-all ${
+                        paymentMethod === 'on_account'
+                          ? 'border-indigo-500/50 bg-indigo-950/30'
+                          : 'border-zinc-800 bg-zinc-950 hover:border-zinc-700'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="payment_provider"
+                        checked={paymentMethod === 'on_account'}
+                        onChange={() => setPaymentMethod('on_account')}
+                        className="mt-1 text-indigo-500 focus:ring-indigo-500"
+                      />
+                      <div>
+                        <div className="text-xs font-semibold text-white">On account</div>
+                        <p className="mt-0.5 text-[11px] text-zinc-400">
+                          {accountCustomer?.name} · credit available {money(creditAvailable)}
+                          {accountCustomer?.transmitInvoicesToKra
+                            ? ' · invoice will be marked for KRA'
+                            : ' · invoice will not be sent to KRA'}
+                        </p>
+                      </div>
+                    </label>
+                  ) : null}
                   {enabledProviders.map((provider) => {
                     const selected = paymentMethod === provider.code;
                     return (
@@ -397,9 +588,12 @@ export function CheckoutModal({
                 {items.map(({ product, quantity }) => (
                   <div key={product.id} className="flex items-center justify-between gap-3 text-xs">
                     <div className="flex min-w-0 items-center gap-2.5">
-                      <img
+                      <AppImage
                         src={product.imageUrl}
                         alt={product.name}
+                        width={36}
+                        height={36}
+                        sizes="36px"
                         className="h-9 w-9 shrink-0 rounded-lg bg-zinc-900 object-cover"
                         referrerPolicy="no-referrer"
                       />
@@ -408,12 +602,12 @@ export function CheckoutModal({
                           {product.name}
                         </div>
                         <div className="text-[10px] text-zinc-500">
-                          Qty: {quantity} × KES {(product.price ?? 0).toLocaleString()}
+                          Qty: {quantity} × {money(product.price ?? 0)}
                         </div>
                       </div>
                     </div>
                     <span className="shrink-0 font-mono text-zinc-200">
-                      KES {((product.price ?? 0) * quantity).toLocaleString()}
+                      {money((product.price ?? 0) * quantity)}
                     </span>
                   </div>
                 ))}
@@ -422,25 +616,23 @@ export function CheckoutModal({
               <div className="space-y-2 border-t border-zinc-800 pt-3 text-xs text-zinc-400">
                 <div className="flex justify-between">
                   <span>Subtotal</span>
-                  <span className="font-mono text-zinc-200">KES {subtotal.toLocaleString()}</span>
+                  <span className="font-mono text-zinc-200">{money(totals.subtotal)}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span>16% VAT (eTIMS)</span>
-                  <span className="font-mono text-zinc-200">KES {tax.toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Express Shipping</span>
-                  <span className="font-mono text-zinc-200">
-                    {shippingFee === 0 ? (
-                      <span className="text-emerald-400">FREE</span>
-                    ) : (
-                      `KES ${shippingFee}`
-                    )}
-                  </span>
-                </div>
+                {taxRows.map((row) => (
+                  <div key={row.key} className="flex justify-between gap-3">
+                    <span className="min-w-0 truncate">{row.label}</span>
+                    <span className="shrink-0 font-mono text-zinc-200">{money(row.amount)}</span>
+                  </div>
+                ))}
+                {totals.shippingFee > 0 ? (
+                  <div className="flex justify-between">
+                    <span>Shipping</span>
+                    <span className="font-mono text-zinc-200">{money(totals.shippingFee)}</span>
+                  </div>
+                ) : null}
                 <div className="flex justify-between border-t border-zinc-800 pt-2 text-base font-bold text-white">
-                  <span>Total Amount</span>
-                  <span className="font-mono text-white">KES {total.toLocaleString()}</span>
+                  <span>Total</span>
+                  <span className="font-mono text-white">{money(totals.totalAmount)}</span>
                 </div>
               </div>
             </div>
@@ -454,13 +646,12 @@ export function CheckoutModal({
                 {isLoading ? (
                   <>
                     <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                    Sending{' '}
-                    {paymentMethod === 'mpesa_daraja' ? 'M-Pesa STK Prompt' : 'Pesapal Link'}...
+                    Sending {payLabel || 'payment'}...
                   </>
                 ) : (
                   <>
-                    Pay KES {total.toLocaleString()} with{' '}
-                    {paymentMethod === 'mpesa_daraja' ? 'M-Pesa' : 'Card'}
+                    Pay {money(totals.totalAmount)}
+                    {payLabel ? ` with ${payLabel}` : ''}
                     <ArrowRight className="h-4 w-4" />
                   </>
                 )}
@@ -468,7 +659,7 @@ export function CheckoutModal({
 
               <div className="flex items-center justify-center gap-1.5 text-center text-[11px] text-zinc-400">
                 <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
-                <span>100% Secure Checkout • eTIMS Tax Compliant</span>
+                <span>Secure checkout</span>
               </div>
             </div>
           </div>

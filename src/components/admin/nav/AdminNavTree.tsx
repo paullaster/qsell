@@ -23,6 +23,10 @@ import {
   Settings,
   GitBranch,
   ChevronDown,
+  ChevronRight,
+  Receipt,
+  BookOpen,
+  Scale,
   type LucideIcon,
 } from 'lucide-react';
 import type { AdminNavIconName, AdminNavItem } from '@/config/admin-nav';
@@ -49,6 +53,9 @@ const ICONS: Record<AdminNavIconName, LucideIcon> = {
   Shapes,
   Settings,
   GitBranch,
+  Receipt,
+  BookOpen,
+  Scale,
 };
 
 function NavIcon({ name }: { name?: AdminNavIconName }) {
@@ -58,20 +65,14 @@ function NavIcon({ name }: { name?: AdminNavIconName }) {
   return <Icon className="h-4 w-4 shrink-0" />;
 }
 
-/** True when `candidateId` is this node or nested under it. */
-function containsId(item: AdminNavItem, candidateId: string): boolean {
-  if (item.id === candidateId) return true;
-  return (item.subLinks ?? []).some((child) => containsId(child, candidateId));
-}
-
 interface AdminNavTreeProps {
   items: AdminNavItem[];
   depth?: number;
   trailIds: ReadonlySet<string>;
   activeId: string | null;
-  /** Single node whose branch is open (ancestors auto-reveal to reach it). */
-  expandedId: string | null;
-  onExpand: (id: string) => void;
+  /** Branch nodes whose children are visible. */
+  openIds: ReadonlySet<string>;
+  onToggle: (item: AdminNavItem, open: boolean) => void;
   onNavigate: () => void;
 }
 
@@ -80,8 +81,8 @@ export function AdminNavTree({
   depth = 1,
   trailIds,
   activeId,
-  expandedId,
-  onExpand,
+  openIds,
+  onToggle,
   onNavigate,
 }: AdminNavTreeProps) {
   return (
@@ -96,8 +97,7 @@ export function AdminNavTree({
         const nested = hasSubLinks(item);
         const isActive = activeId === item.id;
         const inTrail = trailIds.has(item.id);
-        const reveal =
-          nested && expandedId !== null && containsId(item, expandedId);
+        const isOpen = nested && openIds.has(item.id);
 
         const stateClass = item.disabled
           ? 'cursor-not-allowed text-zinc-600 opacity-50'
@@ -113,14 +113,20 @@ export function AdminNavTree({
               href={item.disabled ? '#' : item.href}
               aria-disabled={item.disabled || undefined}
               aria-current={isActive ? 'page' : undefined}
-              aria-expanded={nested ? reveal : undefined}
+              aria-expanded={nested ? isOpen : undefined}
               onClick={(e) => {
                 if (item.disabled) {
                   e.preventDefault();
                   return;
                 }
                 if (nested) {
-                  onExpand(item.id);
+                  if (isOpen) {
+                    e.preventDefault();
+                    onToggle(item, false);
+                    return;
+                  }
+                  onToggle(item, true);
+                  if (inTrail) e.preventDefault();
                 }
                 onNavigate();
               }}
@@ -129,22 +135,22 @@ export function AdminNavTree({
               <NavIcon name={item.icon} />
               <span className="min-w-0 flex-1 truncate font-medium">{item.title}</span>
               {nested ? (
-                <ChevronDown
-                  className={`h-3.5 w-3.5 shrink-0 opacity-70 transition-transform ${
-                    reveal ? 'rotate-0' : '-rotate-90'
-                  }`}
-                />
+                isOpen ? (
+                  <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
+                ) : (
+                  <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
+                )
               ) : null}
             </Link>
 
-            {reveal && item.subLinks ? (
+            {isOpen && item.subLinks ? (
               <AdminNavTree
                 items={item.subLinks}
                 depth={depth + 1}
                 trailIds={trailIds}
                 activeId={activeId}
-                expandedId={expandedId}
-                onExpand={onExpand}
+                openIds={openIds}
+                onToggle={onToggle}
                 onNavigate={onNavigate}
               />
             ) : null}

@@ -6,6 +6,7 @@ import type {
   PaymentPort,
 } from '../port';
 import type { PesapalCredentials } from '../types';
+import { extractPaymentReference } from '../payment-reference';
 
 export class PesapalV3Adapter implements PaymentPort {
   readonly code = 'pesapal_v3' as const;
@@ -109,6 +110,7 @@ export class PesapalV3Adapter implements PaymentPort {
         status: 'successful',
         externalReference: trackingId,
         providerReference: String(body.OrderMerchantReference || body.merchant_reference || ''),
+        receiptNumber: extractPaymentReference('pesapal_v3', body) ?? undefined,
         raw: body,
       };
     }

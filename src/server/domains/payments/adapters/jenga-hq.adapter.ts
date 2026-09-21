@@ -7,6 +7,7 @@ import type {
   PaymentPort,
 } from '../port';
 import type { JengaHqCredentials } from '../types';
+import { extractPaymentReference } from '../payment-reference';
 
 /**
  * Jenga HQ receive-money / checkout adapter.
@@ -134,7 +135,7 @@ export class JengaHqAdapter implements PaymentPort {
         ok: true,
         status: 'successful',
         providerReference: String(body.transactionId || body.transactionReference || ''),
-        receiptNumber: String(body.receiptNumber || body.bankReference || ''),
+        receiptNumber: extractPaymentReference('jenga_hq', body) ?? undefined,
         raw: body,
       };
     }

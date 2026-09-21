@@ -8,3 +8,5 @@ coverage/
 .env*
 !.env.example
 .cursor
+
+session-ses_f3fe.md

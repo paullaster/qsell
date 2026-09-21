@@ -7,7 +7,13 @@ import {
   type PaymentProviderConfigRow,
   type PaymentAttemptRow,
 } from '@/server/db/drizzle/schema';
-import type { PaymentProviderCode, PaymentAttemptStatus, EncryptedCredentialsBlob } from './types';
+import type {
+  PaymentProviderCode,
+  PaymentAttemptStatus,
+  EncryptedCredentialsBlob,
+  CallbackProcessingStatus,
+  CallbackOutcome,
+} from './types';
 
 export class PaymentConfigRepository {
   constructor(private readonly db: DrizzleDb) {}
@@ -178,7 +184,8 @@ export class PaymentAttemptRepository {
     httpMethod: string;
     headers: Record<string, string>;
     rawBody: unknown;
-    processingStatus: string;
+    processingStatus: CallbackProcessingStatus;
+    outcome?: CallbackOutcome;
     processingError?: string | null;
   }) {
     const [row] = await this.db
@@ -191,9 +198,38 @@ export class PaymentAttemptRepository {
         headers: input.headers,
         rawBody: input.rawBody,
         processingStatus: input.processingStatus,
+        outcome: input.outcome ?? 'unclassified',
         processingError: input.processingError ?? null,
       })
       .returning();
     return row!;
+  }
+
+  async updateCallbackEvent(
+    id: string,
+    patch: {
+      processingStatus: CallbackProcessingStatus;
+      outcome: CallbackOutcome;
+      processingError?: string | null;
+    },
+  ) {
+    const [row] = await this.db
+      .update(paymentCallbackEvents)
+      .set({
+        processingStatus: patch.processingStatus,
+        outcome: patch.outcome,
+        processingError: patch.processingError ?? null,
+      })
+      .where(eq(paymentCallbackEvents.id, id))
+      .returning();
+    return row ?? null;
+  }
+
+  async listCallbackEvents(limit = 100) {
+    return this.db
+      .select()
+      .from(paymentCallbackEvents)
+      .orderBy(desc(paymentCallbackEvents.createdAt))
+      .limit(limit);
   }
 }

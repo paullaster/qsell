@@ -49,17 +49,17 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
   const [formError, setFormError] = useState<string | null>(null);
 
   // Live Simulator State
-  const [simAmount, setSimAmount] = useState<number>(25000);
+  const [simAmount, setSimAmount] = useState<number>(0);
   const [simTaxId, setSimTaxId] = useState<string>('');
 
   // Form State
   const [formData, setFormData] = useState({
     name: '',
     code: '',
-    rate: 16.0,
+    rate: 0,
     type: 'vat' as TaxType,
-    countryCode: 'KE',
-    countryName: 'Kenya',
+    countryCode: '',
+    countryName: '',
     description: '',
     isInclusive: true,
     isDefault: false,
@@ -100,13 +100,13 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
       setFormData({
         name: '',
         code: '',
-        rate: 16.0,
+        rate: 0,
         type: 'vat',
-        countryCode: 'KE',
-        countryName: 'Kenya',
+        countryCode: '',
+        countryName: '',
         description: '',
         isInclusive: true,
-        isDefault: false,
+        isDefault: taxCategories.length === 0,
         isActive: true,
       });
     }
@@ -231,7 +231,9 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
 
   const defaultCategory = taxCategories.find((t) => t.isDefault);
   const activeRulesCount = taxCategories.filter((t) => t.isActive).length;
-  const crossBorderCount = taxCategories.filter((t) => t.countryCode !== 'KE').length;
+  const crossBorderCount = new Set(
+    taxCategories.map((t) => t.countryCode).filter((code) => Boolean(code?.trim())),
+  ).size;
 
   return (
     <div className="space-y-6">
@@ -247,8 +249,8 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
                 Tax & Compliance Management
               </h1>
               <p className="mt-0.5 text-xs text-zinc-400">
-                Configure dynamic VAT schedules, digital services levies, and international
-                cross-border tax jurisdictions.
+                Define tax rules for catalog pricing and checkout. Add only the schedules your
+                business uses.
               </p>
             </div>
           </div>
@@ -275,10 +277,10 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
           </div>
           <div className="mt-2 flex items-baseline gap-2">
             <span className="text-2xl font-bold text-white">
-              {defaultCategory ? `${defaultCategory.rate}%` : '16%'}
+              {defaultCategory ? `${defaultCategory.rate}%` : '—'}
             </span>
             <span className="text-xs font-medium text-emerald-400">
-              {defaultCategory?.name || 'KRA Standard VAT'}
+              {defaultCategory?.name || 'No default set'}
             </span>
           </div>
           <p className="mt-1 text-[11px] text-zinc-500">
@@ -300,46 +302,50 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
 
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/80 p-4">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-zinc-400">Price Display Model</span>
+            <span className="text-xs font-medium text-zinc-400">Price display model</span>
             <Building2 className="h-4 w-4 text-amber-400" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-white">Tax-Inclusive</span>
+            <span className="text-2xl font-bold text-white">
+              {defaultCategory
+                ? defaultCategory.isInclusive
+                  ? 'Inclusive'
+                  : 'Exclusive'
+                : '—'}
+            </span>
           </div>
-          <p className="mt-1 text-[11px] text-zinc-500">
-            Standard retail pricing includes fiscal VAT
-          </p>
+          <p className="mt-1 text-[11px] text-zinc-500">From the default tax rule, when set</p>
         </div>
 
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/80 p-4">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-zinc-400">Cross-Border Jurisdictions</span>
+            <span className="text-xs font-medium text-zinc-400">Jurisdictions</span>
             <Globe className="h-4 w-4 text-cyan-400" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
             <span className="text-2xl font-bold text-white">{crossBorderCount}</span>
-            <span className="text-xs font-medium text-cyan-400">International Markets</span>
+            <span className="text-xs font-medium text-cyan-400">country codes</span>
           </div>
-          <p className="mt-1 text-[11px] text-zinc-500">Export, US Sales Tax & EU OSS VAT ready</p>
+          <p className="mt-1 text-[11px] text-zinc-500">Based on rules you configure</p>
         </div>
       </div>
 
-      {/* Live Interactive Tax Calculator / Simulator */}
+      {taxCategories.length > 0 ? (
       <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-5 shadow-lg">
         <div className="flex flex-col justify-between gap-3 border-b border-zinc-800 pb-4 md:flex-row md:items-center">
           <div className="flex items-center gap-2">
             <Calculator className="h-4 w-4 text-emerald-400" />
-            <h2 className="text-sm font-bold text-white">Live Retail Tax Computation Simulator</h2>
+            <h2 className="text-sm font-bold text-white">Tax calculator</h2>
           </div>
           <span className="text-xs text-zinc-400">
-            Verify fiscal math before setting product selling prices
+            Preview net / tax / gross for a selected rule
           </span>
         </div>
 
         <div className="mt-4 grid grid-cols-1 items-end gap-4 md:grid-cols-4">
           <div>
             <label className="mb-1.5 block text-xs font-medium text-zinc-400">
-              Sample Retail Price (KES)
+              Amount
             </label>
             <div className="relative">
               <span className="absolute top-2.5 left-3 text-xs font-semibold text-zinc-500">
@@ -347,8 +353,9 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
               </span>
               <input
                 type="number"
-                value={simAmount}
+                value={simAmount || ''}
                 onChange={(e) => setSimAmount(Number(e.target.value) || 0)}
+                placeholder="0"
                 className="w-full rounded-lg border border-zinc-700 bg-zinc-800 py-2 pr-3 pl-12 text-sm text-white focus:border-indigo-500 focus:outline-none"
               />
             </div>
@@ -402,6 +409,7 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
           </div>
         </div>
       </div>
+      ) : null}
 
       {/* Filter & Search Bar */}
       <div className="flex flex-col items-stretch justify-between gap-3 md:flex-row md:items-center">
@@ -409,7 +417,7 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
           <Search className="absolute top-3 left-3 h-4 w-4 text-zinc-500" />
           <input
             type="text"
-            placeholder="Search by tax rule name, statutory code (e.g. VAT_16), or jurisdiction..."
+            placeholder="Search by name, code, or country…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full rounded-lg border border-zinc-800 bg-zinc-900 py-2 pr-4 pl-9 text-xs text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
@@ -461,7 +469,9 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
               {filteredTaxes.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-8 text-center text-zinc-500">
-                    No tax categories found matching your criteria.
+                    {taxCategories.length === 0
+                      ? 'No tax rules yet. Use Add Tax Rule to create one.'
+                      : 'No tax rules match your filters.'}
                   </td>
                 </tr>
               ) : (
@@ -603,7 +613,7 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g. Standard VAT (16%), Zero Rated Exports, Digital Services Tax"
+                  placeholder="Tax rule name"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-xs text-white focus:border-indigo-500 focus:outline-none"
@@ -618,7 +628,7 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
                   </label>
                   <input
                     type="text"
-                    placeholder="e.g. VAT_16, ZERO_0, DST_1_5"
+                    placeholder="Code"
                     value={formData.code}
                     onChange={(e) => setFormData({ ...formData, code: e.target.value })}
                     className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-white focus:border-indigo-500 focus:outline-none"
@@ -680,7 +690,7 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
                     />
                     <input
                       type="text"
-                      placeholder="Kenya"
+                      placeholder="Country"
                       value={formData.countryName}
                       onChange={(e) => setFormData({ ...formData, countryName: e.target.value })}
                       className="col-span-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-xs text-white focus:border-indigo-500 focus:outline-none"
@@ -711,7 +721,7 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
                     <div>
                       <div className="text-xs font-semibold">Tax-Inclusive</div>
                       <div className="text-[10px] text-zinc-400">
-                        Product price includes tax (e.g. Kenya standard)
+                        Product price includes tax
                       </div>
                     </div>
                   </label>
@@ -733,7 +743,7 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
                     <div>
                       <div className="text-xs font-semibold">Tax-Exclusive</div>
                       <div className="text-[10px] text-zinc-400">
-                        Tax added on top of price at checkout (e.g. US/EU export)
+                        Tax added on top of price at checkout
                       </div>
                     </div>
                   </label>
@@ -745,7 +755,7 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
                   Statutory / Legal Note & Description
                 </label>
                 <textarea
-                  placeholder="e.g. Complies with Kenya Revenue Authority (KRA) eTIMS 16% Standard VAT Schedule 1"
+                  placeholder="Optional notes"
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   rows={2}

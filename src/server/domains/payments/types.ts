@@ -17,6 +17,23 @@ export type PaymentAttemptStatus =
   | 'cancelled'
   | 'expired';
 
+/**
+ * Exact status string copied from the callback payload.
+ * mpesa_daraja / kcb_buni: Body.stkCallback.ResultCode ("0", "1", "1032", …).
+ * pesapal_v3 / jenga_hq: the provider's status text ("COMPLETED", "success", …).
+ * These fallbacks are ours, not a provider status, and only used when the
+ * payload has no recognizable status field:
+ * received | unmatched_token | error
+ */
+export type CallbackProcessingStatus = 'received' | 'unmatched_token' | 'error' | (string & {});
+
+/**
+ * Payment outcome derived from processing_status by the provider rulebook
+ * in callback-status.ts. Never inferred from the HTTP status of the callback.
+ * M-Pesa: ResultCode 0 = successful; any other ResultCode = failed.
+ */
+export type CallbackOutcome = 'successful' | 'failed' | 'pending' | 'unclassified';
+
 /** AES-GCM sealed credentials stored in payment_provider_configs.credentials_encrypted */
 export interface EncryptedCredentialsBlob {
   v: 1;

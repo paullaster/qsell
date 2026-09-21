@@ -25,7 +25,10 @@ export type AdminNavIconName =
   | 'Tags'
   | 'Shapes'
   | 'Settings'
-  | 'GitBranch';
+  | 'GitBranch'
+  | 'Receipt'
+  | 'BookOpen'
+  | 'Scale';
 
 export interface AdminNavItem {
   /** Stable unique id across the whole tree */

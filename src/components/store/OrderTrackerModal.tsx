@@ -18,6 +18,8 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { type Order } from '@/types/index';
+import { AppImage } from '@/components/ui/AppImage';
+import { shownPaymentReference } from '@/lib/paymentReference';
 
 interface OrderTrackerModalProps {
   isOpen: boolean;
@@ -51,6 +53,7 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
           o.orderNumber.toUpperCase() === term ||
           o.id.toUpperCase() === term ||
           (o.mpesaReceiptNumber && o.mpesaReceiptNumber.toUpperCase() === term) ||
+          (shownPaymentReference(o)?.toUpperCase() === term) ||
           o.customerPhone.includes(searchTerm.trim()) ||
           o.customerEmail.toLowerCase() === searchTerm.trim().toLowerCase(),
       );
@@ -88,7 +91,7 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
       {
         title: isPaid ? 'Payment Confirmed & Verified' : 'Awaiting Payment',
         desc: isPaid
-          ? `Paid via ${order.paymentMethod === 'mpesa_daraja' ? 'M-Pesa' : 'Card / Bank'} (${order.mpesaReceiptNumber || 'Confirmed'})`
+          ? `Paid via ${order.paymentMethod === 'mpesa_daraja' ? 'M-Pesa' : 'Card / Bank'} (${shownPaymentReference(order) || 'Confirmed'})`
           : 'Pending customer payment completion',
         time: isPaid
           ? new Date(order.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -310,9 +313,7 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
                     <br />
                     Ref:{' '}
                     <span className="font-mono text-emerald-400">
-                      {matchedOrder.mpesaReceiptNumber ||
-                        matchedOrder.pesapalTrackingId ||
-                        'Confirmed'}
+                      {shownPaymentReference(matchedOrder) || 'Confirmed'}
                     </span>
                     <br />
                     Phone:{' '}
@@ -333,9 +334,12 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
                       className="flex items-center justify-between py-2.5 text-xs first:pt-0 last:pb-0"
                     >
                       <div className="flex items-center gap-3">
-                        <img
+                        <AppImage
                           src={item.imageUrl}
                           alt={item.productName}
+                          width={36}
+                          height={36}
+                          sizes="36px"
                           className="h-9 w-9 shrink-0 rounded-lg bg-zinc-900 object-cover"
                           referrerPolicy="no-referrer"
                         />

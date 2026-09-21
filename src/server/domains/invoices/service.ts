@@ -1,9 +1,10 @@
 import { desc, eq } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { communicationOutbox, invoiceDocuments } from '@/server/db/drizzle/schema';
+import { communicationOutbox, customers, invoiceDocuments } from '@/server/db/drizzle/schema';
 import type { CompanySettingsRepository } from '@/server/domains/company/repository';
 import type { EmailPort, InvoicePayload, InvoicePdfPort } from '@/server/ports/communications';
 import type { Order } from '@/types/index';
+import { shownPaymentReference } from '@/lib/paymentReference';
 import { getContainer } from '@/server/di/container';
 
 export type InvoiceDocumentType = 'tax_invoice' | 'proforma';
@@ -76,8 +77,9 @@ function buildInvoiceEmailHtml(args: {
   company: InvoicePayload['company'];
   order: Order;
   invoiceNumber: string;
+  buyerTaxPin?: string | null;
 }): string {
-  const { documentType, labels, company, order, invoiceNumber } = args;
+  const { documentType, labels, company, order, invoiceNumber, buyerTaxPin } = args;
   const ship = order.shippingAddress;
   const itemRows = order.items
     .map(
@@ -85,7 +87,6 @@ function buildInvoiceEmailHtml(args: {
       <tr>
         <td style="padding:8px;border-bottom:1px solid #E5E7EB;">
           <div style="font-weight:600;">${escapeHtml(item.productName)}</div>
-          <div style="color:#6B7280;font-size:12px;font-family:monospace;">${escapeHtml(item.sku)}</div>
         </td>
         <td style="padding:8px;border-bottom:1px solid #E5E7EB;text-align:center;">${item.quantity}</td>
         <td style="padding:8px;border-bottom:1px solid #E5E7EB;text-align:right;">${formatMoney(item.unitPrice, order.currency)}</td>
@@ -104,6 +105,7 @@ function buildInvoiceEmailHtml(args: {
     .map(escapeHtml)
     .join('<br/>');
 
+  const paymentReference = shownPaymentReference(order);
   const paymentBlock =
     documentType === 'proforma'
       ? `
@@ -111,8 +113,8 @@ function buildInvoiceEmailHtml(args: {
         <ul style="margin:0;padding-left:18px;color:#374151;">
           <li>Preferred method: ${escapeHtml(order.paymentMethod.replace(/_/g, ' '))}</li>
           ${
-            order.transactionReference || order.mpesaReceiptNumber
-              ? `<li>Reference: ${escapeHtml(order.transactionReference || order.mpesaReceiptNumber || '')}</li>`
+            paymentReference
+              ? `<li>Reference: ${escapeHtml(paymentReference)}</li>`
               : ''
           }
           ${company.bankName ? `<li>Bank: ${escapeHtml(company.bankName)}</li>` : ''}
@@ -121,9 +123,7 @@ function buildInvoiceEmailHtml(args: {
           ${company.bankBranch ? `<li>Branch: ${escapeHtml(company.bankBranch)}</li>` : ''}
         </ul>`
       : `<p style="margin:16px 0 0;color:#374151;">Payment status: <strong>${escapeHtml(order.paymentStatus.replace(/_/g, ' '))}</strong>${
-          order.transactionReference || order.mpesaReceiptNumber
-            ? ` · Ref: ${escapeHtml(order.transactionReference || order.mpesaReceiptNumber || '')}`
-            : ''
+          paymentReference ? ` · Ref: ${escapeHtml(paymentReference)}` : ''
         }</p>`;
 
   return `
@@ -177,6 +177,7 @@ function buildInvoiceEmailHtml(args: {
       <p style="margin:16px 0 4px;color:#6B7280;font-size:12px;text-transform:uppercase;letter-spacing:0.04em;">Ship to</p>
       <p style="margin:0;color:#374151;font-size:13px;">
         ${escapeHtml(order.customerName)}<br/>
+        ${buyerTaxPin ? `Tax PIN: ${escapeHtml(buyerTaxPin)}<br/>` : ''}
         ${escapeHtml(ship.street)}<br/>
         ${escapeHtml([ship.city, ship.countyOrState, ship.postalCode].filter(Boolean).join(', '))}<br/>
         ${escapeHtml(ship.country)}<br/>
@@ -206,6 +207,7 @@ export class InvoiceService {
     invoiceNumber: string,
     company: InvoicePayload['company'],
     documentType: InvoiceDocumentType,
+    buyerTaxPin: string | null,
   ): InvoicePayload {
     return {
       documentType,
@@ -219,6 +221,7 @@ export class InvoiceService {
         name: order.customerName,
         email: order.customerEmail,
         phone: order.customerPhone,
+        kraPin: buyerTaxPin,
         shippingAddress: order.shippingAddress,
       },
       items: order.items.map((item) => ({
@@ -233,10 +236,20 @@ export class InvoiceService {
       shippingFee: order.shippingFee,
       totalAmount: order.totalAmount,
       paymentMethod: order.paymentMethod,
-      paymentReference: order.transactionReference || order.mpesaReceiptNumber || null,
+      paymentReference: shownPaymentReference(order),
       paymentStatus: order.paymentStatus,
       notes: order.internalNotes || null,
     };
+  }
+
+  private async buyerTaxPin(order: Order): Promise<string | null> {
+    if (!order.tradeCustomerId) return null;
+    const [row] = await this.deps.db
+      .select({ pin: customers.buyerKraPin })
+      .from(customers)
+      .where(eq(customers.id, order.tradeCustomerId))
+      .limit(1);
+    return row?.pin?.trim() || null;
   }
 
   private async resolveOrder(orderId: string): Promise<Order> {
@@ -263,9 +276,10 @@ export class InvoiceService {
     const order = await this.resolveOrder(orderId);
     this.assertProformaAllowed(order, documentType);
     const company = await this.deps.companySettings.getProfile();
+    const buyerTaxPin = await this.buyerTaxPin(order);
     const prefix = documentType === 'proforma' ? 'PRO' : company.invoicePrefix;
     const invoiceNumber = this.nextInvoiceNumber(prefix);
-    const payload = this.buildPayload(order, invoiceNumber, company, documentType);
+    const payload = this.buildPayload(order, invoiceNumber, company, documentType, buyerTaxPin);
     const pdf = await this.deps.invoicePdf.generate(payload);
     const filename = `${invoiceNumber}.pdf`;
 
@@ -289,6 +303,10 @@ export class InvoiceService {
           documentType,
           paymentMethod: order.paymentMethod,
           paymentReference: payload.paymentReference,
+          transmitInvoicesToKra: order.transmitInvoicesToKra === true,
+          kraTransmissionStatus: order.transmitInvoicesToKra ? 'pending' : 'skipped',
+          customerAccountType: order.customerAccountType ?? null,
+          tradeCustomerId: order.tradeCustomerId ?? null,
         },
       });
     } catch (error: unknown) {
@@ -316,6 +334,7 @@ export class InvoiceService {
     const labels = documentLabels(documentType);
     const pdfBuffer = Buffer.from(generated.pdfBase64, 'base64');
 
+    const buyerTaxPin = await this.buyerTaxPin(order);
     const subject = `${company.tradingName} ${labels.emailSubjectKind} ${generated.invoiceNumber}`;
     const html = buildInvoiceEmailHtml({
       documentType,
@@ -323,6 +342,7 @@ export class InvoiceService {
       company,
       order,
       invoiceNumber: generated.invoiceNumber,
+      buyerTaxPin,
     });
 
     const [outbox] = await this.deps.db

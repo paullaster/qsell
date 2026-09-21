@@ -4,6 +4,7 @@ import React from 'react';
 import { ShoppingCart, Eye, Star, Zap, ShieldCheck, Check } from 'lucide-react';
 import { type Product } from '@/types/index';
 import { productDescriptionPlainText } from '@/lib/productDescription';
+import { AppImage } from '@/components/ui/AppImage';
 
 interface ProductCardProps {
   key?: React.Key;
@@ -11,9 +12,10 @@ interface ProductCardProps {
   onAddToCart: (product: Product) => void;
   onQuickView: (product: Product) => void;
   onQuickBuy?: (product: Product) => void;
+  preloadImage?: boolean;
 }
 
-export function ProductCard({ product, onAddToCart, onQuickView, onQuickBuy }: ProductCardProps) {
+export function ProductCard({ product, onAddToCart, onQuickView, onQuickBuy, preloadImage }: ProductCardProps) {
   const availableStock = product.stockQuantity - product.reservedQuantity;
   const isOutOfStock = availableStock <= 0;
   const isLowStock = availableStock > 0 && availableStock <= product.lowStockThreshold;
@@ -25,12 +27,14 @@ export function ProductCard({ product, onAddToCart, onQuickView, onQuickBuy }: P
         className="relative aspect-4/3 w-full cursor-pointer overflow-hidden bg-zinc-950"
         onClick={() => onQuickView(product)}
       >
-        <img
+        <AppImage
           src={product.imageUrl}
           alt={product.name}
-          className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+          fill
+          sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+          className="object-cover transition-transform duration-300 group-hover:scale-105"
           referrerPolicy="no-referrer"
-          loading="lazy"
+          preload={preloadImage}
         />
 
         {/* Category Pill */}

@@ -23,6 +23,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { type Order, type OrderStatus } from '@/types/index';
+import { AppImage } from '@/components/ui/AppImage';
 import { updateOrderStatusAction, cancelOrderAction } from '@/server/actions';
 import {
   generateInvoicePdfAction,
@@ -30,6 +31,7 @@ import {
 } from '@/server/domains/invoices/actions';
 import { downloadPdfBase64 } from '@/lib/downloadPdf';
 import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
+import { shownPaymentReference } from '@/lib/paymentReference';
 
 interface AdminOrdersProps {
   ordersPromise: Promise<Order[]>;
@@ -315,14 +317,17 @@ export function AdminOrders({ ordersPromise, companyPromise, onRefresh }: AdminO
                         <span className="rounded bg-zinc-800 px-2 py-0.5 font-mono text-[10px] font-bold text-zinc-300 uppercase">
                           {o.paymentMethod}
                         </span>
-                        {o.transactionReference && (
-                          <span
-                            className="mt-0.5 max-w-[100px] truncate font-mono text-[9px] text-zinc-500"
-                            title={o.transactionReference}
-                          >
-                            Ref: {o.transactionReference}
-                          </span>
-                        )}
+                        {(() => {
+                          const reference = shownPaymentReference(o);
+                          return reference ? (
+                            <span
+                              className="mt-0.5 max-w-[100px] truncate font-mono text-[9px] text-zinc-500"
+                              title={reference}
+                            >
+                              Ref: {reference}
+                            </span>
+                          ) : null;
+                        })()}
                       </div>
                     </td>
                     <td className="px-4 py-3.5 text-center">{getStatusBadge(o.status)}</td>
@@ -485,7 +490,7 @@ export function AdminOrders({ ordersPromise, companyPromise, onRefresh }: AdminO
                     <div className="flex items-center justify-between">
                       <span className="text-zinc-400">Reference:</span>
                       <span className="font-mono text-zinc-200">
-                        {selectedOrder.transactionReference || 'N/A'}
+                        {shownPaymentReference(selectedOrder) || 'N/A'}
                       </span>
                     </div>
                     <div className="flex items-center justify-between">
@@ -637,10 +642,12 @@ export function AdminOrders({ ordersPromise, companyPromise, onRefresh }: AdminO
             <div className="flex items-start justify-between gap-4 border-b border-zinc-300 pb-4">
               <div className="flex min-w-0 items-start gap-3">
                 {company.logoUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element -- uploaded runtime assets
-                  <img
+                  <AppImage
                     src={company.logoUrl}
                     alt={`${company.tradingName} logo`}
+                    width={48}
+                    height={48}
+                    sizes="48px"
                     className="h-12 w-12 rounded-lg border border-zinc-200 object-contain"
                   />
                 ) : null}
@@ -707,9 +714,7 @@ export function AdminOrders({ ordersPromise, companyPromise, onRefresh }: AdminO
                 <p>
                   Reference:{' '}
                   <strong className="font-mono">
-                    {selectedOrder.transactionReference ||
-                      selectedOrder.mpesaReceiptNumber ||
-                      '—'}
+                    {shownPaymentReference(selectedOrder) || '—'}
                   </strong>
                 </p>
                 <p>
@@ -737,7 +742,6 @@ export function AdminOrders({ ordersPromise, companyPromise, onRefresh }: AdminO
                   <tr key={i}>
                     <td className="p-2">
                       <div className="font-semibold">{item.productName}</div>
-                      <div className="font-mono text-[10px] text-zinc-500">{item.sku}</div>
                     </td>
                     <td className="p-2 text-center font-mono font-bold">{item.quantity}</td>
                     <td className="p-2 text-right font-mono">

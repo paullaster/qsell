@@ -28,6 +28,7 @@ export {
   updateTaxCategoryAction,
   deleteTaxCategoryAction,
   setDefaultTaxCategoryAction,
+  clearTaxCategoriesAction,
 } from '@/server/domains/taxes/actions';
 
 export {
@@ -79,6 +80,20 @@ export {
 } from '@/server/domains/payments/actions';
 
 export {
+  listDimensionsAction,
+  listDimensionValuesAction,
+  listDimensionOptionStringsAction,
+  listDimensionFieldContractAction,
+  createDimensionAction,
+  updateDimensionAction,
+  deleteDimensionAction,
+  createDimensionValueAction,
+  updateDimensionValueAction,
+  deleteDimensionValueAction,
+  getDimensionAction,
+} from '@/server/domains/dimensions/actions';
+
+export {
   listReconciliationLogsAction,
   runBatchReconciliationAction,
   resolveDiscrepancyAction,
@@ -112,6 +127,18 @@ export {
   setDefaultAddressAction,
   listCustomerOrdersAction,
 } from '@/server/domains/customers/actions';
+
+export {
+  listCustomerProfilesAction,
+  saveCustomerProfileAction,
+  listTradeCustomersAction,
+  getTradeCustomerAction,
+  saveTradeCustomerAction,
+  deleteTradeCustomerAction,
+  receiveCustomerPaymentAction,
+  lookupCheckoutCustomerAction,
+  customerSetupAction,
+} from '@/server/domains/customers/master-actions';
 
 export { listCustomersAction as fetchAllCustomersAction } from '@/server/domains/customers/actions';
 

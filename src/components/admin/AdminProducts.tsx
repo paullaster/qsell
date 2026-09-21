@@ -19,6 +19,7 @@ import {
   ArrowUpDown,
 } from 'lucide-react';
 import { type Product, type Category } from '@/types/index';
+import { AppImage, PRODUCT_IMAGE_FALLBACK } from '@/components/ui/AppImage';
 import { deleteProductAction, updateProductAction } from '@/server/actions';
 
 interface AdminProductsProps {
@@ -350,15 +351,15 @@ export function AdminProducts({
                       </td>
                       <td className="px-4 py-3.5">
                         <div className="flex items-center gap-3">
-                          <img
+                          <AppImage
                             src={p.imageUrl}
                             alt={p.name}
+                            width={40}
+                            height={40}
+                            sizes="40px"
+                            fallbackSrc={PRODUCT_IMAGE_FALLBACK}
                             className="h-10 w-10 shrink-0 rounded-lg border border-zinc-800 bg-zinc-950 object-cover"
                             referrerPolicy="no-referrer"
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).src =
-                                'https://images.unsplash.com/photo-1526738549149-8e07eca6c147?auto=format&fit=crop&w=100&q=80';
-                            }}
                           />
                           <div>
                             <div

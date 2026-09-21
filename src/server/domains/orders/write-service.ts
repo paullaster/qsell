@@ -10,6 +10,7 @@ export class OrderWriteService {
     customerName: string;
     customerEmail: string;
     customerPhone: string;
+    buyerKraPin?: string | null;
     shippingAddress: {
       street: string;
       city: string;
@@ -20,6 +21,11 @@ export class OrderWriteService {
     items: { productId: string; quantity: number }[];
     currency: 'KES' | 'USD';
     paymentMethod: PaymentProvider;
+    /** Flat fields (globalDimension1Code) or { global, shortcut } projection */
+    dimensionFields?: Record<string, string | null | undefined> | {
+      global: Record<string, string>;
+      shortcut: Record<string, string>;
+    };
   }): Promise<{ success: boolean; order?: Order; error?: string }> {
     const orderItems: OrderItem[] = [];
     const pricedLines: {
@@ -120,12 +126,64 @@ export class OrderWriteService {
       status: 'pending',
       paymentStatus: 'unpaid',
       paymentMethod: params.paymentMethod,
+      dimensionSetId: null,
+      dimensionCodes: { global: {}, shortcut: {} },
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
 
-    const { orders: orderRepo } = getContainer();
-    await orderRepo.create(order, params.branchId);
+    try {
+      const { companySettings, dimensionSets, customers } = getContainer();
+      const company = await companySettings.ensureSeeded();
+      const onAccount = params.paymentMethod === 'on_account';
+      const tradeCustomer = await customers.prepareSale({
+        companyId: company.id,
+        name: params.customerName,
+        email: params.customerEmail,
+        phone: params.customerPhone,
+        address: params.shippingAddress,
+        buyerKraPin: params.buyerKraPin,
+        amount: totalAmount,
+        onAccount,
+      });
+      const callerDimensions = params.dimensionFields;
+      const hasCallerDimensions = (() => {
+        if (!callerDimensions) return false;
+        if ('global' in callerDimensions && 'shortcut' in callerDimensions) {
+          const projection = callerDimensions as {
+            global: Record<string, string>;
+            shortcut: Record<string, string>;
+          };
+          return Object.keys(projection.global).length + Object.keys(projection.shortcut).length > 0;
+        }
+        return Object.values(callerDimensions).some((value) => Boolean(value));
+      })();
+      const assignment = await dimensionSets.resolveAssignment(
+        company.id,
+        hasCallerDimensions ? callerDimensions! : tradeCustomer.dimensionCodes,
+      );
+      order.dimensionSetId = assignment.dimensionSetId;
+      order.dimensionCodes = assignment.dimensionCodes;
+      order.tradeCustomerId = tradeCustomer.id;
+      order.customerAccountType = tradeCustomer.accountType as 'cash' | 'credit';
+      order.transmitInvoicesToKra = tradeCustomer.transmitInvoicesToKra;
+      order.kraTransmissionStatus = tradeCustomer.transmitInvoicesToKra ? 'pending' : 'skipped';
+
+      const { orders: orderRepo } = getContainer();
+      await orderRepo.create(order, params.branchId);
+      await customers.postInvoice({
+        customer: tradeCustomer,
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        amount: totalAmount,
+        currency: order.currency,
+      });
+    } catch (err) {
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : 'Customer or dimension assignment failed',
+      };
+    }
 
     // Keep a memory mirror for realtime admin widgets that still read the Map.
     db.orders.set(orderId, order);
