@@ -27,10 +27,12 @@ import {
   Receipt,
   BookOpen,
   Scale,
+  KeyRound,
+  UserCog,
+  Fingerprint,
   type LucideIcon,
 } from 'lucide-react';
-import type { AdminNavIconName, AdminNavItem } from '@/config/admin-nav';
-import { hasSubLinks } from '@/config/admin-nav';
+import { hasSubLinks, type AdminNavIconName, type AdminNavItem } from '@/config/admin-nav';
 
 const ICONS: Record<AdminNavIconName, LucideIcon> = {
   LayoutDashboard,
@@ -56,12 +58,14 @@ const ICONS: Record<AdminNavIconName, LucideIcon> = {
   Receipt,
   BookOpen,
   Scale,
+  KeyRound,
+  UserCog,
+  Fingerprint,
 };
 
 function NavIcon({ name }: { name?: AdminNavIconName }) {
-  if (!name) return null;
+  if (name === undefined) return null;
   const Icon = ICONS[name];
-  if (!Icon) return null;
   return <Icon className="h-4 w-4 shrink-0" />;
 }
 
@@ -99,23 +103,31 @@ export function AdminNavTree({
         const inTrail = trailIds.has(item.id);
         const isOpen = nested && openIds.has(item.id);
 
-        const stateClass = item.disabled
-          ? 'cursor-not-allowed text-zinc-600 opacity-50'
-          : isActive
-            ? 'bg-indigo-600/20 text-indigo-200'
-            : inTrail
-              ? 'bg-zinc-900/70 text-indigo-300/90'
-              : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200';
+        let stateClass: string;
+        if (item.disabled === true) {
+          stateClass = 'cursor-not-allowed text-zinc-600 opacity-50';
+        } else if (isActive) {
+          stateClass = 'bg-indigo-600/20 text-indigo-200';
+        } else if (inTrail) {
+          stateClass = 'bg-zinc-900/70 text-indigo-300/90';
+        } else {
+          stateClass = 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200';
+        }
+
+        const ChevronIcon = nested ? ChevronDown : ChevronRight;
+        const chevron = nested ? (
+          <ChevronIcon className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
+        ) : null;
 
         return (
           <li key={item.id}>
             <Link
-              href={item.disabled ? '#' : item.href}
-              aria-disabled={item.disabled || undefined}
+              href={item.disabled === true ? '#' : item.href}
+              aria-disabled={item.disabled === true ? true : undefined}
               aria-current={isActive ? 'page' : undefined}
               aria-expanded={nested ? isOpen : undefined}
               onClick={(e) => {
-                if (item.disabled) {
+                if (item.disabled === true) {
                   e.preventDefault();
                   return;
                 }
@@ -134,13 +146,7 @@ export function AdminNavTree({
             >
               <NavIcon name={item.icon} />
               <span className="min-w-0 flex-1 truncate font-medium">{item.title}</span>
-              {nested ? (
-                isOpen ? (
-                  <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
-                ) : (
-                  <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
-                )
-              ) : null}
+              {chevron}
             </Link>
 
             {isOpen && item.subLinks ? (

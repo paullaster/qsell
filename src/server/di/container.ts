@@ -4,8 +4,7 @@ import {
   ConsoleEmailAdapter,
   NodemailerSmtpAdapter,
 } from '@/server/adapters/email/nodemailer.adapter';
-import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { drizzleDb } from '@/server/db/drizzle/client';
+import { drizzleDb, type DrizzleDb } from '@/server/db/drizzle/client';
 import { CompanySettingsRepository } from '@/server/domains/company/repository';
 import { InvoiceService } from '@/server/domains/invoices/service';
 import { BranchRepository, OrganizationRepository } from '@/server/domains/branches/repository';
@@ -23,6 +22,9 @@ import { CustomerMasterService } from '@/server/domains/customers/master-service
 import { TransactionLedgerService } from '@/server/domains/transactions/ledger-service';
 import { TransactionReconcileService } from '@/server/domains/transactions/reconcile-service';
 import { PaymentCallbackService } from '@/server/domains/payments/callback-service';
+import { AccessControlService } from '@/server/domains/access-control/engine';
+import { UsersAdminRepository } from '@/server/domains/users/repository';
+import { seedAccessControl } from '@/server/domains/access-control/seed';
 
 export interface AppContainer {
   db: DrizzleDb;
@@ -38,6 +40,8 @@ export interface AppContainer {
   payments: PaymentService;
   orders: OrderRepository;
   users: UserRepository;
+  usersAdmin: UsersAdminRepository;
+  accessControl: AccessControlService;
   dimensions: DimensionRepository;
   dimensionSets: DimensionSetService;
   customers: CustomerMasterService;
@@ -47,7 +51,7 @@ export interface AppContainer {
 }
 
 function createEmailPort(): EmailPort {
-  const driver = (process.env.EMAIL_DRIVER || 'console').toLowerCase();
+  const driver = (process.env.EMAIL_DRIVER ?? 'console').toLowerCase();
   if (driver === 'smtp') {
     return new NodemailerSmtpAdapter();
   }
@@ -81,8 +85,14 @@ export function getContainer(): AppContainer {
   const orders = new OrderRepository(drizzleDb);
   const users = new UserRepository(drizzleDb);
   // Ensure deployment super-admin exists on first container boot.
-  void users.ensureSuperAdminSeed().catch((err) => {
+  void users.ensureSuperAdminSeed().catch((err: unknown) => {
     console.error('[auth] super admin seed failed', err);
+  });
+  const usersAdmin = new UsersAdminRepository(drizzleDb);
+  const accessControl = new AccessControlService(drizzleDb);
+  // Bootstrap the permission catalog + system roles from code.
+  void seedAccessControl(accessControl.repo).catch((err: unknown) => {
+    console.error('[access-control] seed failed', err);
   });
   const dimensions = new DimensionRepository(drizzleDb);
   const dimensionSets = new DimensionSetService(drizzleDb, dimensions);
@@ -110,6 +120,8 @@ export function getContainer(): AppContainer {
     payments,
     orders,
     users,
+    usersAdmin,
+    accessControl,
     dimensions,
     dimensionSets,
     customers,

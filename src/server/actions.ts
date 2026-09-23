@@ -66,8 +66,10 @@ export {
 } from '@/server/domains/gateways/actions';
 
 export {
+  // eslint-disable-next-line @typescript-eslint/no-deprecated
   initiateDarajaStkAction,
   simulateDarajaUserAction,
+  // eslint-disable-next-line @typescript-eslint/no-deprecated
   initiatePesapalPaymentAction,
   submitPesapalOrderAction,
   simulatePesapalPaymentAction,
@@ -109,6 +111,7 @@ export {
 export {
   getSessionAction,
   switchRoleAction,
+  // eslint-disable-next-line @typescript-eslint/no-deprecated
   customerLoginAction,
   ensureAdminSessionAction,
   loginAction,

@@ -20,11 +20,11 @@ export function normalizeAdminNav(
   const result: AdminNavItem[] = [];
 
   for (const raw of items) {
-    if (!raw || typeof raw !== 'object') continue;
+    if (typeof raw !== 'object') continue;
     if (!isInstalled(raw)) continue;
-    if (typeof raw.id !== 'string' || !raw.id.trim()) continue;
-    if (typeof raw.title !== 'string' || !raw.title.trim()) continue;
-    if (typeof raw.name !== 'string' || !raw.name.trim()) continue;
+    if (typeof raw.id !== 'string' || raw.id.trim() === '') continue;
+    if (typeof raw.title !== 'string' || raw.title.trim() === '') continue;
+    if (typeof raw.name !== 'string' || raw.name.trim() === '') continue;
     if (typeof raw.href !== 'string' || !raw.href.startsWith('/')) continue;
     if (seenIds.has(raw.id)) continue;
 
@@ -92,7 +92,7 @@ export function findActiveNavMatch(
           trailIds: trail.map((t) => t.id),
         };
       }
-      if (node.subLinks?.length) {
+      if (node.subLinks && node.subLinks.length > 0) {
         walk(node.subLinks, trail);
       }
     }
@@ -108,7 +108,7 @@ export function findNavItemById(
 ): AdminNavItem | null {
   for (const item of items) {
     if (item.id === id) return item;
-    if (item.subLinks?.length) {
+    if (item.subLinks && item.subLinks.length > 0) {
       const found = findNavItemById(id, item.subLinks);
       if (found) return found;
     }
@@ -135,6 +135,6 @@ export function getAdminPageMeta(
   }
   return {
     title: match.item.title,
-    subtitle: match.item.description || match.trail.map((t) => t.title).join(' / '),
+    subtitle: match.item.description ?? match.trail.map((t) => t.title).join(' / '),
   };
 }

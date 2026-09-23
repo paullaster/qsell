@@ -44,6 +44,11 @@ export function AdminCategories({
   const [isActive, setIsActive] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const submitLabel = isSubmitting
+    ? 'Saving...'
+    : categoryToEdit
+      ? 'Save Changes'
+      : 'Create Category';
 
   // Filter Categories
   const filteredCategories = categories.filter((cat) => {
@@ -249,7 +254,7 @@ export function AdminCategories({
                         className="max-w-xs truncate px-4 py-3.5 text-zinc-400"
                         title={cat.description}
                       >
-                        {cat.description || '—'}
+                        {cat.description !== '' ? cat.description : '—'}
                       </td>
                       <td className="px-4 py-3.5 text-center">
                         <span className="inline-flex items-center gap-1 rounded-full bg-zinc-800 px-2 py-0.5 font-medium text-zinc-300">
@@ -317,7 +322,7 @@ export function AdminCategories({
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4 p-6">
-              {formError && (
+              {formError != null && formError !== '' && (
                 <div className="rounded-lg border border-red-800 bg-red-950/80 p-3 text-xs text-red-200">
                   {formError}
                 </div>
@@ -408,7 +413,7 @@ export function AdminCategories({
                   disabled={isSubmitting}
                   className="cursor-pointer rounded-lg bg-indigo-600 px-5 py-2 text-xs font-bold text-white shadow-lg shadow-indigo-600/20 hover:bg-indigo-500 disabled:opacity-50"
                 >
-                  {isSubmitting ? 'Saving...' : categoryToEdit ? 'Save Changes' : 'Create Category'}
+                  {submitLabel}
                 </button>
               </div>
             </form>

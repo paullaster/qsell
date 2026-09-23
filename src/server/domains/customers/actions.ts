@@ -30,6 +30,10 @@ function master() {
   return getContainer().customers;
 }
 
+function firstNonEmpty(values: Array<string | null | undefined>, fallback = ''): string {
+  return values.find((v) => v != null && v !== '') ?? fallback;
+}
+
 /**
  * Resolve the logged-in storefront shopper to a trade customer card + address book.
  * Keeps an in-memory CustomerAccount shell for order history / payment prefs.

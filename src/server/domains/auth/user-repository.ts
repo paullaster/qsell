@@ -44,6 +44,7 @@ export class UserRepository {
     phone?: string | null;
     role?: AppRole;
     customerStoreId?: string | null;
+    canViewSuperAdmin?: boolean;
   }): Promise<UserRow> {
     const passwordHash = await hash(input.password, 12);
     const [row] = await this.db
@@ -55,6 +56,7 @@ export class UserRepository {
         phone: input.phone ?? null,
         role: input.role ?? 'customer',
         customerStoreId: input.customerStoreId ?? null,
+        canViewSuperAdmin: input.canViewSuperAdmin ?? false,
       })
       .returning();
     return row!;
@@ -87,6 +89,7 @@ export class UserRepository {
         name,
         phone: '0700000000',
         role: 'super_admin',
+        canViewSuperAdmin: true,
       });
     }
 
@@ -95,6 +98,7 @@ export class UserRepository {
       existing.role !== 'super_admin' ||
       !existing.isActive ||
       existing.name !== name ||
+      existing.canViewSuperAdmin !== true ||
       !passwordMatches;
 
     if (!needsUpdate) return existing;
@@ -110,6 +114,7 @@ export class UserRepository {
         name,
         passwordHash,
         isActive: true,
+        canViewSuperAdmin: true,
         updatedAt: new Date(),
       })
       .where(eq(users.id, existing.id))

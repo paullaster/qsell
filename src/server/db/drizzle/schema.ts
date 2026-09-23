@@ -267,15 +267,190 @@ export const users = pgTable(
     email: text('email').notNull(),
     passwordHash: text('password_hash').notNull(),
     name: text('name').notNull(),
+    title: text('title'),
     phone: text('phone'),
-    role: text('role').notNull().default('customer'), // super_admin | admin | manager | customer
+    avatarUrl: text('avatar_url'),
+    role: text('role').notNull().default('customer'), // primary role: super_admin | admin | manager | customer
+    status: text('status').notNull().default('active'), // active | suspended
     customerStoreId: text('customer_store_id'),
     branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+    /** Bumped on every grant change so the access-control cache can invalidate eagerly. */
+    permissionsVersion: integer('permissions_version').notNull().default(0),
+    mustChangePassword: boolean('must_change_password').notNull().default(false),
+    lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+    /** Only the provisioned super-admin has this — gates visibility of super-admin accounts to others. */
+    canViewSuperAdmin: boolean('can_view_super_admin').notNull().default(false),
     isActive: boolean('is_active').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex('users_email_uidx').on(t.email)],
+  (t) => [
+    uniqueIndex('users_email_uidx').on(t.email),
+    index('users_role_idx').on(t.role),
+    index('users_status_idx').on(t.status),
+    index('users_branch_idx').on(t.branchId),
+  ],
+);
+
+/**
+ * RBAC role catalog. `key` is the stable identity referenced by users.role and user_roles;
+ * admin/maintenance UIs edit descriptions and permission bindings, never the key.
+ */
+export const roles = pgTable(
+  'roles',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    key: text('key').notNull().unique(),
+    name: text('name').notNull(),
+    description: text('description').notNull().default(''),
+    /** Lower number = higher precedence; used to break ties between roles. */
+    priority: integer('priority').notNull().default(100),
+    /** When true the role cannot be deleted (rank of the permission set only). */
+    isSystem: boolean('is_system').notNull().default(false),
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('roles_key_idx').on(t.key)],
+);
+
+/** Static permission catalog mirror — seeded from the registry, edited only by code. */
+export const permissions = pgTable(
+  'permissions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    key: text('key').notNull().unique(), // e.g. "orders:update"
+    resource: text('resource').notNull(), // e.g. "orders"
+    action: text('action').notNull(), // e.g. "update"
+    category: text('category').notNull().default('General'), // UI grouping
+    description: text('description').notNull().default(''),
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('permissions_resource_idx').on(t.resource),
+    index('permissions_category_idx').on(t.category),
+  ],
+);
+
+/** Permission bindings for roles. */
+export const rolePermissions = pgTable(
+  'role_permissions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    roleId: uuid('role_id')
+      .notNull()
+      .references(() => roles.id, { onDelete: 'cascade' }),
+    permissionId: uuid('permission_id')
+      .notNull()
+      .references(() => permissions.id, { onDelete: 'cascade' }),
+    effect: text('effect').notNull().default('allow').$type<'allow' | 'deny'>(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('role_permissions_role_perm_uidx').on(t.roleId, t.permissionId),
+    index('role_permissions_perm_idx').on(t.permissionId),
+  ],
+);
+
+/** Extra role assignments per user (beyond the primary users.role), optionally branch-scoped. */
+export const userRoles = pgTable(
+  'user_roles',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    roleId: uuid('role_id')
+      .notNull()
+      .references(() => roles.id, { onDelete: 'cascade' }),
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+    assignedBy: uuid('assigned_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('user_roles_user_role_branch_uidx').on(t.userId, t.roleId, t.branchId),
+    index('user_roles_user_idx').on(t.userId),
+    index('user_roles_role_idx').on(t.roleId),
+  ],
+);
+
+/** Explicit per-user permission grants/denials that override role-derived permissions. */
+export const userPermissions = pgTable(
+  'user_permissions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    permissionId: uuid('permission_id')
+      .notNull()
+      .references(() => permissions.id, { onDelete: 'cascade' }),
+    effect: text('effect').notNull().$type<'allow' | 'deny'>(),
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+    assignedBy: uuid('assigned_by').references(() => users.id, { onDelete: 'set null' }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('user_permissions_user_perm_eff_branch_uidx').on(
+      t.userId,
+      t.permissionId,
+      t.effect,
+      t.branchId,
+    ),
+    index('user_permissions_user_idx').on(t.userId),
+    index('user_permissions_perm_idx').on(t.permissionId),
+  ],
+);
+
+/**
+ * ABAC policy rules. `permissionKey` is the permission dimension, `condition` is a
+ * structured expression evaluated against `user` attributes + request `ctx`.
+ */
+export const accessPolicies = pgTable(
+  'access_policies',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    key: text('key').notNull().unique(),
+    name: text('name').notNull(),
+    permissionKey: text('permission_key').notNull(),
+    description: text('description').notNull().default(''),
+    resource: text('resource'),
+    /** Raw JSON condition AST — validated/normalized at write time. */
+    condition: jsonb('condition').$type<Record<string, unknown>>().notNull().default({}),
+    effect: text('effect').notNull().default('allow').$type<'allow' | 'deny'>(),
+    /** Lower number evaluates first; the first enabled matching policy wins. */
+    priority: integer('priority').notNull().default(100),
+    isEnabled: boolean('is_enabled').notNull().default(true),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('access_policies_perm_idx').on(t.permissionKey)],
+);
+
+/** Immutable security audit trail for sensitive operations. */
+export const auditLogs = pgTable(
+  'audit_logs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    actorUserId: uuid('actor_user_id').references(() => users.id, { onDelete: 'set null' }),
+    action: text('action').notNull(), // users:create, role_permissions:update ...
+    resource: text('resource').notNull(),
+    resourceId: text('resource_id'),
+    /** before/after snapshots and other contextual detail. */
+    detail: jsonb('detail').$type<Record<string, unknown> | null>(),
+    ip: text('ip'),
+    userAgent: text('user_agent'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('audit_logs_actor_idx').on(t.actorUserId),
+    index('audit_logs_resource_idx').on(t.resource, t.resourceId),
+    index('audit_logs_created_idx').on(t.createdAt),
+  ],
 );
 
 export const orders = pgTable(
@@ -653,6 +828,17 @@ export type PaymentAttemptRow = typeof paymentAttempts.$inferSelect;
 export type PaymentCallbackEventRow = typeof paymentCallbackEvents.$inferSelect;
 export type InvoiceDocumentRow = typeof invoiceDocuments.$inferSelect;
 export type UserRow = typeof users.$inferSelect;
+export type RoleRow = typeof roles.$inferSelect;
+export type RoleInsert = typeof roles.$inferInsert;
+export type PermissionRow = typeof permissions.$inferSelect;
+export type PermissionInsert = typeof permissions.$inferInsert;
+export type RolePermissionRow = typeof rolePermissions.$inferSelect;
+export type UserRoleRow = typeof userRoles.$inferSelect;
+export type UserPermissionRow = typeof userPermissions.$inferSelect;
+export type AccessPolicyRow = typeof accessPolicies.$inferSelect;
+export type AccessPolicyInsert = typeof accessPolicies.$inferInsert;
+export type AuditLogRow = typeof auditLogs.$inferSelect;
+export type AuditLogInsert = typeof auditLogs.$inferInsert;
 export type OrderRow = typeof orders.$inferSelect;
 export type OrderItemRow = typeof orderItems.$inferSelect;
 export type DimensionRow = typeof dimensions.$inferSelect;
@@ -661,10 +847,10 @@ export type DimensionValueRow = typeof dimensionValues.$inferSelect;
 export type DimensionValueInsert = typeof dimensionValues.$inferInsert;
 export type DimensionSetRow = typeof dimensionSets.$inferSelect;
 export type DimensionSetEntryRow = typeof dimensionSetEntries.$inferSelect;
-export type DimensionCodesProjection = {
+export interface DimensionCodesProjection {
   global: Record<string, string>;
   shortcut: Record<string, string>;
-};
+}
 export type CustomerProfileRow = typeof customerProfiles.$inferSelect;
 export type CustomerRow = typeof customers.$inferSelect;
 export type CustomerAddressRow = typeof customerAddresses.$inferSelect;
