@@ -1,0 +1,273 @@
+# =============================================================================
+# Deploy to Production on Release Branch Merge
+# =============================================================================
+name: Deploy to Production
+
+on:
+  push:
+    branches: [release]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'production'
+        type: choice
+        options: [staging, production]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  SERVER_IP: 169.58.182.30
+  SERVER_USER: creame
+  DOMAIN: onmicommerce.brainsporellc.com
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build & Push Multi-arch Image
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          target: runner
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            NEXT_TELEMETRY_DISABLED=1
+
+  # ---------------------------------------------------------------------------
+  # Deploy to Server via SSH
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy to Server
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/release'
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install SSH key
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          known_hosts: ${{ secrets.SSH_KNOWN_HOSTS }}
+
+      - name: Deploy via SSH
+        env:
+          SERVER_IP: ${{ env.SERVER_IP }}
+          SERVER_USER: ${{ env.SERVER_USER }}
+          DOMAIN: ${{ env.DOMAIN }}
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          DATA_ENCRYPTION_KEY: ${{ secrets.DATA_ENCRYPTION_KEY }}
+          PAYMENT_DATA_KEY: ${{ secrets.PAYMENT_DATA_KEY }}
+          GRAFANA_PASSWORD: ${{ secrets.GRAFANA_PASSWORD }}
+          MPESA_DARAJA_CONSUMER_KEY: ${{ secrets.MPESA_DARAJA_CONSUMER_KEY }}
+          MPESA_DARAJA_CONSUMER_SECRET: ${{ secrets.MPESA_DARAJA_CONSUMER_SECRET }}
+          MPESA_DARAJA_PASSKEY: ${{ secrets.MPESA_DARAJA_PASSKEY }}
+          MPESA_DARAJA_SHORTCODE: ${{ secrets.MPESA_DARAJA_SHORTCODE }}
+          PESAPAL_CONSUMER_KEY: ${{ secrets.PESAPAL_CONSUMER_KEY }}
+          PESAPAL_CONSUMER_SECRET: ${{ secrets.PESAPAL_CONSUMER_SECRET }}
+          JENGA_CONSUMER_KEY: ${{ secrets.JENGA_CONSUMER_KEY }}
+          JENGA_CONSUMER_SECRET: ${{ secrets.JENGA_CONSUMER_SECRET }}
+          KCB_BUNI_CONSUMER_KEY: ${{ secrets.KCB_BUNI_CONSUMER_KEY }}
+          KCB_BUNI_CONSUMER_SECRET: ${{ secrets.KCB_BUNI_CONSUMER_SECRET }}
+          EMAIL_SMTP_PASSWORD: ${{ secrets.EMAIL_SMTP_PASSWORD }}
+          S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          # Create deployment script on server
+          ssh -o StrictHostKeyChecking=no ${{ env.SERVER_USER }}@${{ env.SERVER_IP }} << 'EOF'
+          set -euo pipefail
+
+          # Variables
+          IMAGE="${REGISTRY}/${IMAGE_NAME}:latest"
+          DOMAIN="${DOMAIN}"
+          COMPOSE_FILE="docker-compose.prod.yml"
+
+          echo "=== Deploying to ${{ env.SERVER_IP }} ==="
+
+          # 1. Pull latest image
+          echo "Pulling image: $IMAGE"
+          docker pull $IMAGE
+
+          # 2. Create secrets directory
+          mkdir -p /opt/qsell/secrets
+          chmod 700 /opt/qsell/secrets
+
+          # 3. Write secrets from environment
+          cat > /opt/qsell/secrets/postgres_password.txt << 'SECRETEOF'
+          ${POSTGRES_PASSWORD}
+          SECRETEOF
+
+          cat > /opt/qsell/secrets/redis_password.txt << 'SECRETEOF'
+          ${REDIS_PASSWORD}
+          SECRETEOF
+
+          cat > /opt/qsell/secrets/nextjs_secrets.txt << 'SECRETEOF'
+          NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+          JWT_SECRET=${JWT_SECRET}
+          DATA_ENCRYPTION_KEY=${DATA_ENCRYPTION_KEY}
+          PAYMENT_DATA_KEY=${PAYMENT_DATA_KEY}
+          SECRETEOF
+
+          cat > /opt/qsell/secrets/grafana_password.txt << 'SECRETEOF'
+          ${GRAFANA_PASSWORD}
+          SECRETEOF
+
+          chmod 600 /opt/qsell/secrets/*.txt
+
+          # 4. Create .env file for docker-compose
+          cat > /opt/qsell/.env << ENVEOF
+          DOMAIN=${DOMAIN}
+          POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+          REDIS_PASSWORD=${REDIS_PASSWORD}
+          NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+          JWT_SECRET=${JWT_SECRET}
+          DATA_ENCRYPTION_KEY=${DATA_ENCRYPTION_KEY}
+          PAYMENT_DATA_KEY=${PAYMENT_DATA_KEY}
+          GRAFANA_PASSWORD=${GRAFANA_PASSWORD}
+          MPESA_DARAJA_CONSUMER_KEY=${MPESA_DARAJA_CONSUMER_KEY}
+          MPESA_DARAJA_CONSUMER_SECRET=${MPESA_DARAJA_CONSUMER_SECRET}
+          MPESA_DARAJA_PASSKEY=${MPESA_DARAJA_PASSKEY}
+          MPESA_DARAJA_SHORTCODE=${MPESA_DARAJA_SHORTCODE}
+          PESAPAL_CONSUMER_KEY=${PESAPAL_CONSUMER_KEY}
+          PESAPAL_CONSUMER_SECRET=${PESAPAL_CONSUMER_SECRET}
+          JENGA_CONSUMER_KEY=${JENGA_CONSUMER_KEY}
+          JENGA_CONSUMER_SECRET=${JENGA_CONSUMER_SECRET}
+          KCB_BUNI_CONSUMER_KEY=${KCB_BUNI_CONSUMER_KEY}
+          KCB_BUNI_CONSUMER_SECRET=${KCB_BUNI_CONSUMER_SECRET}
+          EMAIL_SMTP_PASSWORD=${EMAIL_SMTP_PASSWORD}
+          S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}
+          S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}
+          CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
+          ENVEOF
+
+          # 5. Pull docker-compose files
+          cd /opt/qsell
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+
+          # 6. Run migrations before deploying new app
+          echo "Running database migrations..."
+          docker run --rm \
+            --network qsell-prod-network \
+            -e DATABASE_URL="postgresql://qsell:${POSTGRES_PASSWORD}@postgres:5432/qsell?sslmode=prefer" \
+            ${REGISTRY}/${IMAGE_NAME}:latest \
+            pnpm db:migrate:deploy
+
+          # 7. Deploy with zero-downtime rolling update
+          echo "Deploying new containers..."
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans
+
+          # 8. Wait for health checks
+          echo "Waiting for health checks..."
+          sleep 10
+          for i in {1..30}; do
+            if curl -sf http://localhost:3069/api/health | grep -q '"status":"healthy"'; then
+              echo "Health check passed!"
+              break
+            fi
+            echo "Waiting for app to be healthy... ($i/30)"
+            sleep 5
+          done
+
+          # 8. Configure Cloudflare DNS
+          if [ -n "${CLOUDFLARE_API_TOKEN}" ]; then
+            echo "Configuring Cloudflare DNS for ${DOMAIN}..."
+            # Get zone ID
+            ZONE_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=brainsporellc.com" \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -H "Content-Type: application/json" | jq -r '.result[0].id')
+
+            # Get current IP
+            CURRENT_IP=$(curl -s ifconfig.me)
+
+            # Create/update DNS record
+            RECORD_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records?type=A&name=onmicommerce" \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -H "Content-Type: application/json" | jq -r '.result[0].id // empty')
+
+            if [ -n "${RECORD_ID}" ]; then
+              curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records/${RECORD_ID}" \
+                -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+                -H "Content-Type: application/json" \
+                --data "{\"type\":\"A\",\"name\":\"onmicommerce\",\"content\":\"${CURRENT_IP}\",\"ttl\":300,\"proxied\":true}" > /dev/null
+            else
+              curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records" \
+                -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+                -H "Content-Type: application/json" \
+                --data "{\"type\":\"A\",\"name\":\"onmicommerce\",\"content\":\"${CURRENT_IP}\",\"ttl\":300,\"proxied\":true}" > /dev/null
+            fi
+            echo "Cloudflare DNS updated for ${DOMAIN}"
+          fi
+
+          # 9. Cleanup old images
+          docker image prune -af --filter "until=24h"
+
+          echo "=== Deployment complete! ==="
+          echo "Application available at: https://${DOMAIN}"
+          EOF
+        shell: bash
+
+      - name: Verify Deployment
+        run: |
+          sleep 15
+          curl -sf https://onmicommerce.brainsporellc.com/api/health | jq '.status'
+
+  # ---------------------------------------------------------------------------
+  # Notify on Failure
+  # ---------------------------------------------------------------------------
+  notify-failure:
+    name: Notify on Failure
+    needs: [build, deploy]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Failure Notification
+        run: |
+          echo "Deployment failed! Check GitHub Actions for details."
+          # Add Slack/Discord/Email notification here
+
