@@ -308,3 +308,49 @@ export async function listUsersByRoleAction(role: string): Promise<UserListEntry
   const result = await getContainer().usersAdmin.listUsers({ role, pageSize: 200 });
   return result.rows;
 }
+
+export async function updateUserProfileAction(input: {
+  name?: string;
+  phone?: string;
+  email?: string;
+}): Promise<void> {
+  const session = await auth();
+  if (!session?.user?.id) throw new Error('Not authenticated');
+
+  const actorId = session.user.id;
+  const container = getContainer();
+
+  const existing = await container.usersAdmin.getUserDetail(actorId);
+  if (!existing) throw new Error('User not found');
+
+  // Regular users can only update their own profile (name, phone, email)
+  const allowedFields = ['name', 'phone', 'email'];
+  const updateData: Partial<{ name: string; phone: string | null; email: string }> = {};
+
+  for (const field of allowedFields) {
+    if (input[field as keyof typeof input] !== undefined) {
+      updateData[field as keyof typeof updateData] = input[field as keyof typeof input] as any;
+    }
+  }
+
+  if (Object.keys(updateData).length === 0) return;
+
+  // Validate email if provided
+  if (updateData.email) {
+    assertValidEmail(updateData.email);
+  }
+
+  if (updateData.name) {
+    assertValidName(updateData.name);
+  }
+
+  await container.usersAdmin.updateUser(actorId, updateData);
+  container.accessControl.invalidateUser(actorId);
+  revalidatePath('/admin/profile');
+  revalidatePath('/profile');
+}
+
+async function auth() {
+  const { auth } = await import('@/auth');
+  return auth();
+}
