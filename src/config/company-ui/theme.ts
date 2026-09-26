@@ -31,9 +31,7 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
 
 function rgbToHex(r: number, g: number, b: number): string {
   const clamp = (v: number) => Math.max(0, Math.min(255, Math.round(v)));
-  return `#${[clamp(r), clamp(g), clamp(b)]
-    .map((v) => v.toString(16).padStart(2, '0'))
-    .join('')}`;
+  return `#${[clamp(r), clamp(g), clamp(b)].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
 }
 
 /** Lighten toward white by `amount` (0–1). */
@@ -41,11 +39,44 @@ export function lightenHex(hex: string, amount: number): string {
   const rgb = hexToRgb(hex);
   if (!rgb) return hex;
   const t = Math.max(0, Math.min(1, amount));
-  return rgbToHex(
-    rgb.r + (255 - rgb.r) * t,
-    rgb.g + (255 - rgb.g) * t,
-    rgb.b + (255 - rgb.b) * t,
-  );
+  return rgbToHex(rgb.r + (255 - rgb.r) * t, rgb.g + (255 - rgb.g) * t, rgb.b + (255 - rgb.b) * t);
+}
+
+/** Darken toward black by `amount` (0–1). */
+export function darkenHex(hex: string, amount: number): string {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return hex;
+  const t = Math.max(0, Math.min(1, amount));
+  return rgbToHex(rgb.r * (1 - t), rgb.g * (1 - t), rgb.b * (1 - t));
+}
+
+/** WCAG relative luminance of an sRGB colour, 0 (black) → 1 (white). */
+function relativeLuminance(hex: string): number {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return 0;
+  const channel = (v: number) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(rgb.r) + 0.7152 * channel(rgb.g) + 0.0722 * channel(rgb.b);
+}
+
+/**
+ * Nudge `hex` toward the readable end of the scheme until it clears `limit`.
+ *
+ * Company colours are user-supplied, so a fixed lighten/darken amount cannot be
+ * trusted to stay legible: a near-black primary needs a big lift in dark mode,
+ * a pale pastel needs a big drop in light mode. Stepping in 5% increments caps
+ * the work at 20 iterations and guarantees the result is readable.
+ */
+function ensureLuminance(hex: string, limit: number, lighten: boolean): string {
+  let current = hex;
+  for (let i = 0; i < 20; i++) {
+    const lum = relativeLuminance(current);
+    if (lighten ? lum >= limit : lum <= limit) break;
+    current = lighten ? lightenHex(current, 0.05) : darkenHex(current, 0.05);
+  }
+  return current;
 }
 
 export type CompanyThemeColors = {
@@ -54,6 +85,27 @@ export type CompanyThemeColors = {
 };
 
 export type CompanyThemeCssVars = Record<string, string>;
+
+/**
+ * Per-scheme variants of the company accent, emitted as separate variables so
+ * globals.css can pick the right one from `[data-theme]`.
+ *
+ * `soft` and `faint` are tinted backgrounds (active nav row, icon chips) and
+ * `text` is accent-coloured copy. Each is derived from the company primary and
+ * then forced past a luminance floor, because the default primary is #111827
+ * while a tenant may pick a pale pastel — one fixed lighten amount cannot serve
+ * both ends.
+ */
+function buildAccentVariants(primary: string) {
+  return {
+    '--company-accent-faint-light': ensureLuminance(lightenHex(primary, 0.9), 0.86, true),
+    '--company-accent-soft-light': ensureLuminance(lightenHex(primary, 0.82), 0.66, true),
+    '--company-accent-text-light': ensureLuminance(darkenHex(primary, 0.1), 0.16, false),
+    '--company-accent-faint-dark': ensureLuminance(lightenHex(primary, 0.72), 0.5, true),
+    '--company-accent-soft-dark': ensureLuminance(lightenHex(primary, 0.55), 0.4, true),
+    '--company-accent-text-dark': ensureLuminance(lightenHex(primary, 0.3), 0.3, true),
+  };
+}
 
 /**
  * Build CSS variables for `<html style={...}>`.
@@ -70,6 +122,7 @@ export function buildCompanyThemeCssVars(
     '--company-primary': primary,
     '--company-primary-hover': primaryHover,
     '--company-accent': accent,
+    ...buildAccentVariants(primary),
   };
 }
 

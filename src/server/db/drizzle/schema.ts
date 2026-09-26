@@ -272,6 +272,8 @@ export const users = pgTable(
     avatarUrl: text('avatar_url'),
     role: text('role').notNull().default('customer'), // primary role: super_admin | admin | manager | customer
     status: text('status').notNull().default('active'), // active | suspended
+    /** Per-account colour scheme: light | dark | system. Null = use the app default. */
+    themeMode: text('theme_mode'),
     customerStoreId: text('customer_store_id'),
     branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
     /** Bumped on every grant change so the access-control cache can invalidate eagerly. */
@@ -826,6 +828,353 @@ export type BranchInsert = typeof branches.$inferInsert;
 export type PaymentProviderConfigRow = typeof paymentProviderConfigs.$inferSelect;
 export type PaymentAttemptRow = typeof paymentAttempts.$inferSelect;
 export type PaymentCallbackEventRow = typeof paymentCallbackEvents.$inferSelect;
+/* ============================================================================
+ * CATALOG & INVENTORY
+ *
+ * These six tables replace the former in-memory `PostgresStore` Maps. Column
+ * names mirror the domain types in `src/types/index.ts` so the repositories can
+ * map rows 1:1 without a translation layer.
+ * ========================================================================== */
+
+/** Storefront merchandising category. Products reference this by id. */
+export const categories = pgTable(
+  'categories',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    slug: text('slug').notNull(),
+    description: text('description').notNull().default(''),
+    imageUrl: text('image_url'),
+    isActive: boolean('is_active').notNull().default(true),
+    displayOrder: integer('display_order').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('categories_slug_uidx').on(t.slug),
+    index('categories_display_order_idx').on(t.displayOrder),
+  ],
+);
+
+/**
+ * User-defined item classification (raw material, finished good, service…).
+ * `code` is the integer code from the tax authority and is required for
+ * tax compliance, so it is unique.
+ */
+export const itemTypes = pgTable(
+  'item_types',
+  {
+    id: text('id').primaryKey(),
+    code: integer('code').notNull(),
+    name: text('name').notNull(),
+    /** Non-sellable types (raw materials) must not carry a selling price. */
+    isSellable: boolean('is_sellable').notNull().default(true),
+    /** Exactly one default is used when a product is created without a type. */
+    isDefault: boolean('is_default').notNull().default(false),
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('item_types_code_uidx').on(t.code),
+    uniqueIndex('item_types_name_uidx').on(t.name),
+  ],
+);
+
+/** VAT/GST/excise rate definitions. A product may be pinned to one. */
+export const taxCategories = pgTable(
+  'tax_categories',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    code: text('code').notNull(),
+    /** Percentage, e.g. 16 for 16%. */
+    rate: numeric('rate', { precision: 7, scale: 4 }).notNull(),
+    type: text('type').notNull(),
+    countryCode: text('country_code').notNull().default(''),
+    countryName: text('country_name').notNull().default(''),
+    description: text('description').notNull().default(''),
+    isInclusive: boolean('is_inclusive').notNull().default(false),
+    isDefault: boolean('is_default').notNull().default(false),
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('tax_categories_code_uidx').on(t.code),
+    index('tax_categories_active_idx').on(t.isActive),
+  ],
+);
+
+/** Enabled display currencies. Exactly one row has is_base_currency = true. */
+export const currencies = pgTable('currencies', {
+  /** ISO 4217 alpha code, e.g. "KES". Primary key. */
+  code: text('code').primaryKey(),
+  name: text('name').notNull(),
+  symbol: text('symbol').notNull(),
+  /** Multiplier against the store base currency. */
+  exchangeRate: numeric('exchange_rate', { precision: 18, scale: 8 }).notNull().default('1'),
+  isBaseCurrency: boolean('is_base_currency').notNull().default(false),
+  decimalDigits: integer('decimal_digits').notNull().default(2),
+  symbolPosition: text('symbol_position').notNull().default('prefix'),
+  isEnabled: boolean('is_enabled').notNull().default(true),
+  flagEmoji: text('flag_emoji'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Sellable or stock-holding catalog item.
+ *
+ * `reserved_quantity` is the checkout hold and is only ever mutated by
+ * InventoryReservationService inside a row-locked transaction; `stock_quantity`
+ * is the physical on-hand count. Available = stock - reserved.
+ */
+export const products = pgTable(
+  'products',
+  {
+    id: text('id').primaryKey(),
+    sku: text('sku').notNull(),
+    name: text('name').notNull(),
+    slug: text('slug').notNull(),
+    description: text('description').notNull().default(''),
+    categoryId: text('category_id').references(() => categories.id, { onDelete: 'set null' }),
+    /** Kept for display when the category row is missing or renamed. */
+    categoryName: text('category_name').notNull().default(''),
+    brand: text('brand'),
+    itemTypeId: text('item_type_id')
+      .notNull()
+      .references(() => itemTypes.id, { onDelete: 'restrict' }),
+    /** Denormalized from the item type; drives the storefront sellable filter. */
+    isSellable: boolean('is_sellable').notNull().default(true),
+    price: numeric('price', { precision: 14, scale: 2 }),
+    compareAtPrice: numeric('compare_at_price', { precision: 14, scale: 2 }),
+    costPrice: numeric('cost_price', { precision: 14, scale: 2 }).notNull().default('0'),
+    taxCategoryId: text('tax_category_id').references(() => taxCategories.id, {
+      onDelete: 'set null',
+    }),
+    taxRate: numeric('tax_rate', { precision: 7, scale: 4 }),
+    isTaxInclusive: boolean('is_tax_inclusive'),
+    /** kg */
+    weight: numeric('weight', { precision: 12, scale: 4 }),
+    specifications: jsonb('specifications').$type<{ key: string; value: string }[]>().notNull().default([]),
+    stockQuantity: integer('stock_quantity').notNull().default(0),
+    reservedQuantity: integer('reserved_quantity').notNull().default(0),
+    lowStockThreshold: integer('low_stock_threshold').notNull().default(0),
+    isActive: boolean('is_active').notNull().default(true),
+    imageUrl: text('image_url').notNull().default(''),
+    additionalImages: jsonb('additional_images').$type<string[]>().notNull().default([]),
+    rating: numeric('rating', { precision: 3, scale: 2 }).notNull().default('0'),
+    reviewCount: integer('review_count').notNull().default(0),
+    tags: jsonb('tags').$type<string[]>().notNull().default([]),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('products_sku_uidx').on(t.sku),
+    uniqueIndex('products_slug_uidx').on(t.slug),
+    index('products_category_idx').on(t.categoryId),
+    index('products_item_type_idx').on(t.itemTypeId),
+    index('products_active_idx').on(t.isActive),
+  ],
+);
+
+/**
+ * Append-only stock movement journal — the durable replacement for the old
+ * in-memory `inventoryLedger` array.
+ *
+ * It is also the idempotency guard for order reservations: a second
+ * fulfill/release for the same `referenceId` is a no-op if a row already exists.
+ */
+export const inventoryMovements = pgTable(
+  'inventory_movements',
+  {
+    id: text('id').primaryKey(),
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'cascade' }),
+    /** Denormalized so history survives a product rename. */
+    productName: text('product_name').notNull().default(''),
+    changeAmount: integer('change_amount').notNull(),
+    previousStock: integer('previous_stock').notNull(),
+    newStock: integer('new_stock').notNull(),
+    changeType: text('change_type').notNull(),
+    /** PO number, order id, or adjustment reference. */
+    referenceId: text('reference_id').notNull().default(''),
+    actor: text('actor').notNull().default('admin'),
+    note: text('note').notNull().default(''),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('inventory_movements_product_idx').on(t.productId),
+    index('inventory_movements_reference_idx').on(t.referenceId),
+    index('inventory_movements_created_idx').on(t.createdAt),
+    // Reservation settlement must be idempotent. A payment gateway can deliver
+    // the same webhook concurrently (or on retry), and without this constraint
+    // two transactions would each pass the "already settled?" check and deduct
+    // stock twice. Only settlement types are constrained; ordinary adjustments
+    // to the same reference remain unrestricted.
+    uniqueIndex('inventory_movements_settlement_uidx')
+      .on(t.referenceId, t.productId, t.changeType)
+      .where(sql`${t.changeType} in ('order_fulfillment', 'order_cancellation_release')`),
+  ],
+);
+
+/**
+ * Gateway transaction record for a single payment attempt.
+ *
+ * Distinct from `payment_attempts` (the branch-scoped, credential-aware
+ * provider flow) and from `transaction_ledger_entries` (the financial journal).
+ * This is the operational record the reconciliation screen and the legacy
+ * M-Pesa / Pesapal callbacks read and write.
+ */
+export const paymentTransactions = pgTable(
+  'payment_transactions',
+  {
+    id: text('id').primaryKey(),
+    orderId: text('order_id').notNull(),
+    orderNumber: text('order_number').notNull().default(''),
+    gatewayProvider: text('gateway_provider').notNull(),
+    transactionReference: text('transaction_reference').notNull(),
+    externalReference: text('external_reference'),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull().default('0'),
+    currency: text('currency').notNull().default('KES'),
+    status: text('status').notNull().default('initiated'),
+    customerPhone: text('customer_phone'),
+    customerEmail: text('customer_email'),
+    requestPayload: jsonb('request_payload').$type<Record<string, unknown>>().notNull().default({}),
+    responsePayload: jsonb('response_payload').$type<Record<string, unknown>>().notNull().default({}),
+    ipnStatus: text('ipn_status').notNull().default('pending'),
+    reconciliationStatus: text('reconciliation_status').notNull().default('pending'),
+    errorMessage: text('error_message'),
+    // Callback/webhook linkage for async processing
+    callbackPayload: jsonb('callback_payload').$type<Record<string, unknown>>(),
+    callbackReceivedAt: timestamp('callback_received_at', { withTimezone: true }),
+    callbackProcessedAt: timestamp('callback_processed_at', { withTimezone: true }),
+    callbackAuditId: uuid('callback_audit_id').references(() => integrationAuditLog.id, { onDelete: 'set null' }),
+    queueJobId: text('queue_job_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('payment_transactions_order_idx').on(t.orderId),
+    index('payment_transactions_ref_idx').on(t.transactionReference),
+    index('payment_transactions_status_idx').on(t.status),
+    index('payment_transactions_callback_audit_idx').on(t.callbackAuditId),
+  ],
+);
+
+/** Outcome of matching a gateway transaction against its order. */
+/**
+ * Server-side session records for the legacy `AuthService` login path, so
+ * sessions survive a process restart. The token is a bearer secret, therefore
+ * only a hash is stored and the plaintext is returned to the caller once.
+ */
+export const userSessions = pgTable(
+  'user_sessions',
+  {
+    id: text('id').primaryKey(),
+    tokenHash: text('token_hash').notNull().unique(),
+    userId: text('user_id').notNull(),
+    email: text('email').notNull().default(''),
+    name: text('name').notNull().default(''),
+    role: text('role').notNull().default('customer'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('user_sessions_user_idx').on(t.userId)],
+);
+
+/**
+ * Unified audit log for ALL outbound HTTP calls and inbound webhooks.
+ * Replaces ad-hoc logging in payment services, email, SMS, etc.
+ * Encrypted payloads at rest; headers sanitized.
+ */
+export const integrationAuditLog = pgTable(
+  'integration_audit_log',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    correlationId: text('correlation_id').notNull(),
+    direction: text('direction', { enum: ['outbound', 'inbound'] }).notNull(),
+    provider: text('provider').notNull(),
+    operation: text('operation').notNull(),
+    requestPayload: jsonb('request_payload').$type<Record<string, unknown>>(),
+    responsePayload: jsonb('response_payload').$type<Record<string, unknown>>(),
+    requestHeaders: jsonb('request_headers').$type<Record<string, string>>(),
+    responseHeaders: jsonb('response_headers').$type<Record<string, string>>(),
+    httpMethod: text('http_method'),
+    url: text('url'),
+    statusCode: integer('status_code'),
+    errorCode: text('error_code'),
+    errorMessage: text('error_message'),
+    durationMs: integer('duration_ms'),
+    requestSentAt: timestamp('request_sent_at', { withTimezone: true }),
+    responseReceivedAt: timestamp('response_received_at', { withTimezone: true }),
+    callbackReceivedAt: timestamp('callback_received_at', { withTimezone: true }),
+    callbackPayload: jsonb('callback_payload').$type<Record<string, unknown>>(),
+    retryCount: integer('retry_count').notNull().default(0),
+    queueJobId: text('queue_job_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    retentionUntil: timestamp('retention_until', { withTimezone: true }),
+  },
+  (t) => [
+    index('integration_audit_correlation_idx').on(t.correlationId),
+    index('integration_audit_provider_op_idx').on(t.provider, t.operation),
+    index('integration_audit_created_idx').on(t.createdAt),
+    index('integration_audit_queue_job_idx').on(t.queueJobId),
+    index('integration_audit_retention_idx').on(t.retentionUntil),
+  ],
+);
+
+export const reconciliationLogs = pgTable(
+  'reconciliation_logs',
+  {
+    id: text('id').primaryKey(),
+    transactionId: text('transaction_id').notNull().default(''),
+    orderId: text('order_id').notNull(),
+    orderNumber: text('order_number').notNull().default(''),
+    provider: text('provider').notNull(),
+    reconciliationType: text('reconciliation_type').notNull().default('manual_override'),
+    orderTotal: numeric('order_total', { precision: 14, scale: 2 }).notNull().default('0'),
+    receivedAmount: numeric('received_amount', { precision: 14, scale: 2 }).notNull().default('0'),
+    discrepancyFound: boolean('discrepancy_found').notNull().default(false),
+    discrepancyType: text('discrepancy_type').notNull().default('none'),
+    status: text('status').notNull().default('matched'),
+    details: text('details').notNull().default(''),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('reconciliation_logs_order_idx').on(t.orderId),
+    index('reconciliation_logs_transaction_idx').on(t.transactionId),
+    index('reconciliation_logs_created_idx').on(t.createdAt),
+  ],
+);
+
+/**
+ * Admin-facing gateway toggle and credentials, keyed by the legacy gateway id
+ * (e.g. "gw_mpesa_daraja") so the M-Pesa / Pesapal services can look one up by
+ * a stable key. Complements the branch-scoped `payment_provider_configs`.
+ */
+export const paymentGatewayConfigs = pgTable('payment_gateway_configs', {
+  id: text('id').primaryKey(),
+  provider: text('provider').notNull(),
+  name: text('name').notNull(),
+  isEnabled: boolean('is_enabled').notNull().default(false),
+  environment: text('environment').notNull().default('sandbox'),
+  /**
+   * Sealed credential blob. Never store gateway secrets as plain jsonb here —
+   * `encryptCredentials`/`decryptCredentials` from the payments crypto module own
+   * this column, mirroring `payment_provider_configs.credentialsEncrypted`.
+   */
+  credentialsEncrypted: jsonb('credentials_encrypted').$type<EncryptedCredentialsBlob>(),
+  supportedCurrencies: jsonb('supported_currencies').$type<string[]>().notNull().default([]),
+  icon: text('icon').notNull().default(''),
+  description: text('description').notNull().default(''),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type IntegrationAuditLogRow = typeof integrationAuditLog.$inferSelect;
+export type IntegrationAuditLogInsert = typeof integrationAuditLog.$inferInsert;
+export type UserSessionRow = typeof userSessions.$inferSelect;
+export type UserSessionInsert = typeof userSessions.$inferInsert;
 export type InvoiceDocumentRow = typeof invoiceDocuments.$inferSelect;
 export type UserRow = typeof users.$inferSelect;
 export type RoleRow = typeof roles.$inferSelect;
@@ -856,3 +1205,21 @@ export type CustomerRow = typeof customers.$inferSelect;
 export type CustomerAddressRow = typeof customerAddresses.$inferSelect;
 export type CustomerLedgerEntryRow = typeof customerLedgerEntries.$inferSelect;
 export type TransactionLedgerEntryRow = typeof transactionLedgerEntries.$inferSelect;
+export type CategoryRow = typeof categories.$inferSelect;
+export type CategoryInsert = typeof categories.$inferInsert;
+export type ItemTypeRow = typeof itemTypes.$inferSelect;
+export type ItemTypeInsert = typeof itemTypes.$inferInsert;
+export type TaxCategoryRow = typeof taxCategories.$inferSelect;
+export type TaxCategoryInsert = typeof taxCategories.$inferInsert;
+export type CurrencyRow = typeof currencies.$inferSelect;
+export type CurrencyInsert = typeof currencies.$inferInsert;
+export type ProductRow = typeof products.$inferSelect;
+export type ProductInsert = typeof products.$inferInsert;
+export type InventoryMovementRow = typeof inventoryMovements.$inferSelect;
+export type InventoryMovementInsert = typeof inventoryMovements.$inferInsert;
+export type PaymentTransactionRow = typeof paymentTransactions.$inferSelect;
+export type PaymentTransactionInsert = typeof paymentTransactions.$inferInsert;
+export type ReconciliationLogRow = typeof reconciliationLogs.$inferSelect;
+export type ReconciliationLogInsert = typeof reconciliationLogs.$inferInsert;
+export type PaymentGatewayConfigRow = typeof paymentGatewayConfigs.$inferSelect;
+export type PaymentGatewayConfigInsert = typeof paymentGatewayConfigs.$inferInsert;

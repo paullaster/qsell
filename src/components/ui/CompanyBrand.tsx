@@ -30,7 +30,7 @@ export function CompanyBrand({
     <div className={`flex items-center gap-2.5 ${className}`}>
       {logoUrl ? (
         <span
-          className={`relative ${mark} overflow-hidden rounded-lg bg-white/5 ring-1 ring-zinc-700`}
+          className={`relative ${mark} overflow-hidden rounded-lg bg-white/5 ring-1 ring-line-strong`}
         >
           <AppImage
             src={logoUrl}
@@ -49,11 +49,11 @@ export function CompanyBrand({
         </div>
       )}
       <div className="min-w-0">
-        <span className={`block truncate ${title} font-bold tracking-tight text-white`}>
+        <span className={`block truncate ${title} font-bold tracking-tight text-fg-strong`}>
           {tradingName}
         </span>
         {line ? (
-          <span className="-mt-0.5 block truncate text-[10px] tracking-wider text-zinc-500 uppercase">
+          <span className="-mt-0.5 block truncate text-[10px] tracking-wider text-fg-subtle uppercase">
             {line}
           </span>
         ) : null}

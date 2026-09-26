@@ -45,6 +45,7 @@ import {
   deleteCustomerAddressAction,
   setDefaultAddressAction,
   customerLoginAction,
+  logoutAction,
 } from '@/server/actions';
 
 interface CustomerAccountModalProps {
@@ -342,30 +343,30 @@ export function CustomerAccountModal({
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/80 p-3 backdrop-blur-md sm:p-6">
-      <div className="relative my-4 flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-backdrop/80 p-3 backdrop-blur-md sm:p-6">
+      <div className="relative my-4 flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-line bg-surface-raised shadow-2xl">
         {/* Top Header Bar */}
-        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-800 bg-zinc-950 p-4 sm:p-6">
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-line bg-surface p-4 sm:p-6">
           <div className="flex items-center gap-3">
             <div className="relative">
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-tr from-indigo-600 to-indigo-400 text-lg font-bold text-white shadow-lg">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-tr from-indigo-600 to-indigo-400 text-lg font-bold text-fg-strong shadow-lg">
                 {customer?.name?.charAt(0) || 'C'}
               </div>
-              <div className="absolute -right-1 -bottom-1 flex h-4 w-4 items-center justify-center rounded-full border-2 border-zinc-950 bg-emerald-500">
-                <Check className="h-2.5 w-2.5 stroke-[3] text-white" />
+              <div className="absolute -right-1 -bottom-1 flex h-4 w-4 items-center justify-center rounded-full border-2 border-line bg-emerald-500">
+                <Check className="h-2.5 w-2.5 stroke-[3] text-fg-strong" />
               </div>
             </div>
 
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-lg font-bold text-white">
+                <h2 className="text-lg font-bold text-fg-strong">
                   {customer?.name || 'Customer Account'}
                 </h2>
                 <span className="rounded-full border border-indigo-500/20 bg-indigo-500/10 px-2 py-0.5 text-[10px] font-semibold tracking-wider text-indigo-400 uppercase">
                   {customer?.status === 'verified' ? 'Verified Buyer' : 'Active Account'}
                 </span>
               </div>
-              <p className="mt-0.5 flex items-center gap-2 text-xs text-zinc-400">
+              <p className="mt-0.5 flex items-center gap-2 text-xs text-fg-muted">
                 <span>{customer?.email || 'customer@omnicommerce.ke'}</span>
                 <span>•</span>
                 <span>{customer?.phone || '+254 700 000000'}</span>
@@ -377,7 +378,7 @@ export function CustomerAccountModal({
             {/* Account Switcher Button */}
             <button
               onClick={() => setIsSwitchingAccount(!isSwitchingAccount)}
-              className="flex cursor-pointer items-center gap-1.5 rounded-xl border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-700"
+              className="flex cursor-pointer items-center gap-1.5 rounded-xl border border-line-strong bg-surface-sunken px-3 py-1.5 text-xs font-medium text-fg-strong transition-colors hover:bg-hover"
             >
               <User className="h-3.5 w-3.5 text-indigo-400" />
               <span>Switch Account</span>
@@ -390,7 +391,7 @@ export function CustomerAccountModal({
                   onClose();
                   onNavigateToAdmin();
                 }}
-                className="hidden cursor-pointer items-center gap-1.5 rounded-xl border border-indigo-800/40 bg-indigo-950/60 px-3 py-1.5 text-xs font-medium text-indigo-300 transition-colors hover:bg-indigo-900 sm:flex"
+                className="hidden cursor-pointer items-center gap-1.5 rounded-xl border border-indigo-800/40 bg-indigo-50/60 px-3 py-1.5 text-xs font-medium text-indigo-300 transition-colors hover:bg-indigo-100 sm:flex"
               >
                 <ShieldCheck className="h-3.5 w-3.5" />
                 <span>Admin Console</span>
@@ -402,7 +403,7 @@ export function CustomerAccountModal({
               onClick={() => loadCustomerData(customer?.id)}
               disabled={isLoading}
               title="Refresh Account Data"
-              className="cursor-pointer rounded-xl border border-zinc-800 bg-zinc-900 p-2 text-zinc-400 transition-colors hover:text-white disabled:opacity-50"
+              className="cursor-pointer rounded-xl border border-line bg-surface-raised p-2 text-fg-muted transition-colors hover:text-fg-strong disabled:opacity-50"
             >
               <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin text-indigo-400' : ''}`} />
             </button>
@@ -410,7 +411,7 @@ export function CustomerAccountModal({
             {/* Close */}
             <button
               onClick={onClose}
-              className="cursor-pointer rounded-xl border border-zinc-800 bg-zinc-900 p-2 text-zinc-400 transition-colors hover:text-white"
+              className="cursor-pointer rounded-xl border border-line bg-surface-raised p-2 text-fg-muted transition-colors hover:text-fg-strong"
             >
               <X className="h-4 w-4" />
             </button>
@@ -419,15 +420,15 @@ export function CustomerAccountModal({
 
         {/* Account Switcher Dropdown Drawer */}
         {isSwitchingAccount && (
-          <div className="animate-in fade-in border-b border-zinc-800 bg-zinc-950 p-4 duration-200 sm:p-5">
+          <div className="animate-in fade-in border-b border-line bg-surface p-4 duration-200 sm:p-5">
             <div className="mb-3 flex items-center justify-between">
-              <h3 className="flex items-center gap-2 text-xs font-semibold tracking-wider text-zinc-400 uppercase">
+              <h3 className="flex items-center gap-2 text-xs font-semibold tracking-wider text-fg-muted uppercase">
                 <User className="h-3.5 w-3.5 text-indigo-400" />
                 Select Customer Account / Login
               </h3>
               <button
                 onClick={() => setIsSwitchingAccount(false)}
-                className="text-xs text-zinc-500 hover:text-zinc-300"
+                className="text-xs text-fg-subtle hover:text-fg"
               >
                 Cancel
               </button>
@@ -440,8 +441,8 @@ export function CustomerAccountModal({
                   onClick={() => handleSwitchCustomer(cust)}
                   className={`flex cursor-pointer flex-col justify-between rounded-xl border p-3 text-left transition-all ${
                     cust.id === customer?.id
-                      ? 'border-indigo-500 bg-indigo-600/10 text-white'
-                      : 'hover:bg-zinc-850 border-zinc-800 bg-zinc-900 text-zinc-300'
+                      ? 'TW border-indigo-500 bg-indigo-600/10'
+                      : 'border-line bg-surface-raised text-fg hover:bg-hover'
                   }`}
                 >
                   <div className="flex items-center justify-between">
@@ -450,8 +451,8 @@ export function CustomerAccountModal({
                       <span className="h-2 w-2 rounded-full bg-indigo-500" />
                     )}
                   </div>
-                  <span className="mt-1 truncate text-[11px] text-zinc-500">{cust.email}</span>
-                  <div className="mt-2 flex items-center justify-between border-t border-zinc-800/60 pt-2 text-[10px] text-zinc-400">
+                  <span className="mt-1 truncate text-[11px] text-fg-subtle">{cust.email}</span>
+                  <div className="mt-2 flex items-center justify-between border-t border-line/60 pt-2 text-[10px] text-fg-muted">
                     <span>{cust.addresses?.length || 0} addresses</span>
                     <span className="font-medium text-indigo-400">
                       KES {cust.totalSpend?.toLocaleString()}
@@ -469,7 +470,7 @@ export function CustomerAccountModal({
                   placeholder="Enter email or Kenyan phone (e.g. 0722000000 or customer@biz.co.ke)..."
                   value={customLoginInput}
                   onChange={(e) => setCustomLoginInput(e.target.value)}
-                  className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+                  className="w-full rounded-xl border border-line bg-surface-raised px-3.5 py-2 text-xs text-fg-strong placeholder-fg-subtle focus:border-indigo-500 focus:outline-none"
                 />
               </div>
               <button
@@ -488,50 +489,50 @@ export function CustomerAccountModal({
           <div
             className={`flex items-center gap-2 px-5 py-2.5 text-xs font-medium ${
               statusMessage.type === 'success'
-                ? 'border-b border-emerald-800/40 bg-emerald-950/80 text-emerald-300'
-                : 'border-b border-rose-800/40 bg-rose-950/80 text-rose-300'
+                ? 'border-b border-emerald-800/40 bg-emerald-50/80 text-emerald-700'
+                : 'border-b border-rose-800/40 bg-rose-50/80 text-rose-700'
             }`}
           >
             {statusMessage.type === 'success' ? (
-              <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-emerald-400" />
+              <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-emerald-600" />
             ) : (
-              <AlertCircle className="h-4 w-4 flex-shrink-0 text-rose-400" />
+              <AlertCircle className="h-4 w-4 flex-shrink-0 text-rose-600" />
             )}
             <span>{statusMessage.text}</span>
           </div>
         )}
 
         {/* Quick Stats Grid */}
-        <div className="grid grid-cols-2 gap-px border-b border-zinc-800 bg-zinc-800 sm:grid-cols-4">
-          <div className="bg-zinc-900/90 p-4">
-            <span className="block text-[11px] tracking-wider text-zinc-500 uppercase">
+        <div className="grid grid-cols-2 gap-px border-b border-line bg-surface-sunken sm:grid-cols-4">
+          <div className="bg-surface-sunken/90 p-4">
+            <span className="block text-[11px] tracking-wider text-fg-subtle uppercase">
               Total Orders
             </span>
-            <span className="mt-0.5 block text-lg font-bold text-white">
+            <span className="mt-0.5 block text-lg font-bold text-fg-strong">
               {customer?.totalOrders || orders.length || 0}
             </span>
           </div>
-          <div className="bg-zinc-900/90 p-4">
-            <span className="block text-[11px] tracking-wider text-zinc-500 uppercase">
+          <div className="bg-surface-sunken/90 p-4">
+            <span className="block text-[11px] tracking-wider text-fg-subtle uppercase">
               Lifetime Spend
             </span>
-            <span className="mt-0.5 block text-lg font-bold text-emerald-400">
+            <span className="mt-0.5 block text-lg font-bold text-emerald-600">
               KES {customer?.totalSpend?.toLocaleString() || '0'}
             </span>
           </div>
-          <div className="bg-zinc-900/90 p-4">
-            <span className="block text-[11px] tracking-wider text-zinc-500 uppercase">
+          <div className="bg-surface-sunken/90 p-4">
+            <span className="block text-[11px] tracking-wider text-fg-subtle uppercase">
               Saved Addresses
             </span>
             <span className="mt-0.5 block text-lg font-bold text-indigo-400">
               {customer?.addresses?.length || 0}
             </span>
           </div>
-          <div className="bg-zinc-900/90 p-4">
-            <span className="block text-[11px] tracking-wider text-zinc-500 uppercase">
+          <div className="bg-surface-sunken/90 p-4">
+            <span className="block text-[11px] tracking-wider text-fg-subtle uppercase">
               Preferred Payment
             </span>
-            <span className="mt-1.5 block truncate text-sm font-semibold text-white">
+            <span className="mt-1.5 block truncate text-sm font-semibold text-fg-strong">
               {customer?.paymentPreferences?.preferredMethod === 'mpesa_daraja'
                 ? 'M-Pesa STK'
                 : 'Pesapal v3'}
@@ -540,13 +541,13 @@ export function CustomerAccountModal({
         </div>
 
         {/* Nav Tabs */}
-        <div className="flex scrollbar-none overflow-x-auto border-b border-zinc-800 bg-zinc-950/50 px-4 sm:px-6">
+        <div className="flex scrollbar-none overflow-x-auto border-b border-line bg-surface/50 px-4 sm:px-6">
           <button
             onClick={() => setActiveTab('overview')}
             className={`flex cursor-pointer items-center gap-2 border-b-2 px-4 py-3.5 text-xs font-semibold whitespace-nowrap transition-all ${
               activeTab === 'overview'
                 ? 'border-indigo-500 text-indigo-400'
-                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+                : 'border-transparent text-fg-muted hover:text-fg-strong'
             }`}
           >
             <User className="h-4 w-4" />
@@ -558,7 +559,7 @@ export function CustomerAccountModal({
             className={`flex cursor-pointer items-center gap-2 border-b-2 px-4 py-3.5 text-xs font-semibold whitespace-nowrap transition-all ${
               activeTab === 'addresses'
                 ? 'border-indigo-500 text-indigo-400'
-                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+                : 'border-transparent text-fg-muted hover:text-fg-strong'
             }`}
           >
             <MapPin className="h-4 w-4" />
@@ -570,7 +571,7 @@ export function CustomerAccountModal({
             className={`flex cursor-pointer items-center gap-2 border-b-2 px-4 py-3.5 text-xs font-semibold whitespace-nowrap transition-all ${
               activeTab === 'orders'
                 ? 'border-indigo-500 text-indigo-400'
-                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+                : 'border-transparent text-fg-muted hover:text-fg-strong'
             }`}
           >
             <ShoppingBag className="h-4 w-4" />
@@ -582,7 +583,7 @@ export function CustomerAccountModal({
             className={`flex cursor-pointer items-center gap-2 border-b-2 px-4 py-3.5 text-xs font-semibold whitespace-nowrap transition-all ${
               activeTab === 'payment'
                 ? 'border-indigo-500 text-indigo-400'
-                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+                : 'border-transparent text-fg-muted hover:text-fg-strong'
             }`}
           >
             <CreditCard className="h-4 w-4" />
@@ -593,7 +594,7 @@ export function CustomerAccountModal({
         {/* Tab Contents */}
         <div className="max-h-[60vh] flex-1 overflow-y-auto p-4 sm:p-6">
           {isLoading ? (
-            <div className="flex flex-col items-center justify-center py-16 text-zinc-500">
+            <div className="flex flex-col items-center justify-center py-16 text-fg-subtle">
               <RefreshCw className="mb-3 h-8 w-8 animate-spin text-indigo-500" />
               <p className="text-sm">Loading customer details...</p>
             </div>
@@ -602,18 +603,18 @@ export function CustomerAccountModal({
               {/* TAB 1: OVERVIEW & PROFILE */}
               {activeTab === 'overview' && (
                 <div className="space-y-6">
-                  <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-5">
+                  <div className="rounded-xl border border-line bg-surface p-5">
                     <div className="mb-4 flex items-center justify-between">
                       <div>
-                        <h3 className="text-sm font-bold text-white">Personal Information</h3>
-                        <p className="text-xs text-zinc-400">
+                        <h3 className="text-sm font-bold text-fg-strong">Personal Information</h3>
+                        <p className="text-xs text-fg-muted">
                           Manage your contact details and default communication channels.
                         </p>
                       </div>
                       {!isEditingProfile ? (
                         <button
                           onClick={() => setIsEditingProfile(true)}
-                          className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800"
+                          className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-line-strong bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg-strong transition-colors hover:bg-hover"
                         >
                           <Edit3 className="h-3.5 w-3.5 text-indigo-400" />
                           <span>Edit Profile</span>
@@ -621,7 +622,7 @@ export function CustomerAccountModal({
                       ) : (
                         <button
                           onClick={() => setIsEditingProfile(false)}
-                          className="cursor-pointer rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-400 transition-colors hover:bg-zinc-800"
+                          className="cursor-pointer rounded-lg border border-line-strong bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg-muted transition-colors hover:bg-hover"
                         >
                           Cancel
                         </button>
@@ -632,7 +633,7 @@ export function CustomerAccountModal({
                       <form onSubmit={handleSaveProfile} className="space-y-4 pt-2">
                         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                           <div>
-                            <label className="mb-1 block text-xs font-medium text-zinc-400">
+                            <label className="mb-1 block text-xs font-medium text-fg-muted">
                               Full Legal Name
                             </label>
                             <input
@@ -640,12 +641,12 @@ export function CustomerAccountModal({
                               value={editName}
                               onChange={(e) => setEditName(e.target.value)}
                               required
-                              className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-white focus:border-indigo-500 focus:outline-none"
+                              className="w-full rounded-xl border border-line-strong bg-surface-raised px-3 py-2 text-xs text-fg-strong focus:border-indigo-500 focus:outline-none"
                             />
                           </div>
 
                           <div>
-                            <label className="mb-1 block text-xs font-medium text-zinc-400">
+                            <label className="mb-1 block text-xs font-medium text-fg-muted">
                               Email Address
                             </label>
                             <input
@@ -653,12 +654,12 @@ export function CustomerAccountModal({
                               value={editEmail}
                               onChange={(e) => setEditEmail(e.target.value)}
                               required
-                              className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-white focus:border-indigo-500 focus:outline-none"
+                              className="w-full rounded-xl border border-line-strong bg-surface-raised px-3 py-2 text-xs text-fg-strong focus:border-indigo-500 focus:outline-none"
                             />
                           </div>
 
                           <div>
-                            <label className="mb-1 block text-xs font-medium text-zinc-400">
+                            <label className="mb-1 block text-xs font-medium text-fg-muted">
                               Phone Number (M-Pesa registered)
                             </label>
                             <input
@@ -666,12 +667,12 @@ export function CustomerAccountModal({
                               value={editPhone}
                               onChange={(e) => setEditPhone(e.target.value)}
                               required
-                              className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-white focus:border-indigo-500 focus:outline-none"
+                              className="w-full rounded-xl border border-line-strong bg-surface-raised px-3 py-2 text-xs text-fg-strong focus:border-indigo-500 focus:outline-none"
                             />
                           </div>
 
                           <div>
-                            <label className="mb-1 block text-xs font-medium text-zinc-400">
+                            <label className="mb-1 block text-xs font-medium text-fg-muted">
                               Default Payment Method
                             </label>
                             <select
@@ -679,7 +680,7 @@ export function CustomerAccountModal({
                               onChange={(e) =>
                                 setEditPaymentMethod(e.target.value as PaymentProvider)
                               }
-                              className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-white focus:border-indigo-500 focus:outline-none"
+                              className="w-full rounded-xl border border-line-strong bg-surface-raised px-3 py-2 text-xs text-fg-strong focus:border-indigo-500 focus:outline-none"
                             >
                               <option value="mpesa_daraja">Safaricom M-Pesa STK Push (LNMO)</option>
                               <option value="pesapal_v3">
@@ -693,7 +694,7 @@ export function CustomerAccountModal({
                           <button
                             type="button"
                             onClick={() => setIsEditingProfile(false)}
-                            className="cursor-pointer rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-2 text-xs font-medium text-zinc-300 hover:bg-zinc-800"
+                            className="cursor-pointer rounded-xl border border-line-strong bg-surface-raised px-4 py-2 text-xs font-medium text-fg hover:bg-hover"
                           >
                             Cancel
                           </button>
@@ -714,41 +715,41 @@ export function CustomerAccountModal({
                     ) : (
                       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         {customer?.customerNumber ? (
-                          <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/60 p-3.5 sm:col-span-2">
-                            <span className="mb-1 block text-[10px] font-semibold text-zinc-500 uppercase">
+                          <div className="rounded-xl border border-line/80 bg-surface-sunken/60 p-3.5 sm:col-span-2">
+                            <span className="mb-1 block text-[10px] font-semibold text-fg-subtle uppercase">
                               Customer Number
                             </span>
-                            <span className="font-mono text-xs font-medium text-zinc-200">
+                            <span className="font-mono text-xs font-medium text-fg-strong">
                               {customer.customerNumber}
                             </span>
                           </div>
                         ) : null}
-                        <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/60 p-3.5">
-                          <span className="mb-1 block text-[10px] font-semibold text-zinc-500 uppercase">
+                        <div className="rounded-xl border border-line/80 bg-surface-sunken/60 p-3.5">
+                          <span className="mb-1 block text-[10px] font-semibold text-fg-subtle uppercase">
                             Full Name
                           </span>
-                          <span className="text-xs font-medium text-zinc-200">
+                          <span className="text-xs font-medium text-fg-strong">
                             {customer?.name}
                           </span>
                         </div>
-                        <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/60 p-3.5">
-                          <span className="mb-1 block text-[10px] font-semibold text-zinc-500 uppercase">
+                        <div className="rounded-xl border border-line/80 bg-surface-sunken/60 p-3.5">
+                          <span className="mb-1 block text-[10px] font-semibold text-fg-subtle uppercase">
                             Email Address
                           </span>
-                          <span className="text-xs font-medium text-zinc-200">
+                          <span className="text-xs font-medium text-fg-strong">
                             {customer?.email}
                           </span>
                         </div>
-                        <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/60 p-3.5">
-                          <span className="mb-1 block text-[10px] font-semibold text-zinc-500 uppercase">
+                        <div className="rounded-xl border border-line/80 bg-surface-sunken/60 p-3.5">
+                          <span className="mb-1 block text-[10px] font-semibold text-fg-subtle uppercase">
                             Phone Number
                           </span>
-                          <span className="text-xs font-medium text-zinc-200">
+                          <span className="text-xs font-medium text-fg-strong">
                             {customer?.phone}
                           </span>
                         </div>
-                        <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/60 p-3.5">
-                          <span className="mb-1 block text-[10px] font-semibold text-zinc-500 uppercase">
+                        <div className="rounded-xl border border-line/80 bg-surface-sunken/60 p-3.5">
+                          <span className="mb-1 block text-[10px] font-semibold text-fg-subtle uppercase">
                             Default Payment Rail
                           </span>
                           <span className="text-xs font-medium text-indigo-400">
@@ -762,11 +763,13 @@ export function CustomerAccountModal({
                   </div>
 
                   {/* Primary Delivery Address Banner */}
-                  <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-5">
+                  <div className="rounded-xl border border-line bg-surface p-5">
                     <div className="mb-3 flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <MapPin className="h-4 w-4 text-indigo-400" />
-                        <h3 className="text-sm font-bold text-white">Default Delivery Address</h3>
+                        <h3 className="text-sm font-bold text-fg-strong">
+                          Default Delivery Address
+                        </h3>
                       </div>
                       <button
                         onClick={() => setActiveTab('addresses')}
@@ -782,34 +785,32 @@ export function CustomerAccountModal({
                         const defaultAddr =
                           customer.addresses.find((a) => a.isDefault) || customer.addresses[0];
                         return (
-                          <div className="flex flex-col items-start justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 sm:flex-row sm:items-center">
+                          <div className="flex flex-col items-start justify-between gap-3 rounded-xl border border-line bg-surface-sunken/60 p-4 sm:flex-row sm:items-center">
                             <div>
                               <div className="mb-1 flex items-center gap-2">
-                                <span className="text-xs font-semibold text-white">
+                                <span className="text-xs font-semibold text-fg-strong">
                                   {defaultAddr.label}
                                 </span>
-                                <span className="rounded bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
+                                <span className="rounded bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600">
                                   Default
                                 </span>
                               </div>
-                              <p className="text-xs text-zinc-300">{defaultAddr.street}</p>
-                              <p className="mt-0.5 text-xs text-zinc-500">
+                              <p className="text-xs text-fg">{defaultAddr.street}</p>
+                              <p className="mt-0.5 text-xs text-fg-subtle">
                                 {defaultAddr.city}, {defaultAddr.countyOrState},{' '}
                                 {defaultAddr.country}
                               </p>
                             </div>
-                            <div className="text-right text-xs text-zinc-400">
-                              <p className="font-medium text-zinc-300">
-                                {defaultAddr.recipientName}
-                              </p>
-                              <p className="text-zinc-500">{defaultAddr.recipientPhone}</p>
+                            <div className="text-right text-xs text-fg-muted">
+                              <p className="font-medium text-fg">{defaultAddr.recipientName}</p>
+                              <p className="text-fg-subtle">{defaultAddr.recipientPhone}</p>
                             </div>
                           </div>
                         );
                       })()
                     ) : (
-                      <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-900/40 p-4 text-center">
-                        <p className="mb-2 text-xs text-zinc-500">No addresses saved yet.</p>
+                      <div className="rounded-xl border border-dashed border-line bg-surface-sunken/40 p-4 text-center">
+                        <p className="mb-2 text-xs text-fg-subtle">No addresses saved yet.</p>
                         <button
                           onClick={handleOpenAddAddress}
                           className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
@@ -828,8 +829,8 @@ export function CustomerAccountModal({
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <div>
-                      <h3 className="text-sm font-bold text-white">Your Saved Addresses</h3>
-                      <p className="text-xs text-zinc-400">
+                      <h3 className="text-sm font-bold text-fg-strong">Your Saved Addresses</h3>
+                      <p className="text-xs text-fg-muted">
                         Addresses saved here will automatically autofill at checkout.
                       </p>
                     </div>
@@ -849,49 +850,49 @@ export function CustomerAccountModal({
                           key={addr.id}
                           className={`flex flex-col justify-between rounded-xl border p-4 transition-all ${
                             addr.isDefault
-                              ? 'border-indigo-500/50 bg-zinc-950 shadow-sm shadow-indigo-500/10'
-                              : 'border-zinc-800 bg-zinc-950/70 hover:border-zinc-700'
+                              ? 'border-indigo-500/50 bg-surface shadow-sm shadow-indigo-500/10'
+                              : 'border-line bg-surface/70 hover:border-line-strong'
                           }`}
                         >
                           <div>
                             <div className="mb-2 flex items-center justify-between">
-                              <span className="flex items-center gap-1.5 text-xs font-bold text-white">
+                              <span className="flex items-center gap-1.5 text-xs font-bold text-fg-strong">
                                 <Building className="h-3.5 w-3.5 text-indigo-400" />
                                 {addr.label}
                               </span>
                               {addr.isDefault ? (
-                                <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-400">
+                                <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-600">
                                   Default Delivery
                                 </span>
                               ) : (
                                 <button
                                   onClick={() => handleSetDefaultAddress(addr.id)}
-                                  className="cursor-pointer text-[11px] font-medium text-zinc-400 transition-colors hover:text-indigo-400"
+                                  className="cursor-pointer text-[11px] font-medium text-fg-muted transition-colors hover:text-indigo-400"
                                 >
                                   Make Default
                                 </button>
                               )}
                             </div>
 
-                            <div className="space-y-1 text-xs text-zinc-300">
-                              <p className="font-semibold text-zinc-200">{addr.recipientName}</p>
-                              <p className="flex items-center gap-1 text-zinc-400">
-                                <Phone className="h-3 w-3 text-zinc-500" />
+                            <div className="space-y-1 text-xs text-fg">
+                              <p className="font-semibold text-fg-strong">{addr.recipientName}</p>
+                              <p className="flex items-center gap-1 text-fg-muted">
+                                <Phone className="h-3 w-3 text-fg-subtle" />
                                 {addr.recipientPhone}
                               </p>
-                              <p className="pt-1 text-zinc-300">{addr.street}</p>
-                              <p className="text-zinc-500">
+                              <p className="pt-1 text-fg">{addr.street}</p>
+                              <p className="text-fg-subtle">
                                 {addr.city}, {addr.countyOrState}{' '}
                                 {addr.postalCode ? `(${addr.postalCode})` : ''}
                               </p>
-                              <p className="text-[11px] text-zinc-500">{addr.country}</p>
+                              <p className="text-[11px] text-fg-subtle">{addr.country}</p>
                             </div>
                           </div>
 
-                          <div className="mt-4 flex items-center justify-end gap-2 border-t border-zinc-800/80 pt-3">
+                          <div className="mt-4 flex items-center justify-end gap-2 border-t border-line/80 pt-3">
                             <button
                               onClick={() => handleOpenEditAddress(addr)}
-                              className="flex cursor-pointer items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-900 p-1.5 text-xs text-zinc-400 transition-colors hover:text-zinc-200"
+                              className="flex cursor-pointer items-center gap-1 rounded-lg border border-line bg-surface-raised p-1.5 text-xs text-fg-muted transition-colors hover:text-fg-strong"
                               title="Edit address"
                             >
                               <Edit3 className="h-3.5 w-3.5" />
@@ -899,7 +900,7 @@ export function CustomerAccountModal({
                             </button>
                             <button
                               onClick={() => handleDeleteAddress(addr.id)}
-                              className="flex cursor-pointer items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-900 p-1.5 text-xs text-zinc-400 transition-colors hover:text-rose-400"
+                              className="flex cursor-pointer items-center gap-1 rounded-lg border border-line bg-surface-raised p-1.5 text-xs text-fg-muted transition-colors hover:text-rose-600"
                               title="Delete address"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
@@ -910,10 +911,10 @@ export function CustomerAccountModal({
                       ))}
                     </div>
                   ) : (
-                    <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950 p-8 text-center">
-                      <MapPin className="mx-auto mb-2 h-8 w-8 text-zinc-600" />
-                      <h4 className="text-sm font-semibold text-zinc-300">No addresses on file</h4>
-                      <p className="mt-1 mb-4 text-xs text-zinc-500">
+                    <div className="rounded-xl border border-dashed border-line bg-surface p-8 text-center">
+                      <MapPin className="mx-auto mb-2 h-8 w-8 text-fg-faint" />
+                      <h4 className="text-sm font-semibold text-fg">No addresses on file</h4>
+                      <p className="mt-1 mb-4 text-xs text-fg-subtle">
                         Add your home or office address for fast Kenyan dispatch.
                       </p>
                       <button
@@ -933,12 +934,12 @@ export function CustomerAccountModal({
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <div>
-                      <h3 className="text-sm font-bold text-white">Your Orders</h3>
-                      <p className="text-xs text-zinc-400">
+                      <h3 className="text-sm font-bold text-fg-strong">Your Orders</h3>
+                      <p className="text-xs text-fg-muted">
                         Track shipments, view payment receipts, and review itemized order history.
                       </p>
                     </div>
-                    <span className="text-xs font-medium text-zinc-500">
+                    <span className="text-xs font-medium text-fg-subtle">
                       {orders.length} total orders
                     </span>
                   </div>
@@ -948,24 +949,24 @@ export function CustomerAccountModal({
                       {orders.map((order) => (
                         <div
                           key={order.id}
-                          className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 transition-all hover:border-zinc-700"
+                          className="overflow-hidden rounded-xl border border-line bg-surface transition-all hover:border-line-strong"
                         >
                           {/* Order Header Bar */}
-                          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 bg-zinc-900/60 p-4">
+                          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-surface-sunken/60 p-4">
                             <div className="flex items-center gap-3">
                               <div>
                                 <div className="flex items-center gap-2">
-                                  <span className="text-sm font-bold text-white">
+                                  <span className="text-sm font-bold text-fg-strong">
                                     #{order.orderNumber}
                                   </span>
                                   <span
                                     className={`rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wider uppercase ${
                                       order.status === 'delivered' || order.status === 'completed'
-                                        ? 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-400'
+                                        ? 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-600'
                                         : order.status === 'processing' ||
                                             order.status === 'shipped'
                                           ? 'border border-indigo-500/20 bg-indigo-500/10 text-indigo-400'
-                                          : 'border border-amber-500/20 bg-amber-500/10 text-amber-400'
+                                          : 'border border-amber-500/20 bg-amber-500/10 text-amber-600'
                                     }`}
                                   >
                                     {order.status}
@@ -974,8 +975,8 @@ export function CustomerAccountModal({
                                     className={`rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wider uppercase ${
                                       order.paymentStatus === 'reconciled' ||
                                       order.paymentStatus === 'paid'
-                                        ? 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-400'
-                                        : 'border border-amber-500/20 bg-amber-500/10 text-amber-400'
+                                        ? 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-600'
+                                        : 'border border-amber-500/20 bg-amber-500/10 text-amber-600'
                                     }`}
                                   >
                                     {order.paymentStatus === 'reconciled'
@@ -983,7 +984,7 @@ export function CustomerAccountModal({
                                       : order.paymentStatus}
                                   </span>
                                 </div>
-                                <span className="mt-0.5 block text-[11px] text-zinc-500">
+                                <span className="mt-0.5 block text-[11px] text-fg-subtle">
                                   Placed on{' '}
                                   {new Date(order.createdAt).toLocaleDateString('en-GB', {
                                     day: 'numeric',
@@ -1000,7 +1001,7 @@ export function CustomerAccountModal({
                               {/* View Receipt */}
                               <button
                                 onClick={() => setSelectedReceiptOrder(order)}
-                                className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800"
+                                className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-line-strong bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg-strong transition-colors hover:bg-hover"
                               >
                                 <FileText className="h-3.5 w-3.5 text-indigo-400" />
                                 <span>View Receipt</span>
@@ -1036,37 +1037,37 @@ export function CustomerAccountModal({
                                     width={40}
                                     height={40}
                                     sizes="40px"
-                                    className="h-10 w-10 rounded-lg border border-zinc-800 bg-zinc-900 object-cover"
+                                    className="h-10 w-10 rounded-lg border border-line bg-surface-raised object-cover"
                                   />
                                   <div>
-                                    <p className="font-semibold text-zinc-200">
+                                    <p className="font-semibold text-fg-strong">
                                       {item.productName}
                                     </p>
-                                    <p className="text-[11px] text-zinc-500">
+                                    <p className="text-[11px] text-fg-subtle">
                                       Qty: {item.quantity} × KES {item.unitPrice.toLocaleString()}
                                     </p>
                                   </div>
                                 </div>
-                                <span className="font-bold text-zinc-200">
+                                <span className="font-bold text-fg-strong">
                                   KES {item.totalPrice.toLocaleString()}
                                 </span>
                               </div>
                             ))}
 
                             {/* Summary Totals */}
-                            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-zinc-800/80 pt-3 text-xs">
-                              <div className="text-[11px] text-zinc-500">
+                            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line/80 pt-3 text-xs">
+                              <div className="text-[11px] text-fg-subtle">
                                 {order.paymentMethod === 'mpesa_daraja' ? (
                                   <span>
                                     M-Pesa Ref:{' '}
-                                    <strong className="text-zinc-300">
+                                    <strong className="text-fg">
                                       {shownPaymentReference(order) || 'N/A'}
                                     </strong>
                                   </span>
                                 ) : (
                                   <span>
                                     Pesapal Ref:{' '}
-                                    <strong className="text-zinc-300">
+                                    <strong className="text-fg">
                                       {order.pesapalTrackingId ||
                                         shownPaymentReference(order) ||
                                         'N/A'}
@@ -1084,14 +1085,14 @@ export function CustomerAccountModal({
                               </div>
 
                               <div className="flex items-center gap-4">
-                                <span className="text-xs text-zinc-400">
+                                <span className="text-xs text-fg-muted">
                                   VAT (16%): KES {order.tax.toLocaleString()}
                                 </span>
                                 <div className="text-right">
-                                  <span className="block text-[10px] text-zinc-500 uppercase">
+                                  <span className="block text-[10px] text-fg-subtle uppercase">
                                     Total
                                   </span>
-                                  <span className="text-sm font-extrabold text-emerald-400">
+                                  <span className="text-sm font-extrabold text-emerald-600">
                                     {order.currency} {order.totalAmount.toLocaleString()}
                                   </span>
                                 </div>
@@ -1102,10 +1103,10 @@ export function CustomerAccountModal({
                       ))}
                     </div>
                   ) : (
-                    <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950 p-12 text-center">
-                      <ShoppingBag className="mx-auto mb-2 h-10 w-10 text-zinc-600" />
-                      <h4 className="text-sm font-semibold text-zinc-300">No Orders Yet</h4>
-                      <p className="mt-1 mb-4 text-xs text-zinc-500">
+                    <div className="rounded-xl border border-dashed border-line bg-surface p-12 text-center">
+                      <ShoppingBag className="mx-auto mb-2 h-10 w-10 text-fg-faint" />
+                      <h4 className="text-sm font-semibold text-fg">No Orders Yet</h4>
+                      <p className="mt-1 mb-4 text-xs text-fg-subtle">
                         When you place orders through M-Pesa or Card, they will appear here with
                         live receipts.
                       </p>
@@ -1124,57 +1125,57 @@ export function CustomerAccountModal({
               {activeTab === 'payment' && (
                 <div className="space-y-6">
                   {/* Payment Rails Section */}
-                  <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-5">
+                  <div className="rounded-xl border border-line bg-surface p-5">
                     <div className="mb-3 flex items-center gap-2">
                       <CreditCard className="h-4 w-4 text-indigo-400" />
-                      <h3 className="text-sm font-bold text-white">Configured Payment Rails</h3>
+                      <h3 className="text-sm font-bold text-fg-strong">Configured Payment Rails</h3>
                     </div>
-                    <p className="mb-4 text-xs text-zinc-400">
+                    <p className="mb-4 text-xs text-fg-muted">
                       Direct integration with Safaricom Daraja STK Push and Pesapal v3.0 merchant
                       rails.
                     </p>
 
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                      <div className="flex items-start gap-3 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-                        <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border border-emerald-500/30 bg-emerald-600/20 text-xs font-bold text-emerald-400">
+                      <div className="flex items-start gap-3 rounded-xl border border-line bg-surface-sunken/60 p-4">
+                        <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border border-emerald-500/30 bg-emerald-600/20 text-xs font-bold text-emerald-600">
                           M
                         </div>
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className="text-xs font-bold text-white">
+                            <span className="text-xs font-bold text-fg-strong">
                               Safaricom M-Pesa STK
                             </span>
-                            <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-400">
+                            <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-600">
                               Active
                             </span>
                           </div>
-                          <p className="mt-1 text-xs text-zinc-400">
+                          <p className="mt-1 text-xs text-fg-muted">
                             Prompt Phone:{' '}
-                            <strong className="text-zinc-200">{customer?.phone}</strong>
+                            <strong className="text-fg-strong">{customer?.phone}</strong>
                           </p>
-                          <p className="mt-0.5 text-[11px] text-zinc-500">
+                          <p className="mt-0.5 text-[11px] text-fg-subtle">
                             Instant STK push PIN prompt to customer phone
                           </p>
                         </div>
                       </div>
 
-                      <div className="flex items-start gap-3 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+                      <div className="flex items-start gap-3 rounded-xl border border-line bg-surface-sunken/60 p-4">
                         <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border border-indigo-500/30 bg-indigo-600/20 text-xs font-bold text-indigo-400">
                           P
                         </div>
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className="text-xs font-bold text-white">
+                            <span className="text-xs font-bold text-fg-strong">
                               Pesapal v3.0 Multi-Rail
                             </span>
                             <span className="rounded bg-indigo-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-indigo-400">
                               Ready
                             </span>
                           </div>
-                          <p className="mt-1 text-xs text-zinc-400">
+                          <p className="mt-1 text-xs text-fg-muted">
                             VISA, Mastercard, Airtel Money
                           </p>
-                          <p className="mt-0.5 text-[11px] text-zinc-500">
+                          <p className="mt-0.5 text-[11px] text-fg-subtle">
                             Encrypted 3DS tokenization & IPN webhooks
                           </p>
                         </div>
@@ -1183,26 +1184,28 @@ export function CustomerAccountModal({
                   </div>
 
                   {/* Account Security & Role Status */}
-                  <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-5">
+                  <div className="rounded-xl border border-line bg-surface p-5">
                     <div className="mb-3 flex items-center gap-2">
-                      <ShieldCheck className="h-4 w-4 text-emerald-400" />
-                      <h3 className="text-sm font-bold text-white">Account Security & Session</h3>
+                      <ShieldCheck className="h-4 w-4 text-emerald-600" />
+                      <h3 className="text-sm font-bold text-fg-strong">
+                        Account Security & Session
+                      </h3>
                     </div>
 
-                    <div className="space-y-3 text-xs text-zinc-400">
-                      <div className="flex items-center justify-between rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-3">
+                    <div className="space-y-3 text-xs text-fg-muted">
+                      <div className="flex items-center justify-between rounded-xl border border-line/80 bg-surface-sunken/40 p-3">
                         <span>Account Role Status</span>
-                        <span className="font-bold text-white uppercase">
+                        <span className="font-bold text-fg-strong uppercase">
                           {customer?.role || 'customer'}
                         </span>
                       </div>
-                      <div className="flex items-center justify-between rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-3">
+                      <div className="flex items-center justify-between rounded-xl border border-line/80 bg-surface-sunken/40 p-3">
                         <span>Customer Identity ID</span>
-                        <span className="font-mono text-zinc-300">{customer?.id}</span>
+                        <span className="font-mono text-fg">{customer?.id}</span>
                       </div>
-                      <div className="flex items-center justify-between rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-3">
+                      <div className="flex items-center justify-between rounded-xl border border-line/80 bg-surface-sunken/40 p-3">
                         <span>Member Since</span>
-                        <span className="text-zinc-300">
+                        <span className="text-fg">
                           {customer?.createdAt
                             ? new Date(customer.createdAt).toLocaleDateString('en-GB')
                             : 'August 2026'}
@@ -1217,15 +1220,21 @@ export function CustomerAccountModal({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between border-t border-zinc-800 bg-zinc-950 p-4">
-          <div className="flex items-center gap-2 text-xs text-zinc-500">
-            <ShieldCheck className="h-4 w-4 text-emerald-500" />
+        <div className="flex items-center justify-between border-t border-line bg-surface p-4">
+          <div className="flex items-center gap-2 text-xs text-fg-subtle">
+            <ShieldCheck className="h-4 w-4 text-emerald-600" />
             <span>256-Bit SSL Encrypted Customer Vault</span>
           </div>
 
+          <form action={logoutAction}>
+            <button type="submit" className="flex cursor-pointer items-center gap-1.5 rounded-xl bg-red-600 px-4 py-2 text-xs font-semibold text-white shadow-md shadow-red-600/20 transition-colors hover:bg-red-500">
+              <LogOut className="h-3.5 w-3.5" />
+              <span>Logout</span>
+            </button>
+          </form>
           <button
             onClick={onClose}
-            className="cursor-pointer rounded-xl bg-zinc-800 px-5 py-2 text-xs font-semibold text-zinc-200 transition-colors hover:bg-zinc-700"
+            className="cursor-pointer rounded-xl bg-surface-sunken px-5 py-2 text-xs font-semibold text-fg-strong transition-colors hover:bg-hover"
           >
             Close Account
           </button>
@@ -1236,16 +1245,16 @@ export function CustomerAccountModal({
       {/* ADD / EDIT ADDRESS SUB-MODAL */}
       {/* ========================================================================= */}
       {isAddressModalOpen && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
-          <div className="animate-in zoom-in-95 w-full max-w-lg rounded-2xl border border-zinc-700 bg-zinc-900 p-6 shadow-2xl duration-150">
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-backdrop/80 p-4 backdrop-blur-sm">
+          <div className="animate-in zoom-in-95 w-full max-w-lg rounded-2xl border border-line-strong bg-surface-raised p-6 shadow-2xl duration-150">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="flex items-center gap-2 text-sm font-bold text-white">
+              <h3 className="flex items-center gap-2 text-sm font-bold text-fg-strong">
                 <MapPin className="h-4 w-4 text-indigo-400" />
                 {editingAddressId ? 'Edit Delivery Address' : 'Add New Delivery Address'}
               </h3>
               <button
                 onClick={() => setIsAddressModalOpen(false)}
-                className="text-zinc-400 hover:text-white"
+                className="text-fg-muted hover:text-fg-strong"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -1254,7 +1263,7 @@ export function CustomerAccountModal({
             <form onSubmit={handleSaveAddress} className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="mb-1 block text-[11px] font-medium text-zinc-400">
+                  <label className="mb-1 block text-[11px] font-medium text-fg-muted">
                     Address Label
                   </label>
                   <input
@@ -1263,11 +1272,11 @@ export function CustomerAccountModal({
                     value={addrLabel}
                     onChange={(e) => setAddrLabel(e.target.value)}
                     required
-                    className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-white focus:border-indigo-500 focus:outline-none"
+                    className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-xs text-fg-strong focus:border-indigo-500 focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-[11px] font-medium text-zinc-400">
+                  <label className="mb-1 block text-[11px] font-medium text-fg-muted">
                     Recipient Phone
                   </label>
                   <input
@@ -1276,13 +1285,13 @@ export function CustomerAccountModal({
                     value={addrRecipientPhone}
                     onChange={(e) => setAddrRecipientPhone(e.target.value)}
                     required
-                    className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-white focus:border-indigo-500 focus:outline-none"
+                    className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-xs text-fg-strong focus:border-indigo-500 focus:outline-none"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="mb-1 block text-[11px] font-medium text-zinc-400">
+                <label className="mb-1 block text-[11px] font-medium text-fg-muted">
                   Recipient Name
                 </label>
                 <input
@@ -1291,12 +1300,12 @@ export function CustomerAccountModal({
                   value={addrRecipientName}
                   onChange={(e) => setAddrRecipientName(e.target.value)}
                   required
-                  className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-white focus:border-indigo-500 focus:outline-none"
+                  className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-xs text-fg-strong focus:border-indigo-500 focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="mb-1 block text-[11px] font-medium text-zinc-400">
+                <label className="mb-1 block text-[11px] font-medium text-fg-muted">
                   Street Address / Building / Suite
                 </label>
                 <input
@@ -1305,13 +1314,13 @@ export function CustomerAccountModal({
                   value={addrStreet}
                   onChange={(e) => setAddrStreet(e.target.value)}
                   required
-                  className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-white focus:border-indigo-500 focus:outline-none"
+                  className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-xs text-fg-strong focus:border-indigo-500 focus:outline-none"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="mb-1 block text-[11px] font-medium text-zinc-400">
+                  <label className="mb-1 block text-[11px] font-medium text-fg-muted">
                     City / Town
                   </label>
                   <input
@@ -1320,18 +1329,18 @@ export function CustomerAccountModal({
                     value={addrCity}
                     onChange={(e) => setAddrCity(e.target.value)}
                     required
-                    className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-white focus:border-indigo-500 focus:outline-none"
+                    className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-xs text-fg-strong focus:border-indigo-500 focus:outline-none"
                   />
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-[11px] font-medium text-zinc-400">
+                  <label className="mb-1 block text-[11px] font-medium text-fg-muted">
                     County / State
                   </label>
                   <select
                     value={addrCounty}
                     onChange={(e) => setAddrCounty(e.target.value)}
-                    className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-white focus:border-indigo-500 focus:outline-none"
+                    className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-xs text-fg-strong focus:border-indigo-500 focus:outline-none"
                   >
                     {kenyanCounties.map((c) => (
                       <option key={c} value={c}>
@@ -1348,21 +1357,18 @@ export function CustomerAccountModal({
                   id="addrDefaultCheckbox"
                   checked={addrIsDefault}
                   onChange={(e) => setAddrIsDefault(e.target.checked)}
-                  className="h-4 w-4 rounded border-zinc-700 bg-zinc-950 text-indigo-600"
+                  className="h-4 w-4 rounded border-line-strong bg-surface text-indigo-600"
                 />
-                <label
-                  htmlFor="addrDefaultCheckbox"
-                  className="cursor-pointer text-xs text-zinc-300"
-                >
+                <label htmlFor="addrDefaultCheckbox" className="cursor-pointer text-xs text-fg">
                   Set as my primary default delivery address
                 </label>
               </div>
 
-              <div className="flex justify-end gap-2 border-t border-zinc-800 pt-3">
+              <div className="flex justify-end gap-2 border-t border-line pt-3">
                 <button
                   type="button"
                   onClick={() => setIsAddressModalOpen(false)}
-                  className="cursor-pointer rounded-xl bg-zinc-800 px-4 py-2 text-xs font-medium text-zinc-300 hover:bg-zinc-700"
+                  className="cursor-pointer rounded-xl bg-surface-sunken px-4 py-2 text-xs font-medium text-fg hover:bg-hover"
                 >
                   Cancel
                 </button>
@@ -1388,54 +1394,54 @@ export function CustomerAccountModal({
       {/* TAX INVOICE / RECEIPT MODAL */}
       {/* ========================================================================= */}
       {selectedReceiptOrder && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/85 p-4 backdrop-blur-md">
-          <div className="animate-in zoom-in-95 max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-zinc-700 bg-zinc-950 p-6 shadow-2xl">
-            <div className="mb-4 flex items-center justify-between border-b border-zinc-800 pb-4">
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-backdrop/85 p-4 backdrop-blur-md">
+          <div className="animate-in zoom-in-95 max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-line-strong bg-surface p-6 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between border-b border-line pb-4">
               <div>
                 <span className="text-[10px] font-bold tracking-widest text-indigo-400 uppercase">
                   Official E-Tax Receipt
                 </span>
-                <h3 className="mt-0.5 text-base font-extrabold text-white">
+                <h3 className="mt-0.5 text-base font-extrabold text-fg-strong">
                   OmniCommerce Kenya Ltd
                 </h3>
-                <p className="text-[11px] text-zinc-400">
+                <p className="text-[11px] text-fg-muted">
                   PIN: P051982341M • eTIMS System Verified
                 </p>
               </div>
               <button
                 onClick={() => setSelectedReceiptOrder(null)}
-                className="rounded-lg border border-zinc-800 bg-zinc-900 p-1.5 text-zinc-400 hover:text-white"
+                className="rounded-lg border border-line bg-surface-raised p-1.5 text-fg-muted hover:text-fg-strong"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
             <div className="space-y-4 text-xs">
-              <div className="grid grid-cols-2 gap-4 rounded-xl border border-zinc-800 bg-zinc-900/60 p-3">
+              <div className="grid grid-cols-2 gap-4 rounded-xl border border-line bg-surface-sunken/60 p-3">
                 <div>
-                  <span className="text-[10px] text-zinc-500 uppercase">Invoice To</span>
-                  <p className="mt-0.5 font-bold text-zinc-200">
+                  <span className="text-[10px] text-fg-subtle uppercase">Invoice To</span>
+                  <p className="mt-0.5 font-bold text-fg-strong">
                     {selectedReceiptOrder.customerName}
                   </p>
-                  <p className="text-zinc-400">{selectedReceiptOrder.customerEmail}</p>
-                  <p className="text-zinc-400">{selectedReceiptOrder.customerPhone}</p>
+                  <p className="text-fg-muted">{selectedReceiptOrder.customerEmail}</p>
+                  <p className="text-fg-muted">{selectedReceiptOrder.customerPhone}</p>
                 </div>
                 <div>
-                  <span className="text-[10px] text-zinc-500 uppercase">Order Details</span>
+                  <span className="text-[10px] text-fg-subtle uppercase">Order Details</span>
                   <p className="mt-0.5 font-bold text-indigo-400">
                     #{selectedReceiptOrder.orderNumber}
                   </p>
-                  <p className="text-zinc-400">
+                  <p className="text-fg-muted">
                     Date: {new Date(selectedReceiptOrder.createdAt).toLocaleDateString('en-GB')}
                   </p>
-                  <p className="font-medium text-emerald-400">Status: Paid & Reconciled</p>
+                  <p className="font-medium text-emerald-600">Status: Paid & Reconciled</p>
                 </div>
               </div>
 
               {/* Items Breakdown Table */}
-              <div className="overflow-hidden rounded-xl border border-zinc-800">
+              <div className="overflow-hidden rounded-xl border border-line">
                 <table className="w-full text-left">
-                  <thead className="border-b border-zinc-800 bg-zinc-900/80 text-[10px] text-zinc-400 uppercase">
+                  <thead className="border-b border-line bg-surface-sunken/80 text-[10px] text-fg-muted uppercase">
                     <tr>
                       <th className="p-2.5">Item</th>
                       <th className="p-2.5 text-center">Qty</th>
@@ -1443,11 +1449,11 @@ export function CustomerAccountModal({
                       <th className="p-2.5 text-right">Total</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-zinc-800/60">
+                  <tbody className="divide-y divide-line/60">
                     {selectedReceiptOrder.items.map((item, i) => (
-                      <tr key={i} className="text-zinc-300">
+                      <tr key={i} className="text-fg">
                         <td className="p-2.5">
-                          <p className="font-medium text-white">{item.productName}</p>
+                          <p className="font-medium text-fg-strong">{item.productName}</p>
                         </td>
                         <td className="p-2.5 text-center">{item.quantity}</td>
                         <td className="p-2.5 text-right">KES {item.unitPrice.toLocaleString()}</td>
@@ -1461,22 +1467,22 @@ export function CustomerAccountModal({
               </div>
 
               {/* Financial Breakdown */}
-              <div className="space-y-1.5 rounded-xl border border-zinc-800 bg-zinc-900/60 p-3.5">
-                <div className="flex justify-between text-zinc-400">
+              <div className="space-y-1.5 rounded-xl border border-line bg-surface-sunken/60 p-3.5">
+                <div className="flex justify-between text-fg-muted">
                   <span>Subtotal:</span>
                   <span>KES {selectedReceiptOrder.subtotal.toLocaleString()}</span>
                 </div>
-                <div className="flex justify-between text-zinc-400">
+                <div className="flex justify-between text-fg-muted">
                   <span>VAT (16% Kenya VAT):</span>
                   <span>KES {selectedReceiptOrder.tax.toLocaleString()}</span>
                 </div>
-                <div className="flex justify-between text-zinc-400">
+                <div className="flex justify-between text-fg-muted">
                   <span>Shipping & Handling:</span>
                   <span>KES {selectedReceiptOrder.shippingFee.toLocaleString()}</span>
                 </div>
-                <div className="flex justify-between border-t border-zinc-800 pt-2 text-sm font-extrabold text-white">
+                <div className="flex justify-between border-t border-line pt-2 text-sm font-extrabold text-fg-strong">
                   <span>Total Paid:</span>
-                  <span className="text-emerald-400">
+                  <span className="text-emerald-600">
                     {selectedReceiptOrder.currency}{' '}
                     {selectedReceiptOrder.totalAmount.toLocaleString()}
                   </span>
@@ -1484,7 +1490,7 @@ export function CustomerAccountModal({
               </div>
 
               {/* Payment Proof */}
-              <div className="flex items-center justify-between rounded-xl border border-emerald-800/30 bg-emerald-950/30 p-3 text-[11px] text-emerald-300">
+              <div className="flex items-center justify-between rounded-xl border border-emerald-800/30 bg-emerald-50 p-3 text-[11px] text-emerald-700">
                 <div>
                   <span className="block font-bold">Payment Confirmation</span>
                   <span>
@@ -1492,18 +1498,17 @@ export function CustomerAccountModal({
                     {selectedReceiptOrder.paymentMethod === 'mpesa_daraja'
                       ? 'Safaricom Daraja'
                       : 'Pesapal v3'}{' '}
-                    • Ref:{' '}
-                    {shownPaymentReference(selectedReceiptOrder) || 'N/A'}
+                    • Ref: {shownPaymentReference(selectedReceiptOrder) || 'N/A'}
                   </span>
                 </div>
-                <CheckCircle2 className="h-5 w-5 flex-shrink-0 text-emerald-400" />
+                <CheckCircle2 className="h-5 w-5 flex-shrink-0 text-emerald-600" />
               </div>
             </div>
 
-            <div className="mt-5 flex justify-end border-t border-zinc-800 pt-4">
+            <div className="mt-5 flex justify-end border-t border-line pt-4">
               <button
                 onClick={() => setSelectedReceiptOrder(null)}
-                className="cursor-pointer rounded-xl bg-zinc-800 px-4 py-2 text-xs font-semibold text-white hover:bg-zinc-700"
+                className="cursor-pointer rounded-xl bg-surface-sunken px-4 py-2 text-xs font-semibold text-fg-strong hover:bg-hover"
               >
                 Close Receipt
               </button>

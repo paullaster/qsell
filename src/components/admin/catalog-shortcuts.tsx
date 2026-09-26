@@ -36,7 +36,7 @@ export function CatalogCreateShortcut({
     <button
       type="button"
       onClick={() => router.push(href)}
-      className="cursor-pointer text-[11px] font-semibold text-indigo-400 underline decoration-indigo-400/50 underline-offset-2 hover:text-indigo-300"
+      className="cursor-pointer text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 underline decoration-indigo-400/50 underline-offset-2 hover:text-indigo-500 dark:hover:text-indigo-300"
     >
       {children}
     </button>

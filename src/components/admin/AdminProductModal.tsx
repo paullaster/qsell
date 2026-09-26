@@ -403,8 +403,8 @@ export function AdminProductModal({
   if (!isOpen) return null;
 
   const fieldClass =
-    'w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none';
-  const labelClass = 'mb-1 block text-[11px] font-semibold text-zinc-400';
+    'w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong placeholder-fg-subtle focus:border-indigo-500 focus:outline-none';
+  const labelClass = 'mb-1 block text-[11px] font-semibold text-fg-muted';
 
   const tabIndex = TABS.findIndex((t) => t.id === tab);
   const goNext = () => {
@@ -417,19 +417,19 @@ export function AdminProductModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 backdrop-blur-md sm:p-5">
-      <div className="relative flex h-[min(720px,90vh)] w-[90vw] max-w-6xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-backdrop/80 p-3 backdrop-blur-md sm:p-5">
+      <div className="relative flex h-[min(720px,90vh)] w-[90vw] max-w-6xl flex-col overflow-hidden rounded-2xl border border-line bg-surface-raised shadow-2xl">
         {/* Header */}
-        <div className="flex shrink-0 items-center justify-between border-b border-zinc-800 bg-zinc-950 px-4 py-3 sm:px-5">
+        <div className="flex shrink-0 items-center justify-between border-b border-line bg-surface px-4 py-3 sm:px-5">
           <div className="flex min-w-0 items-center gap-2.5">
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-indigo-500/30 bg-indigo-600/20 text-indigo-400">
               <Package className="h-4 w-4" />
             </div>
             <div className="min-w-0">
-              <h3 className="truncate text-sm font-bold text-white sm:text-base">
+              <h3 className="truncate text-sm font-bold text-fg-strong sm:text-base">
                 {isEditing ? `Edit Product: ${productToEdit?.sku ?? ''}` : 'Create New Product'}
               </h3>
-              <p className="truncate text-[11px] text-zinc-400">
+              <p className="truncate text-[11px] text-fg-muted">
                 {isEditing
                   ? 'Update catalog, pricing, stock, and media.'
                   : 'Fill each step — save from any tab when ready.'}
@@ -439,7 +439,7 @@ export function AdminProductModal({
           <button
             type="button"
             onClick={onClose}
-            className="cursor-pointer rounded-lg p-1 text-zinc-400 hover:text-white"
+            className="cursor-pointer rounded-lg p-1 text-fg-muted hover:text-fg-strong"
             aria-label="Close"
           >
             <X className="h-5 w-5" />
@@ -447,16 +447,14 @@ export function AdminProductModal({
         </div>
 
         {/* Tabs */}
-        <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-zinc-800 bg-zinc-950/80 px-3 py-2 sm:px-4">
+        <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-line bg-surface/80 px-3 py-2 sm:px-4">
           {TABS.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               type="button"
               onClick={() => setTab(id)}
               className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors sm:px-3 ${
-                tab === id
-                  ? 'bg-indigo-600 text-white'
-                  : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'
+                tab === id ? 'bg-indigo-600 text-white' : 'hover:text-fg-muted hover:bg-hover'
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -468,8 +466,8 @@ export function AdminProductModal({
         <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
           <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 text-xs sm:px-5">
             {error ? (
-              <div className="mb-4 flex items-center gap-2 rounded-lg border border-red-800 bg-red-950/80 p-3 text-red-200">
-                <AlertTriangle className="h-4 w-4 shrink-0 text-red-400" />
+              <div className="mb-4 flex items-center gap-2 rounded-lg border border-red-800 bg-red-50/80 p-3 text-red-800">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-red-600" />
                 <span>{error}</span>
               </div>
             ) : null}
@@ -503,7 +501,7 @@ export function AdminProductModal({
                 </div>
                 <div>
                   <div className="mb-1 flex items-center justify-between gap-2">
-                    <label className="text-[11px] font-semibold text-zinc-400">Item Type *</label>
+                    <label className="text-[11px] font-semibold text-fg-muted">Item Type *</label>
                     {itemTypes.length > 0 ? (
                       <CatalogCreateShortcut href="/admin/item-types/new">
                         New
@@ -528,7 +526,7 @@ export function AdminProductModal({
                     ))}
                   </select>
                   {itemTypes.length === 0 ? (
-                    <p className="mt-1 text-[11px] text-amber-400">
+                    <p className="mt-1 text-[11px] text-amber-600">
                       Create an item type under Products &amp; Inventory first.{' '}
                       <CatalogCreateShortcut href="/admin/item-types/new">
                         New
@@ -538,7 +536,7 @@ export function AdminProductModal({
                 </div>
                 <div>
                   <div className="mb-1 flex items-center justify-between gap-2">
-                    <label className="text-[11px] font-semibold text-zinc-400">Category *</label>
+                    <label className="text-[11px] font-semibold text-fg-muted">Category *</label>
                     {categoryOptions.length > 0 ? (
                       <CatalogCreateShortcut href="/admin/categories/new">
                         New
@@ -561,7 +559,7 @@ export function AdminProductModal({
                     ))}
                   </select>
                   {categoryOptions.length === 0 ? (
-                    <p className="mt-1 text-[11px] text-amber-400">
+                    <p className="mt-1 text-[11px] text-amber-600">
                       Create a category under Catalog before adding products.{' '}
                       <CatalogCreateShortcut href="/admin/categories/new">
                         New
@@ -610,14 +608,14 @@ export function AdminProductModal({
                       className={`${fieldClass} font-mono font-bold`}
                     />
                     {activeItemType && !activeItemType.isSellable ? (
-                      <p className="mt-1 text-[11px] text-zinc-500">
+                      <p className="mt-1 text-[11px] text-fg-subtle">
                         Optional for non-sellable item types.
                       </p>
                     ) : null}
                   </div>
                   <div>
                     <div className="mb-1 flex items-center justify-between gap-2">
-                      <label className="text-[11px] font-semibold text-zinc-400">
+                      <label className="text-[11px] font-semibold text-fg-muted">
                         Tax Category
                       </label>
                       {taxCategories.length > 0 ? (
@@ -642,7 +640,7 @@ export function AdminProductModal({
                       ))}
                     </select>
                     {taxCategories.length === 0 ? (
-                      <p className="mt-1 text-[11px] text-amber-400">
+                      <p className="mt-1 text-[11px] text-amber-600">
                         Create a tax category under Finance &amp; Compliance first.{' '}
                         <CatalogCreateShortcut href="/admin/taxes/new">New</CatalogCreateShortcut>
                       </p>
@@ -674,35 +672,37 @@ export function AdminProductModal({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3 rounded-xl border border-zinc-800 bg-zinc-950 p-3 sm:grid-cols-4">
+                <div className="grid grid-cols-2 gap-3 rounded-xl border border-line bg-surface p-3 sm:grid-cols-4">
                   <div>
-                    <span className="block text-[10px] text-zinc-500 uppercase">
+                    <span className="block text-[10px] text-fg-subtle uppercase">
                       Net (Excl. Tax)
                     </span>
-                    <span className="font-mono text-xs font-semibold text-zinc-200">
+                    <span className="font-mono text-xs font-semibold text-fg-strong">
                       KES {Math.round(netSellingPrice).toLocaleString()}
                     </span>
                   </div>
                   <div>
-                    <span className="block text-[10px] text-emerald-400 uppercase">
+                    <span className="block text-[10px] text-emerald-600 uppercase">
                       Tax ({taxRate}%)
                     </span>
-                    <span className="font-mono text-xs font-semibold text-emerald-400">
+                    <span className="font-mono text-xs font-semibold text-emerald-600">
                       KES {Math.round(taxAmountPerUnit).toLocaleString()}
                     </span>
                   </div>
                   <div>
-                    <span className="block text-[10px] text-zinc-500 uppercase">Unit Profit</span>
+                    <span className="block text-[10px] text-fg-subtle uppercase">Unit Profit</span>
                     <span
-                      className={`font-mono text-xs font-bold ${unitGrossProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}
+                      className={`font-mono text-xs font-bold ${unitGrossProfit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}
                     >
                       KES {Math.round(unitGrossProfit).toLocaleString()}
                     </span>
                   </div>
                   <div>
-                    <span className="block text-[10px] text-zinc-500 uppercase">Profit Margin</span>
+                    <span className="block text-[10px] text-fg-subtle uppercase">
+                      Profit Margin
+                    </span>
                     <span
-                      className={`font-mono text-xs font-bold ${Number(grossMarginPct) >= 20 ? 'text-indigo-400' : 'text-amber-400'}`}
+                      className={`font-mono text-xs font-bold ${Number(grossMarginPct) >= 20 ? 'text-indigo-400' : 'text-amber-600'}`}
                     >
                       {grossMarginPct}% ({isTaxInclusive ? 'Incl.' : 'Excl.'})
                     </span>
@@ -754,23 +754,23 @@ export function AdminProductModal({
               <div className="flex h-full min-h-0 flex-col gap-3">
                 <div className="max-h-[280px] min-h-0 space-y-2 overflow-y-auto pr-1">
                   {specifications.length === 0 ? (
-                    <p className="rounded-lg border border-dashed border-zinc-800 px-3 py-6 text-center text-zinc-500">
+                    <p className="rounded-lg border border-dashed border-line px-3 py-6 text-center text-fg-subtle">
                       No specifications yet. Add key attributes below.
                     </p>
                   ) : (
                     specifications.map((spec, idx) => (
                       <div
                         key={`${spec.key}-${idx}`}
-                        className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950 p-2"
+                        className="flex items-center gap-2 rounded-lg border border-line bg-surface p-2"
                       >
-                        <span className="w-28 truncate font-semibold text-white sm:w-36">
+                        <span className="w-28 truncate font-semibold text-fg-strong sm:w-36">
                           {spec.key}
                         </span>
-                        <span className="min-w-0 flex-1 truncate text-zinc-400">{spec.value}</span>
+                        <span className="min-w-0 flex-1 truncate text-fg-muted">{spec.value}</span>
                         <button
                           type="button"
                           onClick={() => handleRemoveSpec(idx)}
-                          className="cursor-pointer p-1 text-zinc-500 hover:text-red-400"
+                          className="cursor-pointer p-1 text-fg-subtle hover:text-red-600"
                           aria-label={`Remove ${spec.key}`}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
@@ -797,7 +797,7 @@ export function AdminProductModal({
                   <button
                     type="button"
                     onClick={handleAddSpec}
-                    className="cursor-pointer rounded-lg bg-zinc-800 px-3 py-2 font-medium text-white hover:bg-zinc-700"
+                    className="cursor-pointer rounded-lg bg-surface-sunken px-3 py-2 font-medium text-fg-strong hover:bg-hover"
                   >
                     Add
                   </button>
@@ -849,8 +849,8 @@ export function AdminProductModal({
                       </select>
                     </div>
                   </div>
-                  <div className="flex flex-col items-center justify-center rounded-xl border border-zinc-800 bg-zinc-950 p-3 sm:w-32">
-                    <span className="mb-2 text-[10px] text-zinc-500 uppercase">Preview</span>
+                  <div className="flex flex-col items-center justify-center rounded-xl border border-line bg-surface p-3 sm:w-32">
+                    <span className="mb-2 text-[10px] text-fg-subtle uppercase">Preview</span>
                     {imageUrl ? (
                       <AppImage
                         src={imageUrl}
@@ -859,11 +859,11 @@ export function AdminProductModal({
                         height={96}
                         sizes="96px"
                         fallbackSrc={PRODUCT_IMAGE_FALLBACK}
-                        className="h-24 w-24 rounded-lg border border-zinc-800 object-cover"
+                        className="h-24 w-24 rounded-lg border border-line object-cover"
                         referrerPolicy="no-referrer"
                       />
                     ) : (
-                      <div className="flex h-24 w-24 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-600">
+                      <div className="flex h-24 w-24 items-center justify-center rounded-lg border border-line bg-surface-raised text-fg-faint">
                         No Image
                       </div>
                     )}
@@ -874,13 +874,13 @@ export function AdminProductModal({
           </div>
 
           {/* Sticky footer */}
-          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-zinc-800 bg-zinc-950 px-4 py-3 sm:px-5">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-line bg-surface px-4 py-3 sm:px-5">
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={goPrev}
                 disabled={tabIndex === 0}
-                className="cursor-pointer rounded-lg bg-zinc-800 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+                className="cursor-pointer rounded-lg bg-surface-sunken px-3 py-2 text-xs font-medium text-fg hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Back
               </button>
@@ -888,7 +888,7 @@ export function AdminProductModal({
                 type="button"
                 onClick={goNext}
                 disabled={tabIndex === TABS.length - 1}
-                className="cursor-pointer rounded-lg bg-zinc-800 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+                className="cursor-pointer rounded-lg bg-surface-sunken px-3 py-2 text-xs font-medium text-fg hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Next
               </button>
@@ -897,7 +897,7 @@ export function AdminProductModal({
               <button
                 type="button"
                 onClick={onClose}
-                className="cursor-pointer rounded-lg bg-zinc-800 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-zinc-700"
+                className="cursor-pointer rounded-lg bg-surface-sunken px-3 py-2 text-xs font-medium text-fg hover:bg-hover"
               >
                 Cancel
               </button>

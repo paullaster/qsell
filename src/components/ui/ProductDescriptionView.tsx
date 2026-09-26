@@ -20,7 +20,7 @@ export function ProductDescriptionView({
   );
 
   if (sections.length === 0) {
-    return <p className={`text-xs text-zinc-500 ${className}`}>No description provided.</p>;
+    return <p className={`text-xs text-fg-subtle ${className}`}>No description provided.</p>;
   }
 
   return (
@@ -31,15 +31,13 @@ export function ProductDescriptionView({
         return (
           <div key={section.id} className={dense ? 'space-y-1' : 'space-y-1.5'}>
             {heading ? (
-              <h4
-                className={`font-semibold text-white ${dense ? 'text-[11px]' : 'text-xs'}`}
-              >
+              <h4 className={`font-semibold text-fg-strong ${dense ? 'text-[11px]' : 'text-xs'}`}>
                 {heading}
               </h4>
             ) : null}
             {body ? (
               <p
-                className={`whitespace-pre-wrap leading-relaxed text-zinc-300 ${
+                className={`leading-relaxed whitespace-pre-wrap text-fg ${
                   dense ? 'text-[11px]' : 'text-xs'
                 }`}
               >

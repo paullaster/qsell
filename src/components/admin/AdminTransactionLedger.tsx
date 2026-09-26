@@ -36,21 +36,21 @@ export function AdminTransactionLedger({ lines }: { lines: TransactionLedgerLine
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-xl font-bold text-white">Transactions Ledger</h2>
-        <p className="mt-1 max-w-2xl text-sm text-zinc-400">
+        <h2 className="text-xl font-bold text-fg-strong">Transactions Ledger</h2>
+        <p className="mt-1 max-w-2xl text-sm text-fg-muted">
           Posted sales (debit) and payments (credit). Only the transaction ledger service writes
           these rows.
         </p>
       </div>
 
       {lines.length === 0 ? (
-        <p className="rounded-xl border border-zinc-800 bg-zinc-900/50 px-4 py-8 text-sm text-zinc-500">
+        <p className="rounded-xl border border-line bg-surface-sunken/50 px-4 py-8 text-sm text-fg-subtle">
           No ledger entries yet. They appear when an invoice or a customer payment is posted.
         </p>
       ) : (
-        <div className="max-h-[min(70vh,56rem)] overflow-auto rounded-xl border border-zinc-800">
-          <table className="w-full min-w-[760px] border-collapse text-left text-sm text-zinc-300">
-            <thead className="sticky top-0 z-10 bg-zinc-950 text-xs tracking-wide text-zinc-500 uppercase shadow-[0_1px_0_0_rgb(39_39_42)]">
+        <div className="max-h-[min(70vh,56rem)] overflow-auto rounded-xl border border-line">
+          <table className="w-full min-w-[760px] border-collapse text-left text-sm text-fg">
+            <thead className="sticky top-0 z-10 bg-surface text-xs tracking-wide text-fg-subtle uppercase shadow-[0_1px_0_0_rgb(39_39_42)]">
               <tr>
                 <th className="px-4 py-3 font-medium">Posted</th>
                 <th className="px-4 py-3 font-medium">Document</th>
@@ -64,26 +64,26 @@ export function AdminTransactionLedger({ lines }: { lines: TransactionLedgerLine
             </thead>
             <tbody>
               {lines.map((line) => (
-                <tr key={line.id} className="border-t border-zinc-800">
-                  <td className="px-4 py-3 whitespace-nowrap text-zinc-400">
+                <tr key={line.id} className="border-t border-line">
+                  <td className="px-4 py-3 whitespace-nowrap text-fg-muted">
                     {postedFormat.format(line.postedAt)}
                   </td>
                   <td className="px-4 py-3">{documentLabel(line.documentType)}</td>
-                  <td className="px-4 py-3 font-medium text-white">{line.documentNo}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-zinc-200">
+                  <td className="px-4 py-3 font-medium text-fg-strong">{line.documentNo}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-fg-strong">
                     {line.direction === 'credit' ? line.transactionReference || '—' : '—'}
                   </td>
                   <td className="px-4 py-3">
                     {line.customerNumber ? (
                       <span>
-                        <span className="text-zinc-500">{line.customerNumber}</span>
+                        <span className="text-fg-subtle">{line.customerNumber}</span>
                         {line.customerName ? ` ${line.customerName}` : ''}
                       </span>
                     ) : (
                       '—'
                     )}
                   </td>
-                  <td className="px-4 py-3 text-zinc-400">{line.description || '—'}</td>
+                  <td className="px-4 py-3 text-fg-muted">{line.description || '—'}</td>
                   <td className="px-4 py-3 text-right whitespace-nowrap tabular-nums">
                     {line.direction === 'debit' ? money(line.amount) : '—'}
                   </td>
@@ -93,19 +93,19 @@ export function AdminTransactionLedger({ lines }: { lines: TransactionLedgerLine
                 </tr>
               ))}
             </tbody>
-            <tfoot className="sticky bottom-0 z-10 bg-zinc-950 shadow-[0_-1px_0_0_rgb(63_63_70)]">
+            <tfoot className="sticky bottom-0 z-10 bg-surface shadow-[0_-1px_0_0_rgb(63_63_70)]">
               {totalRows.map(([currency, total]) => (
-                <tr key={currency} className="border-t border-zinc-700">
+                <tr key={currency} className="border-t border-line-strong">
                   <td
                     colSpan={6}
-                    className="px-4 py-3 text-xs font-semibold tracking-wide text-zinc-400 uppercase"
+                    className="px-4 py-3 text-xs font-semibold tracking-wide text-fg-muted uppercase"
                   >
                     Total · {currency}
                   </td>
-                  <td className="px-4 py-3 text-right whitespace-nowrap tabular-nums text-sm font-semibold text-amber-200">
+                  <td className="px-4 py-3 text-right text-sm font-semibold whitespace-nowrap text-amber-800 tabular-nums">
                     {money(total.debit)}
                   </td>
-                  <td className="px-4 py-3 text-right whitespace-nowrap tabular-nums text-sm font-semibold text-emerald-200">
+                  <td className="px-4 py-3 text-right text-sm font-semibold whitespace-nowrap text-emerald-800 tabular-nums">
                     {money(total.credit)}
                   </td>
                 </tr>

@@ -18,7 +18,9 @@
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
+    "date-fns": "^4.4.0",
     "drizzle-orm": "^0.45.2",
+    "graphile-worker": "^0.18.0",
     "lucide-react": "^0.546.0",
     "motion": "^12.43.0",
     "next": "16.3.4",

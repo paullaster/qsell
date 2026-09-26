@@ -25,6 +25,8 @@ import { PaymentCallbackService } from '@/server/domains/payments/callback-servi
 import { AccessControlService } from '@/server/domains/access-control/engine';
 import { UsersAdminRepository } from '@/server/domains/users/repository';
 import { seedAccessControl } from '@/server/domains/access-control/seed';
+import { CatalogRepository, PaymentRecordsRepository } from '@/server/domains/catalog/repository';
+import { UserSessionRepository } from '@/server/domains/auth/session-repository';
 
 export interface AppContainer {
   db: DrizzleDb;
@@ -48,6 +50,9 @@ export interface AppContainer {
   transactionLedger: TransactionLedgerService;
   transactionReconcile: TransactionReconcileService;
   paymentCallbacks: PaymentCallbackService;
+  catalog: CatalogRepository;
+  paymentRecords: PaymentRecordsRepository;
+  userSessions: UserSessionRepository;
 }
 
 function createEmailPort(): EmailPort {
@@ -105,6 +110,9 @@ export function getContainer(): AppContainer {
     paymentConfigs,
     paymentAttempts,
   );
+  const catalog = new CatalogRepository(drizzleDb);
+  const paymentRecords = new PaymentRecordsRepository(drizzleDb);
+  const userSessions = new UserSessionRepository(drizzleDb);
 
   container = {
     db: drizzleDb,
@@ -128,6 +136,9 @@ export function getContainer(): AppContainer {
     transactionLedger,
     transactionReconcile,
     paymentCallbacks,
+    catalog,
+    paymentRecords,
+    userSessions,
   };
 
   return container;

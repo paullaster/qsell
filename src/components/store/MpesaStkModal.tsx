@@ -62,29 +62,29 @@ export function MpesaStkModal({
   if (!isOpen || !order) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
-      <div className="relative my-6 flex w-full max-w-sm flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 shadow-2xl">
-        <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
-          <div className="flex items-center gap-2 text-sm font-semibold text-white">
-            <Smartphone className="h-4 w-4 text-emerald-400" />
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-backdrop/80 p-4 backdrop-blur-sm">
+      <div className="relative my-6 flex w-full max-w-sm flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl">
+        <div className="flex items-center justify-between border-b border-line px-4 py-3">
+          <div className="flex items-center gap-2 text-sm font-semibold text-fg-strong">
+            <Smartphone className="h-4 w-4 text-emerald-600" />
             M-Pesa / STK
           </div>
-          <button type="button" onClick={onClose} className="text-zinc-500 hover:text-white">
+          <button type="button" onClick={onClose} className="text-fg-subtle hover:text-fg-strong">
             <X className="h-5 w-5" />
           </button>
         </div>
         <div className="space-y-4 p-5 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-950 text-emerald-400">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
             <RefreshCw className="h-6 w-6 animate-spin" />
           </div>
-          <p className="text-sm text-zinc-300">{statusMessage}</p>
-          <p className="font-mono text-xs text-zinc-500">
+          <p className="text-sm text-fg">{statusMessage}</p>
+          <p className="font-mono text-xs text-fg-subtle">
             Order {order.orderNumber} · {order.customerPhone}
           </p>
-          <p className="text-[11px] text-zinc-600">
+          <p className="text-[11px] text-fg-faint">
             Waiting for provider callback · {secondsRemaining}s
           </p>
-          <div className="flex items-center justify-center gap-1.5 text-[10px] text-zinc-500">
+          <div className="flex items-center justify-center gap-1.5 text-[10px] text-fg-subtle">
             <ShieldCheck className="h-3.5 w-3.5" />
             Status updates when the network posts to your unique callback URL
           </div>

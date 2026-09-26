@@ -1,4 +1,4 @@
-import { db } from '@/server/db/store';
+import { subscribeRealtime } from '@/server/realtime';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -19,7 +19,7 @@ export async function GET() {
         ),
       );
 
-      cleanup = db.subscribeSSE((event, data) => {
+      cleanup = subscribeRealtime((event, data) => {
         send(event, data);
       });
     },

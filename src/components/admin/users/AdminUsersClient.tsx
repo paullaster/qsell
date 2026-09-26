@@ -16,7 +16,12 @@ import {
 } from 'lucide-react';
 import type { AccessSnapshot } from '@/server/domains/access-control/engine';
 import type { PermissionKey } from '@/server/domains/access-control/permissions';
-import type { DirectGrantInput, RoleAssignment, UserListEntry, UserListResult } from '@/server/domains/users/repository';
+import type {
+  DirectGrantInput,
+  RoleAssignment,
+  UserListEntry,
+  UserListResult,
+} from '@/server/domains/users/repository';
 import {
   assignRolesAction,
   createUserAction,
@@ -31,12 +36,19 @@ import { grantListToState, stateToGrants } from './shared';
 import { PermissionMatrix, type GrantValue, type PermissionMatrixState } from './PermissionMatrix';
 
 const fieldClass =
-  'w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-indigo-500 focus:outline-none';
+  'w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong placeholder:text-fg-faint focus:border-indigo-500 focus:outline-none';
 
 export interface UsersSetup {
   initial: UserListResult;
   access: AccessSnapshot;
-  roles: { id: string; key: string; name: string; priority: number; isSystem: boolean; isActive: boolean }[];
+  roles: {
+    id: string;
+    key: string;
+    name: string;
+    priority: number;
+    isSystem: boolean;
+    isActive: boolean;
+  }[];
   branches: { id: string; name: string; code: string; isDefault: boolean }[];
 }
 
@@ -102,15 +114,14 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
   const [statusFilter, setStatusFilter] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState<UserFormState>(() => makeEmptyForm(assignableRoles[0]?.key ?? ''));
+  const [form, setForm] = useState<UserFormState>(() =>
+    makeEmptyForm(assignableRoles[0]?.key ?? ''),
+  );
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   const access = setup.access;
-  const has = useMemo(
-    () => (key: PermissionKey) => access.permissions.includes(key),
-    [access],
-  );
+  const has = useMemo(() => (key: PermissionKey) => access.permissions.includes(key), [access]);
   const can = {
     read: has('users:read'),
     create: has('users:create'),
@@ -122,7 +133,9 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
 
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
 
-  const reload = (next: Partial<{ search: string; role: string; status: string; page: number }>) => {
+  const reload = (
+    next: Partial<{ search: string; role: string; status: string; page: number }>,
+  ) => {
     startTransition(async () => {
       try {
         setError(null);
@@ -183,11 +196,13 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
 
   const addExtraRole = () => {
     const remaining = assignableRoles.filter(
-      (r) =>
-        r.key !== form.role && !form.extraRoles.some((extra) => extra.roleKey === r.key),
+      (r) => r.key !== form.role && !form.extraRoles.some((extra) => extra.roleKey === r.key),
     );
     if (remaining.length === 0) return;
-    setForm((f) => ({ ...f, extraRoles: [...f.extraRoles, { roleKey: remaining[0].key, branchId: '' }] }));
+    setForm((f) => ({
+      ...f,
+      extraRoles: [...f.extraRoles, { roleKey: remaining[0].key, branchId: '' }],
+    }));
   };
 
   const removeExtraRole = (index: number) => {
@@ -282,18 +297,18 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
     <div className="mx-auto max-w-6xl space-y-6 p-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2 text-white">
+          <div className="flex items-center gap-2 text-fg-strong">
             <UserCog className="h-5 w-5 text-indigo-400" />
             <h1 className="text-xl font-semibold">Users &amp; Access</h1>
           </div>
-          <p className="mt-1 max-w-2xl text-sm text-zinc-400">
+          <p className="mt-1 max-w-2xl text-sm text-fg-muted">
             Manage who can sign in and what they can do. Roles are coarse-grained RBAC grants;
-            direct grants override roles per user; ABAC access policies add context-aware rules on top.
-            Every sensitive change is written to the audit trail.
+            direct grants override roles per user; ABAC access policies add context-aware rules on
+            top. Every sensitive change is written to the audit trail.
           </p>
         </div>
         {access.superAdmin ? (
-          <span className="inline-flex items-center gap-1 rounded-full border border-indigo-700 bg-indigo-950/40 px-3 py-1 text-xs text-indigo-200">
+          <span className="inline-flex items-center gap-1 rounded-full bg-indigo-600 text-white px-3 py-1 text-xs">
             <ShieldCheck className="h-3 w-3" /> Super admin
           </span>
         ) : null}
@@ -310,51 +325,77 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
       </div>
 
       {!access.superAdmin ? (
-        <p className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2 text-xs text-zinc-500">
-          Your grants: {access.roleKeys.length > 0 ? access.roleKeys.map((k) => roleLabel(setup.roles, k)).join(', ') : 'none'}. You hold{' '}
-          {access.permissions.length} allowed permission{access.permissions.length === 1 ? '' : 's'}.
+        <p className="rounded-lg border border-line bg-surface-sunken/40 px-3 py-2 text-xs text-fg-subtle">
+          Your grants:{' '}
+          {access.roleKeys.length > 0
+            ? access.roleKeys.map((k) => roleLabel(setup.roles, k)).join(', ')
+            : 'none'}
+          . You hold {access.permissions.length} allowed permission
+          {access.permissions.length === 1 ? '' : 's'}.
         </p>
       ) : null}
 
       {error !== null ? (
-        <p className="rounded-lg border border-red-500/40 bg-red-950/40 px-3 py-2 text-sm text-red-200">{error}</p>
+        <p className="rounded-lg border border-red-500/40 bg-red-50 px-3 py-2 text-sm text-red-800">
+          {error}
+        </p>
       ) : null}
 
       {showForm ? (
-        <section className="space-y-4 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+        <section className="space-y-4 rounded-xl border border-line bg-surface-sunken/60 p-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-white">
+            <h2 className="text-sm font-semibold text-fg-strong">
               {editingId !== null ? 'Edit user' : 'New user'}
             </h2>
-            <button type="button" onClick={() => setShowForm(false)} className="text-zinc-500 hover:text-zinc-200">
+            <button
+              type="button"
+              onClick={() => setShowForm(false)}
+              className="text-fg-subtle hover:text-fg-strong"
+            >
               <X className="h-4 w-4" />
             </button>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block text-xs text-zinc-400">
+            <label className="block text-xs text-fg-muted">
               Full name
-              <input className={`${fieldClass} mt-1`} value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+              <input
+                className={`${fieldClass} mt-1`}
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              />
             </label>
-            <label className="block text-xs text-zinc-400">
+            <label className="block text-xs text-fg-muted">
               Email
               <input
                 className={`${fieldClass} mt-1`}
                 value={form.email}
                 disabled={editingId !== null}
                 onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                placeholder={editingId !== null ? 'Unchangeable after creation' : 'user@company.com'}
+                placeholder={
+                  editingId !== null ? 'Unchangeable after creation' : 'user@company.com'
+                }
               />
             </label>
-            <label className="block text-xs text-zinc-400">
+            <label className="block text-xs text-fg-muted">
               Title / job role
-              <input className={`${fieldClass} mt-1`} value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} placeholder="e.g. Sales Manager" />
+              <input
+                className={`${fieldClass} mt-1`}
+                value={form.title}
+                onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
+                placeholder="e.g. Sales Manager"
+              />
             </label>
-            <label className="block text-xs text-zinc-400">
+            <label className="block text-xs text-fg-muted">
               Phone
-              <input className={`${fieldClass} mt-1`} value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} placeholder="0712 000 000" />
+              <input
+                className={`${fieldClass} mt-1`}
+                value={form.phone}
+                onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+                placeholder="0712 000 000"
+              />
             </label>
-            <label className="block text-xs text-zinc-400">
+            <label className="block text-xs text-fg-muted">
               Primary role
               <select
                 className={`${fieldClass} mt-1`}
@@ -375,7 +416,7 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
                 ))}
               </select>
             </label>
-            <label className="block text-xs text-zinc-400">
+            <label className="block text-xs text-fg-muted">
               Status
               <select
                 className={`${fieldClass} mt-1`}
@@ -386,7 +427,7 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
                 <option value="suspended">Suspended</option>
               </select>
             </label>
-            <label className="block text-xs text-zinc-400">
+            <label className="block text-xs text-fg-muted">
               Home branch
               <select
                 className={`${fieldClass} mt-1`}
@@ -403,7 +444,7 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
             </label>
             {editingId === null ? (
               <>
-                <label className="block text-xs text-zinc-400">
+                <label className="block text-xs text-fg-muted">
                   Initial password
                   <input
                     className={`${fieldClass} mt-1`}
@@ -413,17 +454,19 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
                     placeholder="At least 8 characters"
                   />
                 </label>
-                <label className="flex items-center gap-2 text-sm text-zinc-300">
+                <label className="flex items-center gap-2 text-sm text-fg">
                   <input
                     type="checkbox"
                     checked={form.mustChangePassword}
-                    onChange={(e) => setForm((f) => ({ ...f, mustChangePassword: e.target.checked }))}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, mustChangePassword: e.target.checked }))
+                    }
                   />
                   Force password change at first sign-in
                 </label>
               </>
             ) : (
-              <label className="block text-xs text-zinc-400">
+              <label className="block text-xs text-fg-muted">
                 Reset password (leave blank to keep current)
                 <input
                   className={`${fieldClass} mt-1`}
@@ -439,18 +482,20 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
           {can.manageRoles ? (
             <>
               <div>
-                <div className="mb-1 flex items-center justify-between gap-2 text-xs text-zinc-400">
+                <div className="mb-1 flex items-center justify-between gap-2 text-xs text-fg-muted">
                   <span>Additional roles (RBAC — branch-scoped assignments supported)</span>
                   <button
                     type="button"
                     onClick={addExtraRole}
-                    className="inline-flex items-center gap-1 rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-900"
+                    className="inline-flex items-center gap-1 rounded-md border border-line-strong px-2 py-1 text-xs text-fg hover:bg-hover"
                   >
                     <Plus className="h-3 w-3" /> Add role
                   </button>
                 </div>
                 {form.extraRoles.length === 0 ? (
-                  <p className="text-xs text-zinc-600">No additional roles. Roles here stack on top of the primary role.</p>
+                  <p className="text-xs text-fg-faint">
+                    No additional roles. Roles here stack on top of the primary role.
+                  </p>
                 ) : (
                   <div className="space-y-2">
                     {form.extraRoles.map((extra, index) => (
@@ -497,7 +542,7 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
                         <button
                           type="button"
                           onClick={() => removeExtraRole(index)}
-                          className="text-xs text-red-300 hover:text-red-200"
+                          className="text-xs text-red-700 hover:text-red-800"
                         >
                           Remove
                         </button>
@@ -508,7 +553,7 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
               </div>
 
               <div>
-                <div className="mb-2 flex items-center gap-2 text-xs text-zinc-400">
+                <div className="mb-2 flex items-center gap-2 text-xs text-fg-muted">
                   <KeyRound className="h-3 w-3" />
                   <span>Direct permission overrides (highest precedence, RBAC + enforcement)</span>
                 </div>
@@ -522,7 +567,7 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
             </>
           ) : null}
 
-          <div className="flex flex-wrap items-center gap-2 border-t border-zinc-800 pt-3">
+          <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
             <button
               type="button"
               disabled={pending}
@@ -540,7 +585,7 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
                   const row = rows.find((item) => item.id === editingId);
                   if (row) removeUser(row);
                 }}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-red-800 px-3 py-2 text-sm text-red-300 hover:bg-red-950/30 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-red-800 px-3 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
               >
                 <Trash2 className="h-4 w-4" />
                 Delete
@@ -554,7 +599,7 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
                   const row = rows.find((item) => item.id === editingId);
                   if (row) toggleStatus(row);
                 }}
-                className="rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-300"
+                className="rounded-lg border border-line-strong px-3 py-2 text-sm text-fg"
               >
                 {form.status === 'suspended' ? 'Reactivate' : 'Suspend'}
               </button>
@@ -562,7 +607,7 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
             <button
               type="button"
               onClick={() => setShowForm(false)}
-              className="rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-300"
+              className="rounded-lg border border-line-strong px-3 py-2 text-sm text-fg"
             >
               Close
             </button>
@@ -571,10 +616,10 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
       ) : null}
 
       <div className="flex flex-wrap items-end gap-2">
-        <label className="text-xs text-zinc-400">
+        <label className="text-xs text-fg-muted">
           Search
           <div className="mt-1 flex items-center gap-1">
-            <Search className="h-4 w-4 text-zinc-600" />
+            <Search className="h-4 w-4 text-fg-faint" />
             <input
               className={`${fieldClass} w-52`}
               value={search}
@@ -586,9 +631,13 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
             />
           </div>
         </label>
-        <label className="text-xs text-zinc-400">
+        <label className="text-xs text-fg-muted">
           Primary role
-          <select className={`${fieldClass} mt-1 w-44`} value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
+          <select
+            className={`${fieldClass} mt-1 w-44`}
+            value={roleFilter}
+            onChange={(e) => setRoleFilter(e.target.value)}
+          >
             <option value="">All roles</option>
             {setup.roles.map((role) => (
               <option key={role.id} value={role.key}>
@@ -597,9 +646,13 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
             ))}
           </select>
         </label>
-        <label className="text-xs text-zinc-400">
+        <label className="text-xs text-fg-muted">
           Status
-          <select className={`${fieldClass} mt-1 w-36`} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <select
+            className={`${fieldClass} mt-1 w-36`}
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+          >
             <option value="">All</option>
             <option value="active">Active</option>
             <option value="suspended">Suspended</option>
@@ -609,18 +662,18 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
           type="button"
           disabled={pending}
           onClick={applyFilters}
-          className="rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-900 disabled:opacity-50"
+          className="rounded-lg border border-line-strong px-3 py-2 text-sm text-fg hover:bg-hover disabled:opacity-50"
         >
           Apply
         </button>
-        <span className="ml-auto self-center text-xs text-zinc-500">
+        <span className="ml-auto self-center text-xs text-fg-subtle">
           {total} user{total === 1 ? '' : 's'}
         </span>
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-zinc-800">
-        <table className="w-full text-left text-sm text-zinc-300">
-          <thead className="bg-zinc-900 text-xs text-zinc-500">
+      <div className="overflow-hidden rounded-xl border border-line">
+        <table className="w-full text-left text-sm text-fg">
+          <thead className="bg-surface-raised text-xs text-fg-subtle">
             <tr>
               <th className="px-3 py-2">User</th>
               <th>Roles</th>
@@ -632,7 +685,7 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-3 py-6 text-zinc-500">
+                <td colSpan={5} className="px-3 py-6 text-fg-subtle">
                   No users found. Adjust the filters or create your first user.
                 </td>
               </tr>
@@ -640,22 +693,26 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
               rows.map((row) => {
                 const isSelf = access.userId === row.id;
                 return (
-                  <tr key={row.id} className="border-t border-zinc-800 hover:bg-zinc-900">
+                  <tr key={row.id} className="border-t border-line hover:bg-hover">
                     <td className="px-3 py-2">
                       <button type="button" className="text-left" onClick={() => openEdit(row)}>
-                        <p className="text-zinc-100">
-                          {row.name} {isSelf ? <span className="text-xs text-indigo-300">(you)</span> : null}
+                        <p className="text-fg-strong">
+                          {row.name}{' '}
+                          {isSelf ? <span className="text-xs text-indigo-300">(you)</span> : null}
                         </p>
-                        <p className="text-xs text-zinc-500">{row.email}</p>
+                        <p className="text-xs text-fg-subtle">{row.email}</p>
                       </button>
                     </td>
                     <td className="py-2">
                       <div className="flex flex-wrap gap-1">
-                        <span className="rounded-full border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300">
+                        <span className="rounded-full border border-line-strong px-2 py-0.5 text-[11px] text-fg">
                           {roleLabel(setup.roles, row.role)}
                         </span>
                         {row.extraRoles.map((key) => (
-                          <span key={key} className="rounded-full border border-indigo-700/60 px-2 py-0.5 text-[11px] text-indigo-300">
+                          <span
+                            key={key}
+                            className="rounded-full border border-indigo-700/60 px-2 py-0.5 text-[11px] text-indigo-300"
+                          >
                             {roleLabel(setup.roles, key)}
                           </span>
                         ))}
@@ -665,19 +722,19 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
                       <span
                         className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] ${
                           row.status === 'active'
-                            ? 'bg-emerald-900/40 text-emerald-300'
-                            : 'bg-red-950/40 text-red-300'
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : 'bg-red-50 text-red-700'
                         }`}
                       >
                         {row.status}
                       </span>
                       {row.mustChangePassword ? (
-                        <span className="ml-1 rounded-full bg-amber-950/40 px-2 py-0.5 text-[11px] text-amber-300">
+                        <span className="ml-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700">
                           reset
                         </span>
                       ) : null}
                     </td>
-                    <td className="py-2 text-xs text-zinc-500">
+                    <td className="py-2 text-xs text-fg-subtle">
                       {row.lastLoginAt ? timeAgo(row.lastLoginAt) : 'Never'}
                     </td>
                     <td className="px-3 py-2 text-right">
@@ -685,7 +742,7 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
                         <button
                           type="button"
                           onClick={() => removeUser(row)}
-                          className="text-xs text-red-300 hover:text-red-200"
+                          className="text-xs text-red-700 hover:text-red-800"
                         >
                           Delete
                         </button>
@@ -705,18 +762,18 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
             type="button"
             disabled={page <= 1 || pending}
             onClick={() => reload({ page: page - 1 })}
-            className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-300 disabled:opacity-40"
+            className="inline-flex items-center gap-1 rounded-lg border border-line-strong px-3 py-2 text-sm text-fg disabled:opacity-40"
           >
             <ChevronLeft className="h-4 w-4" /> Previous
           </button>
-          <span className="text-xs text-zinc-500">
+          <span className="text-xs text-fg-subtle">
             Page {page} of {pageCount}
           </span>
           <button
             type="button"
             disabled={page >= pageCount || pending}
             onClick={() => reload({ page: page + 1 })}
-            className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-300 disabled:opacity-40"
+            className="inline-flex items-center gap-1 rounded-lg border border-line-strong px-3 py-2 text-sm text-fg disabled:opacity-40"
           >
             Next <ChevronRight className="h-4 w-4" />
           </button>
@@ -724,7 +781,7 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
       ) : null}
 
       {!can.read ? (
-        <p className="flex items-center gap-2 rounded-lg border border-amber-700/40 bg-amber-950/30 px-3 py-2 text-sm text-amber-200">
+        <p className="flex items-center gap-2 rounded-lg border border-amber-700/40 bg-amber-50 px-3 py-2 text-sm text-amber-800">
           <Users className="h-4 w-4" /> You do not have the <code>users:read</code> permission.
         </p>
       ) : null}

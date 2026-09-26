@@ -23,14 +23,16 @@ export function ToastContainer({ toasts, onDismiss }: ToastProps) {
     <div className="pointer-events-none fixed right-5 bottom-5 z-50 flex w-full max-w-md flex-col gap-3 px-4 sm:px-0">
       <AnimatePresence>
         {toasts.map((toast) => {
+          // A neutral shadow reads correctly on the light tint; the original
+          // per-hue -950 glow only made sense against a dark surface.
           const bgBorder =
             toast.type === 'success'
-              ? 'bg-emerald-950/90 border-emerald-500/50 text-emerald-100 shadow-emerald-950/50'
+              ? 'bg-emerald-50/90 border-emerald-500/50 text-emerald-900 shadow-black/20'
               : toast.type === 'warning'
-                ? 'bg-amber-950/90 border-amber-500/50 text-amber-100 shadow-amber-950/50'
+                ? 'bg-amber-50/90 border-amber-500/50 text-amber-900 shadow-black/20'
                 : toast.type === 'error'
-                  ? 'bg-rose-950/90 border-rose-500/50 text-rose-100 shadow-rose-950/50'
-                  : 'bg-indigo-950/90 border-indigo-500/50 text-indigo-100 shadow-indigo-950/50';
+                  ? 'bg-rose-50/90 border-rose-500/50 text-rose-900 shadow-black/20'
+                  : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-600 dark:bg-indigo-500/20 dark:border-indigo-500/30 dark:text-indigo-400';
 
           const Icon =
             toast.type === 'success'
@@ -43,12 +45,12 @@ export function ToastContainer({ toasts, onDismiss }: ToastProps) {
 
           const iconColor =
             toast.type === 'success'
-              ? 'text-emerald-400'
+              ? 'text-emerald-600'
               : toast.type === 'warning'
-                ? 'text-amber-400'
+                ? 'text-amber-600'
                 : toast.type === 'error'
-                  ? 'text-rose-400'
-                  : 'text-indigo-400';
+                  ? 'text-rose-600'
+                  : 'text-indigo-600 dark:text-indigo-400';
 
           return (
             <motion.div
@@ -62,13 +64,13 @@ export function ToastContainer({ toasts, onDismiss }: ToastProps) {
               <Icon className={`mt-0.5 h-5 w-5 shrink-0 ${iconColor}`} />
               <div className="min-w-0 flex-1">
                 <h4 className="text-sm font-semibold tracking-tight">{toast.title}</h4>
-                <p className="mt-0.5 text-xs leading-relaxed text-slate-300">
+                <p className="mt-0.5 text-xs leading-relaxed text-fg">
                   {toast.description || toast.message}
                 </p>
               </div>
               <button
                 onClick={() => onDismiss(toast.id)}
-                className="-mt-1 -mr-1 rounded-lg p-1 text-slate-400 transition-colors hover:text-white"
+                className="-mt-1 -mr-1 rounded-lg p-1 text-fg-muted transition-colors hover:text-fg-strong"
               >
                 <X className="h-4 w-4" />
               </button>

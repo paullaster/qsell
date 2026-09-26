@@ -28,12 +28,12 @@ function GrantToggle({
 }) {
   const toneClass =
     tone === 'emerald'
-      ? 'border-emerald-700 text-emerald-300 hover:bg-emerald-900/30'
-      : 'border-red-800 text-red-300 hover:bg-red-950/40';
+      ? 'border-emerald-700 text-emerald-700 hover:bg-emerald-100'
+      : 'border-red-800 text-red-700 hover:bg-red-50';
   const activeClass =
     tone === 'emerald'
-      ? 'border-emerald-500 bg-emerald-900/40 text-emerald-200'
-      : 'border-red-500 bg-red-950/40 text-red-200';
+      ? 'border-emerald-500 bg-emerald-100 text-emerald-800'
+      : 'border-red-500 bg-red-50 text-red-800';
   const stateClass = active ? activeClass : `${toneClass} bg-transparent`;
   return (
     <button
@@ -66,22 +66,19 @@ export function PermissionMatrix({
   return (
     <div className="space-y-4">
       {groups.map((group) => (
-        <div key={group.category} className="rounded-xl border border-zinc-800 p-3">
-          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+        <div key={group.category} className="rounded-xl border border-line p-3">
+          <h4 className="mb-2 text-xs font-semibold tracking-wide text-fg-subtle uppercase">
             {group.category}
           </h4>
-          <div className="divide-y divide-zinc-800/70">
+          <div className="divide-y divide-line/70">
             {group.permissions.map(({ key, meta }) => {
               const value = grants[key];
               const disabled = disabledKeys?.has(key) ?? false;
               return (
-                <div
-                  key={key}
-                  className="flex flex-wrap items-center justify-between gap-2 py-1.5"
-                >
+                <div key={key} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
                   <div className="min-w-0">
-                    <p className="text-sm text-zinc-200">{meta.resource}</p>
-                    <p className="truncate text-[11px] text-zinc-500">{key}</p>
+                    <p className="text-sm text-fg-strong">{meta.resource}</p>
+                    <p className="truncate text-[11px] text-fg-subtle">{key}</p>
                   </div>
                   <div className="flex shrink-0 gap-1">
                     <GrantToggle
@@ -103,7 +100,7 @@ export function PermissionMatrix({
                         type="button"
                         disabled={disabled}
                         onClick={() => onChange(key, null)}
-                        className="inline-flex items-center gap-1 rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-900 disabled:opacity-40"
+                        className="inline-flex items-center gap-1 rounded-md border border-line-strong px-2 py-1 text-xs text-fg-muted hover:bg-hover disabled:opacity-40"
                       >
                         <Ban className="h-3 w-3" />
                         Unset

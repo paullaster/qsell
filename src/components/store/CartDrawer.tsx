@@ -45,22 +45,22 @@ export function CartDrawer({
     <div className="fixed inset-0 z-50 overflow-hidden">
       <div
         onClick={onClose}
-        className="absolute inset-0 bg-black/70 backdrop-blur-sm transition-opacity"
+        className="absolute inset-0 bg-backdrop/70 backdrop-blur-sm transition-opacity"
       />
 
       <div className="fixed inset-y-0 right-0 flex max-w-full pl-10">
-        <div className="flex w-screen max-w-md flex-col border-l border-zinc-800 bg-zinc-900 text-zinc-100 shadow-2xl">
-          <div className="flex items-center justify-between border-b border-zinc-800 p-4 sm:p-6">
+        <div className="flex w-screen max-w-md flex-col border-l border-line bg-surface-raised text-fg-strong shadow-2xl">
+          <div className="flex items-center justify-between border-b border-line p-4 sm:p-6">
             <div className="flex items-center gap-2">
               <ShoppingBag className="h-5 w-5 text-indigo-400" />
-              <h2 className="text-base font-bold text-white">Your Shopping Cart</h2>
+              <h2 className="text-base font-bold text-fg-strong">Your Shopping Cart</h2>
               <span className="rounded-md border border-indigo-500/20 bg-indigo-500/10 px-2 py-0.5 text-xs font-semibold text-indigo-400">
                 {items.length} {items.length === 1 ? 'item' : 'items'}
               </span>
             </div>
             <button
               onClick={onClose}
-              className="cursor-pointer rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-white"
+              className="cursor-pointer rounded-lg p-1.5 text-fg-muted transition-colors hover:bg-hover hover:text-fg-strong"
               aria-label="Close cart"
             >
               <X className="h-5 w-5" />
@@ -70,11 +70,11 @@ export function CartDrawer({
           <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
             {items.length === 0 ? (
               <div className="space-y-4 py-16 text-center">
-                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-zinc-800 text-zinc-500">
+                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-surface-sunken text-fg-subtle">
                   <ShoppingBag className="h-8 w-8" />
                 </div>
-                <h3 className="text-base font-semibold text-white">Your cart is empty</h3>
-                <p className="mx-auto max-w-xs text-xs text-zinc-400">
+                <h3 className="text-base font-semibold text-fg-strong">Your cart is empty</h3>
+                <p className="mx-auto max-w-xs text-xs text-fg-muted">
                   Browse the catalog. {checkoutWith}
                 </p>
                 <button
@@ -91,7 +91,7 @@ export function CartDrawer({
                 return (
                   <div
                     key={product.id}
-                    className="flex items-start gap-3.5 rounded-lg border border-zinc-800 bg-zinc-950 p-3.5"
+                    className="flex items-start gap-3.5 rounded-lg border border-line bg-surface p-3.5"
                   >
                     <AppImage
                       src={product.imageUrl}
@@ -99,38 +99,38 @@ export function CartDrawer({
                       width={64}
                       height={64}
                       sizes="64px"
-                      className="h-16 w-16 shrink-0 rounded-lg bg-zinc-900 object-cover"
+                      className="h-16 w-16 shrink-0 rounded-lg bg-surface-raised object-cover"
                       referrerPolicy="no-referrer"
                     />
 
                     <div className="min-w-0 flex-1 space-y-1">
                       <h4
-                        className="truncate text-xs font-semibold text-white"
+                        className="truncate text-xs font-semibold text-fg-strong"
                         title={product.name}
                       >
                         {product.name}
                       </h4>
-                      <div className="font-mono text-[11px] text-zinc-500">SKU: {product.sku}</div>
-                      <div className="font-mono text-xs font-bold text-white">
+                      <div className="font-mono text-[11px] text-fg-subtle">SKU: {product.sku}</div>
+                      <div className="font-mono text-xs font-bold text-fg-strong">
                         {money(lineAmount)}
                       </div>
 
                       <div className="flex items-center justify-between pt-1">
-                        <div className="flex items-center rounded-lg border border-zinc-800 bg-zinc-900 p-0.5">
+                        <div className="flex items-center rounded-lg border border-line bg-surface-raised p-0.5">
                           <button
                             onClick={() => onUpdateQuantity(product.id, quantity - 1)}
                             disabled={quantity <= 1}
-                            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-30"
+                            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded text-xs text-fg hover:bg-hover disabled:opacity-30"
                           >
                             -
                           </button>
-                          <span className="w-8 text-center font-mono text-xs font-semibold text-white">
+                          <span className="w-8 text-center font-mono text-xs font-semibold text-fg-strong">
                             {quantity}
                           </span>
                           <button
                             onClick={() => onUpdateQuantity(product.id, quantity + 1)}
                             disabled={quantity >= available}
-                            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-30"
+                            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded text-xs text-fg hover:bg-hover disabled:opacity-30"
                           >
                             +
                           </button>
@@ -138,7 +138,7 @@ export function CartDrawer({
 
                         <button
                           onClick={() => onRemoveItem(product.id)}
-                          className="cursor-pointer p-1 text-zinc-500 transition-colors hover:text-red-400"
+                          className="cursor-pointer p-1 text-fg-subtle transition-colors hover:text-red-600"
                           title="Remove item"
                         >
                           <Trash2 className="h-4 w-4" />
@@ -152,27 +152,27 @@ export function CartDrawer({
           </div>
 
           {items.length > 0 && (
-            <div className="space-y-4 border-t border-zinc-800 bg-zinc-950 p-4 sm:p-6">
-              <div className="space-y-1.5 text-xs text-zinc-400">
+            <div className="space-y-4 border-t border-line bg-surface p-4 sm:p-6">
+              <div className="space-y-1.5 text-xs text-fg-muted">
                 <div className="flex justify-between">
                   <span>Subtotal</span>
-                  <span className="font-mono text-zinc-200">{money(totals.subtotal)}</span>
+                  <span className="font-mono text-fg-strong">{money(totals.subtotal)}</span>
                 </div>
                 {taxRows.map((row) => (
                   <div key={row.key} className="flex justify-between gap-3">
                     <span className="min-w-0 truncate">{row.label}</span>
-                    <span className="shrink-0 font-mono text-zinc-200">{money(row.amount)}</span>
+                    <span className="shrink-0 font-mono text-fg-strong">{money(row.amount)}</span>
                   </div>
                 ))}
                 {totals.shippingFee > 0 ? (
                   <div className="flex justify-between">
                     <span>Shipping</span>
-                    <span className="font-mono text-zinc-200">{money(totals.shippingFee)}</span>
+                    <span className="font-mono text-fg-strong">{money(totals.shippingFee)}</span>
                   </div>
                 ) : null}
-                <div className="flex justify-between border-t border-zinc-800 pt-2 text-sm font-bold text-white">
+                <div className="flex justify-between border-t border-line pt-2 text-sm font-bold text-fg-strong">
                   <span>Total</span>
-                  <span className="font-mono text-white">{money(totals.totalAmount)}</span>
+                  <span className="font-mono text-fg-strong">{money(totals.totalAmount)}</span>
                 </div>
               </div>
 
@@ -187,8 +187,8 @@ export function CartDrawer({
                 <ArrowRight className="h-4 w-4" />
               </button>
 
-              <div className="flex items-center justify-center gap-1.5 text-center text-[11px] text-zinc-400">
-                <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+              <div className="flex items-center justify-center gap-1.5 text-center text-[11px] text-fg-muted">
+                <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
                 <span>
                   {paymentLabels.length > 0
                     ? `Secure checkout with ${paymentLabels.join(' · ')}`

@@ -71,17 +71,17 @@ export function TaxCategoryCreateModal({ presentation }: { presentation: 'interc
   };
 
   const fieldClass =
-    'w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-xs text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none';
+    'w-full rounded-lg border border-line-strong bg-surface-sunken px-3 py-2 text-xs text-fg-strong placeholder-fg-subtle focus:border-indigo-500 focus:outline-none';
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
-      <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl">
-        <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-backdrop/80 p-4 backdrop-blur-sm">
+      <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-xl border border-line bg-surface-raised p-6 shadow-2xl">
+        <div className="flex items-center justify-between border-b border-line pb-4">
           <div className="flex items-center gap-2.5">
             <Percent className="h-5 w-5 text-indigo-400" />
             <div>
-              <h3 className="text-base font-bold text-white">Create Tax Schedule & Category</h3>
-              <p className="text-[11px] text-zinc-400">
+              <h3 className="text-base font-bold text-fg-strong">Create Tax Schedule & Category</h3>
+              <p className="text-[11px] text-fg-muted">
                 Add a tax category, then return to the product form.
               </p>
             </div>
@@ -89,7 +89,7 @@ export function TaxCategoryCreateModal({ presentation }: { presentation: 'interc
           <button
             type="button"
             onClick={close}
-            className="cursor-pointer rounded-lg bg-zinc-800 p-1.5 text-zinc-400 hover:bg-zinc-700 hover:text-white"
+            className="cursor-pointer rounded-lg bg-surface-sunken p-1.5 text-fg-muted hover:bg-hover hover:text-fg-strong"
             aria-label="Close"
           >
             <X className="h-4 w-4" />
@@ -98,13 +98,13 @@ export function TaxCategoryCreateModal({ presentation }: { presentation: 'interc
 
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
           {formError ? (
-            <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-400">
+            <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-600">
               {formError}
             </div>
           ) : null}
 
           <div>
-            <label className="mb-1 block text-xs font-semibold text-zinc-300">
+            <label className="mb-1 block text-xs font-semibold text-fg">
               Tax Schedule / Category Name *
             </label>
             <input
@@ -119,9 +119,7 @@ export function TaxCategoryCreateModal({ presentation }: { presentation: 'interc
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-xs font-semibold text-zinc-300">
-                Tax Statutory Code
-              </label>
+              <label className="mb-1 block text-xs font-semibold text-fg">Tax Statutory Code</label>
               <input
                 type="text"
                 placeholder="Code"
@@ -131,9 +129,7 @@ export function TaxCategoryCreateModal({ presentation }: { presentation: 'interc
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-semibold text-zinc-300">
-                Tax Rate (%) *
-              </label>
+              <label className="mb-1 block text-xs font-semibold text-fg">Tax Rate (%) *</label>
               <input
                 type="number"
                 step="0.01"
@@ -149,9 +145,7 @@ export function TaxCategoryCreateModal({ presentation }: { presentation: 'interc
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-xs font-semibold text-zinc-300">
-                Fiscal Tax Type
-              </label>
+              <label className="mb-1 block text-xs font-semibold text-fg">Fiscal Tax Type</label>
               <select
                 value={type}
                 onChange={(e) => setType(e.target.value as TaxType)}
@@ -166,7 +160,7 @@ export function TaxCategoryCreateModal({ presentation }: { presentation: 'interc
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-xs font-semibold text-zinc-300">
+              <label className="mb-1 block text-xs font-semibold text-fg">
                 Country / Jurisdiction
               </label>
               <div className="grid grid-cols-3 gap-1">
@@ -176,7 +170,7 @@ export function TaxCategoryCreateModal({ presentation }: { presentation: 'interc
                   maxLength={2}
                   value={countryCode}
                   onChange={(e) => setCountryCode(e.target.value.toUpperCase())}
-                  className="rounded-lg border border-zinc-700 bg-zinc-800 px-2 py-2 text-center font-mono text-xs text-white focus:border-indigo-500 focus:outline-none"
+                  className="rounded-lg border border-line-strong bg-surface-sunken px-2 py-2 text-center font-mono text-xs text-fg-strong focus:border-indigo-500 focus:outline-none"
                 />
                 <input
                   type="text"
@@ -190,15 +184,15 @@ export function TaxCategoryCreateModal({ presentation }: { presentation: 'interc
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-semibold text-zinc-300">
+            <label className="mb-1 block text-xs font-semibold text-fg">
               Pricing Inclusion Model
             </label>
             <div className="grid grid-cols-2 gap-3">
               <label
                 className={`flex cursor-pointer items-center gap-2 rounded-lg border p-3 ${
                   isInclusive
-                    ? 'border-indigo-500 bg-indigo-600/15 text-white'
-                    : 'border-zinc-700 bg-zinc-800/60 text-zinc-400'
+                    ? 'TW border-indigo-500 bg-indigo-600/15'
+                    : 'border-line-strong bg-surface-sunken/60 text-fg-muted'
                 }`}
               >
                 <input
@@ -209,14 +203,14 @@ export function TaxCategoryCreateModal({ presentation }: { presentation: 'interc
                 />
                 <div>
                   <div className="text-xs font-semibold">Tax-Inclusive</div>
-                  <div className="text-[10px] text-zinc-400">Product price includes tax</div>
+                  <div className="text-[10px] text-fg-muted">Product price includes tax</div>
                 </div>
               </label>
               <label
                 className={`flex cursor-pointer items-center gap-2 rounded-lg border p-3 ${
                   !isInclusive
-                    ? 'border-indigo-500 bg-indigo-600/15 text-white'
-                    : 'border-zinc-700 bg-zinc-800/60 text-zinc-400'
+                    ? 'TW border-indigo-500 bg-indigo-600/15'
+                    : 'border-line-strong bg-surface-sunken/60 text-fg-muted'
                 }`}
               >
                 <input
@@ -227,14 +221,14 @@ export function TaxCategoryCreateModal({ presentation }: { presentation: 'interc
                 />
                 <div>
                   <div className="text-xs font-semibold">Tax-Exclusive</div>
-                  <div className="text-[10px] text-zinc-400">Tax added on top of price</div>
+                  <div className="text-[10px] text-fg-muted">Tax added on top of price</div>
                 </div>
               </label>
             </div>
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-semibold text-zinc-300">
+            <label className="mb-1 block text-xs font-semibold text-fg">
               Statutory / Legal Note
             </label>
             <textarea
@@ -252,28 +246,26 @@ export function TaxCategoryCreateModal({ presentation }: { presentation: 'interc
                 type="checkbox"
                 checked={isDefault}
                 onChange={(e) => setIsDefault(e.target.checked)}
-                className="rounded border-zinc-700 bg-zinc-800 text-indigo-600"
+                className="rounded border-line-strong bg-surface-sunken text-indigo-600"
               />
-              <span className="text-xs font-medium text-zinc-300">
-                Set as Default Store Tax Rule
-              </span>
+              <span className="text-xs font-medium text-fg">Set as Default Store Tax Rule</span>
             </label>
             <label className="flex cursor-pointer items-center gap-2">
               <input
                 type="checkbox"
                 checked={isActive}
                 onChange={(e) => setIsActive(e.target.checked)}
-                className="rounded border-zinc-700 bg-zinc-800 text-indigo-600"
+                className="rounded border-line-strong bg-surface-sunken text-indigo-600"
               />
-              <span className="text-xs font-medium text-zinc-300">Rule Active</span>
+              <span className="text-xs font-medium text-fg">Rule Active</span>
             </label>
           </div>
 
-          <div className="flex items-center justify-end gap-3 border-t border-zinc-800 pt-4">
+          <div className="flex items-center justify-end gap-3 border-t border-line pt-4">
             <button
               type="button"
               onClick={close}
-              className="cursor-pointer rounded-lg bg-zinc-800 px-4 py-2 text-xs font-medium text-zinc-300 hover:bg-zinc-700"
+              className="cursor-pointer rounded-lg bg-surface-sunken px-4 py-2 text-xs font-medium text-fg hover:bg-hover"
             >
               Cancel
             </button>

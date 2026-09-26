@@ -1,34 +1,28 @@
 import { cookies } from 'next/headers';
-import { db } from '@/server/db/store';
 import type { UserSession, Order, PaymentProvider } from '@/types/index';
 import { OrderWriteService } from '@/server/domains/orders/write-service';
+import { StorefrontCustomerService } from '@/server/domains/customers/storefront-service';
+import { getContainer } from '@/server/di/container';
 
 export const SESSION_COOKIE = 'omni_session';
 
 export class AuthService {
-  static createSession(
+  static async createSession(
     role: 'super_admin' | 'admin' | 'manager' | 'customer',
     email: string,
     name: string,
     phone: string,
-  ): UserSession {
+  ): Promise<UserSession> {
     let userId = '';
 
     if (role === 'customer') {
-      let existingCustomer =
-        db.getCustomerByEmailOrPhone(email) || db.getCustomerByEmailOrPhone(phone);
-      if (!existingCustomer) {
-        existingCustomer = db.createCustomer({
-          name,
-          email,
-          phone,
-          role: 'customer',
-          status: 'verified',
-          addresses: [],
-          paymentPreferences: {},
-        });
-      }
-      userId = existingCustomer.id;
+      const existing =
+        (await StorefrontCustomerService.findByEmailOrPhone(email)) ??
+        (phone ? await StorefrontCustomerService.findByEmailOrPhone(phone) : null);
+      const customer =
+        existing ??
+        (await StorefrontCustomerService.ensure({ name, email, phone }));
+      userId = customer.id;
     } else {
       userId = `usr_${role}`;
     }
@@ -44,13 +38,12 @@ export class AuthService {
       createdAt: new Date().toISOString(),
     };
 
-    db.userSessions.set(token, session);
-    return session;
+    return getContainer().userSessions.create(session, token);
   }
 
-  static getSession(token?: string | null): UserSession | null {
+  static async getSession(token?: string | null): Promise<UserSession | null> {
     if (!token) return null;
-    return db.userSessions.get(token) || null;
+    return getContainer().userSessions.findByToken(token);
   }
 
   static async getSessionFromCookies(): Promise<UserSession | null> {

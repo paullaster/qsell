@@ -18,9 +18,9 @@ export function ProductPageClient({
 
   if (!product) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-black">
+      <div className="flex min-h-screen items-center justify-center bg-canvas">
         <div className="space-y-3 text-center">
-          <p className="text-zinc-400">Product not found</p>
+          <p className="text-fg-muted">Product not found</p>
           <Link href="/" className="text-sm text-indigo-400 hover:underline">
             Back to store
           </Link>
@@ -41,9 +41,9 @@ export function ProductPageClient({
   }
 
   return (
-    <div className="min-h-screen bg-black">
+    <div className="min-h-screen bg-canvas">
       <div className="storefront-shell py-6">
-        <Link href="/" className="text-sm text-zinc-500 hover:text-indigo-400">
+        <Link href="/" className="text-sm text-fg-subtle hover:text-indigo-400">
           ← Back to store
         </Link>
       </div>

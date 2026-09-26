@@ -107,8 +107,7 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
     setSelectedProduct(product);
     setReceiveQty(10);
     setUnitCost(
-      product.costPrice ??
-        (product.price != null ? Math.round(product.price * 0.75) : 0),
+      product.costPrice ?? (product.price != null ? Math.round(product.price * 0.75) : 0),
     );
     setPoNumber(`PO-2026-${Math.floor(100 + Math.random() * 900)}`);
     setActionError(null);
@@ -215,26 +214,24 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
   return (
     <div className="space-y-6">
       {/* Header Bar */}
-      <div className="flex flex-col justify-between gap-4 rounded-xl border border-zinc-800 bg-zinc-900 p-5 sm:flex-row sm:items-center">
+      <div className="flex flex-col justify-between gap-4 rounded-xl border border-line bg-surface-raised p-5 sm:flex-row sm:items-center">
         <div>
-          <h2 className="flex items-center gap-2 text-base font-bold text-white">
+          <h2 className="flex items-center gap-2 text-base font-bold text-fg-strong">
             <Layers className="h-5 w-5 text-indigo-400" />
             Stock Control & Warehouse Management
           </h2>
-          <p className="mt-0.5 text-xs text-zinc-400">
+          <p className="mt-0.5 text-xs text-fg-muted">
             Receive supplier goods (PO), record damaged stock write-offs, conduct physical stock
             audits, and view stock movement history.
           </p>
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex items-center gap-1 overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-950 p-1">
+        <div className="flex items-center gap-1 overflow-x-auto rounded-xl border border-line bg-surface p-1">
           <button
             onClick={() => setActiveTab('stock_levels')}
             className={`cursor-pointer rounded-lg px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors ${
-              activeTab === 'stock_levels'
-                ? 'bg-indigo-600 text-white'
-                : 'text-zinc-400 hover:text-white'
+              activeTab === 'stock_levels' ? 'TW bg-indigo-600' : 'hover:TW text-fg-muted'
             }`}
           >
             Current Stock Levels
@@ -242,9 +239,7 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
           <button
             onClick={() => setActiveTab('reorder_plan')}
             className={`flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors ${
-              activeTab === 'reorder_plan'
-                ? 'bg-indigo-600 text-white'
-                : 'text-zinc-400 hover:text-white'
+              activeTab === 'reorder_plan' ? 'TW bg-indigo-600' : 'hover:TW text-fg-muted'
             }`}
           >
             Low Stock Alerts
@@ -257,7 +252,7 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
           <button
             onClick={() => setActiveTab('ledger')}
             className={`flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors ${
-              activeTab === 'ledger' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:text-white'
+              activeTab === 'ledger' ? 'TW bg-indigo-600' : 'hover:TW text-fg-muted'
             }`}
           >
             <History className="h-3.5 w-3.5" />
@@ -270,26 +265,26 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
       {activeTab === 'stock_levels' && (
         <div className="space-y-4">
           {/* Filter Bar */}
-          <div className="flex flex-col items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-900 p-4 text-xs sm:flex-row">
+          <div className="flex flex-col items-center justify-between gap-3 rounded-xl border border-line bg-surface-raised p-4 text-xs sm:flex-row">
             <div className="relative w-full sm:w-80">
-              <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+              <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-fg-subtle" />
               <input
                 type="text"
                 placeholder="Search by SKU or item title..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full rounded-lg border border-zinc-800 bg-zinc-950 py-1.5 pr-4 pl-9 text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+                className="w-full rounded-lg border border-line bg-surface py-1.5 pr-4 pl-9 text-fg-strong placeholder-fg-subtle focus:border-indigo-500 focus:outline-none"
               />
             </div>
 
             <div className="flex w-full items-center justify-between gap-4 sm:w-auto sm:justify-end">
-              <span className="text-zinc-400">
+              <span className="text-fg-muted">
                 Low Stock Critical:{' '}
-                <strong className="text-amber-400">{lowStockItems.length} items</strong>
+                <strong className="text-amber-600">{lowStockItems.length} items</strong>
               </span>
               <button
                 onClick={onRefresh}
-                className="flex cursor-pointer items-center gap-1 rounded-lg bg-zinc-800 px-3 py-1.5 text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-white"
+                className="flex cursor-pointer items-center gap-1 rounded-lg bg-surface-sunken px-3 py-1.5 text-fg transition-colors hover:bg-hover hover:text-fg-strong"
               >
                 <RefreshCw className="h-3 w-3" />
                 Refresh
@@ -298,10 +293,10 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
           </div>
 
           {/* Warehouse Table */}
-          <div className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 shadow-xl">
+          <div className="overflow-hidden rounded-xl border border-line bg-surface-raised shadow-xl">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
-                <thead className="border-b border-zinc-800 bg-zinc-950 font-semibold text-zinc-400">
+                <thead className="border-b border-line bg-surface font-semibold text-fg-muted">
                   <tr>
                     <th className="px-4 py-3">SKU & Item</th>
                     <th className="px-4 py-3 text-center">On-Hand Total</th>
@@ -311,67 +306,67 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
                     <th className="px-4 py-3 text-right">Warehouse Operations</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-800 text-zinc-300">
+                <tbody className="divide-y divide-line text-fg">
                   {filteredProducts.map((p) => {
                     const available = p.stockQuantity - p.reservedQuantity;
                     const isLow = available <= p.lowStockThreshold && available > 0;
                     const isOut = available <= 0;
 
                     return (
-                      <tr key={p.id} className="transition-colors hover:bg-zinc-800/40">
+                      <tr key={p.id} className="transition-colors hover:bg-hover">
                         <td className="px-4 py-3.5">
-                          <div className="font-semibold text-white">{p.name}</div>
-                          <div className="mt-0.5 flex items-center gap-2 font-mono text-[11px] text-zinc-400">
+                          <div className="font-semibold text-fg-strong">{p.name}</div>
+                          <div className="mt-0.5 flex items-center gap-2 font-mono text-[11px] text-fg-muted">
                             <span className="font-bold text-indigo-400">{p.sku}</span>
                             <span>• {p.category}</span>
                             <span>• Threshold: {p.lowStockThreshold}</span>
                           </div>
                         </td>
-                        <td className="px-4 py-3.5 text-center font-mono font-bold text-white">
+                        <td className="px-4 py-3.5 text-center font-mono font-bold text-fg-strong">
                           {p.stockQuantity}
                         </td>
-                        <td className="px-4 py-3.5 text-center font-mono text-zinc-400">
+                        <td className="px-4 py-3.5 text-center font-mono text-fg-muted">
                           {p.reservedQuantity}
                         </td>
                         <td className="px-4 py-3.5 text-center">
                           <span
                             className={`rounded-full px-2.5 py-0.5 font-mono text-[11px] font-bold ${
                               isOut
-                                ? 'border border-red-800 bg-red-950 text-red-400'
+                                ? 'border border-red-800 bg-red-50 text-red-600'
                                 : isLow
-                                  ? 'border border-amber-800 bg-amber-950 text-amber-300'
-                                  : 'border border-emerald-800 bg-emerald-950/80 text-emerald-300'
+                                  ? 'border border-amber-800 bg-amber-50 text-amber-700'
+                                  : 'border border-emerald-800 bg-emerald-50/80 text-emerald-700'
                             }`}
                           >
                             {available} {isOut ? '(Out of Stock)' : isLow ? '(Low Stock)' : 'Units'}
                           </span>
                         </td>
                         <td className="px-4 py-3.5 text-center">
-                          <div className="inline-flex items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-950 p-1">
+                          <div className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface p-1">
                             <button
                               onClick={() => handleQuickAdjust(p, -5)}
-                              className="cursor-pointer rounded bg-zinc-800 px-2 py-0.5 font-mono text-[10px] text-zinc-300 hover:bg-zinc-700"
+                              className="cursor-pointer rounded bg-surface-sunken px-2 py-0.5 font-mono text-[10px] text-fg hover:bg-hover"
                               title="Decrease 5"
                             >
                               -5
                             </button>
                             <button
                               onClick={() => handleQuickAdjust(p, -1)}
-                              className="cursor-pointer rounded bg-zinc-800 px-2 py-0.5 font-mono text-[10px] text-zinc-300 hover:bg-zinc-700"
+                              className="cursor-pointer rounded bg-surface-sunken px-2 py-0.5 font-mono text-[10px] text-fg hover:bg-hover"
                               title="Decrease 1"
                             >
                               -1
                             </button>
                             <button
                               onClick={() => handleQuickAdjust(p, 1)}
-                              className="cursor-pointer rounded bg-zinc-800 px-2 py-0.5 font-mono text-[10px] text-zinc-300 hover:bg-zinc-700"
+                              className="cursor-pointer rounded bg-surface-sunken px-2 py-0.5 font-mono text-[10px] text-fg hover:bg-hover"
                               title="Increase 1"
                             >
                               +1
                             </button>
                             <button
                               onClick={() => handleQuickAdjust(p, 5)}
-                              className="cursor-pointer rounded bg-zinc-800 px-2 py-0.5 font-mono text-[10px] text-zinc-300 hover:bg-zinc-700"
+                              className="cursor-pointer rounded bg-surface-sunken px-2 py-0.5 font-mono text-[10px] text-fg hover:bg-hover"
                               title="Increase 5"
                             >
                               +5
@@ -382,7 +377,7 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
                           <div className="flex items-center justify-end gap-1.5">
                             <button
                               onClick={() => openReceiveModal(p)}
-                              className="flex cursor-pointer items-center gap-1 rounded-lg border border-emerald-800/80 bg-emerald-950 px-2.5 py-1 text-[11px] font-medium text-emerald-300 transition-colors hover:bg-emerald-900"
+                              className="flex cursor-pointer items-center gap-1 rounded-lg border border-emerald-800/80 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700 transition-colors hover:bg-emerald-100"
                               title="Receive Goods from Purchase Order"
                             >
                               <Truck className="h-3 w-3" />
@@ -390,7 +385,7 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
                             </button>
                             <button
                               onClick={() => openWriteOffModal(p)}
-                              className="flex cursor-pointer items-center gap-1 rounded-lg border border-red-800/80 bg-red-950 px-2.5 py-1 text-[11px] font-medium text-red-300 transition-colors hover:bg-red-900"
+                              className="flex cursor-pointer items-center gap-1 rounded-lg border border-red-800/80 bg-red-50 px-2.5 py-1 text-[11px] font-medium text-red-700 transition-colors hover:bg-red-100"
                               title="Record Damaged or Lost Stock"
                             >
                               <ShieldAlert className="h-3 w-3" />
@@ -398,7 +393,7 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
                             </button>
                             <button
                               onClick={() => openAuditModal(p)}
-                              className="flex cursor-pointer items-center gap-1 rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-[11px] font-medium text-zinc-200 transition-colors hover:bg-zinc-700"
+                              className="flex cursor-pointer items-center gap-1 rounded-lg border border-line-strong bg-surface-sunken px-2.5 py-1 text-[11px] font-medium text-fg-strong transition-colors hover:bg-hover"
                               title="Physical Count Audit"
                             >
                               <ClipboardCheck className="h-3 w-3" />
@@ -419,17 +414,17 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
       {/* TAB 2: Reorder Alerts & Purchase Planning */}
       {activeTab === 'reorder_plan' && (
         <div className="space-y-4">
-          <div className="flex flex-col justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-900 p-4 text-xs sm:flex-row sm:items-center">
+          <div className="flex flex-col justify-between gap-3 rounded-xl border border-line bg-surface-raised p-4 text-xs sm:flex-row sm:items-center">
             <div>
-              <h3 className="text-sm font-bold text-white">
+              <h3 className="text-sm font-bold text-fg-strong">
                 Automated Inventory Replenishment Plan
               </h3>
-              <p className="text-zinc-400">
+              <p className="text-fg-muted">
                 Products currently at or below their safety stock threshold requiring immediate
                 purchase orders.
               </p>
             </div>
-            <div className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 font-mono text-zinc-300">
+            <div className="rounded-lg border border-line bg-surface px-3 py-1.5 font-mono text-fg">
               Total Recommended Restock:{' '}
               <strong>
                 {lowStockItems.reduce(
@@ -442,10 +437,10 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
             </div>
           </div>
 
-          <div className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 shadow-xl">
+          <div className="overflow-hidden rounded-xl border border-line bg-surface-raised shadow-xl">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
-                <thead className="border-b border-zinc-800 bg-zinc-950 font-semibold text-zinc-400">
+                <thead className="border-b border-line bg-surface font-semibold text-fg-muted">
                   <tr>
                     <th className="px-4 py-3">SKU & Item</th>
                     <th className="px-4 py-3 text-center">Available Stock</th>
@@ -455,10 +450,10 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
                     <th className="px-4 py-3 text-right">Action</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-800 text-zinc-300">
+                <tbody className="divide-y divide-line text-fg">
                   {lowStockItems.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="py-10 text-center font-medium text-emerald-400">
+                      <td colSpan={6} className="py-10 text-center font-medium text-emerald-600">
                         All products are currently well above safety stock thresholds!
                       </td>
                     </tr>
@@ -467,26 +462,25 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
                       const available = p.stockQuantity - p.reservedQuantity;
                       const suggestedQty = Math.max(10, p.lowStockThreshold * 3 - available);
                       const unitCostEst =
-                        p.costPrice ??
-                        (p.price != null ? Math.round(p.price * 0.75) : 0);
+                        p.costPrice ?? (p.price != null ? Math.round(p.price * 0.75) : 0);
                       const totalCostEst = suggestedQty * unitCostEst;
 
                       return (
-                        <tr key={p.id} className="hover:bg-zinc-800/40">
+                        <tr key={p.id} className="hover:bg-hover">
                           <td className="px-4 py-3.5">
-                            <div className="font-semibold text-white">{p.name}</div>
-                            <div className="font-mono text-[11px] text-zinc-400">{p.sku}</div>
+                            <div className="font-semibold text-fg-strong">{p.name}</div>
+                            <div className="font-mono text-[11px] text-fg-muted">{p.sku}</div>
                           </td>
-                          <td className="px-4 py-3.5 text-center font-mono font-bold text-red-400">
+                          <td className="px-4 py-3.5 text-center font-mono font-bold text-red-600">
                             {available} units
                           </td>
-                          <td className="px-4 py-3.5 text-center font-mono text-zinc-400">
+                          <td className="px-4 py-3.5 text-center font-mono text-fg-muted">
                             {p.lowStockThreshold} units
                           </td>
                           <td className="px-4 py-3.5 text-center font-mono font-bold text-indigo-400">
                             +{suggestedQty} units
                           </td>
-                          <td className="px-4 py-3.5 text-right font-mono text-zinc-200">
+                          <td className="px-4 py-3.5 text-right font-mono text-fg-strong">
                             KES {totalCostEst.toLocaleString()}
                           </td>
                           <td className="px-4 py-3.5 text-right">
@@ -510,10 +504,10 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
 
       {/* TAB 3: Immutable Audit Ledger */}
       {activeTab === 'ledger' && (
-        <div className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 shadow-xl">
+        <div className="overflow-hidden rounded-xl border border-line bg-surface-raised shadow-xl">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
-              <thead className="border-b border-zinc-800 bg-zinc-950 font-semibold text-zinc-400">
+              <thead className="border-b border-line bg-surface font-semibold text-fg-muted">
                 <tr>
                   <th className="px-4 py-3">Timestamp</th>
                   <th className="px-4 py-3">SKU / Item</th>
@@ -524,10 +518,10 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
                   <th className="px-4 py-3">Reason / Notes</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-800 text-zinc-300">
+              <tbody className="divide-y divide-line text-fg">
                 {ledger.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="py-8 text-center text-zinc-500">
+                    <td colSpan={7} className="py-8 text-center text-fg-subtle">
                       No ledger entries recorded yet.
                     </td>
                   </tr>
@@ -535,38 +529,40 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
                   ledger.map((entry) => {
                     const isPositive = entry.changeAmount > 0;
                     return (
-                      <tr key={entry.id} className="font-mono hover:bg-zinc-800/40">
-                        <td className="px-4 py-3 text-[11px] text-zinc-400">
+                      <tr key={entry.id} className="font-mono hover:bg-hover">
+                        <td className="px-4 py-3 text-[11px] text-fg-muted">
                           {new Date(entry.timestamp).toLocaleString()}
                         </td>
-                        <td className="px-4 py-3 font-semibold text-white">{entry.productName}</td>
+                        <td className="px-4 py-3 font-semibold text-fg-strong">
+                          {entry.productName}
+                        </td>
                         <td className="px-4 py-3">
                           <span
                             className={`rounded px-2 py-0.5 font-sans text-[10px] font-bold tracking-wider uppercase ${
                               entry.changeType === 'purchase_order_receipt'
-                                ? 'border border-emerald-800 bg-emerald-950 text-emerald-300'
+                                ? 'border border-emerald-800 bg-emerald-50 text-emerald-700'
                                 : entry.changeType === 'damage_writeoff'
-                                  ? 'border border-red-800 bg-red-950 text-red-300'
+                                  ? 'border border-red-800 bg-red-50 text-red-700'
                                   : entry.changeType === 'order_fulfillment'
-                                    ? 'border border-blue-800 bg-blue-950 text-blue-300'
-                                    : 'bg-zinc-800 text-zinc-300'
+                                    ? 'border border-blue-800 bg-blue-50 text-blue-700'
+                                    : 'bg-surface-sunken text-fg'
                             }`}
                           >
                             {entry.changeType.replace(/_/g, ' ')}
                           </span>
                         </td>
                         <td
-                          className={`px-4 py-3 text-center font-bold ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}
+                          className={`px-4 py-3 text-center font-bold ${isPositive ? 'text-emerald-600' : 'text-red-600'}`}
                         >
                           {isPositive ? `+${entry.changeAmount}` : entry.changeAmount}
                         </td>
-                        <td className="px-4 py-3 text-center text-zinc-400">
+                        <td className="px-4 py-3 text-center text-fg-muted">
                           {entry.previousStock} &rarr;{' '}
-                          <strong className="text-white">{entry.newStock}</strong>
+                          <strong className="text-fg-strong">{entry.newStock}</strong>
                         </td>
-                        <td className="px-4 py-3 text-zinc-300">{entry.actor}</td>
+                        <td className="px-4 py-3 text-fg">{entry.actor}</td>
                         <td
-                          className="max-w-xs truncate px-4 py-3 font-sans text-zinc-400"
+                          className="max-w-xs truncate px-4 py-3 font-sans text-fg-muted"
                           title={entry.note}
                         >
                           {entry.note}
@@ -583,18 +579,18 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
 
       {/* MODAL 1: Receive Stock from PO */}
       {modalType === 'receive' && selectedProduct && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/80 p-4 backdrop-blur-sm">
-          <div className="relative my-8 w-full max-w-lg overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-950 p-5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-backdrop/80 p-4 backdrop-blur-sm">
+          <div className="relative my-8 w-full max-w-lg overflow-hidden rounded-2xl border border-line bg-surface-raised shadow-2xl">
+            <div className="flex items-center justify-between border-b border-line bg-surface p-5">
               <div className="flex items-center gap-2">
-                <Truck className="h-5 w-5 text-emerald-400" />
-                <h3 className="text-base font-bold text-white">
+                <Truck className="h-5 w-5 text-emerald-600" />
+                <h3 className="text-base font-bold text-fg-strong">
                   Receive Goods (Purchase Order Inward)
                 </h3>
               </div>
               <button
                 onClick={() => setModalType(null)}
-                className="p-1 text-zinc-400 hover:text-white"
+                className="p-1 text-fg-muted hover:text-fg-strong"
               >
                 &times;
               </button>
@@ -602,22 +598,22 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
 
             <form onSubmit={handleReceiveSubmit} className="space-y-4 p-6 text-xs">
               {actionError && (
-                <div className="rounded-lg border border-red-800 bg-red-950 p-3 text-red-200">
+                <div className="rounded-lg border border-red-800 bg-red-50 p-3 text-red-800">
                   {actionError}
                 </div>
               )}
               {actionSuccess && (
-                <div className="rounded-lg border border-emerald-800 bg-emerald-950 p-3 text-emerald-200">
+                <div className="rounded-lg border border-emerald-800 bg-emerald-50 p-3 text-emerald-800">
                   {actionSuccess}
                 </div>
               )}
 
-              <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
-                <span className="block text-[10px] text-zinc-500 uppercase">
+              <div className="rounded-lg border border-line bg-surface p-3">
+                <span className="block text-[10px] text-fg-subtle uppercase">
                   Product Receiving Into
                 </span>
-                <span className="text-sm font-bold text-white">{selectedProduct.name}</span>
-                <div className="mt-0.5 font-mono text-zinc-400">
+                <span className="text-sm font-bold text-fg-strong">{selectedProduct.name}</span>
+                <div className="mt-0.5 font-mono text-fg-muted">
                   SKU: {selectedProduct.sku} | Current On-Hand: {selectedProduct.stockQuantity}{' '}
                   units
                 </div>
@@ -625,70 +621,66 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="mb-1 block font-semibold text-zinc-300">
-                    Quantity Received *
-                  </label>
+                  <label className="mb-1 block font-semibold text-fg">Quantity Received *</label>
                   <input
                     type="number"
                     min={1}
                     value={receiveQty}
                     onChange={(e) => setReceiveQty(Number(e.target.value))}
                     required
-                    className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono font-bold text-white focus:border-emerald-500"
+                    className="w-full rounded-lg border border-line bg-surface px-3.5 py-2 font-mono font-bold text-fg-strong focus:border-emerald-500"
                   />
                 </div>
 
                 <div>
-                  <label className="mb-1 block font-semibold text-zinc-300">Unit Cost (KES)</label>
+                  <label className="mb-1 block font-semibold text-fg">Unit Cost (KES)</label>
                   <input
                     type="number"
                     min={0}
                     value={unitCost}
                     onChange={(e) => setUnitCost(Number(e.target.value))}
-                    className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono text-white focus:border-emerald-500"
+                    className="w-full rounded-lg border border-line bg-surface px-3.5 py-2 font-mono text-fg-strong focus:border-emerald-500"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="mb-1 block font-semibold text-zinc-300">
-                  Supplier / Distributor
-                </label>
+                <label className="mb-1 block font-semibold text-fg">Supplier / Distributor</label>
                 <input
                   type="text"
                   value={supplierName}
                   onChange={(e) => setSupplierName(e.target.value)}
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-white focus:border-emerald-500"
+                  className="w-full rounded-lg border border-line bg-surface px-3.5 py-2 text-fg-strong focus:border-emerald-500"
                 />
               </div>
 
               <div>
-                <label className="mb-1 block font-semibold text-zinc-300">
+                <label className="mb-1 block font-semibold text-fg">
                   PO / Delivery Note Reference #
                 </label>
                 <input
                   type="text"
                   value={poNumber}
                   onChange={(e) => setPoNumber(e.target.value)}
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono text-white focus:border-emerald-500"
+                  className="w-full rounded-lg border border-line bg-surface px-3.5 py-2 font-mono text-fg-strong focus:border-emerald-500"
                 />
               </div>
 
               <div>
-                <label className="mb-1 block font-semibold text-zinc-300">Internal Notes</label>
+                <label className="mb-1 block font-semibold text-fg">Internal Notes</label>
                 <input
                   type="text"
                   value={receiveNotes}
                   onChange={(e) => setReceiveNotes(e.target.value)}
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-white focus:border-emerald-500"
+                  className="w-full rounded-lg border border-line bg-surface px-3.5 py-2 text-fg-strong focus:border-emerald-500"
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-3 border-t border-zinc-800 pt-4">
+              <div className="flex items-center justify-end gap-3 border-t border-line pt-4">
                 <button
                   type="button"
                   onClick={() => setModalType(null)}
-                  className="rounded-lg bg-zinc-800 px-4 py-2 text-zinc-300"
+                  className="rounded-lg bg-surface-sunken px-4 py-2 text-fg"
                 >
                   Cancel
                 </button>
@@ -707,16 +699,18 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
 
       {/* MODAL 2: Write-off Damaged / Shrinkage Stock */}
       {modalType === 'writeoff' && selectedProduct && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/80 p-4 backdrop-blur-sm">
-          <div className="relative my-8 w-full max-w-lg overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-950 p-5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-backdrop/80 p-4 backdrop-blur-sm">
+          <div className="relative my-8 w-full max-w-lg overflow-hidden rounded-2xl border border-line bg-surface-raised shadow-2xl">
+            <div className="flex items-center justify-between border-b border-line bg-surface p-5">
               <div className="flex items-center gap-2">
-                <ShieldAlert className="h-5 w-5 text-red-400" />
-                <h3 className="text-base font-bold text-white">Stock Loss & Damage Write-Off</h3>
+                <ShieldAlert className="h-5 w-5 text-red-600" />
+                <h3 className="text-base font-bold text-fg-strong">
+                  Stock Loss & Damage Write-Off
+                </h3>
               </div>
               <button
                 onClick={() => setModalType(null)}
-                className="p-1 text-zinc-400 hover:text-white"
+                className="p-1 text-fg-muted hover:text-fg-strong"
               >
                 &times;
               </button>
@@ -724,20 +718,20 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
 
             <form onSubmit={handleWriteOffSubmit} className="space-y-4 p-6 text-xs">
               {actionError && (
-                <div className="rounded-lg border border-red-800 bg-red-950 p-3 text-red-200">
+                <div className="rounded-lg border border-red-800 bg-red-50 p-3 text-red-800">
                   {actionError}
                 </div>
               )}
               {actionSuccess && (
-                <div className="rounded-lg border border-emerald-800 bg-emerald-950 p-3 text-emerald-200">
+                <div className="rounded-lg border border-emerald-800 bg-emerald-50 p-3 text-emerald-800">
                   {actionSuccess}
                 </div>
               )}
 
-              <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
-                <span className="block text-[10px] text-zinc-500 uppercase">Selected Product</span>
-                <span className="text-sm font-bold text-white">{selectedProduct.name}</span>
-                <div className="mt-0.5 font-mono text-zinc-400">
+              <div className="rounded-lg border border-line bg-surface p-3">
+                <span className="block text-[10px] text-fg-subtle uppercase">Selected Product</span>
+                <span className="text-sm font-bold text-fg-strong">{selectedProduct.name}</span>
+                <div className="mt-0.5 font-mono text-fg-muted">
                   SKU: {selectedProduct.sku} | Available:{' '}
                   {selectedProduct.stockQuantity - selectedProduct.reservedQuantity} units
                 </div>
@@ -745,7 +739,7 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="mb-1 block font-semibold text-zinc-300">
+                  <label className="mb-1 block font-semibold text-fg">
                     Quantity to Write Off *
                   </label>
                   <input
@@ -755,16 +749,16 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
                     value={writeOffQty}
                     onChange={(e) => setWriteOffQty(Number(e.target.value))}
                     required
-                    className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono font-bold text-white focus:border-red-500"
+                    className="w-full rounded-lg border border-line bg-surface px-3.5 py-2 font-mono font-bold text-fg-strong focus:border-red-500"
                   />
                 </div>
 
                 <div>
-                  <label className="mb-1 block font-semibold text-zinc-300">Reason Code *</label>
+                  <label className="mb-1 block font-semibold text-fg">Reason Code *</label>
                   <select
                     value={writeOffReason}
                     onChange={(e) => setWriteOffReason(e.target.value as any)}
-                    className="w-full cursor-pointer rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-white focus:border-red-500"
+                    className="w-full cursor-pointer rounded-lg border border-line bg-surface px-3.5 py-2 text-fg-strong focus:border-red-500"
                   >
                     <option value="warehouse_damage">Warehouse Damage</option>
                     <option value="damage_transit">Courier Transit Damage</option>
@@ -776,7 +770,7 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
               </div>
 
               <div>
-                <label className="mb-1 block font-semibold text-zinc-300">
+                <label className="mb-1 block font-semibold text-fg">
                   Incident Details / Explanation
                 </label>
                 <textarea
@@ -784,15 +778,15 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
                   onChange={(e) => setWriteOffNotes(e.target.value)}
                   rows={2}
                   placeholder="Explain why this item is being removed from inventory..."
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-white focus:border-red-500"
+                  className="w-full rounded-lg border border-line bg-surface px-3.5 py-2 text-fg-strong focus:border-red-500"
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-3 border-t border-zinc-800 pt-4">
+              <div className="flex items-center justify-end gap-3 border-t border-line pt-4">
                 <button
                   type="button"
                   onClick={() => setModalType(null)}
-                  className="rounded-lg bg-zinc-800 px-4 py-2 text-zinc-300"
+                  className="rounded-lg bg-surface-sunken px-4 py-2 text-fg"
                 >
                   Cancel
                 </button>
@@ -811,16 +805,16 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
 
       {/* MODAL 3: Physical Count Audit */}
       {modalType === 'audit' && selectedProduct && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/80 p-4 backdrop-blur-sm">
-          <div className="relative my-8 w-full max-w-lg overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-950 p-5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-backdrop/80 p-4 backdrop-blur-sm">
+          <div className="relative my-8 w-full max-w-lg overflow-hidden rounded-2xl border border-line bg-surface-raised shadow-2xl">
+            <div className="flex items-center justify-between border-b border-line bg-surface p-5">
               <div className="flex items-center gap-2">
                 <ClipboardCheck className="h-5 w-5 text-indigo-400" />
-                <h3 className="text-base font-bold text-white">Physical Stock Count Audit</h3>
+                <h3 className="text-base font-bold text-fg-strong">Physical Stock Count Audit</h3>
               </div>
               <button
                 onClick={() => setModalType(null)}
-                className="p-1 text-zinc-400 hover:text-white"
+                className="p-1 text-fg-muted hover:text-fg-strong"
               >
                 &times;
               </button>
@@ -828,49 +822,47 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
 
             <form onSubmit={handleAuditSubmit} className="space-y-4 p-6 text-xs">
               {actionError && (
-                <div className="rounded-lg border border-red-800 bg-red-950 p-3 text-red-200">
+                <div className="rounded-lg border border-red-800 bg-red-50 p-3 text-red-800">
                   {actionError}
                 </div>
               )}
               {actionSuccess && (
-                <div className="rounded-lg border border-emerald-800 bg-emerald-950 p-3 text-emerald-200">
+                <div className="rounded-lg border border-emerald-800 bg-emerald-50 p-3 text-emerald-800">
                   {actionSuccess}
                 </div>
               )}
 
-              <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
-                <span className="block text-[10px] text-zinc-500 uppercase">Auditing SKU</span>
-                <span className="text-sm font-bold text-white">{selectedProduct.name}</span>
-                <div className="mt-0.5 font-mono text-zinc-400">
+              <div className="rounded-lg border border-line bg-surface p-3">
+                <span className="block text-[10px] text-fg-subtle uppercase">Auditing SKU</span>
+                <span className="text-sm font-bold text-fg-strong">{selectedProduct.name}</span>
+                <div className="mt-0.5 font-mono text-fg-muted">
                   SKU: {selectedProduct.sku} | System Current Stock:{' '}
                   <strong>{selectedProduct.stockQuantity}</strong>
                 </div>
               </div>
 
               <div>
-                <label className="mb-1 block font-semibold text-zinc-300">
-                  Physical Shelf Count *
-                </label>
+                <label className="mb-1 block font-semibold text-fg">Physical Shelf Count *</label>
                 <input
                   type="number"
                   min={0}
                   value={auditCountedQty}
                   onChange={(e) => setAuditCountedQty(Number(e.target.value))}
                   required
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono text-sm font-bold text-white focus:border-indigo-500"
+                  className="w-full rounded-lg border border-line bg-surface px-3.5 py-2 font-mono text-sm font-bold text-fg-strong focus:border-indigo-500"
                 />
               </div>
 
               {/* Live Discrepancy indicator */}
-              <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-950 p-3 font-mono">
-                <span className="text-zinc-400">Calculated Variance:</span>
+              <div className="flex items-center justify-between rounded-lg border border-line bg-surface p-3 font-mono">
+                <span className="text-fg-muted">Calculated Variance:</span>
                 <span
                   className={`font-bold ${
                     auditCountedQty - selectedProduct.stockQuantity === 0
-                      ? 'text-emerald-400'
+                      ? 'text-emerald-600'
                       : auditCountedQty - selectedProduct.stockQuantity > 0
                         ? 'text-indigo-400'
-                        : 'text-red-400'
+                        : 'text-red-600'
                   }`}
                 >
                   {auditCountedQty - selectedProduct.stockQuantity > 0 ? '+' : ''}
@@ -879,22 +871,20 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
               </div>
 
               <div>
-                <label className="mb-1 block font-semibold text-zinc-300">
-                  Audit Notes / Location
-                </label>
+                <label className="mb-1 block font-semibold text-fg">Audit Notes / Location</label>
                 <input
                   type="text"
                   value={auditNotes}
                   onChange={(e) => setAuditNotes(e.target.value)}
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-white focus:border-indigo-500"
+                  className="w-full rounded-lg border border-line bg-surface px-3.5 py-2 text-fg-strong focus:border-indigo-500"
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-3 border-t border-zinc-800 pt-4">
+              <div className="flex items-center justify-end gap-3 border-t border-line pt-4">
                 <button
                   type="button"
                   onClick={() => setModalType(null)}
-                  className="rounded-lg bg-zinc-800 px-4 py-2 text-zinc-300"
+                  className="rounded-lg bg-surface-sunken px-4 py-2 text-fg"
                 >
                   Cancel
                 </button>

@@ -1,88 +1,125 @@
-import { db } from '@/server/db/store';
+import { getContainer } from '@/server/di/container';
+import { broadcastRealtime } from '@/server/realtime';
+import { toReconciliationLog, toTransaction } from '@/server/domains/catalog/mappers';
 import type { TransactionRecord, Order, ReconciliationLog } from '@/types/index';
 
+function newLogId(): string {
+  return `recon_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+}
+
+interface DiscrepancyVerdict {
+  discrepancyFound: boolean;
+  discrepancyType:
+    | 'none'
+    | 'underpayment'
+    | 'overpayment'
+    | 'status_mismatch'
+    | 'orphan_payment';
+  status: 'matched' | 'corrected' | 'flagged_for_review';
+  details: string;
+}
+
+/**
+ * Compares a gateway capture against its order and records the verdict.
+ *
+ * Every method here writes through the repositories, so a reconciliation is
+ * durable and auditable rather than a transient in-memory mutation.
+ */
 export class ReconciliationEngine {
-  static reconcileSingleTransaction(
+  private static verdict(transaction: TransactionRecord, order: Order): DiscrepancyVerdict {
+    const isSuccess = transaction.status === 'successful';
+    const amountDifference = Number(transaction.amount) - Number(order.totalAmount);
+
+    if (!isSuccess && order.paymentStatus === 'paid') {
+      return {
+        discrepancyFound: true,
+        discrepancyType: 'status_mismatch',
+        status: 'flagged_for_review',
+        details: `Discrepancy: Order ${order.orderNumber} is marked as PAID but gateway transaction ${transaction.transactionReference} status is ${transaction.status}.`,
+      };
+    }
+
+    if (Math.abs(amountDifference) > 0.01) {
+      if (amountDifference < 0) {
+        return {
+          discrepancyFound: true,
+          discrepancyType: 'underpayment',
+          status: 'flagged_for_review',
+          details: `Underpayment Alert: Order total is ${order.currency} ${order.totalAmount.toLocaleString()} but transaction captured only ${order.currency} ${transaction.amount.toLocaleString()}. Shortfall: ${Math.abs(amountDifference).toFixed(2)}`,
+        };
+      }
+      return {
+        discrepancyFound: true,
+        discrepancyType: 'overpayment',
+        status: 'flagged_for_review',
+        details: `Overpayment Notice: Order total is ${order.currency} ${order.totalAmount.toLocaleString()} but transaction captured ${order.currency} ${transaction.amount.toLocaleString()}. Excess: ${amountDifference.toFixed(2)}`,
+      };
+    }
+
+    return {
+      discrepancyFound: false,
+      discrepancyType: 'none',
+      status: 'matched',
+      details: `Near Real-Time Reconciliation verified: Order ${order.orderNumber} total (${order.currency} ${order.totalAmount.toLocaleString()}) matches Gateway ${transaction.gatewayProvider} capture (${transaction.amount.toLocaleString()}). External Ref: ${transaction.externalReference || transaction.transactionReference}.`,
+    };
+  }
+
+  static async reconcileSingleTransaction(
     transaction: TransactionRecord,
     order: Order,
     actor = 'auto_realtime',
-  ): ReconciliationLog {
-    const isSuccess = transaction.status === 'successful';
-    const amountDifference = Number(transaction.amount) - Number(order.totalAmount);
-    let discrepancyFound = false;
-    let discrepancyType:
-      'none' | 'underpayment' | 'overpayment' | 'status_mismatch' | 'orphan_payment' = 'none';
-    let status: 'matched' | 'corrected' | 'flagged_for_review' = 'matched';
-    let details = '';
+  ): Promise<ReconciliationLog> {
+    const container = getContainer();
+    const verdict = this.verdict(transaction, order);
 
-    if (!isSuccess && order.paymentStatus === 'paid') {
-      discrepancyFound = true;
-      discrepancyType = 'status_mismatch';
-      status = 'flagged_for_review';
-      details = `Discrepancy: Order ${order.orderNumber} is marked as PAID but gateway transaction ${transaction.transactionReference} status is ${transaction.status}.`;
-    } else if (Math.abs(amountDifference) > 0.01) {
-      discrepancyFound = true;
-      if (amountDifference < 0) {
-        discrepancyType = 'underpayment';
-        status = 'flagged_for_review';
-        details = `Underpayment Alert: Order total is ${order.currency} ${order.totalAmount.toLocaleString()} but transaction captured only ${order.currency} ${transaction.amount.toLocaleString()}. Shortfall: ${Math.abs(amountDifference).toFixed(2)}`;
-      } else {
-        discrepancyType = 'overpayment';
-        status = 'flagged_for_review';
-        details = `Overpayment Notice: Order total is ${order.currency} ${order.totalAmount.toLocaleString()} but transaction captured ${order.currency} ${transaction.amount.toLocaleString()}. Excess: ${amountDifference.toFixed(2)}`;
-      }
-    } else {
-      details = `Near Real-Time Reconciliation verified: Order ${order.orderNumber} total (${order.currency} ${order.totalAmount.toLocaleString()}) matches Gateway ${transaction.gatewayProvider} capture (${transaction.amount.toLocaleString()}). External Ref: ${transaction.externalReference || transaction.transactionReference}.`;
-    }
-
-    const log: ReconciliationLog = {
-      id: `recon_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    const row = await container.paymentRecords.insertReconciliationLog({
+      id: newLogId(),
       transactionId: transaction.id,
       orderId: order.id,
       orderNumber: order.orderNumber,
       provider: transaction.gatewayProvider,
       reconciliationType: actor === 'auto_realtime' ? 'auto_realtime' : 'manual_override',
-      orderTotal: order.totalAmount,
-      receivedAmount: transaction.amount,
-      discrepancyFound,
-      discrepancyType,
-      status,
-      details,
-      timestamp: new Date().toISOString(),
-    };
+      orderTotal: String(order.totalAmount),
+      receivedAmount: String(transaction.amount),
+      discrepancyFound: verdict.discrepancyFound,
+      discrepancyType: verdict.discrepancyType,
+      status: verdict.status,
+      details: verdict.details,
+    });
+    const log = toReconciliationLog(row);
 
-    db.reconciliationLogs.unshift(log);
-    transaction.reconciliationStatus = discrepancyFound ? 'discrepancy' : 'reconciled';
-    transaction.updatedAt = new Date().toISOString();
+    await container.paymentRecords.updateTransaction(transaction.id, {
+      reconciliationStatus: verdict.discrepancyFound ? 'discrepancy' : 'reconciled',
+    });
 
-    if (!discrepancyFound && order.paymentStatus === 'paid') {
-      order.paymentStatus = 'reconciled';
-      order.updatedAt = new Date().toISOString();
+    if (!verdict.discrepancyFound && order.paymentStatus === 'paid') {
+      await container.orders.update(order.id, { paymentStatus: 'reconciled' });
     }
 
-    db.broadcast('reconciliation_event', {
+    void broadcastRealtime('reconciliation_event', {
       type: 'reconciliation_logged',
       log,
       orderId: order.id,
-      discrepancyFound,
+      discrepancyFound: verdict.discrepancyFound,
     });
 
     return log;
   }
 
-  static runBatchReconciliation(): {
+  static async runBatchReconciliation(): Promise<{
     totalChecked: number;
     matched: number;
     discrepancies: number;
     logs: ReconciliationLog[];
-  } {
+  }> {
+    const container = getContainer();
     let totalChecked = 0;
     let matched = 0;
     let discrepancies = 0;
     const newLogs: ReconciliationLog[] = [];
 
-    const orders = Array.from(db.orders.values());
-    const transactions = Array.from(db.transactions.values());
+    const orders = await container.orders.listAll();
+    const transactions = (await container.paymentRecords.listTransactions()).map(toTransaction);
 
     for (const order of orders) {
       const txs = transactions.filter(
@@ -90,22 +127,21 @@ export class ReconciliationEngine {
       );
       if (txs.length === 0) {
         if (order.paymentStatus === 'paid') {
-          const orphanLog: ReconciliationLog = {
-            id: `recon_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          const row = await container.paymentRecords.insertReconciliationLog({
+            id: newLogId(),
             transactionId: 'unlinked',
             orderId: order.id,
             orderNumber: order.orderNumber,
             provider: order.paymentMethod,
             reconciliationType: 'scheduled_batch',
-            orderTotal: order.totalAmount,
-            receivedAmount: 0,
+            orderTotal: String(order.totalAmount),
+            receivedAmount: '0',
             discrepancyFound: true,
             discrepancyType: 'orphan_payment',
             status: 'flagged_for_review',
             details: `Orphan Warning: Order ${order.orderNumber} marked as paid but has no gateway transaction log.`,
-            timestamp: new Date().toISOString(),
-          };
-          db.reconciliationLogs.unshift(orphanLog);
+          });
+          const orphanLog = toReconciliationLog(row);
           newLogs.push(orphanLog);
           discrepancies++;
           totalChecked++;
@@ -115,14 +151,14 @@ export class ReconciliationEngine {
 
       for (const tx of txs) {
         totalChecked++;
-        const log = this.reconcileSingleTransaction(tx, order, 'scheduled_batch');
+        const log = await this.reconcileSingleTransaction(tx, order, 'scheduled_batch');
         newLogs.push(log);
         if (log.discrepancyFound) discrepancies++;
         else matched++;
       }
     }
 
-    db.broadcast('reconciliation_event', {
+    void broadcastRealtime('reconciliation_event', {
       type: 'batch_reconciliation_complete',
       totalChecked,
       matched,
@@ -132,43 +168,58 @@ export class ReconciliationEngine {
     return { totalChecked, matched, discrepancies, logs: newLogs };
   }
 
-  static getReconciliationLogs(limit = 50): ReconciliationLog[] {
-    return db.reconciliationLogs.slice(0, limit);
+  static async getReconciliationLogs(limit = 50): Promise<ReconciliationLog[]> {
+    const rows = await getContainer().paymentRecords.listReconciliationLogs();
+    return rows.slice(0, limit).map(toReconciliationLog);
   }
 
-  static resolveDiscrepancy(
+  static async getReconciliationLogById(logId: string): Promise<ReconciliationLog | null> {
+    const row = await getContainer().paymentRecords.getReconciliationLogById(logId);
+    return row ? toReconciliationLog(row) : null;
+  }
+
+  static async resolveDiscrepancy(
     logId: string,
     resolutionAction: 'force_match' | 'mark_refund_required' | 'cancel_order',
     notes: string,
-  ): ReconciliationLog {
-    const log = db.reconciliationLogs.find((l) => l.id === logId);
-    if (!log) throw new Error(`Reconciliation log ${logId} not found`);
+  ): Promise<ReconciliationLog> {
+    const container = getContainer();
+    const existing = await this.getReconciliationLogById(logId);
+    if (!existing) throw new Error(`Reconciliation log ${logId} not found`);
 
-    const order = db.orders.get(log.orderId);
-    log.status = 'corrected';
-    log.details += ` | Resolved by Admin: [${resolutionAction}] - ${notes}`;
+    const details = `${existing.details} | Resolved by Admin: [${resolutionAction}] - ${notes}`;
+    const row = await container.paymentRecords.updateReconciliationLog(logId, {
+      status: 'corrected',
+      details,
+    });
+    if (!row) throw new Error(`Reconciliation log ${logId} not found`);
 
+    const order = await container.orders.getById(existing.orderId);
     if (order) {
       if (resolutionAction === 'force_match') {
-        order.paymentStatus = 'reconciled';
-        order.status = 'completed';
+        await container.orders.update(order.id, {
+          paymentStatus: 'reconciled',
+          status: 'completed',
+        });
       } else if (resolutionAction === 'cancel_order') {
-        order.status = 'cancelled';
-        order.paymentStatus = 'failed';
-        db.atomicReleaseReservation(
-          order.items.map((i) => ({ productId: i.productId, quantity: i.quantity })),
+        await container.orders.update(order.id, { status: 'cancelled', paymentStatus: 'failed' });
+        const { InventoryReservationService } = await import(
+          '@/server/domains/inventory/reservation-service'
+        );
+        await InventoryReservationService.releaseOrder(
           order.id,
+          'reconciliation_cancel_order',
+          'reconciliation_admin',
         );
       }
-      order.updatedAt = new Date().toISOString();
     }
 
-    db.broadcast('reconciliation_event', {
+    void broadcastRealtime('reconciliation_event', {
       type: 'discrepancy_resolved',
       logId,
       resolutionAction,
     });
 
-    return log;
+    return toReconciliationLog(row);
   }
 }

@@ -60,17 +60,17 @@ export function ItemTypeCreateModal({ presentation }: { presentation: 'intercept
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-backdrop/80 p-4 backdrop-blur-sm">
       <form
         onSubmit={handleSubmit}
-        className="w-full max-w-md space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900 p-5 shadow-2xl"
+        className="w-full max-w-md space-y-4 rounded-2xl border border-line bg-surface-raised p-5 shadow-2xl"
       >
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <Tags className="h-5 w-5 text-indigo-400" />
             <div>
-              <h3 className="text-base font-bold text-white">Create item type</h3>
-              <p className="text-[11px] text-zinc-400">
+              <h3 className="text-base font-bold text-fg-strong">Create item type</h3>
+              <p className="text-[11px] text-fg-muted">
                 Add an item type, then return to the product form.
               </p>
             </div>
@@ -78,7 +78,7 @@ export function ItemTypeCreateModal({ presentation }: { presentation: 'intercept
           <button
             type="button"
             onClick={close}
-            className="cursor-pointer rounded-lg p-1 text-zinc-400 hover:text-white"
+            className="cursor-pointer rounded-lg p-1 text-fg-muted hover:text-fg-strong"
             aria-label="Close"
           >
             <X className="h-5 w-5" />
@@ -86,23 +86,23 @@ export function ItemTypeCreateModal({ presentation }: { presentation: 'intercept
         </div>
 
         {formError ? (
-          <div className="rounded-lg border border-red-800 bg-red-950/50 px-3 py-2 text-xs text-red-200">
+          <div className="rounded-lg border border-red-800 bg-red-50/50 px-3 py-2 text-xs text-red-800">
             {formError}
           </div>
         ) : null}
 
         <div>
-          <label className="mb-1 block text-[11px] font-semibold text-zinc-400">Name *</label>
+          <label className="mb-1 block text-[11px] font-semibold text-fg-muted">Name *</label>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Finished product, Raw material"
-            className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-indigo-500 focus:outline-none"
+            className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong placeholder:text-fg-faint focus:border-indigo-500 focus:outline-none"
           />
         </div>
 
         <div>
-          <label className="mb-1 block text-[11px] font-semibold text-zinc-400">
+          <label className="mb-1 block text-[11px] font-semibold text-fg-muted">
             Tax authority code *
           </label>
           <input
@@ -113,20 +113,20 @@ export function ItemTypeCreateModal({ presentation }: { presentation: 'intercept
             onChange={(e) => setCode(e.target.value)}
             placeholder="e.g. 1"
             required
-            className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-sm text-white placeholder:text-zinc-600 focus:border-indigo-500 focus:outline-none"
+            className="w-full rounded-lg border border-line bg-surface px-3 py-2 font-mono text-sm text-fg-strong placeholder:text-fg-faint focus:border-indigo-500 focus:outline-none"
           />
-          <p className="mt-1 text-[11px] text-zinc-500">
+          <p className="mt-1 text-[11px] text-fg-subtle">
             Integer value provided by the tax authority for e-invoicing / compliance.
           </p>
         </div>
 
-        <div className="flex flex-wrap gap-4 text-xs text-zinc-300">
+        <div className="flex flex-wrap gap-4 text-xs text-fg">
           <label className="inline-flex items-center gap-2">
             <input
               type="checkbox"
               checked={isSellable}
               onChange={(e) => setIsSellable(e.target.checked)}
-              className="rounded border-zinc-700"
+              className="rounded border-line-strong"
             />
             Sellable on storefront
           </label>
@@ -135,7 +135,7 @@ export function ItemTypeCreateModal({ presentation }: { presentation: 'intercept
               type="checkbox"
               checked={isDefault}
               onChange={(e) => setIsDefault(e.target.checked)}
-              className="rounded border-zinc-700"
+              className="rounded border-line-strong"
             />
             Default for new products
           </label>
@@ -144,7 +144,7 @@ export function ItemTypeCreateModal({ presentation }: { presentation: 'intercept
               type="checkbox"
               checked={isActive}
               onChange={(e) => setIsActive(e.target.checked)}
-              className="rounded border-zinc-700"
+              className="rounded border-line-strong"
             />
             Active
           </label>
@@ -154,14 +154,14 @@ export function ItemTypeCreateModal({ presentation }: { presentation: 'intercept
           <button
             type="button"
             onClick={close}
-            className="cursor-pointer rounded-lg bg-zinc-800 px-4 py-2 text-xs font-medium text-zinc-300 hover:bg-zinc-700"
+            className="cursor-pointer rounded-lg bg-surface-sunken px-4 py-2 text-xs font-medium text-fg hover:bg-hover"
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={isSubmitting}
-            className="cursor-pointer rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-500 disabled:opacity-50"
+            className="cursor-pointer rounded-lg bg-indigo-600 text-white px-4 py-2 text-xs font-bold hover:bg-indigo-500 disabled:opacity-50"
           >
             {isSubmitting ? 'Saving…' : 'Create'}
           </button>

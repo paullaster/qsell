@@ -19,10 +19,7 @@ interface AdminSidebarProps {
   onClose: () => void;
   onRefreshAll: () => void;
   isRealtimeConnected: boolean;
-  company?: Pick<
-    CompanySettingsRow,
-    'tradingName' | 'tagline' | 'logoUrl' | 'accentColor'
-  > | null;
+  company?: Pick<CompanySettingsRow, 'tradingName' | 'tagline' | 'logoUrl' | 'accentColor'> | null;
   moduleLabels?: Record<string, string> | null;
 }
 
@@ -91,17 +88,17 @@ export function AdminSidebar({
     <>
       {isOpen && (
         <div
-          className="fixed inset-0 z-40 bg-black/80 backdrop-blur-sm transition-opacity lg:hidden"
+          className="fixed inset-0 z-40 bg-backdrop/80 backdrop-blur-sm transition-opacity lg:hidden"
           onClick={onClose}
         />
       )}
 
       <aside
-        className={`fixed inset-y-0 left-0 z-50 flex w-72 transform flex-col border-r border-zinc-800 bg-zinc-950 transition-transform duration-200 lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-50 flex w-72 transform flex-col border-r border-line bg-surface transition-transform duration-200 lg:translate-x-0 ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        <div className="flex h-16 items-center justify-between border-b border-zinc-800 px-5">
+        <div className="flex h-16 items-center justify-between border-b border-line px-5">
           <Link href="/admin" className="flex items-center gap-2.5" onClick={onClose}>
             <CompanyBrand
               tradingName={company?.tradingName || 'Admin'}
@@ -112,7 +109,7 @@ export function AdminSidebar({
               subtitle="Admin Console"
             />
           </Link>
-          <button type="button" className="text-zinc-400 lg:hidden" onClick={onClose}>
+          <button type="button" className="text-fg-muted lg:hidden" onClick={onClose}>
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -128,26 +125,26 @@ export function AdminSidebar({
           />
         </nav>
 
-        <div className="space-y-2 border-t border-zinc-800 p-3">
+        <div className="space-y-2 border-t border-line p-3">
           <button
             type="button"
             onClick={() => {
               onRefreshAll();
               router.refresh();
             }}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-zinc-400 hover:bg-zinc-900 hover:text-white"
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-fg-muted hover:bg-hover hover:text-fg-strong"
           >
             <RefreshCw className="h-4 w-4" />
             Refresh data
             <span
               className={`ml-auto h-2 w-2 rounded-full ${
-                isRealtimeConnected ? 'bg-emerald-500' : 'bg-zinc-600'
+                isRealtimeConnected ? 'bg-emerald-500' : 'bg-fg-faint'
               }`}
             />
           </button>
           <Link
             href="/"
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-zinc-400 hover:bg-zinc-900 hover:text-white"
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-fg-muted hover:bg-hover hover:text-fg-strong"
           >
             <Store className="h-4 w-4" />
             Back to storefront

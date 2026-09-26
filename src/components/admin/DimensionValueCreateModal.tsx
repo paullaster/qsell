@@ -7,7 +7,7 @@ import { createDimensionValueAction } from '@/server/domains/dimensions/actions'
 import { publishCustomerShortcut } from '@/components/admin/customer-shortcuts';
 
 const fieldClass =
-  'w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-indigo-500 focus:outline-none';
+  'w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong placeholder:text-fg-faint focus:border-indigo-500 focus:outline-none';
 
 export function DimensionValueCreateModal({
   presentation,
@@ -62,35 +62,60 @@ export function DimensionValueCreateModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center overflow-y-auto bg-black/80 p-4 backdrop-blur-sm">
-      <div className="relative my-8 w-full max-w-lg overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl">
-        <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-950 p-5">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center overflow-y-auto bg-backdrop/80 p-4 backdrop-blur-sm">
+      <div className="relative my-8 w-full max-w-lg overflow-hidden rounded-2xl border border-line bg-surface-raised shadow-2xl">
+        <div className="flex items-center justify-between border-b border-line bg-surface p-5">
           <div className="flex items-center gap-2">
             <Layers className="h-5 w-5 text-indigo-400" />
             <div>
-              <h3 className="text-base font-bold text-white">New {dimensionCode} value</h3>
-              <p className="text-[11px] text-zinc-400">Add a value, then return to the customer form.</p>
+              <h3 className="text-base font-bold text-fg-strong">New {dimensionCode} value</h3>
+              <p className="text-[11px] text-fg-muted">
+                Add a value, then return to the customer form.
+              </p>
             </div>
           </div>
-          <button type="button" onClick={close} className="cursor-pointer rounded-lg p-1 text-zinc-400 hover:text-white" aria-label="Close">
+          <button
+            type="button"
+            onClick={close}
+            className="cursor-pointer rounded-lg p-1 text-fg-muted hover:text-fg-strong"
+            aria-label="Close"
+          >
             <X className="h-4 w-4" />
           </button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-3 p-5">
-          {formError ? <p className="text-xs text-red-300">{formError}</p> : null}
-          <label className="block text-xs text-zinc-400">
+          {formError ? <p className="text-xs text-red-700">{formError}</p> : null}
+          <label className="block text-xs text-fg-muted">
             Code
-            <input className={`${fieldClass} mt-1`} value={code} onChange={(e) => setCode(e.target.value)} required />
+            <input
+              className={`${fieldClass} mt-1`}
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              required
+            />
           </label>
-          <label className="block text-xs text-zinc-400">
+          <label className="block text-xs text-fg-muted">
             Name
-            <input className={`${fieldClass} mt-1`} value={name} onChange={(e) => setName(e.target.value)} required />
+            <input
+              className={`${fieldClass} mt-1`}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+            />
           </label>
-          <label className="block text-xs text-zinc-400">
+          <label className="block text-xs text-fg-muted">
             Description
-            <input className={`${fieldClass} mt-1`} value={description} onChange={(e) => setDescription(e.target.value)} />
+            <input
+              className={`${fieldClass} mt-1`}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
           </label>
-          <button type="submit" disabled={isSubmitting} className="w-full rounded-lg bg-indigo-600 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="w-full rounded-lg bg-indigo-600 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+          >
             {isSubmitting ? 'Saving…' : 'Save value'}
           </button>
         </form>

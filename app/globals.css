@@ -1,20 +1,130 @@
 @import 'tailwindcss';
 
 /*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Design tokens
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Every surface, line and foreground colour in the app is expressed as a
+ * semantic token (bg-surface, border-line, text-fg-muted …) instead of a raw
+ * palette step. The palette steps only ever appear inside this file.
+ *
+ * Scheme switching is driven by a single attribute on <html>:
+ *   data-theme="light" | "dark"     — the RESOLVED scheme, so CSS never needs
+ *                                      a media query and the server can render
+ *                                      the right tokens on the very first paint.
+ *   data-theme-mode="light|dark|system" — the user's raw CHOICE, kept for the
+ *                                      toggle UI and for the "system" label.
+ *
+ * `app/layout.tsx` renders data-theme from the theme cookie, and an inline
+ * script as the first child of <body> corrects it before paint when the choice
+ * is "system".
+ *
+ * Light is the default: the :root block below is the light palette.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+:root {
+  /* Surfaces, lightest → most inset */
+  --canvas: #f4f4f5; /* page background */
+  --surface: #ffffff; /* panels, cards, headers, modals */
+  --surface-raised: #fafafa; /* blocks raised inside a panel */
+  --surface-sunken: #f4f4f5; /* inputs, inner wells, chips */
+
+  /* Interactive state */
+  --hover: #e4e4e7; /* row / nav / button hover fill */
+  --pulse: #e4e4e7; /* loading skeleton blocks */
+
+  /* Borders */
+  --line: #e4e4e7;
+  --line-strong: #d4d4d8;
+
+  /* Foreground, strongest → faintest */
+  --fg-strong: #09090b; /* headings, emphasis */
+  --fg: #27272a; /* body copy */
+  --fg-muted: #52525b; /* secondary copy, labels */
+  --fg-subtle: #71717a; /* meta, timestamps, icons */
+  --fg-faint: #a1a1aa; /* placeholders, disabled, decorative */
+
+  /*
+   * Accent text/soft tints. Both variants are computed from the company primary
+   * in src/config/company-ui/theme.ts; only the one matching the active scheme
+   * is used. Derived per-scheme so indigo-300/400 stay readable whether the
+   * company colour is near-black (the default #111827) or a pale pastel.
+   */
+  --company-accent-soft: var(--company-accent-soft-light, #e0e7ff);
+  --company-accent-faint: var(--company-accent-faint-light, #eef2ff);
+  --company-accent-text: var(--company-accent-text-light, #4338ca);
+}
+
+[data-theme='dark'] {
+  --canvas: #000000;
+  --surface: #09090b;
+  --surface-raised: #18181b;
+  --surface-sunken: #27272a;
+
+  --hover: #1f1f23;
+  --pulse: #27272a;
+
+  --line: #27272a;
+  --line-strong: #3f3f46;
+
+  --fg-strong: #fafafa;
+  --fg: #e4e4e7;
+  --fg-muted: #a1a1aa;
+  --fg-subtle: #71717a;
+  --fg-faint: #52525b;
+
+  --company-accent-soft: var(--company-accent-soft-dark, #c7d2fe);
+  --company-accent-faint: var(--company-accent-faint-dark, #e0e7ff);
+  --company-accent-text: var(--company-accent-text-dark, #818cf8);
+}
+
+/*
  * Company runtime theme:
- * Root layout sets --company-primary / --company-primary-hover / --company-accent on <html>.
- * Button fill tokens (indigo-500/600) map to primary so CTAs follow company branding
- * without rewriting every component. Soft text tokens (indigo-300/400) stay default
- * so labels remain readable on dark surfaces when primary is a dark document color.
+ * Root layout sets --company-primary / --company-primary-hover / --company-accent
+ * on <html>. Solid fill tokens (indigo-500/600) map to primary so CTAs follow
+ * company branding without rewriting every component; the soft ramp
+ * (indigo-200/300/400) maps to the scheme-aware vars above so labels and tints
+ * stay legible against both light and dark surfaces.
  */
 @theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-hover: var(--hover);
+  --color-pulse: var(--pulse);
+
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+
+  --color-fg: var(--fg);
+  --color-fg-strong: var(--fg-strong);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+  --color-fg-faint: var(--fg-faint);
+
+  /* Modal scrims stay dark in both schemes, so the alpha is kept as-is. */
+  --color-backdrop: #000000;
+
   --color-indigo-600: var(--company-primary, #4f46e5);
   --color-indigo-500: var(--company-primary-hover, #6366f1);
+  --color-indigo-400: var(--company-accent-text);
+  --color-indigo-300: var(--company-accent-soft);
+  --color-indigo-200: var(--company-accent-faint);
 }
 
 @layer base {
+  html {
+    /* Let the UA render form controls, scrollbars and carets for the scheme. */
+    color-scheme: light;
+  }
+
+  [data-theme='dark'] {
+    color-scheme: dark;
+  }
+
   body {
-    @apply bg-black font-sans text-zinc-300 antialiased selection:bg-indigo-600 selection:text-white;
+    @apply bg-canvas font-sans text-fg antialiased selection:bg-indigo-600 selection:text-white;
   }
 }
 
@@ -26,5 +136,30 @@
     max-width: 2560px;
     margin-inline: auto;
     padding-inline: clamp(0.35rem, 0.5vw, 0.75rem);
+  }
+
+  /*
+   * Print artefacts (the tax-invoice preview) must stay on white paper with dark
+   * ink no matter which scheme is active — a document you print does not follow
+   * the reader's display. Re-declaring the light values on the subtree does that
+   * for every descendant in one shot, because every token resolves through var().
+   */
+  .print-sheet {
+    --canvas: #f4f4f5;
+    --surface: #ffffff;
+    --surface-raised: #fafafa;
+    --surface-sunken: #f4f4f5;
+    --hover: #e4e4e7;
+    --pulse: #e4e4e7;
+    --line: #e4e4e7;
+    --line-strong: #d4d4d8;
+    --fg-strong: #09090b;
+    --fg: #27272a;
+    --fg-muted: #52525b;
+    --fg-subtle: #71717a;
+    --fg-faint: #a1a1aa;
+    --company-accent-soft: var(--company-accent-soft-light, #e0e7ff);
+    --company-accent-faint: var(--company-accent-faint-light, #eef2ff);
+    --company-accent-text: var(--company-accent-text-light, #4338ca);
   }
 }

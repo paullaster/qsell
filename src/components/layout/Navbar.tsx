@@ -2,8 +2,10 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { ShoppingBag, Search, Truck, User } from 'lucide-react';
+import { LogOut, ShoppingBag, Search, Truck, User } from 'lucide-react';
 import { CompanyBrand } from '@/components/ui/CompanyBrand';
+import { ThemeToggle } from '@/components/theme/ThemeToggle';
+import { logoutAction } from '@/server/domains/auth/actions';
 import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
 
 interface NavbarProps {
@@ -31,7 +33,7 @@ export function Navbar({
   onSearchChange,
 }: NavbarProps) {
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-zinc-800 bg-zinc-950/95 backdrop-blur-md">
+    <header className="sticky top-0 z-40 w-full border-b border-line bg-surface/95 backdrop-blur-md">
       <div className="storefront-shell flex h-16 items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <Link href="/" className="group cursor-pointer text-left focus:outline-none">
@@ -46,18 +48,18 @@ export function Navbar({
 
         <div className="mx-2 flex max-w-md flex-1 items-center sm:mx-6">
           <div className="relative w-full">
-            <Search className="absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+            <Search className="absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2 text-fg-subtle" />
             <input
               type="text"
               placeholder="Search products, brands, or SKU..."
               value={searchQuery}
               onChange={(e) => onSearchChange?.(e.target.value)}
-              className="w-full rounded-xl border border-zinc-800 bg-zinc-900 py-2 pr-8 pl-9 text-xs text-white placeholder-zinc-500 transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 focus:outline-none"
+              className="w-full rounded-xl border border-line bg-surface-raised py-2 pr-8 pl-9 text-xs text-fg-strong placeholder-fg-subtle transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 focus:outline-none"
             />
             {searchQuery && (
               <button
                 onClick={() => onSearchChange?.('')}
-                className="absolute top-1/2 right-3 -translate-y-1/2 cursor-pointer text-xs text-zinc-400 hover:text-white"
+                className="absolute top-1/2 right-3 -translate-y-1/2 cursor-pointer text-xs text-fg-muted hover:text-fg-strong"
               >
                 Clear
               </button>
@@ -66,23 +68,34 @@ export function Navbar({
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3">
+          <ThemeToggle />
           {activeCustomerName ? (
-            onOpenAccount && (
-              <button
-                onClick={onOpenAccount}
-                className="group flex cursor-pointer items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-300 transition-all hover:border-zinc-700 hover:text-white"
-                title="Manage Customer Account & Address Book"
-              >
-                <div className="flex h-5 w-5 items-center justify-center rounded-full bg-indigo-600/30 text-[10px] font-bold text-indigo-400 transition-colors group-hover:bg-indigo-600 group-hover:text-white">
-                  <User className="h-3 w-3" />
-                </div>
-                <span className="hidden max-w-[100px] truncate md:inline">{activeCustomerName}</span>
-              </button>
-            )
+            <>
+              <form action={logoutAction}>
+                <button type="submit" className="rounded-xl border border-line bg-surface-raised px-3 py-2 text-xs font-medium text-fg hover:border-line-strong hover:text-fg-strong" title="Logout">
+                  <LogOut className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Logout</span>
+                </button>
+              </form>
+              {onOpenAccount && (
+                <button
+                  onClick={onOpenAccount}
+                  className="group flex cursor-pointer items-center gap-2 rounded-xl border border-line bg-surface-raised px-3 py-2 text-xs font-medium text-fg transition-all hover:border-line-strong hover:text-fg-strong"
+                  title="Manage Customer Account & Address Book"
+                >
+                  <div className="flex h-5 w-5 items-center justify-center rounded-full bg-indigo-600/30 text-[10px] font-bold text-indigo-400 transition-colors group-hover:bg-indigo-600 group-hover:text-white">
+                    <User className="h-3 w-3" />
+                  </div>
+                  <span className="hidden max-w-[100px] truncate md:inline">
+                    {activeCustomerName}
+                  </span>
+                </button>
+              )}
+            </>
           ) : (
             <Link
               href="/login"
-              className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-300 hover:border-zinc-700 hover:text-white"
+              className="rounded-xl border border-line bg-surface-raised px-3 py-2 text-xs font-medium text-fg hover:border-line-strong hover:text-fg-strong"
             >
               Sign in
             </Link>
@@ -90,7 +103,7 @@ export function Navbar({
 
           <button
             onClick={onOpenTrackOrder}
-            className="flex cursor-pointer items-center gap-1.5 rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-300 transition-all hover:border-zinc-700 hover:text-white"
+            className="flex cursor-pointer items-center gap-1.5 rounded-xl border border-line bg-surface-raised px-3 py-2 text-xs font-medium text-fg transition-all hover:border-line-strong hover:text-fg-strong"
           >
             <Truck className="h-3.5 w-3.5 text-indigo-400" />
             <span className="hidden sm:inline">Track Order</span>

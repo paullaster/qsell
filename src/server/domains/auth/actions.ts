@@ -4,10 +4,10 @@ import { AuthError } from 'next-auth';
 import { auth, signIn, signOut } from '@/auth';
 import { UserRepository } from '@/server/domains/auth/user-repository';
 import { isStaffRole } from '@/server/domains/auth/roles';
-import { db } from '@/server/db/store';
 import { getContainer } from '@/server/di/container';
 import type { UserSession, CustomerAccount } from '@/types/index';
 import { AuthService, SESSION_COOKIE } from './service';
+import { StorefrontCustomerService } from '@/server/domains/customers/storefront-service';
 import { cookies } from 'next/headers';
 
 function toSessionShape(user: {
@@ -61,9 +61,9 @@ export async function getSessionAction(): Promise<{
 
   const customer =
     session.user.role === 'customer'
-      ? db.getCustomerByEmailOrPhone(session.user.email) ||
+      ? (await StorefrontCustomerService.findByEmailOrPhone(session.user.email)) ??
         (session.user.customerStoreId
-          ? db.getCustomerById(session.user.customerStoreId)
+          ? await StorefrontCustomerService.findById(session.user.customerStoreId)
           : null)
       : null;
 
@@ -136,17 +136,10 @@ export async function registerCustomerAction(input: {
   const existing = await users.findByEmail(email);
   if (existing) throw new Error('An account with this email already exists.');
 
-  const customer = db.createCustomer({
+  const customer = await StorefrontCustomerService.ensure({
     name: input.name.trim(),
     email,
     phone: input.phone?.trim() || '0700000000',
-    role: 'customer',
-    status: 'verified',
-    addresses: [],
-    paymentPreferences: {
-      preferredMethod: 'mpesa_daraja',
-      defaultMpesaPhone: input.phone?.trim(),
-    },
   });
 
   await users.create({
@@ -233,21 +226,17 @@ export async function customerLoginAction(
   const identifier = input.identifier;
   if (!identifier) throw new Error('Email, phone, or Customer ID is required.');
 
-  let customer = db.getCustomerByEmailOrPhone(identifier) || db.getCustomerById(identifier);
-  if (!customer) {
-    const isEmail = identifier.includes('@');
-    customer = db.createCustomer({
+  const isEmail = identifier.includes('@');
+  const resolvedEmail = isEmail ? identifier : `${identifier}@guest.omnicommerce.ke`;
+  const customer =
+    (await StorefrontCustomerService.findByEmailOrPhone(identifier)) ??
+    (await StorefrontCustomerService.ensure({
       name: input.name || (isEmail ? identifier.split('@')[0]! : 'Shopper'),
-      email: isEmail ? identifier : `${identifier}@guest.omnicommerce.ke`,
+      email: resolvedEmail,
       phone: input.phone || (isEmail ? '0700000000' : identifier),
-      role: 'customer',
-      status: 'verified',
-      addresses: [],
-      paymentPreferences: {},
-    });
-  }
+    }));
 
-  const session = AuthService.createSession(
+  const session = await AuthService.createSession(
     'customer',
     customer.email,
     customer.name,

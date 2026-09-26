@@ -1,8 +1,8 @@
 'use server';
 
 import { auth } from '@/auth';
-import { db } from '@/server/db/store';
 import { getContainer } from '@/server/di/container';
+import { StorefrontCustomerService } from '@/server/domains/customers/storefront-service';
 import type { CustomerAddressRow } from '@/server/db/drizzle/schema';
 import type { CustomerAccount, CustomerAddress, Order } from '@/types/index';
 import type { CustomerAddressInput } from './master-service';
@@ -30,6 +30,10 @@ function master() {
   return getContainer().customers;
 }
 
+function storefront() {
+  return StorefrontCustomerService;
+}
+
 function firstNonEmpty(values: Array<string | null | undefined>, fallback = ''): string {
   return values.find((v) => v != null && v !== '') ?? fallback;
 }
@@ -52,45 +56,42 @@ async function resolveLoggedInAccount(customerId?: string): Promise<{
 
   const cid = await companyId();
   const storeId = customerId || session?.user?.customerStoreId || undefined;
-  let memory =
-    (storeId ? db.getCustomerById(storeId) : null) ||
-    (email ? db.getCustomerByEmailOrPhone(email) : null);
+  let account = (storeId ? await storefront().findById(storeId) : null) ?? null;
 
-  if (!memory && email && isCustomer) {
-    memory = db.createCustomer({
-      id: session!.user.customerStoreId || undefined,
+  if (!account && email) {
+    account = await storefront().findByEmailOrPhone(email);
+  }
+
+  if (!account && email && isCustomer) {
+    account = await storefront().ensure({
       name: session!.user.name || email.split('@')[0] || 'Customer',
       email,
       phone: session!.user.phone || '0700000000',
-      role: 'customer',
-      status: 'verified',
-      addresses: [],
-      paymentPreferences: {},
     });
   }
 
-  if (!memory && customerId) {
+  if (!account && customerId) {
     throw new Error('Customer not found');
   }
-  if (!memory) return null;
+  if (!account) return null;
 
   const trade = await master().ensureStorefrontCustomer(cid, {
-    name: memory.name || session?.user?.name || memory.email,
-    email: memory.email || email || '',
-    phone: memory.phone || session?.user?.phone,
+    name: account.name || session?.user?.name || account.email,
+    email: account.email || email || '',
+    phone: account.phone || session?.user?.phone,
   });
   const addressRows = await master().listAddresses(trade.id);
-  const account: CustomerAccount = {
-    ...memory,
-    name: trade.name || memory.name,
-    email: trade.email || memory.email,
-    phone: trade.phone || memory.phone,
+  const merged: CustomerAccount = {
+    ...account,
+    name: trade.name || account.name,
+    email: trade.email || account.email,
+    phone: trade.phone || account.phone,
     tradeCustomerId: trade.id,
     customerNumber: trade.number,
     buyerKraPin: trade.buyerKraPin,
     addresses: addressRows.map(mapAddress),
   };
-  return { account, tradeCustomerId: trade.id };
+  return { account: merged, tradeCustomerId: trade.id };
 }
 
 async function requireTradeCustomerId(customerId?: string): Promise<string> {
@@ -106,7 +107,7 @@ async function requireTradeCustomerId(customerId?: string): Promise<string> {
 }
 
 export async function listCustomersAction(): Promise<CustomerAccount[]> {
-  return db.getAllCustomers();
+  return storefront().list();
 }
 
 export const fetchUserProfilesAction = listCustomersAction;
@@ -120,9 +121,9 @@ export async function getCustomerAccountAction(
       if (customerId) throw new Error('Customer not found');
       return { customer: null, orders: [] };
     }
-    const orders = db.getCustomerOrders(resolved.account.id);
+    const orders = await getContainer().orders.listByUserId(resolved.account.id);
     const byEmail = resolved.account.email
-      ? db.getCustomerOrders(resolved.account.email)
+      ? await getContainer().orders.listByUserId(resolved.account.email)
       : [];
     const merged = [...orders];
     for (const order of byEmail) {
@@ -139,19 +140,20 @@ export async function updateCustomerProfileAction(
   customerId: string,
   updates: Partial<CustomerAccount>,
 ): Promise<CustomerAccount> {
-  const memory = db.updateCustomer(customerId, updates);
+  const existingAccount = await storefront().findById(customerId);
+  if (!existingAccount) throw new Error('Customer not found');
   const cid = await companyId();
-  const email = (updates.email || memory.email || '').toLowerCase().trim();
-  if (!email) return memory;
+  const email = (updates.email || existingAccount.email || '').toLowerCase().trim();
+  if (!email) return existingAccount;
 
   const existing = await master().lookupByEmail(cid, email);
   const trade = existing
     ? await master().saveCustomer(cid, {
         id: existing.id,
         profileId: existing.profileId,
-        name: updates.name?.trim() || memory.name,
+        name: updates.name?.trim() || existingAccount.name,
         email: existing.email,
-        phone: updates.phone?.trim() || memory.phone,
+        phone: updates.phone?.trim() || existingAccount.phone,
         street: existing.street,
         city: existing.city,
         countyOrState: existing.countyOrState,
@@ -169,16 +171,16 @@ export async function updateCustomerProfileAction(
         notes: existing.notes,
       })
     : await master().ensureStorefrontCustomer(cid, {
-        name: updates.name?.trim() || memory.name,
+        name: updates.name?.trim() || existingAccount.name,
         email,
-        phone: updates.phone?.trim() || memory.phone,
+        phone: updates.phone?.trim() || existingAccount.phone,
       });
 
   const addresses = await master().listAddresses(trade.id);
   return {
-    ...memory,
+    ...existingAccount,
     name: trade.name,
-    phone: trade.phone || memory.phone,
+    phone: trade.phone || existingAccount.phone,
     tradeCustomerId: trade.id,
     customerNumber: trade.number,
     buyerKraPin: trade.buyerKraPin,
@@ -192,8 +194,8 @@ async function reloadAccount(tradeCustomerId: string, storeCustomerId?: string):
   if (!found) throw new Error('Customer not found.');
   const addresses = (await master().listAddresses(tradeCustomerId)).map(mapAddress);
   const memory =
-    (storeCustomerId ? db.getCustomerById(storeCustomerId) : null) ||
-    (found.customer.email ? db.getCustomerByEmailOrPhone(found.customer.email) : null);
+    (storeCustomerId ? await storefront().findById(storeCustomerId) : null) ??
+    (found.customer.email ? await storefront().findByEmailOrPhone(found.customer.email) : null);
 
   if (memory) {
     return {
@@ -268,5 +270,5 @@ export async function setDefaultAddressAction(
 }
 
 export async function listCustomerOrdersAction(customerId: string): Promise<Order[]> {
-  return db.getCustomerOrders(customerId);
+  return getContainer().orders.listByUserId(customerId);
 }

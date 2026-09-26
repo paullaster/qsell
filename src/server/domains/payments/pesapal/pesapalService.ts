@@ -1,6 +1,9 @@
-import { db } from '@/server/db/store';
 import type { TransactionRecord } from '@/types/index';
+import { getContainer } from '@/server/di/container';
+import { broadcastRealtime } from '@/server/realtime';
+import { toTransaction, toGatewayConfig } from '@/server/domains/catalog/mappers';
 import { ReconciliationEngine } from '@/server/domains/reconciliation/service';
+import { InventoryReservationService } from '@/server/domains/inventory/reservation-service';
 
 export interface PesapalOrderRequest {
   orderId: string;
@@ -20,10 +23,12 @@ export interface PesapalOrderResponse {
 
 export class PesapalService {
   static async submitOrder(params: PesapalOrderRequest): Promise<PesapalOrderResponse> {
-    const order = db.orders.get(params.orderId);
+    const container = getContainer();
+    const order = await container.orders.getById(params.orderId);
     if (!order) throw new Error(`Order ${params.orderId} not found`);
 
-    const gateway = db.paymentGateways.get('gw_pesapal_v3');
+    const gatewayRow = await container.paymentRecords.getGatewayConfig('gw_pesapal_v3');
+    const gateway = gatewayRow ? toGatewayConfig(gatewayRow) : undefined;
     if (!gateway?.isEnabled) {
       throw new Error('Pesapal payment gateway is disabled by administrator');
     }
@@ -67,13 +72,31 @@ export class PesapalService {
       updatedAt: new Date().toISOString(),
     };
 
-    db.transactions.set(transactionId, transaction);
-    order.paymentStatus = 'pending_verification';
-    order.pesapalTrackingId = orderTrackingId;
-    order.transactionReference = merchantReference;
-    order.updatedAt = new Date().toISOString();
+    await container.paymentRecords.upsertTransaction({
+      id: transaction.id,
+      orderId: transaction.orderId,
+      orderNumber: transaction.orderNumber,
+      gatewayProvider: transaction.gatewayProvider,
+      amount: String(transaction.amount),
+      currency: transaction.currency ?? 'KES',
+      externalReference: transaction.externalReference ?? orderTrackingId,
+      transactionReference: transaction.transactionReference,
+      status: transaction.status,
+      customerPhone: transaction.customerPhone ?? null,
+      customerEmail: transaction.customerEmail ?? null,
+      requestPayload: transaction.requestPayload ?? {},
+      responsePayload: transaction.responsePayload ?? {},
+      ipnStatus: transaction.ipnStatus,
+      reconciliationStatus: transaction.reconciliationStatus,
+      errorMessage: transaction.errorMessage ?? null,
+    });
+    await container.orders.update(order.id, {
+      paymentStatus: 'pending_verification',
+      pesapalTrackingId: orderTrackingId,
+      transactionReference: merchantReference,
+    });
 
-    db.broadcast('transaction_event', {
+    void broadcastRealtime('transaction_event', {
       type: 'pesapal_initiated',
       transactionId,
       orderTrackingId,
@@ -95,35 +118,36 @@ export class PesapalService {
     merchantReference: string,
     status = 'COMPLETED',
   ) {
-    const transaction = Array.from(db.transactions.values()).find(
-      (tx) =>
-        tx.externalReference === orderTrackingId || tx.transactionReference === merchantReference,
-    );
+    const container = getContainer();
+    const transactionRow =
+      (await container.paymentRecords.findTransaction({ externalReference: orderTrackingId })) ??
+      (await container.paymentRecords.findTransaction({ transactionReference: merchantReference }));
 
-    if (!transaction) {
+    if (!transactionRow) {
       return { success: false, message: 'Transaction not found' };
     }
+    const transaction = toTransaction(transactionRow);
 
-    const order = db.orders.get(transaction.orderId);
+    const order = await container.orders.getById(transaction.orderId);
 
     if (status.toUpperCase() === 'COMPLETED' || status.toUpperCase() === 'SUCCESS') {
-      transaction.status = 'successful';
-      transaction.ipnStatus = 'delivered';
-      transaction.updatedAt = new Date().toISOString();
+      await container.paymentRecords.updateTransaction(transaction.id, {
+        status: 'successful',
+        ipnStatus: 'delivered',
+      });
 
       if (order) {
-        order.paymentStatus = 'paid';
-        order.status = 'completed';
-        order.pesapalTrackingId = orderTrackingId;
-        order.updatedAt = new Date().toISOString();
-        db.atomicFulfillStock(
-          order.items.map((i) => ({ productId: i.productId, quantity: i.quantity })),
-          order.id,
-        );
-        ReconciliationEngine.reconcileSingleTransaction(transaction, order);
+        await container.orders.update(order.id, {
+          paymentStatus: 'paid',
+          status: 'completed',
+          pesapalTrackingId: orderTrackingId,
+        });
+        await InventoryReservationService.fulfilOrder(order.id);
+        const settledOrder = (await container.orders.getById(order.id)) ?? order;
+        await ReconciliationEngine.reconcileSingleTransaction(transaction, settledOrder);
       }
 
-      db.broadcast('transaction_event', {
+      void broadcastRealtime('transaction_event', {
         type: 'pesapal_completed',
         transactionId: transaction.id,
         orderTrackingId,
@@ -134,19 +158,15 @@ export class PesapalService {
       return { success: true, message: 'Pesapal IPN verified and reconciled' };
     }
 
-    transaction.status = 'failed';
-    transaction.ipnStatus = 'delivered';
-    transaction.errorMessage = `Pesapal returned status: ${status}`;
-    transaction.updatedAt = new Date().toISOString();
+    await container.paymentRecords.updateTransaction(transaction.id, {
+      status: 'failed',
+      ipnStatus: 'delivered',
+      errorMessage: `Pesapal returned status: ${status}`,
+    });
 
     if (order) {
-      order.paymentStatus = 'failed';
-      order.status = 'failed';
-      order.updatedAt = new Date().toISOString();
-      db.atomicReleaseReservation(
-        order.items.map((i) => ({ productId: i.productId, quantity: i.quantity })),
-        order.id,
-      );
+      await container.orders.update(order.id, { paymentStatus: 'failed', status: 'failed' });
+      await InventoryReservationService.releaseOrder(order.id, 'pesapal_ipn_failed', 'pesapal_ipn');
     }
 
     return { success: false, message: `Pesapal payment failed with status ${status}` };

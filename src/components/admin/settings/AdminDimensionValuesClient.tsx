@@ -11,7 +11,7 @@ import {
 } from '@/server/domains/dimensions/actions';
 
 const fieldClass =
-  'w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-indigo-500 focus:outline-none';
+  'w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong placeholder:text-fg-faint focus:border-indigo-500 focus:outline-none';
 
 type FormState = {
   code: string;
@@ -47,7 +47,7 @@ export function AdminDimensionValuesClient({
 
   if (!dimension) {
     return (
-      <p className="text-sm text-zinc-400">
+      <p className="text-sm text-fg-muted">
         Dimension not found.{' '}
         <Link href="/admin/settings/dimensions" className="text-indigo-400 hover:underline">
           Back
@@ -98,9 +98,7 @@ export function AdminDimensionValuesClient({
             dimensionId: dimension.id,
             ...payload,
           });
-          setRows((prev) =>
-            [...prev, created].sort((a, b) => a.code.localeCompare(b.code)),
-          );
+          setRows((prev) => [...prev, created].sort((a, b) => a.code.localeCompare(b.code)));
         }
         openCreate();
       } catch (err) {
@@ -139,15 +137,14 @@ export function AdminDimensionValuesClient({
       <div>
         <Link
           href="/admin/settings/dimensions"
-          className="mb-3 inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-indigo-400"
+          className="mb-3 inline-flex items-center gap-1 text-xs text-fg-subtle hover:text-indigo-400"
         >
           <ArrowLeft className="h-3.5 w-3.5" /> All dimensions
         </Link>
-        <h2 className="text-xl font-bold text-white">
-          {dimension.code}{' '}
-          <span className="font-normal text-zinc-400">— {dimension.name}</span>
+        <h2 className="text-xl font-bold text-fg-strong">
+          {dimension.code} <span className="font-normal text-fg-muted">— {dimension.name}</span>
         </h2>
-        <p className="mt-1 text-sm text-zinc-400">
+        <p className="mt-1 text-sm text-fg-muted">
           Values for this dimension
           {dimension.optionString ? (
             <>
@@ -155,22 +152,20 @@ export function AdminDimensionValuesClient({
               · option <span className="font-mono text-indigo-300">{dimension.optionString}</span>
             </>
           ) : null}
-          {isBranchOption ? (
-            <> · each value creates/updates a real branch</>
-          ) : null}
+          {isBranchOption ? <> · each value creates/updates a real branch</> : null}
         </p>
       </div>
 
-      <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+      <div className="space-y-3 rounded-xl border border-line bg-surface-sunken/50 p-4">
         <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-white">
+          <h3 className="text-sm font-semibold text-fg-strong">
             {editingId ? 'Edit value' : 'New value'}
           </h3>
           {editingId ? (
             <button
               type="button"
               onClick={openCreate}
-              className="inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-white"
+              className="inline-flex items-center gap-1 text-xs text-fg-muted hover:text-fg-strong"
             >
               <X className="h-3.5 w-3.5" /> Cancel
             </button>
@@ -178,7 +173,7 @@ export function AdminDimensionValuesClient({
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <label className="mb-1 block text-[11px] font-semibold text-zinc-400">Code</label>
+            <label className="mb-1 block text-[11px] font-semibold text-fg-muted">Code</label>
             <input
               value={form.code}
               onChange={(e) => setForm((p) => ({ ...p, code: e.target.value }))}
@@ -187,7 +182,7 @@ export function AdminDimensionValuesClient({
             />
           </div>
           <div>
-            <label className="mb-1 block text-[11px] font-semibold text-zinc-400">Name</label>
+            <label className="mb-1 block text-[11px] font-semibold text-fg-muted">Name</label>
             <input
               value={form.name}
               onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
@@ -195,7 +190,9 @@ export function AdminDimensionValuesClient({
             />
           </div>
           <div className="sm:col-span-2">
-            <label className="mb-1 block text-[11px] font-semibold text-zinc-400">Description</label>
+            <label className="mb-1 block text-[11px] font-semibold text-fg-muted">
+              Description
+            </label>
             <input
               value={form.description}
               onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
@@ -203,7 +200,9 @@ export function AdminDimensionValuesClient({
             />
           </div>
           <div>
-            <label className="mb-1 block text-[11px] font-semibold text-zinc-400">Parent value</label>
+            <label className="mb-1 block text-[11px] font-semibold text-fg-muted">
+              Parent value
+            </label>
             <select
               value={form.parentId}
               onChange={(e) => setForm((p) => ({ ...p, parentId: e.target.value }))}
@@ -232,14 +231,14 @@ export function AdminDimensionValuesClient({
       </div>
 
       {error ? (
-        <div className="rounded-lg border border-red-800 bg-red-950/40 px-3 py-2 text-xs text-red-200">
+        <div className="rounded-lg border border-red-800 bg-red-50 px-3 py-2 text-xs text-red-800">
           {error}
         </div>
       ) : null}
 
-      <div className="overflow-hidden rounded-xl border border-zinc-800">
+      <div className="overflow-hidden rounded-xl border border-line">
         <table className="w-full text-left text-xs">
-          <thead className="border-b border-zinc-800 bg-zinc-950 text-[10px] tracking-wider text-zinc-500 uppercase">
+          <thead className="border-b border-line bg-surface text-[10px] tracking-wider text-fg-subtle uppercase">
             <tr>
               <th className="px-4 py-3">Code</th>
               <th className="px-4 py-3">Name</th>
@@ -249,12 +248,12 @@ export function AdminDimensionValuesClient({
               <th className="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-zinc-800">
+          <tbody className="divide-y divide-line">
             {rows.length === 0 ? (
               <tr>
                 <td
                   colSpan={isBranchOption ? 6 : 5}
-                  className="px-4 py-8 text-center text-zinc-500"
+                  className="px-4 py-8 text-center text-fg-subtle"
                 >
                   No values yet.
                 </td>
@@ -265,10 +264,10 @@ export function AdminDimensionValuesClient({
                   parentOptions.find((p) => p.id === row.parentId) ||
                   rows.find((p) => p.id === row.parentId);
                 return (
-                  <tr key={row.id} className="bg-zinc-900/40">
+                  <tr key={row.id} className="bg-surface-sunken/40">
                     <td className="px-4 py-3 font-mono text-indigo-300">{row.code}</td>
-                    <td className="px-4 py-3 text-white">{row.name}</td>
-                    <td className="px-4 py-3 text-zinc-500">{parent?.code || '—'}</td>
+                    <td className="px-4 py-3 text-fg-strong">{row.name}</td>
+                    <td className="px-4 py-3 text-fg-subtle">{parent?.code || '—'}</td>
                     <td className="px-4 py-3">
                       <button
                         type="button"
@@ -276,15 +275,15 @@ export function AdminDimensionValuesClient({
                         onClick={() => toggleActive(row)}
                         className={
                           row.isActive
-                            ? 'text-[11px] font-semibold text-emerald-400'
-                            : 'text-[11px] font-semibold text-zinc-500'
+                            ? 'text-[11px] font-semibold text-emerald-600'
+                            : 'text-[11px] font-semibold text-fg-subtle'
                         }
                       >
                         {row.isActive ? 'Active' : 'Inactive'}
                       </button>
                     </td>
                     {isBranchOption ? (
-                      <td className="px-4 py-3 font-mono text-[10px] text-zinc-500">
+                      <td className="px-4 py-3 font-mono text-[10px] text-fg-subtle">
                         {row.linkedBranchId ? row.linkedBranchId.slice(0, 8) : '—'}
                       </td>
                     ) : null}
@@ -294,7 +293,7 @@ export function AdminDimensionValuesClient({
                           type="button"
                           disabled={pending}
                           onClick={() => openEdit(row)}
-                          className="text-zinc-400 hover:text-white"
+                          className="text-fg-muted hover:text-fg-strong"
                           title="Edit"
                         >
                           <Edit2 className="h-3.5 w-3.5" />
@@ -303,7 +302,7 @@ export function AdminDimensionValuesClient({
                           type="button"
                           disabled={pending}
                           onClick={() => handleDelete(row)}
-                          className="text-zinc-400 hover:text-red-400"
+                          className="text-fg-muted hover:text-red-600"
                           title="Delete"
                         >
                           <Trash2 className="h-3.5 w-3.5" />

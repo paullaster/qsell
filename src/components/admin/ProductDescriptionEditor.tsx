@@ -72,10 +72,10 @@ export function ProductDescriptionEditor({
     <div className={`space-y-3 ${className}`}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <p className="text-[11px] font-semibold tracking-wider text-zinc-400 uppercase">
+          <p className="text-[11px] font-semibold tracking-wider text-fg-muted uppercase">
             Structured description
           </p>
-          <p className="mt-0.5 text-[11px] text-zinc-500">
+          <p className="mt-0.5 text-[11px] text-fg-subtle">
             Add a subheading and content below it. Repeat as needed — everything saves as one
             description.
           </p>
@@ -94,11 +94,11 @@ export function ProductDescriptionEditor({
         {sections.map((section, index) => (
           <div
             key={section.id}
-            className="rounded-xl border border-zinc-800 bg-zinc-950/80 p-3 shadow-sm"
+            className="rounded-xl border border-line bg-surface/80 p-3 shadow-sm"
           >
             <div className="mb-2 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
-                <GripVertical className="h-3.5 w-3.5 text-zinc-600" />
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-fg-subtle uppercase">
+                <GripVertical className="h-3.5 w-3.5 text-fg-faint" />
                 Section {index + 1}
               </div>
               <div className="flex items-center gap-1">
@@ -106,7 +106,7 @@ export function ProductDescriptionEditor({
                   type="button"
                   onClick={() => moveSection(section.id, -1)}
                   disabled={index === 0}
-                  className="rounded px-2 py-1 text-[10px] font-medium text-zinc-400 hover:bg-zinc-800 hover:text-white disabled:opacity-30"
+                  className="rounded px-2 py-1 text-[10px] font-medium text-fg-muted hover:bg-hover hover:text-fg-strong disabled:opacity-30"
                 >
                   Up
                 </button>
@@ -114,14 +114,14 @@ export function ProductDescriptionEditor({
                   type="button"
                   onClick={() => moveSection(section.id, 1)}
                   disabled={index === sections.length - 1}
-                  className="rounded px-2 py-1 text-[10px] font-medium text-zinc-400 hover:bg-zinc-800 hover:text-white disabled:opacity-30"
+                  className="rounded px-2 py-1 text-[10px] font-medium text-fg-muted hover:bg-hover hover:text-fg-strong disabled:opacity-30"
                 >
                   Down
                 </button>
                 <button
                   type="button"
                   onClick={() => removeSection(section.id)}
-                  className="rounded p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-red-400"
+                  className="rounded p-1.5 text-fg-subtle hover:bg-hover hover:text-red-600"
                   aria-label={`Remove section ${index + 1}`}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -129,7 +129,7 @@ export function ProductDescriptionEditor({
               </div>
             </div>
 
-            <label className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold text-zinc-400">
+            <label className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold text-fg-muted">
               <Heading2 className="h-3.5 w-3.5 text-indigo-400" />
               Subheading
             </label>
@@ -138,10 +138,10 @@ export function ProductDescriptionEditor({
               value={section.heading}
               onChange={(e) => updateSection(section.id, { heading: e.target.value })}
               placeholder="e.g. Package, What you can power, Warranty"
-              className="mb-3 w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm font-semibold text-white placeholder-zinc-600 focus:border-indigo-500 focus:outline-none"
+              className="mb-3 w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm font-semibold text-fg-strong placeholder-fg-faint focus:border-indigo-500 focus:outline-none"
             />
 
-            <label className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold text-zinc-400">
+            <label className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold text-fg-muted">
               <AlignLeft className="h-3.5 w-3.5 text-indigo-400" />
               Content
             </label>
@@ -150,7 +150,7 @@ export function ProductDescriptionEditor({
               onChange={(e) => updateSection(section.id, { body: e.target.value })}
               rows={4}
               placeholder="Write the details for this subheading…"
-              className="w-full resize-y rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm leading-relaxed text-zinc-200 placeholder-zinc-600 focus:border-indigo-500 focus:outline-none"
+              className="w-full resize-y rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm leading-relaxed text-fg-strong placeholder-fg-faint focus:border-indigo-500 focus:outline-none"
             />
           </div>
         ))}

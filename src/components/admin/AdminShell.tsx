@@ -3,10 +3,11 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Menu, RefreshCw, Store } from 'lucide-react';
+import { LogOut, Menu, RefreshCw, Store } from 'lucide-react';
 import { AdminSidebar } from './AdminSidebar';
+import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { useRealtimeEvents } from '@/lib/realtime';
-import { ensureAdminSessionAction } from '@/server/domains/auth/actions';
+import { ensureAdminSessionAction, logoutAction } from '@/server/domains/auth/actions';
 import { getCompanySettingsAction } from '@/server/domains/company/actions';
 import { getAdminPageMeta } from '@/config/admin-nav';
 import { resolveCompanyUiConfig } from '@/config/company-ui';
@@ -69,14 +70,14 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
 
   if (!sessionReady) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-black text-sm text-zinc-400">
+      <div className="flex min-h-screen items-center justify-center bg-canvas text-sm text-fg-muted">
         Preparing admin session…
       </div>
     );
   }
 
   return (
-    <div className="flex min-h-screen bg-black text-zinc-300">
+    <div className="flex min-h-screen bg-canvas text-fg">
       <AdminSidebar
         isOpen={isMobileSidebarOpen}
         onClose={() => setIsMobileSidebarOpen(false)}
@@ -87,39 +88,45 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
       />
 
       <div className="flex min-w-0 flex-1 flex-col lg:pl-72">
-        <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-zinc-800 bg-zinc-950/95 px-4 backdrop-blur-md sm:px-6">
+        <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-line bg-surface/95 px-4 backdrop-blur-md sm:px-6">
           <button
             type="button"
-            className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-900 lg:hidden"
+            className="rounded-lg p-2 text-fg-muted hover:bg-hover lg:hidden"
             onClick={() => setIsMobileSidebarOpen(true)}
           >
             <Menu className="h-5 w-5" />
           </button>
           <div className="min-w-0 flex-1">
-            <h1 className="truncate text-sm font-semibold text-white">{pageMeta.title}</h1>
-            <p className="truncate text-[10px] tracking-wider text-zinc-500 uppercase">
+            <h1 className="truncate text-sm font-semibold text-fg-strong">{pageMeta.title}</h1>
+            <p className="truncate text-[10px] tracking-wider text-fg-subtle uppercase">
               {pageMeta.subtitle}
             </p>
           </div>
           <button
             type="button"
             onClick={onRefreshAll}
-            className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-900 hover:text-white"
+            className="rounded-lg p-2 text-fg-muted hover:bg-hover hover:text-fg-strong"
             title="Refresh"
           >
             <RefreshCw className="h-4 w-4" />
           </button>
           <Link
             href="/"
-            className="hidden items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-900 hover:text-white sm:inline-flex"
+            className="hidden items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-fg-muted hover:bg-hover hover:text-fg-strong sm:inline-flex"
           >
             <Store className="h-3.5 w-3.5" />
             Store
           </Link>
           <span
-            className={`h-2 w-2 rounded-full ${isConnected ? 'bg-emerald-500' : 'bg-zinc-600'}`}
+            className={`h-2 w-2 rounded-full ${isConnected ? 'bg-emerald-500' : 'bg-fg-faint'}`}
             title={isConnected ? 'Realtime connected' : 'Realtime offline'}
           />
+          <form action={logoutAction}>
+            <button type="submit" className="rounded-lg p-2 text-fg-muted hover:bg-hover hover:text-fg-strong" title="Logout">
+              <LogOut className="h-4 w-4" />
+            </button>
+          </form>
+          <ThemeToggle />
         </header>
 
         <main className="mx-auto w-full max-w-7xl flex-1 space-y-6 p-4 sm:p-6 lg:p-8">

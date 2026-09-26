@@ -1,12 +1,15 @@
-import { db } from '@/server/db/store';
 import type { DashboardAnalytics } from '@/types/index';
 import { getContainer } from '@/server/di/container';
+import { toReconciliationLog } from '@/server/domains/catalog/mappers';
 
 export class AnalyticsService {
   static async getDashboardAnalytics(): Promise<DashboardAnalytics> {
-    const orders = await getContainer().orders.listAll();
-    const products = Array.from(db.products.values());
-    const reconciliationLogs = db.reconciliationLogs;
+    const container = getContainer();
+    const orders = await container.orders.listAll();
+    const products = await container.catalog.listProducts();
+    const reconciliationLogs = (await container.paymentRecords.listReconciliationLogs()).map(
+      toReconciliationLog,
+    );
 
     const paidOrders = orders.filter(
       (o) => o.paymentStatus === 'paid' || o.paymentStatus === 'reconciled',
@@ -51,9 +54,10 @@ export class AnalyticsService {
     }));
 
     const catMap: Record<string, number> = {};
-    for (const prod of products) {
-      catMap[prod.category] =
-        (catMap[prod.category] || 0) + (prod.price ?? 0) * Math.max(1, 10 - prod.stockQuantity);
+    for (const row of products) {
+      const price = Number(row.price ?? 0);
+      const category = row.categoryLabel ?? row.categoryName;
+      catMap[category] = (catMap[category] || 0) + price * Math.max(1, 10 - row.stockQuantity);
     }
     const categorySales = Object.entries(catMap).map(([category, sales]) => ({ category, sales }));
 

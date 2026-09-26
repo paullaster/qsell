@@ -74,15 +74,15 @@ export function AdminReconciliation({
   return (
     <div className="space-y-6">
       {/* Top Banner */}
-      <div className="flex flex-col items-start justify-between gap-4 rounded-xl border border-zinc-800 bg-zinc-900 p-6 md:flex-row md:items-center">
+      <div className="flex flex-col items-start justify-between gap-4 rounded-xl border border-line bg-surface-raised p-6 md:flex-row md:items-center">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <ShieldCheck className="h-5 w-5 text-indigo-400" />
-            <h2 className="text-base font-bold text-white">
+            <h2 className="text-base font-bold text-fg-strong">
               Automated Payment Settlement & Reconciliation
             </h2>
           </div>
-          <p className="text-xs text-zinc-400">
+          <p className="text-xs text-fg-muted">
             Automatically compares customer order amounts against received M-Pesa statements and
             bank receipts to detect underpayments, excess payments, or unlinked deposits.
           </p>
@@ -105,9 +105,9 @@ export function AdminReconciliation({
       </div>
 
       {batchResult && (
-        <div className="flex items-center justify-between rounded-lg border border-indigo-500/30 bg-indigo-950/40 p-4 text-xs text-indigo-200">
+        <div className="flex items-center justify-between rounded-lg border border-indigo-600 bg-indigo-50 p-4 text-xs text-indigo-600 dark:text-indigo-400">
           <div className="flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
             <span>
               Batch Complete: Checked <strong>{batchResult.totalChecked}</strong> transactions.
               Matched: <strong>{batchResult.matched}</strong>, Discrepancies:{' '}
@@ -116,7 +116,7 @@ export function AdminReconciliation({
           </div>
           <button
             onClick={() => setBatchResult(null)}
-            className="cursor-pointer text-indigo-300 hover:text-white"
+            className="cursor-pointer text-indigo-300 hover:text-fg-strong"
           >
             ✕
           </button>
@@ -125,41 +125,41 @@ export function AdminReconciliation({
 
       {/* Summary Stat Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <div className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
-          <div className="text-xs font-semibold text-zinc-400 uppercase">Verified & Matched</div>
-          <div className="flex items-center gap-2 font-mono text-2xl font-bold text-emerald-400">
-            {matchedCount} <span className="text-xs font-normal text-zinc-500">records</span>
+        <div className="space-y-2 rounded-xl border border-line bg-surface-raised p-5">
+          <div className="text-xs font-semibold text-fg-muted uppercase">Verified & Matched</div>
+          <div className="flex items-center gap-2 font-mono text-2xl font-bold text-emerald-600">
+            {matchedCount} <span className="text-xs font-normal text-fg-subtle">records</span>
           </div>
-          <p className="text-[11px] text-zinc-500">
+          <p className="text-[11px] text-fg-subtle">
             Order total equals received amount (0.00 delta)
           </p>
         </div>
 
-        <div className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
-          <div className="text-xs font-semibold text-zinc-400 uppercase">Flagged Discrepancies</div>
-          <div className="flex items-center gap-2 font-mono text-2xl font-bold text-amber-400">
-            {flaggedCount} <span className="text-xs font-normal text-zinc-500">attention</span>
+        <div className="space-y-2 rounded-xl border border-line bg-surface-raised p-5">
+          <div className="text-xs font-semibold text-fg-muted uppercase">Flagged Discrepancies</div>
+          <div className="flex items-center gap-2 font-mono text-2xl font-bold text-amber-600">
+            {flaggedCount} <span className="text-xs font-normal text-fg-subtle">attention</span>
           </div>
-          <p className="text-[11px] text-zinc-500">
+          <p className="text-[11px] text-fg-subtle">
             Underpaid, overpaid, or unlinked gateway callbacks
           </p>
         </div>
 
-        <div className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
-          <div className="text-xs font-semibold text-zinc-400 uppercase">
+        <div className="space-y-2 rounded-xl border border-line bg-surface-raised p-5">
+          <div className="text-xs font-semibold text-fg-muted uppercase">
             Corrected & Overridden
           </div>
-          <div className="flex items-center gap-2 font-mono text-2xl font-bold text-teal-400">
-            {correctedCount} <span className="text-xs font-normal text-zinc-500">resolved</span>
+          <div className="flex items-center gap-2 font-mono text-2xl font-bold text-teal-600">
+            {correctedCount} <span className="text-xs font-normal text-fg-subtle">resolved</span>
           </div>
-          <p className="text-[11px] text-zinc-500">Admin-adjusted and force reconciled</p>
+          <p className="text-[11px] text-fg-subtle">Admin-adjusted and force reconciled</p>
         </div>
       </div>
 
       {/* Reconciliation Logs Table */}
-      <div className="overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-900 shadow-lg">
+      <div className="overflow-x-auto rounded-xl border border-line bg-surface-raised shadow-lg">
         <table className="w-full text-left text-xs">
-          <thead className="border-b border-zinc-800 bg-zinc-950 text-[10px] font-semibold tracking-wider text-zinc-400 uppercase">
+          <thead className="border-b border-line bg-surface text-[10px] font-semibold tracking-wider text-fg-muted uppercase">
             <tr>
               <th className="px-4 py-3">Timestamp</th>
               <th className="px-3 py-3">Order Number</th>
@@ -172,51 +172,51 @@ export function AdminReconciliation({
               <th className="px-4 py-3 text-right">Action</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-zinc-800">
+          <tbody className="divide-y divide-line">
             {logs.map((log) => {
               const isMatched = log.status === 'matched';
               const isFlagged = log.status === 'flagged_for_review';
               const isMpesa = log.provider === 'mpesa_daraja';
 
               return (
-                <tr key={log.id} className="transition-colors hover:bg-zinc-800/40">
-                  <td className="px-4 py-3.5 font-mono text-[11px] text-zinc-500">
+                <tr key={log.id} className="transition-colors hover:bg-hover">
+                  <td className="px-4 py-3.5 font-mono text-[11px] text-fg-subtle">
                     {new Date(log.timestamp).toLocaleTimeString([], {
                       hour: '2-digit',
                       minute: '2-digit',
                       second: '2-digit',
                     })}
                   </td>
-                  <td className="px-3 py-3.5 font-mono font-semibold text-white">
+                  <td className="px-3 py-3.5 font-mono font-semibold text-fg-strong">
                     {log.orderNumber}
                   </td>
                   <td className="px-3 py-3.5">
-                    <span className="flex items-center gap-1 text-[11px] font-medium text-zinc-300">
+                    <span className="flex items-center gap-1 text-[11px] font-medium text-fg">
                       {isMpesa ? (
-                        <Smartphone className="h-3.5 w-3.5 text-emerald-400" />
+                        <Smartphone className="h-3.5 w-3.5 text-emerald-600" />
                       ) : (
                         <CreditCard className="h-3.5 w-3.5 text-indigo-400" />
                       )}
                       {isMpesa ? 'M-Pesa' : 'Pesapal'}
                     </span>
                   </td>
-                  <td className="px-3 py-3.5 font-mono text-[10px] text-zinc-500 uppercase">
+                  <td className="px-3 py-3.5 font-mono text-[10px] text-fg-subtle uppercase">
                     {log.reconciliationType}
                   </td>
-                  <td className="px-3 py-3.5 font-mono text-white">
+                  <td className="px-3 py-3.5 font-mono text-fg-strong">
                     KES {log.orderTotal.toLocaleString()}
                   </td>
-                  <td className="px-3 py-3.5 font-mono font-semibold text-emerald-400">
+                  <td className="px-3 py-3.5 font-mono font-semibold text-emerald-600">
                     KES {log.receivedAmount.toLocaleString()}
                   </td>
                   <td className="px-3 py-3.5">
                     <span
                       className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-bold ${
                         isMatched
-                          ? 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-400'
+                          ? 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-600'
                           : isFlagged
-                            ? 'animate-pulse border border-amber-500/20 bg-amber-500/10 text-amber-400'
-                            : 'border border-teal-500/20 bg-teal-500/10 text-teal-400'
+                            ? 'animate-pulse border border-amber-500/20 bg-amber-500/10 text-amber-600'
+                            : 'border border-teal-500/20 bg-teal-500/10 text-teal-600'
                       }`}
                     >
                       {isMatched ? (
@@ -227,10 +227,7 @@ export function AdminReconciliation({
                       {log.status.toUpperCase()}
                     </span>
                   </td>
-                  <td
-                    className="max-w-sm truncate px-4 py-3.5 text-xs text-zinc-300"
-                    title={log.details}
-                  >
+                  <td className="max-w-sm truncate px-4 py-3.5 text-xs text-fg" title={log.details}>
                     {log.details}
                   </td>
                   <td className="px-4 py-3.5 text-right">
@@ -242,7 +239,7 @@ export function AdminReconciliation({
                         Resolve...
                       </button>
                     ) : (
-                      <span className="font-mono text-[11px] text-zinc-500">Verified</span>
+                      <span className="font-mono text-[11px] text-fg-subtle">Verified</span>
                     )}
                   </td>
                 </tr>
@@ -254,33 +251,33 @@ export function AdminReconciliation({
 
       {/* Discrepancy Resolution Modal */}
       {selectedLog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/80 p-4 backdrop-blur-md sm:p-6">
-          <div className="relative my-8 flex w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-950 p-5">
-              <h3 className="flex items-center gap-2 text-sm font-bold text-white">
-                <AlertTriangle className="h-4 w-4 text-amber-400" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-backdrop/80 p-4 backdrop-blur-md sm:p-6">
+          <div className="relative my-8 flex w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-line bg-surface-raised shadow-2xl">
+            <div className="flex items-center justify-between border-b border-line bg-surface p-5">
+              <h3 className="flex items-center gap-2 text-sm font-bold text-fg-strong">
+                <AlertTriangle className="h-4 w-4 text-amber-600" />
                 Resolve Discrepancy for {selectedLog.orderNumber}
               </h3>
               <button
                 onClick={() => setSelectedLog(null)}
-                className="cursor-pointer text-zinc-400 hover:text-white"
+                className="cursor-pointer text-fg-muted hover:text-fg-strong"
               >
                 ✕
               </button>
             </div>
 
             <form onSubmit={handleResolveSubmit} className="space-y-4 p-6 text-xs">
-              <div className="space-y-1 rounded-lg border border-zinc-800 bg-zinc-950 p-3.5">
-                <div className="text-zinc-400">Current Issue:</div>
-                <div className="font-medium text-amber-300">{selectedLog.details}</div>
+              <div className="space-y-1 rounded-lg border border-line bg-surface p-3.5">
+                <div className="text-fg-muted">Current Issue:</div>
+                <div className="font-medium text-amber-700">{selectedLog.details}</div>
               </div>
 
               <div>
-                <label className="mb-1 block font-medium text-zinc-300">Resolution Action</label>
+                <label className="mb-1 block font-medium text-fg">Resolution Action</label>
                 <select
                   value={resolveAction}
                   onChange={(e: any) => setResolveAction(e.target.value)}
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-white focus:border-indigo-500 focus:outline-none"
+                  className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-fg-strong focus:border-indigo-500 focus:outline-none"
                 >
                   <option value="force_match">
                     Force Mark Reconciled (Verified offline or via Safaricom)
@@ -293,21 +290,21 @@ export function AdminReconciliation({
               </div>
 
               <div>
-                <label className="mb-1 block font-medium text-zinc-300">Audit Trail Notes</label>
+                <label className="mb-1 block font-medium text-fg">Audit Trail Notes</label>
                 <textarea
                   rows={3}
                   value={resolveNotes}
                   onChange={(e) => setResolveNotes(e.target.value)}
                   required
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-white focus:border-indigo-500 focus:outline-none"
+                  className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-fg-strong focus:border-indigo-500 focus:outline-none"
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-2 border-t border-zinc-800 pt-3">
+              <div className="flex items-center justify-end gap-2 border-t border-line pt-3">
                 <button
                   type="button"
                   onClick={() => setSelectedLog(null)}
-                  className="cursor-pointer rounded-lg bg-zinc-800 px-4 py-2 text-zinc-400 hover:text-white"
+                  className="cursor-pointer rounded-lg bg-surface-sunken px-4 py-2 text-fg-muted hover:text-fg-strong"
                 >
                   Cancel
                 </button>

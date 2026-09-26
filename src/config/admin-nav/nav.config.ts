@@ -250,6 +250,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
             icon: 'ShieldCheck',
             installed: true,
           },
+          {
+            id: 'integration-audit',
+            title: 'Integration Audit Log',
+            name: 'integration-audit',
+            href: '/admin/integration-audit',
+            description: 'All outbound calls and inbound webhooks with full payload capture',
+            icon: 'Activity',
+            installed: true,
+          },
         ],
       },
       {

@@ -8,9 +8,9 @@ export default function AdminError({
   reset: () => void;
 }) {
   return (
-    <div className="space-y-3 rounded-xl border border-red-900/50 bg-red-950/30 p-6">
-      <h2 className="font-semibold text-white">Admin error</h2>
-      <p className="text-sm text-zinc-400">{error.message}</p>
+    <div className="space-y-3 rounded-xl border border-red-900/50 bg-red-50 p-6">
+      <h2 className="font-semibold text-fg-strong">Admin error</h2>
+      <p className="text-sm text-fg-muted">{error.message}</p>
       <button
         type="button"
         onClick={reset}

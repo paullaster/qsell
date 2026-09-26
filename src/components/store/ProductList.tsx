@@ -63,8 +63,7 @@ export function ProductList({
     return products
       .filter((p) => {
         const matchesCat =
-          selectedCategory === 'All' ||
-          p.category.toLowerCase() === selectedCategory.toLowerCase();
+          selectedCategory === 'All' || p.category.toLowerCase() === selectedCategory.toLowerCase();
         const matchesSearch =
           p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
           productDescriptionPlainText(p.description)
@@ -98,7 +97,7 @@ export function ProductList({
     return `${base} ${
       active
         ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
-        : 'border border-zinc-800 bg-zinc-950 text-zinc-400 hover:bg-zinc-800 hover:text-white'
+        : 'border border-line bg-surface text-fg-muted hover:bg-hover hover:text-fg-strong'
     }`;
   };
 
@@ -126,14 +125,14 @@ export function ProductList({
 
   const filtersBar = (
     <div className="flex flex-wrap items-center gap-3">
-      <div className="flex items-center rounded-lg border border-zinc-800 bg-zinc-950 p-1 text-xs">
+      <div className="flex items-center rounded-lg border border-line bg-surface p-1 text-xs">
         <button
           type="button"
           onClick={() => setStockFilter('all')}
           className={`cursor-pointer rounded-md px-2.5 py-1 transition-colors ${
             stockFilter === 'all'
-              ? 'bg-zinc-800 font-semibold text-white'
-              : 'text-zinc-400 hover:text-zinc-200'
+              ? 'bg-surface-sunken font-semibold text-fg-strong'
+              : 'text-fg-muted hover:text-fg-strong'
           }`}
         >
           All Items ({products.length})
@@ -143,8 +142,8 @@ export function ProductList({
           onClick={() => setStockFilter('in_stock')}
           className={`cursor-pointer rounded-md px-2.5 py-1 transition-colors ${
             stockFilter === 'in_stock'
-              ? 'bg-indigo-600 font-semibold text-white shadow-sm'
-              : 'text-zinc-400 hover:text-zinc-200'
+              ? 'bg-indigo-600 text-white font-semibold shadow-sm'
+              : 'text-fg-muted hover:text-fg-strong'
           }`}
         >
           In Stock
@@ -154,8 +153,8 @@ export function ProductList({
           onClick={() => setStockFilter('low_stock')}
           className={`cursor-pointer rounded-md px-2.5 py-1 transition-colors ${
             stockFilter === 'low_stock'
-              ? 'bg-amber-600 font-semibold text-white shadow-sm'
-              : 'text-zinc-400 hover:text-zinc-200'
+              ? 'bg-amber-600 text-white font-semibold shadow-sm'
+              : 'text-fg-muted hover:text-fg-strong'
           }`}
         >
           Low Stock
@@ -167,7 +166,7 @@ export function ProductList({
         onChange={(e) =>
           setSortBy(e.target.value as 'featured' | 'price_asc' | 'price_desc' | 'rating')
         }
-        className="cursor-pointer rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none"
+        className="cursor-pointer rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-fg-strong focus:border-indigo-500 focus:outline-none"
       >
         <option value="featured">Sort: Featured First</option>
         <option value="price_asc">Price: Low to High</option>
@@ -181,8 +180,8 @@ export function ProductList({
     <div className="min-[1000px]:flex min-[1000px]:items-start min-[1000px]:gap-6">
       {/* Vertical category rail — far left from 1000px up */}
       <aside className="sticky top-20 hidden w-48 shrink-0 min-[1000px]:block lg:w-52">
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-3">
-          <p className="mb-2 px-1 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+        <div className="rounded-xl border border-line bg-surface-raised p-3">
+          <p className="mb-2 px-1 text-[10px] font-semibold tracking-wider text-fg-subtle uppercase">
             Categories
           </p>
           {categoryNav('rail')}
@@ -191,7 +190,7 @@ export function ProductList({
 
       <div className="min-w-0 flex-1 space-y-6">
         {/* Mobile / tablet: horizontal categories + filters */}
-        <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-4 min-[1000px]:space-y-0">
+        <div className="space-y-3 rounded-xl border border-line bg-surface-raised p-4 min-[1000px]:space-y-0">
           <div className="min-[1000px]:hidden">{categoryNav('pill')}</div>
           <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
             {filtersBar}
@@ -212,12 +211,12 @@ export function ProductList({
             ))}
           </div>
         ) : (
-          <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-12 text-center">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-zinc-800 text-zinc-400">
+          <div className="space-y-3 rounded-xl border border-line bg-surface-raised p-12 text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-surface-sunken text-fg-muted">
               <Package className="h-6 w-6" />
             </div>
-            <h3 className="text-base font-semibold text-white">No products found</h3>
-            <p className="mx-auto max-w-sm text-xs text-zinc-400">
+            <h3 className="text-base font-semibold text-fg-strong">No products found</h3>
+            <p className="mx-auto max-w-sm text-xs text-fg-muted">
               We couldn&apos;t find any products matching your search criteria or category filter.
               Try clearing filters or searching for another keyword.
             </p>

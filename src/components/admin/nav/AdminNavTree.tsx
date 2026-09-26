@@ -30,6 +30,7 @@ import {
   KeyRound,
   UserCog,
   Fingerprint,
+  Activity,
   type LucideIcon,
 } from 'lucide-react';
 import { hasSubLinks, type AdminNavIconName, type AdminNavItem } from '@/config/admin-nav';
@@ -61,6 +62,7 @@ const ICONS: Record<AdminNavIconName, LucideIcon> = {
   KeyRound,
   UserCog,
   Fingerprint,
+  Activity: Activity,
 };
 
 function NavIcon({ name }: { name?: AdminNavIconName }) {
@@ -91,11 +93,7 @@ export function AdminNavTree({
 }: AdminNavTreeProps) {
   return (
     <ul
-      className={
-        depth === 1
-          ? 'space-y-0.5'
-          : 'mt-0.5 ml-3 space-y-0.5 border-l border-zinc-800 pl-2'
-      }
+      className={depth === 1 ? 'space-y-0.5' : 'mt-0.5 ml-3 space-y-0.5 border-l border-line pl-2'}
     >
       {items.map((item) => {
         const nested = hasSubLinks(item);
@@ -105,13 +103,13 @@ export function AdminNavTree({
 
         let stateClass: string;
         if (item.disabled === true) {
-          stateClass = 'cursor-not-allowed text-zinc-600 opacity-50';
+          stateClass = 'cursor-not-allowed text-fg-faint opacity-50';
         } else if (isActive) {
-          stateClass = 'bg-indigo-600/20 text-indigo-200';
+          stateClass = 'bg-indigo-600 text-white';
         } else if (inTrail) {
-          stateClass = 'bg-zinc-900/70 text-indigo-300/90';
+          stateClass = 'bg-surface-sunken text-indigo-400';
         } else {
-          stateClass = 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200';
+          stateClass = 'text-fg-muted hover:bg-hover hover:text-fg-strong';
         }
 
         const ChevronIcon = nested ? ChevronDown : ChevronRight;

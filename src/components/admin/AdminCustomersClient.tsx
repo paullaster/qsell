@@ -22,7 +22,7 @@ import {
 } from '@/components/admin/customer-shortcuts';
 
 const fieldClass =
-  'w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-indigo-500 focus:outline-none';
+  'w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong placeholder:text-fg-faint focus:border-indigo-500 focus:outline-none';
 
 type SetupField = {
   fieldName: string;
@@ -43,7 +43,9 @@ type Block = 'none' | 'ship' | 'invoice' | 'all';
 
 function money(value: string | number | null | undefined): string {
   const n = typeof value === 'number' ? value : Number(value ?? 0);
-  return Number.isFinite(n) ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00';
+  return Number.isFinite(n)
+    ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : '0.00';
 }
 
 function fieldNumber(fieldName: string): string | null {
@@ -65,7 +67,10 @@ function projectionToSelected(
   return selected;
 }
 
-function selectedToProjection(selected: Record<string, string>, fields: SetupField[]): DimensionCodesProjection {
+function selectedToProjection(
+  selected: Record<string, string>,
+  fields: SetupField[],
+): DimensionCodesProjection {
   const global: Record<string, string> = {};
   const shortcut: Record<string, string> = {};
   for (const field of fields) {
@@ -93,7 +98,7 @@ function DimensionFields({
 }) {
   if (fields.length === 0) {
     return (
-      <p className="text-xs text-zinc-500">
+      <p className="text-xs text-fg-subtle">
         No default or shortcut dimensions are configured.{' '}
         <CatalogCreateShortcut href="/admin/settings/dimensions/new">New</CatalogCreateShortcut>
       </p>
@@ -103,10 +108,10 @@ function DimensionFields({
     <div className="grid gap-3 sm:grid-cols-2">
       {fields.map((field) => (
         <div key={field.fieldName}>
-          <div className="mb-1 flex items-center justify-between gap-2 text-xs text-zinc-400">
+          <div className="mb-1 flex items-center justify-between gap-2 text-xs text-fg-muted">
             <span>
               {field.dimensionCode}
-              <span className="ml-1 text-zinc-600">{field.kind}</span>
+              <span className="ml-1 text-fg-faint">{field.kind}</span>
             </span>
             {field.values.length > 0 ? (
               <CatalogCreateShortcut href={dimensionValueHref(field)}>New</CatalogCreateShortcut>
@@ -126,7 +131,7 @@ function DimensionFields({
             ))}
           </select>
           {field.values.length === 0 ? (
-            <p className="mt-1 text-[11px] text-amber-300">
+            <p className="mt-1 text-[11px] text-amber-700">
               No values yet.{' '}
               <CatalogCreateShortcut href={dimensionValueHref(field)}>New</CatalogCreateShortcut>
             </p>
@@ -383,8 +388,13 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
   };
 
   const deleteCustomer = (row: CustomerRow) => {
-    const open = Number(row.balance) > 0 ? ` Open balance ${money(row.balance)} will be removed.` : '';
-    if (!window.confirm(`Delete ${row.name} (${row.number})?${open} Past orders stay, but they will no longer point at this card.`)) {
+    const open =
+      Number(row.balance) > 0 ? ` Open balance ${money(row.balance)} will be removed.` : '';
+    if (
+      !window.confirm(
+        `Delete ${row.name} (${row.number})?${open} Past orders stay, but they will no longer point at this card.`,
+      )
+    ) {
       return;
     }
     startTransition(async () => {
@@ -463,12 +473,14 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
     <div className="mx-auto max-w-6xl space-y-6 p-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2 text-white">
+          <div className="flex items-center gap-2 text-fg-strong">
             <Users className="h-5 w-5 text-indigo-400" />
             <h1 className="text-xl font-semibold">Customers</h1>
           </div>
-          <p className="mt-1 max-w-2xl text-sm text-zinc-400">
-            Every customer is cash or credit from the start. Profiles copy payment terms, credit limit, default dimensions, and whether invoices are marked for KRA. Cash sales do not create a receivable. Credit sales post an open invoice up to the credit limit.
+          <p className="mt-1 max-w-2xl text-sm text-fg-muted">
+            Every customer is cash or credit from the start. Profiles copy payment terms, credit
+            limit, default dimensions, and whether invoices are marked for KRA. Cash sales do not
+            create a receivable. Credit sales post an open invoice up to the credit limit.
           </p>
         </div>
         <button
@@ -481,7 +493,7 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
         </button>
       </div>
 
-      <div className="flex gap-2 border-b border-zinc-800">
+      <div className="flex gap-2 border-b border-line">
         {(['customers', 'profiles'] as const).map((key) => (
           <button
             key={key}
@@ -491,7 +503,7 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
               setError(null);
             }}
             className={`border-b-2 px-3 py-2 text-sm capitalize ${
-              tab === key ? 'border-indigo-500 text-white' : 'border-transparent text-zinc-500'
+              tab === key ? 'border-indigo-500 text-fg-strong' : 'border-transparent text-fg-subtle'
             }`}
           >
             {key}
@@ -500,19 +512,23 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
       </div>
 
       {error ? (
-        <p className="rounded-lg border border-red-500/40 bg-red-950/40 px-3 py-2 text-sm text-red-200">{error}</p>
+        <p className="rounded-lg border border-red-500/40 bg-red-50 px-3 py-2 text-sm text-red-800">
+          {error}
+        </p>
       ) : null}
 
       {tab === 'customers' ? (
         <div className="space-y-4">
           {showCustomerForm ? (
-            <section className="space-y-4 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+            <section className="space-y-4 rounded-xl border border-line bg-surface-sunken/60 p-4">
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="sm:col-span-2">
-                  <div className="mb-1 flex items-center justify-between gap-2 text-xs text-zinc-400">
+                  <div className="mb-1 flex items-center justify-between gap-2 text-xs text-fg-muted">
                     <span>Profile</span>
                     {profiles.length > 0 ? (
-                      <CatalogCreateShortcut href="/admin/customer-profiles/new">New</CatalogCreateShortcut>
+                      <CatalogCreateShortcut href="/admin/customer-profiles/new">
+                        New
+                      </CatalogCreateShortcut>
                     ) : null}
                   </div>
                   <select
@@ -529,45 +545,81 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
                     ))}
                   </select>
                   {profiles.length === 0 ? (
-                    <p className="mt-1 text-[11px] text-amber-300">
+                    <p className="mt-1 text-[11px] text-amber-700">
                       No profile yet.{' '}
-                      <CatalogCreateShortcut href="/admin/customer-profiles/new">New</CatalogCreateShortcut>
+                      <CatalogCreateShortcut href="/admin/customer-profiles/new">
+                        New
+                      </CatalogCreateShortcut>
                     </p>
                   ) : null}
                 </div>
-                <label className="block text-xs text-zinc-400">
+                <label className="block text-xs text-fg-muted">
                   Name
-                  <input className={`${fieldClass} mt-1`} value={customerForm.name} onChange={(e) => setCustomerForm((f) => ({ ...f, name: e.target.value }))} />
+                  <input
+                    className={`${fieldClass} mt-1`}
+                    value={customerForm.name}
+                    onChange={(e) => setCustomerForm((f) => ({ ...f, name: e.target.value }))}
+                  />
                 </label>
-                <label className="block text-xs text-zinc-400">
+                <label className="block text-xs text-fg-muted">
                   Email
-                  <input className={`${fieldClass} mt-1`} value={customerForm.email} onChange={(e) => setCustomerForm((f) => ({ ...f, email: e.target.value }))} />
+                  <input
+                    className={`${fieldClass} mt-1`}
+                    value={customerForm.email}
+                    onChange={(e) => setCustomerForm((f) => ({ ...f, email: e.target.value }))}
+                  />
                 </label>
-                <label className="block text-xs text-zinc-400">
+                <label className="block text-xs text-fg-muted">
                   Phone
-                  <input className={`${fieldClass} mt-1`} value={customerForm.phone} onChange={(e) => setCustomerForm((f) => ({ ...f, phone: e.target.value }))} />
+                  <input
+                    className={`${fieldClass} mt-1`}
+                    value={customerForm.phone}
+                    onChange={(e) => setCustomerForm((f) => ({ ...f, phone: e.target.value }))}
+                  />
                 </label>
-                <label className="block text-xs text-zinc-400 sm:col-span-2">
+                <label className="block text-xs text-fg-muted sm:col-span-2">
                   Street
-                  <input className={`${fieldClass} mt-1`} value={customerForm.street} onChange={(e) => setCustomerForm((f) => ({ ...f, street: e.target.value }))} />
+                  <input
+                    className={`${fieldClass} mt-1`}
+                    value={customerForm.street}
+                    onChange={(e) => setCustomerForm((f) => ({ ...f, street: e.target.value }))}
+                  />
                 </label>
-                <label className="block text-xs text-zinc-400">
+                <label className="block text-xs text-fg-muted">
                   City
-                  <input className={`${fieldClass} mt-1`} value={customerForm.city} onChange={(e) => setCustomerForm((f) => ({ ...f, city: e.target.value }))} />
+                  <input
+                    className={`${fieldClass} mt-1`}
+                    value={customerForm.city}
+                    onChange={(e) => setCustomerForm((f) => ({ ...f, city: e.target.value }))}
+                  />
                 </label>
-                <label className="block text-xs text-zinc-400">
+                <label className="block text-xs text-fg-muted">
                   County / region
-                  <input className={`${fieldClass} mt-1`} value={customerForm.countyOrState} onChange={(e) => setCustomerForm((f) => ({ ...f, countyOrState: e.target.value }))} />
+                  <input
+                    className={`${fieldClass} mt-1`}
+                    value={customerForm.countyOrState}
+                    onChange={(e) =>
+                      setCustomerForm((f) => ({ ...f, countyOrState: e.target.value }))
+                    }
+                  />
                 </label>
-                <label className="block text-xs text-zinc-400">
+                <label className="block text-xs text-fg-muted">
                   Postal code
-                  <input className={`${fieldClass} mt-1`} value={customerForm.postalCode} onChange={(e) => setCustomerForm((f) => ({ ...f, postalCode: e.target.value }))} />
+                  <input
+                    className={`${fieldClass} mt-1`}
+                    value={customerForm.postalCode}
+                    onChange={(e) => setCustomerForm((f) => ({ ...f, postalCode: e.target.value }))}
+                  />
                 </label>
-                <label className="block text-xs text-zinc-400">
+                <label className="block text-xs text-fg-muted">
                   Country
-                  <input className={`${fieldClass} mt-1`} value={customerForm.country} onChange={(e) => setCustomerForm((f) => ({ ...f, country: e.target.value }))} />
+                  <input
+                    className={`${fieldClass} mt-1`}
+                    value={customerForm.country}
+                    onChange={(e) => setCustomerForm((f) => ({ ...f, country: e.target.value }))}
+                  />
                 </label>
-                <label className="block text-xs text-zinc-400">
+                <label className="block text-xs text-fg-muted">
                   Account type
                   <select
                     className={`${fieldClass} mt-1`}
@@ -586,7 +638,7 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
                     <option value="credit">Credit</option>
                   </select>
                 </label>
-                <label className="block text-xs text-zinc-400">
+                <label className="block text-xs text-fg-muted">
                   Credit limit
                   <input
                     className={`${fieldClass} mt-1`}
@@ -594,10 +646,12 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
                     min={0}
                     disabled={customerForm.accountType === 'cash'}
                     value={customerForm.accountType === 'cash' ? '0' : customerForm.creditLimit}
-                    onChange={(e) => setCustomerForm((f) => ({ ...f, creditLimit: e.target.value }))}
+                    onChange={(e) =>
+                      setCustomerForm((f) => ({ ...f, creditLimit: e.target.value }))
+                    }
                   />
                 </label>
-                <label className="block text-xs text-zinc-400">
+                <label className="block text-xs text-fg-muted">
                   Payment terms (days)
                   <input
                     className={`${fieldClass} mt-1`}
@@ -605,15 +659,19 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
                     min={0}
                     disabled={customerForm.accountType === 'cash'}
                     value={customerForm.accountType === 'cash' ? '0' : customerForm.paymentTermDays}
-                    onChange={(e) => setCustomerForm((f) => ({ ...f, paymentTermDays: e.target.value }))}
+                    onChange={(e) =>
+                      setCustomerForm((f) => ({ ...f, paymentTermDays: e.target.value }))
+                    }
                   />
                 </label>
-                <label className="block text-xs text-zinc-400">
+                <label className="block text-xs text-fg-muted">
                   Blocked
                   <select
                     className={`${fieldClass} mt-1`}
                     value={customerForm.blocked}
-                    onChange={(e) => setCustomerForm((f) => ({ ...f, blocked: e.target.value as Block }))}
+                    onChange={(e) =>
+                      setCustomerForm((f) => ({ ...f, blocked: e.target.value as Block }))
+                    }
                   >
                     <option value="none">None</option>
                     <option value="ship">Ship</option>
@@ -621,21 +679,30 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
                     <option value="all">All</option>
                   </select>
                 </label>
-                <label className="block text-xs text-zinc-400">
+                <label className="block text-xs text-fg-muted">
                   Tax PIN
-                  <input className={`${fieldClass} mt-1`} value={customerForm.buyerKraPin} onChange={(e) => setCustomerForm((f) => ({ ...f, buyerKraPin: e.target.value }))} placeholder="e.g. P051234567X" />
+                  <input
+                    className={`${fieldClass} mt-1`}
+                    value={customerForm.buyerKraPin}
+                    onChange={(e) =>
+                      setCustomerForm((f) => ({ ...f, buyerKraPin: e.target.value }))
+                    }
+                    placeholder="e.g. P051234567X"
+                  />
                 </label>
-                <label className="flex items-center gap-2 text-sm text-zinc-300 sm:col-span-2">
+                <label className="flex items-center gap-2 text-sm text-fg sm:col-span-2">
                   <input
                     type="checkbox"
                     checked={customerForm.transmitInvoicesToKra}
-                    onChange={(e) => setCustomerForm((f) => ({ ...f, transmitInvoicesToKra: e.target.checked }))}
+                    onChange={(e) =>
+                      setCustomerForm((f) => ({ ...f, transmitInvoicesToKra: e.target.checked }))
+                    }
                   />
                   Transmit this customer&apos;s invoices to KRA
                 </label>
               </div>
               {customerForm.accountType === 'credit' && Number(customerForm.creditLimit) <= 0 ? (
-                <p className="text-xs text-amber-300">
+                <p className="text-xs text-amber-700">
                   Credit limit is 0, so this customer cannot be invoiced until you set a limit.
                 </p>
               ) : null}
@@ -643,11 +710,19 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
                 fields={fields}
                 selected={customerForm.dimensions}
                 onChange={(fieldName, code) =>
-                  setCustomerForm((f) => ({ ...f, dimensions: { ...f.dimensions, [fieldName]: code } }))
+                  setCustomerForm((f) => ({
+                    ...f,
+                    dimensions: { ...f.dimensions, [fieldName]: code },
+                  }))
                 }
               />
               <div className="flex gap-2">
-                <button type="button" disabled={pending} onClick={saveCustomer} className="rounded-lg bg-indigo-600 px-3 py-2 text-sm text-white disabled:opacity-50">
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={saveCustomer}
+                  className="rounded-lg bg-indigo-600 px-3 py-2 text-sm text-white disabled:opacity-50"
+                >
                   Save customer
                 </button>
                 {editingCustomerId ? (
@@ -658,33 +733,53 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
                       const row = customers.find((item) => item.id === editingCustomerId);
                       if (row) deleteCustomer(row);
                     }}
-                    className="rounded-lg border border-red-800 px-3 py-2 text-sm text-red-300 disabled:opacity-50"
+                    className="rounded-lg border border-red-800 px-3 py-2 text-sm text-red-700 disabled:opacity-50"
                   >
                     Delete
                   </button>
                 ) : null}
-                <button type="button" onClick={() => setShowCustomerForm(false)} className="rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-300">
+                <button
+                  type="button"
+                  onClick={() => setShowCustomerForm(false)}
+                  className="rounded-lg border border-line-strong px-3 py-2 text-sm text-fg"
+                >
                   Close
                 </button>
               </div>
               {selectedCustomer && Number(selectedCustomer.balance) > 0 ? (
-                <div className="flex flex-wrap items-end gap-2 border-t border-zinc-800 pt-3">
-                  <label className="text-xs text-zinc-400">
+                <div className="flex flex-wrap items-end gap-2 border-t border-line pt-3">
+                  <label className="text-xs text-fg-muted">
                     Receive payment against open balance {money(selectedCustomer.balance)}
-                    <input className={`${fieldClass} mt-1 w-40`} type="number" min={0} value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} />
+                    <input
+                      className={`${fieldClass} mt-1 w-40`}
+                      type="number"
+                      min={0}
+                      value={paymentAmount}
+                      onChange={(e) => setPaymentAmount(e.target.value)}
+                    />
                   </label>
-                  <label className="text-xs text-zinc-400">
+                  <label className="text-xs text-fg-muted">
                     Transaction reference
-                    <input className={`${fieldClass} mt-1 w-48`} value={paymentReference} onChange={(e) => setPaymentReference(e.target.value)} placeholder="Receipt or bank reference" />
+                    <input
+                      className={`${fieldClass} mt-1 w-48`}
+                      value={paymentReference}
+                      onChange={(e) => setPaymentReference(e.target.value)}
+                      placeholder="Receipt or bank reference"
+                    />
                   </label>
-                  <button type="button" disabled={pending} onClick={receivePayment} className="rounded-lg border border-emerald-700 px-3 py-2 text-sm text-emerald-200">
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={receivePayment}
+                    className="rounded-lg border border-emerald-700 px-3 py-2 text-sm text-emerald-800"
+                  >
                     Post payment
                   </button>
                 </div>
               ) : null}
               {ledger.length > 0 ? (
-                <table className="w-full text-left text-xs text-zinc-300">
-                  <thead className="text-zinc-500">
+                <table className="w-full text-left text-xs text-fg">
+                  <thead className="text-fg-subtle">
                     <tr>
                       <th className="py-1">Document</th>
                       <th>Type</th>
@@ -695,7 +790,7 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
                   </thead>
                   <tbody>
                     {ledger.map((entry) => (
-                      <tr key={entry.id} className="border-t border-zinc-800">
+                      <tr key={entry.id} className="border-t border-line">
                         <td className="py-1">{entry.documentNo}</td>
                         <td>{entry.description || entry.documentType}</td>
                         <td>{money(entry.amount)}</td>
@@ -709,9 +804,9 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
             </section>
           ) : null}
 
-          <div className="overflow-hidden rounded-xl border border-zinc-800">
-            <table className="w-full text-left text-sm text-zinc-300">
-              <thead className="bg-zinc-900 text-xs text-zinc-500">
+          <div className="overflow-hidden rounded-xl border border-line">
+            <table className="w-full text-left text-sm text-fg">
+              <thead className="bg-surface-raised text-xs text-fg-subtle">
                 <tr>
                   <th className="px-3 py-2">Number</th>
                   <th>Name</th>
@@ -727,13 +822,18 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
               <tbody>
                 {customers.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-3 py-6 text-zinc-500">
-                      No customers yet. A checkout with a new email creates a cash customer here, including the name, phone, address, and tax PIN entered at checkout.
+                    <td colSpan={9} className="px-3 py-6 text-fg-subtle">
+                      No customers yet. A checkout with a new email creates a cash customer here,
+                      including the name, phone, address, and tax PIN entered at checkout.
                     </td>
                   </tr>
                 ) : (
                   customers.map((row) => (
-                    <tr key={row.id} className="cursor-pointer border-t border-zinc-800 hover:bg-zinc-900" onClick={() => openCustomer(row)}>
+                    <tr
+                      key={row.id}
+                      className="cursor-pointer border-t border-line hover:bg-hover"
+                      onClick={() => openCustomer(row)}
+                    >
                       <td className="px-3 py-2 font-mono text-xs">{row.number}</td>
                       <td>{row.name}</td>
                       <td className="font-mono text-xs">{row.buyerKraPin || '—'}</td>
@@ -745,7 +845,7 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
                       <td className="px-3 py-2 text-right">
                         <button
                           type="button"
-                          className="text-xs text-red-300 hover:text-red-200"
+                          className="text-xs text-red-700 hover:text-red-800"
                           onClick={(event) => {
                             event.stopPropagation();
                             deleteCustomer(row);
@@ -764,21 +864,33 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
       ) : (
         <div className="space-y-4">
           {showProfileForm ? (
-            <section className="space-y-4 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+            <section className="space-y-4 rounded-xl border border-line bg-surface-sunken/60 p-4">
               <div className="grid gap-3 sm:grid-cols-2">
-                <label className="block text-xs text-zinc-400">
+                <label className="block text-xs text-fg-muted">
                   Code
-                  <input className={`${fieldClass} mt-1`} value={profileForm.code} onChange={(e) => setProfileForm((f) => ({ ...f, code: e.target.value }))} />
+                  <input
+                    className={`${fieldClass} mt-1`}
+                    value={profileForm.code}
+                    onChange={(e) => setProfileForm((f) => ({ ...f, code: e.target.value }))}
+                  />
                 </label>
-                <label className="block text-xs text-zinc-400">
+                <label className="block text-xs text-fg-muted">
                   Name
-                  <input className={`${fieldClass} mt-1`} value={profileForm.name} onChange={(e) => setProfileForm((f) => ({ ...f, name: e.target.value }))} />
+                  <input
+                    className={`${fieldClass} mt-1`}
+                    value={profileForm.name}
+                    onChange={(e) => setProfileForm((f) => ({ ...f, name: e.target.value }))}
+                  />
                 </label>
-                <label className="block text-xs text-zinc-400 sm:col-span-2">
+                <label className="block text-xs text-fg-muted sm:col-span-2">
                   Description
-                  <input className={`${fieldClass} mt-1`} value={profileForm.description} onChange={(e) => setProfileForm((f) => ({ ...f, description: e.target.value }))} />
+                  <input
+                    className={`${fieldClass} mt-1`}
+                    value={profileForm.description}
+                    onChange={(e) => setProfileForm((f) => ({ ...f, description: e.target.value }))}
+                  />
                 </label>
-                <label className="block text-xs text-zinc-400">
+                <label className="block text-xs text-fg-muted">
                   Account type
                   <select
                     className={`${fieldClass} mt-1`}
@@ -797,7 +909,7 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
                     <option value="credit">Credit</option>
                   </select>
                 </label>
-                <label className="block text-xs text-zinc-400">
+                <label className="block text-xs text-fg-muted">
                   Credit limit
                   <input
                     className={`${fieldClass} mt-1`}
@@ -808,7 +920,7 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
                     onChange={(e) => setProfileForm((f) => ({ ...f, creditLimit: e.target.value }))}
                   />
                 </label>
-                <label className="block text-xs text-zinc-400">
+                <label className="block text-xs text-fg-muted">
                   Payment terms (days)
                   <input
                     className={`${fieldClass} mt-1`}
@@ -816,14 +928,18 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
                     min={0}
                     disabled={profileForm.accountType === 'cash'}
                     value={profileForm.accountType === 'cash' ? '0' : profileForm.paymentTermDays}
-                    onChange={(e) => setProfileForm((f) => ({ ...f, paymentTermDays: e.target.value }))}
+                    onChange={(e) =>
+                      setProfileForm((f) => ({ ...f, paymentTermDays: e.target.value }))
+                    }
                   />
                 </label>
-                <label className="flex items-center gap-2 text-sm text-zinc-300">
+                <label className="flex items-center gap-2 text-sm text-fg">
                   <input
                     type="checkbox"
                     checked={profileForm.transmitInvoicesToKra}
-                    onChange={(e) => setProfileForm((f) => ({ ...f, transmitInvoicesToKra: e.target.checked }))}
+                    onChange={(e) =>
+                      setProfileForm((f) => ({ ...f, transmitInvoicesToKra: e.target.checked }))
+                    }
                   />
                   Mark invoices for KRA
                 </label>
@@ -832,22 +948,34 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
                 fields={fields}
                 selected={profileForm.dimensions}
                 onChange={(fieldName, code) =>
-                  setProfileForm((f) => ({ ...f, dimensions: { ...f.dimensions, [fieldName]: code } }))
+                  setProfileForm((f) => ({
+                    ...f,
+                    dimensions: { ...f.dimensions, [fieldName]: code },
+                  }))
                 }
               />
               <div className="flex gap-2">
-                <button type="button" disabled={pending} onClick={saveProfile} className="rounded-lg bg-indigo-600 px-3 py-2 text-sm text-white disabled:opacity-50">
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={saveProfile}
+                  className="rounded-lg bg-indigo-600 px-3 py-2 text-sm text-white disabled:opacity-50"
+                >
                   Save profile
                 </button>
-                <button type="button" onClick={() => setShowProfileForm(false)} className="rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-300">
+                <button
+                  type="button"
+                  onClick={() => setShowProfileForm(false)}
+                  className="rounded-lg border border-line-strong px-3 py-2 text-sm text-fg"
+                >
                   Close
                 </button>
               </div>
             </section>
           ) : null}
-          <div className="overflow-hidden rounded-xl border border-zinc-800">
-            <table className="w-full text-left text-sm text-zinc-300">
-              <thead className="bg-zinc-900 text-xs text-zinc-500">
+          <div className="overflow-hidden rounded-xl border border-line">
+            <table className="w-full text-left text-sm text-fg">
+              <thead className="bg-surface-raised text-xs text-fg-subtle">
                 <tr>
                   <th className="px-3 py-2">Code</th>
                   <th>Name</th>
@@ -859,17 +987,25 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
               <tbody>
                 {profiles.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-3 py-6 text-zinc-500">
+                    <td colSpan={5} className="px-3 py-6 text-fg-subtle">
                       No profiles yet. Create one when you want a reusable cash or credit setup.
                     </td>
                   </tr>
                 ) : (
                   profiles.map((row) => (
-                    <tr key={row.id} className="cursor-pointer border-t border-zinc-800 hover:bg-zinc-900" onClick={() => openProfile(row)}>
+                    <tr
+                      key={row.id}
+                      className="cursor-pointer border-t border-line hover:bg-hover"
+                      onClick={() => openProfile(row)}
+                    >
                       <td className="px-3 py-2 font-mono text-xs">{row.code}</td>
                       <td>{row.name}</td>
                       <td className="capitalize">{row.accountType}</td>
-                      <td>{row.accountType === 'cash' ? 'Due on invoice' : `${row.paymentTermDays} days`}</td>
+                      <td>
+                        {row.accountType === 'cash'
+                          ? 'Due on invoice'
+                          : `${row.paymentTermDays} days`}
+                      </td>
                       <td>{row.transmitInvoicesToKra ? 'Transmit' : 'Skip'}</td>
                     </tr>
                   ))

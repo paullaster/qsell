@@ -31,7 +31,8 @@ export type AdminNavIconName =
   | 'Scale'
   | 'KeyRound'
   | 'UserCog'
-  | 'Fingerprint';
+  | 'Fingerprint'
+  | 'Activity';
 
 export interface AdminNavItem {
   /** Stable unique id across the whole tree */

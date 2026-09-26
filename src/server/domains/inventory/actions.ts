@@ -17,7 +17,7 @@ export async function adjustStockAction(
   newQuantity: number,
   reason: string,
 ): Promise<Product> {
-  const product = InventoryDomainService.adjust(productId, newQuantity, reason);
+  const product = await InventoryDomainService.adjust(productId, newQuantity, reason);
   revalidatePath('/admin/inventory');
   revalidatePath('/admin/products');
   revalidatePath('/');
@@ -40,7 +40,7 @@ export async function receiveStockAction(payload: {
   unitCost?: number;
   notes?: string;
 }): Promise<Product> {
-  const product = InventoryDomainService.receive(
+  const product = await InventoryDomainService.receive(
     payload.productId,
     payload.quantity,
     payload.supplier,
@@ -64,7 +64,7 @@ export async function writeOffStockAction(payload: {
     | 'sample_marketing';
   notes?: string;
 }): Promise<Product> {
-  const product = InventoryDomainService.writeOff(
+  const product = await InventoryDomainService.writeOff(
     payload.productId,
     payload.quantity,
     payload.reasonCode,
@@ -80,7 +80,7 @@ export async function auditStockCountAction(payload: {
   countedQuantity: number;
   notes?: string;
 }): Promise<{ product: Product; discrepancy: number }> {
-  const result = InventoryDomainService.audit(
+  const result = await InventoryDomainService.audit(
     payload.productId,
     payload.countedQuantity,
     payload.notes,
@@ -93,7 +93,7 @@ export async function auditStockCountAction(payload: {
 export async function batchAdjustStockAction(
   adjustments: { productId: string; newQuantity: number; reason: string }[],
 ): Promise<Product[]> {
-  const products = InventoryDomainService.batchAdjust(adjustments);
+  const products = await InventoryDomainService.batchAdjust(adjustments);
   revalidatePath('/admin/inventory');
   revalidatePath('/');
   return products;
@@ -108,7 +108,7 @@ export async function updateOrderStatusAction(
     internalNotes?: string;
   },
 ): Promise<Order> {
-  const order = InventoryDomainService.updateOrderStatus(
+  const order = await InventoryDomainService.updateOrderStatus(
     orderId,
     payload.status,
     payload.shippingCourier,
@@ -120,7 +120,7 @@ export async function updateOrderStatusAction(
 }
 
 export async function cancelOrderAction(orderId: string, reason: string): Promise<Order> {
-  const order = InventoryDomainService.cancelOrder(orderId, reason);
+  const order = await InventoryDomainService.cancelOrder(orderId, reason);
   revalidatePath('/admin/orders');
   revalidatePath('/admin/inventory');
   return order;

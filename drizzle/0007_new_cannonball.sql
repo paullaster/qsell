@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "inventory_movements_settlement_uidx" ON "inventory_movements" USING btree ("reference_id","product_id","change_type") WHERE "inventory_movements"."change_type" in ('order_fulfillment', 'order_cancellation_release');

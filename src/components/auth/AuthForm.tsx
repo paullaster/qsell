@@ -50,9 +50,14 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
   };
 
   return (
-    <form onSubmit={onSubmit} className="mx-auto w-full max-w-md space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
-      <h1 className="text-xl font-bold text-white">{isRegister ? 'Create account' : 'Sign in'}</h1>
-      <p className="text-xs text-zinc-400">
+    <form
+      onSubmit={onSubmit}
+      className="mx-auto w-full max-w-md space-y-4 rounded-2xl border border-line bg-surface-raised p-6"
+    >
+      <h1 className="text-xl font-bold text-fg-strong">
+        {isRegister ? 'Create account' : 'Sign in'}
+      </h1>
+      <p className="text-xs text-fg-muted">
         Guests can still checkout without an account. Sign in to save addresses and order history.
       </p>
       {isRegister ? (
@@ -62,13 +67,13 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Full name"
-            className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white"
+            className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong"
           />
           <input
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
             placeholder="Phone (optional)"
-            className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white"
+            className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong"
           />
         </>
       ) : null}
@@ -78,7 +83,7 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         placeholder="Email"
-        className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white"
+        className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong"
       />
       <input
         required
@@ -87,9 +92,9 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
         onChange={(e) => setPassword(e.target.value)}
         placeholder="Password"
         minLength={8}
-        className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white"
+        className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong"
       />
-      {error ? <p className="text-xs text-red-300">{error}</p> : null}
+      {error ? <p className="text-xs text-red-700">{error}</p> : null}
       <button
         type="submit"
         disabled={pending}
@@ -97,7 +102,7 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
       >
         {pending ? 'Please wait…' : isRegister ? 'Create account' : 'Sign in'}
       </button>
-      <p className="text-center text-xs text-zinc-500">
+      <p className="text-center text-xs text-fg-subtle">
         {isRegister ? (
           <>
             Already have an account?{' '}
@@ -112,7 +117,7 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
               Register
             </Link>
             {' · '}
-            <Link href="/" className="text-zinc-400 hover:underline">
+            <Link href="/" className="text-fg-muted hover:underline">
               Continue as guest
             </Link>
           </>

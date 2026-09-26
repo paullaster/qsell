@@ -166,8 +166,6 @@ export {
   uploadCompanyLogoAction,
 } from '@/server/domains/company/actions';
 
-export {
-  generateInvoicePdfAction,
-  emailInvoiceAction,
-} from '@/server/domains/invoices/actions';
+export { generateInvoicePdfAction, emailInvoiceAction } from '@/server/domains/invoices/actions';
 
+export { getThemeModeAction, setThemeModeAction } from '@/server/domains/theme/actions';

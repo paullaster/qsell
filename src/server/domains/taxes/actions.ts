@@ -11,7 +11,7 @@ export async function listTaxCategoriesAction(): Promise<TaxCategory[]> {
 export async function createTaxCategoryAction(
   data: Omit<TaxCategory, 'id' | 'createdAt' | 'updatedAt' | 'productCount'>,
 ): Promise<TaxCategory> {
-  const tax = TaxDomainService.create(data);
+  const tax = await TaxDomainService.create(data);
   revalidatePath('/admin/taxes');
   revalidatePath('/admin/products');
   return tax;
@@ -21,25 +21,25 @@ export async function updateTaxCategoryAction(
   id: string,
   updates: Partial<TaxCategory>,
 ): Promise<TaxCategory> {
-  const tax = TaxDomainService.update(id, updates);
+  const tax = await TaxDomainService.update(id, updates);
   revalidatePath('/admin/taxes');
   return tax;
 }
 
 export async function deleteTaxCategoryAction(id: string): Promise<boolean> {
-  const ok = TaxDomainService.remove(id);
+  const ok = await TaxDomainService.remove(id);
   revalidatePath('/admin/taxes');
   return ok;
 }
 
 export async function setDefaultTaxCategoryAction(id: string): Promise<TaxCategory> {
-  const tax = TaxDomainService.setDefault(id);
+  const tax = await TaxDomainService.setDefault(id);
   revalidatePath('/admin/taxes');
   return tax;
 }
 
 export async function clearTaxCategoriesAction(): Promise<{ cleared: number }> {
-  const cleared = TaxDomainService.clearAll();
+  const cleared = await TaxDomainService.clearAll();
   revalidatePath('/admin/taxes');
   return { cleared };
 }

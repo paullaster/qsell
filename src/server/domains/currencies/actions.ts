@@ -9,7 +9,7 @@ export async function listCurrenciesAction(): Promise<CurrencyConfig[]> {
 }
 
 export async function createCurrencyAction(data: CurrencyConfig): Promise<CurrencyConfig> {
-  const currency = CurrencyDomainService.create(data);
+  const currency = await CurrencyDomainService.create(data);
   revalidatePath('/admin/currencies');
   return currency;
 }
@@ -18,19 +18,19 @@ export async function updateCurrencyAction(
   code: string,
   updates: Partial<CurrencyConfig>,
 ): Promise<CurrencyConfig> {
-  const currency = CurrencyDomainService.update(code, updates);
+  const currency = await CurrencyDomainService.update(code, updates);
   revalidatePath('/admin/currencies');
   return currency;
 }
 
 export async function deleteCurrencyAction(code: string): Promise<boolean> {
-  const ok = CurrencyDomainService.remove(code);
+  const ok = await CurrencyDomainService.remove(code);
   revalidatePath('/admin/currencies');
   return ok;
 }
 
 export async function setBaseCurrencyAction(code: string): Promise<CurrencyConfig> {
-  const currency = CurrencyDomainService.setBase(code);
+  const currency = await CurrencyDomainService.setBase(code);
   revalidatePath('/admin/currencies');
   return currency;
 }

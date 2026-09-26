@@ -65,20 +65,20 @@ export function AdminPaymentConfig({ gatewaysPromise, onRefresh }: AdminPaymentC
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col items-start justify-between gap-4 rounded-xl border border-zinc-800 bg-zinc-900 p-5 sm:flex-row sm:items-center">
+      <div className="flex flex-col items-start justify-between gap-4 rounded-xl border border-line bg-surface-raised p-5 sm:flex-row sm:items-center">
         <div>
-          <h2 className="flex items-center gap-2 text-base font-bold text-white">
+          <h2 className="flex items-center gap-2 text-base font-bold text-fg-strong">
             <Sliders className="h-5 w-5 text-indigo-400" />
             Payment Methods & Checkout Channels
           </h2>
-          <p className="mt-0.5 text-xs text-zinc-400">
+          <p className="mt-0.5 text-xs text-fg-muted">
             Configure M-Pesa (Buy Goods Till / Paybill) and Card / Bank payment channels for your
             online customer checkout.
           </p>
         </div>
         {successMessage && (
-          <div className="flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-950/80 px-3 py-1.5 text-xs text-emerald-300">
-            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+          <div className="flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-50/80 px-3 py-1.5 text-xs text-emerald-700">
+            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
             {successMessage}
           </div>
         )}
@@ -92,9 +92,9 @@ export function AdminPaymentConfig({ gatewaysPromise, onRefresh }: AdminPaymentC
           const Icon = isMpesa ? Smartphone : isPesapal ? CreditCard : ShieldCheck;
           const themeBorder = gw.isEnabled
             ? isMpesa
-              ? 'border-emerald-500/30 bg-zinc-900'
-              : 'border-indigo-500/30 bg-zinc-900'
-            : 'border-zinc-800 bg-zinc-900/40 opacity-75';
+              ? 'border-emerald-500/30 bg-surface-raised'
+              : 'border-indigo-500/30 bg-surface-raised'
+            : 'border-line bg-surface-sunken/40 opacity-75';
 
           return (
             <div
@@ -108,17 +108,17 @@ export function AdminPaymentConfig({ gatewaysPromise, onRefresh }: AdminPaymentC
                     <div
                       className={`flex h-12 w-12 items-center justify-center rounded-xl border shadow-md ${
                         isMpesa
-                          ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-400'
+                          ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-600'
                           : 'border-indigo-500/20 bg-indigo-500/10 text-indigo-400'
                       }`}
                     >
                       <Icon className="h-6 w-6" />
                     </div>
                     <div>
-                      <h3 className="flex items-center gap-2 text-sm font-bold text-white">
+                      <h3 className="flex items-center gap-2 text-sm font-bold text-fg-strong">
                         {gw.name}
                       </h3>
-                      <span className="block font-mono text-[11px] text-zinc-500">
+                      <span className="block font-mono text-[11px] text-fg-subtle">
                         Provider: {gw.provider}
                       </span>
                     </div>
@@ -132,21 +132,21 @@ export function AdminPaymentConfig({ gatewaysPromise, onRefresh }: AdminPaymentC
                       onChange={() => handleToggleEnable(gw)}
                       className="peer sr-only"
                     />
-                    <div className="peer h-6 w-11 rounded-full bg-zinc-800 peer-checked:bg-indigo-600 peer-focus:outline-none after:absolute after:top-[2px] after:left-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-zinc-300 after:bg-white after:transition-all after:content-[''] peer-checked:after:translate-x-full peer-checked:after:border-white" />
+                    <div className="peer h-6 w-11 rounded-full bg-surface-sunken peer-checked:bg-indigo-600 peer-focus:outline-none after:absolute after:top-[2px] after:left-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-line-strong after:bg-white after:transition-all after:content-[''] peer-checked:after:translate-x-full peer-checked:after:border-white" />
                   </label>
                 </div>
 
-                <p className="text-xs leading-relaxed text-zinc-400">{gw.description}</p>
+                <p className="text-xs leading-relaxed text-fg-muted">{gw.description}</p>
 
                 {/* Parameters Pill Matrix */}
-                <div className="space-y-2.5 rounded-lg border border-zinc-800 bg-zinc-950 p-4 text-xs">
-                  <div className="flex items-center justify-between text-zinc-400">
+                <div className="space-y-2.5 rounded-lg border border-line bg-surface p-4 text-xs">
+                  <div className="flex items-center justify-between text-fg-muted">
                     <span>Active Environment:</span>
                     <span
                       className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase ${
                         gw.environment === 'production'
-                          ? 'bg-emerald-500/20 text-emerald-300'
-                          : 'bg-amber-500/20 text-amber-300'
+                          ? 'bg-emerald-500/20 text-emerald-700'
+                          : 'bg-amber-500/20 text-amber-700'
                       }`}
                     >
                       {gw.environment}
@@ -155,23 +155,23 @@ export function AdminPaymentConfig({ gatewaysPromise, onRefresh }: AdminPaymentC
 
                   {isMpesa && (
                     <>
-                      <div className="flex justify-between text-zinc-400">
+                      <div className="flex justify-between text-fg-muted">
                         <span>Shortcode / Till:</span>
-                        <span className="font-mono font-semibold text-white">
+                        <span className="font-mono font-semibold text-fg-strong">
                           {gw.credentials.shortcode || '174379'}
                         </span>
                       </div>
-                      <div className="flex justify-between text-zinc-400">
+                      <div className="flex justify-between text-fg-muted">
                         <span>Consumer Key:</span>
-                        <span className="max-w-[160px] truncate font-mono text-[11px] text-zinc-300">
+                        <span className="max-w-[160px] truncate font-mono text-[11px] text-fg">
                           {gw.credentials.consumerKey
                             ? `${gw.credentials.consumerKey.slice(0, 10)}...`
                             : 'Not configured'}
                         </span>
                       </div>
-                      <div className="flex justify-between text-zinc-400">
+                      <div className="flex justify-between text-fg-muted">
                         <span>Daraja LNMO Passkey:</span>
-                        <span className="max-w-[160px] truncate font-mono text-[11px] text-zinc-300">
+                        <span className="max-w-[160px] truncate font-mono text-[11px] text-fg">
                           {gw.credentials.passkey
                             ? `${gw.credentials.passkey.slice(0, 12)}...`
                             : 'Default Sandbox'}
@@ -182,15 +182,15 @@ export function AdminPaymentConfig({ gatewaysPromise, onRefresh }: AdminPaymentC
 
                   {isPesapal && (
                     <>
-                      <div className="flex justify-between text-zinc-400">
+                      <div className="flex justify-between text-fg-muted">
                         <span>Pesapal IPN ID:</span>
-                        <span className="max-w-[160px] truncate font-mono text-[11px] text-white">
+                        <span className="max-w-[160px] truncate font-mono text-[11px] text-fg-strong">
                           {gw.credentials.ipnId || 'ipn_88fa7b49-default'}
                         </span>
                       </div>
-                      <div className="flex justify-between text-zinc-400">
+                      <div className="flex justify-between text-fg-muted">
                         <span>Consumer Key:</span>
-                        <span className="max-w-[160px] truncate font-mono text-[11px] text-zinc-300">
+                        <span className="max-w-[160px] truncate font-mono text-[11px] text-fg">
                           {gw.credentials.consumerKey
                             ? `${gw.credentials.consumerKey.slice(0, 12)}...`
                             : 'Configured'}
@@ -204,7 +204,7 @@ export function AdminPaymentConfig({ gatewaysPromise, onRefresh }: AdminPaymentC
               {/* Configure credentials trigger */}
               <button
                 onClick={() => setEditingGateway(JSON.parse(JSON.stringify(gw)))}
-                className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-zinc-700/50 bg-zinc-800 px-4 py-2.5 text-xs font-semibold text-zinc-200 transition-colors hover:bg-zinc-700"
+                className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-line-strong/50 bg-surface-sunken px-4 py-2.5 text-xs font-semibold text-fg-strong transition-colors hover:bg-hover"
               >
                 <Key className="h-3.5 w-3.5" />
                 Configure API Keys & Endpoints
@@ -216,16 +216,16 @@ export function AdminPaymentConfig({ gatewaysPromise, onRefresh }: AdminPaymentC
 
       {/* Edit Credentials Modal */}
       {editingGateway && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/80 p-4 backdrop-blur-md sm:p-6">
-          <div className="relative my-8 flex w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-950 p-5">
-              <h3 className="flex items-center gap-2 text-sm font-bold text-white">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-backdrop/80 p-4 backdrop-blur-md sm:p-6">
+          <div className="relative my-8 flex w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-line bg-surface-raised shadow-2xl">
+            <div className="flex items-center justify-between border-b border-line bg-surface p-5">
+              <h3 className="flex items-center gap-2 text-sm font-bold text-fg-strong">
                 <Key className="h-4 w-4 text-indigo-400" />
                 Configure {editingGateway.name}
               </h3>
               <button
                 onClick={() => setEditingGateway(null)}
-                className="cursor-pointer text-zinc-400 hover:text-white"
+                className="cursor-pointer text-fg-muted hover:text-fg-strong"
               >
                 ✕
               </button>
@@ -233,13 +233,13 @@ export function AdminPaymentConfig({ gatewaysPromise, onRefresh }: AdminPaymentC
 
             <form onSubmit={handleSaveCredentials} className="space-y-4 p-6 text-xs">
               <div>
-                <label className="mb-1 block font-medium text-zinc-300">Target Environment</label>
+                <label className="mb-1 block font-medium text-fg">Target Environment</label>
                 <select
                   value={editingGateway.environment}
                   onChange={(e: any) =>
                     setEditingGateway({ ...editingGateway, environment: e.target.value })
                   }
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-white focus:border-indigo-500 focus:outline-none"
+                  className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-fg-strong focus:border-indigo-500 focus:outline-none"
                 >
                   <option value="sandbox">Sandbox (Development / Simulation)</option>
                   <option value="production">Production (Live Safaricom / Pesapal)</option>
@@ -249,7 +249,7 @@ export function AdminPaymentConfig({ gatewaysPromise, onRefresh }: AdminPaymentC
               {editingGateway.provider === 'mpesa_daraja' && (
                 <>
                   <div>
-                    <label className="mb-1 block font-medium text-zinc-300">
+                    <label className="mb-1 block font-medium text-fg">
                       Business ShortCode / Paybill / Till
                     </label>
                     <input
@@ -262,15 +262,13 @@ export function AdminPaymentConfig({ gatewaysPromise, onRefresh }: AdminPaymentC
                         })
                       }
                       required
-                      className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-white placeholder-zinc-600 focus:border-indigo-500 focus:outline-none"
+                      className="w-full rounded-lg border border-line bg-surface px-3 py-2 font-mono text-fg-strong placeholder-fg-faint focus:border-indigo-500 focus:outline-none"
                       placeholder="174379"
                     />
                   </div>
 
                   <div>
-                    <label className="mb-1 block font-medium text-zinc-300">
-                      Daraja Consumer Key
-                    </label>
+                    <label className="mb-1 block font-medium text-fg">Daraja Consumer Key</label>
                     <input
                       type="text"
                       value={editingGateway.credentials.consumerKey || ''}
@@ -283,15 +281,13 @@ export function AdminPaymentConfig({ gatewaysPromise, onRefresh }: AdminPaymentC
                           },
                         })
                       }
-                      className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-white placeholder-zinc-600 focus:border-indigo-500 focus:outline-none"
+                      className="w-full rounded-lg border border-line bg-surface px-3 py-2 font-mono text-fg-strong placeholder-fg-faint focus:border-indigo-500 focus:outline-none"
                       placeholder="cNd3A8vK4jQ1LzX..."
                     />
                   </div>
 
                   <div>
-                    <label className="mb-1 block font-medium text-zinc-300">
-                      Daraja Consumer Secret
-                    </label>
+                    <label className="mb-1 block font-medium text-fg">Daraja Consumer Secret</label>
                     <input
                       type={showSecrets.mpesaSecret ? 'text' : 'password'}
                       value={editingGateway.credentials.consumerSecret || ''}
@@ -304,12 +300,12 @@ export function AdminPaymentConfig({ gatewaysPromise, onRefresh }: AdminPaymentC
                           },
                         })
                       }
-                      className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-white placeholder-zinc-600 focus:border-indigo-500 focus:outline-none"
+                      className="w-full rounded-lg border border-line bg-surface px-3 py-2 font-mono text-fg-strong placeholder-fg-faint focus:border-indigo-500 focus:outline-none"
                     />
                   </div>
 
                   <div>
-                    <label className="mb-1 block font-medium text-zinc-300">
+                    <label className="mb-1 block font-medium text-fg">
                       Lipa Na M-Pesa Online Passkey
                     </label>
                     <textarea
@@ -321,7 +317,7 @@ export function AdminPaymentConfig({ gatewaysPromise, onRefresh }: AdminPaymentC
                           credentials: { ...editingGateway.credentials, passkey: e.target.value },
                         })
                       }
-                      className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-xs text-white placeholder-zinc-600 focus:border-indigo-500 focus:outline-none"
+                      className="w-full rounded-lg border border-line bg-surface px-3 py-2 font-mono text-xs text-fg-strong placeholder-fg-faint focus:border-indigo-500 focus:outline-none"
                       placeholder="bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919"
                     />
                   </div>
@@ -331,7 +327,7 @@ export function AdminPaymentConfig({ gatewaysPromise, onRefresh }: AdminPaymentC
               {editingGateway.provider === 'pesapal_v3' && (
                 <>
                   <div>
-                    <label className="mb-1 block font-medium text-zinc-300">
+                    <label className="mb-1 block font-medium text-fg">
                       Pesapal v3 Consumer Key
                     </label>
                     <input
@@ -346,12 +342,12 @@ export function AdminPaymentConfig({ gatewaysPromise, onRefresh }: AdminPaymentC
                           },
                         })
                       }
-                      className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-white placeholder-zinc-600 focus:border-indigo-500 focus:outline-none"
+                      className="w-full rounded-lg border border-line bg-surface px-3 py-2 font-mono text-fg-strong placeholder-fg-faint focus:border-indigo-500 focus:outline-none"
                     />
                   </div>
 
                   <div>
-                    <label className="mb-1 block font-medium text-zinc-300">
+                    <label className="mb-1 block font-medium text-fg">
                       Pesapal v3 Consumer Secret
                     </label>
                     <input
@@ -366,12 +362,12 @@ export function AdminPaymentConfig({ gatewaysPromise, onRefresh }: AdminPaymentC
                           },
                         })
                       }
-                      className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-white placeholder-zinc-600 focus:border-indigo-500 focus:outline-none"
+                      className="w-full rounded-lg border border-line bg-surface px-3 py-2 font-mono text-fg-strong placeholder-fg-faint focus:border-indigo-500 focus:outline-none"
                     />
                   </div>
 
                   <div>
-                    <label className="mb-1 block font-medium text-zinc-300">
+                    <label className="mb-1 block font-medium text-fg">
                       Registered IPN Notification ID
                     </label>
                     <input
@@ -383,18 +379,18 @@ export function AdminPaymentConfig({ gatewaysPromise, onRefresh }: AdminPaymentC
                           credentials: { ...editingGateway.credentials, ipnId: e.target.value },
                         })
                       }
-                      className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-white placeholder-zinc-600 focus:border-indigo-500 focus:outline-none"
+                      className="w-full rounded-lg border border-line bg-surface px-3 py-2 font-mono text-fg-strong placeholder-fg-faint focus:border-indigo-500 focus:outline-none"
                       placeholder="ipn_88fa7b49-..."
                     />
                   </div>
                 </>
               )}
 
-              <div className="flex items-center justify-end gap-2 border-t border-zinc-800 pt-4">
+              <div className="flex items-center justify-end gap-2 border-t border-line pt-4">
                 <button
                   type="button"
                   onClick={() => setEditingGateway(null)}
-                  className="cursor-pointer rounded-lg bg-zinc-800 px-4 py-2 text-zinc-400 hover:text-white"
+                  className="cursor-pointer rounded-lg bg-surface-sunken px-4 py-2 text-fg-muted hover:text-fg-strong"
                 >
                   Cancel
                 </button>

@@ -2,13 +2,7 @@
 
 import React, { use, useEffect, useState, useTransition } from 'react';
 import Link from 'next/link';
-import {
-  Wallet,
-  Save,
-  CheckCircle2,
-  XCircle,
-  ChevronDown,
-} from 'lucide-react';
+import { Wallet, Save, CheckCircle2, XCircle, ChevronDown } from 'lucide-react';
 import type { BranchRow } from '@/server/db/drizzle/schema';
 import type { PaymentConfigAdminView } from '@/server/domains/payments/actions';
 import {
@@ -58,7 +52,7 @@ const CREDENTIAL_FIELDS: Record<
 };
 
 const fieldClass =
-  'w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-indigo-500 focus:outline-none';
+  'w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong placeholder:text-fg-faint focus:border-indigo-500 focus:outline-none';
 
 type ProviderDraft = {
   isEnabled: boolean;
@@ -80,9 +74,7 @@ function emptyDraft(
     environment,
     apiBaseUrl:
       config?.apiBaseUrl ||
-      (environment === 'production'
-        ? meta.defaultProductionBaseUrl
-        : meta.defaultStagingBaseUrl),
+      (environment === 'production' ? meta.defaultProductionBaseUrl : meta.defaultStagingBaseUrl),
     credValues: {},
     message: null,
     error: null,
@@ -142,45 +134,45 @@ function ProviderPanel({
   };
 
   return (
-    <section className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/50">
+    <section className="overflow-hidden rounded-xl border border-line bg-surface-sunken/50">
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-zinc-900/80"
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-hover/80"
       >
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="font-semibold text-white">{meta.label}</h3>
+            <h3 className="font-semibold text-fg-strong">{meta.label}</h3>
             <span
               className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
                 draft.isEnabled
-                  ? 'bg-emerald-950 text-emerald-300'
-                  : 'bg-zinc-800 text-zinc-400'
+                  ? 'bg-emerald-50 text-emerald-700'
+                  : 'bg-surface-sunken text-fg-muted'
               }`}
             >
               {draft.isEnabled ? 'Enabled' : 'Disabled'}
             </span>
-            <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">
+            <span className="rounded bg-surface-sunken px-1.5 py-0.5 text-[10px] text-fg-muted">
               {draft.environment}
             </span>
-            <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">
+            <span className="rounded bg-surface-sunken px-1.5 py-0.5 text-[10px] text-fg-muted">
               {config?.hasCredentials ? 'Credentials set' : 'No credentials'}
             </span>
           </div>
-          <p className="mt-0.5 truncate text-xs text-zinc-500">{meta.description}</p>
+          <p className="mt-0.5 truncate text-xs text-fg-subtle">{meta.description}</p>
         </div>
         <ChevronDown
-          className={`h-4 w-4 shrink-0 text-zinc-500 transition-transform ${
+          className={`h-4 w-4 shrink-0 text-fg-subtle transition-transform ${
             open ? 'rotate-180' : ''
           }`}
         />
       </button>
 
       {open ? (
-        <div className="space-y-4 border-t border-zinc-800 px-4 py-4">
+        <div className="space-y-4 border-t border-line px-4 py-4">
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <label className="mb-1 block text-[11px] font-semibold text-zinc-400">
+              <label className="mb-1 block text-[11px] font-semibold text-fg-muted">
                 Environment
               </label>
               <select
@@ -203,7 +195,7 @@ function ProviderPanel({
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-[11px] font-semibold text-zinc-400">
+              <label className="mb-1 block text-[11px] font-semibold text-fg-muted">
                 API base URL
               </label>
               <input
@@ -213,12 +205,12 @@ function ProviderPanel({
                 placeholder="https://…"
               />
             </div>
-            <label className="inline-flex items-center gap-2 text-sm text-zinc-300 sm:col-span-2">
+            <label className="inline-flex items-center gap-2 text-sm text-fg sm:col-span-2">
               <input
                 type="checkbox"
                 checked={draft.isEnabled}
                 onChange={(e) => onChange({ ...draft, isEnabled: e.target.checked })}
-                className="rounded border-zinc-700"
+                className="rounded border-line-strong"
               />
               Enable for this branch (shown at checkout when enabled)
             </label>
@@ -226,28 +218,27 @@ function ProviderPanel({
 
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <h4 className="text-sm font-semibold text-white">Credentials</h4>
+              <h4 className="text-sm font-semibold text-fg-strong">Credentials</h4>
               {config?.hasCredentials ? (
-                <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400">
+                <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600">
                   <CheckCircle2 className="h-3.5 w-3.5" /> Saved (masked)
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 text-[11px] text-amber-400">
+                <span className="inline-flex items-center gap-1 text-[11px] text-amber-600">
                   <XCircle className="h-3.5 w-3.5" /> Not configured
                 </span>
               )}
             </div>
-            <p className="text-[11px] text-zinc-500">
-              Leave a field blank to keep the existing secret. Enter a new value only when
-              rotating.
+            <p className="text-[11px] text-fg-subtle">
+              Leave a field blank to keep the existing secret. Enter a new value only when rotating.
             </p>
             <div className="grid gap-3 sm:grid-cols-2">
               {fields.map((f) => (
                 <div key={f.key} className={f.textarea ? 'sm:col-span-2' : ''}>
-                  <label className="mb-1 block text-[11px] font-semibold text-zinc-400">
+                  <label className="mb-1 block text-[11px] font-semibold text-fg-muted">
                     {f.label}
                     {config?.maskedCredentials?.[f.key] ? (
-                      <span className="ml-2 font-mono font-normal text-zinc-600">
+                      <span className="ml-2 font-mono font-normal text-fg-faint">
                         current: {config.maskedCredentials[f.key]}
                       </span>
                     ) : null}
@@ -286,12 +277,12 @@ function ProviderPanel({
           </div>
 
           {draft.error ? (
-            <div className="rounded-lg border border-red-800 bg-red-950/40 px-3 py-2 text-xs text-red-200">
+            <div className="rounded-lg border border-red-800 bg-red-50 px-3 py-2 text-xs text-red-800">
               {draft.error}
             </div>
           ) : null}
           {draft.message ? (
-            <div className="rounded-lg border border-emerald-800 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-200">
+            <div className="rounded-lg border border-emerald-800 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
               {draft.message}
             </div>
           ) : null}
@@ -334,8 +325,7 @@ export function AdminPaymentsHubClient({
   const [openCode, setOpenCode] = useState<PaymentProviderCode | null>(providers[0] ?? null);
   const [drafts, setDrafts] = useState<Record<PaymentProviderCode, ProviderDraft>>(() => {
     const next = {} as Record<PaymentProviderCode, ProviderDraft>;
-    const defaultBranch =
-      branches.find((b) => b.isDefault)?.id || branches[0]?.id || '';
+    const defaultBranch = branches.find((b) => b.isDefault)?.id || branches[0]?.id || '';
     for (const code of providers) {
       const cfg = initialConfigs.find(
         (c) => c.branchId === defaultBranch && c.providerCode === code,
@@ -364,7 +354,7 @@ export function AdminPaymentsHubClient({
 
   if (!branchId) {
     return (
-      <p className="text-sm text-zinc-400">
+      <p className="text-sm text-fg-muted">
         Create a branch first under{' '}
         <Link href="/admin/settings/branches" className="text-indigo-400 hover:underline">
           Settings → Branches
@@ -377,18 +367,18 @@ export function AdminPaymentsHubClient({
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="flex items-center gap-2 text-xl font-bold text-white">
+        <h2 className="flex items-center gap-2 text-xl font-bold text-fg-strong">
           <Wallet className="h-5 w-5 text-indigo-400" />
           Payments
         </h2>
-        <p className="mt-1 max-w-2xl text-sm text-zinc-400">
+        <p className="mt-1 max-w-2xl text-sm text-fg-muted">
           Configure all payment providers for a branch on this page. Callback URLs use a unique
           UUIDv7 per payment attempt — set the public base URL below.
         </p>
       </div>
 
-      <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-        <label className="block text-[11px] font-semibold text-zinc-400">
+      <div className="space-y-3 rounded-xl border border-line bg-surface-sunken/50 p-4">
+        <label className="block text-[11px] font-semibold text-fg-muted">
           Company public base URL (for callbacks)
         </label>
         <div className="flex flex-col gap-2 sm:flex-row">
@@ -407,16 +397,16 @@ export function AdminPaymentsHubClient({
                 setUrlMsg('Public base URL saved');
               })
             }
-            className="rounded-lg bg-zinc-800 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-700"
+            className="rounded-lg bg-surface-sunken px-4 py-2 text-sm font-semibold text-fg-strong hover:bg-hover"
           >
             Save URL
           </button>
         </div>
-        {urlMsg ? <p className="text-[11px] text-emerald-400">{urlMsg}</p> : null}
+        {urlMsg ? <p className="text-[11px] text-emerald-600">{urlMsg}</p> : null}
       </div>
 
       <div>
-        <label className="mb-1 block text-[11px] font-semibold text-zinc-400">Branch</label>
+        <label className="mb-1 block text-[11px] font-semibold text-fg-muted">Branch</label>
         <select
           value={branchId}
           onChange={(e) => setBranchId(e.target.value)}

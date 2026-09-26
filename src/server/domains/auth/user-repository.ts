@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import { drizzleDb } from '@/server/db/drizzle/client';
 import { users, type UserRow } from '@/server/db/drizzle/schema';
 import { hash, compare } from 'bcryptjs';
+import type { ThemeMode } from '@/config/theme';
 import type { AppRole } from './roles';
 
 export type { AppRole };
@@ -35,6 +36,14 @@ export class UserRepository {
   async findById(id: string): Promise<UserRow | null> {
     const rows = await this.db.select().from(users).where(eq(users.id, id)).limit(1);
     return rows[0] ?? null;
+  }
+
+  /** Persist the account's colour-scheme choice so it follows the user to new devices. */
+  async setThemeMode(userId: string, mode: ThemeMode): Promise<void> {
+    await this.db
+      .update(users)
+      .set({ themeMode: mode, updatedAt: new Date() })
+      .where(eq(users.id, userId));
   }
 
   async create(input: {
@@ -103,9 +112,7 @@ export class UserRepository {
 
     if (!needsUpdate) return existing;
 
-    const passwordHash = passwordMatches
-      ? existing.passwordHash
-      : await hash(password, 12);
+    const passwordHash = passwordMatches ? existing.passwordHash : await hash(password, 12);
 
     const [row] = await this.db
       .update(users)

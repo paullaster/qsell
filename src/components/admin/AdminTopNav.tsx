@@ -71,25 +71,25 @@ export function AdminTopNav({
   const currentInfo = tabTitles[activeTab] || tabTitles.dashboard;
 
   return (
-    <header className="sticky top-0 z-30 w-full border-b border-zinc-800 bg-zinc-950/90 px-4 py-3.5 backdrop-blur-md sm:px-6">
+    <header className="sticky top-0 z-30 w-full border-b border-line bg-surface/90 px-4 py-3.5 backdrop-blur-md sm:px-6">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
         {/* Left: Mobile Menu Trigger + Breadcrumb */}
         <div className="flex items-center gap-3">
           <button
             onClick={onOpenMobileSidebar}
-            className="cursor-pointer rounded-lg border border-zinc-800 bg-zinc-900 p-2 text-zinc-400 hover:text-white lg:hidden"
+            className="cursor-pointer rounded-lg border border-line bg-surface-raised p-2 text-fg-muted hover:text-fg-strong lg:hidden"
             aria-label="Open Admin Menu"
           >
             <Menu className="h-5 w-5" />
           </button>
 
           <div>
-            <div className="flex items-center gap-2 font-mono text-[11px] text-zinc-400">
+            <div className="flex items-center gap-2 font-mono text-[11px] text-fg-muted">
               <span>Admin Workspace</span>
               <span>/</span>
               <span className="font-semibold text-indigo-400 uppercase">{activeTab}</span>
             </div>
-            <h1 className="text-base leading-tight font-bold tracking-tight text-white sm:text-lg">
+            <h1 className="text-base leading-tight font-bold tracking-tight text-fg-strong sm:text-lg">
               {currentInfo.title}
             </h1>
           </div>
@@ -100,7 +100,7 @@ export function AdminTopNav({
           {/* Refresh Action */}
           <button
             onClick={onRefreshAll}
-            className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-white"
+            className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs text-fg transition-colors hover:bg-hover hover:text-fg-strong"
             title="Refresh records"
           >
             <RefreshCw className="h-3.5 w-3.5" />

@@ -11,7 +11,7 @@ import {
 } from '@/server/domains/dimensions/actions';
 
 const fieldClass =
-  'w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-indigo-500 focus:outline-none';
+  'w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong placeholder:text-fg-faint focus:border-indigo-500 focus:outline-none';
 
 type OptionItem = { value: string; label: string };
 
@@ -122,15 +122,13 @@ export function AdminDimensionsClient({
         if (editingId) {
           const updated = await updateDimensionAction(editingId, payload);
           setRows((prev) =>
-            prev.map((r) => (r.id === updated.id ? updated : r)).sort((a, b) =>
-              a.code.localeCompare(b.code),
-            ),
+            prev
+              .map((r) => (r.id === updated.id ? updated : r))
+              .sort((a, b) => a.code.localeCompare(b.code)),
           );
         } else {
           const created = await createDimensionAction(payload);
-          setRows((prev) =>
-            [...prev, created].sort((a, b) => a.code.localeCompare(b.code)),
-          );
+          setRows((prev) => [...prev, created].sort((a, b) => a.code.localeCompare(b.code)));
         }
         openCreate();
       } catch (err) {
@@ -193,27 +191,27 @@ export function AdminDimensionsClient({
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="flex items-center gap-2 text-xl font-bold text-white">
+        <h2 className="flex items-center gap-2 text-xl font-bold text-fg-strong">
           <Layers className="h-5 w-5 text-indigo-400" />
           Dimensions
         </h2>
-        <p className="mt-1 max-w-2xl text-sm text-zinc-400">
+        <p className="mt-1 max-w-2xl text-sm text-fg-muted">
           Define classification axes and values to identify any record. Option string{' '}
-          <span className="font-mono text-indigo-300">branch</span> syncs values into the
-          branches table. Default always becomes global; global and shortcut cannot both be on.
+          <span className="font-mono text-indigo-300">branch</span> syncs values into the branches
+          table. Default always becomes global; global and shortcut cannot both be on.
         </p>
       </div>
 
-      <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+      <div className="space-y-3 rounded-xl border border-line bg-surface-sunken/50 p-4">
         <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-white">
+          <h3 className="text-sm font-semibold text-fg-strong">
             {editingId ? 'Edit dimension' : 'New dimension'}
           </h3>
           {editingId ? (
             <button
               type="button"
               onClick={openCreate}
-              className="inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-white"
+              className="inline-flex items-center gap-1 text-xs text-fg-muted hover:text-fg-strong"
             >
               <X className="h-3.5 w-3.5" /> Cancel
             </button>
@@ -221,7 +219,7 @@ export function AdminDimensionsClient({
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <label className="mb-1 block text-[11px] font-semibold text-zinc-400">Code</label>
+            <label className="mb-1 block text-[11px] font-semibold text-fg-muted">Code</label>
             <input
               value={form.code}
               onChange={(e) => setForm((p) => ({ ...p, code: e.target.value }))}
@@ -230,7 +228,7 @@ export function AdminDimensionsClient({
             />
           </div>
           <div>
-            <label className="mb-1 block text-[11px] font-semibold text-zinc-400">Name</label>
+            <label className="mb-1 block text-[11px] font-semibold text-fg-muted">Name</label>
             <input
               value={form.name}
               onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
@@ -239,7 +237,9 @@ export function AdminDimensionsClient({
             />
           </div>
           <div className="sm:col-span-2">
-            <label className="mb-1 block text-[11px] font-semibold text-zinc-400">Description</label>
+            <label className="mb-1 block text-[11px] font-semibold text-fg-muted">
+              Description
+            </label>
             <input
               value={form.description}
               onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
@@ -247,7 +247,7 @@ export function AdminDimensionsClient({
             />
           </div>
           <div>
-            <label className="mb-1 block text-[11px] font-semibold text-zinc-400">Parent</label>
+            <label className="mb-1 block text-[11px] font-semibold text-fg-muted">Parent</label>
             <select
               value={form.parentId}
               onChange={(e) => setForm((p) => ({ ...p, parentId: e.target.value }))}
@@ -262,7 +262,7 @@ export function AdminDimensionsClient({
             </select>
           </div>
           <div>
-            <label className="mb-1 block text-[11px] font-semibold text-zinc-400">
+            <label className="mb-1 block text-[11px] font-semibold text-fg-muted">
               Dimension no.{' '}
               {form.isGlobal || form.isShortcut || form.isDefault ? '(required)' : '(optional)'}
             </label>
@@ -276,7 +276,7 @@ export function AdminDimensionsClient({
             />
           </div>
           <div>
-            <label className="mb-1 block text-[11px] font-semibold text-zinc-400">
+            <label className="mb-1 block text-[11px] font-semibold text-fg-muted">
               Option string
             </label>
             <select
@@ -292,7 +292,7 @@ export function AdminDimensionsClient({
               ))}
             </select>
           </div>
-          <div className="flex flex-wrap items-end gap-4 pb-1 text-sm text-zinc-300">
+          <div className="flex flex-wrap items-end gap-4 pb-1 text-sm text-fg">
             <label className="inline-flex items-center gap-2">
               <input
                 type="checkbox"
@@ -333,14 +333,14 @@ export function AdminDimensionsClient({
       </div>
 
       {error ? (
-        <div className="rounded-lg border border-red-800 bg-red-950/40 px-3 py-2 text-xs text-red-200">
+        <div className="rounded-lg border border-red-800 bg-red-50 px-3 py-2 text-xs text-red-800">
           {error}
         </div>
       ) : null}
 
-      <div className="overflow-hidden rounded-xl border border-zinc-800">
+      <div className="overflow-hidden rounded-xl border border-line">
         <table className="w-full text-left text-xs">
-          <thead className="border-b border-zinc-800 bg-zinc-950 text-[10px] tracking-wider text-zinc-500 uppercase">
+          <thead className="border-b border-line bg-surface text-[10px] tracking-wider text-fg-subtle uppercase">
             <tr>
               <th className="px-4 py-3">Code</th>
               <th className="px-4 py-3">Name</th>
@@ -351,10 +351,10 @@ export function AdminDimensionsClient({
               <th className="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-zinc-800">
+          <tbody className="divide-y divide-line">
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-zinc-500">
+                <td colSpan={7} className="px-4 py-8 text-center text-fg-subtle">
                   No dimensions yet.
                 </td>
               </tr>
@@ -362,13 +362,13 @@ export function AdminDimensionsClient({
               rows.map((row) => {
                 const parent = rows.find((r) => r.id === row.parentId);
                 return (
-                  <tr key={row.id} className="bg-zinc-900/40">
+                  <tr key={row.id} className="bg-surface-sunken/40">
                     <td className="px-4 py-3 font-mono text-indigo-300">{row.code}</td>
-                    <td className="px-4 py-3 text-white">{row.name}</td>
-                    <td className="px-4 py-3 font-mono text-zinc-300">{row.dimensionNo ?? '—'}</td>
-                    <td className="px-4 py-3 text-zinc-400">{row.optionString || '—'}</td>
+                    <td className="px-4 py-3 text-fg-strong">{row.name}</td>
+                    <td className="px-4 py-3 font-mono text-fg">{row.dimensionNo ?? '—'}</td>
+                    <td className="px-4 py-3 text-fg-muted">{row.optionString || '—'}</td>
                     <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-3 text-[11px] text-zinc-300">
+                      <div className="flex flex-wrap gap-3 text-[11px] text-fg">
                         <label className="inline-flex items-center gap-1">
                           <input
                             type="checkbox"
@@ -398,7 +398,7 @@ export function AdminDimensionsClient({
                         </label>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-zinc-500">{parent?.code || '—'}</td>
+                    <td className="px-4 py-3 text-fg-subtle">{parent?.code || '—'}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-3">
                         <Link
@@ -411,7 +411,7 @@ export function AdminDimensionsClient({
                           type="button"
                           disabled={pending}
                           onClick={() => openEdit(row)}
-                          className="text-zinc-400 hover:text-white"
+                          className="text-fg-muted hover:text-fg-strong"
                           title="Edit"
                         >
                           <Edit2 className="h-3.5 w-3.5" />
@@ -420,7 +420,7 @@ export function AdminDimensionsClient({
                           type="button"
                           disabled={pending}
                           onClick={() => handleDelete(row)}
-                          className="text-zinc-400 hover:text-red-400"
+                          className="text-fg-muted hover:text-red-600"
                           title="Delete"
                         >
                           <Trash2 className="h-3.5 w-3.5" />

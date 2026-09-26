@@ -1,0 +1,81 @@
+# =============================================================================
+# Prometheus Configuration for qsell
+# =============================================================================
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'qsell-prod'
+    environment: 'production'
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+rule_files:
+  - "/etc/prometheus/rules/*.yml"
+
+scrape_configs:
+  # ---------------------------------------------------------------------------
+  # Prometheus Self-Monitoring
+  # ---------------------------------------------------------------------------
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # ---------------------------------------------------------------------------
+  # Node Exporter (Host Metrics)
+  # ---------------------------------------------------------------------------
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['host.docker.internal:9100']
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL Metrics
+  # ---------------------------------------------------------------------------
+  - job_name: 'postgres-exporter'
+    static_configs:
+      - targets: ['host.docker.internal:9187']
+
+  # ---------------------------------------------------------------------------
+  # Redis Metrics
+  # ---------------------------------------------------------------------------
+  - job_name: 'redis-exporter'
+    static_configs:
+      - targets: ['host.docker.internal:9121']
+
+  # ---------------------------------------------------------------------------
+  # Nginx Metrics
+  # ---------------------------------------------------------------------------
+  - job_name: 'nginx'
+    static_configs:
+      - targets: ['nginx:8080']
+
+  # ---------------------------------------------------------------------------
+  # Next.js Application Metrics
+  # ---------------------------------------------------------------------------
+  - job_name: 'nextjs'
+    metrics_path: /api/metrics
+    static_configs:
+      - targets: ['app:3069']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'qsell-app'
+
+  # ---------------------------------------------------------------------------
+  # Graphile Worker Metrics
+  # ---------------------------------------------------------------------------
+  - job_name: 'graphile-worker'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['worker:3069']
+
+  # ---------------------------------------------------------------------------
+  # Cadvisor (Container Metrics)
+  # ---------------------------------------------------------------------------
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['host.docker.internal:8080']

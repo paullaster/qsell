@@ -31,7 +31,7 @@ function money(amount: string): string {
   return amountFormat.format(value);
 }
 
-const rowClass = 'border-t border-zinc-800';
+const rowClass = 'border-t border-line';
 
 function PrimaryButton({
   label,
@@ -53,7 +53,11 @@ function PrimaryButton({
       onClick={onClick}
       className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
     >
-      {pending ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+      {pending ? (
+        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+      ) : (
+        <CheckCircle2 className="h-3.5 w-3.5" />
+      )}
       {pending ? pendingLabel : label}
     </button>
   );
@@ -122,56 +126,56 @@ export function AdminTransactionReconcile({
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="flex items-center gap-2 text-xl font-bold text-white">
+        <h2 className="flex items-center gap-2 text-xl font-bold text-fg-strong">
           <Scale className="h-5 w-5 text-indigo-400" /> Reconcile
         </h2>
-        <p className="mt-1 max-w-2xl text-sm text-zinc-400">
+        <p className="mt-1 max-w-2xl text-sm text-fg-muted">
           Documents that settled but never posted to the transactions ledger. Review and post by
           hand — nothing here retries automatically, and posting a document twice is a no-op.
         </p>
       </div>
 
       {error ? (
-        <div className="rounded-lg border border-red-800 bg-red-950/40 px-3 py-2 text-xs text-red-200">
+        <div className="rounded-lg border border-red-800 bg-red-50 px-3 py-2 text-xs text-red-800">
           {error}
         </div>
       ) : null}
 
       <dl className="grid gap-3 sm:grid-cols-2">
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-          <dt className="text-xs tracking-wide text-zinc-500 uppercase">
+        <div className="rounded-xl border border-line bg-surface-sunken/50 p-4">
+          <dt className="text-xs tracking-wide text-fg-subtle uppercase">
             Unposted invoice debits
           </dt>
-          <dd className="mt-1 text-xl font-semibold text-amber-300">
+          <dd className="mt-1 text-xl font-semibold text-amber-700">
             {debits.length} documents · {money(totals.debit.toFixed(2))}
           </dd>
         </div>
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-          <dt className="text-xs tracking-wide text-zinc-500 uppercase">
+        <div className="rounded-xl border border-line bg-surface-sunken/50 p-4">
+          <dt className="text-xs tracking-wide text-fg-subtle uppercase">
             Unposted payment credits
           </dt>
-          <dd className="mt-1 text-xl font-semibold text-emerald-300">
+          <dd className="mt-1 text-xl font-semibold text-emerald-700">
             {credits.length} documents · {money(totals.credit.toFixed(2))}
           </dd>
         </div>
       </dl>
 
-      <section className="overflow-hidden rounded-xl border border-zinc-800">
-        <div className="border-b border-zinc-800 bg-zinc-900/80 px-4 py-3">
-          <h3 className="flex items-center gap-2 text-sm font-semibold text-white">
-            <ArrowUpCircle className="h-4 w-4 text-amber-400" /> Sales missing an invoice debit
+      <section className="overflow-hidden rounded-xl border border-line">
+        <div className="border-b border-line bg-surface-sunken/80 px-4 py-3">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-fg-strong">
+            <ArrowUpCircle className="h-4 w-4 text-amber-600" /> Sales missing an invoice debit
           </h3>
-          <p className="mt-0.5 text-xs text-zinc-500">
+          <p className="mt-0.5 text-xs text-fg-subtle">
             Paid or open orders whose debit never reached the ledger (older orders, or posting
             failed after the order was saved).
           </p>
         </div>
         {debits.length === 0 ? (
-          <p className="px-4 py-6 text-sm text-zinc-500">All sales are posted. Nothing to do.</p>
+          <p className="px-4 py-6 text-sm text-fg-subtle">All sales are posted. Nothing to do.</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-left text-sm text-zinc-300">
-              <thead className="bg-zinc-950 text-[10px] tracking-wider text-zinc-500 uppercase">
+            <table className="w-full min-w-[720px] text-left text-sm text-fg">
+              <thead className="bg-surface text-[10px] tracking-wider text-fg-subtle uppercase">
                 <tr>
                   <th className="px-4 py-2.5">Order</th>
                   <th className="px-4 py-2.5">Customer</th>
@@ -184,21 +188,23 @@ export function AdminTransactionReconcile({
                 {debits.map((row) => (
                   <tr key={row.orderId} className={rowClass}>
                     <td className="px-4 py-3 whitespace-nowrap">
-                      <span className="font-medium text-white">{row.orderNumber}</span>
+                      <span className="font-medium text-fg-strong">{row.orderNumber}</span>
                     </td>
-                    <td className="px-4 py-3 text-zinc-400">{row.customerName}</td>
+                    <td className="px-4 py-3 text-fg-muted">{row.customerName}</td>
                     <td className="px-4 py-3">
                       <span
                         className={
                           row.paymentStatus === 'paid'
-                            ? 'rounded bg-emerald-950/40 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300'
-                            : 'rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-400'
+                            ? 'rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700'
+                            : 'rounded bg-surface-sunken px-1.5 py-0.5 text-[10px] font-semibold text-fg-muted'
                         }
                       >
                         {row.paymentStatus}
                       </span>
                       {row.paymentMethod ? (
-                        <span className="ml-1.5 text-[10px] text-zinc-500">{row.paymentMethod}</span>
+                        <span className="ml-1.5 text-[10px] text-fg-subtle">
+                          {row.paymentMethod}
+                        </span>
                       ) : null}
                     </td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
@@ -220,22 +226,24 @@ export function AdminTransactionReconcile({
         )}
       </section>
 
-      <section className="overflow-hidden rounded-xl border border-zinc-800">
-        <div className="border-b border-zinc-800 bg-zinc-900/80 px-4 py-3">
-          <h3 className="flex items-center gap-2 text-sm font-semibold text-white">
-            <ArrowDownCircle className="h-4 w-4 text-emerald-400" /> Payments missing a credit
+      <section className="overflow-hidden rounded-xl border border-line">
+        <div className="border-b border-line bg-surface-sunken/80 px-4 py-3">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-fg-strong">
+            <ArrowDownCircle className="h-4 w-4 text-emerald-600" /> Payments missing a credit
           </h3>
-          <p className="mt-0.5 text-xs text-zinc-500">
+          <p className="mt-0.5 text-xs text-fg-subtle">
             Receipts recorded in the customer ledger or confirmed by the gateway whose credit never
             reached the ledger.
           </p>
         </div>
         {credits.length === 0 ? (
-          <p className="px-4 py-6 text-sm text-zinc-500">All payments are posted. Nothing to do.</p>
+          <p className="px-4 py-6 text-sm text-fg-subtle">
+            All payments are posted. Nothing to do.
+          </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-left text-sm text-zinc-300">
-              <thead className="bg-zinc-950 text-[10px] tracking-wider text-zinc-500 uppercase">
+            <table className="w-full min-w-[720px] text-left text-sm text-fg">
+              <thead className="bg-surface text-[10px] tracking-wider text-fg-subtle uppercase">
                 <tr>
                   <th className="px-4 py-2.5">Source</th>
                   <th className="px-4 py-2.5">Document / Ref</th>
@@ -251,20 +259,20 @@ export function AdminTransactionReconcile({
                       <span
                         className={
                           row.source === 'gateway_attempt'
-                            ? 'rounded bg-indigo-950/40 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-300'
-                            : 'rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-400'
+                            ? 'rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-300'
+                            : 'rounded bg-surface-sunken px-1.5 py-0.5 text-[10px] font-semibold text-fg-muted'
                         }
                       >
                         {row.source === 'gateway_attempt' ? pia(row.provider) : 'Customer'}
                       </span>
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
-                      <div className="font-medium text-white">{row.documentNo}</div>
+                      <div className="font-medium text-fg-strong">{row.documentNo}</div>
                       {row.orderNumber ? (
-                        <div className="text-[10px] text-zinc-500">{row.orderNumber}</div>
+                        <div className="text-[10px] text-fg-subtle">{row.orderNumber}</div>
                       ) : null}
                     </td>
-                    <td className="px-4 py-3 text-zinc-400">{row.customerName || '—'}</td>
+                    <td className="px-4 py-3 text-fg-muted">{row.customerName || '—'}</td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
                       {row.currency} {money(row.amount)}
                     </td>
@@ -284,23 +292,25 @@ export function AdminTransactionReconcile({
         )}
       </section>
 
-      <section className="overflow-hidden rounded-xl border border-zinc-800">
-        <div className="border-b border-zinc-800 bg-zinc-900/80 px-4 py-3">
-          <h3 className="flex items-center gap-2 text-sm font-semibold text-white">
+      <section className="overflow-hidden rounded-xl border border-line">
+        <div className="border-b border-line bg-surface-sunken/80 px-4 py-3">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-fg-strong">
             <ToggleLeft className="h-4 w-4 text-indigo-400" /> Callback dumps without a verdict
           </h3>
-          <p className="mt-0.5 text-xs text-zinc-500">
-            Provider status is the exact value from the payload. Outcome is derived from it —
-            M-Pesa ResultCode 0 is successful, any other ResultCode is a failure. Classify only
-            reads the stored dump; it does not retry the payment or post the ledger.
+          <p className="mt-0.5 text-xs text-fg-subtle">
+            Provider status is the exact value from the payload. Outcome is derived from it — M-Pesa
+            ResultCode 0 is successful, any other ResultCode is a failure. Classify only reads the
+            stored dump; it does not retry the payment or post the ledger.
           </p>
         </div>
         {callbacks.length === 0 ? (
-          <p className="px-4 py-6 text-sm text-zinc-500">Every callback has a verdict. Nothing to do.</p>
+          <p className="px-4 py-6 text-sm text-fg-subtle">
+            Every callback has a verdict. Nothing to do.
+          </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[820px] text-left text-sm text-zinc-300">
-              <thead className="bg-zinc-950 text-[10px] tracking-wider text-zinc-500 uppercase">
+            <table className="w-full min-w-[820px] text-left text-sm text-fg">
+              <thead className="bg-surface text-[10px] tracking-wider text-fg-subtle uppercase">
                 <tr>
                   <th className="px-4 py-2.5">Received</th>
                   <th className="px-4 py-2.5">Provider</th>
@@ -314,33 +324,35 @@ export function AdminTransactionReconcile({
               <tbody>
                 {callbacks.map((row) => (
                   <tr key={row.id} className={rowClass}>
-                    <td className="px-4 py-3 whitespace-nowrap text-zinc-400">
+                    <td className="px-4 py-3 whitespace-nowrap text-fg-muted">
                       {new Date(row.createdAt).toLocaleString('en-GB', {
                         dateStyle: 'medium',
                         timeStyle: 'short',
                       })}
                     </td>
-                    <td className="px-4 py-3 font-mono text-[11px] text-indigo-300">{row.providerCode}</td>
-                    <td className="px-4 py-3 font-mono text-[11px] text-zinc-500">
+                    <td className="px-4 py-3 font-mono text-[11px] text-indigo-300">
+                      {row.providerCode}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-[11px] text-fg-subtle">
                       {row.callbackToken.slice(0, 8)}…
                     </td>
-                    <td className="px-4 py-3 font-mono text-[11px] text-zinc-200">
+                    <td className="px-4 py-3 font-mono text-[11px] text-fg-strong">
                       {row.processingStatus}
                     </td>
                     <td className="px-4 py-3">
                       <OutcomeBadge outcome={row.outcome} />
                     </td>
                     <td className="max-w-[260px] px-4 py-3">
-                      <details className="text-zinc-500">
-                        <summary className="cursor-pointer text-[11px] text-zinc-500 hover:text-zinc-300">
+                      <details className="text-fg-subtle">
+                        <summary className="cursor-pointer text-[11px] text-fg-subtle hover:text-fg">
                           View payload
                         </summary>
-                        <pre className="mt-1 max-h-40 overflow-auto rounded bg-zinc-950 p-2 text-[10px] text-zinc-400">
+                        <pre className="mt-1 max-h-40 overflow-auto rounded bg-surface p-2 text-[10px] text-fg-muted">
                           {JSON.stringify(row.rawBody, null, 2)}
                         </pre>
                       </details>
                       {row.processingError ? (
-                        <p className="mt-1 text-[10px] text-red-400">{row.processingError}</p>
+                        <p className="mt-1 text-[10px] text-red-600">{row.processingError}</p>
                       ) : null}
                     </td>
                     <td className="px-4 py-3 text-right">
@@ -365,12 +377,12 @@ export function AdminTransactionReconcile({
 function OutcomeBadge({ outcome }: { outcome: string }) {
   const className =
     outcome === 'successful'
-      ? 'rounded bg-emerald-950/40 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300'
+      ? 'rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700'
       : outcome === 'failed'
-        ? 'rounded bg-red-950/40 px-1.5 py-0.5 text-[10px] font-semibold text-red-300'
+        ? 'rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-700'
         : outcome === 'pending'
-          ? 'rounded bg-sky-950/40 px-1.5 py-0.5 text-[10px] font-semibold text-sky-300'
-          : 'rounded bg-amber-950/40 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300';
+          ? 'rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700'
+          : 'rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700';
   return <span className={className}>{outcome}</span>;
 }
 

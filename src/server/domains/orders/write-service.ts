@@ -1,7 +1,9 @@
-import { db } from '@/server/db/store';
 import type { Order, OrderItem, PaymentProvider } from '@/types/index';
 import { computeCheckoutTotals } from '@/lib/checkoutPricing';
 import { getContainer } from '@/server/di/container';
+import { CatalogService } from '@/server/domains/catalog/service';
+import { InventoryReservationService } from '@/server/domains/inventory/reservation-service';
+import { broadcastRealtime } from '@/server/realtime';
 
 export class OrderWriteService {
   static async createOrder(params: {
@@ -36,8 +38,15 @@ export class OrderWriteService {
       isTaxInclusive: boolean;
     }[] = [];
 
+    const catalogProducts = new Map(
+      (await CatalogService.getProductsByIds(params.items.map((i) => i.productId))).map((p) => [
+        p.id,
+        p,
+      ]),
+    );
+
     for (const item of params.items) {
-      const prod = db.products.get(item.productId);
+      const prod = catalogProducts.get(item.productId);
       if (!prod) {
         return { success: false, error: `Product ID ${item.productId} does not exist.` };
       }
@@ -70,44 +79,21 @@ export class OrderWriteService {
     const orderId = `ord_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const orderNumber = `ORD-2026-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    const reservation = db.atomicReserveStock(params.items, orderId, params.customerEmail);
+    const reservation = await InventoryReservationService.reserveForOrder(
+      params.items,
+      orderId,
+      params.customerEmail,
+    );
     if (!reservation.success) {
       return { success: false, error: reservation.error };
     }
 
+    // Customer persistence is handled by customers.prepareSale() below, which
+    // resolves-or-creates the trade customer in Postgres along with the
+    // delivery address. The old code kept a second, parallel CustomerAccount
+    // Map here purely so db.getCustomerOrders() could find the order; that map
+    // is gone, and order history is read from the orders table instead.
     let resolvedUserId = params.userId || '';
-    let customer =
-      (params.userId ? db.getCustomerById(params.userId) : null) ||
-      db.getCustomerByEmailOrPhone(params.customerEmail);
-
-    if (!customer) {
-      customer = db.createCustomer({
-        name: params.customerName,
-        email: params.customerEmail,
-        phone: params.customerPhone,
-        addresses: [
-          {
-            id: `addr_${Date.now()}`,
-            label: 'Home / Delivery',
-            recipientName: params.customerName,
-            recipientPhone: params.customerPhone,
-            ...params.shippingAddress,
-            isDefault: true,
-          },
-        ],
-        paymentPreferences: {
-          preferredMethod: params.paymentMethod,
-          defaultMpesaPhone: params.customerPhone,
-        },
-      });
-      resolvedUserId = params.userId || customer.id;
-    } else {
-      resolvedUserId = params.userId || customer.id;
-      customer.totalOrders = (customer.totalOrders || 0) + 1;
-      customer.lastOrderDate = new Date().toISOString();
-      customer.updatedAt = new Date().toISOString();
-      db.broadcast('customer_updated', customer);
-    }
 
     const order: Order = {
       id: orderId,
@@ -146,6 +132,8 @@ export class OrderWriteService {
         amount: totalAmount,
         onAccount,
       });
+      // The trade customer is the durable identity for this order.
+      if (!resolvedUserId) resolvedUserId = tradeCustomer.id;
       const callerDimensions = params.dimensionFields;
       const hasCallerDimensions = (() => {
         if (!callerDimensions) return false;
@@ -185,9 +173,7 @@ export class OrderWriteService {
       };
     }
 
-    // Keep a memory mirror for realtime admin widgets that still read the Map.
-    db.orders.set(orderId, order);
-    db.broadcast('order_event', { type: 'order_created', order });
+    void broadcastRealtime('order_event', { type: 'order_created', order });
 
     return { success: true, order };
   }

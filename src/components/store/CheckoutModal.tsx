@@ -24,7 +24,12 @@ import {
   type CurrencyConfig,
 } from '@/types/index';
 import { type CartItem } from './CartDrawer';
-import { fetchCustomerAccountAction, listEnabledCheckoutProvidersAction, lookupCheckoutCustomerAction, addCustomerAddressAction } from '@/server/actions';
+import {
+  fetchCustomerAccountAction,
+  listEnabledCheckoutProvidersAction,
+  lookupCheckoutCustomerAction,
+  addCustomerAddressAction,
+} from '@/server/actions';
 import type { PaymentProviderCode } from '@/server/domains/payments/types';
 import { cartTaxRows, cartTotals, formatCartAmount } from '@/lib/cartMoney';
 import { AppImage } from '@/components/ui/AppImage';
@@ -190,8 +195,7 @@ export function CheckoutModal({
     accountCustomer.accountType === 'credit' &&
     !accountCustomer.blocked &&
     creditAvailable >= totals.totalAmount;
-  const payLabel =
-    paymentMethod === 'on_account' ? 'On account' : selectedProvider?.label;
+  const payLabel = paymentMethod === 'on_account' ? 'On account' : selectedProvider?.label;
   const hasSavedAddresses = Boolean(customer?.addresses && customer.addresses.length > 0);
   const showAddressFields = !isSignedIn || useNewAddress || !hasSavedAddresses;
 
@@ -246,17 +250,17 @@ export function CheckoutModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/80 p-4 backdrop-blur-md sm:p-6">
-      <div className="relative my-8 flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-backdrop/80 p-4 backdrop-blur-md sm:p-6">
+      <div className="relative my-8 flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-line bg-surface-raised shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-950 p-5 sm:p-6">
+        <div className="flex items-center justify-between border-b border-line bg-surface p-5 sm:p-6">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-emerald-500/30 bg-emerald-600/20 text-emerald-400">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-emerald-500/30 bg-emerald-600/20 text-emerald-600">
               <Lock className="h-5 w-5" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-white">Secure Checkout</h2>
-              <p className="text-xs text-zinc-400">
+              <h2 className="text-lg font-bold text-fg-strong">Secure Checkout</h2>
+              <p className="text-xs text-fg-muted">
                 {enabledProviders.length > 0
                   ? enabledProviders.map((provider) => provider.label).join(' · ')
                   : 'Choose a payment method to continue'}
@@ -265,7 +269,7 @@ export function CheckoutModal({
           </div>
           <button
             onClick={onClose}
-            className="cursor-pointer rounded-lg border border-zinc-800 bg-zinc-900 p-2 text-zinc-400 transition-colors hover:text-white"
+            className="cursor-pointer rounded-lg border border-line bg-surface-raised p-2 text-fg-muted transition-colors hover:text-fg-strong"
           >
             <X className="h-5 w-5" />
           </button>
@@ -279,7 +283,7 @@ export function CheckoutModal({
           {/* Left Column: Shipping & Customer Info */}
           <div className="space-y-6 lg:col-span-7">
             {formError && (
-              <div className="rounded-lg border border-red-800 bg-red-950/80 p-3.5 text-xs text-red-200">
+              <div className="rounded-lg border border-red-800 bg-red-50/80 p-3.5 text-xs text-red-800">
                 {formError}
               </div>
             )}
@@ -290,26 +294,26 @@ export function CheckoutModal({
                 <User className="h-4 w-4" /> 1. Customer & Identification
               </h3>
               {isSignedIn ? (
-                <div className="rounded-xl border border-zinc-800 bg-zinc-950/80 p-4">
+                <div className="rounded-xl border border-line bg-surface/80 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
-                      <p className="text-sm font-semibold text-white">{customerName}</p>
-                      <p className="mt-0.5 text-xs text-zinc-400">{customerEmail}</p>
-                      <p className="mt-0.5 font-mono text-xs text-zinc-300">{customerPhone}</p>
+                      <p className="text-sm font-semibold text-fg-strong">{customerName}</p>
+                      <p className="mt-0.5 text-xs text-fg-muted">{customerEmail}</p>
+                      <p className="mt-0.5 font-mono text-xs text-fg">{customerPhone}</p>
                     </div>
                     {customer?.customerNumber ? (
-                      <span className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-[11px] text-zinc-300">
+                      <span className="rounded-md border border-line-strong bg-surface-raised px-2 py-1 font-mono text-[11px] text-fg">
                         {customer.customerNumber}
                       </span>
                     ) : null}
                   </div>
                   <div className="mt-3">
-                    <label className="mb-1 block text-xs font-medium text-zinc-300">Tax PIN</label>
+                    <label className="mb-1 block text-xs font-medium text-fg">Tax PIN</label>
                     <input
                       type="text"
                       value={buyerKraPin}
                       onChange={(e) => setBuyerKraPin(e.target.value)}
-                      className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3.5 py-2 font-mono text-xs text-white uppercase placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+                      className="w-full rounded-lg border border-line bg-surface-raised px-3.5 py-2 font-mono text-xs text-fg-strong uppercase placeholder-fg-subtle focus:border-indigo-500 focus:outline-none"
                       placeholder="Optional KRA PIN"
                     />
                   </div>
@@ -317,7 +321,7 @@ export function CheckoutModal({
               ) : (
                 <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-zinc-300">
+                    <label className="mb-1 block text-xs font-medium text-fg">
                       Full Legal Name
                     </label>
                     <input
@@ -325,44 +329,42 @@ export function CheckoutModal({
                       value={customerName}
                       onChange={(e) => setCustomerName(e.target.value)}
                       required
-                      className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+                      className="w-full rounded-lg border border-line bg-surface px-3.5 py-2 text-xs text-fg-strong placeholder-fg-subtle focus:border-indigo-500 focus:outline-none"
                       placeholder="Full name"
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-zinc-300">Email</label>
+                    <label className="mb-1 block text-xs font-medium text-fg">Email</label>
                     <input
                       type="email"
                       value={customerEmail}
                       onChange={(e) => setCustomerEmail(e.target.value)}
                       required
-                      className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+                      className="w-full rounded-lg border border-line bg-surface px-3.5 py-2 text-xs text-fg-strong placeholder-fg-subtle focus:border-indigo-500 focus:outline-none"
                       placeholder="you@example.com"
                     />
                   </div>
                   <div className="sm:col-span-2">
-                    <label className="mb-1 block text-xs font-medium text-zinc-300">
-                      Mobile phone
-                    </label>
+                    <label className="mb-1 block text-xs font-medium text-fg">Mobile phone</label>
                     <div className="relative">
-                      <Phone className="absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2 text-emerald-400" />
+                      <Phone className="absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2 text-emerald-600" />
                       <input
                         type="text"
                         value={customerPhone}
                         onChange={(e) => setCustomerPhone(e.target.value)}
                         required
-                        className="w-full rounded-lg border border-zinc-800 bg-zinc-950 py-2 pr-4 pl-10 font-mono text-xs text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+                        className="w-full rounded-lg border border-line bg-surface py-2 pr-4 pl-10 font-mono text-xs text-fg-strong placeholder-fg-subtle focus:border-indigo-500 focus:outline-none"
                         placeholder="Phone number"
                       />
                     </div>
                   </div>
                   <div className="sm:col-span-2">
-                    <label className="mb-1 block text-xs font-medium text-zinc-300">Tax PIN</label>
+                    <label className="mb-1 block text-xs font-medium text-fg">Tax PIN</label>
                     <input
                       type="text"
                       value={buyerKraPin}
                       onChange={(e) => setBuyerKraPin(e.target.value)}
-                      className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 font-mono text-xs text-white uppercase placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+                      className="w-full rounded-lg border border-line bg-surface px-3.5 py-2 font-mono text-xs text-fg-strong uppercase placeholder-fg-subtle focus:border-indigo-500 focus:outline-none"
                       placeholder="Optional KRA PIN"
                     />
                   </div>
@@ -377,7 +379,7 @@ export function CheckoutModal({
                   <MapPin className="h-4 w-4" /> 2. Delivery & Dispatch Address
                 </h3>
                 {hasSavedAddresses ? (
-                  <span className="text-[11px] text-zinc-400">
+                  <span className="text-[11px] text-fg-muted">
                     {customer!.addresses.length} saved addresses
                   </span>
                 ) : null}
@@ -392,28 +394,28 @@ export function CheckoutModal({
                       onClick={() => handleSelectSavedAddress(addr)}
                       className={`flex cursor-pointer items-start justify-between gap-2 rounded-xl border p-2.5 text-left text-xs transition-all ${
                         !useNewAddress && selectedAddressId === addr.id
-                          ? 'border-indigo-500 bg-indigo-600/10 text-white shadow-sm'
-                          : 'border-zinc-800 bg-zinc-950/60 text-zinc-300 hover:border-zinc-700'
+                          ? 'TW border-indigo-500 bg-indigo-600/10 shadow-sm'
+                          : 'border-line bg-surface/60 text-fg hover:border-line-strong'
                       }`}
                     >
                       <div className="overflow-hidden">
-                        <div className="flex items-center gap-1.5 font-bold text-zinc-200">
+                        <div className="flex items-center gap-1.5 font-bold text-fg-strong">
                           <Building className="h-3 w-3 flex-shrink-0 text-indigo-400" />
                           <span className="truncate">{addr.label}</span>
                           {addr.isDefault && (
-                            <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] text-emerald-400">
+                            <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] text-emerald-600">
                               Default
                             </span>
                           )}
                         </div>
-                        <p className="mt-0.5 truncate text-[11px] text-zinc-400">{addr.street}</p>
-                        <p className="text-[10px] text-zinc-500">
+                        <p className="mt-0.5 truncate text-[11px] text-fg-muted">{addr.street}</p>
+                        <p className="text-[10px] text-fg-subtle">
                           {addr.city}, {addr.countyOrState}
                         </p>
                       </div>
                       {!useNewAddress && selectedAddressId === addr.id ? (
                         <div className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full bg-indigo-600">
-                          <Check className="h-2.5 w-2.5 stroke-[3] text-white" />
+                          <Check className="h-2.5 w-2.5 stroke-[3] text-fg-strong" />
                         </div>
                       ) : null}
                     </button>
@@ -442,8 +444,8 @@ export function CheckoutModal({
                   }}
                   className={`w-full cursor-pointer rounded-xl border px-3 py-2 text-left text-xs transition-colors ${
                     useNewAddress
-                      ? 'border-indigo-500 bg-indigo-600/10 text-white'
-                      : 'border-zinc-800 bg-zinc-950/60 text-zinc-300 hover:border-zinc-700'
+                      ? 'TW border-indigo-500 bg-indigo-600/10'
+                      : 'border-line bg-surface/60 text-fg hover:border-line-strong'
                   }`}
                 >
                   {useNewAddress && hasSavedAddresses
@@ -457,7 +459,7 @@ export function CheckoutModal({
               {showAddressFields ? (
                 <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
                   <div className="sm:col-span-2">
-                    <label className="mb-1 block text-xs font-medium text-zinc-300">
+                    <label className="mb-1 block text-xs font-medium text-fg">
                       Street / Building / Office
                     </label>
                     <input
@@ -465,25 +467,23 @@ export function CheckoutModal({
                       value={street}
                       onChange={(e) => setStreet(e.target.value)}
                       required={showAddressFields}
-                      className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+                      className="w-full rounded-lg border border-line bg-surface px-3.5 py-2 text-xs text-fg-strong placeholder-fg-subtle focus:border-indigo-500 focus:outline-none"
                       placeholder="Street address"
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-zinc-300">
-                      City / Town
-                    </label>
+                    <label className="mb-1 block text-xs font-medium text-fg">City / Town</label>
                     <input
                       type="text"
                       value={city}
                       onChange={(e) => setCity(e.target.value)}
                       required={showAddressFields}
-                      className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+                      className="w-full rounded-lg border border-line bg-surface px-3.5 py-2 text-xs text-fg-strong placeholder-fg-subtle focus:border-indigo-500 focus:outline-none"
                       placeholder="City"
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-zinc-300">
+                    <label className="mb-1 block text-xs font-medium text-fg">
                       County / Region
                     </label>
                     <input
@@ -491,7 +491,7 @@ export function CheckoutModal({
                       value={countyOrState}
                       onChange={(e) => setCountyOrState(e.target.value)}
                       required={showAddressFields}
-                      className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+                      className="w-full rounded-lg border border-line bg-surface px-3.5 py-2 text-xs text-fg-strong placeholder-fg-subtle focus:border-indigo-500 focus:outline-none"
                       placeholder="Region"
                     />
                   </div>
@@ -505,7 +505,7 @@ export function CheckoutModal({
                 <CreditCard className="h-4 w-4" /> 3. Select Payment Gateway
               </h3>
               {enabledProviders.length === 0 && !canPayOnAccount ? (
-                <p className="rounded-lg border border-amber-800/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
+                <p className="rounded-lg border border-amber-800/60 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                   No payment methods are enabled for this branch. Configure credentials under Admin
                   → Settings → Payments, or use a credit customer to pay on account.
                 </p>
@@ -515,8 +515,8 @@ export function CheckoutModal({
                     <label
                       className={`flex cursor-pointer items-start gap-3.5 rounded-xl border p-3.5 transition-all ${
                         paymentMethod === 'on_account'
-                          ? 'border-indigo-500/50 bg-indigo-950/30'
-                          : 'border-zinc-800 bg-zinc-950 hover:border-zinc-700'
+                          ? 'border-indigo-500/50 bg-indigo-50'
+                          : 'border-line bg-surface hover:border-line-strong'
                       }`}
                     >
                       <input
@@ -527,8 +527,8 @@ export function CheckoutModal({
                         className="mt-1 text-indigo-500 focus:ring-indigo-500"
                       />
                       <div>
-                        <div className="text-xs font-semibold text-white">On account</div>
-                        <p className="mt-0.5 text-[11px] text-zinc-400">
+                        <div className="text-xs font-semibold text-fg-strong">On account</div>
+                        <p className="mt-0.5 text-[11px] text-fg-muted">
                           {accountCustomer?.name} · credit available {money(creditAvailable)}
                           {accountCustomer?.transmitInvoicesToKra
                             ? ' · invoice will be marked for KRA'
@@ -545,8 +545,8 @@ export function CheckoutModal({
                         onClick={() => setPaymentMethod(provider.code)}
                         className={`flex cursor-pointer items-start gap-3.5 rounded-xl border p-3.5 transition-all ${
                           selected
-                            ? 'border-indigo-500/50 bg-indigo-950/30 shadow-md shadow-indigo-950/30'
-                            : 'border-zinc-800 bg-zinc-950 hover:border-zinc-700'
+                            ? 'border-indigo-500/50 bg-indigo-50 shadow-md shadow-indigo-950/30'
+                            : 'border-line bg-surface hover:border-line-strong'
                         }`}
                       >
                         <input
@@ -559,15 +559,17 @@ export function CheckoutModal({
                         <div className="flex-1">
                           <div className="flex items-center gap-2">
                             {provider.code === 'mpesa_daraja' || provider.code === 'kcb_buni' ? (
-                              <Smartphone className="h-4 w-4 text-emerald-400" />
+                              <Smartphone className="h-4 w-4 text-emerald-600" />
                             ) : provider.code === 'jenga_hq' ? (
-                              <Building className="h-4 w-4 text-amber-400" />
+                              <Building className="h-4 w-4 text-amber-600" />
                             ) : (
                               <CreditCard className="h-4 w-4 text-indigo-400" />
                             )}
-                            <span className="text-xs font-bold text-white">{provider.label}</span>
+                            <span className="text-xs font-bold text-fg-strong">
+                              {provider.label}
+                            </span>
                           </div>
-                          <p className="mt-1 text-[11px] text-zinc-400">{provider.description}</p>
+                          <p className="mt-1 text-[11px] text-fg-muted">{provider.description}</p>
                         </div>
                       </label>
                     );
@@ -578,9 +580,9 @@ export function CheckoutModal({
           </div>
 
           {/* Right Column: Order Summary & Execution */}
-          <div className="flex flex-col justify-between space-y-6 rounded-xl border border-zinc-800 bg-zinc-950 p-5 lg:col-span-5">
+          <div className="flex flex-col justify-between space-y-6 rounded-xl border border-line bg-surface p-5 lg:col-span-5">
             <div className="space-y-4">
-              <h3 className="border-b border-zinc-800 pb-2 text-sm font-bold text-white">
+              <h3 className="border-b border-line pb-2 text-sm font-bold text-fg-strong">
                 Order Review ({items.length} {items.length === 1 ? 'item' : 'items'})
               </h3>
 
@@ -594,45 +596,45 @@ export function CheckoutModal({
                         width={36}
                         height={36}
                         sizes="36px"
-                        className="h-9 w-9 shrink-0 rounded-lg bg-zinc-900 object-cover"
+                        className="h-9 w-9 shrink-0 rounded-lg bg-surface-raised object-cover"
                         referrerPolicy="no-referrer"
                       />
                       <div className="truncate">
-                        <div className="truncate font-medium text-white" title={product.name}>
+                        <div className="truncate font-medium text-fg-strong" title={product.name}>
                           {product.name}
                         </div>
-                        <div className="text-[10px] text-zinc-500">
+                        <div className="text-[10px] text-fg-subtle">
                           Qty: {quantity} × {money(product.price ?? 0)}
                         </div>
                       </div>
                     </div>
-                    <span className="shrink-0 font-mono text-zinc-200">
+                    <span className="shrink-0 font-mono text-fg-strong">
                       {money((product.price ?? 0) * quantity)}
                     </span>
                   </div>
                 ))}
               </div>
 
-              <div className="space-y-2 border-t border-zinc-800 pt-3 text-xs text-zinc-400">
+              <div className="space-y-2 border-t border-line pt-3 text-xs text-fg-muted">
                 <div className="flex justify-between">
                   <span>Subtotal</span>
-                  <span className="font-mono text-zinc-200">{money(totals.subtotal)}</span>
+                  <span className="font-mono text-fg-strong">{money(totals.subtotal)}</span>
                 </div>
                 {taxRows.map((row) => (
                   <div key={row.key} className="flex justify-between gap-3">
                     <span className="min-w-0 truncate">{row.label}</span>
-                    <span className="shrink-0 font-mono text-zinc-200">{money(row.amount)}</span>
+                    <span className="shrink-0 font-mono text-fg-strong">{money(row.amount)}</span>
                   </div>
                 ))}
                 {totals.shippingFee > 0 ? (
                   <div className="flex justify-between">
                     <span>Shipping</span>
-                    <span className="font-mono text-zinc-200">{money(totals.shippingFee)}</span>
+                    <span className="font-mono text-fg-strong">{money(totals.shippingFee)}</span>
                   </div>
                 ) : null}
-                <div className="flex justify-between border-t border-zinc-800 pt-2 text-base font-bold text-white">
+                <div className="flex justify-between border-t border-line pt-2 text-base font-bold text-fg-strong">
                   <span>Total</span>
-                  <span className="font-mono text-white">{money(totals.totalAmount)}</span>
+                  <span className="font-mono text-fg-strong">{money(totals.totalAmount)}</span>
                 </div>
               </div>
             </div>
@@ -657,8 +659,8 @@ export function CheckoutModal({
                 )}
               </button>
 
-              <div className="flex items-center justify-center gap-1.5 text-center text-[11px] text-zinc-400">
-                <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
+              <div className="flex items-center justify-center gap-1.5 text-center text-[11px] text-fg-muted">
+                <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
                 <span>Secure checkout</span>
               </div>
             </div>

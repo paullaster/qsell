@@ -53,7 +53,7 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
           o.orderNumber.toUpperCase() === term ||
           o.id.toUpperCase() === term ||
           (o.mpesaReceiptNumber && o.mpesaReceiptNumber.toUpperCase() === term) ||
-          (shownPaymentReference(o)?.toUpperCase() === term) ||
+          shownPaymentReference(o)?.toUpperCase() === term ||
           o.customerPhone.includes(searchTerm.trim()) ||
           o.customerEmail.toLowerCase() === searchTerm.trim().toLowerCase(),
       );
@@ -117,44 +117,44 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
   };
 
   return (
-    <div className="animate-fade-in fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/85 p-4 backdrop-blur-md sm:p-6">
-      <div className="relative my-8 flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl">
+    <div className="animate-fade-in fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-backdrop/85 p-4 backdrop-blur-md sm:p-6">
+      <div className="relative my-8 flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-line bg-surface-raised shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-950 p-5 sm:p-6">
+        <div className="flex items-center justify-between border-b border-line bg-surface p-5 sm:p-6">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-indigo-500/20 bg-indigo-600/10 text-indigo-400">
               <Truck className="h-5 w-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-white">Track Your Order</h2>
-              <p className="text-xs text-zinc-400">
+              <h2 className="text-base font-bold text-fg-strong">Track Your Order</h2>
+              <p className="text-xs text-fg-muted">
                 Real-time status, dispatch timeline & eTIMS receipt
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="cursor-pointer rounded-lg border border-zinc-800 bg-zinc-900 p-2 text-zinc-400 transition-colors hover:text-white"
+            className="cursor-pointer rounded-lg border border-line bg-surface-raised p-2 text-fg-muted transition-colors hover:text-fg-strong"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
         {/* Search Input Box */}
-        <div className="border-b border-zinc-800 bg-zinc-950 p-5 sm:p-6">
+        <div className="border-b border-line bg-surface p-5 sm:p-6">
           <form onSubmit={handleSearch} className="space-y-3">
-            <label className="block text-xs font-medium text-zinc-300">
+            <label className="block text-xs font-medium text-fg">
               Enter Order Number, M-Pesa Receipt Code, or Phone Number
             </label>
             <div className="flex gap-2">
               <div className="relative flex-1">
-                <Search className="absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+                <Search className="absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2 text-fg-subtle" />
                 <input
                   type="text"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   placeholder="e.g. ORD-1740987654 or QJK4920194 or 0712345678"
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-900 py-2.5 pr-4 pl-10 font-mono text-xs text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+                  className="w-full rounded-lg border border-line bg-surface-raised py-2.5 pr-4 pl-10 font-mono text-xs text-fg-strong placeholder-fg-subtle focus:border-indigo-500 focus:outline-none"
                   required
                 />
               </div>
@@ -166,7 +166,7 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
                 {isLoading ? 'Searching...' : 'Track Order'}
               </button>
             </div>
-            <p className="text-[11px] text-zinc-500">
+            <p className="text-[11px] text-fg-subtle">
               Tip: You can find your Order Number in the SMS confirmation or on your M-Pesa
               transaction reference.
             </p>
@@ -176,19 +176,19 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
         {/* Results Area */}
         <div className="flex-1 space-y-6 overflow-y-auto p-5 sm:p-6">
           {searchError && (
-            <div className="flex items-center gap-3 rounded-xl border border-red-800/60 bg-red-950/40 p-4 text-xs text-red-300">
-              <AlertCircle className="h-5 w-5 shrink-0 text-red-400" />
+            <div className="flex items-center gap-3 rounded-xl border border-red-800/60 bg-red-50 p-4 text-xs text-red-700">
+              <AlertCircle className="h-5 w-5 shrink-0 text-red-600" />
               <span>{searchError}</span>
             </div>
           )}
 
           {!hasSearched && !matchedOrder && (
             <div className="space-y-3 py-12 text-center">
-              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-zinc-800 text-zinc-500">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-surface-sunken text-fg-subtle">
                 <Package className="h-7 w-7" />
               </div>
-              <h3 className="text-sm font-semibold text-white">Instant Live Tracking</h3>
-              <p className="mx-auto max-w-sm text-xs leading-relaxed text-zinc-400">
+              <h3 className="text-sm font-semibold text-fg-strong">Instant Live Tracking</h3>
+              <p className="mx-auto max-w-sm text-xs leading-relaxed text-fg-muted">
                 Enter your order credentials above to view real-time dispatch progress, carrier
                 location, and electronic invoice records.
               </p>
@@ -198,26 +198,26 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
           {matchedOrder && (
             <div className="animate-fade-in space-y-6">
               {/* Order Meta Header Banner */}
-              <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-line bg-surface p-4">
                 <div>
-                  <span className="block font-mono text-[10px] text-zinc-500 uppercase">
+                  <span className="block font-mono text-[10px] text-fg-subtle uppercase">
                     Order Reference
                   </span>
-                  <span className="font-mono text-base font-bold text-white">
+                  <span className="font-mono text-base font-bold text-fg-strong">
                     {matchedOrder.orderNumber}
                   </span>
                 </div>
 
                 <div>
-                  <span className="block font-mono text-[10px] text-zinc-500 uppercase">
+                  <span className="block font-mono text-[10px] text-fg-subtle uppercase">
                     Payment Status
                   </span>
                   <span
                     className={`inline-flex items-center rounded px-2 py-0.5 font-mono text-xs font-bold ${
                       matchedOrder.paymentStatus === 'reconciled' ||
                       matchedOrder.paymentStatus === 'paid'
-                        ? 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-400'
-                        : 'border border-amber-500/20 bg-amber-500/10 text-amber-400'
+                        ? 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-600'
+                        : 'border border-amber-500/20 bg-amber-500/10 text-amber-600'
                     }`}
                   >
                     {matchedOrder.paymentStatus.toUpperCase()}
@@ -225,10 +225,10 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
                 </div>
 
                 <div>
-                  <span className="block font-mono text-[10px] text-zinc-500 uppercase">
+                  <span className="block font-mono text-[10px] text-fg-subtle uppercase">
                     Order Total
                   </span>
-                  <span className="font-mono text-sm font-bold text-white">
+                  <span className="font-mono text-sm font-bold text-fg-strong">
                     KES {matchedOrder.totalAmount.toLocaleString()}
                   </span>
                 </div>
@@ -239,7 +239,7 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
                 <h4 className="flex items-center gap-1.5 text-xs font-bold tracking-wider text-indigo-400 uppercase">
                   <Clock className="h-4 w-4" /> Dispatch & Delivery Progress
                 </h4>
-                <div className="space-y-4 rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+                <div className="space-y-4 rounded-xl border border-line bg-surface p-4">
                   {getTimelineSteps(matchedOrder).map((step, idx) => (
                     <div key={idx} className="flex items-start gap-3.5">
                       <div className="flex flex-col items-center">
@@ -248,8 +248,8 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
                             step.completed
                               ? 'bg-emerald-500 text-black shadow-sm shadow-emerald-500/50'
                               : step.current
-                                ? 'animate-pulse bg-indigo-600 text-white'
-                                : 'bg-zinc-800 text-zinc-500'
+                                ? 'TW animate-pulse bg-indigo-600'
+                                : 'bg-surface-sunken text-fg-subtle'
                           }`}
                         >
                           {step.completed ? '✓' : idx + 1}
@@ -257,7 +257,7 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
                         {idx < 3 && (
                           <div
                             className={`my-1 h-8 w-0.5 ${
-                              step.completed ? 'bg-emerald-500/50' : 'bg-zinc-800'
+                              step.completed ? 'bg-emerald-500/50' : 'bg-surface-sunken'
                             }`}
                           />
                         )}
@@ -265,13 +265,13 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
                       <div className="-mt-0.5 flex-1">
                         <div className="flex items-center justify-between">
                           <h5
-                            className={`text-xs font-semibold ${step.completed || step.current ? 'text-white' : 'text-zinc-500'}`}
+                            className={`text-xs font-semibold ${step.completed || step.current ? 'text-fg-strong' : 'text-fg-subtle'}`}
                           >
                             {step.title}
                           </h5>
-                          <span className="font-mono text-[10px] text-zinc-400">{step.time}</span>
+                          <span className="font-mono text-[10px] text-fg-muted">{step.time}</span>
                         </div>
-                        <p className="mt-0.5 text-[11px] text-zinc-400">{step.desc}</p>
+                        <p className="mt-0.5 text-[11px] text-fg-muted">{step.desc}</p>
                       </div>
                     </div>
                   ))}
@@ -280,11 +280,11 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
 
               {/* Delivery Address & Customer Info */}
               <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
-                <div className="space-y-1.5 rounded-xl border border-zinc-800 bg-zinc-950 p-3.5 text-xs">
-                  <div className="flex items-center gap-1.5 font-semibold text-zinc-300">
+                <div className="space-y-1.5 rounded-xl border border-line bg-surface p-3.5 text-xs">
+                  <div className="flex items-center gap-1.5 font-semibold text-fg">
                     <MapPin className="h-3.5 w-3.5 text-indigo-400" /> Delivery Address
                   </div>
-                  <p className="text-[11px] leading-relaxed text-zinc-400">
+                  <p className="text-[11px] leading-relaxed text-fg-muted">
                     {matchedOrder.customerName}
                     <br />
                     {matchedOrder.shippingAddress.street}, {matchedOrder.shippingAddress.city}
@@ -294,40 +294,39 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
                   </p>
                 </div>
 
-                <div className="space-y-1.5 rounded-xl border border-zinc-800 bg-zinc-950 p-3.5 text-xs">
-                  <div className="flex items-center gap-1.5 font-semibold text-zinc-300">
+                <div className="space-y-1.5 rounded-xl border border-line bg-surface p-3.5 text-xs">
+                  <div className="flex items-center gap-1.5 font-semibold text-fg">
                     {matchedOrder.paymentMethod === 'mpesa_daraja' ? (
-                      <Smartphone className="h-3.5 w-3.5 text-emerald-400" />
+                      <Smartphone className="h-3.5 w-3.5 text-emerald-600" />
                     ) : (
                       <CreditCard className="h-3.5 w-3.5 text-indigo-400" />
                     )}
                     Payment Reconciliation
                   </div>
-                  <p className="text-[11px] leading-relaxed text-zinc-400">
+                  <p className="text-[11px] leading-relaxed text-fg-muted">
                     Method:{' '}
-                    <span className="font-medium text-white">
+                    <span className="font-medium text-fg-strong">
                       {matchedOrder.paymentMethod === 'mpesa_daraja'
                         ? 'Safaricom M-Pesa STK'
                         : 'Pesapal v3.0'}
                     </span>
                     <br />
                     Ref:{' '}
-                    <span className="font-mono text-emerald-400">
+                    <span className="font-mono text-emerald-600">
                       {shownPaymentReference(matchedOrder) || 'Confirmed'}
                     </span>
                     <br />
-                    Phone:{' '}
-                    <span className="font-mono text-zinc-300">{matchedOrder.customerPhone}</span>
+                    Phone: <span className="font-mono text-fg">{matchedOrder.customerPhone}</span>
                   </p>
                 </div>
               </div>
 
               {/* Purchased Items List */}
               <div className="space-y-2">
-                <span className="block text-xs font-bold tracking-wider text-zinc-400 uppercase">
+                <span className="block text-xs font-bold tracking-wider text-fg-muted uppercase">
                   Items in Shipment ({matchedOrder.items.length})
                 </span>
-                <div className="divide-y divide-zinc-800 rounded-xl border border-zinc-800 bg-zinc-950 p-3">
+                <div className="divide-y divide-line rounded-xl border border-line bg-surface p-3">
                   {matchedOrder.items.map((item, i) => (
                     <div
                       key={i}
@@ -340,17 +339,17 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
                           width={36}
                           height={36}
                           sizes="36px"
-                          className="h-9 w-9 shrink-0 rounded-lg bg-zinc-900 object-cover"
+                          className="h-9 w-9 shrink-0 rounded-lg bg-surface-raised object-cover"
                           referrerPolicy="no-referrer"
                         />
                         <div>
-                          <div className="font-medium text-white">{item.productName}</div>
-                          <div className="font-mono text-[10px] text-zinc-500">
+                          <div className="font-medium text-fg-strong">{item.productName}</div>
+                          <div className="font-mono text-[10px] text-fg-subtle">
                             Qty: {item.quantity} × KES {item.unitPrice.toLocaleString()}
                           </div>
                         </div>
                       </div>
-                      <span className="font-mono font-semibold text-white">
+                      <span className="font-mono font-semibold text-fg-strong">
                         KES {item.totalPrice.toLocaleString()}
                       </span>
                     </div>
@@ -362,14 +361,14 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between border-t border-zinc-800 bg-zinc-950 p-4 sm:p-5">
-          <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
-            <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
+        <div className="flex items-center justify-between border-t border-line bg-surface p-4 sm:p-5">
+          <div className="flex items-center gap-1.5 text-[11px] text-fg-subtle">
+            <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
             eTIMS Compliant Tax Invoicing • Nairobi Fast Dispatch
           </div>
           <button
             onClick={onClose}
-            className="cursor-pointer rounded-lg bg-zinc-800 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-zinc-700"
+            className="cursor-pointer rounded-lg bg-surface-sunken px-4 py-2 text-xs font-medium text-fg-strong transition-colors hover:bg-hover"
           >
             Close
           </button>

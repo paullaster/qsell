@@ -274,7 +274,7 @@ export function StorefrontPageClient({
   const cartItemsCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
   return (
-    <div className="flex min-h-screen flex-col bg-black text-zinc-300">
+    <div className="flex min-h-screen flex-col bg-canvas text-fg">
       <Toast toasts={toasts} onDismiss={removeToast} />
       <Navbar
         company={company}

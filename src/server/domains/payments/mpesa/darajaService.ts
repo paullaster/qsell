@@ -1,6 +1,9 @@
-import { db } from '@/server/db/store';
 import type { TransactionRecord } from '@/types/index';
+import { getContainer } from '@/server/di/container';
+import { broadcastRealtime } from '@/server/realtime';
+import { toTransaction, toGatewayConfig } from '@/server/domains/catalog/mappers';
 import { ReconciliationEngine } from '@/server/domains/reconciliation/service';
+import { InventoryReservationService } from '@/server/domains/inventory/reservation-service';
 import { extractPaymentReference } from '@/server/domains/payments/payment-reference';
 
 export interface StkPushRequest {
@@ -35,10 +38,12 @@ export class DarajaService {
   }
 
   static async initiateStkPush(params: StkPushRequest): Promise<StkPushResponse> {
-    const order = db.orders.get(params.orderId);
+    const container = getContainer();
+    const order = await container.orders.getById(params.orderId);
     if (!order) throw new Error(`Order ${params.orderId} not found`);
 
-    const gateway = db.paymentGateways.get('gw_mpesa_daraja');
+    const gatewayRow = await container.paymentRecords.getGatewayConfig('gw_mpesa_daraja');
+    const gateway = gatewayRow ? toGatewayConfig(gatewayRow) : undefined;
     if (!gateway?.isEnabled) {
       throw new Error('M-Pesa Daraja payment gateway is currently disabled by administrator');
     }
@@ -98,11 +103,27 @@ export class DarajaService {
       updatedAt: new Date().toISOString(),
     };
 
-    db.transactions.set(transactionId, transaction);
-    order.paymentStatus = 'pending_verification';
-    order.updatedAt = new Date().toISOString();
+    await container.paymentRecords.upsertTransaction({
+      id: transaction.id,
+      orderId: transaction.orderId,
+      orderNumber: transaction.orderNumber,
+      gatewayProvider: transaction.gatewayProvider,
+      amount: String(transaction.amount),
+      currency: transaction.currency ?? 'KES',
+      externalReference: transaction.externalReference ?? null,
+      transactionReference: transaction.transactionReference,
+      status: transaction.status,
+      customerPhone: transaction.customerPhone ?? null,
+      customerEmail: transaction.customerEmail ?? null,
+      requestPayload: transaction.requestPayload ?? {},
+      responsePayload: transaction.responsePayload ?? {},
+      ipnStatus: transaction.ipnStatus,
+      reconciliationStatus: transaction.reconciliationStatus,
+      errorMessage: transaction.errorMessage ?? null,
+    });
+    await container.orders.update(order.id, { paymentStatus: 'pending_verification' });
 
-    db.broadcast('transaction_event', {
+    void broadcastRealtime('transaction_event', {
       type: 'stk_initiated',
       transactionId,
       checkoutRequestId,
@@ -138,15 +159,16 @@ export class DarajaService {
     const resultCode = Number(stkCallback?.ResultCode);
     const resultDesc = stkCallback?.ResultDesc || 'No description';
 
-    const transaction = Array.from(db.transactions.values()).find(
-      (tx) => tx.transactionReference === checkoutRequestId,
-    );
-
-    if (!transaction) {
+    const container = getContainer();
+    const transactionRow = await container.paymentRecords.findTransaction({
+      transactionReference: checkoutRequestId,
+    });
+    if (!transactionRow) {
       return { success: false, message: 'Transaction not found' };
     }
+    const transaction = toTransaction(transactionRow);
 
-    const order = db.orders.get(transaction.orderId);
+    const order = await container.orders.getById(transaction.orderId);
 
     if (resultCode === 0) {
       const mpesaReceiptNumber = extractPaymentReference('mpesa_daraja', callbackPayload);
@@ -157,26 +179,26 @@ export class DarajaService {
         };
       }
 
-      transaction.status = 'successful';
-      transaction.externalReference = mpesaReceiptNumber;
-      transaction.ipnStatus = 'delivered';
-      transaction.responsePayload = { ...transaction.responsePayload, callback: callbackPayload };
-      transaction.updatedAt = new Date().toISOString();
+      await container.paymentRecords.updateTransaction(transaction.id, {
+        status: 'successful',
+        externalReference: mpesaReceiptNumber,
+        ipnStatus: 'delivered',
+        responsePayload: { ...(transaction.responsePayload ?? {}), callback: callbackPayload },
+      });
 
       if (order) {
-        order.paymentStatus = 'paid';
-        order.status = 'completed';
-        order.mpesaReceiptNumber = mpesaReceiptNumber;
-        order.transactionReference = mpesaReceiptNumber;
-        order.updatedAt = new Date().toISOString();
-        db.atomicFulfillStock(
-          order.items.map((i) => ({ productId: i.productId, quantity: i.quantity })),
-          order.id,
-        );
-        ReconciliationEngine.reconcileSingleTransaction(transaction, order);
+        await container.orders.update(order.id, {
+          paymentStatus: 'paid',
+          status: 'completed',
+          mpesaReceiptNumber,
+          transactionReference: mpesaReceiptNumber,
+        });
+        await InventoryReservationService.fulfilOrder(order.id);
+        const settledOrder = (await container.orders.getById(order.id)) ?? order;
+        await ReconciliationEngine.reconcileSingleTransaction(transaction, settledOrder);
       }
 
-      db.broadcast('transaction_event', {
+      void broadcastRealtime('transaction_event', {
         type: 'stk_successful',
         transactionId: transaction.id,
         checkoutRequestId,
@@ -188,22 +210,18 @@ export class DarajaService {
       return { success: true, message: 'Callback processed and reconciled successfully' };
     }
 
-    transaction.status = 'failed';
-    transaction.errorMessage = resultDesc;
-    transaction.ipnStatus = 'delivered';
-    transaction.updatedAt = new Date().toISOString();
+    await container.paymentRecords.updateTransaction(transaction.id, {
+      status: 'failed',
+      errorMessage: resultDesc,
+      ipnStatus: 'delivered',
+    });
 
     if (order) {
-      order.paymentStatus = 'failed';
-      order.status = 'failed';
-      order.updatedAt = new Date().toISOString();
-      db.atomicReleaseReservation(
-        order.items.map((i) => ({ productId: i.productId, quantity: i.quantity })),
-        order.id,
-      );
+      await container.orders.update(order.id, { paymentStatus: 'failed', status: 'failed' });
+      await InventoryReservationService.releaseOrder(order.id, 'mpesa_stk_failed', 'mpesa_ipn');
     }
 
-    db.broadcast('transaction_event', {
+    void broadcastRealtime('transaction_event', {
       type: 'stk_failed',
       transactionId: transaction.id,
       checkoutRequestId,
@@ -218,10 +236,11 @@ export class DarajaService {
     checkoutRequestId: string,
     action: 'accept' | 'cancel' | 'wrong_pin' | 'timeout',
   ) {
-    const transaction = Array.from(db.transactions.values()).find(
-      (tx) => tx.transactionReference === checkoutRequestId,
-    );
-    if (!transaction) throw new Error(`Checkout Request ID ${checkoutRequestId} not found.`);
+    const row = await getContainer().paymentRecords.findTransaction({
+      transactionReference: checkoutRequestId,
+    });
+    if (!row) throw new Error(`Checkout Request ID ${checkoutRequestId} not found.`);
+    const transaction = toTransaction(row);
 
     if (action === 'accept') {
       const mockReceipt = `QHD${Math.floor(1000000 + Math.random() * 9000000)}`;

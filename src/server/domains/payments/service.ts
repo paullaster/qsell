@@ -11,7 +11,7 @@ import { extractPaymentReference } from './payment-reference';
 import type { CallbackResult } from './port';
 import { OrderRepository } from '@/server/domains/orders/repository';
 import { getContainer } from '@/server/di/container';
-import { db as memoryDb } from '@/server/db/store';
+import { InventoryReservationService } from '@/server/domains/inventory/reservation-service';
 import type { PaymentProvider } from '@/types/index';
 
 function headersToRecord(headers: Headers): Record<string, string> {
@@ -148,16 +148,12 @@ export class PaymentService {
       paymentMethod: params.providerCode as PaymentProvider,
     });
 
-    const mem = memoryDb.orders.get(params.orderId);
-    if (mem) {
-      mem.paymentStatus = status === 'failed' ? 'failed' : 'pending_verification';
-      if (status === 'failed') mem.status = 'failed';
-      mem.paymentMethod = params.providerCode as PaymentProvider;
-      mem.updatedAt = new Date().toISOString();
-    }
-
     if (status === 'failed') {
-      memoryDb.releaseOrderReservation(params.orderId);
+      await InventoryReservationService.releaseOrder(
+        params.orderId,
+        'payment_initiation_failed',
+        `payment:${params.providerCode}`,
+      );
     }
 
     return { attempt: updated, result };
@@ -286,31 +282,18 @@ export class PaymentService {
         mpesaReceiptNumber: receiptProviders ? paymentReference : null,
         transactionReference: paymentReference,
       });
-      memoryDb.fulfillOrderReservation(attempt.orderId);
+      await InventoryReservationService.fulfilOrder(attempt.orderId);
       await getContainer().customers.applyOrderPayment(attempt.orderId);
     } else if (outcome === 'failed') {
       await this.orderRepo.update(attempt.orderId, {
         paymentStatus: 'failed',
         status: 'failed',
       });
-      memoryDb.releaseOrderReservation(attempt.orderId);
-    }
-
-    const mem = memoryDb.orders.get(attempt.orderId);
-    if (mem) {
-      if (outcome === 'successful' && paymentReference) {
-        mem.paymentStatus = 'paid';
-        mem.status = mem.status === 'pending' ? 'processing' : mem.status;
-        mem.mpesaReceiptNumber =
-          params.providerCode === 'mpesa_daraja' || params.providerCode === 'kcb_buni'
-            ? paymentReference
-            : mem.mpesaReceiptNumber;
-        mem.transactionReference = paymentReference;
-      } else if (outcome === 'failed') {
-        mem.paymentStatus = 'failed';
-        mem.status = 'failed';
-      }
-      mem.updatedAt = new Date().toISOString();
+      await InventoryReservationService.releaseOrder(
+        attempt.orderId,
+        'payment_callback_failed',
+        `payment:${params.providerCode}`,
+      );
     }
 
     return {
