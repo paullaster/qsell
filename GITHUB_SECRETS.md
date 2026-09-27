@@ -21,6 +21,24 @@ Set these **Actions secrets** under the same settings page:
 | `DEPLOY_KNOWN_HOSTS` | Pinned SSH `known_hosts` line for the host |
 | `GHCR_READ_TOKEN` | Fine-grained GitHub token with read access to the GHCR package |
 
+`webfactory/ssh-agent` cannot unlock passphrase-protected keys. Use a dedicated
+deployment key with no passphrase; do not use your personal SSH key. Store only
+its private half in `DEPLOY_SSH_PRIVATE_KEY`, and install its public half in the
+deployment account's `authorized_keys`:
+
+```sh
+ssh-keygen -t ed25519 -a 100 -N '' -C 'qsell-github-actions' \
+  -f ~/.ssh/qsell_actions_deploy
+ssh-copy-id -i ~/.ssh/qsell_actions_deploy.pub creame@<server-host>
+```
+
+Verify the new key before replacing the GitHub secret:
+
+```sh
+ssh -i ~/.ssh/qsell_actions_deploy -o IdentitiesOnly=yes \
+  creame@<server-host> 'id -un'
+```
+
 Application secrets stay on the host in `/opt/qsell/.env.runtime`; the Postgres
 bootstrap password stays in `/opt/qsell/secrets/postgres_password`. The Actions
 workflow does not write or print either file.
