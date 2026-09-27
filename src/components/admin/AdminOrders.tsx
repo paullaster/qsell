@@ -648,6 +648,7 @@ export function AdminOrders({ ordersPromise, companyPromise, onRefresh }: AdminO
                     width={48}
                     height={48}
                     sizes="48px"
+                    unoptimized
                     className="h-12 w-12 rounded-lg border border-line-strong object-contain"
                   />
                 ) : null}

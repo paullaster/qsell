@@ -53,23 +53,6 @@ export class AnalyticsService {
       percentage: totalRevenue > 0 ? Number(((data.amount / totalRevenue) * 100).toFixed(1)) : 0,
     }));
 
-    const catMap: Record<string, number> = {};
-    for (const row of products) {
-      const price = Number(row.price ?? 0);
-      const category = row.categoryLabel ?? row.categoryName;
-      catMap[category] = (catMap[category] || 0) + price * Math.max(1, 10 - row.stockQuantity);
-    }
-    const categorySales = Object.entries(catMap).map(([category, sales]) => ({ category, sales }));
-
-    const recentHourlySales = [
-      { time: '08:00', sales: 24500, orders: 1 },
-      { time: '10:00', sales: 78900, orders: 2 },
-      { time: '12:00', sales: 45200, orders: 1 },
-      { time: '14:00', sales: 112000, orders: 3 },
-      { time: '16:00', sales: 67800, orders: 2 },
-      { time: '18:00', sales: 89000, orders: 2 },
-    ];
-
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const todaySalesKes = paidOrders
@@ -85,8 +68,6 @@ export class AnalyticsService {
       lowStockAlertsCount,
       todaySalesKes,
       salesByPaymentMethod,
-      categorySales,
-      recentHourlySales,
     };
   }
 

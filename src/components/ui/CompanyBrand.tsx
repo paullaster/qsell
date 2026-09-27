@@ -37,6 +37,7 @@ export function CompanyBrand({
             alt={`${tradingName} logo`}
             fill
             sizes="36px"
+            unoptimized
             className="object-contain"
           />
         </span>

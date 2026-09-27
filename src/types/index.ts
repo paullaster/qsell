@@ -129,12 +129,7 @@ export interface InventoryLedgerEntry {
 }
 
 export type PaymentProvider =
-  | 'mpesa_daraja'
-  | 'pesapal_v3'
-  | 'jenga_hq'
-  | 'kcb_buni'
-  | 'card_direct'
-  | 'on_account';
+  'mpesa_daraja' | 'pesapal_v3' | 'jenga_hq' | 'kcb_buni' | 'card_direct' | 'on_account';
 
 export interface PaymentGatewayConfig {
   id: string;
@@ -327,14 +322,5 @@ export interface DashboardAnalytics {
     amount: number;
     count: number;
     percentage: number;
-  }[];
-  recentHourlySales: {
-    time: string;
-    sales: number;
-    orders: number;
-  }[];
-  categorySales: {
-    category: string;
-    sales: number;
   }[];
 }
