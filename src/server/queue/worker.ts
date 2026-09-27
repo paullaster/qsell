@@ -23,6 +23,8 @@ export interface ProcessPaymentCallbackJob {
   auditId: string;
   correlationId: string;
   provider: string;
+  callbackToken?: string;
+  callbackEventId?: string;
   rawPayload: string;
   headers: Record<string, string>;
 }

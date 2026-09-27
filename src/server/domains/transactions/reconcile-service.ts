@@ -65,6 +65,18 @@ export class TransactionReconcileService {
     private readonly ledger: TransactionLedgerService,
   ) {}
 
+  /** Automatically post the ledger credit after a provider confirms payment. */
+  async reconcileSuccessfulPaymentAttempt(attemptId: string): Promise<void> {
+    const [attempt] = await this.db
+      .select({ companyId: branches.companyId })
+      .from(paymentAttempts)
+      .innerJoin(branches, eq(branches.id, paymentAttempts.branchId))
+      .where(eq(paymentAttempts.id, attemptId))
+      .limit(1);
+    if (!attempt) throw new Error('Payment attempt branch not found for reconciliation.');
+    await this.postPaymentCredit(attempt.companyId, 'gateway_attempt', attemptId);
+  }
+
   async listMissing(companyId: string, limit = 200): Promise<LedgerReconciliationSnapshot> {
     const branchIds = await this.companyBranchIds(companyId);
     const [invoiceDebits, paymentCredits] = await Promise.all([
@@ -252,7 +264,10 @@ export class TransactionReconcileService {
       .select()
       .from(orders)
       .where(
-        and(eq(orders.id, orderId), or(isNull(orders.branchId), inArray(orders.branchId, branchIds))),
+        and(
+          eq(orders.id, orderId),
+          or(isNull(orders.branchId), inArray(orders.branchId, branchIds)),
+        ),
       )
       .limit(1);
     if (!order) throw new Error('Order not found for this company.');
@@ -276,18 +291,27 @@ export class TransactionReconcileService {
   }
 
   /** Manually post a credit for a payment that never hit the transaction ledger. */
-  async postPaymentCredit(companyId: string, source: 'customer_ledger' | 'gateway_attempt', id: string): Promise<void> {
+  async postPaymentCredit(
+    companyId: string,
+    source: 'customer_ledger' | 'gateway_attempt',
+    id: string,
+  ): Promise<void> {
     if (source === 'customer_ledger') {
       return this.postPaymentCreditFromLedgerDocument(companyId, id);
     }
     return this.postPaymentCreditFromAttempt(companyId, id);
   }
 
-  private async postPaymentCreditFromLedgerDocument(companyId: string, entryId: string): Promise<void> {
+  private async postPaymentCreditFromLedgerDocument(
+    companyId: string,
+    entryId: string,
+  ): Promise<void> {
     const [entry] = await this.db
       .select()
       .from(customerLedgerEntries)
-      .where(and(eq(customerLedgerEntries.id, entryId), eq(customerLedgerEntries.companyId, companyId)))
+      .where(
+        and(eq(customerLedgerEntries.id, entryId), eq(customerLedgerEntries.companyId, companyId)),
+      )
       .limit(1);
     if (!entry) throw new Error('Payment document not found for this company.');
     if (entry.documentType !== 'payment') throw new Error('Document is not a payment.');
