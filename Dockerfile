@@ -5,8 +5,9 @@ FROM node:${NODE_VERSION}-alpine AS base
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1 \
     PNPM_HOME=/pnpm \
+    COREPACK_HOME=/pnpm/corepack \
     PATH=/pnpm:$PATH
-RUN corepack enable
+RUN corepack enable && corepack prepare pnpm@12.6.0 --activate
 
 # Install the exact pnpm version and dependency graph declared by the manifest
 # and lockfile. A missing lockfile fails the image build instead of resolving
@@ -41,11 +42,14 @@ ENV NODE_ENV=production \
     PORT=3069 \
     HOSTNAME=0.0.0.0 \
     PNPM_HOME=/pnpm \
+    COREPACK_HOME=/pnpm/corepack \
     PATH=/pnpm:$PATH
 RUN addgroup --system --gid 1001 nextjs \
  && adduser --system --uid 1001 --ingroup nextjs nextjs \
  && corepack enable \
- && corepack prepare pnpm@12.6.0 --activate
+ && corepack prepare pnpm@12.6.0 --activate \
+ && chown -R nextjs:nextjs /pnpm \
+ && chown nextjs:nextjs /app
 
 FROM runtime-base AS runner
 COPY --from=builder --chown=nextjs:nextjs /app/.next/standalone ./

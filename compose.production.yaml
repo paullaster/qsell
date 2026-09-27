@@ -102,9 +102,9 @@ services:
     restart: unless-stopped
     init: true
     ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
+      # Existing host Nginx retains public 80/443 and forwards to Caddy here.
+      # Caddy then routes requests to the web app over the Compose network.
+      - "127.0.0.1:8080:8080"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
