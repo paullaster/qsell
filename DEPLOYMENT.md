@@ -3,11 +3,13 @@
 ## Architecture
 
 - Cloudflare proxies `omnicommerce.brainsporellc.com` to the Ubuntu host.
-- Caddy terminates TLS and proxies to the Next.js container on port 3069.
+- Existing host Nginx owns public ports 80/443 and terminates TLS.
+- Host Nginx proxies to Caddy on `127.0.0.1:8080`; Caddy proxies to the Next.js
+  service on Compose port 3069.
 - Next.js is built with Next standalone output and runs as an unprivileged user.
 - PostgreSQL 18 stores application data and Graphile Worker jobs.
 - The web app, Graphile Worker, and migration runner use images built from the
-  same release commit. Only the web service is exposed to Caddy.
+  same release commit. Only the Caddy proxy is published to host loopback.
 - There is no unused Redis service, Swarm dependency, public database port, or
   fake cache/health service in the production stack.
 
@@ -27,8 +29,29 @@
 5. Configure the repository Actions variables and secrets listed in
    [GITHUB_SECRETS.md](./GITHUB_SECRETS.md).
 6. In Cloudflare, create a proxied `A` record for `omnicommerce` pointing to the
-   host. Set SSL/TLS mode to **Full (strict)**. Caddy obtains and renews the
-   origin certificate automatically; ports 80 and 443 must be reachable.
+   host. Ensure the existing Nginx virtual host has a valid TLS certificate and
+   proxy configuration before selecting **Full (strict)** in Cloudflare.
+7. Integrate the Nginx location snippet into the existing HTTPS server block
+   for this hostname. The release workflow copies the latest snippet to
+   `/opt/qsell/deploy/nginx/omnicommerce-locations.conf`.
+
+Inside the existing `listen 443 ssl` server block for
+`omnicommerce.brainsporellc.com`, replace its current application catch-all
+`location /` with:
+
+```sh
+include /opt/qsell/deploy/nginx/omnicommerce-locations.conf;
+```
+
+Keep existing ACME handling and TLS certificate directives unchanged. Then:
+
+```sh
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Keep the current valid TLS certificate and set Cloudflare SSL/TLS to
+**Full (strict)**. Nginx continues to own ports 80/443; Compose publishes Caddy
+only on loopback port 8080.
 
 The runtime environment must include at least `DATABASE_URL` and `AUTH_SECRET`.
 Configure enabled payment, email, encryption, and storage integrations there as
@@ -41,7 +64,7 @@ needed. Do not place secrets in the repository or in the deployment workflow.
    and builds Next.js.
 2. Merge the pull request. The release workflow publishes immutable
    `sha-<commit>`, `worker-<commit>`, and `migrator-<commit>` images to GHCR.
-3. The workflow connects to the host with its SSH key, copies the Compose/Caddy
+3. The workflow connects to the host with its SSH key, copies the Compose/Nginx
    config, pulls those exact commit images, applies migrations, updates Compose,
    and checks the app health endpoint.
 

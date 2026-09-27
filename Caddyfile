@@ -1,4 +1,10 @@
-omnicommerce.brainsporellc.com {
+{
+	# The host Nginx owns ports 80/443 and TLS. Caddy is an internal proxy only.
+	http_port 8080
+	auto_https off
+}
+
+http://omnicommerce.brainsporellc.com:8080 {
 	encode zstd gzip
 
 	header {
@@ -9,12 +15,14 @@ omnicommerce.brainsporellc.com {
 	}
 
 	reverse_proxy app:3069 {
+		header_up X-Forwarded-Proto {http.request.header.X-Forwarded-Proto}
+		header_up X-Forwarded-Host {http.request.header.X-Forwarded-Host}
 		health_uri /api/health
 		health_interval 10s
 		health_timeout 3s
 		transport http {
-			 dial_timeout 5s
-			 response_header_timeout 60s
-		 }
+			dial_timeout 5s
+			response_header_timeout 60s
+		}
 	}
 }

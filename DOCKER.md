@@ -29,7 +29,10 @@ docker compose --profile worker up --build
 
 Production uses `compose.production.yaml` with a single Compose project: the
 standalone Next.js app, a separate Graphile Worker process, a one-shot Drizzle
-migrator, PostgreSQL 18, and Caddy for HTTPS. The release workflow publishes
+migrator, PostgreSQL 18, and Caddy as the app reverse proxy. Caddy listens on
+loopback port 8080 because host Nginx already owns public ports 80/443. Nginx
+terminates TLS and proxies to Caddy; Caddy proxies to the app on port 3069. The
+release workflow publishes
 immutable images and updates the server; it does not build images on the host.
 
 See [DEPLOYMENT.md](./DEPLOYMENT.md) for host provisioning and first deployment.

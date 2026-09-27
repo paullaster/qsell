@@ -128,15 +128,16 @@ jobs:
           install -d -m 700 ~/.ssh
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
-      - name: Copy Compose and TLS proxy config
+      - name: Copy Compose, Caddy, and host Nginx config
         env:
           DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
           DEPLOY_USER: ${{ vars.DEPLOY_USER }}
         run: |
           test -n "$DEPLOY_HOST"
           test -n "$DEPLOY_USER"
-          ssh "$DEPLOY_USER@$DEPLOY_HOST" 'mkdir -p /opt/qsell'
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" 'mkdir -p /opt/qsell/deploy/nginx'
           scp compose.production.yaml Caddyfile "$DEPLOY_USER@$DEPLOY_HOST:/opt/qsell/"
+          scp deploy/nginx/omnicommerce-locations.conf "$DEPLOY_USER@$DEPLOY_HOST:/opt/qsell/deploy/nginx/"
       - name: Authenticate server to GHCR
         env:
           DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
