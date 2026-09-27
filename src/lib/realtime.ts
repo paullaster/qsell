@@ -53,6 +53,7 @@ export function useRealtimeSync(onEvent?: (event: string, data: any) => void) {
         eventSource.addEventListener('reconciliation_event', (e) =>
           handleAnyMessage(e, 'reconciliation_event'),
         );
+        eventSource.addEventListener('quote_event', (e) => handleAnyMessage(e, 'quote_event'));
         eventSource.addEventListener('payment_gateway_updated', (e) =>
           handleAnyMessage(e, 'payment_gateway_updated'),
         );

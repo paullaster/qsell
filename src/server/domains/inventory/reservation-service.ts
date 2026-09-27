@@ -44,9 +44,32 @@ export class InventoryReservationService {
     if (items.length === 0) return { success: true };
 
     const outcome = await drizzleDb.transaction(async (tx) => {
+      const existingReservations = await tx
+        .select({
+          productId: inventoryMovements.productId,
+          quantity: inventoryMovements.changeAmount,
+        })
+        .from(inventoryMovements)
+        .where(
+          and(
+            eq(inventoryMovements.referenceId, orderId),
+            eq(inventoryMovements.changeType, 'order_reservation'),
+          ),
+        );
+      const reservedByProduct = new Map(
+        existingReservations.map((row) => [row.productId, Math.abs(row.quantity)]),
+      );
+      const remainingItems = items
+        .map((item) => ({
+          ...item,
+          quantity: Math.max(0, item.quantity - (reservedByProduct.get(item.productId) ?? 0)),
+        }))
+        .filter((item) => item.quantity > 0);
+      if (remainingItems.length === 0) return { success: true as const };
+
       // 1. Validate availability with every candidate row locked, in a stable
       //    order, so concurrent checkouts queue instead of interleaving.
-      const ids = [...new Set(items.map((i) => i.productId))].sort();
+      const ids = [...new Set(remainingItems.map((i) => i.productId))].sort();
       const locked = await tx
         .select()
         .from(products)
@@ -56,10 +79,13 @@ export class InventoryReservationService {
 
       const byId = new Map(locked.map((row) => [row.id, row]));
 
-      for (const item of items) {
+      for (const item of remainingItems) {
         const product = byId.get(item.productId);
         if (!product) {
-          return { success: false as const, error: `Product ID ${item.productId} was not found in catalog.` };
+          return {
+            success: false as const,
+            error: `Product ID ${item.productId} was not found in catalog.`,
+          };
         }
         const available = product.stockQuantity - product.reservedQuantity;
         if (available < item.quantity) {
@@ -71,7 +97,7 @@ export class InventoryReservationService {
       }
 
       // 2. Apply the holds.
-      for (const item of items) {
+      for (const item of remainingItems) {
         const product = byId.get(item.productId)!;
         await tx
           .update(products)
@@ -232,7 +258,13 @@ export class InventoryReservationService {
       .where(
         and(
           eq(orders.paymentStatus, 'failed'),
-          inArray(orders.paymentMethod, ['mpesa_daraja', 'pesapal_v3', 'jenga_hq', 'kcb_buni', 'card_direct']),
+          inArray(orders.paymentMethod, [
+            'mpesa_daraja',
+            'pesapal_v3',
+            'jenga_hq',
+            'kcb_buni',
+            'card_direct',
+          ]),
         ),
       );
 

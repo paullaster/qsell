@@ -21,13 +21,27 @@ export class OrderWriteService {
       country: string;
     };
     items: { productId: string; quantity: number }[];
+    quotedItems?: {
+      productId: string;
+      quantity: number;
+      productName: string;
+      sku: string;
+      lineAmount: number;
+      taxRate: number;
+      isTaxInclusive: boolean;
+    }[];
+    quotedTotals?: { subtotal: number; tax: number; shippingFee: number; totalAmount: number };
+    orderId?: string;
+    orderNumber?: string;
     currency: 'KES' | 'USD';
     paymentMethod: PaymentProvider;
     /** Flat fields (globalDimension1Code) or { global, shortcut } projection */
-    dimensionFields?: Record<string, string | null | undefined> | {
-      global: Record<string, string>;
-      shortcut: Record<string, string>;
-    };
+    dimensionFields?:
+      | Record<string, string | null | undefined>
+      | {
+          global: Record<string, string>;
+          shortcut: Record<string, string>;
+        };
   }): Promise<{ success: boolean; order?: Order; error?: string }> {
     const orderItems: OrderItem[] = [];
     const pricedLines: {
@@ -44,40 +58,47 @@ export class OrderWriteService {
         p,
       ]),
     );
+    const quotedItems = new Map((params.quotedItems ?? []).map((item) => [item.productId, item]));
 
     for (const item of params.items) {
       const prod = catalogProducts.get(item.productId);
       if (!prod) {
         return { success: false, error: `Product ID ${item.productId} does not exist.` };
       }
-      if (prod.isSellable === false) {
+      const quoted = quotedItems.get(item.productId);
+      if (prod.isSellable === false && !quoted) {
         return { success: false, error: `${prod.name} is not sellable and cannot be ordered.` };
       }
-      if (prod.price == null || !Number.isFinite(prod.price) || prod.price <= 0) {
+      if (!quoted && (prod.price == null || !Number.isFinite(prod.price) || prod.price <= 0)) {
         return { success: false, error: `${prod.name} has no valid selling price.` };
       }
-      const itemTotal = prod.price * item.quantity;
+      const unitPrice = quoted ? quoted.lineAmount / Math.max(quoted.quantity, 1) : prod.price!;
+      const itemTotal = quoted ? quoted.lineAmount : unitPrice * item.quantity;
       orderItems.push({
         productId: prod.id,
-        productName: prod.name,
-        sku: prod.sku,
+        productName: quoted?.productName ?? prod.name,
+        sku: quoted?.sku ?? prod.sku,
         quantity: item.quantity,
-        unitPrice: prod.price,
+        unitPrice,
         totalPrice: itemTotal,
         imageUrl: prod.imageUrl,
       });
       pricedLines.push({
         productId: prod.id,
         quantity: item.quantity,
-        unitPrice: prod.price,
-        taxRate: prod.taxRate ?? 0,
-        isTaxInclusive: prod.isTaxInclusive !== false,
+        unitPrice,
+        taxRate: quoted?.taxRate ?? prod.taxRate ?? 0,
+        isTaxInclusive: quoted?.isTaxInclusive ?? prod.isTaxInclusive !== false,
       });
     }
 
-    const { subtotal, tax, shippingFee, totalAmount } = computeCheckoutTotals(pricedLines);
-    const orderId = `ord_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    const orderNumber = `ORD-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+    const { subtotal, tax, shippingFee, totalAmount } =
+      params.quotedTotals ?? computeCheckoutTotals(pricedLines);
+    const orderId =
+      params.orderId ?? `ord_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const orderNumber =
+      params.orderNumber ??
+      `ORD-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const reservation = await InventoryReservationService.reserveForOrder(
       params.items,
@@ -142,7 +163,9 @@ export class OrderWriteService {
             global: Record<string, string>;
             shortcut: Record<string, string>;
           };
-          return Object.keys(projection.global).length + Object.keys(projection.shortcut).length > 0;
+          return (
+            Object.keys(projection.global).length + Object.keys(projection.shortcut).length > 0
+          );
         }
         return Object.values(callerDimensions).some((value) => Boolean(value));
       })();

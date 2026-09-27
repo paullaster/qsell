@@ -9,6 +9,7 @@ import type { UserSession, CustomerAccount } from '@/types/index';
 import { AuthService, SESSION_COOKIE } from './service';
 import { StorefrontCustomerService } from '@/server/domains/customers/storefront-service';
 import { cookies } from 'next/headers';
+import { randomUUID } from 'node:crypto';
 
 function toSessionShape(user: {
   id: string;
@@ -45,8 +46,7 @@ export async function getSessionAction(): Promise<{
       .getAll()
       .some(
         (c) =>
-          c.name.includes('authjs.session-token') ||
-          c.name.includes('next-auth.session-token'),
+          c.name.includes('authjs.session-token') || c.name.includes('next-auth.session-token'),
       );
     if (hasSessionCookie) await clearStaleAuthSessionCookies();
     return { session: null, customer: null };
@@ -61,10 +61,10 @@ export async function getSessionAction(): Promise<{
 
   const customer =
     session.user.role === 'customer'
-      ? (await StorefrontCustomerService.findByEmailOrPhone(session.user.email)) ??
+      ? ((await StorefrontCustomerService.findByEmailOrPhone(session.user.email)) ??
         (session.user.customerStoreId
           ? await StorefrontCustomerService.findById(session.user.customerStoreId)
-          : null)
+          : null))
       : null;
 
   if (!customer || session.user.role !== 'customer') {
@@ -130,46 +130,107 @@ export async function registerCustomerAction(input: {
   email: string;
   phone?: string;
   password: string;
-}): Promise<{ ok: true }> {
-  const email = input.email.toLowerCase().trim();
-  const users = new UserRepository();
-  const existing = await users.findByEmail(email);
-  if (existing) throw new Error('An account with this email already exists.');
-
-  const customer = await StorefrontCustomerService.ensure({
-    name: input.name.trim(),
-    email,
-    phone: input.phone?.trim() || '0700000000',
-  });
-
-  await users.create({
-    email,
-    password: input.password,
-    name: input.name.trim(),
-    phone: input.phone?.trim() || null,
-    role: 'customer',
-    customerStoreId: customer.id,
-  });
-
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const requestId = randomUUID();
   try {
-    const container = getContainer();
-    const company = await container.companySettings.ensureSeeded();
-    await container.customers.ensureStorefrontCustomer(company.id, {
-      name: input.name.trim(),
+    const name = input.name.trim();
+    const email = input.email.toLowerCase().trim();
+    if (!name || !email || !input.password) {
+      return { ok: false, error: 'Enter your name, email address, and password to continue.' };
+    }
+    if (input.password.length < 8) {
+      return { ok: false, error: 'Choose a password with at least 8 characters.' };
+    }
+
+    const users = new UserRepository();
+    const existing = await users.findByEmail(email);
+    if (existing) {
+      console.info('[auth.register] account already exists', { requestId, code: 'EMAIL_EXISTS' });
+      return {
+        ok: false,
+        error: 'An account with this email already exists. Sign in or reset your password instead.',
+      };
+    }
+
+    const customer = await StorefrontCustomerService.ensure({
+      name,
       email,
-      phone: input.phone?.trim() || null,
+      phone: input.phone?.trim() || '0700000000',
     });
-  } catch {
-    /* trade card is created on first account/checkout load if this fails */
+
+    await users.create({
+      email,
+      password: input.password,
+      name,
+      phone: input.phone?.trim() || null,
+      role: 'customer',
+      customerStoreId: customer.id,
+    });
+
+    try {
+      const container = getContainer();
+      const company = await container.companySettings.ensureSeeded();
+      await container.customers.ensureStorefrontCustomer(company.id, {
+        name,
+        email,
+        phone: input.phone?.trim() || null,
+      });
+    } catch (error) {
+      console.error('[auth.register] storefront customer sync failed', {
+        requestId,
+        code: 'CUSTOMER_SYNC_FAILED',
+        error: describeAuthError(error),
+      });
+      // The linked trade record is repaired during account/checkout loading.
+    }
+
+    await signIn('credentials', {
+      email,
+      password: input.password,
+      redirect: false,
+    });
+
+    return { ok: true };
+  } catch (error) {
+    console.error('[auth.register] account creation failed', {
+      requestId,
+      code: 'REGISTRATION_FAILED',
+      error: describeAuthError(error),
+    });
+    if (error instanceof AuthError) {
+      return {
+        ok: false,
+        error:
+          'Your account was created, but we could not sign you in automatically. Please sign in with your new account.',
+      };
+    }
+    if (isUniqueConstraintError(error)) {
+      return {
+        ok: false,
+        error: 'An account with this email already exists. Sign in or reset your password instead.',
+      };
+    }
+    return {
+      ok: false,
+      error: `We couldn't create your account right now. Please try again. If this continues, contact support with reference ${requestId}.`,
+    };
   }
+}
 
-  await signIn('credentials', {
-    email,
-    password: input.password,
-    redirect: false,
-  });
+function describeAuthError(error: unknown) {
+  if (error instanceof Error) {
+    return { name: error.name, message: error.message, stack: error.stack };
+  }
+  return { message: String(error) };
+}
 
-  return { ok: true };
+function isUniqueConstraintError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: unknown }).code === '23505'
+  );
 }
 
 export async function loginAction(input: {

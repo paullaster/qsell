@@ -957,7 +957,10 @@ export const products = pgTable(
     isTaxInclusive: boolean('is_tax_inclusive'),
     /** kg */
     weight: numeric('weight', { precision: 12, scale: 4 }),
-    specifications: jsonb('specifications').$type<{ key: string; value: string }[]>().notNull().default([]),
+    specifications: jsonb('specifications')
+      .$type<{ key: string; value: string }[]>()
+      .notNull()
+      .default([]),
     stockQuantity: integer('stock_quantity').notNull().default(0),
     reservedQuantity: integer('reserved_quantity').notNull().default(0),
     lowStockThreshold: integer('low_stock_threshold').notNull().default(0),
@@ -1044,7 +1047,10 @@ export const paymentTransactions = pgTable(
     customerPhone: text('customer_phone'),
     customerEmail: text('customer_email'),
     requestPayload: jsonb('request_payload').$type<Record<string, unknown>>().notNull().default({}),
-    responsePayload: jsonb('response_payload').$type<Record<string, unknown>>().notNull().default({}),
+    responsePayload: jsonb('response_payload')
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
     ipnStatus: text('ipn_status').notNull().default('pending'),
     reconciliationStatus: text('reconciliation_status').notNull().default('pending'),
     errorMessage: text('error_message'),
@@ -1052,7 +1058,9 @@ export const paymentTransactions = pgTable(
     callbackPayload: jsonb('callback_payload').$type<Record<string, unknown>>(),
     callbackReceivedAt: timestamp('callback_received_at', { withTimezone: true }),
     callbackProcessedAt: timestamp('callback_processed_at', { withTimezone: true }),
-    callbackAuditId: uuid('callback_audit_id').references(() => integrationAuditLog.id, { onDelete: 'set null' }),
+    callbackAuditId: uuid('callback_audit_id').references(() => integrationAuditLog.id, {
+      onDelete: 'set null',
+    }),
     queueJobId: text('queue_job_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -1150,6 +1158,131 @@ export const reconciliationLogs = pgTable(
   ],
 );
 
+/** Per-company gross-margin approval floor for sales quotes. */
+export const salesQuoteSettings = pgTable('sales_quote_settings', {
+  companyId: uuid('company_id')
+    .primaryKey()
+    .references(() => companySettings.id, { onDelete: 'cascade' }),
+  minimumGrossMarginPercent: numeric('minimum_gross_margin_percent', {
+    precision: 7,
+    scale: 3,
+  })
+    .notNull()
+    .default('0'),
+  nextQuoteNumber: integer('next_quote_number').notNull().default(1),
+  updatedBy: text('updated_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Sales quotation header; line/cost/tax values are price snapshots. */
+export const salesQuotes = pgTable(
+  'sales_quotes',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+    customerId: uuid('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+    quoteNumber: text('quote_number').notNull(),
+    status: text('status').notNull().default('draft'),
+    customerName: text('customer_name').notNull(),
+    customerEmail: text('customer_email'),
+    customerPhone: text('customer_phone'),
+    billingAddress: jsonb('billing_address').$type<Record<string, string>>().notNull().default({}),
+    deliveryAddress: jsonb('delivery_address')
+      .$type<Record<string, string>>()
+      .notNull()
+      .default({}),
+    currency: text('currency').notNull().default('KES'),
+    subtotal: numeric('subtotal', { precision: 14, scale: 2 }).notNull().default('0'),
+    taxAmount: numeric('tax_amount', { precision: 14, scale: 2 }).notNull().default('0'),
+    discountAmount: numeric('discount_amount', { precision: 14, scale: 2 }).notNull().default('0'),
+    quoteDiscountPercent: numeric('quote_discount_percent', { precision: 7, scale: 3 })
+      .notNull()
+      .default('0'),
+    shippingFee: numeric('shipping_fee', { precision: 14, scale: 2 }).notNull().default('0'),
+    totalAmount: numeric('total_amount', { precision: 14, scale: 2 }).notNull().default('0'),
+    totalCost: numeric('total_cost', { precision: 14, scale: 2 }).notNull().default('0'),
+    grossProfit: numeric('gross_profit', { precision: 14, scale: 2 }).notNull().default('0'),
+    grossMarginPercent: numeric('gross_margin_percent', { precision: 7, scale: 3 })
+      .notNull()
+      .default('0'),
+    minimumMarginPercent: numeric('minimum_margin_percent', { precision: 7, scale: 3 })
+      .notNull()
+      .default('0'),
+    approvalStatus: text('approval_status').notNull().default('not_required'),
+    paymentMethod: text('payment_method').notNull().default('mpesa_daraja'),
+    validUntil: timestamp('valid_until', { withTimezone: true }),
+    customerReference: text('customer_reference'),
+    publicNotes: text('public_notes'),
+    internalNotes: text('internal_notes'),
+    createdBy: text('created_by'),
+    approvedBy: text('approved_by'),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+    acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+    rejectedAt: timestamp('rejected_at', { withTimezone: true }),
+    convertedOrderId: text('converted_order_id').references(() => orders.id, {
+      onDelete: 'set null',
+    }),
+    shareTokenHash: text('share_token_hash'),
+    revisedFromQuoteId: uuid('revised_from_quote_id').references(
+      (): AnyPgColumn => salesQuotes.id,
+      {
+        onDelete: 'set null',
+      },
+    ),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('sales_quotes_company_number_uidx').on(t.companyId, t.quoteNumber),
+    index('sales_quotes_company_status_idx').on(t.companyId, t.status, t.createdAt),
+    index('sales_quotes_customer_idx').on(t.customerId, t.createdAt),
+  ],
+);
+
+export const salesQuoteLines = pgTable(
+  'sales_quote_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    quoteId: uuid('quote_id')
+      .notNull()
+      .references(() => salesQuotes.id, { onDelete: 'cascade' }),
+    productId: text('product_id').references(() => products.id, { onDelete: 'set null' }),
+    lineNumber: integer('line_number').notNull(),
+    sku: text('sku').notNull().default(''),
+    description: text('description').notNull(),
+    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    unitPrice: numeric('unit_price', { precision: 14, scale: 4 }).notNull(),
+    unitCost: numeric('unit_cost', { precision: 14, scale: 4 }).notNull(),
+    taxRate: numeric('tax_rate', { precision: 7, scale: 3 }).notNull().default('0'),
+    isTaxInclusive: boolean('is_tax_inclusive').notNull().default(true),
+    discountPercent: numeric('discount_percent', { precision: 7, scale: 3 }).notNull().default('0'),
+    netAmount: numeric('net_amount', { precision: 14, scale: 2 }).notNull(),
+    taxAmount: numeric('tax_amount', { precision: 14, scale: 2 }).notNull(),
+    lineAmount: numeric('line_amount', { precision: 14, scale: 2 }).notNull(),
+    costAmount: numeric('cost_amount', { precision: 14, scale: 2 }).notNull(),
+  },
+  (t) => [uniqueIndex('sales_quote_lines_number_uidx').on(t.quoteId, t.lineNumber)],
+);
+
+export const salesQuoteEvents = pgTable(
+  'sales_quote_events',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    quoteId: uuid('quote_id')
+      .notNull()
+      .references(() => salesQuotes.id, { onDelete: 'cascade' }),
+    eventType: text('event_type').notNull(),
+    actorId: text('actor_id'),
+    details: jsonb('details').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('sales_quote_events_quote_idx').on(t.quoteId, t.createdAt)],
+);
+
 /**
  * Admin-facing gateway toggle and credentials, keyed by the legacy gateway id
  * (e.g. "gw_mpesa_daraja") so the M-Pesa / Pesapal services can look one up by
@@ -1192,6 +1325,9 @@ export type AuditLogRow = typeof auditLogs.$inferSelect;
 export type AuditLogInsert = typeof auditLogs.$inferInsert;
 export type OrderRow = typeof orders.$inferSelect;
 export type OrderItemRow = typeof orderItems.$inferSelect;
+export type SalesQuoteRow = typeof salesQuotes.$inferSelect;
+export type SalesQuoteLineRow = typeof salesQuoteLines.$inferSelect;
+export type SalesQuoteEventRow = typeof salesQuoteEvents.$inferSelect;
 export type DimensionRow = typeof dimensions.$inferSelect;
 export type DimensionInsert = typeof dimensions.$inferInsert;
 export type DimensionValueRow = typeof dimensionValues.$inferSelect;
