@@ -1,0 +1,5 @@
+allowBuilds:
+  esbuild: false
+  unrs-resolver: false
+# Require the exact packageManager version declared in package.json everywhere.
+pmOnFail: error

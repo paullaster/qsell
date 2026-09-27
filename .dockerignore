@@ -1,0 +1,15 @@
+.git
+.github
+.next
+node_modules
+coverage
+out
+*.log
+.env
+.env.*
+!.env.example
+.env.runtime
+.env.deploy
+secrets
+.dev-exports
+.DS_Store

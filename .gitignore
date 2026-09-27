@@ -7,6 +7,11 @@ coverage/
 *.log
 .env*
 !.env.example
+.env.runtime
+.env.deploy
+secrets/
+postgres-data/
+caddy-data/
 .cursor
 
 session-ses_f3fe.md
