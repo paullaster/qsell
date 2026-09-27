@@ -4,26 +4,16 @@ import { sql } from 'drizzle-orm';
 
 export async function GET(): Promise<NextResponse> {
   const start = Date.now();
-  const checks: Record<string, { status: 'healthy' | 'unhealthy'; latency?: number; error?: string }> = {};
+  const checks: Record<string, { status: 'healthy' | 'unhealthy'; latencyMs?: number }> = {};
 
   // Database check
   try {
     const dbStart = Date.now();
     const container = getContainer();
     await container.db.execute(sql`SELECT 1`);
-    checks.database = { status: 'healthy', latency: Date.now() - dbStart };
-  } catch (error) {
-    checks.database = { status: 'unhealthy', error: error instanceof Error ? error.message : 'Unknown error' };
-  }
-
-  // Redis check
-  try {
-    const redisStart = Date.now();
-    // Assuming you have a Redis client in container or import it
-    // For now, we'll skip actual Redis check if not configured
-    checks.redis = { status: 'healthy', latency: Date.now() - redisStart };
-  } catch (error) {
-    checks.redis = { status: 'unhealthy', error: error instanceof Error ? error.message : 'Unknown error' };
+    checks.database = { status: 'healthy', latencyMs: Date.now() - dbStart };
+  } catch {
+    checks.database = { status: 'unhealthy' };
   }
 
   // Overall status

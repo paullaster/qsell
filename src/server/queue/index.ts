@@ -1,18 +1,15 @@
 import { run, TaskList } from 'graphile-worker';
 import { tasks } from './tasks';
-import { ensureWorkerSchema } from './worker';
 
 /** Start the background worker (call from a dedicated process or Next.js serverless). */
 export async function startWorker(): Promise<void> {
-  await ensureWorkerSchema();
-
   const taskList = tasks as TaskList;
 
   const runner = await run({
     connectionString: process.env.DATABASE_URL,
     taskList,
-    concurrency: 5,
-    pollInterval: 1000,
+    concurrency: Math.max(1, Number(process.env.WORKER_CONCURRENCY ?? 5)),
+    pollInterval: Math.max(250, Number(process.env.WORKER_POLL_INTERVAL ?? 1000)),
   });
 
   // Graceful shutdown
