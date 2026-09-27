@@ -1,6 +1,7 @@
 import NextAuth from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 import type { NextAuthConfig } from 'next-auth';
+import type {} from 'next-auth/jwt';
 import { UserRepository } from '@/server/domains/auth/user-repository';
 import { isStaffRole } from '@/server/domains/auth/roles';
 
@@ -22,7 +23,7 @@ declare module 'next-auth' {
   }
 }
 
-declare module '@auth/core/jwt' {
+declare module 'next-auth/jwt' {
   interface JWT {
     role?: string;
     phone?: string | null;
