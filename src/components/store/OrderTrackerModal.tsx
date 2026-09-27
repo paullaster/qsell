@@ -117,17 +117,17 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
   };
 
   return (
-    <div className="animate-fade-in fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-backdrop/85 p-4 backdrop-blur-md sm:p-6">
-      <div className="relative my-8 flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-line bg-surface-raised shadow-2xl">
+    <div className="animate-fade-in fixed inset-0 z-50 flex items-stretch justify-center overflow-y-auto bg-backdrop/85 p-0 backdrop-blur-md sm:items-center sm:p-4">
+      <div className="relative flex min-h-dvh w-full max-w-2xl flex-col overflow-hidden border border-line bg-surface-raised shadow-2xl sm:my-4 sm:min-h-0 sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl lg:max-h-[90vh]">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-line bg-surface p-5 sm:p-6">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-indigo-500/20 bg-indigo-600/10 text-indigo-400">
-              <Truck className="h-5 w-5" />
+        <div className="flex items-center justify-between gap-2 border-b border-line bg-surface p-4 sm:p-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-indigo-500/20 bg-indigo-600/10 text-indigo-400 sm:h-10 sm:w-10">
+              <Truck className="h-4 w-4 sm:h-5 sm:w-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-fg-strong">Track Your Order</h2>
-              <p className="text-xs text-fg-muted">
+              <h2 className="text-sm font-bold text-fg-strong sm:text-base">Track Your Order</h2>
+              <p className="line-clamp-1 text-[11px] text-fg-muted sm:text-xs">
                 Real-time status, dispatch timeline & eTIMS receipt
               </p>
             </div>
@@ -141,12 +141,12 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
         </div>
 
         {/* Search Input Box */}
-        <div className="border-b border-line bg-surface p-5 sm:p-6">
+        <div className="border-b border-line bg-surface p-4 sm:p-6">
           <form onSubmit={handleSearch} className="space-y-3">
             <label className="block text-xs font-medium text-fg">
               Enter Order Number, M-Pesa Receipt Code, or Phone Number
             </label>
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2 min-[420px]:flex-row">
               <div className="relative flex-1">
                 <Search className="absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2 text-fg-subtle" />
                 <input
@@ -154,14 +154,14 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   placeholder="e.g. ORD-1740987654 or QJK4920194 or 0712345678"
-                  className="w-full rounded-lg border border-line bg-surface-raised py-2.5 pr-4 pl-10 font-mono text-xs text-fg-strong placeholder-fg-subtle focus:border-indigo-500 focus:outline-none"
+                  className="h-11 w-full rounded-lg border border-line bg-surface-raised py-2.5 pr-3 pl-10 font-mono text-xs text-fg-strong placeholder-fg-subtle focus:border-indigo-500 focus:outline-none sm:pr-4"
                   required
                 />
               </div>
               <button
                 type="submit"
                 disabled={isLoading}
-                className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg bg-indigo-600 px-5 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
+                className="flex min-h-11 w-full shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-indigo-500 disabled:opacity-50 min-[420px]:w-auto min-[420px]:px-5"
               >
                 {isLoading ? 'Searching...' : 'Track Order'}
               </button>
@@ -174,7 +174,7 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
         </div>
 
         {/* Results Area */}
-        <div className="flex-1 space-y-6 overflow-y-auto p-5 sm:p-6">
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4 sm:space-y-6 sm:p-6">
           {searchError && (
             <div className="flex items-center gap-3 rounded-xl border border-red-800/60 bg-red-50 p-4 text-xs text-red-700">
               <AlertCircle className="h-5 w-5 shrink-0 text-red-600" />

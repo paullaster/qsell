@@ -196,6 +196,7 @@ async function main() {
     const productValues = {
         id: p.id ?? `prod_${slugify(name)}_${Date.now()}`,
         sku: p.sku ?? `SKU-${slugify(name).toUpperCase()}`,
+        stockCode: p.stockCode ?? `STK-${slugify(String(p.sku ?? name)).toUpperCase()}`,
         name,
         slug: p.slug ?? slugify(name),
         description: p.description ?? '',
@@ -229,6 +230,7 @@ async function main() {
         set: {
           name,
           sku: p.sku,
+          stockCode: p.stockCode ?? `STK-${slugify(String(p.sku ?? name)).toUpperCase()}`,
           price: num(p.price ?? 0),
           stockQuantity: Number(p.stockQuantity ?? 0),
           reservedQuantity: Number(p.reservedQuantity ?? 0),

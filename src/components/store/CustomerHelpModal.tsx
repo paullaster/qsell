@@ -49,17 +49,17 @@ export function CustomerHelpModal({ isOpen, onClose }: CustomerHelpModalProps) {
   ];
 
   return (
-    <div className="animate-fade-in fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-backdrop/85 p-4 backdrop-blur-md sm:p-6">
-      <div className="relative my-8 flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-line bg-surface-raised shadow-2xl">
+    <div className="animate-fade-in fixed inset-0 z-50 flex items-stretch justify-center overflow-y-auto bg-backdrop/85 p-0 backdrop-blur-md sm:items-center sm:p-4">
+      <div className="relative flex min-h-dvh w-full max-w-2xl flex-col overflow-hidden border border-line bg-surface-raised shadow-2xl sm:my-4 sm:min-h-0 sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl lg:max-h-[90vh]">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-line bg-surface p-5 sm:p-6">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-indigo-500/20 bg-indigo-600/10 text-indigo-400">
-              <HelpCircle className="h-5 w-5" />
+        <div className="flex items-center justify-between gap-2 border-b border-line bg-surface p-4 sm:p-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-indigo-500/20 bg-indigo-600/10 text-indigo-400 sm:h-10 sm:w-10">
+              <HelpCircle className="h-4 w-4 sm:h-5 sm:w-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-fg-strong">Customer Support & FAQs</h2>
-              <p className="text-xs text-fg-muted">
+              <h2 className="text-sm font-bold text-fg-strong sm:text-base">Customer Support & FAQs</h2>
+              <p className="line-clamp-1 text-[11px] text-fg-muted sm:text-xs">
                 Delivery details, payment instructions & warranties
               </p>
             </div>
@@ -73,7 +73,7 @@ export function CustomerHelpModal({ isOpen, onClose }: CustomerHelpModalProps) {
         </div>
 
         {/* Content */}
-        <div className="flex-1 space-y-6 overflow-y-auto p-5 sm:p-6">
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4 sm:space-y-6 sm:p-6">
           {/* Quick Contact Cards */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div className="space-y-1 rounded-xl border border-line bg-surface p-3.5">

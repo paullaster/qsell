@@ -315,6 +315,7 @@ export function StorefrontPageClient({
         items={cart}
         currency={currency}
         paymentLabels={paymentLabels}
+        isSignedIn={Boolean(sessionName)}
         onUpdateQuantity={(productId, quantity) =>
           setCart((prev) =>
             prev.map((item) => (item.product.id === productId ? { ...item, quantity } : item)),

@@ -343,11 +343,11 @@ export function CustomerAccountModal({
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-backdrop/80 p-3 backdrop-blur-md sm:p-6">
-      <div className="relative my-4 flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-line bg-surface-raised shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-stretch justify-center overflow-y-auto bg-backdrop/80 p-0 backdrop-blur-md sm:items-center sm:p-4 lg:p-6">
+      <div className="relative flex min-h-dvh w-full max-w-5xl flex-col overflow-hidden border border-line bg-surface-raised shadow-2xl sm:my-4 sm:min-h-0 sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl lg:max-h-[92vh]">
         {/* Top Header Bar */}
-        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-line bg-surface p-4 sm:p-6">
-          <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-surface p-3 sm:gap-4 sm:p-6">
+          <div className="flex min-w-0 items-center gap-3">
             <div className="relative">
               <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-tr from-indigo-600 to-indigo-400 text-lg font-bold text-fg-strong shadow-lg">
                 {customer?.name?.charAt(0) || 'C'}
@@ -359,7 +359,7 @@ export function CustomerAccountModal({
 
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-lg font-bold text-fg-strong">
+                <h2 className="truncate text-base font-bold text-fg-strong sm:text-lg">
                   {customer?.name || 'Customer Account'}
                 </h2>
                 <span className="rounded-full border border-indigo-500/20 bg-indigo-500/10 px-2 py-0.5 text-[10px] font-semibold tracking-wider text-indigo-400 uppercase">
@@ -1245,8 +1245,8 @@ export function CustomerAccountModal({
       {/* ADD / EDIT ADDRESS SUB-MODAL */}
       {/* ========================================================================= */}
       {isAddressModalOpen && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center bg-backdrop/80 p-4 backdrop-blur-sm">
-          <div className="animate-in zoom-in-95 w-full max-w-lg rounded-2xl border border-line-strong bg-surface-raised p-6 shadow-2xl duration-150">
+        <div className="fixed inset-0 z-60 flex items-stretch justify-center overflow-y-auto bg-backdrop/80 p-2 backdrop-blur-sm sm:items-center sm:p-4">
+          <div className="animate-in zoom-in-95 my-auto max-h-[calc(100dvh-1rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-line-strong bg-surface-raised p-4 shadow-2xl duration-150 sm:max-h-[90vh] sm:p-6">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="flex items-center gap-2 text-sm font-bold text-fg-strong">
                 <MapPin className="h-4 w-4 text-indigo-400" />

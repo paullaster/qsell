@@ -59,6 +59,8 @@ export class CatalogService {
     if (!itemType) {
       throw new Error('Create an item type first, then assign it to this product');
     }
+    if (!productData.sku.trim()) throw new Error('SKU code is required');
+    if (!productData.stockCode.trim()) throw new Error('Stock code is required');
 
     const isSellable = itemType.isSellable;
     let price: number | undefined;
@@ -87,6 +89,8 @@ export class CatalogService {
     const newProduct: Product = {
       ...productData,
       id,
+      sku: productData.sku.trim().toUpperCase(),
+      stockCode: productData.stockCode.trim().toUpperCase(),
       price,
       costPrice: Number(productData.costPrice),
       itemTypeId: itemType.id,
@@ -128,6 +132,15 @@ export class CatalogService {
     const existingRow = await catalog.getProductById(id);
     if (!existingRow) throw new Error(`Product ${id} not found`);
     const existing = toProduct(existingRow);
+
+    if (updates.sku !== undefined) {
+      if (!updates.sku.trim()) throw new Error('SKU code is required');
+      updates.sku = updates.sku.trim().toUpperCase();
+    }
+    if (updates.stockCode !== undefined) {
+      if (!updates.stockCode.trim()) throw new Error('Stock code is required');
+      updates.stockCode = updates.stockCode.trim().toUpperCase();
+    }
 
     if (updates.itemTypeId) {
       const itemType = await catalog.getItemTypeById(updates.itemTypeId);

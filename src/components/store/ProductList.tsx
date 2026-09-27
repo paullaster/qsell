@@ -124,23 +124,24 @@ export function ProductList({
   );
 
   const filtersBar = (
-    <div className="flex flex-wrap items-center gap-3">
-      <div className="flex items-center rounded-lg border border-line bg-surface p-1 text-xs">
+    <div className="flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center">
+      <div className="flex w-full items-center rounded-lg border border-line bg-surface p-1 text-[11px] sm:w-auto sm:text-xs">
         <button
           type="button"
           onClick={() => setStockFilter('all')}
-          className={`cursor-pointer rounded-md px-2.5 py-1 transition-colors ${
+          className={`min-h-9 min-w-0 flex-1 cursor-pointer rounded-md px-1.5 py-1 transition-colors sm:flex-none sm:px-2.5 ${
             stockFilter === 'all'
               ? 'bg-surface-sunken font-semibold text-fg-strong'
               : 'text-fg-muted hover:text-fg-strong'
           }`}
         >
-          All Items ({products.length})
+          <span className="sm:hidden">All ({products.length})</span>
+          <span className="hidden sm:inline">All Items ({products.length})</span>
         </button>
         <button
           type="button"
           onClick={() => setStockFilter('in_stock')}
-          className={`cursor-pointer rounded-md px-2.5 py-1 transition-colors ${
+          className={`min-h-9 min-w-0 flex-1 cursor-pointer rounded-md px-1.5 py-1 transition-colors sm:flex-none sm:px-2.5 ${
             stockFilter === 'in_stock'
               ? 'bg-indigo-600 text-white font-semibold shadow-sm'
               : 'text-fg-muted hover:text-fg-strong'
@@ -151,7 +152,7 @@ export function ProductList({
         <button
           type="button"
           onClick={() => setStockFilter('low_stock')}
-          className={`cursor-pointer rounded-md px-2.5 py-1 transition-colors ${
+          className={`min-h-9 min-w-0 flex-1 cursor-pointer rounded-md px-1.5 py-1 transition-colors sm:flex-none sm:px-2.5 ${
             stockFilter === 'low_stock'
               ? 'bg-amber-600 text-white font-semibold shadow-sm'
               : 'text-fg-muted hover:text-fg-strong'
@@ -166,7 +167,7 @@ export function ProductList({
         onChange={(e) =>
           setSortBy(e.target.value as 'featured' | 'price_asc' | 'price_desc' | 'rating')
         }
-        className="cursor-pointer rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-fg-strong focus:border-indigo-500 focus:outline-none"
+        className="h-10 w-full max-w-full cursor-pointer rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-fg-strong focus:border-indigo-500 focus:outline-none sm:h-9 sm:w-auto"
       >
         <option value="featured">Sort: Featured First</option>
         <option value="price_asc">Price: Low to High</option>
@@ -190,7 +191,7 @@ export function ProductList({
 
       <div className="min-w-0 flex-1 space-y-6">
         {/* Mobile / tablet: horizontal categories + filters */}
-        <div className="space-y-3 rounded-xl border border-line bg-surface-raised p-4 min-[1000px]:space-y-0">
+        <div className="space-y-3 rounded-xl border border-line bg-surface-raised p-3 sm:p-4 min-[1000px]:space-y-0">
           <div className="min-[1000px]:hidden">{categoryNav('pill')}</div>
           <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
             {filtersBar}

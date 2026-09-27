@@ -1,6 +1,6 @@
 {
-  "id": "3dd25ac8-4775-4063-88cb-21f2a2dd3e92",
-  "prevId": "fe3ceb14-1583-43bc-b995-a63ad57c7e12",
+  "id": "69bc43e5-ce89-4271-a1ba-8fef9137f3ef",
+  "prevId": "3dd25ac8-4775-4063-88cb-21f2a2dd3e92",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -4504,6 +4504,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "stock_code": {
+          "name": "stock_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
         "name": {
           "name": "name",
           "type": "text",
@@ -4689,6 +4695,21 @@
           "columns": [
             {
               "expression": "sku",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "products_stock_code_uidx": {
+          "name": "products_stock_code_uidx",
+          "columns": [
+            {
+              "expression": "stock_code",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

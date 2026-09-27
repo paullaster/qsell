@@ -62,8 +62,8 @@ export function MpesaStkModal({
   if (!isOpen || !order) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-backdrop/80 p-4 backdrop-blur-sm">
-      <div className="relative my-6 flex w-full max-w-sm flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-stretch justify-center bg-backdrop/80 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+      <div className="relative flex min-h-dvh w-full max-w-sm flex-col overflow-hidden border border-line bg-surface shadow-2xl sm:my-4 sm:min-h-0 sm:rounded-2xl">
         <div className="flex items-center justify-between border-b border-line px-4 py-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-fg-strong">
             <Smartphone className="h-4 w-4 text-emerald-600" />

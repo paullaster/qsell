@@ -934,6 +934,7 @@ export const products = pgTable(
   {
     id: text('id').primaryKey(),
     sku: text('sku').notNull(),
+    stockCode: text('stock_code').notNull(),
     name: text('name').notNull(),
     slug: text('slug').notNull(),
     description: text('description').notNull().default(''),
@@ -971,6 +972,7 @@ export const products = pgTable(
   },
   (t) => [
     uniqueIndex('products_sku_uidx').on(t.sku),
+    uniqueIndex('products_stock_code_uidx').on(t.stockCode),
     uniqueIndex('products_slug_uidx').on(t.slug),
     index('products_category_idx').on(t.categoryId),
     index('products_item_type_idx').on(t.itemTypeId),

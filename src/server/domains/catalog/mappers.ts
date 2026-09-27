@@ -116,6 +116,7 @@ export function toProduct(row: ProductJoined): Product {
   return {
     id: row.id,
     sku: row.sku,
+    stockCode: row.stockCode,
     name: row.name,
     slug: row.slug,
     description: row.description,
@@ -231,6 +232,7 @@ export function productToRow(product: Product): ProductInsert {
   return {
     id: product.id,
     sku: product.sku,
+    stockCode: product.stockCode,
     name: product.name,
     slug: product.slug,
     description: product.description,

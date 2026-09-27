@@ -56,11 +56,11 @@ export function OrderSuccessModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-backdrop/85 p-4 backdrop-blur-md sm:p-6">
-      <div className="relative my-8 flex w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-line bg-surface-raised shadow-2xl">
-        <div className="relative border-b border-line bg-surface p-6 text-center sm:p-8">
-          <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full border border-emerald-500/20 bg-emerald-500/10 text-emerald-600 shadow-lg">
-            <CheckCircle2 className="h-9 w-9" />
+    <div className="fixed inset-0 z-50 flex items-stretch justify-center overflow-y-auto bg-backdrop/85 p-0 backdrop-blur-md sm:items-center sm:p-4">
+      <div className="relative flex min-h-dvh w-full max-w-2xl flex-col overflow-hidden border border-line bg-surface-raised shadow-2xl sm:my-4 sm:min-h-0 sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl lg:max-h-[90vh]">
+        <div className="relative border-b border-line bg-surface p-4 text-center sm:p-8">
+          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full border border-emerald-500/20 bg-emerald-500/10 text-emerald-600 shadow-lg sm:h-16 sm:w-16">
+            <CheckCircle2 className="h-7 w-7 sm:h-9 sm:w-9" />
           </div>
           <h2 className="text-xl font-bold tracking-tight text-fg-strong sm:text-2xl">
             Order Successfully Placed & Confirmed!
@@ -71,7 +71,7 @@ export function OrderSuccessModal({
           </p>
         </div>
 
-        <div className="space-y-5 p-6">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:space-y-5 sm:p-6">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="rounded-xl border border-line bg-surface p-4">
               <div className="mb-1 flex items-center gap-2 text-[11px] tracking-wider text-fg-subtle uppercase">

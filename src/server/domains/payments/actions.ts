@@ -238,11 +238,25 @@ export async function listEnabledCheckoutProvidersAction(): Promise<
   const { branch } = await ensureBranchContext();
   const { payments } = getContainer();
   const enabled = await payments.listEnabledProviders(branch.id);
-  return enabled.map((c) => ({
-    code: c.providerCode as PaymentProviderCode,
-    label: c.displayName || PAYMENT_PROVIDER_META[c.providerCode as PaymentProviderCode].label,
-    description: PAYMENT_PROVIDER_META[c.providerCode as PaymentProviderCode].description,
-  }));
+  return enabled.map((c) => {
+    const code = c.providerCode as PaymentProviderCode;
+    const meta = PAYMENT_PROVIDER_META[code];
+    const rawLabel = c.displayName || meta.label;
+    const rawDescription = meta.description;
+
+    // Keep provider implementation terminology out of the storefront UI.
+    return {
+      code,
+      label:
+        code === 'mpesa_daraja'
+          ? rawLabel.replace(/\s*\(?daraja\)?/gi, '').trim()
+          : rawLabel,
+      description:
+        code === 'mpesa_daraja'
+          ? 'Pay securely with M-Pesa on your phone.'
+          : rawDescription,
+    };
+  });
 }
 
 export async function initiateBranchPaymentAction(input: {

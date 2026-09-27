@@ -15,7 +15,7 @@ const GRID_BY_DESKTOP: Record<ProductGridDesktopColumns, string> = {
 
 export function productGridClassName(
   desktopColumns: ProductGridDesktopColumns,
-  gapClass = 'gap-6',
+  gapClass = 'gap-3 sm:gap-4 lg:gap-6',
 ): string {
   return `grid ${gapClass} ${GRID_BY_DESKTOP[desktopColumns]}`;
 }
