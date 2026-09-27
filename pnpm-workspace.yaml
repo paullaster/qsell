@@ -1,5 +1,7 @@
 allowBuilds:
   esbuild: false
   unrs-resolver: false
-# Require the exact packageManager version declared in package.json everywhere.
-pmOnFail: error
+# Corepack, CI setup, and Docker pin the executable to pnpm 12.6.0. Avoid
+# recording/downloading pnpm's standalone environment package in production;
+# the runtime images warm the required executable cache during image build.
+pmOnFail: ignore
