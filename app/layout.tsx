@@ -8,6 +8,11 @@ import { resolveCompanyUiConfig } from '@/config/company-ui';
 import { resolveThemeForServer, themeBootstrapScript, type ThemeMode } from '@/config/theme';
 import './globals.css';
 
+// Company settings, user theme, catalog, and admin data are read from the live
+// database. Render routes at request time so Docker/CI image builds do not need
+// production database access or capture database-backed output in the image.
+export const dynamic = 'force-dynamic';
+
 export async function generateMetadata(): Promise<Metadata> {
   try {
     const company = await getCompanySettingsAction();
