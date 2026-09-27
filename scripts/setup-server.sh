@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bootstrap a clean Ubuntu 22.04/24.04 host for Compose deployment.
+# Bootstrap a clean Ubuntu 22.04/24.04/26.04 host for Compose deployment.
 # Run as root. Add the deployment user's SSH public key separately.
 set -Eeuo pipefail
 
@@ -16,6 +16,13 @@ if [[ "${ID:-}" != "ubuntu" ]]; then
   echo "This bootstrap currently supports Ubuntu only." >&2
   exit 1
 fi
+case "${VERSION_ID:-}" in
+  22.04|24.04|26.04) ;;
+  *)
+    echo "Unsupported Ubuntu release: ${VERSION_ID:-unknown} (expected 22.04, 24.04, or 26.04)." >&2
+    exit 1
+    ;;
+esac
 
 apt-get update
 apt-get install -y ca-certificates curl ufw
@@ -27,7 +34,7 @@ chmod a+r /etc/apt/keyrings/docker.asc
 cat > /etc/apt/sources.list.d/docker.sources <<EOF
 Types: deb
 URIs: https://download.docker.com/linux/ubuntu
-Suites: ${VERSION_CODENAME}
+Suites: ${UBUNTU_CODENAME:-$VERSION_CODENAME}
 Components: stable
 Architectures: $(dpkg --print-architecture)
 Signed-By: /etc/apt/keyrings/docker.asc

@@ -1,6 +1,6 @@
 # Docker commands
 
-The repository pins **pnpm 11.9.0** through `package.json` and builds with
+The repository pins **pnpm 12.6.0** through `package.json` and builds with
 `pnpm-lock.yaml`. Keep that lockfile committed; Docker and CI intentionally use
 `--frozen-lockfile` so a deployment cannot resolve different dependency versions.
 

@@ -12,7 +12,7 @@ RUN corepack enable
 # and lockfile. A missing lockfile fails the image build instead of resolving
 # newer dependency versions implicitly.
 FROM base AS dependencies
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile
 
@@ -45,7 +45,7 @@ ENV NODE_ENV=production \
 RUN addgroup --system --gid 1001 nextjs \
  && adduser --system --uid 1001 --ingroup nextjs nextjs \
  && corepack enable \
- && corepack prepare pnpm@11.9.0 --activate
+ && corepack prepare pnpm@12.6.0 --activate
 
 FROM runtime-base AS runner
 COPY --from=builder --chown=nextjs:nextjs /app/.next/standalone ./
@@ -62,7 +62,7 @@ CMD ["node", "server.js"]
 # task handlers via tsx and shares the same pinned dependency lockfile.
 FROM runtime-base AS worker
 COPY --from=dependencies --chown=nextjs:nextjs /app/node_modules ./node_modules
-COPY --chown=nextjs:nextjs package.json tsconfig.json ./
+COPY --chown=nextjs:nextjs package.json pnpm-workspace.yaml tsconfig.json ./
 COPY --chown=nextjs:nextjs src ./src
 USER nextjs
 CMD ["pnpm", "worker"]
@@ -71,7 +71,7 @@ CMD ["pnpm", "worker"]
 # containers, so schema changes are applied using the same source revision.
 FROM runtime-base AS migrator
 COPY --from=dependencies --chown=nextjs:nextjs /app/node_modules ./node_modules
-COPY --chown=nextjs:nextjs package.json tsconfig.json drizzle.config.ts ./
+COPY --chown=nextjs:nextjs package.json pnpm-workspace.yaml tsconfig.json drizzle.config.ts ./
 COPY --chown=nextjs:nextjs drizzle ./drizzle
 COPY --chown=nextjs:nextjs src ./src
 USER nextjs
