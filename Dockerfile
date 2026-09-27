@@ -41,15 +41,25 @@ ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3069 \
     HOSTNAME=0.0.0.0 \
+    HOME=/home/nextjs \
     PNPM_HOME=/pnpm \
     COREPACK_HOME=/pnpm/corepack \
     PATH=/pnpm:$PATH
 RUN addgroup --system --gid 1001 nextjs \
  && adduser --system --uid 1001 --ingroup nextjs nextjs \
+ && mkdir -p /home/nextjs/.cache \
  && corepack enable \
  && corepack prepare pnpm@12.6.0 --activate \
  && chown -R nextjs:nextjs /pnpm \
- && chown nextjs:nextjs /app
+ && chown -R nextjs:nextjs /home/nextjs /app
+
+# pnpm 12 resolves its pinned standalone executable from the project lockfile.
+# Warm that cache during image build so production worker/migration containers
+# never need registry/DNS access at startup. HOME is identical at runtime.
+COPY --from=dependencies --chown=nextjs:nextjs /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml ./
+USER nextjs
+RUN pnpm --version
+USER root
 
 FROM runtime-base AS runner
 COPY --from=builder --chown=nextjs:nextjs /app/.next/standalone ./
