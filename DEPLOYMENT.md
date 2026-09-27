@@ -2,7 +2,7 @@
 
 ## Architecture
 
-- Cloudflare proxies `onmicommerce.brainsporellc.com` to the Ubuntu host.
+- Cloudflare proxies `omnicommerce.brainsporellc.com` to the Ubuntu host.
 - Caddy terminates TLS and proxies to the Next.js container on port 3069.
 - Next.js is built with Next standalone output and runs as an unprivileged user.
 - PostgreSQL 18 stores application data and Graphile Worker jobs.
@@ -26,7 +26,7 @@
    `chmod 600 /opt/qsell/secrets/postgres_password`.
 5. Configure the repository Actions variables and secrets listed in
    [GITHUB_SECRETS.md](./GITHUB_SECRETS.md).
-6. In Cloudflare, create a proxied `A` record for `onmicommerce` pointing to the
+6. In Cloudflare, create a proxied `A` record for `omnicommerce` pointing to the
    host. Set SSL/TLS mode to **Full (strict)**. Caddy obtains and renews the
    origin certificate automatically; ports 80 and 443 must be reachable.
 
