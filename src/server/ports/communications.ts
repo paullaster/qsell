@@ -40,7 +40,7 @@ export interface InvoiceLineItem {
 }
 
 export interface InvoicePayload {
-  documentType: 'tax_invoice' | 'proforma';
+  documentType: 'tax_invoice' | 'proforma' | 'sales_quote';
   invoiceNumber: string;
   issuedAt: string;
   orderId: string;
@@ -63,6 +63,7 @@ export interface InvoicePayload {
   items: InvoiceLineItem[];
   subtotal: number;
   tax: number;
+  taxLabel?: string;
   shippingFee: number;
   totalAmount: number;
   paymentMethod: string;

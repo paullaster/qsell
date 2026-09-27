@@ -1,0 +1,753 @@
+import { and, desc, eq, sql } from 'drizzle-orm';
+import { createHash, randomBytes } from 'node:crypto';
+import { getContainer } from '@/server/di/container';
+import { drizzleDb } from '@/server/db/drizzle/client';
+import {
+  salesQuoteEvents,
+  salesQuoteLines,
+  salesQuotes,
+  salesQuoteSettings,
+  type SalesQuoteRow,
+} from '@/server/db/drizzle/schema';
+import { CatalogService } from '@/server/domains/catalog/service';
+import { OrderWriteService } from '@/server/domains/orders/write-service';
+import type { CompanyProfile } from '@/server/ports/communications';
+import { broadcastRealtime } from '@/server/realtime';
+import type { PaymentProvider } from '@/types/index';
+
+const money = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+const num = (value: string | number | null | undefined) => Number(value ?? 0);
+const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
+const escapeHtml = (value: string) =>
+  value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
+
+export type QuoteStatus =
+  | 'draft'
+  | 'pending_approval'
+  | 'approved'
+  | 'sent'
+  | 'accepted'
+  | 'rejected'
+  | 'expired'
+  | 'converted'
+  | 'cancelled';
+
+export interface QuoteInput {
+  customerId?: string | null;
+  customerName: string;
+  customerEmail?: string | null;
+  customerPhone?: string | null;
+  billingAddress?: Record<string, string>;
+  deliveryAddress?: Record<string, string>;
+  currency: string;
+  paymentMethod: PaymentProvider;
+  validUntil?: string | null;
+  customerReference?: string | null;
+  publicNotes?: string | null;
+  internalNotes?: string | null;
+  discountPercent: number;
+  shippingFee: number;
+  lines: { productId: string; quantity: number; unitPrice?: number; discountPercent: number }[];
+}
+
+export interface SalesQuote extends SalesQuoteRow {
+  lines: (typeof salesQuoteLines.$inferSelect)[];
+  events: (typeof salesQuoteEvents.$inferSelect)[];
+}
+
+export class SalesQuoteService {
+  private async companyId() {
+    return (await getContainer().companySettings.ensureSeeded()).id;
+  }
+
+  async getSettings(companyId?: string) {
+    const resolvedCompanyId = companyId ?? (await this.companyId());
+    const [setting] = await drizzleDb
+      .select()
+      .from(salesQuoteSettings)
+      .where(eq(salesQuoteSettings.companyId, resolvedCompanyId))
+      .limit(1);
+    return (
+      setting ?? {
+        companyId: resolvedCompanyId,
+        minimumGrossMarginPercent: '0',
+        nextQuoteNumber: 1,
+        updatedBy: null,
+        updatedAt: new Date(),
+      }
+    );
+  }
+
+  async updateSettings(userId: string, minimumGrossMarginPercent: number) {
+    if (
+      !Number.isFinite(minimumGrossMarginPercent) ||
+      minimumGrossMarginPercent < 0 ||
+      minimumGrossMarginPercent > 100
+    ) {
+      throw new Error('Minimum gross margin must be between 0 and 100%.');
+    }
+    const companyId = await this.companyId();
+    const [row] = await drizzleDb
+      .insert(salesQuoteSettings)
+      .values({
+        companyId,
+        minimumGrossMarginPercent: minimumGrossMarginPercent.toFixed(3),
+        updatedBy: userId,
+      })
+      .onConflictDoUpdate({
+        target: salesQuoteSettings.companyId,
+        set: {
+          minimumGrossMarginPercent: minimumGrossMarginPercent.toFixed(3),
+          updatedBy: userId,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    return row!;
+  }
+
+  async list() {
+    const companyId = await this.companyId();
+    const rows = await drizzleDb
+      .select()
+      .from(salesQuotes)
+      .where(eq(salesQuotes.companyId, companyId))
+      .orderBy(desc(salesQuotes.updatedAt))
+      .limit(500);
+    return rows;
+  }
+
+  async get(id: string): Promise<SalesQuote | null> {
+    const companyId = await this.companyId();
+    const [quote] = await drizzleDb
+      .select()
+      .from(salesQuotes)
+      .where(and(eq(salesQuotes.id, id), eq(salesQuotes.companyId, companyId)))
+      .limit(1);
+    if (!quote) return null;
+    const [lines, events] = await Promise.all([
+      drizzleDb
+        .select()
+        .from(salesQuoteLines)
+        .where(eq(salesQuoteLines.quoteId, quote.id))
+        .orderBy(salesQuoteLines.lineNumber),
+      drizzleDb
+        .select()
+        .from(salesQuoteEvents)
+        .where(eq(salesQuoteEvents.quoteId, quote.id))
+        .orderBy(desc(salesQuoteEvents.createdAt)),
+    ]);
+    return { ...quote, lines, events };
+  }
+
+  async create(userId: string, input: QuoteInput): Promise<SalesQuote> {
+    return this.save(userId, null, input);
+  }
+
+  async update(userId: string, id: string, input: QuoteInput): Promise<SalesQuote> {
+    return this.save(userId, id, input);
+  }
+
+  async revise(userId: string, id: string): Promise<SalesQuote> {
+    const previous = await this.get(id);
+    if (!previous) throw new Error('Quote not found.');
+    if (previous.status === 'converted' || previous.status === 'cancelled') {
+      throw new Error('A converted or cancelled quote cannot be revised.');
+    }
+    const revised = await this.create(userId, {
+      customerId: previous.customerId,
+      customerName: previous.customerName,
+      customerEmail: previous.customerEmail,
+      customerPhone: previous.customerPhone,
+      billingAddress: previous.billingAddress,
+      deliveryAddress: previous.deliveryAddress,
+      currency: previous.currency,
+      paymentMethod: previous.paymentMethod as PaymentProvider,
+      validUntil: previous.validUntil?.toISOString().slice(0, 10),
+      customerReference: previous.customerReference,
+      publicNotes: previous.publicNotes,
+      internalNotes: previous.internalNotes,
+      discountPercent: num(previous.quoteDiscountPercent),
+      shippingFee: num(previous.shippingFee),
+      lines: previous.lines.map((line) => ({
+        productId: line.productId ?? '',
+        quantity: num(line.quantity),
+        unitPrice: num(line.unitPrice),
+        discountPercent: num(line.discountPercent),
+      })),
+    });
+    await drizzleDb
+      .update(salesQuotes)
+      .set({ revisedFromQuoteId: previous.id })
+      .where(eq(salesQuotes.id, revised.id));
+    await this.event(revised.id, 'revised_from', userId, {
+      previousQuoteId: previous.id,
+      previousQuoteNumber: previous.quoteNumber,
+    });
+    await this.event(previous.id, 'revision_created', userId, {
+      quoteId: revised.id,
+      quoteNumber: revised.quoteNumber,
+    });
+    return (await this.get(revised.id))!;
+  }
+
+  private async save(userId: string, id: string | null, input: QuoteInput): Promise<SalesQuote> {
+    const companyId = await this.companyId();
+    const settings = await this.getSettings(companyId);
+    const quoteNumber = id
+      ? (await this.get(id))?.quoteNumber
+      : await this.allocateQuoteNumber(companyId);
+    if (!quoteNumber) throw new Error('Quote not found.');
+
+    const existing = id ? await this.get(id) : null;
+    if (id && !existing) throw new Error('Quote not found.');
+    if (existing && !['draft', 'pending_approval', 'approved'].includes(existing.status)) {
+      throw new Error('Only draft or approved quotes can be edited.');
+    }
+    const customerName = input.customerName.trim();
+    if (!customerName) throw new Error('Choose a customer or enter a customer name.');
+    if (!input.lines.length) throw new Error('Add at least one item to the quote.');
+    if (input.lines.some((line) => !Number.isFinite(line.quantity) || line.quantity <= 0)) {
+      throw new Error('Each quote line needs a quantity greater than zero.');
+    }
+    this.assertPercent(input.discountPercent, 'Quote discount');
+    if (!Number.isFinite(input.shippingFee) || input.shippingFee < 0) {
+      throw new Error('Shipping must be zero or a positive amount.');
+    }
+
+    const products = new Map(
+      (await CatalogService.getProductsByIds(input.lines.map((line) => line.productId))).map(
+        (p) => [p.id, p],
+      ),
+    );
+    let subtotal = 0;
+    let taxAmount = 0;
+    let discountAmount = 0;
+    let totalCost = 0;
+    const lines = input.lines.map((line, index) => {
+      const product = products.get(line.productId);
+      if (!product || product.isSellable === false)
+        throw new Error('A selected item is no longer sellable.');
+      const unitPrice = line.unitPrice ?? product.price;
+      if (unitPrice == null || !Number.isFinite(unitPrice) || unitPrice < 0) {
+        throw new Error(`${product.name} needs a valid selling price.`);
+      }
+      this.assertPercent(line.discountPercent, `${product.name} discount`);
+      const beforeDiscount = unitPrice * line.quantity;
+      const discountedGross =
+        beforeDiscount * (1 - line.discountPercent / 100) * (1 - input.discountPercent / 100);
+      const rate = Math.max(0, product.taxRate ?? 0);
+      const inclusive = product.isTaxInclusive !== false;
+      const net = inclusive && rate > 0 ? discountedGross / (1 + rate / 100) : discountedGross;
+      const tax = inclusive && rate > 0 ? discountedGross - net : net * (rate / 100);
+      const lineNet = money(net);
+      const lineTax = money(tax);
+      const lineTotal = money(lineNet + lineTax);
+      const cost = Math.max(0, product.costPrice || 0) * line.quantity;
+      subtotal += lineNet;
+      taxAmount += lineTax;
+      discountAmount += beforeDiscount - discountedGross;
+      totalCost += cost;
+      return {
+        productId: product.id,
+        lineNumber: (index + 1) * 10000,
+        sku: product.sku,
+        description: product.name,
+        quantity: line.quantity.toFixed(3),
+        unitPrice: unitPrice.toFixed(4),
+        unitCost: (product.costPrice || 0).toFixed(4),
+        taxRate: rate.toFixed(3),
+        isTaxInclusive: inclusive,
+        discountPercent: line.discountPercent.toFixed(3),
+        netAmount: lineNet.toFixed(2),
+        taxAmount: lineTax.toFixed(2),
+        lineAmount: lineTotal.toFixed(2),
+        costAmount: money(cost).toFixed(2),
+      };
+    });
+    subtotal = money(subtotal);
+    taxAmount = money(taxAmount);
+    discountAmount = money(discountAmount);
+    totalCost = money(totalCost);
+    const shippingFee = money(input.shippingFee);
+    const totalAmount = money(subtotal + taxAmount + shippingFee);
+    const grossProfit = money(subtotal - totalCost);
+    const grossMarginPercent = subtotal > 0 ? (grossProfit / subtotal) * 100 : 0;
+    const minimumMarginPercent = num(settings.minimumGrossMarginPercent);
+    const belowFloor = grossMarginPercent < minimumMarginPercent;
+    const approvalStatus = belowFloor ? 'pending' : 'not_required';
+    const status: QuoteStatus = belowFloor ? 'pending_approval' : 'draft';
+    const now = new Date();
+    const { branch } = await getContainer().organizations.ensureDefaultOrgAndBranch(
+      companyId,
+      (await getContainer().companySettings.getProfile()).tradingName,
+    );
+    const deliveryAddress = input.deliveryAddress ?? {};
+    const header = {
+      companyId,
+      branchId: branch.id,
+      customerId: input.customerId || null,
+      quoteNumber,
+      status,
+      customerName,
+      customerEmail: input.customerEmail?.trim().toLowerCase() || null,
+      customerPhone: input.customerPhone?.trim() || null,
+      billingAddress: input.billingAddress ?? {},
+      deliveryAddress,
+      currency: input.currency.trim().toUpperCase(),
+      subtotal: subtotal.toFixed(2),
+      taxAmount: taxAmount.toFixed(2),
+      discountAmount: discountAmount.toFixed(2),
+      quoteDiscountPercent: input.discountPercent.toFixed(3),
+      shippingFee: shippingFee.toFixed(2),
+      totalAmount: totalAmount.toFixed(2),
+      totalCost: totalCost.toFixed(2),
+      grossProfit: grossProfit.toFixed(2),
+      grossMarginPercent: grossMarginPercent.toFixed(3),
+      minimumMarginPercent: minimumMarginPercent.toFixed(3),
+      approvalStatus,
+      paymentMethod: input.paymentMethod,
+      validUntil: input.validUntil ? new Date(`${input.validUntil}T23:59:59`) : null,
+      customerReference: input.customerReference?.trim() || null,
+      publicNotes: input.publicNotes?.trim() || null,
+      internalNotes: input.internalNotes?.trim() || null,
+      updatedAt: now,
+    };
+
+    const saved = await drizzleDb.transaction(async (tx) => {
+      let quote: SalesQuoteRow;
+      if (existing) {
+        const [updated] = await tx
+          .update(salesQuotes)
+          .set({
+            ...header,
+            status: existing.status === 'approved' && !belowFloor ? 'approved' : status,
+          })
+          .where(eq(salesQuotes.id, existing.id))
+          .returning();
+        if (!updated) throw new Error('Quote was changed by another user. Refresh and try again.');
+        quote = updated;
+        await tx.delete(salesQuoteLines).where(eq(salesQuoteLines.quoteId, quote.id));
+      } else {
+        const [created] = await tx
+          .insert(salesQuotes)
+          .values({ ...header, createdBy: userId })
+          .returning();
+        quote = created!;
+      }
+      await tx
+        .insert(salesQuoteLines)
+        .values(lines.map((line) => ({ ...line, quoteId: quote.id })));
+      await tx.insert(salesQuoteEvents).values({
+        quoteId: quote.id,
+        eventType: existing ? 'updated' : 'created',
+        actorId: userId,
+        details: {
+          status,
+          grossMarginPercent: Number(grossMarginPercent.toFixed(3)),
+          minimumMarginPercent,
+          approvalRequired: belowFloor,
+        },
+      });
+      return quote;
+    });
+    return (await this.get(saved.id))!;
+  }
+
+  private async allocateQuoteNumber(companyId: string) {
+    const [settings] = await drizzleDb
+      .insert(salesQuoteSettings)
+      .values({ companyId, nextQuoteNumber: 2 })
+      .onConflictDoUpdate({
+        target: salesQuoteSettings.companyId,
+        set: { nextQuoteNumber: sql`${salesQuoteSettings.nextQuoteNumber} + 1` },
+      })
+      .returning({ nextQuoteNumber: salesQuoteSettings.nextQuoteNumber });
+    const sequence = Math.max(1, (settings?.nextQuoteNumber ?? 2) - 1);
+    const year = new Date().getFullYear();
+    return `QTE-${year}-${String(sequence).padStart(5, '0')}`;
+  }
+
+  async approve(userId: string, id: string) {
+    const quote = await this.get(id);
+    if (!quote) throw new Error('Quote not found.');
+    if (quote.status !== 'pending_approval')
+      throw new Error('This quote is not awaiting approval.');
+    const [updated] = await drizzleDb
+      .update(salesQuotes)
+      .set({
+        status: 'approved',
+        approvalStatus: 'approved',
+        approvedBy: userId,
+        approvedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(and(eq(salesQuotes.id, id), eq(salesQuotes.status, 'pending_approval')))
+      .returning();
+    if (!updated) throw new Error('Quote state changed. Refresh and try again.');
+    await this.event(id, 'approved', userId, { approvedBelowFloor: true });
+    return this.get(id);
+  }
+
+  async changeStatus(id: string, userId: string, status: 'accepted' | 'rejected' | 'cancelled') {
+    const quote = await this.get(id);
+    if (!quote) throw new Error('Quote not found.');
+    const allowed: Record<typeof status, QuoteStatus[]> = {
+      accepted: ['sent'],
+      rejected: ['sent'],
+      cancelled: ['draft', 'pending_approval', 'approved', 'sent', 'accepted'],
+    };
+    if (!allowed[status].includes(quote.status as QuoteStatus)) {
+      throw new Error(`A ${quote.status} quote cannot be marked ${status}.`);
+    }
+    const patch = {
+      status,
+      updatedAt: new Date(),
+      ...(status === 'accepted' ? { acceptedAt: new Date() } : {}),
+      ...(status === 'rejected' ? { rejectedAt: new Date() } : {}),
+    };
+    await drizzleDb.update(salesQuotes).set(patch).where(eq(salesQuotes.id, id));
+    await this.event(id, status, userId, {});
+    if (status === 'accepted') {
+      try {
+        await this.convertToOrder(userId, id);
+      } catch (error) {
+        await this.event(id, 'order_conversion_failed', userId, {
+          error: error instanceof Error ? error.message : 'Order conversion failed',
+        });
+      }
+    }
+    return this.get(id);
+  }
+
+  async convertToOrder(userId: string, id: string) {
+    let quote = await this.get(id);
+    if (!quote) throw new Error('Quote not found.');
+    if (quote.convertedOrderId) return getContainer().orders.getById(quote.convertedOrderId);
+    const orderId = `ord_quote_${quote.id}`;
+    const orderNumber = `SO-${quote.quoteNumber}`;
+    const alreadyCreatedOrder = await getContainer().orders.getById(orderId);
+    if (alreadyCreatedOrder) {
+      await drizzleDb
+        .update(salesQuotes)
+        .set({
+          status: 'converted',
+          convertedOrderId: alreadyCreatedOrder.id,
+          updatedAt: new Date(),
+        })
+        .where(eq(salesQuotes.id, id));
+      await this.event(id, 'converted', userId, {
+        orderId: alreadyCreatedOrder.id,
+        orderNumber: alreadyCreatedOrder.orderNumber,
+        recovered: true,
+      });
+      return alreadyCreatedOrder;
+    }
+    if (quote.status === 'converting') {
+      if (Date.now() - quote.updatedAt.getTime() < 10 * 60 * 1000) {
+        throw new Error(
+          'This quote is already being converted. Refresh the quote in a few minutes.',
+        );
+      }
+      await drizzleDb
+        .update(salesQuotes)
+        .set({ status: 'accepted', updatedAt: new Date() })
+        .where(and(eq(salesQuotes.id, id), eq(salesQuotes.status, 'converting')));
+      quote = (await this.get(id))!;
+    }
+    if (quote.status !== 'accepted')
+      throw new Error('Only accepted quotes can be converted to orders.');
+    if (quote.validUntil && quote.validUntil < new Date())
+      throw new Error('This quote has expired.');
+    const address = quote.deliveryAddress;
+    if (!address.street || !address.city || !address.countyOrState || !address.country) {
+      throw new Error('Add a complete delivery address to the quote before converting it.');
+    }
+    const items = quote.lines.map((line) => ({
+      productId: line.productId ?? '',
+      quantity: num(line.quantity),
+    }));
+    if (items.some((line) => !line.productId))
+      throw new Error('A quoted product was removed from the catalog and cannot be converted.');
+    const [claimed] = await drizzleDb
+      .update(salesQuotes)
+      .set({ status: 'converting', updatedAt: new Date() })
+      .where(
+        and(
+          eq(salesQuotes.id, id),
+          eq(salesQuotes.status, 'accepted'),
+          sql`${salesQuotes.convertedOrderId} IS NULL`,
+        ),
+      )
+      .returning({ id: salesQuotes.id });
+    if (!claimed)
+      throw new Error('The quote is already being processed. Refresh to see its latest status.');
+
+    try {
+      const result = await OrderWriteService.createOrder({
+        orderId,
+        orderNumber,
+        userId: quote.customerId,
+        branchId: quote.branchId,
+        customerName: quote.customerName,
+        customerEmail: quote.customerEmail ?? '',
+        customerPhone: quote.customerPhone ?? '',
+        shippingAddress: {
+          street: address.street,
+          city: address.city,
+          countyOrState: address.countyOrState,
+          postalCode: address.postalCode,
+          country: address.country,
+        },
+        items,
+        quotedItems: quote.lines.map((line) => ({
+          productId: line.productId!,
+          quantity: num(line.quantity),
+          productName: line.description,
+          sku: line.sku,
+          lineAmount: num(line.lineAmount),
+          taxRate: num(line.taxRate),
+          isTaxInclusive: line.isTaxInclusive,
+        })),
+        quotedTotals: {
+          subtotal: num(quote.subtotal),
+          tax: num(quote.taxAmount),
+          shippingFee: num(quote.shippingFee),
+          totalAmount: num(quote.totalAmount),
+        },
+        currency: quote.currency as 'KES' | 'USD',
+        paymentMethod: quote.paymentMethod as PaymentProvider,
+      });
+      if (!result.success || !result.order)
+        throw new Error(result.error || 'Could not convert quote to an order.');
+      await drizzleDb
+        .update(salesQuotes)
+        .set({ status: 'converted', convertedOrderId: result.order.id, updatedAt: new Date() })
+        .where(eq(salesQuotes.id, id));
+      await this.event(id, 'converted', userId, {
+        orderId: result.order.id,
+        orderNumber: result.order.orderNumber,
+      });
+      return result.order;
+    } catch (error) {
+      await drizzleDb
+        .update(salesQuotes)
+        .set({ status: 'accepted', updatedAt: new Date() })
+        .where(and(eq(salesQuotes.id, id), eq(salesQuotes.status, 'converting')));
+      throw error;
+    }
+  }
+
+  async send(userId: string, id: string) {
+    const quote = await this.get(id);
+    if (!quote) throw new Error('Quote not found.');
+    if (!quote.customerEmail) throw new Error('Add a customer email before sending this quote.');
+    if (!['draft', 'approved'].includes(quote.status))
+      throw new Error('Only draft or approved quotes can be sent.');
+    if (quote.approvalStatus === 'pending')
+      throw new Error('This quote needs approval before it can be sent.');
+    if (quote.validUntil && quote.validUntil < new Date())
+      throw new Error('This quote has expired.');
+    const [company, companySettings] = await Promise.all([
+      getContainer().companySettings.getProfile(),
+      getContainer().companySettings.ensureSeeded(),
+    ]);
+    const token = randomBytes(32).toString('hex');
+    const baseUrl =
+      companySettings.publicBaseUrl?.replace(/\/$/, '') ||
+      process.env.APP_URL?.replace(/\/$/, '') ||
+      process.env.NEXTAUTH_URL?.replace(/\/$/, '') ||
+      '';
+    const acceptUrl = baseUrl ? `${baseUrl}/quote/${token}` : '';
+    const pdf = await this.renderPdf(quote, company);
+    const html = `<div style="font-family:Arial,sans-serif;color:#111827"><h2>${escapeHtml(company.tradingName)}</h2><p>Your quotation <strong>${escapeHtml(quote.quoteNumber)}</strong> totals ${escapeHtml(quote.currency)} ${num(quote.totalAmount).toFixed(2)}.</p>${quote.validUntil ? `<p>Valid until ${quote.validUntil.toLocaleDateString()}.</p>` : ''}${quote.publicNotes ? `<p>${escapeHtml(quote.publicNotes)}</p>` : ''}${acceptUrl ? `<p><a href="${acceptUrl}">Review and respond to this quote</a></p>` : ''}<p>This proforma quotation is not a tax invoice and does not confirm receipt of funds.</p></div>`;
+    const sent = await getContainer().email.send({
+      to: quote.customerEmail,
+      subject: `${company.tradingName} quotation ${quote.quoteNumber}`,
+      html,
+      text: `Your quotation ${quote.quoteNumber} totals ${quote.currency} ${num(quote.totalAmount).toFixed(2)}.${acceptUrl ? ` Review and respond: ${acceptUrl}` : ''}`,
+      replyTo: company.email,
+      fromOverride: `${company.tradingName} Sales <${company.email}>`,
+      attachments: [
+        { filename: `${quote.quoteNumber}.pdf`, content: pdf, contentType: 'application/pdf' },
+      ],
+    });
+    await drizzleDb
+      .update(salesQuotes)
+      .set({
+        status: 'sent',
+        sentAt: new Date(),
+        shareTokenHash: tokenHash(token),
+        updatedAt: new Date(),
+      })
+      .where(eq(salesQuotes.id, id));
+    await this.event(id, 'sent', userId, {
+      recipient: quote.customerEmail,
+      messageId: sent.messageId ?? null,
+    });
+    return this.get(id);
+  }
+
+  async generatePdf(id: string) {
+    const quote = await this.get(id);
+    if (!quote) throw new Error('Quote not found.');
+    const company = await getContainer().companySettings.getProfile();
+    const pdf = await this.renderPdf(quote, company);
+    return { filename: `${quote.quoteNumber}.pdf`, pdfBase64: pdf.toString('base64') };
+  }
+
+  private async renderPdf(quote: SalesQuote, company: CompanyProfile) {
+    return getContainer().invoicePdf.generate({
+      documentType: 'sales_quote',
+      invoiceNumber: quote.quoteNumber,
+      issuedAt: new Date().toISOString(),
+      orderId: quote.id,
+      orderNumber: quote.quoteNumber,
+      currency: quote.currency,
+      company,
+      customer: {
+        name: quote.customerName,
+        email: quote.customerEmail ?? '',
+        phone: quote.customerPhone ?? '',
+        kraPin: null,
+        shippingAddress: {
+          street: quote.deliveryAddress.street ?? '',
+          city: quote.deliveryAddress.city ?? '',
+          countyOrState: quote.deliveryAddress.countyOrState ?? '',
+          postalCode: quote.deliveryAddress.postalCode,
+          country: quote.deliveryAddress.country ?? '',
+        },
+      },
+      items: quote.lines.map((line) => ({
+        sku: line.sku,
+        name: line.description,
+        quantity: num(line.quantity),
+        unitPrice: num(line.lineAmount) / Math.max(num(line.quantity), 1),
+        totalPrice: num(line.lineAmount),
+      })),
+      subtotal: num(quote.subtotal),
+      tax: num(quote.taxAmount),
+      taxLabel: 'Tax',
+      shippingFee: num(quote.shippingFee),
+      totalAmount: num(quote.totalAmount),
+      paymentMethod: quote.paymentMethod,
+      paymentReference: null,
+      paymentStatus: 'unpaid',
+      notes: quote.publicNotes,
+    });
+  }
+
+  async getShared(token: string) {
+    if (!/^[a-f0-9]{64}$/i.test(token)) return null;
+    const [quote] = await drizzleDb
+      .select()
+      .from(salesQuotes)
+      .where(and(eq(salesQuotes.shareTokenHash, tokenHash(token)), eq(salesQuotes.status, 'sent')))
+      .limit(1);
+    if (!quote) return null;
+    if (quote.validUntil && quote.validUntil < new Date()) {
+      await drizzleDb
+        .update(salesQuotes)
+        .set({ status: 'expired', updatedAt: new Date() })
+        .where(and(eq(salesQuotes.id, quote.id), eq(salesQuotes.status, 'sent')));
+      await this.event(quote.id, 'expired', null, { reason: 'valid_until_elapsed' });
+      return null;
+    }
+    const lines = await drizzleDb
+      .select({
+        sku: salesQuoteLines.sku,
+        description: salesQuoteLines.description,
+        quantity: salesQuoteLines.quantity,
+        unitPrice: salesQuoteLines.unitPrice,
+        discountPercent: salesQuoteLines.discountPercent,
+        taxRate: salesQuoteLines.taxRate,
+        isTaxInclusive: salesQuoteLines.isTaxInclusive,
+        lineAmount: salesQuoteLines.lineAmount,
+      })
+      .from(salesQuoteLines)
+      .where(eq(salesQuoteLines.quoteId, quote.id))
+      .orderBy(salesQuoteLines.lineNumber);
+    const company = await getContainer().companySettings.getProfile();
+    return {
+      quoteNumber: quote.quoteNumber,
+      status: quote.status,
+      customerName: quote.customerName,
+      currency: quote.currency,
+      validUntil: quote.validUntil,
+      customerReference: quote.customerReference,
+      publicNotes: quote.publicNotes,
+      subtotal: quote.subtotal,
+      taxAmount: quote.taxAmount,
+      discountAmount: quote.discountAmount,
+      shippingFee: quote.shippingFee,
+      totalAmount: quote.totalAmount,
+      lines,
+      company: {
+        tradingName: company.tradingName,
+        email: company.email,
+        phone: company.phone,
+        logoUrl: company.logoUrl,
+      },
+    };
+  }
+
+  async respondShared(token: string, accepted: boolean) {
+    if (!/^[a-f0-9]{64}$/i.test(token)) throw new Error('This quote link is invalid.');
+    const [quote] = await drizzleDb
+      .select({ id: salesQuotes.id, validUntil: salesQuotes.validUntil })
+      .from(salesQuotes)
+      .where(and(eq(salesQuotes.shareTokenHash, tokenHash(token)), eq(salesQuotes.status, 'sent')))
+      .limit(1);
+    if (!quote)
+      throw new Error('This quote link is no longer active. Contact the seller for assistance.');
+    if (quote.validUntil && quote.validUntil < new Date()) {
+      await drizzleDb
+        .update(salesQuotes)
+        .set({ status: 'expired', updatedAt: new Date() })
+        .where(eq(salesQuotes.id, quote.id));
+      await this.event(quote.id, 'expired', null, { reason: 'customer_response_after_expiry' });
+      throw new Error('This quote has expired. Contact the seller for an updated quote.');
+    }
+    const nextStatus = accepted ? 'accepted' : 'rejected';
+    const [updated] = await drizzleDb
+      .update(salesQuotes)
+      .set({
+        status: nextStatus,
+        ...(accepted ? { acceptedAt: new Date() } : { rejectedAt: new Date() }),
+        updatedAt: new Date(),
+      })
+      .where(and(eq(salesQuotes.id, quote.id), eq(salesQuotes.status, 'sent')))
+      .returning({ id: salesQuotes.id });
+    if (!updated) throw new Error('This quote has already received a response.');
+    await this.event(quote.id, nextStatus, null, { source: 'customer_share_link' });
+    if (accepted) {
+      try {
+        await this.convertToOrder('customer_acceptance', quote.id);
+      } catch (error) {
+        await this.event(quote.id, 'order_conversion_failed', null, {
+          error: error instanceof Error ? error.message : 'Order conversion failed',
+        });
+      }
+    }
+    return nextStatus;
+  }
+
+  private async event(
+    quoteId: string,
+    eventType: string,
+    actorId: string | null,
+    details: Record<string, unknown>,
+  ) {
+    await drizzleDb.insert(salesQuoteEvents).values({ quoteId, eventType, actorId, details });
+    await broadcastRealtime('quote_event', { quoteId, type: eventType });
+  }
+
+  private assertPercent(value: number, label: string) {
+    if (!Number.isFinite(value) || value < 0 || value > 100)
+      throw new Error(`${label} must be between 0 and 100%.`);
+  }
+}

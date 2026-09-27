@@ -31,7 +31,11 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
       try {
         setError(null);
         if (isRegister) {
-          await registerCustomerAction({ name, email, phone, password });
+          const result = await registerCustomerAction({ name, email, phone, password });
+          if (!result.ok) {
+            setError(result.error);
+            return;
+          }
           router.push(safeCallbackUrl ?? '/');
           router.refresh();
           return;
@@ -47,7 +51,13 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
         }
         router.refresh();
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Authentication failed');
+        setError(
+          isRegister
+            ? 'We couldn’t create your account right now. Please try again.'
+            : err instanceof Error
+              ? err.message
+              : 'We couldn’t sign you in. Check your details and try again.',
+        );
       }
     });
   };
@@ -97,7 +107,14 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
         minLength={8}
         className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong"
       />
-      {error ? <p className="text-xs text-red-700">{error}</p> : null}
+      {error ? (
+        <p
+          className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800"
+          role="alert"
+        >
+          {error}
+        </p>
+      ) : null}
       <button
         type="submit"
         disabled={pending}
@@ -133,7 +150,10 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
           </Link>
           <p className="text-center text-xs text-fg-subtle">
             Prefer not to register?{' '}
-            <Link href="/" className="font-medium text-fg-muted underline underline-offset-2 hover:text-fg-strong">
+            <Link
+              href="/"
+              className="font-medium text-fg-muted underline underline-offset-2 hover:text-fg-strong"
+            >
               Continue as guest
             </Link>
           </p>

@@ -71,6 +71,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
     installed: true,
     subLinks: [
       {
+        id: 'quotes',
+        title: 'Quotes',
+        name: 'quotes',
+        href: '/admin/quotes',
+        description: 'Prepare and manage proforma quotations from customer orders',
+        icon: 'Receipt',
+        installed: true,
+      },
+      {
         id: 'orders',
         title: 'Customer Orders',
         name: 'orders',

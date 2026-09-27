@@ -30,9 +30,10 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
 
   generate(payload: InvoicePayload): Promise<Buffer> {
     return new Promise((resolve, reject) => {
-      const isProforma = payload.documentType === 'proforma';
-      const title = isProforma ? 'PROFORMA INVOICE' : 'TAX INVOICE';
-      const docLabel = isProforma ? 'Proforma No.' : 'Invoice No.';
+      const isProforma = payload.documentType !== 'tax_invoice';
+      const isQuote = payload.documentType === 'sales_quote';
+      const title = isQuote ? 'SALES QUOTATION' : isProforma ? 'PROFORMA INVOICE' : 'TAX INVOICE';
+      const docLabel = isQuote ? 'Quote No.' : isProforma ? 'Proforma No.' : 'Invoice No.';
 
       const doc = new PDFDocument({
         size: 'A4',
@@ -318,7 +319,7 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
       const totalLabel = isProforma ? 'Amount Payable' : 'Total Paid';
       const totals: Array<{ label: string; value: string; emph?: boolean }> = [
         { label: 'Subtotal', value: money(payload.subtotal, payload.currency) },
-        { label: 'VAT (16%)', value: money(payload.tax, payload.currency) },
+        { label: payload.taxLabel ?? 'VAT (16%)', value: money(payload.tax, payload.currency) },
         { label: 'Shipping', value: money(payload.shippingFee, payload.currency) },
         { label: totalLabel, value: money(payload.totalAmount, payload.currency), emph: true },
       ];
@@ -395,7 +396,9 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
       }
 
       const footerNote = isProforma
-        ? 'This proforma invoice is a quotation for payment. It is not a tax invoice and does not confirm receipt of funds.'
+        ? isQuote
+          ? 'This quotation is valid subject to the expiry date shown and is not a tax invoice or confirmation of payment.'
+          : 'This proforma invoice is a quotation for payment. It is not a tax invoice and does not confirm receipt of funds.'
         : payload.company.invoiceFooterNote ||
           'This is a computer-generated tax invoice. Keep for your records and KRA compliance.';
 
