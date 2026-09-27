@@ -189,4 +189,4 @@ jobs:
       - name: Verify public HTTPS endpoint
         run: |
           curl --fail --silent --show-error --retry 20 --retry-delay 5 \
-            https://onmicommerce.brainsporellc.com/api/health
+            https://omnicommerce.brainsporellc.com/api/health

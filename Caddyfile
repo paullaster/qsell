@@ -1,4 +1,4 @@
-onmicommerce.brainsporellc.com {
+omnicommerce.brainsporellc.com {
 	encode zstd gzip
 
 	header {
