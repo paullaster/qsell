@@ -187,7 +187,12 @@ jobs:
           exit 1
           REMOTE
 
-      - name: Verify public HTTPS endpoint
+      - name: Verify HTTPS origin from deploy host
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
         run: |
-          curl --fail --silent --show-error --retry 20 --retry-delay 5 \
-            https://omnicommerce.brainsporellc.com/api/health
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" \
+            "curl --fail --silent --show-error --retry 20 --retry-delay 5 \
+             --resolve omnicommerce.brainsporellc.com:443:127.0.0.1 \
+             https://omnicommerce.brainsporellc.com/api/health"
