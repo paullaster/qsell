@@ -3,15 +3,16 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LogOut, Menu, RefreshCw, Store } from 'lucide-react';
+import { Menu, RefreshCw, Store, LogOut, User, ChevronDown, Settings } from 'lucide-react';
 import { AdminSidebar } from './AdminSidebar';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { useRealtimeEvents } from '@/lib/realtime';
-import { ensureAdminSessionAction, logoutAction } from '@/server/domains/auth/actions';
+import { ensureAdminSessionAction } from '@/server/domains/auth/actions';
 import { getCompanySettingsAction } from '@/server/domains/company/actions';
 import { getAdminPageMeta } from '@/config/admin-nav';
 import { resolveCompanyUiConfig } from '@/config/company-ui';
 import { useCompanyUiConfig } from '@/components/company/CompanyUiConfigProvider';
+import { logoutAction } from '@/server/domains/auth/actions';
 import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
@@ -25,6 +26,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     'tradingName' | 'tagline' | 'logoUrl' | 'accentColor'
   > | null>(null);
   const [moduleLabels, setModuleLabels] = useState(uiConfig.moduleLabels);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
 
   const pageMeta = useMemo(
     () => getAdminPageMeta(pathname, moduleLabels),
@@ -68,6 +70,18 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
 
   const { isConnected } = useRealtimeEvents(handleRealtime);
 
+  // Close user menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('[data-user-menu]')) {
+        setIsUserMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   if (!sessionReady) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-canvas text-sm text-fg-muted">
@@ -88,7 +102,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
       />
 
       <div className="flex min-w-0 flex-1 flex-col lg:pl-72">
-        <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-line bg-surface/95 px-4 backdrop-blur-md sm:px-6">
+        <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-line bg-surface/95 px-4 backdrop-blur-md sm:px-6" data-user-menu>
           <button
             type="button"
             className="rounded-lg p-2 text-fg-muted hover:bg-hover lg:hidden"
@@ -102,31 +116,78 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               {pageMeta.subtitle}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onRefreshAll}
-            className="rounded-lg p-2 text-fg-muted hover:bg-hover hover:text-fg-strong"
-            title="Refresh"
-          >
-            <RefreshCw className="h-4 w-4" />
-          </button>
-          <Link
-            href="/"
-            className="hidden items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-fg-muted hover:bg-hover hover:text-fg-strong sm:inline-flex"
-          >
-            <Store className="h-3.5 w-3.5" />
-            Store
-          </Link>
-          <span
-            className={`h-2 w-2 rounded-full ${isConnected ? 'bg-emerald-500' : 'bg-fg-faint'}`}
-            title={isConnected ? 'Realtime connected' : 'Realtime offline'}
-          />
-          <form action={logoutAction}>
-            <button type="submit" className="rounded-lg p-2 text-fg-muted hover:bg-hover hover:text-fg-strong" title="Logout">
-              <LogOut className="h-4 w-4" />
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onRefreshAll}
+              className="rounded-lg p-2 text-fg-muted hover:bg-hover hover:text-fg-strong"
+              title="Refresh"
+            >
+              <RefreshCw className="h-4 w-4" />
             </button>
-          </form>
-          <ThemeToggle />
+
+            <Link
+              href="/"
+              className="hidden items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-fg-muted hover:bg-hover hover:text-fg-strong sm:inline-flex"
+            >
+              <Store className="h-3.5 w-3.5" />
+              Store
+            </Link>
+
+            <span
+              className={`h-2 w-2 rounded-full ${isConnected ? 'bg-emerald-500' : 'bg-fg-faint'}`}
+              title={isConnected ? 'Realtime connected' : 'Realtime offline'}
+            />
+
+            <ThemeToggle />
+
+            {/* User Menu Dropdown */}
+            <div className="relative" data-user-menu>
+              <button
+                type="button"
+                onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+                className="flex items-center gap-2 rounded-lg p-1.5 text-fg-muted hover:bg-hover hover:text-fg-strong"
+                aria-expanded={isUserMenuOpen}
+                aria-haspopup="true"
+                aria-label="User menu"
+              >
+                <User className="h-5 w-5" />
+                <ChevronDown className={`h-4 w-4 transition-transform ${isUserMenuOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {isUserMenuOpen && (
+                <div className="absolute right-0 mt-2 w-48 rounded-xl border border-line bg-surface-raised shadow-xl py-1">
+                  <Link
+                    href="/admin/profile"
+                    className="flex items-center gap-2 px-3 py-2 text-sm text-fg hover:bg-hover"
+                    onClick={() => setIsUserMenuOpen(false)}
+                  >
+                    <User className="h-4 w-4" />
+                    <span>My Profile</span>
+                  </Link>
+                  <Link
+                    href="/admin/settings"
+                    className="flex items-center gap-2 px-3 py-2 text-sm text-fg hover:bg-hover"
+                    onClick={() => setIsUserMenuOpen(false)}
+                  >
+                    <Settings className="h-4 w-4" />
+                    <span>Settings</span>
+                  </Link>
+                  <hr className="my-1 border-line" />
+                  <form action={logoutAction}>
+                    <button
+                      type="submit"
+                      className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50/50"
+                    >
+                      <LogOut className="h-4 w-4" />
+                      <span>Logout</span>
+                    </button>
+                  </form>
+                </div>
+              )}
+            </div>
+          </div>
         </header>
 
         <main className="mx-auto w-full max-w-7xl flex-1 space-y-6 p-4 sm:p-6 lg:p-8">

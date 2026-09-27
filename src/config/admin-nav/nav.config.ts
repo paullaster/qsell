@@ -6,6 +6,15 @@ import type { AdminNavItem } from './types';
  */
 export const ADMIN_NAV: AdminNavItem[] = [
   {
+    id: 'account',
+    title: 'My Account',
+    name: 'account',
+    href: '/admin/profile',
+    description: 'Your profile, settings, and security',
+    icon: 'Users',
+    installed: true,
+  },
+  {
     id: 'dashboard',
     title: 'Business Overview',
     name: 'dashboard',

@@ -1,8 +1,8 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { LogOut, ShoppingBag, Search, Truck, User } from 'lucide-react';
+import { LogOut, ShoppingBag, Search, Truck, User, ChevronDown, CreditCard, MapPin } from 'lucide-react';
 import { CompanyBrand } from '@/components/ui/CompanyBrand';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { logoutAction } from '@/server/domains/auth/actions';
