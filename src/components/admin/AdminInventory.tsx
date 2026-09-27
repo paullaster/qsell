@@ -228,19 +228,31 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex items-center gap-1 overflow-x-auto rounded-xl border border-line bg-surface p-1">
+        <div
+          aria-label="Inventory views"
+          className="flex items-center gap-1 overflow-x-auto rounded-xl border border-line bg-surface p-1"
+          role="group"
+        >
           <button
+            type="button"
+            aria-pressed={activeTab === 'stock_levels'}
             onClick={() => setActiveTab('stock_levels')}
-            className={`cursor-pointer rounded-lg px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors ${
-              activeTab === 'stock_levels' ? 'TW bg-indigo-600' : 'hover:TW text-fg-muted'
+            className={`cursor-pointer rounded-lg px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:outline-none ${
+              activeTab === 'stock_levels'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-fg-muted hover:bg-hover hover:text-fg-strong'
             }`}
           >
             Current Stock Levels
           </button>
           <button
+            type="button"
+            aria-pressed={activeTab === 'reorder_plan'}
             onClick={() => setActiveTab('reorder_plan')}
-            className={`flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors ${
-              activeTab === 'reorder_plan' ? 'TW bg-indigo-600' : 'hover:TW text-fg-muted'
+            className={`flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:outline-none ${
+              activeTab === 'reorder_plan'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-fg-muted hover:bg-hover hover:text-fg-strong'
             }`}
           >
             Low Stock Alerts
@@ -251,9 +263,13 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
             )}
           </button>
           <button
+            type="button"
+            aria-pressed={activeTab === 'ledger'}
             onClick={() => setActiveTab('ledger')}
-            className={`flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors ${
-              activeTab === 'ledger' ? 'TW bg-indigo-600' : 'hover:TW text-fg-muted'
+            className={`flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:outline-none ${
+              activeTab === 'ledger'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-fg-muted hover:bg-hover hover:text-fg-strong'
             }`}
           >
             <History className="h-3.5 w-3.5" />

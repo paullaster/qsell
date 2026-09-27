@@ -11,32 +11,33 @@ import {
   RefreshCw,
   Search,
   ExternalLink,
+  X,
 } from 'lucide-react';
 import { format } from 'date-fns';
 
 interface AuditLogEntry {
   id: string;
-  correlation_id: string;
+  correlationId: string;
   direction: 'outbound' | 'inbound';
   provider: string;
   operation: string;
-  http_method: string | null;
+  httpMethod: string | null;
   url: string | null;
-  status_code: number | null;
-  error_code: string | null;
-  error_message: string | null;
-  duration_ms: number | null;
-  request_sent_at: string | null;
-  response_received_at: string | null;
-  callback_received_at: string | null;
-  created_at: string;
-  retry_count: number;
-  queue_job_id: string | null;
-  request_headers: Record<string, string> | null;
-  request_payload: Record<string, unknown> | null;
-  response_headers: Record<string, string> | null;
-  response_payload: Record<string, unknown> | null;
-  callback_payload: Record<string, unknown> | null;
+  statusCode: number | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  durationMs: number | null;
+  requestSentAt: string | Date | null;
+  responseReceivedAt: string | Date | null;
+  callbackReceivedAt: string | Date | null;
+  createdAt: string | Date;
+  retryCount: number;
+  queueJobId: string | null;
+  requestHeaders: Record<string, string> | null;
+  requestPayload: Record<string, unknown> | null;
+  responseHeaders: Record<string, string> | null;
+  responsePayload: Record<string, unknown> | null;
+  callbackPayload: Record<string, unknown> | null;
 }
 
 interface PaginatedResponse<T> {
@@ -88,9 +89,51 @@ export function AdminIntegrationAudit({
   const [statusFilter, setStatusFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [selectedLog, setSelectedLog] = useState<AuditLogEntry | null>(null);
+
+  const filteredLogs = logs.filter((log) => {
+    const query = search.trim().toLowerCase();
+    const searchable = [
+      log.correlationId,
+      log.url,
+      log.errorCode,
+      log.errorMessage,
+      JSON.stringify(log.callbackPayload ?? {}),
+      JSON.stringify(log.responsePayload ?? {}),
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    const dateValue = log.callbackReceivedAt ?? log.requestSentAt ?? log.createdAt;
+    const date = dateValue instanceof Date ? dateValue : new Date(dateValue);
+    return (
+      (!query || searchable.includes(query)) &&
+      (!providerFilter || log.provider === providerFilter) &&
+      (!operationFilter || log.operation === operationFilter) &&
+      (!directionFilter || log.direction === directionFilter) &&
+      (!statusFilter ||
+        (statusFilter === 'success' &&
+          log.statusCode != null &&
+          log.statusCode >= 200 &&
+          log.statusCode < 300) ||
+        (statusFilter === 'client_error' &&
+          log.statusCode != null &&
+          log.statusCode >= 400 &&
+          log.statusCode < 500) ||
+        (statusFilter === 'server_error' && log.statusCode != null && log.statusCode >= 500) ||
+        (statusFilter === 'failed' && Boolean(log.errorCode))) &&
+      (!dateFrom || date >= new Date(`${dateFrom}T00:00:00`)) &&
+      (!dateTo || date <= new Date(`${dateTo}T23:59:59.999`))
+    );
+  });
 
   const getStatusBadge = (code: number | null) => {
-    if (!code) return <span className="inline-flex items-center gap-1 rounded-full border border-line-strong bg-surface-sunken px-2.5 py-0.5 text-[11px] font-semibold text-fg">—</span>;
+    if (!code)
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full border border-line-strong bg-surface-sunken px-2.5 py-0.5 text-[11px] font-semibold text-fg">
+          —
+        </span>
+      );
     if (code >= 200 && code < 300)
       return (
         <span className="inline-flex items-center gap-1 rounded-full border border-emerald-800 bg-emerald-50/80 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700">
@@ -109,11 +152,17 @@ export function AdminIntegrationAudit({
           {code}
         </span>
       );
-    return <span className="inline-flex items-center gap-1 rounded-full border border-line-strong bg-surface-sunken px-2.5 py-0.5 text-[11px] font-semibold text-fg">{code}</span>;
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full border border-line-strong bg-surface-sunken px-2.5 py-0.5 text-[11px] font-semibold text-fg">
+        {code}
+      </span>
+    );
   };
 
   const getDirectionBadge = (dir: 'outbound' | 'inbound') => (
-    <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${dir === 'outbound' ? 'bg-indigo-600 text-white' : 'bg-amber-600 text-white'}`}>
+    <span
+      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${dir === 'outbound' ? 'bg-indigo-600 text-white' : 'bg-amber-600 text-white'}`}
+    >
       {dir === 'outbound' ? '→ Outbound' : '← Inbound'}
     </span>
   );
@@ -124,9 +173,9 @@ export function AdminIntegrationAudit({
     return `${(ms / 1000).toFixed(2)}s`;
   };
 
-  const formatTime = (dateStr: string | null) => {
+  const formatTime = (dateStr: string | Date | null) => {
     if (!dateStr) return '—';
-    return format(new Date(dateStr), 'MMM d, HH:mm:ss');
+    return format(dateStr instanceof Date ? dateStr : new Date(dateStr), 'MMM d, HH:mm:ss');
   };
 
   return (
@@ -152,9 +201,7 @@ export function AdminIntegrationAudit({
             Refresh
           </button>
 
-          <button
-            className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-line-strong bg-surface-sunken px-3 py-2 text-xs font-semibold text-fg transition-colors hover:bg-hover hover:text-fg-strong"
-          >
+          <button className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-line-strong bg-surface-sunken px-3 py-2 text-xs font-semibold text-fg transition-colors hover:bg-hover hover:text-fg-strong">
             <Download className="h-3.5 w-3.5" />
             Export CSV
           </button>
@@ -274,34 +321,38 @@ export function AdminIntegrationAudit({
               </tr>
             </thead>
             <tbody className="divide-y divide-line text-fg">
-              {logs.length === 0 ? (
+              {filteredLogs.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="py-10 text-center text-fg-subtle">
                     No audit logs match the current filter criteria.
                   </td>
                 </tr>
               ) : (
-                logs.map((log) => (
-                  <tr key={log.id} className="transition-colors hover:bg-hover cursor-pointer">
+                filteredLogs.map((log) => (
+                  <tr key={log.id} className="transition-colors hover:bg-hover">
                     <td className="px-4 py-3.5 font-mono text-[11px] text-fg-muted">
-                      {log.request_sent_at
-                        ? formatTime(log.request_sent_at)
-                        : log.callback_received_at
-                        ? formatTime(log.callback_received_at)
-                        : formatTime(log.created_at)}
+                      {log.requestSentAt
+                        ? formatTime(log.requestSentAt)
+                        : log.callbackReceivedAt
+                          ? formatTime(log.callbackReceivedAt)
+                          : formatTime(log.createdAt)}
                     </td>
                     <td className="px-4 py-3.5">{getDirectionBadge(log.direction)}</td>
-                    <td className="px-4 py-3.5 font-mono text-[11px] capitalize">{log.provider.replace(/_/g, ' ')}</td>
-                    <td className="px-4 py-3.5 font-mono text-[11px]">{log.operation}</td>
-                    <td className="px-4 py-3.5 font-mono text-[11px] max-w-[280px] truncate">
-                      {log.http_method} {log.url}
+                    <td className="px-4 py-3.5 font-mono text-[11px] capitalize">
+                      {log.provider.replace(/_/g, ' ')}
                     </td>
-                    <td className="px-4 py-3.5 text-center">{getStatusBadge(log.status_code)}</td>
-                    <td className="px-4 py-3.5 text-center font-mono text-[11px]">{formatDuration(log.duration_ms)}</td>
+                    <td className="px-4 py-3.5 font-mono text-[11px]">{log.operation}</td>
+                    <td className="max-w-[280px] truncate px-4 py-3.5 font-mono text-[11px]">
+                      {log.httpMethod} {log.url}
+                    </td>
+                    <td className="px-4 py-3.5 text-center">{getStatusBadge(log.statusCode)}</td>
                     <td className="px-4 py-3.5 text-center font-mono text-[11px]">
-                      {log.retry_count > 0 ? (
+                      {formatDuration(log.durationMs)}
+                    </td>
+                    <td className="px-4 py-3.5 text-center font-mono text-[11px]">
+                      {log.retryCount > 0 ? (
                         <span className="inline-flex items-center gap-1 rounded-full border border-amber-800 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
-                          {log.retry_count}
+                          {log.retryCount}
                         </span>
                       ) : (
                         '0'
@@ -309,6 +360,9 @@ export function AdminIntegrationAudit({
                     </td>
                     <td className="px-4 py-3.5 text-right">
                       <button
+                        type="button"
+                        aria-label={`View audit details for ${log.provider} ${log.operation}`}
+                        onClick={() => setSelectedLog(log)}
                         className="cursor-pointer rounded-lg border border-line-strong bg-surface-sunken px-2.5 py-1.5 text-xs font-medium text-fg transition-colors hover:bg-hover hover:text-fg-strong"
                       >
                         <ExternalLink className="h-3.5 w-3.5" />
@@ -322,20 +376,22 @@ export function AdminIntegrationAudit({
         </div>
 
         {/* Pagination */}
-        <div className="flex items-center justify-between p-4 border-t border-line">
+        <div className="flex items-center justify-between border-t border-line p-4">
           <p className="text-sm text-fg-muted">
-            Showing {((page - 1) * pageSize) + 1} to {Math.min(page * pageSize, total)} of {total}
+            Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, total)} of {total}
           </p>
           <div className="flex gap-2">
             <button
-              onClick={() => window.location.href = `/admin/integration-audit?page=${Math.max(1, page - 1)}`}
+              onClick={() =>
+                (window.location.href = `/admin/integration-audit?page=${Math.max(1, page - 1)}`)
+              }
               disabled={page === 1}
               className="cursor-pointer rounded-lg border border-line-strong bg-surface-sunken px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:bg-hover hover:text-fg-strong disabled:opacity-40"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
             <button
-              onClick={() => window.location.href = `/admin/integration-audit?page=${page + 1}`}
+              onClick={() => (window.location.href = `/admin/integration-audit?page=${page + 1}`)}
               disabled={page * pageSize >= total}
               className="cursor-pointer rounded-lg border border-line-strong bg-surface-sunken px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:bg-hover hover:text-fg-strong disabled:opacity-40"
             >
@@ -344,6 +400,70 @@ export function AdminIntegrationAudit({
           </div>
         </div>
       </div>
+
+      {selectedLog && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-backdrop/70 p-4 backdrop-blur-sm"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setSelectedLog(null);
+          }}
+        >
+          <section
+            aria-labelledby="audit-detail-title"
+            aria-modal="true"
+            className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl border border-line bg-surface-raised shadow-2xl"
+            role="dialog"
+          >
+            <header className="sticky top-0 flex items-center justify-between border-b border-line bg-surface-raised p-5">
+              <div>
+                <h3 id="audit-detail-title" className="font-semibold text-fg-strong">
+                  {selectedLog.provider.replace(/_/g, ' ')} · {selectedLog.operation}
+                </h3>
+                <p className="mt-1 font-mono text-xs text-fg-muted">
+                  Correlation ID: {selectedLog.correlationId}
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="Close audit details"
+                onClick={() => setSelectedLog(null)}
+                className="rounded-lg p-2 text-fg-muted hover:bg-hover hover:text-fg-strong"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </header>
+
+            <div className="grid gap-4 p-5 sm:grid-cols-2">
+              <div className="rounded-lg border border-line bg-surface p-3 text-xs">
+                <div className="font-semibold text-fg-strong">Processing</div>
+                <dl className="mt-2 space-y-1.5 text-fg-muted">
+                  <div>HTTP status: {selectedLog.statusCode ?? 'Pending'}</div>
+                  <div>Queue job: {selectedLog.queueJobId ?? 'Not queued'}</div>
+                  <div>Error code: {selectedLog.errorCode ?? '—'}</div>
+                  <div>Error message: {selectedLog.errorMessage ?? '—'}</div>
+                  <div>Received: {formatTime(selectedLog.callbackReceivedAt)}</div>
+                </dl>
+              </div>
+
+              <AuditJsonBlock title="Callback payload" value={selectedLog.callbackPayload} />
+              <AuditJsonBlock title="Processing result" value={selectedLog.responsePayload} />
+              <AuditJsonBlock title="Request headers" value={selectedLog.requestHeaders} />
+            </div>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AuditJsonBlock({ title, value }: { title: string; value: unknown }) {
+  return (
+    <div className="min-w-0 rounded-lg border border-line bg-surface p-3">
+      <h4 className="mb-2 text-xs font-semibold text-fg-strong">{title}</h4>
+      <pre className="max-h-72 overflow-auto font-mono text-[11px] break-all whitespace-pre-wrap text-fg-muted">
+        {value == null ? 'No data recorded' : JSON.stringify(value, null, 2)}
+      </pre>
     </div>
   );
 }

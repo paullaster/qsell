@@ -7,8 +7,13 @@ import {
   type PaymentProviderCode,
   type PaymentProviderEnvironment,
 } from '@/server/domains/payments/types';
-import { encryptCredentials, decryptCredentials, maskCredentials } from '@/server/domains/payments/crypto';
+import {
+  encryptCredentials,
+  decryptCredentials,
+  maskCredentials,
+} from '@/server/domains/payments/crypto';
 import type { BranchRow, PaymentProviderConfigRow } from '@/server/db/drizzle/schema';
+import { extractPaymentReference } from '@/server/domains/payments/payment-reference';
 
 async function ensureBranchContext() {
   const { companySettings, organizations } = getContainer();
@@ -203,9 +208,7 @@ export async function savePaymentConfigAction(input: {
   }
 
   const defaultUrl =
-    input.environment === 'production'
-      ? meta.defaultProductionBaseUrl
-      : meta.defaultStagingBaseUrl;
+    input.environment === 'production' ? meta.defaultProductionBaseUrl : meta.defaultStagingBaseUrl;
 
   const row = await paymentConfigs.upsert({
     branchId: input.branchId,
@@ -247,14 +250,9 @@ export async function listEnabledCheckoutProvidersAction(): Promise<
     // Keep provider implementation terminology out of the storefront UI.
     return {
       code,
-      label:
-        code === 'mpesa_daraja'
-          ? rawLabel.replace(/\s*\(?daraja\)?/gi, '').trim()
-          : rawLabel,
+      label: code === 'mpesa_daraja' ? rawLabel.replace(/\s*\(?daraja\)?/gi, '').trim() : rawLabel,
       description:
-        code === 'mpesa_daraja'
-          ? 'Pay securely with M-Pesa on your phone.'
-          : rawDescription,
+        code === 'mpesa_daraja' ? 'Pay securely with M-Pesa on your phone.' : rawDescription,
     };
   });
 }
@@ -306,6 +304,7 @@ export async function getPaymentAttemptStatusAction(attemptId: string) {
     errorMessage: attempt.errorMessage,
     redirectUrl: attempt.redirectUrl,
     providerReference: attempt.providerReference,
+    receiptNumber: extractPaymentReference(attempt.providerCode, attempt.responsePayload),
   };
 }
 
@@ -356,10 +355,7 @@ export async function simulateDarajaUserAction(
 }
 
 /** Removed: payments are live via provider callbacks. */
-export async function simulatePesapalPaymentAction(
-  _orderTrackingId: string,
-  _channel?: string,
-) {
+export async function simulatePesapalPaymentAction(_orderTrackingId: string, _channel?: string) {
   throw new Error(
     'Local payment simulation is disabled. Complete payment on Pesapal; status updates via IPN callback.',
   );

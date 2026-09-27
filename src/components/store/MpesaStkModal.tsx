@@ -42,7 +42,7 @@ export function MpesaStkModal({
           clearInterval(poll);
           clearInterval(timer);
           setStatusMessage('Payment confirmed.');
-          onPaymentSuccess(attempt.providerReference || 'PAID');
+          onPaymentSuccess(attempt.receiptNumber || attempt.providerReference || 'PAID');
         } else if (attempt.status === 'failed' || attempt.status === 'cancelled') {
           clearInterval(poll);
           clearInterval(timer);
@@ -81,8 +81,10 @@ export function MpesaStkModal({
           <p className="font-mono text-xs text-fg-subtle">
             Order {order.orderNumber} · {order.customerPhone}
           </p>
-          <p className="text-[11px] text-fg-faint">
-            Waiting for provider callback · {secondsRemaining}s
+          <p className="text-[11px] text-fg-faint" role="status" aria-live="polite">
+            {secondsRemaining > 0
+              ? `Waiting for provider callback · ${secondsRemaining}s`
+              : 'Still waiting for confirmation. Do not start another payment; this order will update when M-Pesa responds.'}
           </p>
           <div className="flex items-center justify-center gap-1.5 text-[10px] text-fg-subtle">
             <ShieldCheck className="h-3.5 w-3.5" />

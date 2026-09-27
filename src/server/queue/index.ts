@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { run, TaskList } from 'graphile-worker';
 import { tasks } from './tasks';
 

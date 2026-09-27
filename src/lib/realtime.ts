@@ -56,6 +56,9 @@ export function useRealtimeSync(onEvent?: (event: string, data: any) => void) {
         eventSource.addEventListener('payment_gateway_updated', (e) =>
           handleAnyMessage(e, 'payment_gateway_updated'),
         );
+        eventSource.addEventListener('payment_callback_processed', (e) =>
+          handleAnyMessage(e, 'payment_callback_processed'),
+        );
 
         eventSource.onerror = () => {
           setIsConnected(false);

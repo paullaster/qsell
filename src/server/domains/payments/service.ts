@@ -48,7 +48,11 @@ export class PaymentService {
     );
   }
 
-  buildCallbackUrl(publicBaseUrl: string, providerCode: PaymentProviderCode, token: string): string {
+  buildCallbackUrl(
+    publicBaseUrl: string,
+    providerCode: PaymentProviderCode,
+    token: string,
+  ): string {
     const prefix = PAYMENT_PROVIDER_META[providerCode].callbackPathPrefix;
     return `${publicBaseUrl.replace(/\/$/, '')}${prefix}/${token}`;
   }
@@ -70,10 +74,7 @@ export class PaymentService {
     customerPhone: string;
     description?: string;
   }) {
-    const config = await this.configs.getByBranchAndProvider(
-      params.branch.id,
-      params.providerCode,
-    );
+    const config = await this.configs.getByBranchAndProvider(params.branch.id, params.providerCode);
     if (!config || !config.isEnabled) {
       throw new Error(`Payment provider ${params.providerCode} is not enabled for this branch`);
     }
@@ -162,6 +163,7 @@ export class PaymentService {
   async handleProviderCallback(params: {
     providerCode: PaymentProviderCode;
     callbackToken: string;
+    receiptEventId?: string;
     request: Request;
   }): Promise<{ httpStatus: number; body: Record<string, unknown>; callback: CallbackResult }> {
     const attempt = await this.attempts.getByCallbackToken(params.callbackToken);
@@ -178,17 +180,21 @@ export class PaymentService {
     const verdict = classifyCallbackPayload(params.providerCode, body);
     const dumpStatus = verdict.rawStatus ?? (attempt ? 'received' : 'unmatched_token');
     const dumpOutcome = verdict.rawStatus ? verdict.outcome : 'unclassified';
-    const dump = await this.attempts.recordCallbackEvent({
-      paymentAttemptId: attempt?.id ?? null,
-      callbackToken: params.callbackToken,
-      providerCode: params.providerCode,
-      httpMethod: params.request.method,
-      headers: headersToRecord(params.request.headers),
-      rawBody: body,
-      processingStatus: dumpStatus,
-      outcome: dumpOutcome,
-      processingError: attempt ? null : 'No payment attempt for callback token',
-    });
+    const receiptEventId =
+      params.receiptEventId ??
+      (
+        await this.attempts.recordCallbackEvent({
+          paymentAttemptId: attempt?.id ?? null,
+          callbackToken: params.callbackToken,
+          providerCode: params.providerCode,
+          httpMethod: params.request.method,
+          headers: headersToRecord(params.request.headers),
+          rawBody: body,
+          processingStatus: dumpStatus,
+          outcome: dumpOutcome,
+          processingError: attempt ? null : 'No payment attempt for callback token',
+        })
+      ).id;
 
     if (!attempt) {
       return {
@@ -199,7 +205,7 @@ export class PaymentService {
     }
 
     if (attempt.providerCode !== params.providerCode) {
-      await this.attempts.updateCallbackEvent(dump.id, {
+      await this.attempts.updateCallbackEvent(receiptEventId, {
         processingStatus: verdict.rawStatus ?? 'error',
         outcome: verdict.rawStatus ? verdict.outcome : 'failed',
         processingError: 'Provider mismatch',
@@ -228,7 +234,7 @@ export class PaymentService {
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Callback classification failed';
-      await this.attempts.updateCallbackEvent(dump.id, {
+      await this.attempts.updateCallbackEvent(receiptEventId, {
         processingStatus: verdict.rawStatus ?? 'error',
         outcome: verdict.rawStatus ? verdict.outcome : 'unclassified',
         processingError: message,
@@ -239,7 +245,7 @@ export class PaymentService {
     // The rulebook decides success vs failure from the provider status.
     // The adapter still supplies the receipt and references.
     const outcome = verdict.rawStatus ? verdict.outcome : callback.status;
-    await this.attempts.updateCallbackEvent(dump.id, {
+    await this.attempts.updateCallbackEvent(receiptEventId, {
       processingStatus: verdict.rawStatus ?? callback.status,
       outcome,
       processingError: callback.errorMessage ?? null,
@@ -250,12 +256,10 @@ export class PaymentService {
 
     const paymentReference =
       outcome === 'successful'
-        ? callback.receiptNumber?.trim() ||
-          extractPaymentReference(params.providerCode, body) ||
-          ''
+        ? callback.receiptNumber?.trim() || extractPaymentReference(params.providerCode, body) || ''
         : '';
     if (outcome === 'successful' && !paymentReference) {
-      await this.attempts.updateCallbackEvent(dump.id, {
+      await this.attempts.updateCallbackEvent(receiptEventId, {
         processingStatus: verdict.rawStatus ?? callback.status,
         outcome,
         processingError: 'Successful payment callback had no transaction reference.',
@@ -275,7 +279,8 @@ export class PaymentService {
     });
 
     if (outcome === 'successful' && paymentReference) {
-      const receiptProviders = params.providerCode === 'mpesa_daraja' || params.providerCode === 'kcb_buni';
+      const receiptProviders =
+        params.providerCode === 'mpesa_daraja' || params.providerCode === 'kcb_buni';
       await this.orderRepo.update(attempt.orderId, {
         paymentStatus: 'paid',
         status: 'processing',
@@ -284,6 +289,7 @@ export class PaymentService {
       });
       await InventoryReservationService.fulfilOrder(attempt.orderId);
       await getContainer().customers.applyOrderPayment(attempt.orderId);
+      await getContainer().transactionReconcile.reconcileSuccessfulPaymentAttempt(attempt.id);
     } else if (outcome === 'failed') {
       await this.orderRepo.update(attempt.orderId, {
         paymentStatus: 'failed',
