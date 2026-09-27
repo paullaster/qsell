@@ -77,7 +77,8 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
   const filteredProducts = products.filter((p) => {
     const matchesSearch =
       p.name.toLowerCase().includes(search.toLowerCase()) ||
-      p.sku.toLowerCase().includes(search.toLowerCase());
+      p.sku.toLowerCase().includes(search.toLowerCase()) ||
+      p.stockCode.toLowerCase().includes(search.toLowerCase());
     const matchesCategory =
       categoryFilter === 'all' || p.category.toLowerCase() === categoryFilter.toLowerCase();
     return matchesSearch && matchesCategory;
@@ -317,7 +318,8 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
                         <td className="px-4 py-3.5">
                           <div className="font-semibold text-fg-strong">{p.name}</div>
                           <div className="mt-0.5 flex items-center gap-2 font-mono text-[11px] text-fg-muted">
-                            <span className="font-bold text-indigo-400">{p.sku}</span>
+                            <span className="font-bold text-indigo-400">SKU: {p.sku}</span>
+                            <span>• Stock: {p.stockCode}</span>
                             <span>• {p.category}</span>
                             <span>• Threshold: {p.lowStockThreshold}</span>
                           </div>

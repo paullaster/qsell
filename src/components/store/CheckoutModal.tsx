@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
 import {
   X,
   Smartphone,
@@ -14,6 +15,8 @@ import {
   ArrowRight,
   Building,
   Check,
+  LogIn,
+  UserPlus,
 } from 'lucide-react';
 import {
   Product,
@@ -250,17 +253,17 @@ export function CheckoutModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-backdrop/80 p-4 backdrop-blur-md sm:p-6">
-      <div className="relative my-8 flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-line bg-surface-raised shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-stretch justify-center overflow-y-auto bg-backdrop/80 p-0 backdrop-blur-md sm:items-center sm:p-4 lg:p-6">
+      <div className="relative flex min-h-dvh w-full max-w-4xl flex-col overflow-hidden border border-line bg-surface-raised shadow-2xl sm:my-4 sm:max-h-[calc(100dvh-2rem)] sm:min-h-0 sm:rounded-2xl lg:my-6 lg:max-h-[90vh]">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-line bg-surface p-5 sm:p-6">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-emerald-500/30 bg-emerald-600/20 text-emerald-600">
-              <Lock className="h-5 w-5" />
+        <div className="flex items-center justify-between gap-3 border-b border-line bg-surface p-4 sm:p-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-emerald-500/30 bg-emerald-600/20 text-emerald-600 sm:h-10 sm:w-10">
+              <Lock className="h-4 w-4 sm:h-5 sm:w-5" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-fg-strong">Secure Checkout</h2>
-              <p className="text-xs text-fg-muted">
+              <h2 className="text-base font-bold text-fg-strong sm:text-lg">Secure Checkout</h2>
+              <p className="line-clamp-1 text-[11px] text-fg-muted sm:text-xs">
                 {enabledProviders.length > 0
                   ? enabledProviders.map((provider) => provider.label).join(' · ')
                   : 'Choose a payment method to continue'}
@@ -278,7 +281,7 @@ export function CheckoutModal({
         {/* Content Form */}
         <form
           onSubmit={handleSubmit}
-          className="grid flex-1 grid-cols-1 gap-8 overflow-y-auto p-6 lg:grid-cols-12"
+          className="grid flex-1 grid-cols-1 gap-5 overflow-y-auto p-4 sm:gap-6 sm:p-6 lg:grid-cols-12"
         >
           {/* Left Column: Shipping & Customer Info */}
           <div className="space-y-6 lg:col-span-7">
@@ -293,6 +296,41 @@ export function CheckoutModal({
               <h3 className="flex items-center gap-2 text-xs font-semibold tracking-wider text-indigo-400 uppercase">
                 <User className="h-4 w-4" /> 1. Customer & Identification
               </h3>
+              {!isSignedIn ? (
+                <section className="rounded-2xl border border-indigo-500/30 bg-indigo-500/5 p-4 sm:p-5">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white">
+                      <UserPlus className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h4 className="text-sm font-bold text-fg-strong">Faster checkout next time</h4>
+                      <p className="mt-1 text-xs leading-relaxed text-fg-muted">
+                        Sign in to use saved details, or create an account to keep your addresses
+                        and order history together. Your cart will be here when you return.
+                      </p>
+                      <div className="mt-4 grid grid-cols-1 gap-2 min-[380px]:grid-cols-2">
+                        <Link
+                          href="/register?callbackUrl=%2F"
+                          className="flex min-h-12 touch-manipulation items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white shadow-md transition-colors hover:bg-indigo-500"
+                        >
+                          <UserPlus className="h-4 w-4 shrink-0" />
+                          <span>Create account</span>
+                        </Link>
+                        <Link
+                          href="/login?callbackUrl=%2F"
+                          className="flex min-h-12 touch-manipulation items-center justify-center gap-2 rounded-xl border border-line-strong bg-surface-raised px-4 py-3 text-sm font-semibold text-fg-strong transition-colors hover:bg-hover"
+                        >
+                          <LogIn className="h-4 w-4 shrink-0" />
+                          <span>Sign in</span>
+                        </Link>
+                      </div>
+                      <p className="mt-2 text-center text-[11px] text-fg-subtle">
+                        Guest checkout is also available below.
+                      </p>
+                    </div>
+                  </div>
+                </section>
+              ) : null}
               {isSignedIn ? (
                 <div className="rounded-xl border border-line bg-surface/80 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-2">
@@ -502,12 +540,12 @@ export function CheckoutModal({
             {/* Payment Method Selector — only branch-enabled providers */}
             <div className="space-y-3 pt-2">
               <h3 className="flex items-center gap-2 text-xs font-semibold tracking-wider text-indigo-400 uppercase">
-                <CreditCard className="h-4 w-4" /> 3. Select Payment Gateway
+                <CreditCard className="h-4 w-4" /> 3. Choose Payment Method
               </h3>
               {enabledProviders.length === 0 && !canPayOnAccount ? (
-                <p className="rounded-lg border border-amber-800/60 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                  No payment methods are enabled for this branch. Configure credentials under Admin
-                  → Settings → Payments, or use a credit customer to pay on account.
+                <p className="rounded-lg border border-line bg-surface-raised px-3 py-3 text-sm text-fg-muted">
+                  Online payment is unavailable right now. Please try again later or contact us for
+                  help.
                 </p>
               ) : (
                 <div className="space-y-2.5">
@@ -580,7 +618,7 @@ export function CheckoutModal({
           </div>
 
           {/* Right Column: Order Summary & Execution */}
-          <div className="flex flex-col justify-between space-y-6 rounded-xl border border-line bg-surface p-5 lg:col-span-5">
+          <div className="flex min-w-0 flex-col justify-between space-y-5 rounded-xl border border-line bg-surface p-4 sm:p-5 lg:col-span-5">
             <div className="space-y-4">
               <h3 className="border-b border-line pb-2 text-sm font-bold text-fg-strong">
                 Order Review ({items.length} {items.length === 1 ? 'item' : 'items'})

@@ -46,6 +46,23 @@ const TABS: { id: ProductFormTab; label: string; icon: typeof Package }[] = [
   { id: 'media', label: 'Media', icon: ImageIcon },
 ];
 
+function createCodeSuffix(): string {
+  return Math.random().toString(36).slice(2, 8).toUpperCase().padEnd(6, '0');
+}
+
+function generateProductCode(prefix: 'SKU' | 'STK', productName: string, suffix: string): string {
+  const stem = productName
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32)
+    .replace(/-+$/g, '');
+
+  return stem && suffix ? `${prefix}-${stem}-${suffix}` : '';
+}
+
 interface AdminProductModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -71,6 +88,10 @@ export function AdminProductModal({
   // Basic Information
   const [name, setName] = useState('');
   const [sku, setSku] = useState('');
+  const [stockCode, setStockCode] = useState('');
+  const [codeSuffix, setCodeSuffix] = useState('');
+  const [skuManuallyEdited, setSkuManuallyEdited] = useState(false);
+  const [stockCodeManuallyEdited, setStockCodeManuallyEdited] = useState(false);
   const [slug, setSlug] = useState('');
   const [category, setCategory] = useState('');
   const [brand, setBrand] = useState('');
@@ -169,6 +190,10 @@ export function AdminProductModal({
     if (productToEdit) {
       setName(productToEdit.name);
       setSku(productToEdit.sku);
+      setStockCode(productToEdit.stockCode);
+      setCodeSuffix('');
+      setSkuManuallyEdited(true);
+      setStockCodeManuallyEdited(true);
       setSlug(productToEdit.slug);
       setCategory(productToEdit.category);
       setBrand(productToEdit.brand || '');
@@ -194,6 +219,10 @@ export function AdminProductModal({
     } else {
       setName('');
       setSku('');
+      setStockCode('');
+      setCodeSuffix(createCodeSuffix());
+      setSkuManuallyEdited(false);
+      setStockCodeManuallyEdited(false);
       setSlug('');
       setCategory('');
       setBrand('');
@@ -297,6 +326,12 @@ export function AdminProductModal({
       focusTabForError(msg);
       return;
     }
+    if (!stockCode.trim()) {
+      const msg = 'Stock code is required.';
+      setError(msg);
+      focusTabForError(msg);
+      return;
+    }
     if (!category.trim()) {
       const msg =
         categoryOptions.length === 0
@@ -355,6 +390,7 @@ export function AdminProductModal({
       const productPayload = {
         name: name.trim(),
         sku: sku.trim().toUpperCase(),
+        stockCode: stockCode.trim().toUpperCase(),
         slug: autoSlug,
         category,
         brand: brand.trim() || undefined,
@@ -480,23 +516,51 @@ export function AdminProductModal({
                     type="text"
                     value={name}
                     onChange={(e) => {
-                      setName(e.target.value);
+                      const nextName = e.target.value;
+                      setName(nextName);
                       if (!isEditing) {
-                        setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
+                        setSlug(nextName.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
+                        if (!skuManuallyEdited) {
+                          setSku(generateProductCode('SKU', nextName, codeSuffix));
+                        }
+                        if (!stockCodeManuallyEdited) {
+                          setStockCode(generateProductCode('STK', nextName, codeSuffix));
+                        }
                       }
                     }}
                     placeholder="e.g. Sony WH-1000XM5 Wireless Headphones"
                     className={fieldClass}
                   />
+                  {!isEditing ? (
+                    <p className="mt-1 text-[10px] text-fg-subtle">
+                      SKU and Stock Code fill from the title and can be edited.
+                    </p>
+                  ) : null}
                 </div>
                 <div>
-                  <label className={labelClass}>SKU Code *</label>
+                  <label className={labelClass}>SKU *</label>
                   <input
                     type="text"
                     value={sku}
-                    onChange={(e) => setSku(e.target.value.toUpperCase())}
-                    placeholder="e.g. SNY-WH1000XM5"
-                    className={`${fieldClass} font-mono`}
+                    onChange={(e) => {
+                      setSku(e.target.value.toUpperCase());
+                      setSkuManuallyEdited(true);
+                    }}
+                    autoComplete="off"
+                    className={`${fieldClass} min-h-11 font-mono uppercase`}
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>Stock Code *</label>
+                  <input
+                    type="text"
+                    value={stockCode}
+                    onChange={(e) => {
+                      setStockCode(e.target.value.toUpperCase());
+                      setStockCodeManuallyEdited(true);
+                    }}
+                    autoComplete="off"
+                    className={`${fieldClass} min-h-11 font-mono uppercase`}
                   />
                 </div>
                 <div>

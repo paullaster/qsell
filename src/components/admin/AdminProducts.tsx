@@ -54,6 +54,7 @@ export function AdminProducts({
     const matchesSearch =
       p.name.toLowerCase().includes(search.toLowerCase()) ||
       p.sku.toLowerCase().includes(search.toLowerCase()) ||
+      p.stockCode.toLowerCase().includes(search.toLowerCase()) ||
       p.category.toLowerCase().includes(search.toLowerCase());
 
     const matchesCategory =
@@ -129,6 +130,7 @@ export function AdminProducts({
   const handleExportCSV = () => {
     const headers = [
       'SKU',
+      'Stock_Code',
       'Name',
       'Category',
       'Price_KES',
@@ -140,6 +142,7 @@ export function AdminProducts({
     ];
     const rows = filteredProducts.map((p) => [
       p.sku,
+      p.stockCode,
       `"${p.name.replace(/"/g, '""')}"`,
       p.category,
       p.price ?? '',
@@ -307,7 +310,7 @@ export function AdminProducts({
                     className="cursor-pointer rounded border-line-strong bg-surface text-indigo-600 focus:ring-0"
                   />
                 </th>
-                <th className="px-4 py-3">Product & SKU</th>
+                <th className="px-4 py-3">Product / SKU / Stock Code</th>
                 <th className="px-4 py-3">Category</th>
                 <th className="px-4 py-3 text-right">Price (KES)</th>
                 <th className="px-4 py-3 text-right">Cost / Margin</th>
@@ -368,9 +371,10 @@ export function AdminProducts({
                             >
                               {p.name}
                             </div>
-                            <div className="flex items-center gap-2 font-mono text-[11px] text-fg-muted">
-                              <span>{p.sku}</span>
-                              {p.brand && <span className="text-fg-subtle">• {p.brand}</span>}
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] text-fg-muted">
+                              <span>SKU: {p.sku}</span>
+                              <span className="text-fg-subtle">Stock: {p.stockCode}</span>
+                              {p.brand && <span className="font-sans text-fg-subtle">• {p.brand}</span>}
                             </div>
                           </div>
                         </div>

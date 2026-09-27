@@ -33,6 +33,8 @@ export interface ProductSpecification {
 export interface Product {
   id: string;
   sku: string;
+  /** Internal stock-control identifier; distinct from the customer-facing SKU. */
+  stockCode: string;
   name: string;
   slug: string;
   description: string;

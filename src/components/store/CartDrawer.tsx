@@ -1,6 +1,7 @@
 'use client';
 
-import { X, Trash2, ShoppingBag, ArrowRight, ShieldCheck } from 'lucide-react';
+import { X, Trash2, ShoppingBag, ArrowRight, ShieldCheck, LogIn } from 'lucide-react';
+import Link from 'next/link';
 import { type Product, type CurrencyConfig } from '@/types/index';
 import { cartTaxRows, cartTotals, formatCartAmount } from '@/lib/cartMoney';
 import { AppImage } from '@/components/ui/AppImage';
@@ -16,6 +17,7 @@ interface CartDrawerProps {
   items: CartItem[];
   currency: CurrencyConfig | null;
   paymentLabels: string[];
+  isSignedIn: boolean;
   onUpdateQuantity: (productId: string, quantity: number) => void;
   onRemoveItem: (productId: string) => void;
   onProceedToCheckout: () => void;
@@ -27,6 +29,7 @@ export function CartDrawer({
   items,
   currency,
   paymentLabels,
+  isSignedIn,
   onUpdateQuantity,
   onRemoveItem,
   onProceedToCheckout,
@@ -48,13 +51,13 @@ export function CartDrawer({
         className="absolute inset-0 bg-backdrop/70 backdrop-blur-sm transition-opacity"
       />
 
-      <div className="fixed inset-y-0 right-0 flex max-w-full pl-10">
-        <div className="flex w-screen max-w-md flex-col border-l border-line bg-surface-raised text-fg-strong shadow-2xl">
+      <div className="fixed inset-y-0 right-0 flex w-full max-w-full sm:w-auto sm:pl-10">
+        <div className="flex h-dvh w-full max-w-full flex-col border-l border-line bg-surface-raised text-fg-strong shadow-2xl sm:h-auto sm:w-screen sm:max-w-md">
           <div className="flex items-center justify-between border-b border-line p-4 sm:p-6">
-            <div className="flex items-center gap-2">
+            <div className="flex min-w-0 items-center gap-2">
               <ShoppingBag className="h-5 w-5 text-indigo-400" />
-              <h2 className="text-base font-bold text-fg-strong">Your Shopping Cart</h2>
-              <span className="rounded-md border border-indigo-500/20 bg-indigo-500/10 px-2 py-0.5 text-xs font-semibold text-indigo-400">
+              <h2 className="truncate text-sm font-bold text-fg-strong sm:text-base">Your Cart</h2>
+              <span className="shrink-0 rounded-md border border-indigo-500/20 bg-indigo-500/10 px-2 py-0.5 text-[10px] font-semibold text-indigo-400 sm:text-xs">
                 {items.length} {items.length === 1 ? 'item' : 'items'}
               </span>
             </div>
@@ -153,6 +156,36 @@ export function CartDrawer({
 
           {items.length > 0 && (
             <div className="space-y-4 border-t border-line bg-surface p-4 sm:p-6">
+              {!isSignedIn ? (
+                <div className="rounded-xl border border-indigo-500/25 bg-indigo-500/5 p-3.5 sm:p-4">
+                  <div className="flex items-start gap-3">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white">
+                      <LogIn className="h-4 w-4" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-fg-strong">Already have an account?</p>
+                      <p className="mt-0.5 text-xs leading-relaxed text-fg-muted">
+                        Sign in to use your saved details. Your cart will be here when you return.
+                      </p>
+                      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+                        <Link
+                          href="/login?callbackUrl=%2F"
+                          className="inline-flex min-h-10 touch-manipulation items-center justify-center rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-500"
+                        >
+                          Sign in
+                        </Link>
+                        <Link
+                          href="/register?callbackUrl=%2F"
+                          className="min-h-10 touch-manipulation content-center text-xs font-medium text-indigo-600 underline underline-offset-2 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+                        >
+                          Create account
+                        </Link>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
               <div className="space-y-1.5 text-xs text-fg-muted">
                 <div className="flex justify-between">
                   <span>Subtotal</span>
