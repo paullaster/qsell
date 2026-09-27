@@ -6,6 +6,7 @@ import { ThemeProvider } from '@/components/theme/ThemeProvider';
 import { companyHtmlStyle } from '@/components/company/companyHtmlStyle';
 import { resolveCompanyUiConfig } from '@/config/company-ui';
 import { resolveThemeForServer, themeBootstrapScript, type ThemeMode } from '@/config/theme';
+import { resolveCompanyLogoUrl } from '@/lib/companyLogo';
 import './globals.css';
 
 // Company settings, user theme, catalog, and admin data are read from the live
@@ -19,10 +20,11 @@ export async function generateMetadata(): Promise<Metadata> {
     const title = company.tagline
       ? `${company.tradingName} — ${company.tagline}`
       : company.tradingName;
+    const logoUrl = resolveCompanyLogoUrl(company.logoUrl);
     return {
       title,
       description: `${company.legalName} storefront and commerce console`,
-      icons: company.logoUrl ? [{ url: company.logoUrl }] : undefined,
+      icons: logoUrl ? [{ url: logoUrl }] : undefined,
     };
   } catch {
     return {

@@ -2,18 +2,14 @@
 
 import { use } from 'react';
 import {
-  TrendingUp,
   DollarSign,
   ShoppingBag,
   AlertTriangle,
-  CheckCircle2,
   Smartphone,
   CreditCard,
   Layers,
   ArrowUpRight,
   ShieldCheck,
-  Zap,
-  Activity,
 } from 'lucide-react';
 import { type DashboardAnalytics } from '@/types/index';
 
@@ -43,9 +39,7 @@ export function AdminDashboard({ analyticsPromise, onNavigateTab }: AdminDashboa
             <div className="font-mono text-2xl font-bold text-fg-strong">
               KES {analytics.totalRevenue.toLocaleString()}
             </div>
-            <div className="mt-1 flex items-center gap-1 text-[11px] text-emerald-600">
-              <TrendingUp className="h-3 w-3" /> +14.2% vs previous period
-            </div>
+            <div className="mt-1 text-[11px] text-fg-muted">Collected from paid orders</div>
           </div>
         </div>
 
@@ -87,9 +81,7 @@ export function AdminDashboard({ analyticsPromise, onNavigateTab }: AdminDashboa
             <div className="font-mono text-2xl font-bold text-indigo-400">
               {analytics.reconciliationRate}%
             </div>
-            <div className="mt-1 flex items-center gap-1 text-[11px] text-emerald-600">
-              <CheckCircle2 className="h-3 w-3" /> Zero unresolved discrepancies
-            </div>
+            <div className="mt-1 text-[11px] text-fg-muted">Based on recorded reconciliations</div>
           </div>
         </div>
 
@@ -119,9 +111,9 @@ export function AdminDashboard({ analyticsPromise, onNavigateTab }: AdminDashboa
       </div>
 
       {/* Analytics Breakdown */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+      <div className="grid grid-cols-1 gap-6">
         {/* Payment Gateways Performance */}
-        <div className="space-y-5 rounded-xl border border-line bg-surface-raised p-6 lg:col-span-6">
+        <div className="space-y-5 rounded-xl border border-line bg-surface-raised p-6">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-bold text-fg-strong">Payment Method Distribution</h3>
@@ -174,46 +166,6 @@ export function AdminDashboard({ analyticsPromise, onNavigateTab }: AdminDashboa
                 </div>
               );
             })}
-          </div>
-        </div>
-
-        {/* Real-time Hourly Velocity */}
-        <div className="space-y-5 rounded-xl border border-line bg-surface-raised p-6 lg:col-span-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-sm font-bold text-fg-strong">Intraday Sales Velocity</h3>
-              <p className="text-xs text-fg-subtle">Real-time hourly volume & transaction flow</p>
-            </div>
-            <div className="flex items-center gap-1.5 rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-0.5 font-mono text-[10px] text-emerald-600">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#10b981]" />{' '}
-              LIVE
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            <div className="grid grid-cols-6 gap-2 text-center">
-              {analytics.recentHourlySales.map((h) => (
-                <div
-                  key={h.time}
-                  className="space-y-1 rounded-lg border border-line bg-surface p-2.5"
-                >
-                  <div className="font-mono text-[10px] text-fg-subtle">{h.time}</div>
-                  <div className="font-mono text-xs font-bold text-fg-strong">
-                    KES {(h.sales / 1000).toFixed(0)}k
-                  </div>
-                  <div className="text-[9px] text-fg-subtle">{h.orders} orders</div>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex items-center justify-between rounded-lg border border-line bg-surface p-3.5 text-xs">
-              <span className="flex items-center gap-1.5 text-fg-muted">
-                <Zap className="h-3.5 w-3.5 text-amber-600" /> Payment Verification:
-              </span>
-              <span className="font-mono font-semibold text-emerald-600">
-                Active (Automatic Settlement)
-              </span>
-            </div>
           </div>
         </div>
       </div>

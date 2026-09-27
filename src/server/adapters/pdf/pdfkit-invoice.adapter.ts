@@ -16,7 +16,11 @@ function nonEmpty(parts: Array<string | null | undefined>): string[] {
 
 function resolveLocalLogoPath(logoUrl?: string | null): string | null {
   if (!logoUrl || !logoUrl.startsWith('/')) return null;
-  const absolute = path.join(process.cwd(), 'public', logoUrl.replace(/^\//, ''));
+  const apiRoute = logoUrl.match(/^\/api\/company\/logo\/(logo-[a-z\d-]+\.(?:png|jpg|webp|svg))$/i);
+  const legacyPath = logoUrl.match(/^\/uploads\/company\/(logo-[a-z\d-]+\.(?:png|jpg|webp|svg))$/i);
+  const filename = apiRoute?.[1] ?? legacyPath?.[1];
+  if (!filename) return null;
+  const absolute = path.join(process.cwd(), 'public', 'uploads', 'company', filename);
   return existsSync(absolute) ? absolute : null;
 }
 

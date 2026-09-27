@@ -2,6 +2,7 @@
 
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { getContainer } from '@/server/di/container';
 import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
@@ -100,12 +101,12 @@ export async function uploadCompanyLogoAction(formData: FormData): Promise<Compa
 
   const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'company');
   await mkdir(uploadDir, { recursive: true });
-  const filename = `logo-${Date.now()}.${ext}`;
+  const filename = `logo-${Date.now()}-${randomUUID()}.${ext}`;
   const absolutePath = path.join(uploadDir, filename);
   const buffer = Buffer.from(await file.arrayBuffer());
   await writeFile(absolutePath, buffer);
 
-  const logoUrl = `/uploads/company/${filename}`;
+  const logoUrl = `/api/company/logo/${filename}`;
   const { companySettings } = getContainer();
   const updated = await companySettings.update({ logoUrl });
   revalidateCompanySurfaces();

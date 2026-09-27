@@ -172,11 +172,26 @@ jobs:
 
           compose --profile ops pull
           compose --profile ops run --rm migrate
+
+          # Preserve logos and other user uploads from the current writable
+          # container before replacing it with the image that mounts uploads_data.
+          upload_backup=$(mktemp -d /opt/qsell/.uploads-backup.XXXXXX)
+          old_app=$(compose ps -q app || true)
+          if [ -n "$old_app" ]; then
+            docker cp "$old_app:/app/public/uploads/." "$upload_backup/" || true
+          fi
+
           compose up -d --remove-orphans
+          new_app=$(compose ps -q app)
+          if [ -n "$new_app" ] && [ -d "$upload_backup/company" ]; then
+            docker cp "$upload_backup/company" "$new_app:/app/public/uploads/"
+            docker exec -u 0 "$new_app" chown -R 1001:1001 /app/public/uploads
+          fi
 
           for attempt in $(seq 1 30); do
             if compose exec -T app node -e "fetch('http://127.0.0.1:3069/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"; then
               echo 'Application health check passed.'
+              rm -rf "$upload_backup"
               exit 0
             fi
             sleep 5

@@ -1,6 +1,10 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
+  experimental: {
+    // Leave room for multipart metadata around the 2 MB logo-file limit.
+    serverActions: { bodySizeLimit: '3mb' },
+  },
   // The dev server defaults to localhost, but phones on the same LAN open the
   // app by the laptop's private IP. Allow the current LAN origin for dev HMR
   // so the page hydrates and React touch/click handlers attach on mobile.

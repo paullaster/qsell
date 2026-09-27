@@ -25,7 +25,11 @@ export function AppImage({ src, alt, fallbackSrc, onError, unoptimized, ...rest 
     setFailed(false);
   }, [src]);
 
-  const resolved = (failed ? fallbackSrc : src)?.trim() || fallbackSrc || '';
+  const source = (failed ? fallbackSrc : src)?.trim() || fallbackSrc || '';
+  const legacyCompanyLogo = source.match(/^\/uploads\/company\/(logo-[a-zA-Z0-9._-]+)$/);
+  const resolved = legacyCompanyLogo
+    ? `/api/company/logo/${encodeURIComponent(legacyCompanyLogo[1])}`
+    : source;
   if (!resolved) return null;
 
   return (
@@ -33,7 +37,9 @@ export function AppImage({ src, alt, fallbackSrc, onError, unoptimized, ...rest 
       {...rest}
       src={resolved}
       alt={alt}
-      unoptimized={unoptimized || needsUnoptimized(resolved)}
+      unoptimized={
+        unoptimized || needsUnoptimized(resolved) || resolved.startsWith('/api/company/logo/')
+      }
       onError={(event) => {
         if (fallbackSrc && resolved !== fallbackSrc) setFailed(true);
         onError?.(event);
