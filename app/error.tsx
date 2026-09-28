@@ -1,8 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import { usePathname } from 'next/navigation';
-import { reportClientApplicationErrorAction } from '@/server/domains/application-errors/actions';
+import * as Sentry from '@sentry/nextjs';
 
 export default function Error({
   error,
@@ -11,20 +10,9 @@ export default function Error({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  const pathname = usePathname();
-
   useEffect(() => {
-    console.error('[application] route error', error);
-    void reportClientApplicationErrorAction({
-      errorName: error.name,
-      message: error.message,
-      stack: error.stack,
-      digest: error.digest,
-      path: pathname,
-    }).catch((loggingError) => {
-      console.error('[application] failed to report route error', loggingError);
-    });
-  }, [error, pathname]);
+    Sentry.captureException(error);
+  }, [error]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-canvas p-6">

@@ -1,9 +1,20 @@
 import type { NextConfig } from 'next';
+import { withSentryConfig } from '@sentry/nextjs/config';
+
+const serverActionAllowedOrigins = (
+  process.env.SERVER_ACTION_ALLOWED_ORIGINS ?? 'omnicommerce.brainsporellc.com'
+)
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 const nextConfig: NextConfig = {
   experimental: {
     // Leave room for multipart metadata around the 2 MB logo-file limit.
-    serverActions: { bodySizeLimit: '3mb' },
+    serverActions: {
+      bodySizeLimit: '3mb',
+      allowedOrigins: serverActionAllowedOrigins,
+    },
   },
   // The dev server defaults to localhost, but phones on the same LAN open the
   // app by the laptop's private IP. Allow the current LAN origin for dev HMR
@@ -28,4 +39,8 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+export default withSentryConfig(nextConfig, {
+  silent: !process.env.CI,
+  telemetry: false,
+  sourcemaps: { disable: !process.env.SENTRY_AUTH_TOKEN },
+});

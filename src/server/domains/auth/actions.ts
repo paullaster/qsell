@@ -11,7 +11,7 @@ import { StorefrontCustomerService } from '@/server/domains/customers/storefront
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { randomUUID } from 'node:crypto';
-import { recordApplicationError } from '@/server/observability/application-errors';
+import * as Sentry from '@sentry/nextjs';
 
 const LOGIN_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -271,15 +271,9 @@ export async function loginAction(input: {
     if (err instanceof AuthError) {
       return { ok: false, error: 'Email or password is incorrect. Please try again.' };
     }
-    await recordApplicationError({
-      source: 'auth-action',
-      errorName: err instanceof Error ? err.name : 'AuthenticationError',
-      message: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : null,
-      path: '/login',
-      routeType: 'action',
-      requestId,
-      context: { operation: 'credentials_sign_in' },
+    Sentry.captureException(err, {
+      tags: { area: 'auth', action: 'credentials_sign_in' },
+      extra: { requestId },
     });
     return {
       ok: false,
