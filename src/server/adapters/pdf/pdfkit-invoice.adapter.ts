@@ -140,9 +140,23 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
 
       const metaRows: Array<[string, string]> = [
         [docLabel, payload.invoiceNumber],
-        ['Order No.', payload.orderNumber],
+        ...(isQuote ? [] : [['Order No.', payload.orderNumber] as [string, string]]),
         ['Issue Date', new Date(payload.issuedAt).toLocaleDateString('en-KE')],
-        ['Order status', payload.paymentStatus.replace(/_/g, ' ').toUpperCase()],
+        ...(isQuote
+          ? [
+              ...(payload.validUntil
+                ? [['Valid Until', payload.validUntil] as [string, string]]
+                : []),
+              ...(payload.customerReference
+                ? [['Customer Reference', payload.customerReference] as [string, string]]
+                : []),
+            ]
+          : [
+              ['Order status', payload.paymentStatus.replace(/_/g, ' ').toUpperCase()] as [
+                string,
+                string,
+              ],
+            ]),
         ['Currency', payload.currency],
       ];
 
@@ -178,54 +192,66 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
       const shipX = M + halfW + colGap;
       const blockTop = y;
 
-      doc.fillColor(accent).font('Helvetica-Bold').fontSize(9).text('BILL TO', M, blockTop, {
-        width: halfW,
-        lineBreak: false,
-      });
-      doc
-        .fillColor(accent)
-        .font('Helvetica-Bold')
-        .fontSize(9)
-        .text('SHIP TO', shipX, blockTop, { width: halfW, lineBreak: false });
-
-      let billY = blockTop + 14;
-      let shipY = blockTop + 14;
-
-      const billLines = nonEmpty([
-        payload.customer.name,
-        payload.customer.email,
-        payload.customer.phone,
-        payload.customer.kraPin ? `Tax PIN: ${payload.customer.kraPin}` : null,
-      ]);
-      doc.fillColor(ink).font('Helvetica-Bold').fontSize(10);
-      doc.text(billLines[0] ?? '', M, billY, { width: halfW, lineBreak: false });
-      billY += 13;
-      doc.fillColor(muted).font('Helvetica').fontSize(8);
-      for (const row of billLines.slice(1)) {
-        doc.text(row, M, billY, { width: halfW, lineBreak: false });
-        billY += 11;
+      const showBillTo = !isQuote || payload.showBillingAddress !== false;
+      if (showBillTo) {
+        doc.fillColor(accent).font('Helvetica-Bold').fontSize(9).text('BILL TO', M, blockTop, {
+          width: halfW,
+          lineBreak: false,
+        });
+      }
+      if (!isQuote) {
+        doc
+          .fillColor(accent)
+          .font('Helvetica-Bold')
+          .fontSize(9)
+          .text('SHIP TO', shipX, blockTop, { width: halfW, lineBreak: false });
       }
 
-      const shipLines = nonEmpty([
-        payload.customer.name,
-        payload.customer.shippingAddress.street,
-        [
-          payload.customer.shippingAddress.city,
-          payload.customer.shippingAddress.countyOrState,
-          payload.customer.shippingAddress.postalCode,
-        ]
-          .filter(Boolean)
-          .join(', '),
-        payload.customer.shippingAddress.country,
-        payload.customer.phone,
-      ]);
-      doc.fillColor(ink).font('Helvetica-Bold').fontSize(10);
-      doc.text(shipLines[0] ?? '', shipX, shipY, { width: halfW, lineBreak: false });
-      shipY += 13;
-      doc.fillColor(muted).font('Helvetica').fontSize(8);
-      for (const row of shipLines.slice(1)) {
-        doc.text(row, shipX, shipY, { width: halfW, lineBreak: false });
-        shipY += 11;
+      let billY = blockTop + (showBillTo ? 14 : 0);
+      let shipY = blockTop;
+
+      if (showBillTo) {
+        const billLines = nonEmpty([
+          payload.billingInformation?.name ?? payload.customer.name,
+          payload.billingInformation?.email ?? payload.customer.email,
+          payload.billingInformation?.phone ?? payload.customer.phone,
+          payload.billingInformation?.address ?? null,
+          payload.billingInformation?.taxId ? `Tax PIN: ${payload.billingInformation.taxId}` : null,
+        ]);
+        doc.fillColor(ink).font('Helvetica-Bold').fontSize(10);
+        doc.text(billLines[0] ?? '', M, billY, { width: halfW, lineBreak: false });
+        billY += 13;
+        doc.fillColor(muted).font('Helvetica').fontSize(8);
+        for (const row of billLines.slice(1)) {
+          doc.text(row, M, billY, { width: halfW, lineBreak: false });
+          billY += 11;
+        }
+      }
+
+      const shipLines = isQuote
+        ? []
+        : nonEmpty([
+            payload.customer.name,
+            payload.customer.shippingAddress.street,
+            [
+              payload.customer.shippingAddress.city,
+              payload.customer.shippingAddress.countyOrState,
+              payload.customer.shippingAddress.postalCode,
+            ]
+              .filter(Boolean)
+              .join(', '),
+            payload.customer.shippingAddress.country,
+            payload.customer.phone,
+          ]);
+      if (!isQuote) {
+        doc.fillColor(ink).font('Helvetica-Bold').fontSize(10);
+        doc.text(shipLines[0] ?? '', shipX, shipY + 14, { width: halfW, lineBreak: false });
+        shipY += 27;
+        doc.fillColor(muted).font('Helvetica').fontSize(8);
+        for (const row of shipLines.slice(1)) {
+          doc.text(row, shipX, shipY, { width: halfW, lineBreak: false });
+          shipY += 11;
+        }
       }
 
       y = Math.max(billY, shipY) + 18;
@@ -266,6 +292,46 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
       const footerReserve = isProforma ? 240 : 180;
 
       for (const [index, item] of payload.items.entries()) {
+        if (isQuote && item.kind === 'section') {
+          const rowH = 38;
+          if (y + rowH > PAGE_H - footerReserve) {
+            doc.addPage();
+            doc.rect(0, 0, PAGE_W, 6).fill(accent);
+            y = drawTableHeader(28);
+          }
+          doc.rect(M, y, CONTENT_W, rowH).fill('#F3F4F6');
+          doc
+            .fillColor(primary)
+            .font('Helvetica-Bold')
+            .fontSize(10)
+            .text(item.name, M + 8, y + 7, { width: CONTENT_W * 0.67, lineBreak: false });
+          if (item.sectionDescription) {
+            doc
+              .fillColor(muted)
+              .font('Helvetica')
+              .fontSize(7)
+              .text(item.sectionDescription, M + 8, y + 22, {
+                width: CONTENT_W * 0.67,
+                lineBreak: false,
+              });
+          }
+          doc
+            .fillColor(ink)
+            .font('Helvetica-Bold')
+            .fontSize(9)
+            .text(
+              money(item.sectionTotal ?? item.totalPrice, payload.currency),
+              M + CONTENT_W * 0.67,
+              y + 12,
+              {
+                width: CONTENT_W * 0.3 - 8,
+                align: 'right',
+                lineBreak: false,
+              },
+            );
+          y += rowH;
+          continue;
+        }
         doc.font('Helvetica').fontSize(8);
         const nameHeight = Math.max(
           12,
@@ -363,8 +429,23 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
 
       y += 18;
 
-      // Payment / bank instructions — proforma only
-      if (isProforma) {
+      // Payment / bank instructions — proforma and quote documents.
+      if (isQuote && payload.paymentDetails) {
+        if (y > PAGE_H - 160) {
+          doc.addPage();
+          doc.rect(0, 0, PAGE_W, 6).fill(accent);
+          y = 28;
+        }
+        doc.fillColor(accent).font('Helvetica-Bold').fontSize(9).text('PAYMENT DETAILS', M, y);
+        y += 14;
+        doc
+          .fillColor(ink)
+          .font('Helvetica')
+          .fontSize(8)
+          .text(payload.paymentDetails, M, y, { width: CONTENT_W });
+        y = doc.y + 10;
+      }
+      if (isProforma && !isQuote) {
         if (y > PAGE_H - 160) {
           doc.addPage();
           doc.rect(0, 0, PAGE_W, 6).fill(accent);
@@ -399,12 +480,45 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
         y += 10;
       }
 
-      const footerNote = isProforma
-        ? isQuote
-          ? 'This quotation is valid subject to the expiry date shown and is not a tax invoice or confirmation of payment.'
-          : 'This proforma invoice is a quotation for payment. It is not a tax invoice and does not confirm receipt of funds.'
-        : payload.company.invoiceFooterNote ||
-          'This is a computer-generated tax invoice. Keep for your records and KRA compliance.';
+      if (isQuote && payload.paymentTerms) {
+        if (y > PAGE_H - 140) {
+          doc.addPage();
+          doc.rect(0, 0, PAGE_W, 6).fill(accent);
+          y = 28;
+        }
+        doc.fillColor(accent).font('Helvetica-Bold').fontSize(9).text('PAYMENT TERMS', M, y);
+        y += 13;
+        doc
+          .fillColor(ink)
+          .font('Helvetica')
+          .fontSize(8)
+          .text(payload.paymentTerms, M, y, { width: CONTENT_W });
+        y = doc.y + 10;
+      }
+      if (isQuote && payload.termsAndConditions) {
+        if (y > PAGE_H - 140) {
+          doc.addPage();
+          doc.rect(0, 0, PAGE_W, 6).fill(accent);
+          y = 28;
+        }
+        doc.fillColor(accent).font('Helvetica-Bold').fontSize(9).text('TERMS & CONDITIONS', M, y);
+        y += 13;
+        doc
+          .fillColor(ink)
+          .font('Helvetica')
+          .fontSize(7)
+          .text(payload.termsAndConditions, M, y, { width: CONTENT_W, lineGap: 2 });
+        y = doc.y + 10;
+      }
+
+      const footerNote = isQuote
+        ? 'This quotation is subject to the stated validity and terms. It is not a tax invoice or confirmation of payment.'
+        : isProforma
+          ? isQuote
+            ? 'This quotation is valid subject to the expiry date shown and is not a tax invoice or confirmation of payment.'
+            : 'This proforma invoice is a quotation for payment. It is not a tax invoice and does not confirm receipt of funds.'
+          : payload.company.invoiceFooterNote ||
+            'This is a computer-generated tax invoice. Keep for your records and KRA compliance.';
 
       doc.fillColor(muted).font('Helvetica').fontSize(8);
       doc.text(footerNote, M, y, { width: CONTENT_W, lineGap: 2 });

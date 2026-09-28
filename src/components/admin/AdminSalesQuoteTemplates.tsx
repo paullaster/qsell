@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Copy, FileStack, Plus, Star, X } from 'lucide-react';
+import { Copy, FileStack, Plus, Search, Star, X } from 'lucide-react';
 import type { Product } from '@/types/index';
 import type { CustomerRow } from '@/server/db/drizzle/schema';
 import type { QuoteTemplateInput, SalesQuoteTemplate } from '@/server/domains/quotes/service';
@@ -23,6 +23,9 @@ function emptyTemplate(): QuoteTemplateInput {
     currency: 'KES',
     paymentMethod: 'mpesa_daraja',
     paymentTerms: '',
+    paymentDetails: '',
+    termsAndConditions: '',
+    showBillingAddress: false,
     validityDays: 30,
     quoteDiscountPercent: 0,
     shippingFee: 0,
@@ -32,11 +35,15 @@ function emptyTemplate(): QuoteTemplateInput {
     internalNotes: '',
     tags: [],
     isDefault: false,
+    sections: [],
     lines: [],
   };
 }
 
 function templateInput(template: SalesQuoteTemplate): QuoteTemplateInput {
+  const sectionIdMap = new Map(
+    template.sections.map((section) => [section.id, crypto.randomUUID()]),
+  );
   return {
     name: template.name,
     category: template.category,
@@ -45,6 +52,8 @@ function templateInput(template: SalesQuoteTemplate): QuoteTemplateInput {
     currency: template.currency,
     paymentMethod: template.paymentMethod as QuoteTemplateInput['paymentMethod'],
     paymentTerms: template.paymentTerms,
+    paymentDetails: template.paymentDetails,
+    termsAndConditions: template.termsAndConditions,
     validityDays: template.validityDays,
     quoteDiscountPercent: Number(template.quoteDiscountPercent),
     shippingFee: Number(template.shippingFee),
@@ -54,7 +63,14 @@ function templateInput(template: SalesQuoteTemplate): QuoteTemplateInput {
     internalNotes: template.internalNotes,
     tags: template.tags,
     isDefault: template.isDefault,
+    showBillingAddress: template.showBillingAddress,
+    sections: template.sections.map((section) => ({
+      id: sectionIdMap.get(section.id)!,
+      title: section.title,
+      description: section.description,
+    })),
     lines: template.lines.map((line) => ({
+      sectionId: line.sectionId ? (sectionIdMap.get(line.sectionId) ?? null) : null,
       productId: line.productId ?? '',
       quantity: Number(line.quantity),
       priceMode: line.priceMode as 'catalog' | 'fixed',
@@ -297,14 +313,38 @@ function TemplateEditor({
   const [tagsText, setTagsText] = useState(initial.tags.join(', '));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [catalogSectionId, setCatalogSectionId] = useState<string | null>(null);
+  const [catalogOpen, setCatalogOpen] = useState(false);
   const update = <K extends keyof QuoteTemplateInput>(key: K, value: QuoteTemplateInput[K]) =>
     setInput((current) => ({ ...current, [key]: value }));
-  const addLine = (productId: string) => {
-    if (!productId || input.lines.some((line) => line.productId === productId)) return;
+  const addLine = (productId: string, sectionId?: string) => {
+    if (!productId) return;
     update('lines', [
       ...input.lines,
-      { productId, quantity: 1, priceMode: 'catalog', unitPrice: null, discountPercent: 0 },
+      {
+        sectionId: sectionId ?? null,
+        productId,
+        quantity: 1,
+        priceMode: 'catalog',
+        unitPrice: null,
+        discountPercent: 0,
+      },
     ]);
+  };
+  const addSection = () =>
+    update('sections', [
+      ...input.sections,
+      { id: crypto.randomUUID(), title: `Section ${input.sections.length + 1}`, description: '' },
+    ]);
+  const removeSection = (sectionId: string) => {
+    const remaining = input.sections.filter((section) => section.id !== sectionId);
+    setInput((current) => ({
+      ...current,
+      sections: remaining,
+      lines: current.lines.map((line) =>
+        line.sectionId === sectionId ? { ...line, sectionId: null } : line,
+      ),
+    }));
   };
   const patchLine = (index: number, patch: Partial<QuoteTemplateInput['lines'][number]>) =>
     update(
@@ -526,33 +566,86 @@ function TemplateEditor({
                   negotiated rate.
                 </p>
               </div>
-              <select
-                defaultValue=""
-                onChange={(event) => {
-                  addLine(event.target.value);
-                  event.target.value = '';
-                }}
-                className="rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong"
-              >
-                <option value="">Add product…</option>
-                {products
-                  .filter(
-                    (product) =>
-                      product.isSellable &&
-                      !input.lines.some((line) => line.productId === product.id),
-                  )
-                  .map((product) => (
-                    <option key={product.id} value={product.id}>
-                      {product.sku} · {product.name}
-                    </option>
-                  ))}
-              </select>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCatalogSectionId(null);
+                    setCatalogOpen(true);
+                  }}
+                  className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
+                >
+                  <Plus className="h-4 w-4" /> Add item
+                </button>
+                <button
+                  type="button"
+                  onClick={addSection}
+                  className="inline-flex items-center gap-2 rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-hover"
+                >
+                  <Plus className="h-4 w-4" /> Add section
+                </button>
+              </div>
             </header>
+            <div className="space-y-2 border-b border-line p-3">
+              {input.sections.map((section) => (
+                <div
+                  key={section.id}
+                  className="flex flex-col gap-2 rounded-lg border border-line bg-surface p-2 sm:flex-row sm:items-center"
+                >
+                  <input
+                    value={section.title}
+                    onChange={(event) =>
+                      update(
+                        'sections',
+                        input.sections.map((row) =>
+                          row.id === section.id ? { ...row, title: event.target.value } : row,
+                        ),
+                      )
+                    }
+                    aria-label="Template section title"
+                    className="flex-1 rounded-md border border-line bg-surface-raised px-2 py-1.5 text-sm font-semibold text-fg-strong"
+                  />
+                  <input
+                    value={section.description ?? ''}
+                    onChange={(event) =>
+                      update(
+                        'sections',
+                        input.sections.map((row) =>
+                          row.id === section.id ? { ...row, description: event.target.value } : row,
+                        ),
+                      )
+                    }
+                    placeholder="Section note (optional)"
+                    aria-label="Template section description"
+                    className="flex-1 rounded-md border border-line bg-surface-raised px-2 py-1.5 text-sm text-fg"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCatalogSectionId(section.id);
+                      setCatalogOpen(true);
+                    }}
+                    className="rounded-md bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500"
+                  >
+                    Browse catalogue
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeSection(section.id)}
+                    aria-label="Remove template section"
+                    className="rounded-md p-2 text-fg-muted hover:bg-red-50 hover:text-red-700"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[850px] text-sm">
                 <thead className="bg-surface text-xs text-fg-muted">
                   <tr>
                     <th className="p-3 text-left">Product</th>
+                    <th className="p-3">Section</th>
                     <th className="p-3">Qty</th>
                     <th className="p-3">Price source</th>
                     <th className="p-3">Fixed price</th>
@@ -581,7 +674,7 @@ function TemplateEditor({
                         : revenue;
                     const margin = net > 0 ? ((net - cost) / net) * 100 : 0;
                     return (
-                      <tr key={line.productId}>
+                      <tr key={`${line.sectionId ?? 'none'}-${line.productId}-${index}`}>
                         <td className="p-3">
                           <div className="font-medium text-fg-strong">
                             {product?.name ?? line.productId}
@@ -590,6 +683,23 @@ function TemplateEditor({
                             {product?.sku} · current cost{' '}
                             {amount(Number(product?.costPrice ?? 0), input.currency)}
                           </div>
+                        </td>
+                        <td className="p-3">
+                          <select
+                            value={line.sectionId ?? ''}
+                            onChange={(event) =>
+                              patchLine(index, { sectionId: event.target.value || null })
+                            }
+                            className="max-w-40 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong"
+                            aria-label="Template line section"
+                          >
+                            <option value="">Individual item (not in a section)</option>
+                            {input.sections.map((section) => (
+                              <option key={section.id} value={section.id}>
+                                {section.title}
+                              </option>
+                            ))}
+                          </select>
                         </td>
                         <td className="p-3">
                           <input
@@ -679,7 +789,7 @@ function TemplateEditor({
                   })}
                   {input.lines.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="p-8 text-center text-sm text-fg-muted">
+                      <td colSpan={8} className="p-8 text-center text-sm text-fg-muted">
                         Add products to create a reusable bundle.
                       </td>
                     </tr>
@@ -708,6 +818,35 @@ function TemplateEditor({
               />
             </label>
           </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-sm font-medium text-fg">
+              Payment details
+              <textarea
+                rows={3}
+                value={input.paymentDetails ?? ''}
+                onChange={(event) => update('paymentDetails', event.target.value)}
+                placeholder="Bank / mobile money instructions shown to the customer"
+                className="mt-1 block w-full rounded-lg border border-line bg-surface px-3 py-2 text-fg-strong"
+              />
+            </label>
+            <label className="text-sm font-medium text-fg">
+              Terms and conditions
+              <textarea
+                rows={3}
+                value={input.termsAndConditions ?? ''}
+                onChange={(event) => update('termsAndConditions', event.target.value)}
+                className="mt-1 block w-full rounded-lg border border-line bg-surface px-3 py-2 text-fg-strong"
+              />
+            </label>
+          </div>
+          <label className="flex items-center gap-2 text-sm font-medium text-fg">
+            <input
+              type="checkbox"
+              checked={input.showBillingAddress}
+              onChange={(event) => update('showBillingAddress', event.target.checked)}
+            />
+            Include Bill To information on customer quote documents by default
+          </label>
           <div className="grid gap-4 lg:grid-cols-2">
             {(['billingAddress', 'deliveryAddress'] as const).map((kind) => (
               <fieldset key={kind} className="rounded-xl border border-line p-3">
@@ -761,6 +900,110 @@ function TemplateEditor({
             </button>
           </footer>
         </form>
+      </section>
+      {catalogOpen && (
+        <TemplateCataloguePicker
+          products={products}
+          currency={input.currency}
+          onClose={() => setCatalogSectionId(null)}
+          onSelect={(productId) => {
+            addLine(productId, catalogSectionId ?? undefined);
+            setCatalogOpen(false);
+            setCatalogSectionId(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function TemplateCataloguePicker({
+  products,
+  currency,
+  onClose,
+  onSelect,
+}: {
+  products: Product[];
+  currency: string;
+  onClose: () => void;
+  onSelect: (id: string) => void;
+}) {
+  const [search, setSearch] = useState('');
+  const matches = products.filter(
+    (product) =>
+      product.isSellable &&
+      `${product.name} ${product.sku} ${product.stockCode} ${product.category}`
+        .toLowerCase()
+        .includes(search.trim().toLowerCase()),
+  );
+  return (
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-backdrop/70 p-3 backdrop-blur-sm"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-label="Template product catalogue"
+        className="max-h-[85dvh] w-full max-w-4xl overflow-hidden rounded-2xl border border-line bg-surface-raised shadow-2xl"
+      >
+        <header className="flex items-center justify-between border-b border-line p-4">
+          <h3 className="font-semibold text-fg-strong">Browse product catalogue</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close catalogue"
+            className="rounded-lg p-2 text-fg-muted hover:bg-hover"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </header>
+        <div className="border-b border-line p-3">
+          <div className="relative">
+            <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-fg-subtle" />
+            <input
+              autoFocus
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search products by name, SKU, stock code, or category"
+              className="w-full rounded-lg border border-line bg-surface py-2 pr-3 pl-9 text-sm text-fg-strong"
+            />
+          </div>
+        </div>
+        <div className="max-h-[65dvh] overflow-y-auto p-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            {matches.map((product) => (
+              <article
+                key={product.id}
+                className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface p-3"
+              >
+                <div>
+                  <p className="font-semibold text-fg-strong">{product.name}</p>
+                  <p className="text-xs text-fg-muted">
+                    {product.sku} · {product.category}
+                  </p>
+                  <p className="mt-1 text-xs text-fg-subtle">
+                    {product.price == null ? 'No catalog price' : amount(product.price, currency)} ·
+                    cost {amount(product.costPrice, currency)}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={product.price == null}
+                  onClick={() => onSelect(product.id)}
+                  className="shrink-0 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+                >
+                  Add to template
+                </button>
+              </article>
+            ))}
+          </div>
+          {matches.length === 0 && (
+            <p className="p-8 text-center text-sm text-fg-muted">No products found.</p>
+          )}
+        </div>
       </section>
     </div>
   );

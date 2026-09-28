@@ -32,6 +32,9 @@ export interface CompanyProfile {
 }
 
 export interface InvoiceLineItem {
+  kind?: 'section' | 'item';
+  sectionTotal?: number;
+  sectionDescription?: string | null;
   sku: string;
   name: string;
   quantity: number;
@@ -69,7 +72,20 @@ export interface InvoicePayload {
   paymentMethod: string;
   paymentReference?: string | null;
   paymentStatus: string;
+  customerReference?: string | null;
   notes?: string | null;
+  showBillingAddress?: boolean;
+  billingInformation?: {
+    name: string;
+    email?: string | null;
+    phone?: string | null;
+    address?: string | null;
+    taxId?: string | null;
+  } | null;
+  paymentDetails?: string | null;
+  paymentTerms?: string | null;
+  termsAndConditions?: string | null;
+  validUntil?: string | null;
 }
 
 export interface InvoicePdfPort {

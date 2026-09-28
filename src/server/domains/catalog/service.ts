@@ -21,6 +21,10 @@ function slugify(value: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
+function isUniqueConstraintError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505';
+}
+
 export class CatalogService {
   // ── Products ──────────────────────────────────────────────────────────────
 
@@ -125,6 +129,63 @@ export class CatalogService {
     });
 
     return newProduct;
+  }
+
+  static async duplicateProduct(id: string): Promise<Product> {
+    const source = await this.getProductById(id);
+    if (!source) throw new Error('Product not found. Refresh the catalog and try again.');
+
+    for (let copyNumber = 0; copyNumber < 10000; copyNumber += 1) {
+      const suffix = copyNumber === 0 ? 'COPY' : `COPY${copyNumber}`;
+      const candidateSku = `${source.sku}-${suffix}`.toUpperCase();
+      const candidateStockCode = `${source.stockCode}-${suffix}`.toUpperCase();
+      const candidateSlug =
+        `${source.slug}-copy${copyNumber === 0 ? '' : copyNumber}`.toLowerCase();
+      const [skuMatch, stockCodeMatch, slugMatch] = await Promise.all([
+        repo().getProductBySku(candidateSku),
+        repo().getProductByStockCode(candidateStockCode),
+        repo().getProductBySlug(candidateSlug),
+      ]);
+      if (!skuMatch && !stockCodeMatch && !slugMatch) {
+        try {
+          return await this.createProduct({
+            name: source.name,
+            sku: candidateSku,
+            stockCode: candidateStockCode,
+            slug: candidateSlug,
+            description: source.description,
+            category: source.category,
+            brand: source.brand,
+            itemTypeId: source.itemTypeId,
+            itemTypeName: source.itemTypeName,
+            itemTypeCode: source.itemTypeCode,
+            isSellable: source.isSellable,
+            price: source.price,
+            compareAtPrice: source.compareAtPrice,
+            costPrice: source.costPrice,
+            taxCategoryId: source.taxCategoryId,
+            taxCategoryName: source.taxCategoryName,
+            taxRate: source.taxRate,
+            isTaxInclusive: source.isTaxInclusive,
+            weight: source.weight,
+            specifications:
+              source.specifications?.map((specification) => ({ ...specification })) ?? [],
+            stockQuantity: source.stockQuantity,
+            lowStockThreshold: source.lowStockThreshold,
+            isActive: source.isActive,
+            imageUrl: source.imageUrl,
+            additionalImages: source.additionalImages?.slice() ?? [],
+            rating: source.rating,
+            reviewCount: source.reviewCount,
+            tags: source.tags.slice(),
+          });
+        } catch (error) {
+          if (isUniqueConstraintError(error)) continue;
+          throw error;
+        }
+      }
+    }
+    throw new Error('Could not generate unique product codes for this copy.');
   }
 
   static async updateProduct(id: string, updates: Partial<Product>): Promise<Product> {
