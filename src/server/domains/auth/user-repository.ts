@@ -73,7 +73,7 @@ export class UserRepository {
 
   async verifyPassword(email: string, password: string): Promise<UserRow | null> {
     const user = await this.findByEmail(email);
-    if (!user || !user.isActive) return null;
+    if (!user || !user.isActive || user.status === 'suspended') return null;
     const ok = await compare(password, user.passwordHash);
     return ok ? user : null;
   }

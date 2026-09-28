@@ -72,8 +72,11 @@ export function Navbar({
   return (
     <header className="sticky top-0 z-40 w-full border-b border-line bg-surface/95 backdrop-blur-md">
       <div className="storefront-shell flex min-h-16 flex-wrap items-center gap-x-2 gap-y-2 py-2 sm:flex-nowrap sm:gap-4 sm:py-0">
-        <div className="order-1 min-w-0 max-w-[42vw] shrink sm:max-w-56 sm:flex-none">
-          <Link href="/" className="group block min-w-0 cursor-pointer text-left focus:outline-none">
+        <div className="order-1 max-w-[42vw] min-w-0 shrink sm:max-w-56 sm:flex-none">
+          <Link
+            href="/"
+            className="group block min-w-0 cursor-pointer text-left focus:outline-none"
+          >
             <CompanyBrand
               tradingName={company.tradingName}
               tagline={company.tagline}
@@ -83,7 +86,7 @@ export function Navbar({
           </Link>
         </div>
 
-        <div className="order-3 basis-full sm:order-2 sm:mx-2 sm:flex sm:min-w-0 sm:max-w-md sm:flex-1 sm:items-center lg:mx-6">
+        <div className="order-3 basis-full sm:order-2 sm:mx-2 sm:flex sm:max-w-md sm:min-w-0 sm:flex-1 sm:items-center lg:mx-6">
           <div className="relative w-full">
             <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-fg-subtle sm:left-3.5" />
             <input
@@ -112,63 +115,126 @@ export function Navbar({
           <div ref={accountMenuRef} className="relative">
             <button
               type="button"
-              aria-label={activeCustomerName ? `Account menu for ${activeCustomerName}` : 'Account menu'}
+              aria-label={
+                activeCustomerName ? `Account menu for ${activeCustomerName}` : 'Account menu'
+              }
               aria-haspopup="menu"
               aria-expanded={isAccountMenuOpen}
               aria-controls="storefront-account-menu"
               onClick={() => setIsAccountMenuOpen((open) => !open)}
-              className="flex h-10 w-10 touch-manipulation cursor-pointer items-center justify-center gap-1 rounded-xl border border-line bg-surface-raised text-fg transition-colors hover:border-line-strong hover:bg-hover sm:w-auto sm:px-3"
+              className="flex h-10 w-10 cursor-pointer touch-manipulation items-center justify-center gap-1 rounded-xl border border-line bg-surface-raised text-fg transition-colors hover:border-line-strong hover:bg-hover sm:w-auto sm:px-3"
             >
               <User className="h-4 w-4 shrink-0 text-indigo-500" />
               <span className="hidden max-w-28 truncate text-xs font-medium md:inline">
                 {activeCustomerName || 'Account'}
               </span>
-              <ChevronDown className={`hidden h-3.5 w-3.5 transition-transform sm:block ${isAccountMenuOpen ? 'rotate-180' : ''}`} />
+              <ChevronDown
+                className={`hidden h-3.5 w-3.5 transition-transform sm:block ${isAccountMenuOpen ? 'rotate-180' : ''}`}
+              />
             </button>
             {isAccountMenuOpen ? (
-            <div id="storefront-account-menu" role="menu" aria-label="Account" className="absolute right-0 z-50 mt-2 w-56 rounded-xl border border-line bg-surface-raised p-1 shadow-xl">
-              {activeCustomerName ? (
-                <>
-                  <Link href="/profile" role="menuitem" onClick={() => setIsAccountMenuOpen(false)} className="flex min-h-11 items-center gap-2 rounded-lg px-3 py-2 text-sm text-fg hover:bg-hover">
-                    <User className="h-4 w-4" /> My Profile
+              <div
+                id="storefront-account-menu"
+                role="menu"
+                aria-label="Account"
+                className="absolute right-0 z-50 mt-2 w-56 rounded-xl border border-line bg-surface-raised p-1 shadow-xl"
+              >
+                {activeCustomerName ? (
+                  <>
+                    <Link
+                      href="/profile"
+                      role="menuitem"
+                      onClick={() => setIsAccountMenuOpen(false)}
+                      className="flex min-h-11 items-center gap-2 rounded-lg px-3 py-2 text-sm text-fg hover:bg-hover"
+                    >
+                      <User className="h-4 w-4" /> My Profile
+                    </Link>
+                    {onOpenAccount ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setIsAccountMenuOpen(false);
+                          onOpenAccount();
+                        }}
+                        className="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg hover:bg-hover"
+                      >
+                        <User className="h-4 w-4" /> Account overview
+                      </button>
+                    ) : null}
+                    <Link
+                      href="/profile/addresses"
+                      role="menuitem"
+                      onClick={() => setIsAccountMenuOpen(false)}
+                      className="flex min-h-11 items-center gap-2 rounded-lg px-3 py-2 text-sm text-fg hover:bg-hover"
+                    >
+                      <MapPin className="h-4 w-4" /> Addresses
+                    </Link>
+                    <Link
+                      href="/profile/orders"
+                      role="menuitem"
+                      onClick={() => setIsAccountMenuOpen(false)}
+                      className="flex min-h-11 items-center gap-2 rounded-lg px-3 py-2 text-sm text-fg hover:bg-hover"
+                    >
+                      <Truck className="h-4 w-4" /> My Orders
+                    </Link>
+                    <Link
+                      href="/profile/payment"
+                      role="menuitem"
+                      onClick={() => setIsAccountMenuOpen(false)}
+                      className="flex min-h-11 items-center gap-2 rounded-lg px-3 py-2 text-sm text-fg hover:bg-hover"
+                    >
+                      <CreditCard className="h-4 w-4" /> Payment Methods
+                    </Link>
+                    <hr className="my-1 border-line" />
+                    <form action={logoutAction}>
+                      <input type="hidden" name="returnTo" value="/" />
+                      <button
+                        type="submit"
+                        role="menuitem"
+                        className="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+                      >
+                        <LogOut className="h-4 w-4" /> Logout
+                      </button>
+                    </form>
+                  </>
+                ) : (
+                  <Link
+                    href="/login"
+                    role="menuitem"
+                    onClick={() => setIsAccountMenuOpen(false)}
+                    className="flex min-h-11 items-center gap-2 rounded-lg px-3 py-2 text-sm text-fg hover:bg-hover"
+                  >
+                    <User className="h-4 w-4" /> Sign in
                   </Link>
-                  {onOpenAccount ? (
-                    <button type="button" role="menuitem" onClick={() => { setIsAccountMenuOpen(false); onOpenAccount(); }} className="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg hover:bg-hover">
-                      <User className="h-4 w-4" /> Account overview
-                    </button>
-                  ) : null}
-                  <Link href="/profile/addresses" role="menuitem" onClick={() => setIsAccountMenuOpen(false)} className="flex min-h-11 items-center gap-2 rounded-lg px-3 py-2 text-sm text-fg hover:bg-hover">
-                    <MapPin className="h-4 w-4" /> Addresses
-                  </Link>
-                  <Link href="/profile/orders" role="menuitem" onClick={() => setIsAccountMenuOpen(false)} className="flex min-h-11 items-center gap-2 rounded-lg px-3 py-2 text-sm text-fg hover:bg-hover">
-                    <Truck className="h-4 w-4" /> My Orders
-                  </Link>
-                  <Link href="/profile/payment" role="menuitem" onClick={() => setIsAccountMenuOpen(false)} className="flex min-h-11 items-center gap-2 rounded-lg px-3 py-2 text-sm text-fg hover:bg-hover">
-                    <CreditCard className="h-4 w-4" /> Payment Methods
-                  </Link>
-                  <hr className="my-1 border-line" />
-                  <form action={logoutAction}>
-                    <button type="submit" role="menuitem" className="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30">
-                      <LogOut className="h-4 w-4" /> Logout
-                    </button>
-                  </form>
-                </>
-              ) : (
-                <Link href="/login" role="menuitem" onClick={() => setIsAccountMenuOpen(false)} className="flex min-h-11 items-center gap-2 rounded-lg px-3 py-2 text-sm text-fg hover:bg-hover">
-                  <User className="h-4 w-4" /> Sign in
-                </Link>
-              )}
-              <button type="button" role="menuitem" onClick={() => { setIsAccountMenuOpen(false); onOpenTrackOrder(); }} className="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg hover:bg-hover">
-                <Truck className="h-4 w-4" /> Track order
-              </button>
-              <button type="button" role="menuitem" onClick={() => { setIsAccountMenuOpen(false); onOpenHelp(); }} className="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg hover:bg-hover">
-                <HelpCircle className="h-4 w-4" /> Help & support
-              </button>
-              <div className="flex min-h-12 items-center justify-between border-t border-line px-3 py-1 sm:hidden">
-                <span className="text-sm text-fg">Appearance</span>
-                <ThemeToggle />
+                )}
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setIsAccountMenuOpen(false);
+                    onOpenTrackOrder();
+                  }}
+                  className="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg hover:bg-hover"
+                >
+                  <Truck className="h-4 w-4" /> Track order
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setIsAccountMenuOpen(false);
+                    onOpenHelp();
+                  }}
+                  className="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg hover:bg-hover"
+                >
+                  <HelpCircle className="h-4 w-4" /> Help & support
+                </button>
+                <div className="flex min-h-12 items-center justify-between border-t border-line px-3 py-1 sm:hidden">
+                  <span className="text-sm text-fg">Appearance</span>
+                  <ThemeToggle />
+                </div>
               </div>
-            </div>
             ) : null}
           </div>
 

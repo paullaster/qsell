@@ -344,7 +344,7 @@ export function CustomerAccountModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-stretch justify-center overflow-y-auto bg-backdrop/80 p-0 backdrop-blur-md sm:items-center sm:p-4 lg:p-6">
-      <div className="relative flex min-h-dvh w-full max-w-5xl flex-col overflow-hidden border border-line bg-surface-raised shadow-2xl sm:my-4 sm:min-h-0 sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl lg:max-h-[92vh]">
+      <div className="relative flex min-h-dvh w-full max-w-5xl flex-col overflow-hidden border border-line bg-surface-raised shadow-2xl sm:my-4 sm:max-h-[calc(100dvh-2rem)] sm:min-h-0 sm:rounded-2xl lg:max-h-[92vh]">
         {/* Top Header Bar */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-surface p-3 sm:gap-4 sm:p-6">
           <div className="flex min-w-0 items-center gap-3">
@@ -1227,7 +1227,11 @@ export function CustomerAccountModal({
           </div>
 
           <form action={logoutAction}>
-            <button type="submit" className="flex cursor-pointer items-center gap-1.5 rounded-xl bg-red-600 px-4 py-2 text-xs font-semibold text-white shadow-md shadow-red-600/20 transition-colors hover:bg-red-500">
+            <input type="hidden" name="returnTo" value="/" />
+            <button
+              type="submit"
+              className="flex cursor-pointer items-center gap-1.5 rounded-xl bg-red-600 px-4 py-2 text-xs font-semibold text-white shadow-md shadow-red-600/20 transition-colors hover:bg-red-500"
+            >
               <LogOut className="h-3.5 w-3.5" />
               <span>Logout</span>
             </button>

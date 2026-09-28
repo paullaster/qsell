@@ -9,7 +9,11 @@ import type { UserSession, CustomerAccount } from '@/types/index';
 import { AuthService, SESSION_COOKIE } from './service';
 import { StorefrontCustomerService } from '@/server/domains/customers/storefront-service';
 import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
 import { randomUUID } from 'node:crypto';
+import { recordApplicationError } from '@/server/observability/application-errors';
+
+const LOGIN_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function toSessionShape(user: {
   id: string;
@@ -236,17 +240,27 @@ function isUniqueConstraintError(error: unknown): boolean {
 export async function loginAction(input: {
   email: string;
   password: string;
-}): Promise<{ ok: true; role: string }> {
+}): Promise<{ ok: true; role: string } | { ok: false; error: string }> {
+  const requestId = randomUUID();
+  const email = typeof input?.email === 'string' ? input.email.trim().toLowerCase() : '';
+  const password = typeof input?.password === 'string' ? input.password : '';
+  if (!email || !password) {
+    return { ok: false, error: 'Enter both your email address and password.' };
+  }
+  if (!LOGIN_EMAIL_PATTERN.test(email)) {
+    return { ok: false, error: 'Enter a valid email address.' };
+  }
+
   try {
     const users = new UserRepository();
     await users.ensureSuperAdminSeed();
-    const verified = await users.verifyPassword(input.email, input.password);
+    const verified = await users.verifyPassword(email, password);
     if (!verified) {
-      throw new Error('Invalid email or password.');
+      return { ok: false, error: 'Email or password is incorrect. Please try again.' };
     }
     await signIn('credentials', {
-      email: input.email,
-      password: input.password,
+      email,
+      password,
       redirect: false,
     });
     // Prefer DB-verified role — auth() in the same request often lacks the new session cookie.
@@ -255,20 +269,56 @@ export async function loginAction(input: {
     return { ok: true, role };
   } catch (err) {
     if (err instanceof AuthError) {
-      throw new Error('Invalid email or password.');
+      return { ok: false, error: 'Email or password is incorrect. Please try again.' };
     }
-    throw err;
+    await recordApplicationError({
+      source: 'auth-action',
+      errorName: err instanceof Error ? err.name : 'AuthenticationError',
+      message: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : null,
+      path: '/login',
+      routeType: 'action',
+      requestId,
+      context: { operation: 'credentials_sign_in' },
+    });
+    return {
+      ok: false,
+      error: `We couldn't sign you in right now. Please try again. If this continues, contact support with reference ${requestId}.`,
+    };
   }
 }
 
-export async function logoutAction(): Promise<void> {
-  await signOut({ redirect: false });
+export async function logoutAction(formData?: FormData): Promise<void> {
   try {
-    const cookieStore = await cookies();
-    cookieStore.delete(SESSION_COOKIE);
-  } catch {
-    /* ignore */
+    await signOut({ redirect: false });
+  } catch (error) {
+    console.error(
+      '[auth.logout] Auth.js sign-out failed; clearing session cookies directly',
+      error,
+    );
   }
+
+  const cookieStore = await cookies();
+  const legacyToken = cookieStore.get(SESSION_COOKIE)?.value;
+  if (legacyToken) {
+    try {
+      await getContainer().userSessions.deleteByToken(legacyToken);
+    } catch (error) {
+      console.error('[auth.logout] legacy session revocation failed', error);
+    }
+  }
+  for (const cookie of cookieStore.getAll()) {
+    if (
+      cookie.name === SESSION_COOKIE ||
+      cookie.name.includes('authjs.session-token') ||
+      cookie.name.includes('next-auth.session-token')
+    ) {
+      cookieStore.delete(cookie.name);
+    }
+  }
+
+  const returnTo = formData?.get('returnTo');
+  redirect(returnTo === '/login' ? '/login' : '/');
 }
 
 /** @deprecated Prefer loginAction — kept for CustomerAccountModal compatibility */
