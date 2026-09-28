@@ -1174,6 +1174,85 @@ export const salesQuoteSettings = pgTable('sales_quote_settings', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** Reusable quote defaults; product prices can either refresh or be fixed. */
+export const salesQuoteTemplates = pgTable(
+  'sales_quote_templates',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    customerId: uuid('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+    name: text('name').notNull(),
+    category: text('category'),
+    description: text('description'),
+    status: text('status').notNull().default('active'),
+    isDefault: boolean('is_default').notNull().default(false),
+    tags: jsonb('tags').$type<string[]>().notNull().default([]),
+    currency: text('currency').notNull().default('KES'),
+    paymentMethod: text('payment_method').notNull().default('mpesa_daraja'),
+    paymentTerms: text('payment_terms'),
+    validityDays: integer('validity_days').notNull().default(30),
+    quoteDiscountPercent: numeric('quote_discount_percent', { precision: 7, scale: 3 })
+      .notNull()
+      .default('0'),
+    shippingFee: numeric('shipping_fee', { precision: 14, scale: 2 }).notNull().default('0'),
+    billingAddress: jsonb('billing_address').$type<Record<string, string>>().notNull().default({}),
+    deliveryAddress: jsonb('delivery_address')
+      .$type<Record<string, string>>()
+      .notNull()
+      .default({}),
+    publicNotes: text('public_notes'),
+    internalNotes: text('internal_notes'),
+    usageCount: integer('usage_count').notNull().default(0),
+    createdBy: text('created_by'),
+    updatedBy: text('updated_by'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('sales_quote_templates_company_name_uidx').on(t.companyId, t.name),
+    uniqueIndex('sales_quote_templates_one_default_uidx')
+      .on(t.companyId)
+      .where(sql`${t.isDefault} = true`),
+    index('sales_quote_templates_company_status_idx').on(t.companyId, t.status),
+  ],
+);
+
+export const salesQuoteTemplateLines = pgTable(
+  'sales_quote_template_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    templateId: uuid('template_id')
+      .notNull()
+      .references(() => salesQuoteTemplates.id, { onDelete: 'cascade' }),
+    productId: text('product_id').references(() => products.id, { onDelete: 'set null' }),
+    lineNumber: integer('line_number').notNull(),
+    sku: text('sku').notNull().default(''),
+    description: text('description').notNull(),
+    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull().default('1'),
+    priceMode: text('price_mode').notNull().default('catalog'),
+    unitPrice: numeric('unit_price', { precision: 14, scale: 4 }),
+    discountPercent: numeric('discount_percent', { precision: 7, scale: 3 }).notNull().default('0'),
+  },
+  (t) => [uniqueIndex('sales_quote_template_lines_number_uidx').on(t.templateId, t.lineNumber)],
+);
+
+export const salesQuoteTemplateEvents = pgTable(
+  'sales_quote_template_events',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    templateId: uuid('template_id')
+      .notNull()
+      .references(() => salesQuoteTemplates.id, { onDelete: 'cascade' }),
+    eventType: text('event_type').notNull(),
+    actorId: text('actor_id'),
+    details: jsonb('details').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('sales_quote_template_events_idx').on(t.templateId, t.createdAt)],
+);
+
 /** Sales quotation header; line/cost/tax values are price snapshots. */
 export const salesQuotes = pgTable(
   'sales_quotes',
@@ -1184,6 +1263,10 @@ export const salesQuotes = pgTable(
       .references(() => companySettings.id, { onDelete: 'cascade' }),
     branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
     customerId: uuid('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+    templateId: uuid('template_id').references(() => salesQuoteTemplates.id, {
+      onDelete: 'set null',
+    }),
+    templateName: text('template_name'),
     quoteNumber: text('quote_number').notNull(),
     status: text('status').notNull().default('draft'),
     customerName: text('customer_name').notNull(),
@@ -1194,6 +1277,7 @@ export const salesQuotes = pgTable(
       .$type<Record<string, string>>()
       .notNull()
       .default({}),
+    paymentTerms: text('payment_terms'),
     currency: text('currency').notNull().default('KES'),
     subtotal: numeric('subtotal', { precision: 14, scale: 2 }).notNull().default('0'),
     taxAmount: numeric('tax_amount', { precision: 14, scale: 2 }).notNull().default('0'),
@@ -1328,6 +1412,9 @@ export type OrderItemRow = typeof orderItems.$inferSelect;
 export type SalesQuoteRow = typeof salesQuotes.$inferSelect;
 export type SalesQuoteLineRow = typeof salesQuoteLines.$inferSelect;
 export type SalesQuoteEventRow = typeof salesQuoteEvents.$inferSelect;
+export type SalesQuoteTemplateRow = typeof salesQuoteTemplates.$inferSelect;
+export type SalesQuoteTemplateLineRow = typeof salesQuoteTemplateLines.$inferSelect;
+export type SalesQuoteTemplateEventRow = typeof salesQuoteTemplateEvents.$inferSelect;
 export type DimensionRow = typeof dimensions.$inferSelect;
 export type DimensionInsert = typeof dimensions.$inferInsert;
 export type DimensionValueRow = typeof dimensionValues.$inferSelect;
