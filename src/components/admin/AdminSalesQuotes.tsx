@@ -15,11 +15,16 @@ import {
   Send,
   Settings2,
   ShoppingCart,
+  Files,
   X,
 } from 'lucide-react';
 import type { Product } from '@/types/index';
 import type { CustomerRow, SalesQuoteRow } from '@/server/db/drizzle/schema';
-import type { SalesQuote } from '@/server/domains/quotes/service';
+import type {
+  QuoteTemplateInput,
+  SalesQuote,
+  SalesQuoteTemplate,
+} from '@/server/domains/quotes/service';
 import { downloadPdfBase64 } from '@/lib/downloadPdf';
 import {
   approveSalesQuoteAction,
@@ -30,11 +35,16 @@ import {
   getSalesQuoteAction,
   sendSalesQuoteAction,
   reviseSalesQuoteAction,
+  saveSalesQuoteTemplateAction,
+  duplicateSalesQuoteTemplateAction,
+  archiveSalesQuoteTemplateAction,
+  setDefaultSalesQuoteTemplateAction,
   respondToSalesQuoteAction,
   updateSalesQuoteAction,
   updateSalesQuoteSettingsAction,
 } from '@/server/domains/quotes/actions';
 import type { QuoteInput } from '@/server/domains/quotes/service';
+import { AdminSalesQuoteTemplates } from './AdminSalesQuoteTemplates';
 
 type QuoteLineInput = QuoteInput['lines'][number];
 
@@ -45,6 +55,7 @@ interface EditorData {
     minimumGrossMarginPercent: string;
     nextQuoteNumber: number;
   };
+  templates: SalesQuoteTemplate[];
 }
 
 const STATUSES = [
@@ -76,6 +87,8 @@ function newQuoteInput(): QuoteInput {
     deliveryAddress: {},
     currency: 'KES',
     paymentMethod: 'mpesa_daraja',
+    paymentTerms: '',
+    templateId: null,
     validUntil: new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
     customerReference: '',
     publicNotes: '',
@@ -96,6 +109,8 @@ function quoteToInput(quote: SalesQuote): QuoteInput {
     deliveryAddress: quote.deliveryAddress,
     currency: quote.currency,
     paymentMethod: quote.paymentMethod as QuoteInput['paymentMethod'],
+    paymentTerms: quote.paymentTerms,
+    templateId: quote.templateId,
     validUntil: quote.validUntil?.toISOString().slice(0, 10) ?? null,
     customerReference: quote.customerReference,
     publicNotes: quote.publicNotes,
@@ -108,6 +123,50 @@ function quoteToInput(quote: SalesQuote): QuoteInput {
       unitPrice: Number(line.unitPrice),
       discountPercent: Number(line.discountPercent),
     })),
+  };
+}
+
+function quoteInputFromTemplate(
+  template: SalesQuoteTemplate,
+  products: Product[],
+  customers: CustomerRow[],
+): QuoteInput {
+  const customer = customers.find((row) => row.id === template.customerId);
+  const address: Record<string, string> = customer
+    ? {
+        street: customer.street ?? '',
+        city: customer.city ?? '',
+        countyOrState: customer.countyOrState ?? '',
+        postalCode: customer.postalCode ?? '',
+        country: customer.country ?? 'Kenya',
+      }
+    : {};
+  return {
+    ...newQuoteInput(),
+    customerId: customer?.id ?? null,
+    customerName: customer?.name ?? '',
+    customerEmail: customer?.email ?? '',
+    customerPhone: customer?.phone ?? '',
+    billingAddress: template.billingAddress.street ? template.billingAddress : address,
+    deliveryAddress: template.deliveryAddress.street ? template.deliveryAddress : address,
+    currency: template.currency,
+    paymentMethod: template.paymentMethod as QuoteInput['paymentMethod'],
+    paymentTerms: template.paymentTerms,
+    templateId: template.id,
+    validUntil: new Date(Date.now() + template.validityDays * 86400000).toISOString().slice(0, 10),
+    publicNotes: template.publicNotes,
+    internalNotes: template.internalNotes,
+    discountPercent: Number(template.quoteDiscountPercent),
+    shippingFee: Number(template.shippingFee),
+    lines: template.lines.map((line) => {
+      const product = products.find((row) => row.id === line.productId);
+      return {
+        productId: line.productId ?? '',
+        quantity: Number(line.quantity),
+        unitPrice: line.priceMode === 'fixed' ? Number(line.unitPrice ?? 0) : product?.price,
+        discountPercent: Number(line.discountPercent),
+      };
+    }),
   };
 }
 
@@ -131,6 +190,7 @@ export function AdminSalesQuotes({
   const capabilities = use(capabilitiesPromise);
   const router = useRouter();
   const [search, setSearch] = useState('');
+  const [activeTab, setActiveTab] = useState<'quotes' | 'templates'>('quotes');
   const [statusFilter, setStatusFilter] = useState<(typeof STATUSES)[number]>('all');
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<SalesQuote | null>(null);
@@ -256,7 +316,7 @@ export function AdminSalesQuotes({
           >
             <RefreshCw className="h-4 w-4" />
           </button>
-          {capabilities.canCreate && (
+          {capabilities.canCreate && activeTab === 'quotes' && (
             <button
               type="button"
               onClick={openCreate}
@@ -277,202 +337,242 @@ export function AdminSalesQuotes({
         </div>
       )}
 
-      <section className="rounded-xl border border-line bg-surface-raised">
-        <div className="flex flex-col gap-3 border-b border-line p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="relative w-full sm:max-w-sm">
-            <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-fg-subtle" />
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search quote number, customer, reference…"
-              className="w-full rounded-lg border border-line bg-surface py-2 pr-3 pl-9 text-sm text-fg-strong placeholder:text-fg-subtle"
-            />
+      <div
+        className="flex gap-1 border-b border-line"
+        role="tablist"
+        aria-label="Sales quotes workspace"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'quotes'}
+          onClick={() => setActiveTab('quotes')}
+          className={`border-b-2 px-4 py-2.5 text-sm font-semibold ${activeTab === 'quotes' ? 'border-indigo-600 text-indigo-700 dark:text-indigo-300' : 'border-transparent text-fg-muted hover:text-fg-strong'}`}
+        >
+          Quotes
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'templates'}
+          onClick={() => setActiveTab('templates')}
+          className={`inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold ${activeTab === 'templates' ? 'border-indigo-600 text-indigo-700 dark:text-indigo-300' : 'border-transparent text-fg-muted hover:text-fg-strong'}`}
+        >
+          <Files className="h-4 w-4" /> Templates
+        </button>
+      </div>
+
+      {activeTab === 'quotes' ? (
+        <section className="rounded-xl border border-line bg-surface-raised">
+          <div className="flex flex-col gap-3 border-b border-line p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="relative w-full sm:max-w-sm">
+              <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-fg-subtle" />
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search quote number, customer, reference…"
+                className="w-full rounded-lg border border-line bg-surface py-2 pr-3 pl-9 text-sm text-fg-strong placeholder:text-fg-subtle"
+              />
+            </div>
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value as (typeof STATUSES)[number])}
+              className="rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong"
+              aria-label="Filter quotes by status"
+            >
+              {STATUSES.map((status) => (
+                <option key={status} value={status}>
+                  {status === 'all' ? 'All statuses' : statusLabel(status)}
+                </option>
+              ))}
+            </select>
           </div>
-          <select
-            value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value as (typeof STATUSES)[number])}
-            className="rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong"
-            aria-label="Filter quotes by status"
-          >
-            {STATUSES.map((status) => (
-              <option key={status} value={status}>
-                {status === 'all' ? 'All statuses' : statusLabel(status)}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[850px] text-left text-sm">
-            <thead className="bg-surface text-xs text-fg-muted">
-              <tr>
-                <th className="px-4 py-3">Quote</th>
-                <th className="px-4 py-3">Customer</th>
-                <th className="px-4 py-3 text-right">Total</th>
-                <th className="px-4 py-3 text-right">Gross margin</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Valid until</th>
-                <th className="px-4 py-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line">
-              {filteredQuotes.length === 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[850px] text-left text-sm">
+              <thead className="bg-surface text-xs text-fg-muted">
                 <tr>
-                  <td colSpan={7} className="px-4 py-12 text-center text-fg-muted">
-                    {quotes.length === 0
-                      ? 'No quotes yet. Create a quote to start the sales workflow.'
-                      : 'No quotes match those filters.'}
-                  </td>
+                  <th className="px-4 py-3">Quote</th>
+                  <th className="px-4 py-3">Customer</th>
+                  <th className="px-4 py-3 text-right">Total</th>
+                  <th className="px-4 py-3 text-right">Gross margin</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Valid until</th>
+                  <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
-              ) : (
-                filteredQuotes.map((quote) => {
-                  const floorMiss =
-                    Number(quote.grossMarginPercent) < Number(quote.minimumMarginPercent);
-                  const expired =
-                    quote.validUntil != null &&
-                    quote.validUntil < new Date() &&
-                    !['converted', 'rejected', 'cancelled'].includes(quote.status);
-                  return (
-                    <tr key={quote.id} className="hover:bg-hover/60">
-                      <td className="px-4 py-3">
-                        <button
-                          type="button"
-                          onClick={async () => setDetails(await getSalesQuoteAction(quote.id))}
-                          className="font-semibold text-indigo-700 underline-offset-2 hover:underline dark:text-indigo-300"
-                        >
-                          {quote.quoteNumber}
-                        </button>
-                        <div className="mt-0.5 text-xs text-fg-subtle">
-                          {new Date(quote.createdAt).toLocaleDateString()}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="font-medium text-fg-strong">{quote.customerName}</div>
-                        <div className="text-xs text-fg-muted">
-                          {quote.customerEmail || quote.customerReference || '—'}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono font-semibold text-fg-strong">
-                        {money(Number(quote.totalAmount), quote.currency)}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <span
-                          className={`font-mono font-semibold ${floorMiss ? 'text-red-700' : 'text-emerald-700'}`}
-                        >
-                          {Number(quote.grossMarginPercent).toFixed(1)}%
-                        </span>
-                        <div className="text-xs text-fg-muted">
-                          {money(Number(quote.grossProfit), quote.currency)}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${floorMiss && quote.approvalStatus === 'pending' ? 'bg-amber-100 text-amber-900' : quote.status === 'accepted' || quote.status === 'converted' ? 'bg-emerald-100 text-emerald-800' : quote.status === 'rejected' || quote.status === 'expired' || quote.status === 'cancelled' ? 'bg-red-100 text-red-800' : 'bg-surface-sunken text-fg'}`}
-                        >
-                          {floorMiss && quote.approvalStatus === 'pending' ? (
-                            <Clock3 className="h-3.5 w-3.5" />
-                          ) : null}
-                          {expired ? 'expired' : statusLabel(quote.status)}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-xs text-fg-muted">
-                        {quote.validUntil
-                          ? new Date(quote.validUntil).toLocaleDateString()
-                          : 'No expiry'}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex justify-end gap-1">
+              </thead>
+              <tbody className="divide-y divide-line">
+                {filteredQuotes.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-12 text-center text-fg-muted">
+                      {quotes.length === 0
+                        ? 'No quotes yet. Create a quote to start the sales workflow.'
+                        : 'No quotes match those filters.'}
+                    </td>
+                  </tr>
+                ) : (
+                  filteredQuotes.map((quote) => {
+                    const floorMiss =
+                      Number(quote.grossMarginPercent) < Number(quote.minimumMarginPercent);
+                    const expired =
+                      quote.validUntil != null &&
+                      quote.validUntil < new Date() &&
+                      !['converted', 'rejected', 'cancelled'].includes(quote.status);
+                    return (
+                      <tr key={quote.id} className="hover:bg-hover/60">
+                        <td className="px-4 py-3">
                           <button
                             type="button"
-                            title="Download PDF"
-                            onClick={() => void handleDownload(quote)}
-                            className="rounded-md p-2 text-fg-muted hover:bg-hover hover:text-fg-strong"
+                            onClick={async () => setDetails(await getSalesQuoteAction(quote.id))}
+                            className="font-semibold text-indigo-700 underline-offset-2 hover:underline dark:text-indigo-300"
                           >
-                            <Download className="h-4 w-4" />
+                            {quote.quoteNumber}
                           </button>
-                          {(quote.status === 'draft' ||
-                            quote.status === 'approved' ||
-                            quote.status === 'pending_approval') &&
-                            capabilities.canUpdate && (
-                              <button
-                                type="button"
-                                title="Edit quote"
-                                onClick={() => void openEdit(quote.id)}
-                                className="rounded-md p-2 text-fg-muted hover:bg-hover hover:text-fg-strong"
-                              >
-                                Edit
-                              </button>
-                            )}
-                          {quote.status === 'pending_approval' && capabilities.canApprove && (
+                          <div className="mt-0.5 text-xs text-fg-subtle">
+                            {new Date(quote.createdAt).toLocaleDateString()}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-fg-strong">{quote.customerName}</div>
+                          <div className="text-xs text-fg-muted">
+                            {quote.customerEmail || quote.customerReference || '—'}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono font-semibold text-fg-strong">
+                          {money(Number(quote.totalAmount), quote.currency)}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <span
+                            className={`font-mono font-semibold ${floorMiss ? 'text-red-700' : 'text-emerald-700'}`}
+                          >
+                            {Number(quote.grossMarginPercent).toFixed(1)}%
+                          </span>
+                          <div className="text-xs text-fg-muted">
+                            {money(Number(quote.grossProfit), quote.currency)}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${floorMiss && quote.approvalStatus === 'pending' ? 'bg-amber-100 text-amber-900' : quote.status === 'accepted' || quote.status === 'converted' ? 'bg-emerald-100 text-emerald-800' : quote.status === 'rejected' || quote.status === 'expired' || quote.status === 'cancelled' ? 'bg-red-100 text-red-800' : 'bg-surface-sunken text-fg'}`}
+                          >
+                            {floorMiss && quote.approvalStatus === 'pending' ? (
+                              <Clock3 className="h-3.5 w-3.5" />
+                            ) : null}
+                            {expired ? 'expired' : statusLabel(quote.status)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-fg-muted">
+                          {quote.validUntil
+                            ? new Date(quote.validUntil).toLocaleDateString()
+                            : 'No expiry'}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex justify-end gap-1">
                             <button
                               type="button"
-                              title="Approve quote"
-                              disabled={busyId === quote.id}
-                              onClick={() =>
-                                void withAction(
-                                  quote.id,
-                                  () => approveSalesQuoteAction(quote.id),
-                                  `${quote.quoteNumber} approved.`,
-                                )
-                              }
-                              className="rounded-md p-2 text-emerald-700 hover:bg-emerald-50"
+                              title="Download PDF"
+                              onClick={() => void handleDownload(quote)}
+                              className="rounded-md p-2 text-fg-muted hover:bg-hover hover:text-fg-strong"
                             >
-                              <BadgeCheck className="h-4 w-4" />
+                              <Download className="h-4 w-4" />
                             </button>
-                          )}
-                          {(quote.status === 'draft' || quote.status === 'approved') &&
-                            capabilities.canUpdate &&
-                            quote.approvalStatus !== 'pending' && (
+                            {(quote.status === 'draft' ||
+                              quote.status === 'approved' ||
+                              quote.status === 'pending_approval') &&
+                              capabilities.canUpdate && (
+                                <button
+                                  type="button"
+                                  title="Edit quote"
+                                  onClick={() => void openEdit(quote.id)}
+                                  className="rounded-md p-2 text-fg-muted hover:bg-hover hover:text-fg-strong"
+                                >
+                                  Edit
+                                </button>
+                              )}
+                            {quote.status === 'pending_approval' && capabilities.canApprove && (
                               <button
                                 type="button"
-                                title="Email quotation"
+                                title="Approve quote"
                                 disabled={busyId === quote.id}
                                 onClick={() =>
                                   void withAction(
                                     quote.id,
-                                    () => sendSalesQuoteAction(quote.id),
-                                    `${quote.quoteNumber} emailed to ${quote.customerEmail || 'customer'}.`,
+                                    () => approveSalesQuoteAction(quote.id),
+                                    `${quote.quoteNumber} approved.`,
                                   )
                                 }
-                                className="rounded-md p-2 text-indigo-700 hover:bg-indigo-50"
+                                className="rounded-md p-2 text-emerald-700 hover:bg-emerald-50"
                               >
-                                <Send className="h-4 w-4" />
+                                <BadgeCheck className="h-4 w-4" />
                               </button>
                             )}
-                          {quote.status === 'accepted' && capabilities.canApprove && (
-                            <button
-                              type="button"
-                              title="Convert to order"
-                              disabled={busyId === quote.id}
-                              onClick={() =>
-                                void withAction(
-                                  quote.id,
-                                  async () => {
-                                    const order = await convertSalesQuoteToOrderAction(quote.id);
-                                    setNotice(`Converted to order ${order?.orderNumber ?? ''}.`);
-                                  },
-                                  `${quote.quoteNumber} converted to an order.`,
-                                )
-                              }
-                              className="rounded-md p-2 text-emerald-700 hover:bg-emerald-50"
-                            >
-                              <ShoppingCart className="h-4 w-4" />
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+                            {(quote.status === 'draft' || quote.status === 'approved') &&
+                              capabilities.canUpdate &&
+                              quote.approvalStatus !== 'pending' && (
+                                <button
+                                  type="button"
+                                  title="Email quotation"
+                                  disabled={busyId === quote.id}
+                                  onClick={() =>
+                                    void withAction(
+                                      quote.id,
+                                      () => sendSalesQuoteAction(quote.id),
+                                      `${quote.quoteNumber} emailed to ${quote.customerEmail || 'customer'}.`,
+                                    )
+                                  }
+                                  className="rounded-md p-2 text-indigo-700 hover:bg-indigo-50"
+                                >
+                                  <Send className="h-4 w-4" />
+                                </button>
+                              )}
+                            {quote.status === 'accepted' && capabilities.canApprove && (
+                              <button
+                                type="button"
+                                title="Convert to order"
+                                disabled={busyId === quote.id}
+                                onClick={() =>
+                                  void withAction(
+                                    quote.id,
+                                    async () => {
+                                      const order = await convertSalesQuoteToOrderAction(quote.id);
+                                      setNotice(`Converted to order ${order?.orderNumber ?? ''}.`);
+                                    },
+                                    `${quote.quoteNumber} converted to an order.`,
+                                  )
+                                }
+                                className="rounded-md p-2 text-emerald-700 hover:bg-emerald-50"
+                              >
+                                <ShoppingCart className="h-4 w-4" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : (
+        <AdminSalesQuoteTemplates
+          templates={editorData.templates}
+          products={editorData.products}
+          customers={editorData.customers}
+          canCreate={capabilities.canCreate}
+          canUpdate={capabilities.canUpdate}
+          canDelete={capabilities.canDelete}
+          onRefresh={refresh}
+          onMessage={setNotice}
+          onError={setError}
+        />
+      )}
 
       {editorOpen && (
         <QuoteEditor
           products={editorData.products}
           customers={editorData.customers}
+          templates={editorData.templates.filter((template) => template.status === 'active')}
           initial={editing ? quoteToInput(editing) : newQuoteInput()}
           quoteNumber={editing?.quoteNumber}
           minimumMargin={marginFloor}
@@ -599,6 +699,7 @@ async function respondToQuote(id: string, accepted: boolean) {
 function QuoteEditor({
   products,
   customers,
+  templates,
   initial,
   quoteNumber,
   minimumMargin,
@@ -607,13 +708,18 @@ function QuoteEditor({
 }: {
   products: Product[];
   customers: CustomerRow[];
+  templates: SalesQuoteTemplate[];
   initial: QuoteInput;
   quoteNumber?: string;
   minimumMargin: number;
   onClose: () => void;
   onSave: (input: QuoteInput) => Promise<void>;
 }) {
-  const [input, setInput] = useState<QuoteInput>(initial);
+  const [input, setInput] = useState<QuoteInput>(() => {
+    if (initial.customerName || initial.lines.length || initial.templateId) return initial;
+    const defaultTemplate = templates.find((template) => template.isDefault);
+    return defaultTemplate ? quoteInputFromTemplate(defaultTemplate, products, customers) : initial;
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const linesPreview = input.lines.map((line) => {
@@ -661,6 +767,14 @@ function QuoteEditor({
       'lines',
       input.lines.map((line, lineIndex) => (lineIndex === index ? { ...line, ...patch } : line)),
     );
+  const selectTemplate = (templateId: string) => {
+    const template = templates.find((candidate) => candidate.id === templateId);
+    if (!template) {
+      setInput(newQuoteInput());
+      return;
+    }
+    setInput(quoteInputFromTemplate(template, products, customers));
+  };
 
   const chooseCustomer = (id: string) => {
     const customer = customers.find((item) => item.id === id);
@@ -714,6 +828,24 @@ function QuoteEditor({
           >
             {error}
           </p>
+        )}
+        {!quoteNumber && templates.length > 0 && (
+          <label className="block text-sm font-medium text-fg">
+            Start from a template
+            <select
+              value={input.templateId ?? ''}
+              onChange={(event) => selectTemplate(event.target.value)}
+              className="mt-1 block w-full rounded-lg border border-line bg-surface px-3 py-2 text-fg-strong"
+            >
+              <option value="">Blank quote</option>
+              {templates.map((template) => (
+                <option key={template.id} value={template.id}>
+                  {template.name}
+                  {template.isDefault ? ' · Default' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
         )}
         <section className="grid gap-3 sm:grid-cols-2">
           <label className="text-sm font-medium text-fg">
@@ -802,6 +934,15 @@ function QuoteEditor({
                 customers.find((customer) => customer.id === input.customerId)?.accountType ===
                   'credit' && <option value="on_account">On account</option>}
             </select>
+          </label>
+          <label className="text-sm font-medium text-fg">
+            Payment terms
+            <input
+              value={input.paymentTerms ?? ''}
+              onChange={(event) => setField('paymentTerms', event.target.value)}
+              placeholder="e.g. 50% deposit, balance on delivery"
+              className="mt-1 block w-full rounded-lg border border-line bg-surface px-3 py-2 text-fg-strong"
+            />
           </label>
         </section>
 

@@ -7,6 +7,10 @@ import {
   salesQuoteLines,
   salesQuotes,
   salesQuoteSettings,
+  salesQuoteTemplateEvents,
+  salesQuoteTemplateLines,
+  salesQuoteTemplates,
+  type SalesQuoteTemplateRow,
   type SalesQuoteRow,
 } from '@/server/db/drizzle/schema';
 import { CatalogService } from '@/server/domains/catalog/service';
@@ -45,6 +49,8 @@ export interface QuoteInput {
   deliveryAddress?: Record<string, string>;
   currency: string;
   paymentMethod: PaymentProvider;
+  paymentTerms?: string | null;
+  templateId?: string | null;
   validUntil?: string | null;
   customerReference?: string | null;
   publicNotes?: string | null;
@@ -57,6 +63,37 @@ export interface QuoteInput {
 export interface SalesQuote extends SalesQuoteRow {
   lines: (typeof salesQuoteLines.$inferSelect)[];
   events: (typeof salesQuoteEvents.$inferSelect)[];
+}
+
+export interface QuoteTemplateInput {
+  name: string;
+  category?: string | null;
+  description?: string | null;
+  customerId?: string | null;
+  currency: string;
+  paymentMethod: PaymentProvider;
+  paymentTerms?: string | null;
+  validityDays: number;
+  quoteDiscountPercent: number;
+  shippingFee: number;
+  billingAddress?: Record<string, string>;
+  deliveryAddress?: Record<string, string>;
+  publicNotes?: string | null;
+  internalNotes?: string | null;
+  tags: string[];
+  isDefault: boolean;
+  lines: {
+    productId: string;
+    quantity: number;
+    priceMode: 'catalog' | 'fixed';
+    unitPrice?: number | null;
+    discountPercent: number;
+  }[];
+}
+
+export interface SalesQuoteTemplate extends SalesQuoteTemplateRow {
+  lines: (typeof salesQuoteTemplateLines.$inferSelect)[];
+  events: (typeof salesQuoteTemplateEvents.$inferSelect)[];
 }
 
 export class SalesQuoteService {
@@ -108,6 +145,228 @@ export class SalesQuoteService {
       })
       .returning();
     return row!;
+  }
+
+  async listTemplates(includeArchived = true): Promise<SalesQuoteTemplate[]> {
+    const companyId = await this.companyId();
+    const rows = await drizzleDb
+      .select()
+      .from(salesQuoteTemplates)
+      .where(
+        includeArchived
+          ? eq(salesQuoteTemplates.companyId, companyId)
+          : and(
+              eq(salesQuoteTemplates.companyId, companyId),
+              eq(salesQuoteTemplates.status, 'active'),
+            ),
+      )
+      .orderBy(desc(salesQuoteTemplates.isDefault), desc(salesQuoteTemplates.updatedAt));
+    return Promise.all(rows.map((row) => this.getTemplate(row.id) as Promise<SalesQuoteTemplate>));
+  }
+
+  async getTemplate(id: string): Promise<SalesQuoteTemplate | null> {
+    const companyId = await this.companyId();
+    const [template] = await drizzleDb
+      .select()
+      .from(salesQuoteTemplates)
+      .where(and(eq(salesQuoteTemplates.id, id), eq(salesQuoteTemplates.companyId, companyId)))
+      .limit(1);
+    if (!template) return null;
+    const [lines, events] = await Promise.all([
+      drizzleDb
+        .select()
+        .from(salesQuoteTemplateLines)
+        .where(eq(salesQuoteTemplateLines.templateId, id))
+        .orderBy(salesQuoteTemplateLines.lineNumber),
+      drizzleDb
+        .select()
+        .from(salesQuoteTemplateEvents)
+        .where(eq(salesQuoteTemplateEvents.templateId, id))
+        .orderBy(desc(salesQuoteTemplateEvents.createdAt)),
+    ]);
+    return { ...template, lines, events };
+  }
+
+  async saveTemplate(userId: string, id: string | null, input: QuoteTemplateInput) {
+    const companyId = await this.companyId();
+    const name = input.name.trim();
+    if (!name) throw new Error('Template name is required.');
+    this.assertPercent(input.quoteDiscountPercent, 'Template quote discount');
+    if (
+      !Number.isInteger(input.validityDays) ||
+      input.validityDays < 1 ||
+      input.validityDays > 3650
+    ) {
+      throw new Error('Template validity must be between 1 and 3,650 days.');
+    }
+    if (!Number.isFinite(input.shippingFee) || input.shippingFee < 0) {
+      throw new Error('Template shipping must be zero or greater.');
+    }
+    const existing = id ? await this.getTemplate(id) : null;
+    if (id && !existing) throw new Error('Quote template not found.');
+    if (input.lines.length === 0) throw new Error('Add at least one product to the template.');
+    const products = new Map(
+      (await CatalogService.getProductsByIds(input.lines.map((line) => line.productId))).map(
+        (p) => [p.id, p],
+      ),
+    );
+    const lines = input.lines.map((line, index) => {
+      const product = products.get(line.productId);
+      if (!product || !product.isSellable)
+        throw new Error('A template item is missing or is not sellable.');
+      if (!Number.isFinite(line.quantity) || line.quantity <= 0)
+        throw new Error(`${product.name} needs a quantity greater than zero.`);
+      this.assertPercent(line.discountPercent, `${product.name} discount`);
+      const unitPrice = line.priceMode === 'fixed' ? line.unitPrice : null;
+      if (line.priceMode === 'fixed' && (!Number.isFinite(unitPrice) || Number(unitPrice) < 0)) {
+        throw new Error(`${product.name} needs a valid fixed selling price.`);
+      }
+      return {
+        productId: product.id,
+        lineNumber: (index + 1) * 10000,
+        sku: product.sku,
+        description: product.name,
+        quantity: line.quantity.toFixed(3),
+        priceMode: line.priceMode,
+        unitPrice: unitPrice == null ? null : Number(unitPrice).toFixed(4),
+        discountPercent: line.discountPercent.toFixed(3),
+      };
+    });
+
+    const saved = await drizzleDb.transaction(async (tx) => {
+      if (input.isDefault) {
+        await tx
+          .update(salesQuoteTemplates)
+          .set({ isDefault: false, updatedAt: new Date() })
+          .where(eq(salesQuoteTemplates.companyId, companyId));
+      }
+      const values = {
+        companyId,
+        customerId: input.customerId || null,
+        name,
+        category: input.category?.trim() || null,
+        description: input.description?.trim() || null,
+        status: 'active',
+        isDefault: input.isDefault,
+        tags: [...new Set(input.tags.map((tag) => tag.trim()).filter(Boolean))],
+        currency: input.currency.trim().toUpperCase(),
+        paymentMethod: input.paymentMethod,
+        paymentTerms: input.paymentTerms?.trim() || null,
+        validityDays: input.validityDays,
+        quoteDiscountPercent: input.quoteDiscountPercent.toFixed(3),
+        shippingFee: input.shippingFee.toFixed(2),
+        billingAddress: input.billingAddress ?? {},
+        deliveryAddress: input.deliveryAddress ?? {},
+        publicNotes: input.publicNotes?.trim() || null,
+        internalNotes: input.internalNotes?.trim() || null,
+        updatedBy: userId,
+        updatedAt: new Date(),
+      };
+      let template: SalesQuoteTemplateRow;
+      if (existing) {
+        const [updated] = await tx
+          .update(salesQuoteTemplates)
+          .set(values)
+          .where(eq(salesQuoteTemplates.id, existing.id))
+          .returning();
+        if (!updated) throw new Error('Template changed while editing. Refresh and try again.');
+        template = updated;
+        await tx
+          .delete(salesQuoteTemplateLines)
+          .where(eq(salesQuoteTemplateLines.templateId, template.id));
+      } else {
+        const [created] = await tx
+          .insert(salesQuoteTemplates)
+          .values({ ...values, createdBy: userId })
+          .returning();
+        template = created!;
+      }
+      await tx
+        .insert(salesQuoteTemplateLines)
+        .values(lines.map((line) => ({ ...line, templateId: template.id })));
+      await tx.insert(salesQuoteTemplateEvents).values({
+        templateId: template.id,
+        eventType: existing ? 'updated' : 'created',
+        actorId: userId,
+        details: { lineCount: lines.length, isDefault: input.isDefault },
+      });
+      return template;
+    });
+    await broadcastRealtime('quote_event', {
+      templateId: saved.id,
+      type: existing ? 'template_updated' : 'template_created',
+    });
+    return (await this.getTemplate(saved.id))!;
+  }
+
+  async duplicateTemplate(userId: string, id: string) {
+    const original = await this.getTemplate(id);
+    if (!original) throw new Error('Quote template not found.');
+    const names = new Set(
+      (await this.listTemplates()).map((template) => template.name.toLowerCase()),
+    );
+    let name = `${original.name} (Copy)`;
+    for (let copy = 2; names.has(name.toLowerCase()); copy += 1)
+      name = `${original.name} (Copy ${copy})`;
+    return this.saveTemplate(userId, null, {
+      name,
+      category: original.category,
+      description: original.description,
+      customerId: original.customerId,
+      currency: original.currency,
+      paymentMethod: original.paymentMethod as PaymentProvider,
+      paymentTerms: original.paymentTerms,
+      validityDays: original.validityDays,
+      quoteDiscountPercent: num(original.quoteDiscountPercent),
+      shippingFee: num(original.shippingFee),
+      billingAddress: original.billingAddress,
+      deliveryAddress: original.deliveryAddress,
+      publicNotes: original.publicNotes,
+      internalNotes: original.internalNotes,
+      tags: original.tags,
+      isDefault: false,
+      lines: original.lines.map((line) => ({
+        productId: line.productId ?? '',
+        quantity: num(line.quantity),
+        priceMode: line.priceMode as 'catalog' | 'fixed',
+        unitPrice: line.unitPrice == null ? null : num(line.unitPrice),
+        discountPercent: num(line.discountPercent),
+      })),
+    });
+  }
+
+  async archiveTemplate(userId: string, id: string) {
+    const existing = await this.getTemplate(id);
+    if (!existing) throw new Error('Quote template not found.');
+    await drizzleDb
+      .update(salesQuoteTemplates)
+      .set({ status: 'archived', isDefault: false, updatedBy: userId, updatedAt: new Date() })
+      .where(eq(salesQuoteTemplates.id, id));
+    await this.templateEvent(id, 'archived', userId, {});
+    await broadcastRealtime('quote_event', { templateId: id, type: 'template_archived' });
+  }
+
+  async setDefaultTemplate(userId: string, id: string) {
+    const companyId = await this.companyId();
+    const template = await this.getTemplate(id);
+    if (!template || template.status !== 'active') throw new Error('Choose an active template.');
+    await drizzleDb.transaction(async (tx) => {
+      await tx
+        .update(salesQuoteTemplates)
+        .set({ isDefault: false, updatedBy: userId, updatedAt: new Date() })
+        .where(eq(salesQuoteTemplates.companyId, companyId));
+      await tx
+        .update(salesQuoteTemplates)
+        .set({ isDefault: true, updatedBy: userId, updatedAt: new Date() })
+        .where(eq(salesQuoteTemplates.id, id));
+      await tx.insert(salesQuoteTemplateEvents).values({
+        templateId: id,
+        eventType: 'set_as_default',
+        actorId: userId,
+        details: {},
+      });
+    });
+    await broadcastRealtime('quote_event', { templateId: id, type: 'template_default_changed' });
   }
 
   async list() {
@@ -167,6 +426,8 @@ export class SalesQuoteService {
       deliveryAddress: previous.deliveryAddress,
       currency: previous.currency,
       paymentMethod: previous.paymentMethod as PaymentProvider,
+      paymentTerms: previous.paymentTerms,
+      templateId: previous.templateId,
       validUntil: previous.validUntil?.toISOString().slice(0, 10),
       customerReference: previous.customerReference,
       publicNotes: previous.publicNotes,
@@ -207,6 +468,13 @@ export class SalesQuoteService {
     if (id && !existing) throw new Error('Quote not found.');
     if (existing && !['draft', 'pending_approval', 'approved'].includes(existing.status)) {
       throw new Error('Only draft or approved quotes can be edited.');
+    }
+    const sourceTemplate = input.templateId ? await this.getTemplate(input.templateId) : null;
+    if (input.templateId && !sourceTemplate) {
+      throw new Error('The selected quote template is no longer available.');
+    }
+    if (sourceTemplate?.status === 'archived' && existing?.templateId !== sourceTemplate.id) {
+      throw new Error('Archived templates cannot be used for new quotes.');
     }
     const customerName = input.customerName.trim();
     if (!customerName) throw new Error('Choose a customer or enter a customer name.');
@@ -291,6 +559,8 @@ export class SalesQuoteService {
       companyId,
       branchId: branch.id,
       customerId: input.customerId || null,
+      templateId: sourceTemplate?.id ?? null,
+      templateName: sourceTemplate?.name ?? null,
       quoteNumber,
       status,
       customerName,
@@ -311,6 +581,7 @@ export class SalesQuoteService {
       minimumMarginPercent: minimumMarginPercent.toFixed(3),
       approvalStatus,
       paymentMethod: input.paymentMethod,
+      paymentTerms: input.paymentTerms?.trim() || null,
       validUntil: input.validUntil ? new Date(`${input.validUntil}T23:59:59`) : null,
       customerReference: input.customerReference?.trim() || null,
       publicNotes: input.publicNotes?.trim() || null,
@@ -353,6 +624,18 @@ export class SalesQuoteService {
           approvalRequired: belowFloor,
         },
       });
+      if (!existing && sourceTemplate) {
+        await tx
+          .update(salesQuoteTemplates)
+          .set({ usageCount: sql`${salesQuoteTemplates.usageCount} + 1`, updatedAt: now })
+          .where(eq(salesQuoteTemplates.id, sourceTemplate.id));
+        await tx.insert(salesQuoteTemplateEvents).values({
+          templateId: sourceTemplate.id,
+          eventType: 'used',
+          actorId: userId,
+          details: { quoteId: quote.id, quoteNumber: quote.quoteNumber },
+        });
+      }
       return quote;
     });
     return (await this.get(saved.id))!;
@@ -744,6 +1027,17 @@ export class SalesQuoteService {
   ) {
     await drizzleDb.insert(salesQuoteEvents).values({ quoteId, eventType, actorId, details });
     await broadcastRealtime('quote_event', { quoteId, type: eventType });
+  }
+
+  private async templateEvent(
+    templateId: string,
+    eventType: string,
+    actorId: string | null,
+    details: Record<string, unknown>,
+  ) {
+    await drizzleDb
+      .insert(salesQuoteTemplateEvents)
+      .values({ templateId, eventType, actorId, details });
   }
 
   private assertPercent(value: number, label: string) {

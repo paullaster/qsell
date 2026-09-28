@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { canPermission, requirePermission } from '@/server/domains/access-control/guard';
 import { listProductsAction } from '@/server/domains/catalog/actions';
 import { listTradeCustomersAction } from '@/server/domains/customers/master-actions';
-import { SalesQuoteService, type QuoteInput } from './service';
+import { SalesQuoteService, type QuoteInput, type QuoteTemplateInput } from './service';
 
 const service = () => new SalesQuoteService();
 
@@ -20,12 +20,44 @@ export async function getSalesQuoteAction(id: string) {
 
 export async function getSalesQuoteEditorDataAction() {
   await requirePermission('quotes:read');
-  const [products, customers, settings] = await Promise.all([
+  const [products, customers, settings, templates] = await Promise.all([
     listProductsAction(),
     listTradeCustomersAction(),
     service().getSettings(),
+    service().listTemplates(),
   ]);
-  return { products, customers, settings };
+  return { products, customers, settings, templates };
+}
+
+export async function listSalesQuoteTemplatesAction() {
+  await requirePermission('quotes:read');
+  return service().listTemplates();
+}
+
+export async function saveSalesQuoteTemplateAction(id: string | null, input: QuoteTemplateInput) {
+  const userId = await requirePermission(id ? 'quotes:update' : 'quotes:create');
+  const template = await service().saveTemplate(userId, id, input);
+  revalidatePath('/admin/quotes');
+  return template;
+}
+
+export async function duplicateSalesQuoteTemplateAction(id: string) {
+  const userId = await requirePermission('quotes:create');
+  const template = await service().duplicateTemplate(userId, id);
+  revalidatePath('/admin/quotes');
+  return template;
+}
+
+export async function archiveSalesQuoteTemplateAction(id: string) {
+  const userId = await requirePermission('quotes:delete');
+  await service().archiveTemplate(userId, id);
+  revalidatePath('/admin/quotes');
+}
+
+export async function setDefaultSalesQuoteTemplateAction(id: string) {
+  const userId = await requirePermission('quotes:update');
+  await service().setDefaultTemplate(userId, id);
+  revalidatePath('/admin/quotes');
 }
 
 export async function createSalesQuoteAction(input: QuoteInput) {
