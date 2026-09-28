@@ -17,10 +17,15 @@ import {
   AlertTriangle,
   Eye,
   ArrowUpDown,
+  Copy,
 } from 'lucide-react';
 import { type Product, type Category } from '@/types/index';
 import { AppImage, PRODUCT_IMAGE_FALLBACK } from '@/components/ui/AppImage';
-import { deleteProductAction, updateProductAction } from '@/server/actions';
+import {
+  deleteProductAction,
+  duplicateProductAction,
+  updateProductAction,
+} from '@/server/domains/catalog/actions';
 
 interface AdminProductsProps {
   productsPromise: Promise<Product[]>;
@@ -47,6 +52,9 @@ export function AdminProducts({
     'all',
   );
   const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(new Set());
+  const [duplicatingProductId, setDuplicatingProductId] = useState<string | null>(null);
+  const [productActionMessage, setProductActionMessage] = useState<string | null>(null);
+  const [productActionError, setProductActionError] = useState<string | null>(null);
 
   // Filtering Logic
   const filteredProducts = products.filter((p) => {
@@ -117,6 +125,25 @@ export function AdminProducts({
     if (window.confirm(`Are you sure you want to delete "${p.name}" (${p.sku})?`)) {
       await deleteProductAction(p.id);
       onRefresh();
+    }
+  };
+
+  const handleDuplicateSingle = async (product: Product) => {
+    try {
+      setDuplicatingProductId(product.id);
+      setProductActionError(null);
+      setProductActionMessage(null);
+      const copy = await duplicateProductAction(product.id);
+      setProductActionMessage(
+        `Created product copy with SKU ${copy.sku} and stock code ${copy.stockCode}.`,
+      );
+      onRefresh();
+    } catch (error) {
+      setProductActionError(
+        error instanceof Error ? error.message : `Could not duplicate ${product.name}.`,
+      );
+    } finally {
+      setDuplicatingProductId(null);
     }
   };
 
@@ -202,6 +229,15 @@ export function AdminProducts({
           </button>
         </div>
       </div>
+
+      {(productActionMessage || productActionError) && (
+        <p
+          role={productActionError ? 'alert' : 'status'}
+          className={`rounded-lg border px-3 py-2 text-sm ${productActionError ? 'border-red-300 bg-red-50 text-red-800' : 'border-emerald-300 bg-emerald-50 text-emerald-800'}`}
+        >
+          {productActionError ?? productActionMessage}
+        </p>
+      )}
 
       {/* Filter and Search Bar */}
       <div className="space-y-3 rounded-xl border border-line bg-surface-raised p-4 text-xs">
@@ -374,7 +410,9 @@ export function AdminProducts({
                             <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] text-fg-muted">
                               <span>SKU: {p.sku}</span>
                               <span className="text-fg-subtle">Stock: {p.stockCode}</span>
-                              {p.brand && <span className="font-sans text-fg-subtle">• {p.brand}</span>}
+                              {p.brand && (
+                                <span className="font-sans text-fg-subtle">• {p.brand}</span>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -457,6 +495,16 @@ export function AdminProducts({
                             title="Edit Product"
                           >
                             <Edit2 className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={duplicatingProductId === p.id}
+                            onClick={() => void handleDuplicateSingle(p)}
+                            className="cursor-pointer rounded-lg bg-surface-sunken p-1.5 text-fg transition-colors hover:bg-indigo-50 hover:text-indigo-700 disabled:cursor-wait disabled:opacity-50"
+                            title="Duplicate Product"
+                            aria-label={`Duplicate ${p.name}`}
+                          >
+                            <Copy className="h-3.5 w-3.5" />
                           </button>
                           <button
                             onClick={() => handleDeleteSingle(p)}

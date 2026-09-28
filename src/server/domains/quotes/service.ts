@@ -1,5 +1,5 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { getContainer } from '@/server/di/container';
 import { drizzleDb } from '@/server/db/drizzle/client';
 import {
@@ -9,7 +9,9 @@ import {
   salesQuoteSettings,
   salesQuoteTemplateEvents,
   salesQuoteTemplateLines,
+  salesQuoteTemplateSections,
   salesQuoteTemplates,
+  salesQuoteSections,
   type SalesQuoteTemplateRow,
   type SalesQuoteRow,
 } from '@/server/db/drizzle/schema';
@@ -51,17 +53,28 @@ export interface QuoteInput {
   paymentMethod: PaymentProvider;
   paymentTerms?: string | null;
   templateId?: string | null;
+  showBillingAddress?: boolean;
+  paymentDetails?: string | null;
+  termsAndConditions?: string | null;
   validUntil?: string | null;
   customerReference?: string | null;
   publicNotes?: string | null;
   internalNotes?: string | null;
   discountPercent: number;
   shippingFee: number;
-  lines: { productId: string; quantity: number; unitPrice?: number; discountPercent: number }[];
+  sections: { id: string; title: string; description?: string | null }[];
+  lines: {
+    sectionId?: string | null;
+    productId: string;
+    quantity: number;
+    unitPrice?: number;
+    discountPercent: number;
+  }[];
 }
 
 export interface SalesQuote extends SalesQuoteRow {
   lines: (typeof salesQuoteLines.$inferSelect)[];
+  sections: (typeof salesQuoteSections.$inferSelect)[];
   events: (typeof salesQuoteEvents.$inferSelect)[];
 }
 
@@ -73,6 +86,9 @@ export interface QuoteTemplateInput {
   currency: string;
   paymentMethod: PaymentProvider;
   paymentTerms?: string | null;
+  paymentDetails?: string | null;
+  termsAndConditions?: string | null;
+  showBillingAddress: boolean;
   validityDays: number;
   quoteDiscountPercent: number;
   shippingFee: number;
@@ -82,7 +98,9 @@ export interface QuoteTemplateInput {
   internalNotes?: string | null;
   tags: string[];
   isDefault: boolean;
+  sections: { id: string; title: string; description?: string | null }[];
   lines: {
+    sectionId?: string | null;
     productId: string;
     quantity: number;
     priceMode: 'catalog' | 'fixed';
@@ -93,6 +111,7 @@ export interface QuoteTemplateInput {
 
 export interface SalesQuoteTemplate extends SalesQuoteTemplateRow {
   lines: (typeof salesQuoteTemplateLines.$inferSelect)[];
+  sections: (typeof salesQuoteTemplateSections.$inferSelect)[];
   events: (typeof salesQuoteTemplateEvents.$inferSelect)[];
 }
 
@@ -172,7 +191,7 @@ export class SalesQuoteService {
       .where(and(eq(salesQuoteTemplates.id, id), eq(salesQuoteTemplates.companyId, companyId)))
       .limit(1);
     if (!template) return null;
-    const [lines, events] = await Promise.all([
+    const [lines, sections, events] = await Promise.all([
       drizzleDb
         .select()
         .from(salesQuoteTemplateLines)
@@ -180,11 +199,21 @@ export class SalesQuoteService {
         .orderBy(salesQuoteTemplateLines.lineNumber),
       drizzleDb
         .select()
+        .from(salesQuoteTemplateSections)
+        .where(eq(salesQuoteTemplateSections.templateId, id))
+        .orderBy(salesQuoteTemplateSections.sectionNumber),
+      drizzleDb
+        .select()
         .from(salesQuoteTemplateEvents)
         .where(eq(salesQuoteTemplateEvents.templateId, id))
         .orderBy(desc(salesQuoteTemplateEvents.createdAt)),
     ]);
-    return { ...template, lines, events };
+    return {
+      ...template,
+      lines,
+      sections,
+      events,
+    };
   }
 
   async saveTemplate(userId: string, id: string | null, input: QuoteTemplateInput) {
@@ -210,6 +239,11 @@ export class SalesQuoteService {
         (p) => [p.id, p],
       ),
     );
+    const sections = input.sections ?? [];
+    const sectionIds = new Set(sections.map((section) => section.id));
+    if (sections.some((section) => !section.title.trim())) {
+      throw new Error('Every quote template section needs a title.');
+    }
     const lines = input.lines.map((line, index) => {
       const product = products.get(line.productId);
       if (!product || !product.isSellable)
@@ -217,12 +251,16 @@ export class SalesQuoteService {
       if (!Number.isFinite(line.quantity) || line.quantity <= 0)
         throw new Error(`${product.name} needs a quantity greater than zero.`);
       this.assertPercent(line.discountPercent, `${product.name} discount`);
+      if (line.sectionId && !sectionIds.has(line.sectionId)) {
+        throw new Error(`${product.name} references a section that no longer exists.`);
+      }
       const unitPrice = line.priceMode === 'fixed' ? line.unitPrice : null;
       if (line.priceMode === 'fixed' && (!Number.isFinite(unitPrice) || Number(unitPrice) < 0)) {
         throw new Error(`${product.name} needs a valid fixed selling price.`);
       }
       return {
         productId: product.id,
+        sectionId: line.sectionId || null,
         lineNumber: (index + 1) * 10000,
         sku: product.sku,
         description: product.name,
@@ -252,6 +290,11 @@ export class SalesQuoteService {
         currency: input.currency.trim().toUpperCase(),
         paymentMethod: input.paymentMethod,
         paymentTerms: input.paymentTerms?.trim() || null,
+        paymentDetails: input.paymentDetails?.trim() || null,
+        termsAndConditions: input.termsAndConditions?.trim() || null,
+        showBillingAddress:
+          input.showBillingAddress === true &&
+          Object.values(input.billingAddress ?? {}).some((value) => value.trim().length > 0),
         validityDays: input.validityDays,
         quoteDiscountPercent: input.quoteDiscountPercent.toFixed(3),
         shippingFee: input.shippingFee.toFixed(2),
@@ -274,12 +317,26 @@ export class SalesQuoteService {
         await tx
           .delete(salesQuoteTemplateLines)
           .where(eq(salesQuoteTemplateLines.templateId, template.id));
+        await tx
+          .delete(salesQuoteTemplateSections)
+          .where(eq(salesQuoteTemplateSections.templateId, template.id));
       } else {
         const [created] = await tx
           .insert(salesQuoteTemplates)
           .values({ ...values, createdBy: userId })
           .returning();
         template = created!;
+      }
+      if (sections.length) {
+        await tx.insert(salesQuoteTemplateSections).values(
+          sections.map((section, index) => ({
+            id: section.id,
+            templateId: template.id,
+            sectionNumber: (index + 1) * 10000,
+            title: section.title.trim(),
+            description: section.description?.trim() || null,
+          })),
+        );
       }
       await tx
         .insert(salesQuoteTemplateLines)
@@ -305,6 +362,9 @@ export class SalesQuoteService {
     const names = new Set(
       (await this.listTemplates()).map((template) => template.name.toLowerCase()),
     );
+    const copiedSectionIds = new Map(
+      original.sections.map((section) => [section.id, randomUUID()]),
+    );
     let name = `${original.name} (Copy)`;
     for (let copy = 2; names.has(name.toLowerCase()); copy += 1)
       name = `${original.name} (Copy ${copy})`;
@@ -316,6 +376,9 @@ export class SalesQuoteService {
       currency: original.currency,
       paymentMethod: original.paymentMethod as PaymentProvider,
       paymentTerms: original.paymentTerms,
+      paymentDetails: original.paymentDetails,
+      termsAndConditions: original.termsAndConditions,
+      showBillingAddress: original.showBillingAddress,
       validityDays: original.validityDays,
       quoteDiscountPercent: num(original.quoteDiscountPercent),
       shippingFee: num(original.shippingFee),
@@ -325,7 +388,13 @@ export class SalesQuoteService {
       internalNotes: original.internalNotes,
       tags: original.tags,
       isDefault: false,
+      sections: original.sections.map((section) => ({
+        id: copiedSectionIds.get(section.id)!,
+        title: section.title,
+        description: section.description,
+      })),
       lines: original.lines.map((line) => ({
+        sectionId: line.sectionId ? (copiedSectionIds.get(line.sectionId) ?? null) : null,
         productId: line.productId ?? '',
         quantity: num(line.quantity),
         priceMode: line.priceMode as 'catalog' | 'fixed',
@@ -388,7 +457,7 @@ export class SalesQuoteService {
       .where(and(eq(salesQuotes.id, id), eq(salesQuotes.companyId, companyId)))
       .limit(1);
     if (!quote) return null;
-    const [lines, events] = await Promise.all([
+    const [lines, sections, events] = await Promise.all([
       drizzleDb
         .select()
         .from(salesQuoteLines)
@@ -396,11 +465,21 @@ export class SalesQuoteService {
         .orderBy(salesQuoteLines.lineNumber),
       drizzleDb
         .select()
+        .from(salesQuoteSections)
+        .where(eq(salesQuoteSections.quoteId, quote.id))
+        .orderBy(salesQuoteSections.sectionNumber),
+      drizzleDb
+        .select()
         .from(salesQuoteEvents)
         .where(eq(salesQuoteEvents.quoteId, quote.id))
         .orderBy(desc(salesQuoteEvents.createdAt)),
     ]);
-    return { ...quote, lines, events };
+    return {
+      ...quote,
+      lines,
+      sections,
+      events,
+    };
   }
 
   async create(userId: string, input: QuoteInput): Promise<SalesQuote> {
@@ -417,6 +496,12 @@ export class SalesQuoteService {
     if (previous.status === 'converted' || previous.status === 'cancelled') {
       throw new Error('A converted or cancelled quote cannot be revised.');
     }
+    const revisedSections = previous.sections.map((section) => ({
+      id: randomUUID(),
+      sourceId: section.id,
+      title: section.title,
+      description: section.description,
+    }));
     const revised = await this.create(userId, {
       customerId: previous.customerId,
       customerName: previous.customerName,
@@ -428,13 +513,20 @@ export class SalesQuoteService {
       paymentMethod: previous.paymentMethod as PaymentProvider,
       paymentTerms: previous.paymentTerms,
       templateId: previous.templateId,
+      showBillingAddress: previous.showBillingAddress,
+      paymentDetails: previous.paymentDetails,
+      termsAndConditions: previous.termsAndConditions,
       validUntil: previous.validUntil?.toISOString().slice(0, 10),
       customerReference: previous.customerReference,
       publicNotes: previous.publicNotes,
       internalNotes: previous.internalNotes,
       discountPercent: num(previous.quoteDiscountPercent),
       shippingFee: num(previous.shippingFee),
+      sections: revisedSections,
       lines: previous.lines.map((line) => ({
+        sectionId: line.sectionId
+          ? revisedSections.find((section) => section.sourceId === line.sectionId)?.id
+          : null,
         productId: line.productId ?? '',
         quantity: num(line.quantity),
         unitPrice: num(line.unitPrice),
@@ -492,6 +584,14 @@ export class SalesQuoteService {
         (p) => [p.id, p],
       ),
     );
+    const sections = input.sections ?? [];
+    const sectionIds = new Set(sections.map((section) => section.id));
+    if (sections.some((section) => !section.title.trim())) {
+      throw new Error('Every quote section needs a title.');
+    }
+    if (input.lines.some((line) => line.sectionId && !sectionIds.has(line.sectionId))) {
+      throw new Error('A quote line references a section that no longer exists.');
+    }
     let subtotal = 0;
     let taxAmount = 0;
     let discountAmount = 0;
@@ -522,6 +622,7 @@ export class SalesQuoteService {
       totalCost += cost;
       return {
         productId: product.id,
+        sectionId: line.sectionId || null,
         lineNumber: (index + 1) * 10000,
         sku: product.sku,
         description: product.name,
@@ -582,6 +683,11 @@ export class SalesQuoteService {
       approvalStatus,
       paymentMethod: input.paymentMethod,
       paymentTerms: input.paymentTerms?.trim() || null,
+      showBillingAddress:
+        input.showBillingAddress === true &&
+        Object.values(input.billingAddress ?? {}).some((value) => value.trim().length > 0),
+      paymentDetails: input.paymentDetails?.trim() || null,
+      termsAndConditions: input.termsAndConditions?.trim() || null,
       validUntil: input.validUntil ? new Date(`${input.validUntil}T23:59:59`) : null,
       customerReference: input.customerReference?.trim() || null,
       publicNotes: input.publicNotes?.trim() || null,
@@ -603,12 +709,24 @@ export class SalesQuoteService {
         if (!updated) throw new Error('Quote was changed by another user. Refresh and try again.');
         quote = updated;
         await tx.delete(salesQuoteLines).where(eq(salesQuoteLines.quoteId, quote.id));
+        await tx.delete(salesQuoteSections).where(eq(salesQuoteSections.quoteId, quote.id));
       } else {
         const [created] = await tx
           .insert(salesQuotes)
           .values({ ...header, createdBy: userId })
           .returning();
         quote = created!;
+      }
+      if (sections.length) {
+        await tx.insert(salesQuoteSections).values(
+          sections.map((section, index) => ({
+            id: section.id,
+            quoteId: quote.id,
+            sectionNumber: (index + 1) * 10000,
+            title: section.title.trim(),
+            description: section.description?.trim() || null,
+          })),
+        );
       }
       await tx
         .insert(salesQuoteLines)
@@ -898,20 +1016,39 @@ export class SalesQuoteService {
         phone: quote.customerPhone ?? '',
         kraPin: null,
         shippingAddress: {
-          street: quote.deliveryAddress.street ?? '',
-          city: quote.deliveryAddress.city ?? '',
-          countyOrState: quote.deliveryAddress.countyOrState ?? '',
-          postalCode: quote.deliveryAddress.postalCode,
-          country: quote.deliveryAddress.country ?? '',
+          street: quote.billingAddress.street ?? '',
+          city: quote.billingAddress.city ?? '',
+          countyOrState: quote.billingAddress.countyOrState ?? '',
+          postalCode: quote.billingAddress.postalCode,
+          country: quote.billingAddress.country ?? '',
         },
       },
-      items: quote.lines.map((line) => ({
-        sku: line.sku,
-        name: line.description,
-        quantity: num(line.quantity),
-        unitPrice: num(line.lineAmount) / Math.max(num(line.quantity), 1),
-        totalPrice: num(line.lineAmount),
-      })),
+      items: [
+        ...quote.lines
+          .filter((line) => !line.sectionId)
+          .map((line) => ({
+            kind: 'item' as const,
+            sku: line.sku,
+            name: line.description,
+            quantity: num(line.quantity),
+            unitPrice: num(line.unitPrice),
+            totalPrice: num(line.lineAmount),
+          })),
+        ...quote.sections.map((section) => {
+          const lines = quote.lines.filter((line) => line.sectionId === section.id);
+          const total = lines.reduce((sum, line) => sum + num(line.lineAmount), 0);
+          return {
+            kind: 'section' as const,
+            sectionTotal: total,
+            sectionDescription: section.description,
+            sku: '',
+            name: section.title,
+            quantity: 0,
+            unitPrice: 0,
+            totalPrice: total,
+          };
+        }),
+      ],
       subtotal: num(quote.subtotal),
       tax: num(quote.taxAmount),
       taxLabel: 'Tax',
@@ -920,7 +1057,29 @@ export class SalesQuoteService {
       paymentMethod: quote.paymentMethod,
       paymentReference: null,
       paymentStatus: 'unpaid',
+      customerReference: quote.customerReference,
       notes: quote.publicNotes,
+      showBillingAddress: quote.showBillingAddress,
+      billingInformation: quote.showBillingAddress
+        ? {
+            name: quote.customerName,
+            email: quote.customerEmail,
+            phone: quote.customerPhone,
+            address: [
+              quote.billingAddress.street,
+              quote.billingAddress.city,
+              quote.billingAddress.countyOrState,
+              quote.billingAddress.postalCode,
+              quote.billingAddress.country,
+            ]
+              .filter(Boolean)
+              .join(', '),
+          }
+        : null,
+      paymentDetails: quote.paymentDetails,
+      paymentTerms: quote.paymentTerms,
+      termsAndConditions: quote.termsAndConditions,
+      validUntil: quote.validUntil?.toLocaleDateString(),
     });
   }
 
@@ -940,8 +1099,9 @@ export class SalesQuoteService {
       await this.event(quote.id, 'expired', null, { reason: 'valid_until_elapsed' });
       return null;
     }
-    const lines = await drizzleDb
+    const rawLines = await drizzleDb
       .select({
+        sectionId: salesQuoteLines.sectionId,
         sku: salesQuoteLines.sku,
         description: salesQuoteLines.description,
         quantity: salesQuoteLines.quantity,
@@ -954,21 +1114,38 @@ export class SalesQuoteService {
       .from(salesQuoteLines)
       .where(eq(salesQuoteLines.quoteId, quote.id))
       .orderBy(salesQuoteLines.lineNumber);
+    const rawSections = await drizzleDb
+      .select({
+        id: salesQuoteSections.id,
+        title: salesQuoteSections.title,
+        description: salesQuoteSections.description,
+      })
+      .from(salesQuoteSections)
+      .where(eq(salesQuoteSections.quoteId, quote.id))
+      .orderBy(salesQuoteSections.sectionNumber);
+    const sections = rawSections;
+    const lines = rawLines;
     const company = await getContainer().companySettings.getProfile();
     return {
       quoteNumber: quote.quoteNumber,
       status: quote.status,
       customerName: quote.customerName,
+      showBillingAddress: quote.showBillingAddress,
+      billingAddress: quote.billingAddress,
       currency: quote.currency,
       validUntil: quote.validUntil,
       customerReference: quote.customerReference,
       publicNotes: quote.publicNotes,
+      paymentDetails: quote.paymentDetails,
+      paymentTerms: quote.paymentTerms,
+      termsAndConditions: quote.termsAndConditions,
       subtotal: quote.subtotal,
       taxAmount: quote.taxAmount,
       discountAmount: quote.discountAmount,
       shippingFee: quote.shippingFee,
       totalAmount: quote.totalAmount,
       lines,
+      sections,
       company: {
         tradingName: company.tradingName,
         email: company.email,

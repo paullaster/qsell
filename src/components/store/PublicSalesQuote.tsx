@@ -72,24 +72,64 @@ export function PublicSalesQuote({ token, quote }: { token: string; quote: Share
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-line">
-                    {quote.lines.map((line, index) => (
-                      <tr key={`${line.sku}-${index}`}>
-                        <td className="p-3">
-                          <div className="font-medium text-fg-strong">{line.description}</div>
-                          <div className="text-xs text-fg-muted">{line.sku}</div>
-                        </td>
-                        <td className="p-3 text-right">{Number(line.quantity)}</td>
-                        <td className="p-3 text-right">
-                          {quote.currency}{' '}
-                          {(Number(line.lineAmount) / Math.max(Number(line.quantity), 1)).toFixed(
-                            2,
-                          )}
-                        </td>
-                        <td className="p-3 text-right font-medium">
-                          {quote.currency} {Number(line.lineAmount).toFixed(2)}
-                        </td>
-                      </tr>
-                    ))}
+                    {quote.lines
+                      .filter((line) => !line.sectionId)
+                      .map((line, index) => (
+                        <tr key={`item-${line.sku}-${index}`}>
+                          <td className="p-3">
+                            <div className="font-medium text-fg-strong">{line.description}</div>
+                            <div className="text-xs text-fg-muted">{line.sku}</div>
+                          </td>
+                          <td className="p-3 text-right">{Number(line.quantity)}</td>
+                          <td className="p-3 text-right">
+                            {quote.currency} {Number(line.unitPrice).toFixed(2)}
+                          </td>
+                          <td className="p-3 text-right font-medium">
+                            {quote.currency} {Number(line.lineAmount).toFixed(2)}
+                          </td>
+                        </tr>
+                      ))}
+                    {quote.sections.flatMap((section) => {
+                      const sectionLines = quote.lines.filter(
+                        (line) => line.sectionId === section.id,
+                      );
+                      const gross = sectionLines.reduce(
+                        (sum, line) => sum + Number(line.lineAmount),
+                        0,
+                      );
+                      return [
+                        <tr key={`section-${section.id}`} className="bg-surface-raised">
+                          <td colSpan={4} className="p-3">
+                            <div className="flex justify-between gap-3">
+                              <div>
+                                <strong className="text-fg-strong">{section.title}</strong>
+                                {section.description && (
+                                  <p className="text-xs text-fg-muted">{section.description}</p>
+                                )}
+                              </div>
+                              <span className="font-semibold text-fg-strong">
+                                {quote.currency} {gross.toFixed(2)}
+                              </span>
+                            </div>
+                          </td>
+                        </tr>,
+                        ...sectionLines.map((line, index) => (
+                          <tr key={`${section.id}-${line.sku}-${index}`}>
+                            <td className="p-3">
+                              <div className="font-medium text-fg-strong">{line.description}</div>
+                              <div className="text-xs text-fg-muted">{line.sku}</div>
+                            </td>
+                            <td className="p-3 text-right">{Number(line.quantity)}</td>
+                            <td className="p-3 text-right">
+                              {quote.currency} {Number(line.unitPrice).toFixed(2)}
+                            </td>
+                            <td className="p-3 text-right font-medium">
+                              {quote.currency} {Number(line.lineAmount).toFixed(2)}
+                            </td>
+                          </tr>
+                        )),
+                      ];
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -108,6 +148,47 @@ export function PublicSalesQuote({ token, quote }: { token: string; quote: Share
                 <p className="mt-6 rounded-lg bg-surface-raised p-4 text-sm whitespace-pre-wrap text-fg">
                   {quote.publicNotes}
                 </p>
+              )}
+              {quote.showBillingAddress && (
+                <div className="mt-5 rounded-xl border border-line p-4">
+                  <h2 className="text-sm font-semibold text-fg-strong">Bill to</h2>
+                  <p className="mt-1 text-sm text-fg-muted">{quote.customerName}</p>
+                  <p className="text-sm text-fg-muted">
+                    {[
+                      quote.billingAddress.street,
+                      quote.billingAddress.city,
+                      quote.billingAddress.countyOrState,
+                      quote.billingAddress.postalCode,
+                      quote.billingAddress.country,
+                    ]
+                      .filter(Boolean)
+                      .join(', ')}
+                  </p>
+                </div>
+              )}
+              {quote.paymentDetails && (
+                <div className="mt-5 rounded-xl border border-line p-4">
+                  <h2 className="text-sm font-semibold text-fg-strong">Payment details</h2>
+                  <p className="mt-1 text-sm whitespace-pre-wrap text-fg-muted">
+                    {quote.paymentDetails}
+                  </p>
+                </div>
+              )}
+              {quote.paymentTerms && (
+                <div className="mt-4 rounded-xl border border-line p-4">
+                  <h2 className="text-sm font-semibold text-fg-strong">Payment terms</h2>
+                  <p className="mt-1 text-sm whitespace-pre-wrap text-fg-muted">
+                    {quote.paymentTerms}
+                  </p>
+                </div>
+              )}
+              {quote.termsAndConditions && (
+                <div className="mt-4 rounded-xl border border-line p-4">
+                  <h2 className="text-sm font-semibold text-fg-strong">Terms and conditions</h2>
+                  <p className="mt-1 text-sm whitespace-pre-wrap text-fg-muted">
+                    {quote.termsAndConditions}
+                  </p>
+                </div>
               )}
               {error && (
                 <p

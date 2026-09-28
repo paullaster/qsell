@@ -1192,6 +1192,9 @@ export const salesQuoteTemplates = pgTable(
     currency: text('currency').notNull().default('KES'),
     paymentMethod: text('payment_method').notNull().default('mpesa_daraja'),
     paymentTerms: text('payment_terms'),
+    showBillingAddress: boolean('show_billing_address').notNull().default(false),
+    paymentDetails: text('payment_details'),
+    termsAndConditions: text('terms_and_conditions'),
     validityDays: integer('validity_days').notNull().default(30),
     quoteDiscountPercent: numeric('quote_discount_percent', { precision: 7, scale: 3 })
       .notNull()
@@ -1219,6 +1222,22 @@ export const salesQuoteTemplates = pgTable(
   ],
 );
 
+export const salesQuoteTemplateSections = pgTable(
+  'sales_quote_template_sections',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    templateId: uuid('template_id')
+      .notNull()
+      .references(() => salesQuoteTemplates.id, { onDelete: 'cascade' }),
+    sectionNumber: integer('section_number').notNull(),
+    title: text('title').notNull(),
+    description: text('description'),
+  },
+  (t) => [
+    uniqueIndex('sales_quote_template_sections_number_uidx').on(t.templateId, t.sectionNumber),
+  ],
+);
+
 export const salesQuoteTemplateLines = pgTable(
   'sales_quote_template_lines',
   {
@@ -1226,6 +1245,9 @@ export const salesQuoteTemplateLines = pgTable(
     templateId: uuid('template_id')
       .notNull()
       .references(() => salesQuoteTemplates.id, { onDelete: 'cascade' }),
+    sectionId: uuid('section_id').references(() => salesQuoteTemplateSections.id, {
+      onDelete: 'set null',
+    }),
     productId: text('product_id').references(() => products.id, { onDelete: 'set null' }),
     lineNumber: integer('line_number').notNull(),
     sku: text('sku').notNull().default(''),
@@ -1278,6 +1300,9 @@ export const salesQuotes = pgTable(
       .notNull()
       .default({}),
     paymentTerms: text('payment_terms'),
+    showBillingAddress: boolean('show_billing_address').notNull().default(false),
+    paymentDetails: text('payment_details'),
+    termsAndConditions: text('terms_and_conditions'),
     currency: text('currency').notNull().default('KES'),
     subtotal: numeric('subtotal', { precision: 14, scale: 2 }).notNull().default('0'),
     taxAmount: numeric('tax_amount', { precision: 14, scale: 2 }).notNull().default('0'),
@@ -1327,6 +1352,20 @@ export const salesQuotes = pgTable(
   ],
 );
 
+export const salesQuoteSections = pgTable(
+  'sales_quote_sections',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    quoteId: uuid('quote_id')
+      .notNull()
+      .references(() => salesQuotes.id, { onDelete: 'cascade' }),
+    sectionNumber: integer('section_number').notNull(),
+    title: text('title').notNull(),
+    description: text('description'),
+  },
+  (t) => [uniqueIndex('sales_quote_sections_number_uidx').on(t.quoteId, t.sectionNumber)],
+);
+
 export const salesQuoteLines = pgTable(
   'sales_quote_lines',
   {
@@ -1334,6 +1373,7 @@ export const salesQuoteLines = pgTable(
     quoteId: uuid('quote_id')
       .notNull()
       .references(() => salesQuotes.id, { onDelete: 'cascade' }),
+    sectionId: uuid('section_id').references(() => salesQuoteSections.id, { onDelete: 'set null' }),
     productId: text('product_id').references(() => products.id, { onDelete: 'set null' }),
     lineNumber: integer('line_number').notNull(),
     sku: text('sku').notNull().default(''),

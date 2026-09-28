@@ -354,6 +354,11 @@ export class CatalogRepository {
     return rows[0] ?? null;
   }
 
+  async getProductByStockCode(stockCode: string): Promise<ProductJoined | null> {
+    const rows = await this.productQuery().where(eq(products.stockCode, stockCode)).limit(1);
+    return rows[0] ?? null;
+  }
+
   async insertProduct(values: typeof products.$inferInsert): Promise<ProductRow> {
     const [row] = await this.db.insert(products).values(values).returning();
     return row!;
