@@ -40,7 +40,11 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
           router.refresh();
           return;
         }
-        const res = await loginAction({ email, password });
+        const res = await loginAction({ email: email.trim().toLowerCase(), password });
+        if (!res.ok) {
+          setError(res.error);
+          return;
+        }
         if (isStaffRole(res.role)) {
           // Staff must land in admin — ignore storefront callback leftovers (e.g. "/").
           router.push(safeCallbackUrl?.startsWith('/admin') ? safeCallbackUrl : '/admin');
@@ -54,9 +58,7 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
         setError(
           isRegister
             ? 'We couldn’t create your account right now. Please try again.'
-            : err instanceof Error
-              ? err.message
-              : 'We couldn’t sign you in. Check your details and try again.',
+            : 'We couldn’t sign you in right now. Check your connection and try again.',
         );
       }
     });
@@ -75,14 +77,24 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
       </p>
       {isRegister ? (
         <>
+          <label htmlFor="register-name" className="sr-only">
+            Full name
+          </label>
           <input
+            id="register-name"
+            name="name"
             required
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Full name"
             className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong"
           />
+          <label htmlFor="register-phone" className="sr-only">
+            Phone (optional)
+          </label>
           <input
+            id="register-phone"
+            name="phone"
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
             placeholder="Phone (optional)"
@@ -90,21 +102,41 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
           />
         </>
       ) : null}
+      <label htmlFor="auth-email" className="sr-only">
+        Email address
+      </label>
       <input
+        id="auth-email"
+        name="email"
         required
         type="email"
+        inputMode="email"
+        autoCapitalize="none"
+        autoCorrect="off"
+        spellCheck={false}
+        autoComplete="email"
+        enterKeyHint="next"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         placeholder="Email"
         className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong"
       />
+      <label htmlFor="auth-password" className="sr-only">
+        Password
+      </label>
       <input
+        id="auth-password"
+        name="password"
         required
         type="password"
+        autoCapitalize="none"
+        autoCorrect="off"
+        autoComplete={isRegister ? 'new-password' : 'current-password'}
+        enterKeyHint="go"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         placeholder="Password"
-        minLength={8}
+        minLength={isRegister ? 8 : undefined}
         className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong"
       />
       {error ? (

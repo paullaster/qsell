@@ -4,7 +4,7 @@ import { ThemeToggle } from '@/components/theme/ThemeToggle';
 
 export default function LoginPage() {
   return (
-    <div className="relative flex min-h-screen flex-col items-center justify-center gap-4 bg-canvas px-4 py-10">
+    <div className="relative flex min-h-dvh flex-col items-center justify-center gap-4 bg-canvas px-4 py-10">
       <div className="absolute top-4 right-4">
         <ThemeToggle />
       </div>

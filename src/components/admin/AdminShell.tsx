@@ -102,7 +102,10 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
       />
 
       <div className="flex min-w-0 flex-1 flex-col lg:pl-72">
-        <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-line bg-surface/95 px-4 backdrop-blur-md sm:px-6" data-user-menu>
+        <header
+          className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-line bg-surface/95 px-4 backdrop-blur-md sm:px-6"
+          data-user-menu
+        >
           <button
             type="button"
             className="rounded-lg p-2 text-fg-muted hover:bg-hover lg:hidden"
@@ -153,11 +156,13 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                 aria-label="User menu"
               >
                 <User className="h-5 w-5" />
-                <ChevronDown className={`h-4 w-4 transition-transform ${isUserMenuOpen ? 'rotate-180' : ''}`} />
+                <ChevronDown
+                  className={`h-4 w-4 transition-transform ${isUserMenuOpen ? 'rotate-180' : ''}`}
+                />
               </button>
 
               {isUserMenuOpen && (
-                <div className="absolute right-0 mt-2 w-48 rounded-xl border border-line bg-surface-raised shadow-xl py-1">
+                <div className="absolute right-0 mt-2 w-48 rounded-xl border border-line bg-surface-raised py-1 shadow-xl">
                   <Link
                     href="/admin/profile"
                     className="flex items-center gap-2 px-3 py-2 text-sm text-fg hover:bg-hover"
@@ -176,6 +181,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                   </Link>
                   <hr className="my-1 border-line" />
                   <form action={logoutAction}>
+                    <input type="hidden" name="returnTo" value="/login" />
                     <button
                       type="submit"
                       className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50/50"

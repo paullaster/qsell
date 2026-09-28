@@ -66,11 +66,12 @@ interface StorefrontProfileClientProps {
   sessionPromise: Promise<{ session: UserSession | null; customer: CustomerAccount | null }>;
 }
 
-export function StorefrontProfileClient({
-  sessionPromise,
-}: StorefrontProfileClientProps) {
+export function StorefrontProfileClient({ sessionPromise }: StorefrontProfileClientProps) {
   const router = useRouter();
-  const { session, customer: customerData } = use(sessionPromise) ?? { session: null, customer: null };
+  const { session, customer: customerData } = use(sessionPromise) ?? {
+    session: null,
+    customer: null,
+  };
   const customer = customerData;
 
   const [isEditing, setIsEditing] = useState(false);
@@ -85,16 +86,22 @@ export function StorefrontProfileClient({
 
   return (
     <div className="storefront-shell min-h-screen bg-canvas text-fg">
-      <div className="mx-auto max-w-4xl space-y-6 py-8 px-4">
+      <div className="mx-auto max-w-4xl space-y-6 px-4 py-8">
         {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+        <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-3xl font-bold text-fg-strong">My Account</h1>
-            <p className="text-sm text-fg-muted mt-1">Manage your profile, addresses, orders, and preferences</p>
+            <p className="mt-1 text-sm text-fg-muted">
+              Manage your profile, addresses, orders, and preferences
+            </p>
           </div>
           <div className="flex items-center gap-3">
             <form action={logoutAction}>
-              <button type="submit" className="flex items-center gap-2 rounded-lg border border-line bg-surface-raised px-4 py-2 text-sm font-medium text-fg transition-colors hover:bg-hover hover:text-fg-strong">
+              <input type="hidden" name="returnTo" value="/" />
+              <button
+                type="submit"
+                className="flex items-center gap-2 rounded-lg border border-line bg-surface-raised px-4 py-2 text-sm font-medium text-fg transition-colors hover:bg-hover hover:text-fg-strong"
+              >
                 <LogOut className="h-4 w-4" />
                 <span>Logout</span>
               </button>
@@ -104,22 +111,26 @@ export function StorefrontProfileClient({
 
         {/* Profile Header Card */}
         <div className="rounded-2xl border border-line bg-surface-raised p-6 sm:p-8">
-          <div className="flex flex-col sm:flex-row sm:items-center gap-6">
+          <div className="flex flex-col gap-6 sm:flex-row sm:items-center">
             <div className="flex items-center gap-4">
               <div className="flex h-24 w-24 items-center justify-center rounded-full bg-indigo-600/20 text-4xl font-bold text-indigo-400">
-                {customer?.name?.charAt(0).toUpperCase() || user?.name?.charAt(0).toUpperCase() || 'U'}
+                {customer?.name?.charAt(0).toUpperCase() ||
+                  user?.name?.charAt(0).toUpperCase() ||
+                  'U'}
               </div>
               <div>
                 <h2 className="text-2xl font-bold text-fg-strong">
                   {customer?.name || user?.name || 'Customer'}
                 </h2>
-                <div className="flex flex-wrap items-center gap-2 mt-1 text-sm text-fg-muted">
-                  <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-emerald-500/10 text-emerald-600">
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-fg-muted">
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-600">
                     <ShieldCheck className="h-3 w-3" />
                     {customer?.status || 'Active'}
                   </span>
                   {customer?.customerNumber && (
-                    <span className="font-mono text-xs text-fg-subtle">#{customer.customerNumber}</span>
+                    <span className="font-mono text-xs text-fg-subtle">
+                      #{customer.customerNumber}
+                    </span>
                   )}
                 </div>
               </div>
@@ -136,15 +147,18 @@ export function StorefrontProfileClient({
           </div>
 
           {isEditing && (
-            <form action={async (formData) => {
+            <form
+              action={async (formData) => {
                 await updateUserProfileAction({
                   name: formData.get('name') as string,
                   phone: formData.get('phone') as string,
                   email: formData.get('email') as string,
                 });
                 router.refresh();
-              }} className="mt-6 space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              }}
+              className="mt-6 space-y-4"
+            >
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div>
                   <label className="mb-1 block text-sm font-medium text-fg-muted">Full Name</label>
                   <input
@@ -167,7 +181,9 @@ export function StorefrontProfileClient({
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-fg-muted">Phone Number</label>
+                  <label className="mb-1 block text-sm font-medium text-fg-muted">
+                    Phone Number
+                  </label>
                   <input
                     name="phone"
                     type="tel"
@@ -196,28 +212,36 @@ export function StorefrontProfileClient({
           )}
 
           {!isEditing && (
-            <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div className="rounded-xl border border-line bg-surface p-4">
-                <span className="text-xs text-fg-subtle uppercase tracking-wider">Email</span>
-                <p className="mt-1 font-medium text-fg-strong break-all">{user?.email || customer?.email}</p>
+                <span className="text-xs tracking-wider text-fg-subtle uppercase">Email</span>
+                <p className="mt-1 font-medium break-all text-fg-strong">
+                  {user?.email || customer?.email}
+                </p>
               </div>
               <div className="rounded-xl border border-line bg-surface p-4">
-                <span className="text-xs text-fg-subtle uppercase tracking-wider">Phone</span>
+                <span className="text-xs tracking-wider text-fg-subtle uppercase">Phone</span>
                 <p className="mt-1 font-medium text-fg-strong">{customer?.phone || 'Not set'}</p>
               </div>
               <div className="rounded-xl border border-line bg-surface p-4">
-                <span className="text-xs text-fg-subtle uppercase tracking-wider">Status</span>
+                <span className="text-xs tracking-wider text-fg-subtle uppercase">Status</span>
                 <p className="mt-1 font-medium text-fg-strong">
-                  <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-emerald-500/10 text-emerald-600">
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-600">
                     <ShieldCheck className="h-3 w-3" />
                     {customer?.status || 'Active'}
                   </span>
                 </p>
               </div>
               <div className="rounded-xl border border-line bg-surface p-4">
-                <span className="text-xs text-fg-subtle uppercase tracking-wider">Member Since</span>
+                <span className="text-xs tracking-wider text-fg-subtle uppercase">
+                  Member Since
+                </span>
                 <p className="mt-1 font-medium text-fg-strong">
-                  {customer?.createdAt ? format(new Date(customer.createdAt), 'MMM d, yyyy') : (user?.createdAt ? format(new Date(user.createdAt), 'MMM d, yyyy') : 'Unknown')}
+                  {customer?.createdAt
+                    ? format(new Date(customer.createdAt), 'MMM d, yyyy')
+                    : user?.createdAt
+                      ? format(new Date(user.createdAt), 'MMM d, yyyy')
+                      : 'Unknown'}
                 </p>
               </div>
             </div>
@@ -225,7 +249,7 @@ export function StorefrontProfileClient({
         </div>
 
         {/* Quick Navigation */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Link
             href="/profile/addresses"
             className="flex items-center gap-3 rounded-xl border border-line bg-surface-raised p-4 transition-colors hover:border-indigo-500 hover:bg-indigo-50/50"
@@ -274,7 +298,7 @@ export function StorefrontProfileClient({
         {/* Recent Orders Preview */}
         {customer?.orders && customer.orders.length > 0 && (
           <div className="mt-8">
-            <div className="flex items-center justify-between mb-4">
+            <div className="mb-4 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-fg-strong">Recent Orders</h3>
               <Link
                 href="/profile/orders"
@@ -288,7 +312,7 @@ export function StorefrontProfileClient({
                 <Link
                   key={order.id}
                   href={`/orders/${order.id}`}
-                  className="flex items-center justify-between p-4 rounded-xl border border-line bg-surface-raised transition-colors hover:border-indigo-500 hover:bg-indigo-50/50"
+                  className="flex items-center justify-between rounded-xl border border-line bg-surface-raised p-4 transition-colors hover:border-indigo-500 hover:bg-indigo-50/50"
                 >
                   <div className="flex items-center gap-4">
                     <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-600/20">
@@ -296,17 +320,21 @@ export function StorefrontProfileClient({
                     </div>
                     <div>
                       <p className="font-medium text-fg-strong">Order #{order.orderNumber}</p>
-                      <p className="text-sm text-fg-muted">{format(new Date(order.createdAt), 'MMM d, yyyy')}</p>
+                      <p className="text-sm text-fg-muted">
+                        {format(new Date(order.createdAt), 'MMM d, yyyy')}
+                      </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-4 text-right">
-                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
-                      order.status === 'delivered' || order.status === 'completed'
-                        ? 'bg-emerald-500/10 text-emerald-600'
-                        : order.status === 'processing' || order.status === 'shipped'
-                        ? 'bg-indigo-500/10 text-indigo-600'
-                        : 'bg-amber-500/10 text-amber-600'
-                    }`}>
+                    <span
+                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
+                        order.status === 'delivered' || order.status === 'completed'
+                          ? 'bg-emerald-500/10 text-emerald-600'
+                          : order.status === 'processing' || order.status === 'shipped'
+                            ? 'bg-indigo-500/10 text-indigo-600'
+                            : 'bg-amber-500/10 text-amber-600'
+                      }`}
+                    >
                       {order.status}
                     </span>
                     <span className="font-semibold text-fg-strong">
