@@ -118,6 +118,7 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
     makeEmptyForm(assignableRoles[0]?.key ?? ''),
   );
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   const access = setup.access;
@@ -140,9 +141,9 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
       try {
         setError(null);
         const result = await listUsersAction({
-          search: next.search ?? search,
-          role: next.role ?? roleFilter,
-          status: next.status ?? statusFilter,
+          search: (next.search ?? search) || undefined,
+          role: (next.role ?? roleFilter) || undefined,
+          status: (next.status ?? statusFilter) || undefined,
           page: next.page ?? page,
           pageSize,
         });
@@ -160,6 +161,7 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
     setForm(makeEmptyForm(assignableRoles[0]?.key ?? ''));
     setShowForm(true);
     setError(null);
+    setNotice(null);
   };
 
   const openEdit = (row: UserListEntry) => {
@@ -213,11 +215,13 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
     startTransition(async () => {
       try {
         setError(null);
+        setNotice(null);
         if (form.name.trim() === '') throw new Error('Display name is required');
         const directGrants: DirectGrantInput[] = stateToGrants(form.grants);
         const extraRoles: RoleAssignment[] = form.extraRoles
           .filter((r) => r.roleKey !== '')
           .map((r) => ({ roleKey: r.roleKey, branchId: r.branchId === '' ? null : r.branchId }));
+        let successMessage = 'User changes saved.';
 
         if (editingId !== null) {
           await updateUserAction(editingId, {
@@ -236,7 +240,7 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
             await setDirectGrantsAction(editingId, directGrants);
           }
         } else {
-          await createUserAction({
+          const created = await createUserAction({
             email: form.email,
             password: form.password,
             name: form.name,
@@ -249,9 +253,16 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
             extraRoles,
             directGrants,
           });
+          successMessage = `${created.name} was created successfully.`;
         }
         setShowForm(false);
-        reload({});
+        setNotice(successMessage);
+        if (editingId === null) {
+          setPage(1);
+          reload({ page: 1 });
+        } else {
+          reload({});
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to save user');
       }
@@ -308,7 +319,7 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
           </p>
         </div>
         {access.superAdmin ? (
-          <span className="inline-flex items-center gap-1 rounded-full bg-indigo-600 text-white px-3 py-1 text-xs">
+          <span className="inline-flex items-center gap-1 rounded-full bg-indigo-600 px-3 py-1 text-xs text-white">
             <ShieldCheck className="h-3 w-3" /> Super admin
           </span>
         ) : null}
@@ -338,6 +349,14 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
       {error !== null ? (
         <p className="rounded-lg border border-red-500/40 bg-red-50 px-3 py-2 text-sm text-red-800">
           {error}
+        </p>
+      ) : null}
+      {notice !== null ? (
+        <p
+          className="rounded-lg border border-emerald-500/40 bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
+          role="status"
+        >
+          {notice}
         </p>
       ) : null}
 

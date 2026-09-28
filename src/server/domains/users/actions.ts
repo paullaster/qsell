@@ -36,14 +36,16 @@ function isSuperAdminRole(role: string): boolean {
 const PROVISIONED_SUPER_ADMIN_MSG =
   'The super_admin account is provisioned by the system seeder and cannot be created or reassigned from the user module.';
 
-export async function listUsersAction(input: {
-  search?: string;
-  role?: string;
-  status?: string;
-  branchId?: string;
-  page?: number;
-  pageSize?: number;
-} = {}): Promise<UserListResult> {
+export async function listUsersAction(
+  input: {
+    search?: string;
+    role?: string;
+    status?: string;
+    branchId?: string;
+    page?: number;
+    pageSize?: number;
+  } = {},
+): Promise<UserListResult> {
   const actorId = await requirePermission('users:read');
   const canView = await getContainer().usersAdmin.canViewSuperAdmins(actorId);
   return getContainer().usersAdmin.listUsers({ ...input, hideSuperAdmins: !canView });
@@ -117,7 +119,8 @@ export async function createUserAction(input: CreateUserInput): Promise<UserList
     role: row.role,
     extraRoles: sanitizeRoles(input.extraRoles),
   });
-  revalidatePath('/admin/users');
+  // The users page refreshes its list through listUsersAction on the client. Avoid forcing
+  // a full Server Component route render as part of this mutation response.
   return toListEntry(row, input.extraRoles ?? []);
 }
 
@@ -204,7 +207,10 @@ export async function resetUserPasswordAction(userId: string, newPassword: strin
   revalidatePath('/admin/users');
 }
 
-export async function assignRolesAction(userId: string, assignments: RoleAssignment[]): Promise<void> {
+export async function assignRolesAction(
+  userId: string,
+  assignments: RoleAssignment[],
+): Promise<void> {
   const actorId = await requirePermission('users:manage_roles');
   const container = getContainer();
   const existing = await container.usersAdmin.getUserDetail(userId);
@@ -229,7 +235,10 @@ export async function assignRolesAction(userId: string, assignments: RoleAssignm
   revalidatePath('/admin/users');
 }
 
-export async function setDirectGrantsAction(userId: string, grants: DirectGrantInput[]): Promise<void> {
+export async function setDirectGrantsAction(
+  userId: string,
+  grants: DirectGrantInput[],
+): Promise<void> {
   const actorId = await requirePermission('users:manage_roles');
   const container = getContainer();
   const existing = await container.usersAdmin.getUserDetail(userId);
@@ -284,7 +293,24 @@ async function writeAudit(
   });
 }
 
-function toListEntry(row: { id: string; email: string; name: string; title: string | null; phone: string | null; role: string; status: string; branchId: string | null; isActive: boolean; mustChangePassword: boolean; lastLoginAt: Date | null; createdAt: Date; updatedAt: Date }, extraRoles: RoleAssignment[]): UserListEntry {
+function toListEntry(
+  row: {
+    id: string;
+    email: string;
+    name: string;
+    title: string | null;
+    phone: string | null;
+    role: string;
+    status: string;
+    branchId: string | null;
+    isActive: boolean;
+    mustChangePassword: boolean;
+    lastLoginAt: Date | null;
+    createdAt: Date;
+    updatedAt: Date;
+  },
+  extraRoles: RoleAssignment[],
+): UserListEntry {
   return {
     id: row.id,
     email: row.email,
