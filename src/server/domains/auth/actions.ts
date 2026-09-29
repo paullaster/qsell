@@ -214,6 +214,11 @@ export async function registerCustomerAction(input: {
         error: 'An account with this email already exists. Sign in or reset your password instead.',
       };
     }
+    // Unexpected failure swallowed by the graceful return, so report it explicitly.
+    Sentry.captureException(error, {
+      tags: { area: 'auth', action: 'register' },
+      extra: { requestId },
+    });
     return {
       ok: false,
       error: `We couldn't create your account right now. Please try again. If this continues, contact support with reference ${requestId}.`,
@@ -299,6 +304,7 @@ export async function logoutAction(formData?: FormData): Promise<void> {
       await getContainer().userSessions.deleteByToken(legacyToken);
     } catch (error) {
       console.error('[auth.logout] legacy session revocation failed', error);
+      Sentry.captureException(error, { tags: { area: 'auth', action: 'logout_revoke' } });
     }
   }
   for (const cookie of cookieStore.getAll()) {
