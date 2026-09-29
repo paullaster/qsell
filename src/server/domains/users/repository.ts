@@ -1,5 +1,5 @@
 import { and, count, desc, eq, ilike, inArray, ne, or, sql } from 'drizzle-orm';
-import { hash } from 'bcryptjs';
+import { hash } from '@node-rs/bcrypt';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   permissions,

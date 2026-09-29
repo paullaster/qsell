@@ -20,9 +20,9 @@
     "worker": "tsx src/server/queue/index.ts"
   },
   "dependencies": {
+    "@node-rs/bcrypt": "^1.10.9",
     "@sentry/nextjs": "^11.0.0",
     "@sentry/profiling-node": "11.0.0",
-    "bcryptjs": "^3.0.3",
     "date-fns": "^4.4.0",
     "drizzle-orm": "^0.45.2",
     "graphile-worker": "^0.18.0",
@@ -40,7 +40,6 @@
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@tailwindcss/postcss": "^4.1.14",
-    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^22.14.0",
     "@types/nodemailer": "^8.0.1",
     "@types/pdfkit": "^0.17.6",
