@@ -2,6 +2,8 @@
 
 import { requirePermission } from '@/server/domains/access-control/guard';
 import { revalidatePath } from 'next/cache';
+import { randomUUID } from 'node:crypto';
+import * as Sentry from '@sentry/nextjs';
 import { auth } from '@/auth';
 import { getContainer } from '@/server/di/container';
 import { buildProductTemplateCsv, MAX_IMPORT_BYTES } from '@/lib/productCsv';
@@ -163,25 +165,68 @@ export async function startProductImportAction(formData: FormData): Promise<Stag
   const userId = await requirePermission('products:create');
   const file = formData.get('file');
   if (!(file instanceof File)) {
-    return { ok: false, problems: [{ row: null, column: null, message: 'Choose a CSV file to upload.' }], rowsWithProblems: 0, totalRows: 0 };
+    return {
+      ok: false,
+      problems: [{ row: null, column: null, message: 'Choose a CSV file to upload.' }],
+      rowsWithProblems: 0,
+      totalRows: 0,
+    };
   }
   if (file.size > MAX_IMPORT_BYTES) {
     return {
       ok: false,
-      problems: [{ row: null, column: null, message: `The file is larger than ${MAX_IMPORT_BYTES / 1024 / 1024} MB. Split it into smaller files.` }],
+      problems: [
+        {
+          row: null,
+          column: null,
+          message: `The file is larger than ${MAX_IMPORT_BYTES / 1024 / 1024} MB. Split it into smaller files.`,
+        },
+      ],
       rowsWithProblems: 0,
       totalRows: 0,
     };
   }
   if (!/\.csv$/i.test(file.name)) {
-    return { ok: false, problems: [{ row: null, column: null, message: 'Upload a .csv file.' }], rowsWithProblems: 0, totalRows: 0 };
+    return {
+      ok: false,
+      problems: [{ row: null, column: null, message: 'Upload a .csv file.' }],
+      rowsWithProblems: 0,
+      totalRows: 0,
+    };
   }
   const session = await auth();
-  return await getContainer().productImports.stage({
-    fileName: file.name,
-    bytes: new Uint8Array(await file.arrayBuffer()),
-    actor: { id: userId, email: session?.user.email ?? '' },
+  try {
+    return await getContainer().productImports.stage({
+      fileName: file.name,
+      bytes: new Uint8Array(await file.arrayBuffer()),
+      actor: { id: userId, email: session?.user.email ?? '' },
+    });
+  } catch (error) {
+    // Never show raw database errors (they carry SQL and parameters) — report and give a reference.
+    const reference = reportImportFailure(error, 'start');
+    return {
+      ok: false,
+      problems: [
+        {
+          row: null,
+          column: null,
+          message: `The import could not be started. Nothing was imported. Please try again; if it keeps failing, contact support with reference ${reference}.`,
+        },
+      ],
+      rowsWithProblems: 0,
+      totalRows: 0,
+    };
+  }
+}
+
+function reportImportFailure(error: unknown, action: string): string {
+  const reference = randomUUID();
+  console.error(`[catalog.import.${action}] failed`, { reference, error });
+  Sentry.captureException(error, {
+    tags: { area: 'catalog', action: `import_${action}` },
+    extra: { reference },
   });
+  return reference;
 }
 
 export async function getProductImportAction(jobId: string): Promise<ImportJobView | null> {
@@ -196,7 +241,14 @@ export async function listProductImportsAction(): Promise<ImportJobView[]> {
 
 export async function retryProductImportAction(jobId: string): Promise<boolean> {
   await requirePermission('products:create');
-  return await getContainer().productImports.retry(jobId);
+  try {
+    return await getContainer().productImports.retry(jobId);
+  } catch (error) {
+    const reference = reportImportFailure(error, 'retry');
+    throw new Error(`The import could not be restarted. Reference ${reference}.`, {
+      cause: error,
+    });
+  }
 }
 
 /** Rows that failed while importing, with reasons, as CSV text. */
