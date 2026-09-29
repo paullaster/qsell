@@ -1,5 +1,7 @@
 'use server';
 
+import { requirePermission } from '@/server/domains/access-control/guard';
+
 import { revalidatePath } from 'next/cache';
 import { getContainer } from '@/server/di/container';
 import type {
@@ -23,10 +25,12 @@ function reconcile() {
  * transaction ledger. Nothing is retried automatically.
  */
 export async function getLedgerReconciliationSnapshotAction(): Promise<LedgerReconciliationSnapshotView> {
+  await requirePermission('transactions:read');
   return reconcile().listMissing(await companyId());
 }
 
 export async function postInvoiceLedgerDebitAction(orderId: string): Promise<MissingInvoiceDebit[]> {
+  await requirePermission('transactions:post');
   await reconcile().postInvoiceDebit(await companyId(), orderId);
   revalidatePath('/admin/transactions/ledger');
   revalidatePath('/admin/transactions/reconcile');
@@ -38,6 +42,7 @@ export async function postPaymentLedgerCreditAction(
   source: 'customer_ledger' | 'gateway_attempt',
   id: string,
 ): Promise<MissingPaymentCredit[]> {
+  await requirePermission('transactions:post');
   await reconcile().postPaymentCredit(await companyId(), source, id);
   revalidatePath('/admin/transactions/ledger');
   revalidatePath('/admin/transactions/reconcile');

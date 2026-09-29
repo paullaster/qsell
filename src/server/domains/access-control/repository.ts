@@ -66,8 +66,24 @@ export interface PolicyMatch {
   isEnabled: boolean;
 }
 
+/** Arbitrary constant naming the seed's cluster-wide advisory lock. */
+const SEED_LOCK_KEY = 0x5eed_ac1;
+
 export class AccessControlRepository {
   constructor(private readonly db: DrizzleDb) {}
+
+  /**
+   * Run `work` in one transaction holding a cluster-wide advisory lock, so
+   * concurrent boots (app replicas, the worker) seed one at a time and a crash
+   * mid-seed rolls back cleanly instead of leaving a role without its grants.
+   */
+  async runExclusive<T>(work: (repo: AccessControlRepository) => Promise<T>): Promise<T> {
+    return await this.db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(${SEED_LOCK_KEY})`);
+      // A transaction exposes the same query API; nested .transaction() calls become savepoints.
+      return await work(new AccessControlRepository(tx as unknown as DrizzleDb));
+    });
+  }
 
   async getUserAccessModel(userId: string): Promise<UserAccessModel | null> {
     const userRows = await this.db.select().from(users).where(eq(users.id, userId)).limit(1);
@@ -364,6 +380,15 @@ export class AccessControlRepository {
   }
 
 /** Replace a role's entire permission grant set. */
+  async countRolePermissions(roleId: string): Promise<number> {
+    const rows = await this.db
+      .select({ id: rolePermissions.id })
+      .from(rolePermissions)
+      .where(eq(rolePermissions.roleId, roleId))
+      .limit(1);
+    return rows.length;
+  }
+
   async setRolePermissions(roleId: string, grants: { permissionKey: string; effect: GrantEffect }[]): Promise<void> {
     await this.db.transaction(async (tx) => {
       await tx.delete(rolePermissions).where(eq(rolePermissions.roleId, roleId));

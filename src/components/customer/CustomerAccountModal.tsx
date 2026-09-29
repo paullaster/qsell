@@ -38,13 +38,11 @@ import { AppImage } from '@/components/ui/AppImage';
 import { shownPaymentReference } from '@/lib/paymentReference';
 import {
   fetchCustomerAccountAction,
-  fetchAllCustomersAction,
   updateCustomerProfileAction,
   addCustomerAddressAction,
   updateCustomerAddressAction,
   deleteCustomerAddressAction,
   setDefaultAddressAction,
-  customerLoginAction,
   logoutAction,
 } from '@/server/actions';
 
@@ -58,19 +56,23 @@ interface CustomerAccountModalProps {
 
 type TabType = 'overview' | 'addresses' | 'orders' | 'payment';
 
-export function CustomerAccountModal({
-  isOpen,
+/** Mounted only while open, so the account reloads fresh each time it opens. */
+export function CustomerAccountModal(props: CustomerAccountModalProps) {
+  if (!props.isOpen) return null;
+  return <CustomerAccountModalContent {...props} />;
+}
+
+function CustomerAccountModalContent({
   onClose,
   onNavigateToAdmin,
   onSelectOrderForTracking,
   onRefreshGlobalData,
 }: CustomerAccountModalProps) {
-  if (!isOpen) return null;
 
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [customer, setCustomer] = useState<CustomerAccount | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
-  const [allCustomers, setAllCustomers] = useState<CustomerAccount[]>([]);
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{
@@ -101,23 +103,15 @@ export function CustomerAccountModal({
   // Receipt Modal State
   const [selectedReceiptOrder, setSelectedReceiptOrder] = useState<Order | null>(null);
 
-  // Quick Switcher Dropdown
-  const [isSwitchingAccount, setIsSwitchingAccount] = useState(false);
-  const [customLoginInput, setCustomLoginInput] = useState('');
-
   // Initial Load
   const loadCustomerData = async (targetId?: string) => {
     try {
       setIsLoading(true);
       setStatusMessage(null);
-      const [accountData, customersList] = await Promise.all([
-        fetchCustomerAccountAction(targetId),
-        fetchAllCustomersAction().catch(() => []),
-      ]);
+      const accountData = await fetchCustomerAccountAction(targetId);
 
       setCustomer(accountData.customer);
       setOrders(accountData.orders);
-      setAllCustomers(customersList);
 
       // Initialize edit fields
       if (accountData.customer) {
@@ -132,6 +126,7 @@ export function CustomerAccountModal({
       setStatusMessage({ text: err.message || 'Failed to load customer profile', type: 'error' });
     } finally {
       setIsLoading(false);
+      setHasLoaded(true);
     }
   };
 
@@ -144,46 +139,6 @@ export function CustomerAccountModal({
     setTimeout(() => {
       setStatusMessage(null);
     }, 4000);
-  };
-
-  // Switch customer profile
-  const handleSwitchCustomer = async (targetCustomer: CustomerAccount) => {
-    try {
-      setIsLoading(true);
-      const { customer: updatedCustomer, session } = await customerLoginAction(
-        targetCustomer.id,
-        targetCustomer.name,
-        targetCustomer.phone,
-      );
-      await loadCustomerData(updatedCustomer.id);
-      setIsSwitchingAccount(false);
-      showNotification(`Switched active account to ${updatedCustomer.name}`);
-      onRefreshGlobalData?.();
-    } catch (err: any) {
-      showNotification(err.message || 'Failed to switch profile', 'error');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Custom login / registration
-  const handleCustomLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!customLoginInput.trim()) return;
-
-    try {
-      setIsLoading(true);
-      const { customer: newCustomer } = await customerLoginAction(customLoginInput.trim());
-      await loadCustomerData(newCustomer.id);
-      setCustomLoginInput('');
-      setIsSwitchingAccount(false);
-      showNotification(`Logged in as ${newCustomer.name}`);
-      onRefreshGlobalData?.();
-    } catch (err: any) {
-      showNotification(err.message || 'Login failed', 'error');
-    } finally {
-      setIsLoading(false);
-    }
   };
 
   // Save Profile
@@ -342,6 +297,55 @@ export function CustomerAccountModal({
     'Kakamega County',
   ];
 
+  // Account data is only ever the signed-in shopper's own; guests are asked to sign in.
+  if (hasLoaded && !isLoading && customer === null) {
+    return (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-backdrop/80 p-4 backdrop-blur-md"
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget) onClose();
+        }}
+      >
+        <section
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="account-signed-out-title"
+          className="relative w-full max-w-md space-y-4 rounded-2xl border border-line bg-surface p-6 shadow-2xl"
+        >
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="absolute top-3 right-3 flex h-10 w-10 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg-strong"
+          >
+            <X className="h-5 w-5" aria-hidden="true" />
+          </button>
+          <User className="h-8 w-8 text-indigo-500" aria-hidden="true" />
+          <h2 id="account-signed-out-title" className="text-lg font-bold text-fg-strong">
+            Sign in to see your account
+          </h2>
+          <p className="text-sm text-fg-muted">
+            Your orders, saved addresses and payment preferences are available once you sign in.
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <a
+              href="/login"
+              className="flex min-h-11 items-center justify-center rounded-xl bg-indigo-600 px-4 text-sm font-semibold text-white hover:bg-indigo-500"
+            >
+              Sign in
+            </a>
+            <a
+              href="/register"
+              className="flex min-h-11 items-center justify-center rounded-xl border border-line-strong px-4 text-sm font-semibold text-fg-strong hover:bg-hover"
+            >
+              Create account
+            </a>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-stretch justify-center overflow-y-auto bg-backdrop/80 p-0 backdrop-blur-md sm:items-center sm:p-4 lg:p-6">
       <div className="relative flex min-h-dvh w-full max-w-5xl flex-col overflow-hidden border border-line bg-surface-raised shadow-2xl sm:my-4 sm:max-h-[calc(100dvh-2rem)] sm:min-h-0 sm:rounded-2xl lg:max-h-[92vh]">
@@ -375,15 +379,6 @@ export function CustomerAccountModal({
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Account Switcher Button */}
-            <button
-              onClick={() => setIsSwitchingAccount(!isSwitchingAccount)}
-              className="flex cursor-pointer items-center gap-1.5 rounded-xl border border-line-strong bg-surface-sunken px-3 py-1.5 text-xs font-medium text-fg-strong transition-colors hover:bg-hover"
-            >
-              <User className="h-3.5 w-3.5 text-indigo-400" />
-              <span>Switch Account</span>
-            </button>
-
             {/* Admin Switcher Shortcut */}
             {onNavigateToAdmin && (
               <button
@@ -417,72 +412,6 @@ export function CustomerAccountModal({
             </button>
           </div>
         </div>
-
-        {/* Account Switcher Dropdown Drawer */}
-        {isSwitchingAccount && (
-          <div className="animate-in fade-in border-b border-line bg-surface p-4 duration-200 sm:p-5">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="flex items-center gap-2 text-xs font-semibold tracking-wider text-fg-muted uppercase">
-                <User className="h-3.5 w-3.5 text-indigo-400" />
-                Select Customer Account / Login
-              </h3>
-              <button
-                onClick={() => setIsSwitchingAccount(false)}
-                className="text-xs text-fg-subtle hover:text-fg"
-              >
-                Cancel
-              </button>
-            </div>
-
-            <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-4">
-              {allCustomers.map((cust) => (
-                <button
-                  key={cust.id}
-                  onClick={() => handleSwitchCustomer(cust)}
-                  className={`flex cursor-pointer flex-col justify-between rounded-xl border p-3 text-left transition-all ${
-                    cust.id === customer?.id
-                      ? 'TW border-indigo-500 bg-indigo-600/10'
-                      : 'border-line bg-surface-raised text-fg hover:bg-hover'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="truncate text-xs font-semibold">{cust.name}</span>
-                    {cust.id === customer?.id && (
-                      <span className="h-2 w-2 rounded-full bg-indigo-500" />
-                    )}
-                  </div>
-                  <span className="mt-1 truncate text-[11px] text-fg-subtle">{cust.email}</span>
-                  <div className="mt-2 flex items-center justify-between border-t border-line/60 pt-2 text-[10px] text-fg-muted">
-                    <span>{cust.addresses?.length || 0} addresses</span>
-                    <span className="font-medium text-indigo-400">
-                      KES {cust.totalSpend?.toLocaleString()}
-                    </span>
-                  </div>
-                </button>
-              ))}
-            </div>
-
-            {/* Custom Phone or Email sign-in */}
-            <form onSubmit={handleCustomLogin} className="flex items-center gap-2">
-              <div className="relative flex-1">
-                <input
-                  type="text"
-                  placeholder="Enter email or Kenyan phone (e.g. 0722000000 or customer@biz.co.ke)..."
-                  value={customLoginInput}
-                  onChange={(e) => setCustomLoginInput(e.target.value)}
-                  className="w-full rounded-xl border border-line bg-surface-raised px-3.5 py-2 text-xs text-fg-strong placeholder-fg-subtle focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={!customLoginInput.trim()}
-                className="cursor-pointer rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold whitespace-nowrap text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
-              >
-                Sign In / Register
-              </button>
-            </form>
-          </div>
-        )}
 
         {/* Global Notification Banner */}
         {statusMessage && (

@@ -288,9 +288,47 @@ export const purgeAuthTokens = async (_payload: unknown, helpers: JobHelpers) =>
   helpers.logger.info(`Purged ${removed} unusable auth tokens`);
 };
 
+/**
+ * Worker task: turn a validated, staged CSV import into products. Resumable —
+ * a retry continues from the first unprocessed row. When the queue gives up,
+ * the import is marked failed so the admin sees it and can retry from the UI.
+ */
+export const processProductImport = async (payload: unknown, helpers: JobHelpers) => {
+  const jobId =
+    typeof payload === 'object' && payload !== null && 'jobId' in payload && typeof payload.jobId === 'string'
+      ? payload.jobId
+      : null;
+  if (jobId === null) {
+    helpers.logger.error('process-product-import: payload has no jobId');
+    return;
+  }
+  const imports = getContainer().productImports;
+  try {
+    await imports.process(jobId, (message) => helpers.logger.info(message));
+    await broadcastRealtime('inventory_update', { type: 'product_import_completed', importId: jobId });
+  } catch (error) {
+    if (helpers.job.attempts >= helpers.job.max_attempts) {
+      await imports.markFailed(jobId, error instanceof Error ? error.message : 'Import failed');
+    }
+    throw error;
+  }
+};
+
+/** Finished imports' staged rows are kept 30 days for progress and error reports. */
+const PRODUCT_IMPORT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+export const purgeProductImports = async (_payload: unknown, helpers: JobHelpers) => {
+  const removed = await getContainer().productImports.purgeFinishedBefore(
+    new Date(Date.now() - PRODUCT_IMPORT_RETENTION_MS),
+  );
+  helpers.logger.info(`Purged ${removed} finished product imports`);
+};
+
 export const tasks = {
   'process-payment-callback': processPaymentCallback,
   'process-webhook': processWebhook,
   'retry-failed-call': retryFailedCall,
   'purge-auth-tokens': purgeAuthTokens,
+  'process-product-import': processProductImport,
+  'purge-product-imports': purgeProductImports,
 };

@@ -1,15 +1,19 @@
 'use server';
 
+import { requirePermission } from '@/server/domains/access-control/guard';
+
 import { revalidatePath } from 'next/cache';
 import { OrdersService } from './service';
 import { getContainer } from '@/server/di/container';
 import type { Order, PaymentProvider } from '@/types/index';
 
 export async function listOrdersAction(): Promise<Order[]> {
+  await requirePermission('orders:read');
   return getContainer().orders.listAll();
 }
 
 export async function getOrderAction(id: string): Promise<Order | null> {
+  await requirePermission('orders:read');
   return getContainer().orders.getById(id);
 }
 

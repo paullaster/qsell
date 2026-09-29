@@ -1,5 +1,7 @@
 'use server';
 
+import { requirePermission } from '@/server/domains/access-control/guard';
+
 import { auth } from '@/auth';
 import { getContainer } from '@/server/di/container';
 import { StorefrontCustomerService } from '@/server/domains/customers/storefront-service';
@@ -39,46 +41,35 @@ function firstNonEmpty(values: Array<string | null | undefined>, fallback = ''):
 }
 
 /**
- * Resolve the logged-in storefront shopper to a trade customer card + address book.
- * Keeps an in-memory CustomerAccount shell for order history / payment prefs.
+ * Resolve the signed-in storefront shopper to a trade customer card + address book.
+ * Identity comes only from the Auth.js session — never from a client-supplied id —
+ * so one shopper can never read or change another shopper's account.
  */
-async function resolveLoggedInAccount(customerId?: string): Promise<{
+async function resolveLoggedInAccount(): Promise<{
   account: CustomerAccount;
   tradeCustomerId: string;
 } | null> {
   const session = await auth();
-  const email = session?.user?.email?.toLowerCase().trim();
-  const isCustomer = session?.user?.role === 'customer';
-
-  if (!customerId && (!session?.user || !isCustomer || !email)) {
+  const email = session?.user.email.toLowerCase().trim() ?? '';
+  if (session?.user.role !== 'customer' || email === '') {
     return null;
   }
 
   const cid = await companyId();
-  const storeId = customerId || session?.user?.customerStoreId || undefined;
-  let account = (storeId ? await storefront().findById(storeId) : null) ?? null;
+  const storeId = session.user.customerStoreId ?? undefined;
+  let account = (storeId !== undefined ? await storefront().findById(storeId) : null) ?? null;
+  account ??= await storefront().findByEmailOrPhone(email);
+  account ??= await storefront().ensure({
+    name: firstNonEmpty([session.user.name, email.split('@')[0]], 'Customer'),
+    email,
+    phone: session.user.phone ?? '0700000000',
+  });
 
-  if (!account && email) {
-    account = await storefront().findByEmailOrPhone(email);
-  }
-
-  if (!account && email && isCustomer) {
-    account = await storefront().ensure({
-      name: session!.user.name || email.split('@')[0] || 'Customer',
-      email,
-      phone: session!.user.phone || '0700000000',
-    });
-  }
-
-  if (!account && customerId) {
-    throw new Error('Customer not found');
-  }
-  if (!account) return null;
-
+  const phone = firstNonEmpty([account.phone, session.user.phone]);
   const trade = await master().ensureStorefrontCustomer(cid, {
-    name: account.name || session?.user?.name || account.email,
-    email: account.email || email || '',
-    phone: account.phone || session?.user?.phone,
+    name: firstNonEmpty([account.name, session.user.name, account.email]),
+    email: firstNonEmpty([account.email, email]),
+    phone: phone === '' ? null : phone,
   });
   const addressRows = await master().listAddresses(trade.id);
   const merged: CustomerAccount = {
@@ -94,19 +85,36 @@ async function resolveLoggedInAccount(customerId?: string): Promise<{
   return { account: merged, tradeCustomerId: trade.id };
 }
 
-async function requireTradeCustomerId(customerId?: string): Promise<string> {
-  const resolved = await resolveLoggedInAccount(customerId);
-  if (!resolved) throw new Error('Sign in to manage addresses.');
-  if (customerId && resolved.account.id !== customerId && resolved.tradeCustomerId !== customerId) {
-    // Allow address mutations when the client passes the trade customer id or store id.
-    const cid = await companyId();
-    const byId = await master().getCustomer(cid, customerId);
-    if (byId) return byId.customer.id;
+/** Same identifiers the UI may pass back: the store account id or the trade customer id. */
+function isOwnAccount(
+  resolved: { account: CustomerAccount; tradeCustomerId: string },
+  customerId: string | undefined,
+): boolean {
+  return (
+    customerId === undefined ||
+    customerId === resolved.account.id ||
+    customerId === resolved.tradeCustomerId
+  );
+}
+
+async function requireOwnAccount(customerId?: string): Promise<{
+  account: CustomerAccount;
+  tradeCustomerId: string;
+}> {
+  const resolved = await resolveLoggedInAccount();
+  if (!resolved) throw new Error('Sign in to manage your account.');
+  if (!isOwnAccount(resolved, customerId)) {
+    throw new Error('You can only manage your own account.');
   }
-  return resolved.tradeCustomerId;
+  return resolved;
+}
+
+async function requireTradeCustomerId(customerId?: string): Promise<string> {
+  return (await requireOwnAccount(customerId)).tradeCustomerId;
 }
 
 export async function listCustomersAction(): Promise<CustomerAccount[]> {
+  await requirePermission('customers:read');
   return storefront().list();
 }
 
@@ -116,9 +124,8 @@ export async function getCustomerAccountAction(
   customerId?: string,
 ): Promise<{ customer: CustomerAccount | null; orders: Order[] }> {
   try {
-    const resolved = await resolveLoggedInAccount(customerId);
-    if (!resolved) {
-      if (customerId) throw new Error('Customer not found');
+    const resolved = await resolveLoggedInAccount();
+    if (!resolved || !isOwnAccount(resolved, customerId)) {
       return { customer: null, orders: [] };
     }
     const orders = await getContainer().orders.listByUserId(resolved.account.id);
@@ -130,8 +137,7 @@ export async function getCustomerAccountAction(
       if (!merged.some((o) => o.id === order.id)) merged.push(order);
     }
     return { customer: resolved.account, orders: merged };
-  } catch (err) {
-    if (customerId) throw err;
+  } catch {
     return { customer: null, orders: [] };
   }
 }
@@ -140,10 +146,11 @@ export async function updateCustomerProfileAction(
   customerId: string,
   updates: Partial<CustomerAccount>,
 ): Promise<CustomerAccount> {
-  const existingAccount = await storefront().findById(customerId);
-  if (!existingAccount) throw new Error('Customer not found');
+  const { account: existingAccount } = await requireOwnAccount(customerId);
   const cid = await companyId();
-  const email = (updates.email || existingAccount.email || '').toLowerCase().trim();
+  // The email is the sign-in identity; it is never changed from the storefront, and
+  // accepting it here would let a shopper overwrite someone else's customer card.
+  const email = existingAccount.email.toLowerCase().trim();
   if (!email) return existingAccount;
 
   const existing = await master().lookupByEmail(cid, email);
@@ -269,6 +276,7 @@ export async function setDefaultAddressAction(
   return reloadAccount(tradeId, customerId);
 }
 
-export async function listCustomerOrdersAction(customerId: string): Promise<Order[]> {
-  return getContainer().orders.listByUserId(customerId);
+export async function listCustomerOrdersAction(customerId?: string): Promise<Order[]> {
+  const { account } = await requireOwnAccount(customerId);
+  return getContainer().orders.listByUserId(account.id);
 }

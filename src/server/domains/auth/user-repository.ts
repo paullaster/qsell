@@ -165,6 +165,8 @@ export class UserRepository {
       existing.name !== name ||
       existing.canViewSuperAdmin !== true ||
       existing.emailVerifiedAt === null ||
+      existing.status !== 'active' ||
+      existing.mustChangePassword ||
       !passwordMatches;
 
     if (!needsUpdate) return existing;
@@ -178,6 +180,9 @@ export class UserRepository {
         name,
         passwordHash,
         isActive: true,
+        status: 'active',
+        // Env is the password's source of truth, so a forced change would just be undone.
+        mustChangePassword: false,
         canViewSuperAdmin: true,
         emailVerifiedAt: existing.emailVerifiedAt ?? new Date(),
         updatedAt: new Date(),

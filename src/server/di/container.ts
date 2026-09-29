@@ -29,6 +29,22 @@ import { CatalogRepository, PaymentRecordsRepository } from '@/server/domains/ca
 import { UserSessionRepository } from '@/server/domains/auth/session-repository';
 import { AuthTokenRepository } from '@/server/domains/auth/token-repository';
 import { AccountService } from '@/server/domains/auth/account-service';
+import { ProductImportService } from '@/server/domains/catalog/import-service';
+import { getWorkerUtils } from '@/server/queue/worker';
+
+/** Installs/updates the job-queue schema once per process, before the first enqueue. */
+let queueReady: Promise<void> | null = null;
+function ensureQueueSchema(): Promise<void> {
+  queueReady ??= getWorkerUtils()
+    .then(async (utils) => {
+      await utils.migrate();
+    })
+    .catch((error: unknown) => {
+      queueReady = null;
+      throw error;
+    });
+  return queueReady;
+}
 
 export interface AppContainer {
   db: DrizzleDb;
@@ -57,6 +73,7 @@ export interface AppContainer {
   userSessions: UserSessionRepository;
   authTokens: AuthTokenRepository;
   accounts: AccountService;
+  productImports: ProductImportService;
 }
 
 function createEmailPort(): EmailPort {
@@ -153,6 +170,7 @@ export function getContainer(): AppContainer {
     userSessions,
     authTokens,
     accounts,
+    productImports: new ProductImportService(drizzleDb, ensureQueueSchema),
   };
 
   return container;

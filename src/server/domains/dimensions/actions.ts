@@ -1,5 +1,7 @@
 'use server';
 
+import { requirePermission } from '@/server/domains/access-control/guard';
+
 import { revalidatePath } from 'next/cache';
 import { getContainer } from '@/server/di/container';
 import type { DimensionRow, DimensionValueRow } from '@/server/db/drizzle/schema';
@@ -23,6 +25,7 @@ function writeService() {
 export async function listDimensionOptionStringsAction(): Promise<
   { value: DimensionOptionString; label: string }[]
 > {
+  await requirePermission('settings:read');
   return DIMENSION_OPTION_STRINGS.map((value) => ({
     value,
     label: DIMENSION_OPTION_STRING_LABELS[value],
@@ -30,21 +33,25 @@ export async function listDimensionOptionStringsAction(): Promise<
 }
 
 export async function listDimensionsAction(): Promise<DimensionRow[]> {
+  await requirePermission('settings:read');
   const { dimensions } = getContainer();
   return dimensions.listByCompany(await companyId());
 }
 
 export async function getDimensionAction(id: string): Promise<DimensionRow | null> {
+  await requirePermission('settings:read');
   return getContainer().dimensions.getById(id);
 }
 
 export async function listDimensionValuesAction(
   dimensionId: string,
 ): Promise<DimensionValueRow[]> {
+  await requirePermission('settings:read');
   return getContainer().dimensions.listValues(dimensionId);
 }
 
 export async function listDimensionFieldContractAction() {
+  await requirePermission('settings:read');
   const id = await companyId();
   return getContainer().dimensionSets.listFieldContract(id);
 }
@@ -60,6 +67,7 @@ export async function createDimensionAction(input: {
   isShortcut?: boolean;
   optionString?: string | null;
 }): Promise<DimensionRow> {
+  await requirePermission('dimensions:manage');
   const row = await writeService().createDimension({
     companyId: await companyId(),
     ...input,
@@ -84,6 +92,7 @@ export async function updateDimensionAction(
     blocked?: boolean;
   },
 ): Promise<DimensionRow> {
+  await requirePermission('dimensions:manage');
   const row = await writeService().updateDimension(id, patch);
   revalidatePath('/admin/settings/dimensions');
   revalidatePath(`/admin/settings/dimensions/${id}`);
@@ -92,6 +101,7 @@ export async function updateDimensionAction(
 }
 
 export async function deleteDimensionAction(id: string): Promise<void> {
+  await requirePermission('dimensions:manage');
   await writeService().deleteDimension(id);
   revalidatePath('/admin/settings/dimensions');
   revalidatePath('/admin/settings/branches');
@@ -104,6 +114,7 @@ export async function createDimensionValueAction(input: {
   description?: string | null;
   parentId?: string | null;
 }): Promise<DimensionValueRow> {
+  await requirePermission('dimensions:manage');
   const row = await writeService().createValue(input);
   revalidatePath(`/admin/settings/dimensions/${input.dimensionId}`);
   revalidatePath('/admin/settings/branches');
@@ -121,6 +132,7 @@ export async function updateDimensionValueAction(
     blocked?: boolean;
   },
 ): Promise<DimensionValueRow> {
+  await requirePermission('dimensions:manage');
   const row = await writeService().updateValue(id, patch);
   revalidatePath(`/admin/settings/dimensions/${row.dimensionId}`);
   revalidatePath('/admin/settings/branches');
@@ -128,6 +140,7 @@ export async function updateDimensionValueAction(
 }
 
 export async function deleteDimensionValueAction(id: string): Promise<void> {
+  await requirePermission('dimensions:manage');
   const existing = await getContainer().dimensions.getValueById(id);
   await writeService().deleteValue(id);
   if (existing) {

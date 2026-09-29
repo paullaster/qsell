@@ -1011,6 +1011,67 @@ export const products = pgTable(
   ],
 );
 
+export type ProductImportStatus = 'queued' | 'processing' | 'completed' | 'failed';
+export type ProductImportRowStatus = 'pending' | 'created' | 'failed';
+
+/**
+ * One bulk CSV import. The file is fully validated before this row exists; the
+ * worker then turns its staged rows into products. Counters are derived from
+ * the rows, which are the source of truth.
+ */
+export const productImportJobs = pgTable(
+  'product_import_jobs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    status: text('status').$type<ProductImportStatus>().notNull().default('queued'),
+    fileName: text('file_name').notNull(),
+    /** Guards against the same file being submitted twice while one run is active. */
+    fileSha256: text('file_sha256').notNull(),
+    totalRows: integer('total_rows').notNull(),
+    createdCount: integer('created_count').notNull().default(0),
+    failedCount: integer('failed_count').notNull().default(0),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    /** Recorded on each stock-ledger entry the import writes. */
+    createdByEmail: text('created_by_email').notNull().default(''),
+    errorMessage: text('error_message'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('product_import_jobs_created_idx').on(t.createdAt),
+    uniqueIndex('product_import_jobs_active_file_uidx')
+      .on(t.fileSha256)
+      .where(sql`${t.status} in ('queued', 'processing')`),
+  ],
+);
+
+/** A validated CSV row waiting to become (or that became) a product. */
+export const productImportRows = pgTable(
+  'product_import_rows',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    jobId: uuid('job_id')
+      .notNull()
+      .references(() => productImportJobs.id, { onDelete: 'cascade' }),
+    /** Line in the uploaded file, as the user's spreadsheet numbers it. */
+    rowNumber: integer('row_number').notNull(),
+    status: text('status').$type<ProductImportRowStatus>().notNull().default('pending'),
+    /** Normalised, format-checked values (ProductImportDraft). */
+    data: jsonb('data').$type<Record<string, unknown>>().notNull(),
+    /** The original cells by header, for the error report. */
+    raw: jsonb('raw').$type<Record<string, string>>().notNull(),
+    errors: jsonb('errors').$type<string[]>().notNull().default([]),
+    productId: text('product_id').references(() => products.id, { onDelete: 'set null' }),
+    processedAt: timestamp('processed_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('product_import_rows_job_row_uidx').on(t.jobId, t.rowNumber),
+    index('product_import_rows_job_status_idx').on(t.jobId, t.status, t.rowNumber),
+  ],
+);
+
 /**
  * Append-only stock movement journal — the durable replacement for the old
  * in-memory `inventoryLedger` array.
@@ -1465,6 +1526,8 @@ export type UserSessionInsert = typeof userSessions.$inferInsert;
 export type InvoiceDocumentRow = typeof invoiceDocuments.$inferSelect;
 export type UserRow = typeof users.$inferSelect;
 export type AuthTokenRow = typeof authTokens.$inferSelect;
+export type ProductImportJobRow = typeof productImportJobs.$inferSelect;
+export type ProductImportRowRow = typeof productImportRows.$inferSelect;
 export type RoleRow = typeof roles.$inferSelect;
 export type RoleInsert = typeof roles.$inferInsert;
 export type PermissionRow = typeof permissions.$inferSelect;

@@ -6,7 +6,7 @@ import { UserRepository } from '@/server/domains/auth/user-repository';
 import { isStaffRole } from '@/server/domains/auth/roles';
 import { getContainer } from '@/server/di/container';
 import type { UserSession, CustomerAccount } from '@/types/index';
-import { AuthService, SESSION_COOKIE } from './service';
+import { SESSION_COOKIE } from './service';
 import { StorefrontCustomerService } from '@/server/domains/customers/storefront-service';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
@@ -70,12 +70,7 @@ export async function getSessionAction(): Promise<{
   if (!session?.user?.email) {
     // Cookie may be undecryptable after AUTH_SECRET rotation; drop it so Auth.js stops retrying.
     const store = await cookies();
-    const hasSessionCookie = store
-      .getAll()
-      .some(
-        (c) =>
-          c.name.includes('authjs.session-token') || c.name.includes('next-auth.session-token'),
-      );
+    const hasSessionCookie = store.getAll().some((c) => isAuthSessionCookie(c.name));
     if (hasSessionCookie) await clearStaleAuthSessionCookies();
     return { session: null, customer: null };
   }
@@ -137,17 +132,40 @@ export async function getSessionAction(): Promise<{
   }
 }
 
+/** Auth.js session cookies: plain, `__Secure-` prefixed (HTTPS) and chunked (`.0`, `.1`…). */
+function isAuthSessionCookie(name: string): boolean {
+  return name.includes('authjs.session-token') || name.includes('next-auth.session-token');
+}
+
+/**
+ * Expire every session cookie the browser sent.
+ *
+ * A deletion must carry the attributes the cookie was set with. Browsers ignore
+ * any Set-Cookie for a `__Secure-`/`__Host-` name that lacks `Secure` — and
+ * behind HTTPS Auth.js names its cookie `__Secure-authjs.session-token`. A bare
+ * `cookies().delete(name)` sends no `Secure`, so in production the deletion was
+ * silently dropped (and it replaced Auth.js's own valid deletion), leaving users
+ * signed in after "logout".
+ */
+async function expireSessionCookies(): Promise<void> {
+  const store = await cookies();
+  for (const { name } of store.getAll()) {
+    if (name !== SESSION_COOKIE && !isAuthSessionCookie(name)) continue;
+    const prefixed = name.startsWith('__Secure-') || name.startsWith('__Host-');
+    store.set(name, '', {
+      path: '/',
+      expires: new Date(0),
+      maxAge: 0,
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: prefixed || process.env.NODE_ENV === 'production',
+    });
+  }
+}
+
 async function clearStaleAuthSessionCookies(): Promise<void> {
   try {
-    const store = await cookies();
-    for (const cookie of store.getAll()) {
-      if (
-        cookie.name.includes('authjs.session-token') ||
-        cookie.name.includes('next-auth.session-token')
-      ) {
-        store.delete(cookie.name);
-      }
-    }
+    await expireSessionCookies();
   } catch {
     /* cookies() can throw outside a request — ignore */
   }
@@ -466,61 +484,23 @@ export async function logoutAction(formData?: FormData): Promise<void> {
       Sentry.captureException(error, { tags: { area: 'auth', action: 'logout_revoke' } });
     }
   }
-  for (const cookie of cookieStore.getAll()) {
-    if (
-      cookie.name === SESSION_COOKIE ||
-      cookie.name.includes('authjs.session-token') ||
-      cookie.name.includes('next-auth.session-token')
-    ) {
-      cookieStore.delete(cookie.name);
-    }
-  }
+  await expireSessionCookies();
 
   const returnTo = formData?.get('returnTo');
   redirect(returnTo === '/login' ? '/login' : '/');
 }
 
-/** @deprecated Prefer loginAction — kept for CustomerAccountModal compatibility */
+/**
+ * @deprecated Removed. This used to create a session for any customer from just
+ * an email, phone or customer id — no password — which let anyone open any
+ * shopper's account. Kept only so stale clients get a clear error.
+ */
 export async function customerLoginAction(
-  identifierOrInput: string | { identifier: string; name?: string; phone?: string },
-  name?: string,
-  phone?: string,
+  _identifierOrInput: string | { identifier: string; name?: string; phone?: string },
+  _name?: string,
+  _phone?: string,
 ): Promise<{ session: UserSession; customer: CustomerAccount }> {
-  const input =
-    typeof identifierOrInput === 'string'
-      ? { identifier: identifierOrInput, name, phone }
-      : identifierOrInput;
-
-  // Legacy path without password: create/find customer and Auth.js session is not established.
-  // Prefer registerCustomerAction / loginAction.
-  const identifier = input.identifier;
-  if (!identifier) throw new Error('Email, phone, or Customer ID is required.');
-
-  const isEmail = identifier.includes('@');
-  const resolvedEmail = isEmail ? identifier : `${identifier}@guest.omnicommerce.ke`;
-  const customer =
-    (await StorefrontCustomerService.findByEmailOrPhone(identifier)) ??
-    (await StorefrontCustomerService.ensure({
-      name: input.name || (isEmail ? identifier.split('@')[0]! : 'Shopper'),
-      email: resolvedEmail,
-      phone: input.phone || (isEmail ? '0700000000' : identifier),
-    }));
-
-  const session = await AuthService.createSession(
-    'customer',
-    customer.email,
-    customer.name,
-    customer.phone,
-  );
-  const cookieStore = await cookies();
-  cookieStore.set(SESSION_COOKIE, session.token, {
-    httpOnly: true,
-    sameSite: 'lax',
-    path: '/',
-    secure: process.env.NODE_ENV === 'production',
-    maxAge: 60 * 60 * 24 * 7,
-  });
-  return { session, customer };
+  throw new Error('Please sign in with your email and password.');
 }
 
 export async function ensureAdminSessionAction(): Promise<UserSession> {
