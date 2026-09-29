@@ -18,7 +18,6 @@ import { useRealtimeEvents } from '@/lib/realtime';
 import {
   createOrderAction,
   initiateBranchPaymentAction,
-  getSessionAction,
   listCurrenciesAction,
   listEnabledCheckoutProvidersAction,
 } from '@/server/actions';
@@ -29,15 +28,21 @@ import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
 interface StorefrontPageClientProps {
   productsPromise: Promise<Product[]>;
   companyPromise: Promise<CompanySettingsRow>;
+  /** Signed-in shopper's display name, resolved on the server; null for guests. */
+  sessionNamePromise: Promise<string | null>;
 }
 
 export function StorefrontPageClient({
   productsPromise,
   companyPromise,
+  sessionNamePromise,
 }: StorefrontPageClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const company = use(companyPromise);
+  // Rendered with the page, so the navbar and checkout know who is signed in on first
+  // paint. Sign-in and logout both do full page loads, so this can't go stale.
+  const sessionName = use(sessionNamePromise);
 
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
   const addToast = useCallback((toast: Omit<ToastNotification, 'id'>) => {
@@ -59,13 +64,9 @@ export function StorefrontPageClient({
     router.replace('/login?callbackUrl=/admin');
   }, [searchParams, router]);
 
-  const [sessionName, setSessionName] = useState<string | null>(null);
   const [currency, setCurrency] = useState<CurrencyConfig | null>(null);
   const [paymentLabels, setPaymentLabels] = useState<string[]>([]);
   useEffect(() => {
-    getSessionAction()
-      .then(({ session }) => setSessionName(session?.name || null))
-      .catch(() => setSessionName(null));
     listCurrenciesAction()
       .then((currencies) => setCurrency(resolveBaseCurrency(currencies)))
       .catch(() => setCurrency(null));
@@ -363,10 +364,7 @@ export function StorefrontPageClient({
         onContinueShopping={() => setIsSuccessModalOpen(false)}
       />
 
-      <OrderTrackerModal
-        isOpen={isTrackOrderOpen}
-        onClose={() => setIsTrackOrderOpen(false)}
-      />
+      <OrderTrackerModal isOpen={isTrackOrderOpen} onClose={() => setIsTrackOrderOpen(false)} />
 
       <CustomerHelpModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
 
