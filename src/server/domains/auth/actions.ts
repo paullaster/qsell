@@ -300,8 +300,7 @@ export async function loginAction(input: {
 
   try {
     // The password is checked exactly once, in the Credentials provider's authorize().
-    // (It used to be checked here as well: bcrypt is deliberately slow — ~2 s per check
-    // with bcryptjs on a modest CPU — so every login paid for it twice.)
+    // bcrypt is deliberately slow, so checking it here as well would double every login's cost.
     await signIn('credentials', { email, password, redirect: false });
     // Role and flags come from an indexed lookup; no hashing, the password is already verified.
     const user = await new UserRepository().findByEmail(email);

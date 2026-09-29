@@ -1,7 +1,10 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { drizzleDb } from '@/server/db/drizzle/client';
 import { users, type UserRow } from '@/server/db/drizzle/schema';
-import { hash, compare } from 'bcryptjs';
+// Native bcrypt: hashes on libuv's thread pool, so password checks never block the
+// event loop (bcryptjs is pure JS and stalled every other request while hashing).
+// Hashes are the standard $2b$ format — existing bcryptjs hashes verify unchanged.
+import { hash, verify } from '@node-rs/bcrypt';
 import type { ThemeMode } from '@/config/theme';
 import type { AppRole } from './roles';
 import type { DbExecutor } from './token-repository';
@@ -121,7 +124,7 @@ export class UserRepository {
   async verifyPassword(email: string, password: string): Promise<UserRow | null> {
     const user = await this.findByEmail(email);
     if (!user || !user.isActive || user.status === 'suspended') return null;
-    const ok = await compare(password, user.passwordHash);
+    const ok = await verify(password, user.passwordHash);
     return ok ? user : null;
   }
 
@@ -158,7 +161,7 @@ export class UserRepository {
       });
     }
 
-    const passwordMatches = await compare(password, existing.passwordHash);
+    const passwordMatches = await verify(password, existing.passwordHash);
     const needsUpdate =
       existing.role !== 'super_admin' ||
       !existing.isActive ||
