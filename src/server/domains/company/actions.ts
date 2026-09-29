@@ -1,5 +1,7 @@
 'use server';
 
+import { requirePermission } from '@/server/domains/access-control/guard';
+
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -64,6 +66,7 @@ export async function updateCompanySettingsAction(
     uiConfig: CompanyUiConfigRaw;
   }>,
 ): Promise<CompanySettingsRow> {
+  await requirePermission('company:manage');
   const { companySettings } = getContainer();
   const payload = { ...updates };
   if (updates.uiConfig !== undefined) {
@@ -79,6 +82,7 @@ const ALLOWED_LOGO_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'im
 const MAX_LOGO_BYTES = 2 * 1024 * 1024;
 
 export async function uploadCompanyLogoAction(formData: FormData): Promise<CompanySettingsRow> {
+  await requirePermission('company:manage');
   const file = formData.get('logo');
   if (!(file instanceof File) || file.size === 0) {
     throw new Error('Please choose a logo image to upload');

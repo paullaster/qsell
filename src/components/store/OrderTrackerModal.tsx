@@ -20,15 +20,20 @@ import {
 import { type Order } from '@/types/index';
 import { AppImage } from '@/components/ui/AppImage';
 import { shownPaymentReference } from '@/lib/paymentReference';
+import { lookupOrderAction } from '@/server/domains/orders/actions';
 
 interface OrderTrackerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  ordersPromise: Promise<Order[]>;
 }
 
-export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrackerModalProps) {
+/**
+ * Looks an order up on the server by order number AND the email or phone it
+ * was placed with, so a visitor only ever sees an order they can already identify.
+ */
+export function OrderTrackerModal({ isOpen, onClose }: OrderTrackerModalProps) {
   const [searchTerm, setSearchTerm] = useState('');
+  const [contact, setContact] = useState('');
   const [hasSearched, setHasSearched] = useState(false);
   const [matchedOrder, setMatchedOrder] = useState<Order | null>(null);
   const [searchError, setSearchError] = useState('');
@@ -38,32 +43,21 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!searchTerm.trim()) return;
+    if (searchTerm.trim() === '' || contact.trim() === '') return;
 
     setIsLoading(true);
     setSearchError('');
     setHasSearched(true);
 
     try {
-      const allOrders = await ordersPromise;
-      const term = searchTerm.trim().toUpperCase();
-
-      const found = allOrders.find(
-        (o) =>
-          o.orderNumber.toUpperCase() === term ||
-          o.id.toUpperCase() === term ||
-          (o.mpesaReceiptNumber && o.mpesaReceiptNumber.toUpperCase() === term) ||
-          shownPaymentReference(o)?.toUpperCase() === term ||
-          o.customerPhone.includes(searchTerm.trim()) ||
-          o.customerEmail.toLowerCase() === searchTerm.trim().toLowerCase(),
-      );
+      const found = await lookupOrderAction(searchTerm.trim().toUpperCase(), contact.trim());
 
       if (found) {
         setMatchedOrder(found);
       } else {
         setMatchedOrder(null);
         setSearchError(
-          `No order found matching "${searchTerm}". Please verify your Order ID or M-Pesa Receipt Number.`,
+          'No order matches that order number and contact. Check both and try again.',
         );
       }
     } catch (err: any) {
@@ -143,21 +137,41 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
         {/* Search Input Box */}
         <div className="border-b border-line bg-surface p-4 sm:p-6">
           <form onSubmit={handleSearch} className="space-y-3">
-            <label className="block text-xs font-medium text-fg">
-              Enter Order Number, M-Pesa Receipt Code, or Phone Number
-            </label>
-            <div className="flex flex-col gap-2 min-[420px]:flex-row">
-              <div className="relative flex-1">
-                <Search className="absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2 text-fg-subtle" />
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="block text-xs font-medium text-fg">
+                Order number
+                <span className="relative mt-1 block">
+                  <Search
+                    className="absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2 text-fg-subtle"
+                    aria-hidden="true"
+                  />
+                  <input
+                    type="text"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    placeholder="e.g. ORD-2026-5348"
+                    autoCapitalize="characters"
+                    spellCheck={false}
+                    className="h-11 w-full rounded-lg border border-line bg-surface-raised py-2.5 pr-3 pl-10 font-mono text-xs text-fg-strong placeholder-fg-subtle focus:border-indigo-500 focus:outline-none"
+                    required
+                  />
+                </span>
+              </label>
+              <label className="block text-xs font-medium text-fg">
+                Email or phone used at checkout
                 <input
                   type="text"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="e.g. ORD-1740987654 or QJK4920194 or 0712345678"
-                  className="h-11 w-full rounded-lg border border-line bg-surface-raised py-2.5 pr-3 pl-10 font-mono text-xs text-fg-strong placeholder-fg-subtle focus:border-indigo-500 focus:outline-none sm:pr-4"
+                  inputMode="email"
+                  autoComplete="email"
+                  value={contact}
+                  onChange={(e) => setContact(e.target.value)}
+                  placeholder="you@example.com or 0712345678"
+                  className="mt-1 h-11 w-full rounded-lg border border-line bg-surface-raised px-3 py-2.5 text-xs text-fg-strong placeholder-fg-subtle focus:border-indigo-500 focus:outline-none"
                   required
                 />
-              </div>
+              </label>
+            </div>
+            <div className="flex justify-end">
               <button
                 type="submit"
                 disabled={isLoading}
@@ -167,8 +181,8 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
               </button>
             </div>
             <p className="text-[11px] text-fg-subtle">
-              Tip: You can find your Order Number in the SMS confirmation or on your M-Pesa
-              transaction reference.
+              Your order number is in your order confirmation. We ask for your email or phone
+              too so nobody else can look up your order.
             </p>
           </form>
         </div>
@@ -176,7 +190,10 @@ export function OrderTrackerModal({ isOpen, onClose, ordersPromise }: OrderTrack
         {/* Results Area */}
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4 sm:space-y-6 sm:p-6">
           {searchError && (
-            <div className="flex items-center gap-3 rounded-xl border border-red-800/60 bg-red-50 p-4 text-xs text-red-700">
+            <div
+              role="alert"
+              className="flex items-center gap-3 rounded-xl border border-red-800/60 bg-red-50 p-4 text-xs text-red-700"
+            >
               <AlertCircle className="h-5 w-5 shrink-0 text-red-600" />
               <span>{searchError}</span>
             </div>

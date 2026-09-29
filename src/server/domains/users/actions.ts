@@ -34,6 +34,34 @@ function isSuperAdminRole(role: string): boolean {
   return role === 'super_admin';
 }
 
+const CUSTOMER_ROLE = 'customer';
+
+/**
+ * Staff and shopper accounts are kept strictly apart: a customer account holds no
+ * extra roles or direct grants (which could smuggle in admin permissions), and a
+ * staff account never also holds the customer role (which made admins look like
+ * customers in this very screen).
+ */
+function assertRoleCombination(
+  primaryRole: string,
+  extraRoleKeys: readonly string[],
+  directGrantCount: number,
+): void {
+  if (primaryRole === CUSTOMER_ROLE) {
+    if (extraRoleKeys.length > 0 || directGrantCount > 0) {
+      throw new Error(
+        'Customer accounts cannot have additional roles or permission overrides. Choose a staff role instead, or remove them.',
+      );
+    }
+    return;
+  }
+  if (extraRoleKeys.includes(CUSTOMER_ROLE)) {
+    throw new Error(
+      'Staff accounts cannot also hold the Customer role. Create a separate customer account for shopping.',
+    );
+  }
+}
+
 const PROVISIONED_SUPER_ADMIN_MSG =
   'The super_admin account is provisioned by the system seeder and cannot be created or reassigned from the user module.';
 
@@ -116,6 +144,11 @@ export async function createUserAction(input: CreateUserInput): Promise<CreateUs
     throw new Error(PROVISIONED_SUPER_ADMIN_MSG);
   }
   if (input.role === '') throw new Error('A primary role is required');
+  assertRoleCombination(
+    input.role,
+    (input.extraRoles ?? []).map((r) => r.roleKey),
+    (input.directGrants ?? []).length,
+  );
 
   const container = getContainer();
   const row = await container.usersAdmin.createUser(input);
@@ -168,7 +201,19 @@ export async function updateUserAction(userId: string, input: UpdateUserInput): 
 
   if (input.branchId === '') input.branchId = null;
 
+  const becomesCustomer =
+    input.role === CUSTOMER_ROLE && existing.user.role !== CUSTOMER_ROLE;
+
   const updated = await container.usersAdmin.updateUser(userId, input);
+  if (becomesCustomer) {
+    // Demotion to shopper: drop every staff capability in the same change.
+    await container.usersAdmin.setExtraRoles(userId, [], actorId);
+    await container.usersAdmin.setDirectGrants(userId, []);
+    await writeAudit(actorId, 'users:demote_to_customer', 'users', userId, {
+      removedRoles: existing.extraRoles.map((r) => r.key),
+      removedGrants: existing.directGrants.map((g) => grantKey(g.permissionKey, g.effect)),
+    });
+  }
   container.accessControl.invalidateUser(userId);
   await writeAudit(actorId, 'users:update', 'users', userId, {
     before: {
@@ -239,6 +284,7 @@ export async function assignRolesAction(
   if (keys.some((k) => isSuperAdminRole(k))) {
     throw new Error(PROVISIONED_SUPER_ADMIN_MSG);
   }
+  assertRoleCombination(existing.user.role, keys, 0);
   const roles = await container.accessControl.repo.listRoles();
   const activeKeys = new Set(roles.filter((r) => r.isActive).map((r) => r.key));
   for (const key of keys) {
@@ -263,6 +309,7 @@ export async function setDirectGrantsAction(
   const existing = await container.usersAdmin.getUserDetail(userId);
   if (!existing) throw new Error('User not found');
 
+  assertRoleCombination(existing.user.role, [], grants.length);
   for (const grant of grants) {
     if (!isPermissionKey(grant.permissionKey)) {
       throw new Error(`Unknown permission '${grant.permissionKey}'`);

@@ -33,7 +33,7 @@ export interface AccessContext {
 export type AccessDecision =
   | {
       allowed: true;
-      source: 'super_admin' | 'direct' | 'role' | 'policy';
+      source: 'super_admin' | 'direct' | 'role' | 'policy' | 'implied';
       grantedBy?: { policyId: string; policyKey: string };
       roleKey?: string;
     }
@@ -103,7 +103,11 @@ export class AccessControlService {
     const allowed = new Set<PermissionKey>();
     for (const grant of model.grants) {
       if (grant.roleKey !== null) roleKeys.add(grant.roleKey);
-      if (grant.effect === 'allow') allowed.add(grant.permissionKey as PermissionKey);
+      if (grant.effect === 'allow') {
+        allowed.add(grant.permissionKey as PermissionKey);
+        // Mirror decide(): any allow on a resource implies reading it.
+        allowed.add(`${grant.permissionKey.split(':')[0] ?? ''}:read` as PermissionKey);
+      }
     }
     const superAdmin = model.superAdmin;
 
@@ -192,6 +196,16 @@ export class AccessControlService {
       null,
     );
     if (roleAllow) return { allowed: true, source: 'role', roleKey: roleAllow.roleKey ?? undefined };
+
+    // 5b. Any allow on a resource implies reading it (e.g. products:update ⇒ products:read).
+    // Explicit read denies were already honoured in steps 2 and 4.
+    if (key.endsWith(':read')) {
+      const resource = key.slice(0, -'read'.length);
+      const impliesRead = model.grants.some(
+        (g) => g.effect === 'allow' && g.permissionKey.startsWith(resource) && inScope(g.scopeBranchId),
+      );
+      if (impliesRead) return { allowed: true, source: 'implied' };
+    }
 
     // 6. ABAC policies.
     const policies = await this.getPolicies(key);

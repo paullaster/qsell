@@ -60,7 +60,9 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
           // Staff must land in admin — ignore storefront callback leftovers (e.g. "/").
           destination = safeCallbackUrl?.startsWith('/admin') === true ? safeCallbackUrl : '/admin';
         } else {
-          destination = safeCallbackUrl ?? '/';
+          // Shoppers never land on admin routes, even if a stale callback points there.
+          destination =
+            safeCallbackUrl !== null && !safeCallbackUrl.startsWith('/admin') ? safeCallbackUrl : '/';
         }
         router.push(
           res.mustChangePassword

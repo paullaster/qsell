@@ -1,5 +1,9 @@
 'use server';
 
+import { requirePermission } from '@/server/domains/access-control/guard';
+import { auth } from '@/auth';
+import { isStaffRole } from '@/server/domains/auth/roles';
+
 import { revalidatePath } from 'next/cache';
 import { getContainer } from '@/server/di/container';
 import type {
@@ -8,7 +12,6 @@ import type {
   CustomerRow,
   DimensionCodesProjection,
 } from '@/server/db/drizzle/schema';
-import { listDimensionFieldContractAction, listDimensionValuesAction } from '@/server/domains/dimensions/actions';
 import type { CustomerAccountType, CustomerBlock } from './master-service';
 
 async function companyId(): Promise<string> {
@@ -20,6 +23,7 @@ function master() {
 }
 
 export async function listCustomerProfilesAction(): Promise<CustomerProfileRow[]> {
+  await requirePermission('customers:read');
   return master().listProfiles(await companyId());
 }
 
@@ -35,18 +39,21 @@ export async function saveCustomerProfileAction(input: {
   dimensionCodes?: DimensionCodesProjection;
   isActive?: boolean;
 }): Promise<CustomerProfileRow> {
+  await requirePermission('customers:update');
   const row = await master().saveProfile(await companyId(), input);
   revalidatePath('/admin/customers');
   return row;
 }
 
 export async function listTradeCustomersAction(): Promise<CustomerRow[]> {
+  await requirePermission('customers:read');
   return master().listCustomers(await companyId());
 }
 
 export async function getTradeCustomerAction(
   id: string,
 ): Promise<{ customer: CustomerRow; ledger: CustomerLedgerEntryRow[] } | null> {
+  await requirePermission('customers:read');
   return master().getCustomer(await companyId(), id);
 }
 
@@ -71,12 +78,14 @@ export async function saveTradeCustomerAction(input: {
   isActive?: boolean;
   notes?: string | null;
 }): Promise<CustomerRow> {
+  await requirePermission('customers:update');
   const row = await master().saveCustomer(await companyId(), input);
   revalidatePath('/admin/customers');
   return row;
 }
 
 export async function deleteTradeCustomerAction(id: string): Promise<void> {
+  await requirePermission('customers:delete');
   await master().deleteCustomer(await companyId(), id);
   revalidatePath('/admin/customers');
 }
@@ -86,6 +95,7 @@ export async function receiveCustomerPaymentAction(
   amount: number,
   reference: string,
 ): Promise<CustomerRow> {
+  await requirePermission('transactions:post');
   const row = await master().receivePayment(await companyId(), customerId, { amount, reference });
   revalidatePath('/admin/customers');
   revalidatePath('/admin/transactions/ledger');
@@ -101,7 +111,13 @@ export async function lookupCheckoutCustomerAction(email: string): Promise<{
   balance: number;
   transmitInvoicesToKra: boolean;
 }> {
-  const customer = await master().lookupByEmail(await companyId(), email);
+  // Credit terms and balances are private: only the shopper signed in with this
+  // email (or staff) may see them. Everyone else gets the same "no account" answer,
+  // so the lookup can't be used to probe which emails are customers.
+  const session = await auth();
+  const isSelf = session?.user.email.toLowerCase() === email.trim().toLowerCase();
+  const allowed = isSelf || isStaffRole(session?.user.role);
+  const customer = allowed ? await master().lookupByEmail(await companyId(), email) : null;
   if (!customer || !customer.isActive) {
     return {
       found: false,
@@ -135,15 +151,18 @@ export async function customerSetupAction(): Promise<{
     values: { code: string; name: string }[];
   }[];
 }> {
+  await requirePermission('customers:read');
   const id = await companyId();
   const [customerRows, profiles, contract] = await Promise.all([
     master().listCustomers(id),
     master().listProfiles(id),
-    listDimensionFieldContractAction(),
+    // Field metadata is part of the customer form, so read it directly rather than
+    // through the settings actions (which would demand settings:read as well).
+    getContainer().dimensionSets.listFieldContract(id),
   ]);
   const fields = await Promise.all(
     contract.map(async (field) => {
-      const values = await listDimensionValuesAction(field.dimensionId);
+      const values = await getContainer().dimensions.listValues(field.dimensionId);
       return {
         fieldName: field.fieldName,
         dimensionId: field.dimensionId,

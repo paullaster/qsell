@@ -113,6 +113,13 @@
       "when": 1790652618179,
       "tag": "0015_auth_email_verification_password_reset",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1790664880660,
+      "tag": "0016_product_csv_imports",
+      "breakpoints": true
     }
   ]
 }
