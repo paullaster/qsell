@@ -89,8 +89,6 @@ jobs:
           build-args: |
             DEPLOYMENT_VERSION=${{ github.sha }}
             NEXT_PUBLIC_SENTRY_DSN=${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
-            SENTRY_ORG=${{ vars.SENTRY_ORG }}
-            SENTRY_PROJECT=${{ vars.SENTRY_PROJECT }}
             SERVER_ACTION_ALLOWED_ORIGINS=${{ vars.SERVER_ACTION_ALLOWED_ORIGINS || 'omnicommerce.brainsporellc.com' }}
           secrets: |
             sentry_auth_token=${{ secrets.SENTRY_AUTH_TOKEN }}

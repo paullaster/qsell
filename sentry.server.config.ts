@@ -7,4 +7,7 @@ Sentry.init({
   enabled: Boolean(dsn),
   environment: process.env.SENTRY_ENVIRONMENT ?? process.env.NODE_ENV,
   release: process.env.DEPLOYMENT_VERSION,
+  tracesSampleRate: process.env.NODE_ENV === 'development' ? 1.0 : 0.1,
+  // Attaches local variable values to server stack frames.
+  includeLocalVariables: true,
 });
