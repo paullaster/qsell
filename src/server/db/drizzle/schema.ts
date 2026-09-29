@@ -280,6 +280,8 @@ export const users = pgTable(
     permissionsVersion: integer('permissions_version').notNull().default(0),
     mustChangePassword: boolean('must_change_password').notNull().default(false),
     lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+    /** Null until the owner proves control of `email`; sign-in is refused while null. */
+    emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
     /** Only the provisioned super-admin has this — gates visibility of super-admin accounts to others. */
     canViewSuperAdmin: boolean('can_view_super_admin').notNull().default(false),
     isActive: boolean('is_active').notNull().default(true),
@@ -291,6 +293,32 @@ export const users = pgTable(
     index('users_role_idx').on(t.role),
     index('users_status_idx').on(t.status),
     index('users_branch_idx').on(t.branchId),
+  ],
+);
+
+export type AuthTokenPurpose = 'email_verification' | 'password_reset';
+
+/**
+ * Single-use, expiring tokens mailed to users (email verification, password reset).
+ * Only a SHA-256 hash is stored, so a database leak cannot be replayed.
+ */
+export const authTokens = pgTable(
+  'auth_tokens',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    purpose: text('purpose').$type<AuthTokenPurpose>().notNull(),
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('auth_tokens_token_hash_uidx').on(t.tokenHash),
+    index('auth_tokens_user_purpose_created_idx').on(t.userId, t.purpose, t.createdAt),
+    index('auth_tokens_expires_idx').on(t.expiresAt),
   ],
 );
 
@@ -1436,6 +1464,7 @@ export type UserSessionRow = typeof userSessions.$inferSelect;
 export type UserSessionInsert = typeof userSessions.$inferInsert;
 export type InvoiceDocumentRow = typeof invoiceDocuments.$inferSelect;
 export type UserRow = typeof users.$inferSelect;
+export type AuthTokenRow = typeof authTokens.$inferSelect;
 export type RoleRow = typeof roles.$inferSelect;
 export type RoleInsert = typeof roles.$inferInsert;
 export type PermissionRow = typeof permissions.$inferSelect;

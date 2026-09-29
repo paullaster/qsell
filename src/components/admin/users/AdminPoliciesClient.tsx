@@ -201,10 +201,10 @@ export function AdminPoliciesClient({ setupPromise }: { setupPromise: Promise<Po
 
   if (!canManage) {
     return (
-      <div className="mx-auto max-w-6xl space-y-6 p-6">
+      <div className="space-y-6">
         <div className="flex items-center gap-2 text-fg-strong">
-          <Fingerprint className="h-5 w-5 text-indigo-400" />
-          <h1 className="text-xl font-semibold">Access Policies</h1>
+          <Fingerprint className="h-5 w-5 text-indigo-500" aria-hidden="true" />
+          <h2 className="text-xl font-semibold">Access Policies</h2>
         </div>
         <p className="rounded-lg border border-amber-700/40 bg-amber-50 px-3 py-2 text-sm text-amber-800">
           You do not have the <code>policies:manage</code> permission.
@@ -214,12 +214,12 @@ export function AdminPoliciesClient({ setupPromise }: { setupPromise: Promise<Po
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 p-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
+    <div className="space-y-6">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <div className="flex items-center gap-2 text-fg-strong">
-            <Fingerprint className="h-5 w-5 text-indigo-400" />
-            <h1 className="text-xl font-semibold">Access Policies (ABAC)</h1>
+            <Fingerprint className="h-5 w-5 text-indigo-500" aria-hidden="true" />
+            <h2 className="text-xl font-semibold">Access Policies (ABAC)</h2>
           </div>
           <p className="mt-1 max-w-2xl text-sm text-fg-muted">
             Policies evaluate a condition against the user (attributes), the request
@@ -230,21 +230,27 @@ export function AdminPoliciesClient({ setupPromise }: { setupPromise: Promise<Po
         <button
           type="button"
           onClick={openNew}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-500"
+          className="inline-flex min-h-11 w-full shrink-0 items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 sm:w-auto"
         >
-          <Plus className="h-4 w-4" />
+          <Plus className="h-4 w-4" aria-hidden="true" />
           New policy
         </button>
-      </div>
+      </header>
 
       {error !== null ? (
-        <p className="rounded-lg border border-red-500/40 bg-red-50 px-3 py-2 text-sm text-red-800">
+        <p
+          className="rounded-lg border border-red-500/40 bg-red-50 px-3 py-2 text-sm text-red-800"
+          role="alert"
+        >
           {error}
         </p>
       ) : null}
 
       {showForm ? (
-        <section className="space-y-4 rounded-xl border border-line bg-surface-sunken/60 p-4">
+        <section
+          aria-label="Editor"
+          className="space-y-4 rounded-xl border border-line bg-surface-sunken/60 p-4 sm:p-5"
+        >
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-fg-strong">
               {form.id !== null ? 'Edit policy' : 'New policy'}
@@ -252,9 +258,10 @@ export function AdminPoliciesClient({ setupPromise }: { setupPromise: Promise<Po
             <button
               type="button"
               onClick={() => setShowForm(false)}
-              className="text-fg-subtle hover:text-fg-strong"
+              aria-label="Close editor"
+              className="flex h-10 w-10 items-center justify-center rounded-lg text-fg-subtle hover:bg-hover hover:text-fg-strong"
             >
-              <X className="h-4 w-4" />
+              <X className="h-5 w-5" aria-hidden="true" />
             </button>
           </div>
 
@@ -297,7 +304,7 @@ export function AdminPoliciesClient({ setupPromise }: { setupPromise: Promise<Po
                 ))}
               </select>
             </label>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-3 min-[420px]:grid-cols-2">
               <label className="block text-xs text-fg-muted">
                 Effect
                 <select
@@ -333,6 +340,7 @@ export function AdminPoliciesClient({ setupPromise }: { setupPromise: Promise<Po
             <label className="flex items-center gap-2 text-sm text-fg sm:col-span-2">
               <input
                 type="checkbox"
+                className="h-4 w-4"
                 checked={form.isEnabled}
                 onChange={(e) => setForm((f) => ({ ...f, isEnabled: e.target.checked }))}
               />
@@ -341,7 +349,7 @@ export function AdminPoliciesClient({ setupPromise }: { setupPromise: Promise<Po
           </div>
 
           <div>
-            <p className="mb-1 text-xs text-fg-muted">
+            <label htmlFor="policy-condition" className="mb-1 block text-xs text-fg-muted">
               Condition (JSON). Use <code>user.*</code>, <code>ctx.*</code>, <code>res.*</code>{' '}
               fields with operators{' '}
               <code>eq neq gt gte lt lte in not_in contains matches exists is_null</code> and{' '}
@@ -351,8 +359,11 @@ export function AdminPoliciesClient({ setupPromise }: { setupPromise: Promise<Po
                 {'}'}
               </code>{' '}
               matches everything.
-            </p>
+            </label>
             <textarea
+              id="policy-condition"
+              aria-invalid={form.conditionError !== null}
+              aria-describedby={form.conditionError !== null ? 'policy-condition-error' : undefined}
               className={`${fieldClass} mt-1 h-36 font-mono text-xs`}
               value={form.conditionText}
               spellCheck={false}
@@ -361,9 +372,11 @@ export function AdminPoliciesClient({ setupPromise }: { setupPromise: Promise<Po
               }
             />
             {form.conditionError !== null ? (
-              <p className="mt-1 text-xs text-red-700">{form.conditionError}</p>
+              <p id="policy-condition-error" className="mt-1 text-xs text-red-700" role="alert">
+                {form.conditionError}
+              </p>
             ) : null}
-            <p className="mt-1 text-[11px] text-fg-subtle">
+            <p className="mt-1 text-[11px] break-all text-fg-subtle">
               Example:{' '}
               <code>
                 {
@@ -378,9 +391,9 @@ export function AdminPoliciesClient({ setupPromise }: { setupPromise: Promise<Po
               type="button"
               disabled={pending}
               onClick={save}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-500 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-500 disabled:opacity-50 min-h-10"
             >
-              {pending ? <RotateCw className="h-4 w-4 animate-spin" /> : null}
+              {pending ? <RotateCw className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
               {form.id !== null ? 'Save changes' : 'Create policy'}
             </button>
             {form.id !== null ? (
@@ -391,16 +404,16 @@ export function AdminPoliciesClient({ setupPromise }: { setupPromise: Promise<Po
                   const policy = policies.find((p) => p.id === form.id);
                   if (policy) removePolicy(policy);
                 }}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-red-800 px-3 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
+                className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-red-800 px-3 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
               >
-                <Trash2 className="h-4 w-4" />
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
                 Delete
               </button>
             ) : null}
             <button
               type="button"
               onClick={() => setShowForm(false)}
-              className="rounded-lg border border-line-strong px-3 py-2 text-sm text-fg"
+              className="min-h-10 rounded-lg border border-line-strong px-3 py-2 text-sm text-fg hover:bg-hover"
             >
               Close
             </button>
@@ -408,16 +421,81 @@ export function AdminPoliciesClient({ setupPromise }: { setupPromise: Promise<Po
         </section>
       ) : null}
 
-      <div className="overflow-hidden rounded-xl border border-line">
-        <table className="w-full text-left text-sm text-fg">
+      {policies.length === 0 ? (
+        <p className="rounded-xl border border-line px-4 py-6 text-sm text-fg-subtle md:hidden">
+          No access policies yet. Roles handle most access; create a policy for context-aware
+          rules.
+        </p>
+      ) : (
+        <ul className="space-y-3 md:hidden">
+          {policies.map((policy) => (
+            <li key={policy.id} className="space-y-2 rounded-xl border border-line bg-surface p-4">
+              <div className="min-w-0">
+                <p className="font-medium text-fg-strong">{policy.name}</p>
+                <p className="font-mono text-xs break-all text-fg-subtle">{policy.key}</p>
+              </div>
+              <p className="font-mono text-xs break-all text-fg-muted">{policy.permissionKey}</p>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-fg-muted">
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[11px] ${
+                    policy.effect === 'allow'
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : 'bg-red-50 text-red-800'
+                  }`}
+                >
+                  {policy.effect}
+                </span>
+                <span>Priority {policy.priority}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 border-t border-line pt-3">
+                <button
+                  type="button"
+                  onClick={() => togglePolicy(policy)}
+                  aria-pressed={policy.isEnabled}
+                  aria-label={`${policy.name}: ${policy.isEnabled ? 'enabled' : 'disabled'}. Toggle`}
+                  className={`min-h-10 rounded-lg px-2 text-xs ${
+                    policy.isEnabled
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : 'bg-surface-sunken text-fg-subtle'
+                  }`}
+                >
+                  {policy.isEnabled ? 'Enabled' : 'Disabled'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openPolicy(policy)}
+                  aria-label={`Edit policy ${policy.name}`}
+                  className="inline-flex min-h-10 items-center justify-center gap-1 rounded-lg border border-line-strong px-2 text-xs text-fg hover:bg-hover"
+                >
+                  <Pencil className="h-3.5 w-3.5" aria-hidden="true" /> Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removePolicy(policy)}
+                  aria-label={`Delete policy ${policy.name}`}
+                  className="inline-flex min-h-10 items-center justify-center gap-1 rounded-lg border border-red-700 px-2 text-xs text-red-700 hover:bg-red-50 dark:text-red-400"
+                >
+                  <Trash2 className="h-3.5 w-3.5" aria-hidden="true" /> Delete
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="hidden overflow-x-auto rounded-xl border border-line md:block">
+        <table className="w-full min-w-[44rem] text-left text-sm text-fg">
+          <caption className="sr-only">Access policies</caption>
           <thead className="bg-surface-raised text-xs text-fg-subtle">
             <tr>
-              <th className="px-3 py-2">Policy</th>
-              <th>Permission</th>
-              <th>Effect</th>
-              <th>Priority</th>
-              <th>Status</th>
-              <th className="px-3 py-2 text-right"> </th>
+              <th scope="col" className="px-4 py-2 font-medium">Policy</th>
+              <th scope="col" className="px-4 py-2 font-medium">Permission</th>
+              <th scope="col" className="px-4 py-2 font-medium">Effect</th>
+              <th scope="col" className="px-4 py-2 font-medium">Priority</th>
+              <th scope="col" className="px-4 py-2 font-medium">Status</th>
+              <th scope="col" className="px-4 py-2 text-right">
+                <span className="sr-only">Actions</span>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -431,28 +509,30 @@ export function AdminPoliciesClient({ setupPromise }: { setupPromise: Promise<Po
             ) : (
               policies.map((policy) => (
                 <tr key={policy.id} className="border-t border-line hover:bg-hover">
-                  <td className="px-3 py-2">
+                  <td className="px-4 py-3">
                     <p className="text-fg-strong">{policy.name}</p>
                     <p className="font-mono text-xs text-fg-subtle">{policy.key}</p>
                   </td>
-                  <td className="py-2 font-mono text-xs text-fg-muted">{policy.permissionKey}</td>
-                  <td className="py-2">
+                  <td className="px-4 py-3 font-mono text-xs text-fg-muted">{policy.permissionKey}</td>
+                  <td className="px-4 py-3">
                     {policy.effect === 'allow' ? (
                       <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] text-emerald-700">
-                        <CheckCircle2 className="h-3 w-3" /> allow
+                        <CheckCircle2 className="h-3 w-3" aria-hidden="true" /> allow
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[11px] text-red-700">
-                        <XCircle className="h-3 w-3" /> deny
+                        <XCircle className="h-3 w-3" aria-hidden="true" /> deny
                       </span>
                     )}
                   </td>
-                  <td className="py-2 font-mono text-xs text-fg-muted">{policy.priority}</td>
-                  <td className="py-2">
+                  <td className="px-4 py-3 font-mono text-xs text-fg-muted">{policy.priority}</td>
+                  <td className="px-4 py-3">
                     <button
                       type="button"
                       onClick={() => togglePolicy(policy)}
-                      className={`rounded-full px-2 py-0.5 text-[11px] ${
+                      aria-pressed={policy.isEnabled}
+                      aria-label={`${policy.name}: ${policy.isEnabled ? 'enabled' : 'disabled'}. Toggle`}
+                      className={`min-h-8 rounded-full px-3 py-1 text-[11px] ${
                         policy.isEnabled
                           ? 'bg-emerald-100 text-emerald-700'
                           : 'bg-surface-sunken text-fg-subtle'
@@ -461,20 +541,22 @@ export function AdminPoliciesClient({ setupPromise }: { setupPromise: Promise<Po
                       {policy.isEnabled ? 'enabled' : 'disabled'}
                     </button>
                   </td>
-                  <td className="px-3 py-2 text-right">
+                  <td className="px-4 py-3 text-right whitespace-nowrap">
                     <button
                       type="button"
                       onClick={() => openPolicy(policy)}
-                      className="mr-2 inline-flex items-center gap-1 text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-400 dark:hover:text-indigo-300"
+                      aria-label={`Edit policy ${policy.name}`}
+                      className="inline-flex min-h-9 items-center gap-1 rounded-lg px-2 text-xs text-indigo-700 hover:bg-hover dark:text-indigo-300"
                     >
-                      <Pencil className="h-3 w-3" /> Edit
+                      <Pencil className="h-3.5 w-3.5" aria-hidden="true" /> Edit
                     </button>
                     <button
                       type="button"
                       onClick={() => removePolicy(policy)}
-                      className="text-xs text-red-700 hover:text-red-800"
+                      aria-label={`Delete policy ${policy.name}`}
+                      className="inline-flex min-h-9 items-center gap-1 rounded-lg px-2 text-xs text-red-700 hover:bg-red-50 dark:text-red-400"
                     >
-                      Delete
+                      <Trash2 className="h-3.5 w-3.5" aria-hidden="true" /> Delete
                     </button>
                   </td>
                 </tr>

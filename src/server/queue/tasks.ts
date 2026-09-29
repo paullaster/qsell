@@ -1,4 +1,4 @@
-import { Task } from 'graphile-worker';
+import type { JobHelpers } from 'graphile-worker';
 import { getContainer } from '@/server/di/container';
 import { ReconciliationEngine } from '@/server/domains/reconciliation/service';
 import { InventoryReservationService } from '@/server/domains/inventory/reservation-service';
@@ -277,8 +277,20 @@ export const retryFailedCall = async (
   });
 };
 
+/** Tokens are kept a week after they stop working, for support/audit questions. */
+const AUTH_TOKEN_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Worker cron task: delete expired or used email-verification / password-reset tokens. */
+export const purgeAuthTokens = async (_payload: unknown, helpers: JobHelpers) => {
+  const removed = await getContainer().authTokens.purgeUnusable(
+    new Date(Date.now() - AUTH_TOKEN_RETENTION_MS),
+  );
+  helpers.logger.info(`Purged ${removed} unusable auth tokens`);
+};
+
 export const tasks = {
   'process-payment-callback': processPaymentCallback,
   'process-webhook': processWebhook,
   'retry-failed-call': retryFailedCall,
+  'purge-auth-tokens': purgeAuthTokens,
 };

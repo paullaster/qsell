@@ -19,12 +19,14 @@ function GrantToggle({
   label,
   icon: Icon,
   onClick,
+  disabled,
 }: {
   active: boolean;
   tone: 'emerald' | 'red';
   label: string;
   icon: typeof Check;
   onClick: () => void;
+  disabled: boolean;
 }) {
   const toneClass =
     tone === 'emerald'
@@ -39,10 +41,11 @@ function GrantToggle({
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       aria-pressed={active}
-      className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs ${stateClass}`}
+      className={`inline-flex min-h-9 items-center gap-1 rounded-md border px-2.5 py-1 text-xs disabled:opacity-40 ${stateClass}`}
     >
-      <Icon className="h-3 w-3" />
+      <Icon className="h-3 w-3" aria-hidden="true" />
       {label}
     </button>
   );
@@ -77,32 +80,40 @@ export function PermissionMatrix({
               return (
                 <div key={key} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
                   <div className="min-w-0">
-                    <p className="text-sm text-fg-strong">{meta.resource}</p>
-                    <p className="truncate text-[11px] text-fg-subtle">{key}</p>
+                    <p id={`perm-${key}`} className="text-sm text-fg-strong">
+                      {meta.resource}
+                    </p>
+                    <p className="text-[11px] break-all text-fg-subtle">{key}</p>
                   </div>
-                  <div className="flex shrink-0 gap-1">
+                  <div
+                    role="group"
+                    aria-labelledby={`perm-${key}`}
+                    className="flex shrink-0 flex-wrap gap-1"
+                  >
                     <GrantToggle
                       active={value === 'allow'}
                       tone="emerald"
                       label="Allow"
                       icon={Check}
-                      onClick={() => !disabled && onChange(key, value === 'allow' ? null : 'allow')}
+                      disabled={disabled}
+                      onClick={() => onChange(key, value === 'allow' ? null : 'allow')}
                     />
                     <GrantToggle
                       active={value === 'deny'}
                       tone="red"
                       label="Deny"
                       icon={X}
-                      onClick={() => !disabled && onChange(key, value === 'deny' ? null : 'deny')}
+                      disabled={disabled}
+                      onClick={() => onChange(key, value === 'deny' ? null : 'deny')}
                     />
                     {value !== null && value !== undefined ? (
                       <button
                         type="button"
                         disabled={disabled}
                         onClick={() => onChange(key, null)}
-                        className="inline-flex items-center gap-1 rounded-md border border-line-strong px-2 py-1 text-xs text-fg-muted hover:bg-hover disabled:opacity-40"
+                        className="inline-flex min-h-9 items-center gap-1 rounded-md border border-line-strong px-2.5 py-1 text-xs text-fg-muted hover:bg-hover disabled:opacity-40"
                       >
-                        <Ban className="h-3 w-3" />
+                        <Ban className="h-3 w-3" aria-hidden="true" />
                         Unset
                       </button>
                     ) : null}

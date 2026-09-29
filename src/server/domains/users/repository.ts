@@ -62,7 +62,6 @@ export interface CreateUserInput {
   status?: 'active' | 'suspended';
   branchId?: string | null;
   customerStoreId?: string | null;
-  mustChangePassword?: boolean;
   extraRoles?: RoleAssignment[];
   directGrants?: DirectGrantInput[];
 }
@@ -225,7 +224,10 @@ export class UsersAdminRepository {
           status: input.status ?? 'active',
           branchId: input.branchId ?? null,
           customerStoreId: input.customerStoreId ?? null,
-          mustChangePassword: input.mustChangePassword ?? false,
+          // The admin knows this password, so the owner must replace it at first sign-in.
+          mustChangePassword: true,
+          // Admin-provisioned accounts are vouched for; only self sign-ups must verify.
+          emailVerifiedAt: new Date(),
           permissionsVersion: 0,
         })
         .returning();
@@ -261,11 +263,12 @@ export class UsersAdminRepository {
     return rows.at(0) !== undefined;
   }
 
+  /** Admin-set password: the admin knows it, so the owner must replace it at next sign-in. */
   async resetPassword(userId: string, newPassword: string): Promise<boolean> {
     const passwordHash = await hash(newPassword, 12);
     const rows = await this.db
       .update(users)
-      .set({ passwordHash, mustChangePassword: false, updatedAt: new Date() })
+      .set({ passwordHash, mustChangePassword: true, updatedAt: new Date() })
       .where(eq(users.id, userId))
       .returning({ id: users.id });
     return rows.at(0) !== undefined;

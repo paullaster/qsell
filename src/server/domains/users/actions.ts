@@ -4,6 +4,8 @@ import { revalidatePath } from 'next/cache';
 import { getContainer } from '@/server/di/container';
 import { requirePermission } from '@/server/domains/access-control/guard';
 import { isPermissionKey } from '@/server/domains/access-control/permissions';
+import { validatePassword } from '@/lib/passwordPolicy';
+import * as Sentry from '@sentry/nextjs';
 import type {
   CreateUserInput,
   DirectGrantInput,
@@ -16,9 +18,8 @@ import type {
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function assertValidPassword(password: string): void {
-  if (password.length < 8) {
-    throw new Error('Password must be at least 8 characters');
-  }
+  const problem = validatePassword(password);
+  if (problem !== null) throw new Error(problem);
 }
 
 function assertValidEmail(email: string): void {
@@ -99,7 +100,13 @@ export async function getUserDetailAction(userId: string): Promise<{
   };
 }
 
-export async function createUserAction(input: CreateUserInput): Promise<UserListEntry> {
+export interface CreateUserResult {
+  user: UserListEntry;
+  /** False when the account exists but the welcome email could not be sent. */
+  welcomeEmailSent: boolean;
+}
+
+export async function createUserAction(input: CreateUserInput): Promise<CreateUserResult> {
   const actorId = await requirePermission('users:create');
   assertValidEmail(input.email);
   assertValidPassword(input.password);
@@ -119,9 +126,21 @@ export async function createUserAction(input: CreateUserInput): Promise<UserList
     role: row.role,
     extraRoles: sanitizeRoles(input.extraRoles),
   });
+
+  // Sent inline (not after the response) so the admin learns immediately if
+  // delivery failed and can hand the credentials over another way.
+  let welcomeEmailSent = true;
+  try {
+    await container.accounts.sendAccountCreated(row, input.password);
+  } catch (error) {
+    welcomeEmailSent = false;
+    console.error('[users.create] welcome email failed', { userId: row.id });
+    Sentry.captureException(error, { tags: { area: 'users', action: 'welcome_email' } });
+  }
+
   // The users page refreshes its list through listUsersAction on the client. Avoid forcing
   // a full Server Component route render as part of this mutation response.
-  return toListEntry(row, input.extraRoles ?? []);
+  return { user: toListEntry(row, input.extraRoles ?? []), welcomeEmailSent };
 }
 
 export async function updateUserAction(userId: string, input: UpdateUserInput): Promise<void> {

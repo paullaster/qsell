@@ -27,6 +27,8 @@ import { UsersAdminRepository } from '@/server/domains/users/repository';
 import { seedAccessControl } from '@/server/domains/access-control/seed';
 import { CatalogRepository, PaymentRecordsRepository } from '@/server/domains/catalog/repository';
 import { UserSessionRepository } from '@/server/domains/auth/session-repository';
+import { AuthTokenRepository } from '@/server/domains/auth/token-repository';
+import { AccountService } from '@/server/domains/auth/account-service';
 
 export interface AppContainer {
   db: DrizzleDb;
@@ -53,6 +55,8 @@ export interface AppContainer {
   catalog: CatalogRepository;
   paymentRecords: PaymentRecordsRepository;
   userSessions: UserSessionRepository;
+  authTokens: AuthTokenRepository;
+  accounts: AccountService;
 }
 
 function createEmailPort(): EmailPort {
@@ -113,6 +117,14 @@ export function getContainer(): AppContainer {
   const catalog = new CatalogRepository(drizzleDb);
   const paymentRecords = new PaymentRecordsRepository(drizzleDb);
   const userSessions = new UserSessionRepository(drizzleDb);
+  const authTokens = new AuthTokenRepository(drizzleDb);
+  const accounts = new AccountService({
+    db: drizzleDb,
+    users,
+    tokens: authTokens,
+    email,
+    companySettings,
+  });
 
   container = {
     db: drizzleDb,
@@ -139,6 +151,8 @@ export function getContainer(): AppContainer {
     catalog,
     paymentRecords,
     userSessions,
+    authTokens,
+    accounts,
   };
 
   return container;

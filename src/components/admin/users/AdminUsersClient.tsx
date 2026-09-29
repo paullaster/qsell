@@ -1,10 +1,12 @@
 'use client';
 
-import React, { use, useMemo, useState, useTransition } from 'react';
+import React, { use, useEffect, useId, useMemo, useRef, useState, useTransition } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
+  Info,
   KeyRound,
+  Pencil,
   Plus,
   RotateCw,
   Search,
@@ -32,11 +34,16 @@ import {
   setDirectGrantsAction,
   updateUserAction,
 } from '@/server/domains/users/actions';
+import { PASSWORD_MIN_LENGTH } from '@/lib/passwordPolicy';
+import { PasswordInput } from '@/components/auth/PasswordInput';
 import { grantListToState, stateToGrants } from './shared';
 import { PermissionMatrix, type GrantValue, type PermissionMatrixState } from './PermissionMatrix';
 
 const fieldClass =
-  'w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong placeholder:text-fg-faint focus:border-indigo-500 focus:outline-none';
+  'w-full min-h-10 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong placeholder:text-fg-faint focus:border-indigo-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40';
+const labelClass = 'block text-xs font-medium text-fg-muted';
+const secondaryButtonClass =
+  'inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg border border-line-strong px-3 py-2 text-sm text-fg hover:bg-hover disabled:opacity-50';
 
 export interface UsersSetup {
   initial: UserListResult;
@@ -83,7 +90,7 @@ function makeEmptyForm(primaryRoleKey: string): UserFormState {
     role: primaryRoleKey,
     status: 'active',
     branchId: '',
-    mustChangePassword: false,
+    mustChangePassword: true,
     password: '',
     newPassword: '',
     extraRoles: [],
@@ -94,6 +101,15 @@ function makeEmptyForm(primaryRoleKey: string): UserFormState {
 function roleLabel(roles: UsersSetup['roles'], key: string): string {
   const role = roles.find((r) => r.key === key);
   return role ? role.name : key;
+}
+
+/** Empty filter inputs mean "no filter". */
+function optional(value: string): string | undefined {
+  return value === '' ? undefined : value;
+}
+
+function errorMessage(err: unknown, fallback: string): string {
+  return err instanceof Error ? err.message : fallback;
 }
 
 export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<UsersSetup> }) {
@@ -121,18 +137,41 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
+  const formHeadingId = useId();
+  const formHeadingRef = useRef<HTMLHeadingElement>(null);
+  // Where keyboard focus returns when the editor closes.
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (showForm) {
+      formHeadingRef.current?.focus();
+    }
+  }, [showForm, editingId]);
+
   const access = setup.access;
-  const has = useMemo(() => (key: PermissionKey) => access.permissions.includes(key), [access]);
-  const can = {
-    read: has('users:read'),
-    create: has('users:create'),
-    update: has('users:update'),
-    del: has('users:delete'),
-    manageRoles: has('users:manage_roles'),
-    resetPassword: has('users:reset_password'),
-  };
+  const can = useMemo(() => {
+    const has = (key: PermissionKey) => access.permissions.includes(key);
+    return {
+      read: has('users:read'),
+      create: has('users:create'),
+      update: has('users:update'),
+      del: has('users:delete'),
+      manageRoles: has('users:manage_roles'),
+      resetPassword: has('users:reset_password'),
+    };
+  }, [access]);
 
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
+
+  const rememberTrigger = () => {
+    returnFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  };
+
+  const closeForm = () => {
+    setShowForm(false);
+    returnFocusRef.current?.focus();
+  };
 
   const reload = (
     next: Partial<{ search: string; role: string; status: string; page: number }>,
@@ -141,9 +180,9 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
       try {
         setError(null);
         const result = await listUsersAction({
-          search: (next.search ?? search) || undefined,
-          role: (next.role ?? roleFilter) || undefined,
-          status: (next.status ?? statusFilter) || undefined,
+          search: optional(next.search ?? search),
+          role: optional(next.role ?? roleFilter),
+          status: optional(next.status ?? statusFilter),
           page: next.page ?? page,
           pageSize,
         });
@@ -151,12 +190,13 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
         setTotal(result.total);
         setPage(result.page);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load users');
+        setError(errorMessage(err, 'Failed to load users'));
       }
     });
   };
 
   const openNew = () => {
+    rememberTrigger();
     setEditingId(null);
     setForm(makeEmptyForm(assignableRoles[0]?.key ?? ''));
     setShowForm(true);
@@ -165,14 +205,18 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
   };
 
   const openEdit = (row: UserListEntry) => {
+    rememberTrigger();
     setEditingId(row.id);
     setShowForm(true);
     setError(null);
+    setNotice(null);
     setForm(makeEmptyForm(row.role));
     startTransition(async () => {
       try {
         const detail = await getUserDetailAction(row.id);
-        if (!detail) return;
+        if (!detail) {
+          return;
+        }
         setForm({
           name: detail.name,
           email: detail.email,
@@ -191,19 +235,21 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
           grants: grantListToState(detail.directGrants),
         });
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load user');
+        setError(errorMessage(err, 'Failed to load user'));
       }
     });
   };
 
   const addExtraRole = () => {
-    const remaining = assignableRoles.filter(
+    const next = assignableRoles.find(
       (r) => r.key !== form.role && !form.extraRoles.some((extra) => extra.roleKey === r.key),
     );
-    if (remaining.length === 0) return;
+    if (next === undefined) {
+      return;
+    }
     setForm((f) => ({
       ...f,
-      extraRoles: [...f.extraRoles, { roleKey: remaining[0].key, branchId: '' }],
+      extraRoles: [...f.extraRoles, { roleKey: next.key, branchId: '' }],
     }));
   };
 
@@ -211,12 +257,15 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
     setForm((f) => ({ ...f, extraRoles: f.extraRoles.filter((_, i) => i !== index) }));
   };
 
-  const save = () => {
+  const save = (e: React.SubmitEvent<HTMLFormElement>) => {
+    e.preventDefault();
     startTransition(async () => {
       try {
         setError(null);
         setNotice(null);
-        if (form.name.trim() === '') throw new Error('Display name is required');
+        if (form.name.trim() === '') {
+          throw new Error('Display name is required');
+        }
         const directGrants: DirectGrantInput[] = stateToGrants(form.grants);
         const extraRoles: RoleAssignment[] = form.extraRoles
           .filter((r) => r.roleKey !== '')
@@ -234,14 +283,16 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
           });
           if (form.newPassword.trim() !== '') {
             await resetUserPasswordAction(editingId, form.newPassword);
+            successMessage =
+              'User changes saved. They will be asked to choose a new password at their next sign-in.';
           }
           if (can.manageRoles) {
             await assignRolesAction(editingId, extraRoles);
             await setDirectGrantsAction(editingId, directGrants);
           }
         } else {
-          const created = await createUserAction({
-            email: form.email,
+          const { user, welcomeEmailSent } = await createUserAction({
+            email: form.email.trim(),
             password: form.password,
             name: form.name,
             title: form.title === '' ? null : form.title,
@@ -249,13 +300,14 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
             role: form.role,
             status: form.status,
             branchId: form.branchId === '' ? null : form.branchId,
-            mustChangePassword: form.mustChangePassword,
             extraRoles,
             directGrants,
           });
-          successMessage = `${created.name} was created successfully.`;
+          successMessage = welcomeEmailSent
+            ? `${user.name} was created. Their sign-in details were emailed to ${user.email}.`
+            : `${user.name} was created, but the welcome email could not be sent. Share the temporary password with them securely — they must change it at first sign-in.`;
         }
-        setShowForm(false);
+        closeForm();
         setNotice(successMessage);
         if (editingId === null) {
           setPage(1);
@@ -264,25 +316,29 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
           reload({});
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to save user');
+        setError(errorMessage(err, 'Failed to save user'));
       }
     });
   };
 
   const removeUser = (row: UserListEntry) => {
-    // eslint-disable-next-line no-alert -- native confirm matches the existing admin UI pattern
-    if (!window.confirm(`Delete ${row.name} (${row.email})? This cannot be undone.`)) return;
+    // eslint-disable-next-line no-alert -- native confirm is keyboard and screen-reader accessible
+    if (!window.confirm(`Delete ${row.name} (${row.email})? This cannot be undone.`)) {
+      return;
+    }
     startTransition(async () => {
       try {
         setError(null);
         await deleteUserAction(row.id);
         setRows((prev) => prev.filter((item) => item.id !== row.id));
+        setTotal((prev) => Math.max(0, prev - 1));
+        setNotice(`${row.name} was deleted.`);
         if (editingId === row.id) {
           setEditingId(null);
           setShowForm(false);
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to delete user');
+        setError(errorMessage(err, 'Failed to delete user'));
       }
     });
   };
@@ -296,21 +352,33 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
         setRows((prev) =>
           prev.map((item) => (item.id === row.id ? { ...item, status: nextStatus } : item)),
         );
+        setForm((f) => ({ ...f, status: nextStatus }));
+        setNotice(`${row.name} is now ${nextStatus}.`);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to update status');
+        setError(errorMessage(err, 'Failed to update status'));
       }
     });
   };
 
-  const applyFilters = () => reload({ page: 1 });
+  const applyFilters = (e: React.SubmitEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    reload({ page: 1 });
+  };
+
+  const editingRow = editingId === null ? undefined : rows.find((item) => item.id === editingId);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 p-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2 text-fg-strong">
-            <UserCog className="h-5 w-5 text-indigo-400" />
-            <h1 className="text-xl font-semibold">Users &amp; Access</h1>
+    <div className="space-y-6">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2 text-fg-strong">
+            <UserCog className="h-5 w-5 shrink-0 text-indigo-500" aria-hidden="true" />
+            <h2 className="text-xl font-semibold">Users &amp; Access</h2>
+            {access.superAdmin ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-indigo-600 px-3 py-1 text-xs text-white">
+                <ShieldCheck className="h-3 w-3" aria-hidden="true" /> Super admin
+              </span>
+            ) : null}
           </div>
           <p className="mt-1 max-w-2xl text-sm text-fg-muted">
             Manage who can sign in and what they can do. Roles are coarse-grained RBAC grants;
@@ -318,22 +386,17 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
             top. Every sensitive change is written to the audit trail.
           </p>
         </div>
-        {access.superAdmin ? (
-          <span className="inline-flex items-center gap-1 rounded-full bg-indigo-600 px-3 py-1 text-xs text-white">
-            <ShieldCheck className="h-3 w-3" /> Super admin
-          </span>
-        ) : null}
         {can.create ? (
           <button
             type="button"
             onClick={openNew}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-500"
+            className="inline-flex min-h-11 w-full shrink-0 items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 sm:w-auto"
           >
-            <Plus className="h-4 w-4" />
+            <Plus className="h-4 w-4" aria-hidden="true" />
             New user
           </button>
         ) : null}
-      </div>
+      </header>
 
       {!access.superAdmin ? (
         <p className="rounded-lg border border-line bg-surface-sunken/40 px-3 py-2 text-xs text-fg-subtle">
@@ -347,74 +410,108 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
       ) : null}
 
       {error !== null ? (
-        <p className="rounded-lg border border-red-500/40 bg-red-50 px-3 py-2 text-sm text-red-800">
+        <p
+          className="rounded-lg border border-red-500/40 bg-red-50 px-3 py-2 text-sm text-red-800"
+          role="alert"
+        >
           {error}
         </p>
       ) : null}
-      {notice !== null ? (
-        <p
-          className="rounded-lg border border-emerald-500/40 bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
-          role="status"
-        >
-          {notice}
-        </p>
-      ) : null}
+      <div aria-live="polite">
+        {notice !== null ? (
+          <p className="rounded-lg border border-emerald-500/40 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+            {notice}
+          </p>
+        ) : null}
+      </div>
 
       {showForm ? (
-        <section className="space-y-4 rounded-xl border border-line bg-surface-sunken/60 p-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-fg-strong">
-              {editingId !== null ? 'Edit user' : 'New user'}
-            </h2>
+        <form
+          onSubmit={save}
+          aria-labelledby={formHeadingId}
+          aria-busy={pending}
+          className="space-y-5 rounded-xl border border-line bg-surface-sunken/60 p-4 sm:p-5"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              closeForm();
+            }
+          }}
+        >
+          <div className="flex items-center justify-between gap-3">
+            <h3
+              id={formHeadingId}
+              ref={formHeadingRef}
+              tabIndex={-1}
+              className="text-base font-semibold text-fg-strong focus:outline-none"
+            >
+              {editingId !== null ? `Edit ${form.name === '' ? 'user' : form.name}` : 'New user'}
+            </h3>
             <button
               type="button"
-              onClick={() => setShowForm(false)}
-              className="text-fg-subtle hover:text-fg-strong"
+              onClick={closeForm}
+              aria-label="Close user editor"
+              className="flex h-10 w-10 items-center justify-center rounded-lg text-fg-subtle hover:bg-hover hover:text-fg-strong"
             >
-              <X className="h-4 w-4" />
+              <X className="h-5 w-5" aria-hidden="true" />
             </button>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block text-xs text-fg-muted">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className={labelClass}>
               Full name
               <input
                 className={`${fieldClass} mt-1`}
+                required
+                autoComplete="off"
                 value={form.name}
                 onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
               />
             </label>
-            <label className="block text-xs text-fg-muted">
+            <label className={labelClass}>
               Email
               <input
-                className={`${fieldClass} mt-1`}
+                className={`${fieldClass} mt-1 disabled:opacity-60`}
+                type="email"
+                inputMode="email"
+                autoCapitalize="none"
+                autoComplete="off"
+                spellCheck={false}
+                required={editingId === null}
                 value={form.email}
                 disabled={editingId !== null}
                 onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                placeholder={
-                  editingId !== null ? 'Unchangeable after creation' : 'user@company.com'
-                }
+                placeholder="user@company.com"
+                aria-describedby={editingId !== null ? `${formHeadingId}-email-hint` : undefined}
               />
+              {editingId !== null ? (
+                <span id={`${formHeadingId}-email-hint`} className="mt-1 block text-fg-subtle">
+                  Email can’t be changed after the account is created.
+                </span>
+              ) : null}
             </label>
-            <label className="block text-xs text-fg-muted">
+            <label className={labelClass}>
               Title / job role
               <input
                 className={`${fieldClass} mt-1`}
+                autoComplete="off"
                 value={form.title}
                 onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
                 placeholder="e.g. Sales Manager"
               />
             </label>
-            <label className="block text-xs text-fg-muted">
+            <label className={labelClass}>
               Phone
               <input
                 className={`${fieldClass} mt-1`}
+                type="tel"
+                inputMode="tel"
+                autoComplete="off"
                 value={form.phone}
                 onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
                 placeholder="0712 000 000"
               />
             </label>
-            <label className="block text-xs text-fg-muted">
+            <label className={labelClass}>
               Primary role
               <select
                 className={`${fieldClass} mt-1`}
@@ -435,18 +532,23 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
                 ))}
               </select>
             </label>
-            <label className="block text-xs text-fg-muted">
+            <label className={labelClass}>
               Status
               <select
                 className={`${fieldClass} mt-1`}
                 value={form.status}
-                onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as Status }))}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    status: e.target.value === 'suspended' ? 'suspended' : 'active',
+                  }))
+                }
               >
                 <option value="active">Active</option>
                 <option value="suspended">Suspended</option>
               </select>
             </label>
-            <label className="block text-xs text-fg-muted">
+            <label className={labelClass}>
               Home branch
               <select
                 className={`${fieldClass} mt-1`}
@@ -461,199 +563,222 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
                 ))}
               </select>
             </label>
+
             {editingId === null ? (
-              <>
-                <label className="block text-xs text-fg-muted">
-                  Initial password
-                  <input
-                    className={`${fieldClass} mt-1`}
-                    type="password"
-                    value={form.password}
-                    onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-                    placeholder="At least 8 characters"
-                  />
+              <div className="space-y-1">
+                <label htmlFor={`${formHeadingId}-password`} className={labelClass}>
+                  Temporary password
                 </label>
-                <label className="flex items-center gap-2 text-sm text-fg">
-                  <input
-                    type="checkbox"
-                    checked={form.mustChangePassword}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, mustChangePassword: e.target.checked }))
-                    }
-                  />
-                  Force password change at first sign-in
+                <PasswordInput
+                  id={`${formHeadingId}-password`}
+                  required
+                  minLength={PASSWORD_MIN_LENGTH}
+                  autoComplete="new-password"
+                  value={form.password}
+                  onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+                  placeholder={`At least ${PASSWORD_MIN_LENGTH} characters`}
+                  aria-describedby={`${formHeadingId}-password-hint`}
+                />
+              </div>
+            ) : null}
+            {editingId !== null && can.resetPassword ? (
+              <div className="space-y-1">
+                <label htmlFor={`${formHeadingId}-new-password`} className={labelClass}>
+                  Set a new temporary password
                 </label>
-              </>
-            ) : (
-              <label className="block text-xs text-fg-muted">
-                Reset password (leave blank to keep current)
-                <input
-                  className={`${fieldClass} mt-1`}
-                  type="password"
+                <PasswordInput
+                  id={`${formHeadingId}-new-password`}
+                  minLength={PASSWORD_MIN_LENGTH}
+                  autoComplete="new-password"
                   value={form.newPassword}
                   onChange={(e) => setForm((f) => ({ ...f, newPassword: e.target.value }))}
-                  placeholder="At least 8 characters"
+                  placeholder="Leave blank to keep the current password"
+                  aria-describedby={`${formHeadingId}-password-hint`}
                 />
-              </label>
-            )}
+              </div>
+            ) : null}
+
+            <p
+              id={`${formHeadingId}-password-hint`}
+              className="flex items-start gap-2 rounded-lg border border-indigo-500/30 bg-indigo-50 px-3 py-2 text-xs text-indigo-900 sm:col-span-2 dark:bg-indigo-950/40 dark:text-indigo-200"
+            >
+              <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              {editingId === null ? (
+                <span>
+                  We’ll email the user their sign-in email and this temporary password. They must
+                  choose their own password the first time they sign in.
+                </span>
+              ) : (
+                <span>
+                  {form.mustChangePassword
+                    ? 'This user has not yet replaced their temporary password. '
+                    : ''}
+                  Setting a new password here makes it temporary: the user must change it at their
+                  next sign-in.
+                </span>
+              )}
+            </p>
           </div>
 
           {can.manageRoles ? (
             <>
-              <div>
-                <div className="mb-1 flex items-center justify-between gap-2 text-xs text-fg-muted">
-                  <span>Additional roles (RBAC — branch-scoped assignments supported)</span>
-                  <button
-                    type="button"
-                    onClick={addExtraRole}
-                    className="inline-flex items-center gap-1 rounded-md border border-line-strong px-2 py-1 text-xs text-fg hover:bg-hover"
-                  >
-                    <Plus className="h-3 w-3" /> Add role
+              <fieldset className="space-y-2">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <legend className="text-xs font-medium text-fg-muted">
+                    Additional roles (RBAC — branch-scoped assignments supported)
+                  </legend>
+                  <button type="button" onClick={addExtraRole} className={secondaryButtonClass}>
+                    <Plus className="h-4 w-4" aria-hidden="true" /> Add role
                   </button>
                 </div>
                 {form.extraRoles.length === 0 ? (
-                  <p className="text-xs text-fg-faint">
+                  <p className="text-xs text-fg-subtle">
                     No additional roles. Roles here stack on top of the primary role.
                   </p>
                 ) : (
-                  <div className="space-y-2">
-                    {form.extraRoles.map((extra, index) => (
-                      <div key={extra.roleKey} className="flex flex-wrap items-center gap-2">
-                        <select
-                          className={`${fieldClass} w-48`}
-                          value={extra.roleKey}
-                          onChange={(e) =>
-                            setForm((f) => ({
-                              ...f,
-                              extraRoles: f.extraRoles.map((item, i) =>
-                                i === index ? { ...item, roleKey: e.target.value } : item,
-                              ),
-                            }))
-                          }
+                  <ul className="space-y-2">
+                    {form.extraRoles.map((extra, index) => {
+                      const name = roleLabel(setup.roles, extra.roleKey);
+                      return (
+                        <li
+                          key={extra.roleKey}
+                          className="grid gap-2 rounded-lg border border-line p-2 sm:grid-cols-[1fr_1fr_auto] sm:items-center sm:border-0 sm:p-0"
                         >
-                          {assignableRoles
-                            .filter((r) => r.key !== form.role)
-                            .map((role) => (
-                              <option key={role.id} value={role.key} disabled={!role.isActive}>
-                                {role.name}
+                          <select
+                            className={fieldClass}
+                            aria-label={`Additional role ${index + 1}`}
+                            value={extra.roleKey}
+                            onChange={(e) =>
+                              setForm((f) => ({
+                                ...f,
+                                extraRoles: f.extraRoles.map((item, i) =>
+                                  i === index ? { ...item, roleKey: e.target.value } : item,
+                                ),
+                              }))
+                            }
+                          >
+                            {assignableRoles
+                              .filter((r) => r.key !== form.role)
+                              .map((role) => (
+                                <option key={role.id} value={role.key} disabled={!role.isActive}>
+                                  {role.name}
+                                </option>
+                              ))}
+                          </select>
+                          <select
+                            className={fieldClass}
+                            aria-label={`Branch scope for ${name}`}
+                            value={extra.branchId}
+                            onChange={(e) =>
+                              setForm((f) => ({
+                                ...f,
+                                extraRoles: f.extraRoles.map((item, i) =>
+                                  i === index ? { ...item, branchId: e.target.value } : item,
+                                ),
+                              }))
+                            }
+                          >
+                            <option value="">Apply everywhere</option>
+                            {setup.branches.map((branch) => (
+                              <option key={branch.id} value={branch.id}>
+                                Only {branch.name}
                               </option>
                             ))}
-                        </select>
-                        <select
-                          className={`${fieldClass} w-52`}
-                          value={extra.branchId}
-                          onChange={(e) =>
-                            setForm((f) => ({
-                              ...f,
-                              extraRoles: f.extraRoles.map((item, i) =>
-                                i === index ? { ...item, branchId: e.target.value } : item,
-                              ),
-                            }))
-                          }
-                        >
-                          <option value="">Apply everywhere</option>
-                          {setup.branches.map((branch) => (
-                            <option key={branch.id} value={branch.id}>
-                              Only {branch.name}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          type="button"
-                          onClick={() => removeExtraRole(index)}
-                          className="text-xs text-red-700 hover:text-red-800"
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    ))}
-                  </div>
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => removeExtraRole(index)}
+                            aria-label={`Remove role ${name}`}
+                            className="inline-flex min-h-10 items-center justify-center gap-1 rounded-lg px-3 text-sm text-red-700 hover:bg-red-50 dark:text-red-400"
+                          >
+                            <X className="h-4 w-4" aria-hidden="true" />
+                            Remove
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
                 )}
-              </div>
+              </fieldset>
 
-              <div>
-                <div className="mb-2 flex items-center gap-2 text-xs text-fg-muted">
-                  <KeyRound className="h-3 w-3" />
-                  <span>Direct permission overrides (highest precedence, RBAC + enforcement)</span>
-                </div>
+              <fieldset>
+                <legend className="mb-2 flex items-center gap-2 text-xs font-medium text-fg-muted">
+                  <KeyRound className="h-3 w-3" aria-hidden="true" />
+                  Direct permission overrides (highest precedence, RBAC + enforcement)
+                </legend>
                 <PermissionMatrix
                   grants={form.grants}
                   onChange={(key, value: GrantValue) =>
                     setForm((f) => ({ ...f, grants: { ...f.grants, [key]: value } }))
                   }
                 />
-              </div>
+              </fieldset>
             </>
           ) : null}
 
-          <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
+          <div className="flex flex-col-reverse gap-2 border-t border-line pt-4 sm:flex-row sm:flex-wrap sm:items-center">
             <button
-              type="button"
+              type="submit"
               disabled={pending}
-              onClick={save}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-500 disabled:opacity-50"
+              className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50 sm:order-first"
             >
-              {pending ? <RotateCw className="h-4 w-4 animate-spin" /> : null}
+              {pending ? <RotateCw className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
               {editingId !== null ? 'Save changes' : 'Create user'}
             </button>
-            {editingId !== null && can.del ? (
+            {editingRow !== undefined && can.update ? (
               <button
                 type="button"
                 disabled={pending}
-                onClick={() => {
-                  const row = rows.find((item) => item.id === editingId);
-                  if (row) removeUser(row);
-                }}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-red-800 px-3 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
-              >
-                <Trash2 className="h-4 w-4" />
-                Delete
-              </button>
-            ) : null}
-            {editingId !== null && can.update ? (
-              <button
-                type="button"
-                disabled={pending}
-                onClick={() => {
-                  const row = rows.find((item) => item.id === editingId);
-                  if (row) toggleStatus(row);
-                }}
-                className="rounded-lg border border-line-strong px-3 py-2 text-sm text-fg"
+                onClick={() => toggleStatus(editingRow)}
+                className={secondaryButtonClass}
               >
                 {form.status === 'suspended' ? 'Reactivate' : 'Suspend'}
               </button>
             ) : null}
-            <button
-              type="button"
-              onClick={() => setShowForm(false)}
-              className="rounded-lg border border-line-strong px-3 py-2 text-sm text-fg"
-            >
-              Close
+            {editingRow !== undefined && can.del && access.userId !== editingRow.id ? (
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => removeUser(editingRow)}
+                className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg border border-red-700 px-3 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50 dark:text-red-400"
+              >
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
+                Delete
+              </button>
+            ) : null}
+            <button type="button" onClick={closeForm} className={secondaryButtonClass}>
+              Cancel
             </button>
           </div>
-        </section>
+        </form>
       ) : null}
 
-      <div className="flex flex-wrap items-end gap-2">
-        <label className="text-xs text-fg-muted">
+      <form
+        role="search"
+        aria-label="Filter users"
+        onSubmit={applyFilters}
+        className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_12rem_10rem_auto] lg:items-end"
+      >
+        <label className={labelClass}>
           Search
-          <div className="mt-1 flex items-center gap-1">
-            <Search className="h-4 w-4 text-fg-faint" />
+          <span className="relative mt-1 block">
+            <Search
+              className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-fg-faint"
+              aria-hidden="true"
+            />
             <input
-              className={`${fieldClass} w-52`}
+              type="search"
+              className={`${fieldClass} pl-9`}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') applyFilters();
-              }}
               placeholder="Name or email"
             />
-          </div>
+          </span>
         </label>
-        <label className="text-xs text-fg-muted">
+        <label className={labelClass}>
           Primary role
           <select
-            className={`${fieldClass} mt-1 w-44`}
+            className={`${fieldClass} mt-1`}
             value={roleFilter}
             onChange={(e) => setRoleFilter(e.target.value)}
           >
@@ -665,10 +790,10 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
             ))}
           </select>
         </label>
-        <label className="text-xs text-fg-muted">
+        <label className={labelClass}>
           Status
           <select
-            className={`${fieldClass} mt-1 w-36`}
+            className={`${fieldClass} mt-1`}
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
           >
@@ -677,141 +802,245 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
             <option value="suspended">Suspended</option>
           </select>
         </label>
-        <button
-          type="button"
-          disabled={pending}
-          onClick={applyFilters}
-          className="rounded-lg border border-line-strong px-3 py-2 text-sm text-fg hover:bg-hover disabled:opacity-50"
-        >
-          Apply
+        <button type="submit" disabled={pending} className={secondaryButtonClass}>
+          Apply filters
         </button>
-        <span className="ml-auto self-center text-xs text-fg-subtle">
-          {total} user{total === 1 ? '' : 's'}
-        </span>
-      </div>
+      </form>
 
-      <div className="overflow-hidden rounded-xl border border-line">
-        <table className="w-full text-left text-sm text-fg">
-          <thead className="bg-surface-raised text-xs text-fg-subtle">
-            <tr>
-              <th className="px-3 py-2">User</th>
-              <th>Roles</th>
-              <th>Status</th>
-              <th>Last sign-in</th>
-              <th className="px-3 py-2 text-right"> </th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <tr>
-                <td colSpan={5} className="px-3 py-6 text-fg-subtle">
-                  No users found. Adjust the filters or create your first user.
-                </td>
-              </tr>
-            ) : (
-              rows.map((row) => {
-                const isSelf = access.userId === row.id;
-                return (
-                  <tr key={row.id} className="border-t border-line hover:bg-hover">
-                    <td className="px-3 py-2">
-                      <button type="button" className="text-left" onClick={() => openEdit(row)}>
-                        <p className="text-fg-strong">
-                          {row.name}{' '}
-                          {isSelf ? <span className="text-xs text-indigo-300">(you)</span> : null}
-                        </p>
-                        <p className="text-xs text-fg-subtle">{row.email}</p>
-                      </button>
-                    </td>
-                    <td className="py-2">
-                      <div className="flex flex-wrap gap-1">
-                        <span className="rounded-full border border-line-strong px-2 py-0.5 text-[11px] text-fg">
-                          {roleLabel(setup.roles, row.role)}
-                        </span>
-                        {row.extraRoles.map((key) => (
-                          <span
-                            key={key}
-                            className="rounded-full border border-indigo-700/60 px-2 py-0.5 text-[11px] text-indigo-300"
-                          >
-                            {roleLabel(setup.roles, key)}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="py-2">
-                      <span
-                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] ${
-                          row.status === 'active'
-                            ? 'bg-emerald-100 text-emerald-700'
-                            : 'bg-red-50 text-red-700'
-                        }`}
+      <p className="text-xs text-fg-subtle" aria-live="polite">
+        {total} user{total === 1 ? '' : 's'}
+      </p>
+
+      <div aria-busy={pending}>
+        {rows.length === 0 ? (
+          <p className="rounded-xl border border-line px-4 py-6 text-sm text-fg-subtle">
+            No users found. Adjust the filters or create your first user.
+          </p>
+        ) : (
+          <>
+            {/* Phones and small tablets: one card per user. */}
+            <ul className="space-y-3 md:hidden">
+              {rows.map((row) => (
+                <li key={row.id} className="rounded-xl border border-line bg-surface p-4">
+                  <UserSummary row={row} roles={setup.roles} isSelf={access.userId === row.id} />
+                  <div className="mt-3 flex gap-2 border-t border-line pt-3">
+                    <button
+                      type="button"
+                      onClick={() => openEdit(row)}
+                      aria-label={`Edit ${row.name}`}
+                      className={`${secondaryButtonClass} flex-1`}
+                    >
+                      <Pencil className="h-4 w-4" aria-hidden="true" /> Edit
+                    </button>
+                    {access.userId !== row.id && can.del ? (
+                      <button
+                        type="button"
+                        onClick={() => removeUser(row)}
+                        aria-label={`Delete ${row.name}`}
+                        className="inline-flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-lg border border-red-700 px-3 py-2 text-sm text-red-700 hover:bg-red-50 dark:text-red-400"
                       >
-                        {row.status}
-                      </span>
-                      {row.mustChangePassword ? (
-                        <span className="ml-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700">
-                          reset
-                        </span>
-                      ) : null}
-                    </td>
-                    <td className="py-2 text-xs text-fg-subtle">
-                      {row.lastLoginAt ? timeAgo(row.lastLoginAt) : 'Never'}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      {!isSelf && can.del ? (
-                        <button
-                          type="button"
-                          onClick={() => removeUser(row)}
-                          className="text-xs text-red-700 hover:text-red-800"
-                        >
-                          Delete
-                        </button>
-                      ) : null}
-                    </td>
+                        <Trash2 className="h-4 w-4" aria-hidden="true" /> Delete
+                      </button>
+                    ) : null}
+                  </div>
+                </li>
+              ))}
+            </ul>
+
+            {/* Tablets and up: a table. Scrolls sideways rather than clipping if space runs out. */}
+            <div className="hidden overflow-x-auto rounded-xl border border-line md:block">
+              <table className="w-full min-w-[40rem] text-left text-sm text-fg">
+                <caption className="sr-only">
+                  Users, page {page} of {pageCount}
+                </caption>
+                <thead className="bg-surface-raised text-xs text-fg-subtle">
+                  <tr>
+                    <th scope="col" className="px-4 py-2 font-medium">
+                      User
+                    </th>
+                    <th scope="col" className="px-4 py-2 font-medium">
+                      Roles
+                    </th>
+                    <th scope="col" className="px-4 py-2 font-medium">
+                      Status
+                    </th>
+                    <th scope="col" className="px-4 py-2 font-medium">
+                      Last sign-in
+                    </th>
+                    <th scope="col" className="px-4 py-2 text-right font-medium">
+                      <span className="sr-only">Actions</span>
+                    </th>
                   </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+                </thead>
+                <tbody>
+                  {rows.map((row) => {
+                    const isSelf = access.userId === row.id;
+                    return (
+                      <tr key={row.id} className="border-t border-line hover:bg-hover">
+                        <td className="px-4 py-3">
+                          <p className="text-fg-strong">
+                            {row.name}{' '}
+                            {isSelf ? (
+                              <span className="text-xs text-indigo-700 dark:text-indigo-300">
+                                (you)
+                              </span>
+                            ) : null}
+                          </p>
+                          <p className="text-xs break-all text-fg-subtle">{row.email}</p>
+                        </td>
+                        <td className="px-4 py-3">
+                          <RoleChips row={row} roles={setup.roles} />
+                        </td>
+                        <td className="px-4 py-3">
+                          <StatusChips row={row} />
+                        </td>
+                        <td className="px-4 py-3 text-xs whitespace-nowrap text-fg-subtle">
+                          {row.lastLoginAt ? timeAgo(row.lastLoginAt) : 'Never'}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex justify-end gap-1">
+                            <button
+                              type="button"
+                              onClick={() => openEdit(row)}
+                              aria-label={`Edit ${row.name}`}
+                              className="inline-flex min-h-9 items-center gap-1 rounded-lg px-2 text-xs text-indigo-700 hover:bg-hover dark:text-indigo-300"
+                            >
+                              <Pencil className="h-3.5 w-3.5" aria-hidden="true" /> Edit
+                            </button>
+                            {!isSelf && can.del ? (
+                              <button
+                                type="button"
+                                onClick={() => removeUser(row)}
+                                aria-label={`Delete ${row.name}`}
+                                className="inline-flex min-h-9 items-center gap-1 rounded-lg px-2 text-xs text-red-700 hover:bg-red-50 dark:text-red-400"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" aria-hidden="true" /> Delete
+                              </button>
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
       </div>
 
       {pageCount > 1 ? (
-        <div className="flex items-center justify-between">
+        <nav aria-label="Users pagination" className="flex items-center justify-between gap-2">
           <button
             type="button"
             disabled={page <= 1 || pending}
             onClick={() => reload({ page: page - 1 })}
-            className="inline-flex items-center gap-1 rounded-lg border border-line-strong px-3 py-2 text-sm text-fg disabled:opacity-40"
+            className={secondaryButtonClass}
           >
-            <ChevronLeft className="h-4 w-4" /> Previous
+            <ChevronLeft className="h-4 w-4" aria-hidden="true" /> Previous
           </button>
-          <span className="text-xs text-fg-subtle">
+          <span className="text-xs text-fg-subtle" aria-live="polite">
             Page {page} of {pageCount}
           </span>
           <button
             type="button"
             disabled={page >= pageCount || pending}
             onClick={() => reload({ page: page + 1 })}
-            className="inline-flex items-center gap-1 rounded-lg border border-line-strong px-3 py-2 text-sm text-fg disabled:opacity-40"
+            className={secondaryButtonClass}
           >
-            Next <ChevronRight className="h-4 w-4" />
+            Next <ChevronRight className="h-4 w-4" aria-hidden="true" />
           </button>
-        </div>
+        </nav>
       ) : null}
 
       {!can.read ? (
         <p className="flex items-center gap-2 rounded-lg border border-amber-700/40 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          <Users className="h-4 w-4" /> You do not have the <code>users:read</code> permission.
+          <Users className="h-4 w-4" aria-hidden="true" /> You do not have the{' '}
+          <code>users:read</code> permission.
         </p>
       ) : null}
     </div>
   );
 }
 
+function UserSummary({
+  row,
+  roles,
+  isSelf,
+}: {
+  row: UserListEntry;
+  roles: UsersSetup['roles'];
+  isSelf: boolean;
+}) {
+  return (
+    <div className="space-y-2">
+      <div>
+        <p className="font-medium text-fg-strong">
+          {row.name}{' '}
+          {isSelf ? (
+            <span className="text-xs text-indigo-700 dark:text-indigo-300">(you)</span>
+          ) : null}
+        </p>
+        <p className="text-xs break-all text-fg-subtle">{row.email}</p>
+      </div>
+      <RoleChips row={row} roles={roles} />
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusChips row={row} />
+        <span className="text-xs text-fg-subtle">
+          Last sign-in: {row.lastLoginAt ? timeAgo(row.lastLoginAt) : 'never'}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function RoleChips({ row, roles }: { row: UserListEntry; roles: UsersSetup['roles'] }) {
+  return (
+    <ul className="flex flex-wrap gap-1" aria-label="Roles">
+      <li className="rounded-full border border-line-strong px-2 py-0.5 text-[11px] text-fg">
+        {roleLabel(roles, row.role)}
+      </li>
+      {row.extraRoles.map((key) => (
+        <li
+          key={key}
+          className="rounded-full border border-indigo-700/60 px-2 py-0.5 text-[11px] text-indigo-700 dark:text-indigo-300"
+        >
+          {roleLabel(roles, key)}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function StatusChips({ row }: { row: UserListEntry }) {
+  return (
+    <span className="inline-flex flex-wrap gap-1">
+      <span
+        className={`rounded-full px-2 py-0.5 text-[11px] capitalize ${
+          row.status === 'active' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-50 text-red-800'
+        }`}
+      >
+        {row.status}
+      </span>
+      {row.mustChangePassword ? (
+        <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] text-amber-800">
+          Password change pending
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 function timeAgo(date: Date): string {
   const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
-  if (seconds < 60) return 'just now';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  if (seconds < 60) {
+    return 'just now';
+  }
+  if (seconds < 3600) {
+    return `${Math.floor(seconds / 60)}m ago`;
+  }
+  if (seconds < 86400) {
+    return `${Math.floor(seconds / 3600)}h ago`;
+  }
   return date.toLocaleDateString();
 }

@@ -10,6 +10,7 @@ declare module 'next-auth' {
     role?: string;
     phone?: string | null;
     customerStoreId?: string | null;
+    mustChangePassword?: boolean;
   }
   interface Session {
     user: {
@@ -19,6 +20,8 @@ declare module 'next-auth' {
       role: string;
       phone?: string | null;
       customerStoreId?: string | null;
+      /** Set for admin-issued passwords; the user must choose their own before doing anything else. */
+      mustChangePassword: boolean;
     };
   }
 }
@@ -28,6 +31,7 @@ declare module 'next-auth/jwt' {
     role?: string;
     phone?: string | null;
     customerStoreId?: string | null;
+    mustChangePassword?: boolean;
   }
 }
 
@@ -70,6 +74,8 @@ const authConfig = {
         await users.ensureSuperAdminSeed();
         const user = await users.verifyPassword(email, password);
         if (!user) return null;
+        // Enforced here, not only in loginAction, so no sign-in path can skip verification.
+        if (user.emailVerifiedAt === null) return null;
 
         return {
           id: user.id,
@@ -78,6 +84,7 @@ const authConfig = {
           role: user.role,
           phone: user.phone,
           customerStoreId: user.customerStoreId,
+          mustChangePassword: user.mustChangePassword,
         };
       },
     }),
@@ -86,7 +93,12 @@ const authConfig = {
     authorized({ auth, request }) {
       const path = request.nextUrl.pathname;
       if (path.startsWith('/admin')) {
-        return isStaffRole(auth?.user?.role);
+        if (!isStaffRole(auth?.user.role)) return false;
+        if (auth?.user.mustChangePassword === true) {
+          const target = new URL('/change-password', request.nextUrl);
+          target.searchParams.set('callbackUrl', `${path}${request.nextUrl.search}`);
+          return Response.redirect(target);
+        }
       }
       return true;
     },
@@ -95,6 +107,7 @@ const authConfig = {
         token.role = user.role;
         token.phone = user.phone;
         token.customerStoreId = user.customerStoreId;
+        token.mustChangePassword = user.mustChangePassword === true;
         token.sub = user.id;
       }
       return token;
@@ -109,6 +122,7 @@ const authConfig = {
           typeof token.customerStoreId === 'string' || token.customerStoreId === null
             ? token.customerStoreId
             : null;
+        session.user.mustChangePassword = token.mustChangePassword === true;
       }
       return session;
     },
