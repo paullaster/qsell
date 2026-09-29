@@ -27,16 +27,24 @@ type View =
 
 const isActive = (job: ImportJobView) => job.status === 'queued' || job.status === 'processing';
 
-export function ProductImportDialog({
-  isOpen,
-  onClose,
-  onImported,
-}: {
+interface ProductImportDialogProps {
   isOpen: boolean;
   onClose: () => void;
   /** Called once when an import finishes creating products. */
   onImported: () => void;
-}) {
+}
+
+/**
+ * Rendered only while open: each opening mounts a fresh dialog, so no file,
+ * error or previous import view carries over. Past imports stay reachable
+ * through the "Recent imports" list.
+ */
+export function ProductImportDialog({ isOpen, onClose, onImported }: ProductImportDialogProps) {
+  if (!isOpen) return null;
+  return <ImportDialogContent onClose={onClose} onImported={onImported} />;
+}
+
+function ImportDialogContent({ onClose, onImported }: Omit<ProductImportDialogProps, 'isOpen'>) {
   const titleId = useId();
   const fileInputId = useId();
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -51,25 +59,19 @@ export function ProductImportDialog({
   /** When the tracked job was last fetched; drives the "worker may be down" hint without reading the clock during render. */
   const [polledAt, setPolledAt] = useState(0);
 
-  // Open: remember focus, move it into the dialog, resume any running import.
+  // On open: remember focus, move it into the dialog, load recent imports for reference.
   useEffect(() => {
-    if (!isOpen) return;
     returnFocusRef.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     headingRef.current?.focus();
     listProductImportsAction()
-      .then((jobs) => {
-        setRecent(jobs);
-        const running = jobs.find(isActive);
-        if (running) setView({ kind: 'tracking', job: running });
-      })
+      .then(setRecent)
       .catch(() => {
         /* the list is a convenience; the dialog still works without it */
       });
-  }, [isOpen]);
+  }, []);
 
   const close = useCallback(() => {
-    setError(null);
     onClose();
     returnFocusRef.current?.focus();
   }, [onClose]);
@@ -77,7 +79,7 @@ export function ProductImportDialog({
   // Poll the tracked job until it finishes.
   const trackedId = view.kind === 'tracking' && isActive(view.job) ? view.job.id : null;
   useEffect(() => {
-    if (!isOpen || trackedId === null) return;
+    if (trackedId === null) return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
       getProductImportAction(trackedId)
@@ -102,9 +104,13 @@ export function ProductImportDialog({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [isOpen, trackedId, view, onImported]);
+  }, [trackedId, view, onImported]);
 
-  if (!isOpen) return null;
+  const startOver = () => {
+    setView({ kind: 'idle' });
+    setFile(null);
+    setError(null);
+  };
 
   const upload = (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -233,6 +239,7 @@ export function ProductImportDialog({
               polledAt={polledAt}
               onDownloadFailures={downloadFailures}
               onRetry={retry}
+              onStartOver={startOver}
               pending={pending}
             />
           ) : (
@@ -390,12 +397,15 @@ function JobProgress({
   polledAt,
   onDownloadFailures,
   onRetry,
+  onStartOver,
   pending,
 }: {
   job: ImportJobView;
   polledAt: number;
   onDownloadFailures: (jobId: string) => void;
   onRetry: (jobId: string) => void;
+  /** Back to a fresh upload form; a running import keeps going in the background. */
+  onStartOver: () => void;
   pending: boolean;
 }) {
   const done = job.createdCount + job.failedCount;
@@ -490,6 +500,14 @@ function JobProgress({
             <RotateCw className="h-4 w-4" aria-hidden="true" /> Retry import
           </button>
         ) : null}
+        <button
+          type="button"
+          disabled={pending}
+          onClick={onStartOver}
+          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-line-strong px-4 text-sm text-fg hover:bg-hover disabled:opacity-50 sm:ml-auto"
+        >
+          <FileUp className="h-4 w-4" aria-hidden="true" /> Import another file
+        </button>
       </div>
     </div>
   );
