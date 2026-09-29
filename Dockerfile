@@ -28,12 +28,18 @@ CMD ["pnpm", "dev", "--hostname", "0.0.0.0", "--port", "3069"]
 FROM dependencies AS builder
 COPY . .
 ARG DEPLOYMENT_VERSION=local
+ARG NEXT_PUBLIC_SENTRY_DSN
+ARG SERVER_ACTION_ALLOWED_ORIGINS=omnicommerce.brainsporellc.com
 # src/auth.ts validates AUTH_SECRET during module initialization at build time.
 # This is a disposable build-only value; the runtime secret comes from .env.runtime.
 ENV NODE_ENV=production \
     AUTH_SECRET=build-only-not-a-runtime-secret \
-    DEPLOYMENT_VERSION=${DEPLOYMENT_VERSION}
-RUN pnpm build
+    DEPLOYMENT_VERSION=${DEPLOYMENT_VERSION} \
+    NEXT_PUBLIC_DEPLOYMENT_VERSION=${DEPLOYMENT_VERSION} \
+    NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN} \
+    SERVER_ACTION_ALLOWED_ORIGINS=${SERVER_ACTION_ALLOWED_ORIGINS}
+RUN --mount=type=secret,id=sentry_auth_token,target=/run/secrets/sentry-auth-token,required=false \
+    SENTRY_AUTH_TOKEN="$(cat /run/secrets/sentry-auth-token 2>/dev/null || true)" pnpm build
 
 FROM node:${NODE_VERSION}-alpine AS runtime-base
 WORKDIR /app

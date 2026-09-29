@@ -88,6 +88,10 @@ jobs:
           cache-to: type=gha,mode=max,scope=web
           build-args: |
             DEPLOYMENT_VERSION=${{ github.sha }}
+            NEXT_PUBLIC_SENTRY_DSN=${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
+            SERVER_ACTION_ALLOWED_ORIGINS=${{ vars.SERVER_ACTION_ALLOWED_ORIGINS || 'omnicommerce.brainsporellc.com' }}
+          secrets: |
+            sentry_auth_token=${{ secrets.SENTRY_AUTH_TOKEN }}
 
       - name: Build and publish worker image
         uses: docker/build-push-action@v6

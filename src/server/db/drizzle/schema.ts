@@ -455,34 +455,6 @@ export const auditLogs = pgTable(
   ],
 );
 
-/** Server and client errors retained for production troubleshooting. */
-export const applicationErrorLogs = pgTable(
-  'application_error_logs',
-  {
-    id: uuid('id').defaultRandom().primaryKey(),
-    source: text('source').notNull().default('server'),
-    errorName: text('error_name').notNull(),
-    message: text('message').notNull(),
-    stack: text('stack'),
-    digest: text('digest'),
-    path: text('path'),
-    method: text('method'),
-    routePath: text('route_path'),
-    routeType: text('route_type'),
-    runtime: text('runtime'),
-    requestId: text('request_id'),
-    userAgent: text('user_agent'),
-    actorUserId: uuid('actor_user_id').references(() => users.id, { onDelete: 'set null' }),
-    context: jsonb('context').$type<Record<string, unknown>>().notNull().default({}),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [
-    index('application_error_logs_created_idx').on(t.createdAt),
-    index('application_error_logs_digest_idx').on(t.digest),
-    index('application_error_logs_route_idx').on(t.routePath, t.createdAt),
-  ],
-);
-
 export const orders = pgTable(
   'orders',
   {

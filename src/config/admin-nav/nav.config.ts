@@ -315,15 +315,6 @@ export const ADMIN_NAV: AdminNavItem[] = [
             icon: 'Wallet',
             installed: true,
           },
-          {
-            id: 'application-errors',
-            title: 'Application Error Logs',
-            name: 'application-errors',
-            href: '/admin/application-errors',
-            description: 'Inspect server errors and production error digests',
-            icon: 'Activity',
-            installed: true,
-          },
         ],
       },
       {

@@ -20,6 +20,7 @@
     "worker": "tsx src/server/queue/index.ts"
   },
   "dependencies": {
+    "@sentry/nextjs": "^11.0.0",
     "bcryptjs": "^3.0.3",
     "date-fns": "^4.4.0",
     "drizzle-orm": "^0.45.2",
