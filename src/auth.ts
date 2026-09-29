@@ -1,4 +1,4 @@
-import NextAuth from 'next-auth';
+import NextAuth, { CredentialsSignin } from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 import type { NextAuthConfig } from 'next-auth';
 import type {} from 'next-auth/jwt';
@@ -35,6 +35,14 @@ declare module 'next-auth/jwt' {
     /** Epoch ms when role/status were last confirmed against the database. */
     verifiedAt?: number;
   }
+}
+
+/** `signIn()` rethrows this with its `code`, so callers can tell "unverified" from "wrong password". */
+export const EMAIL_NOT_VERIFIED_CODE = 'email_not_verified';
+
+/** Only thrown after the password matched, so it never reveals whether an address exists. */
+class EmailNotVerified extends CredentialsSignin {
+  override code = EMAIL_NOT_VERIFIED_CODE;
 }
 
 const authSecret = process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
@@ -82,8 +90,8 @@ const authConfig = {
         await users.ensureSuperAdminSeed();
         const user = await users.verifyPassword(email, password);
         if (!user) return null;
-        // Enforced here, not only in loginAction, so no sign-in path can skip verification.
-        if (user.emailVerifiedAt === null) return null;
+        // The single place credentials are checked — every sign-in path goes through here.
+        if (user.emailVerifiedAt === null) throw new EmailNotVerified();
 
         return {
           id: user.id,
