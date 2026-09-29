@@ -1,7 +1,7 @@
 'use server';
 
-import { AuthError } from 'next-auth';
-import { auth, signIn, signOut } from '@/auth';
+import { AuthError, CredentialsSignin } from 'next-auth';
+import { auth, EMAIL_NOT_VERIFIED_CODE, signIn, signOut } from '@/auth';
 import { UserRepository } from '@/server/domains/auth/user-repository';
 import { isStaffRole } from '@/server/domains/auth/roles';
 import { getContainer } from '@/server/di/container';
@@ -299,30 +299,25 @@ export async function loginAction(input: {
   }
 
   try {
-    const users = new UserRepository();
-    await users.ensureSuperAdminSeed();
-    const verified = await users.verifyPassword(email, password);
-    if (!verified) {
-      return { ok: false, error: 'Email or password is incorrect. Please try again.' };
-    }
-    // Only disclosed after the password matched, so it can't be used to probe addresses.
-    if (verified.emailVerifiedAt === null) {
+    // The password is checked exactly once, in the Credentials provider's authorize().
+    // (It used to be checked here as well: bcrypt is deliberately slow — ~2 s per check
+    // with bcryptjs on a modest CPU — so every login paid for it twice.)
+    await signIn('credentials', { email, password, redirect: false });
+    // Role and flags come from an indexed lookup; no hashing, the password is already verified.
+    const user = await new UserRepository().findByEmail(email);
+    return {
+      ok: true,
+      role: user?.role ?? 'customer',
+      mustChangePassword: user?.mustChangePassword === true,
+    };
+  } catch (err) {
+    if (err instanceof CredentialsSignin && err.code === EMAIL_NOT_VERIFIED_CODE) {
       return {
         ok: false,
         code: 'EMAIL_NOT_VERIFIED',
         error: 'Please confirm your email address first. Check your inbox for the link we sent.',
       };
     }
-    await signIn('credentials', {
-      email,
-      password,
-      redirect: false,
-    });
-    // Prefer DB-verified role — auth() in the same request often lacks the new session cookie.
-    const session = await auth();
-    const role = verified.role || session?.user?.role || 'customer';
-    return { ok: true, role, mustChangePassword: verified.mustChangePassword };
-  } catch (err) {
     if (err instanceof AuthError) {
       return { ok: false, error: 'Email or password is incorrect. Please try again.' };
     }
