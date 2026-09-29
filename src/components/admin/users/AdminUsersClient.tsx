@@ -42,6 +42,9 @@ import { PermissionMatrix, type GrantValue, type PermissionMatrixState } from '.
 const fieldClass =
   'w-full min-h-10 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong placeholder:text-fg-faint focus:border-indigo-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40';
 const labelClass = 'block text-xs font-medium text-fg-muted';
+
+/** Shopper accounts: no extra roles, no permission overrides (enforced server-side too). */
+const CUSTOMER_ROLE = 'customer';
 const secondaryButtonClass =
   'inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg border border-line-strong px-3 py-2 text-sm text-fg hover:bg-hover disabled:opacity-50';
 
@@ -130,9 +133,7 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
   const [statusFilter, setStatusFilter] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState<UserFormState>(() =>
-    makeEmptyForm(assignableRoles[0]?.key ?? ''),
-  );
+  const [form, setForm] = useState<UserFormState>(() => makeEmptyForm(''));
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -198,7 +199,8 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
   const openNew = () => {
     rememberTrigger();
     setEditingId(null);
-    setForm(makeEmptyForm(assignableRoles[0]?.key ?? ''));
+    // No pre-selected role: a silent default of "Administrator" once created admins by accident.
+    setForm(makeEmptyForm(''));
     setShowForm(true);
     setError(null);
     setNotice(null);
@@ -242,7 +244,10 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
 
   const addExtraRole = () => {
     const next = assignableRoles.find(
-      (r) => r.key !== form.role && !form.extraRoles.some((extra) => extra.roleKey === r.key),
+      (r) =>
+        r.key !== form.role &&
+        r.key !== CUSTOMER_ROLE &&
+        !form.extraRoles.some((extra) => extra.roleKey === r.key),
     );
     if (next === undefined) {
       return;
@@ -265,6 +270,9 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
         setNotice(null);
         if (form.name.trim() === '') {
           throw new Error('Display name is required');
+        }
+        if (form.role === '') {
+          throw new Error('Choose a primary role');
         }
         const directGrants: DirectGrantInput[] = stateToGrants(form.grants);
         const extraRoles: RoleAssignment[] = form.extraRoles
@@ -515,16 +523,25 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
               Primary role
               <select
                 className={`${fieldClass} mt-1`}
+                required
                 value={form.role}
                 onChange={(e) => {
                   const roleKey = e.target.value;
                   setForm((f) => ({
                     ...f,
                     role: roleKey,
-                    extraRoles: f.extraRoles.filter((extra) => extra.roleKey !== roleKey),
+                    // Customers carry no staff roles or overrides.
+                    extraRoles:
+                      roleKey === CUSTOMER_ROLE
+                        ? []
+                        : f.extraRoles.filter((extra) => extra.roleKey !== roleKey),
+                    grants: roleKey === CUSTOMER_ROLE ? {} : f.grants,
                   }));
                 }}
               >
+                <option value="" disabled>
+                  Choose a role…
+                </option>
                 {assignableRoles.map((role) => (
                   <option key={role.id} value={role.key} disabled={!role.isActive}>
                     {role.name} {role.isSystem ? '· system' : ''}
@@ -620,7 +637,13 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
             </p>
           </div>
 
-          {can.manageRoles ? (
+          {can.manageRoles && form.role === CUSTOMER_ROLE ? (
+            <p className="rounded-lg border border-line bg-surface px-3 py-2 text-xs text-fg-muted">
+              Customer accounts shop on the storefront only. They can’t hold additional roles or
+              permission overrides, and they can’t open the admin panel.
+            </p>
+          ) : null}
+          {can.manageRoles && form.role !== CUSTOMER_ROLE ? (
             <>
               <fieldset className="space-y-2">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -658,7 +681,7 @@ export function AdminUsersClient({ setupPromise }: { setupPromise: Promise<Users
                             }
                           >
                             {assignableRoles
-                              .filter((r) => r.key !== form.role)
+                              .filter((r) => r.key !== form.role && r.key !== CUSTOMER_ROLE)
                               .map((role) => (
                                 <option key={role.id} value={role.key} disabled={!role.isActive}>
                                   {role.name}

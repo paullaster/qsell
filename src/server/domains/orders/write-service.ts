@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { Order, OrderItem, PaymentProvider } from '@/types/index';
 import { computeCheckoutTotals } from '@/lib/checkoutPricing';
 import { getContainer } from '@/server/di/container';
@@ -95,7 +96,8 @@ export class OrderWriteService {
     const { subtotal, tax, shippingFee, totalAmount } =
       params.quotedTotals ?? computeCheckoutTotals(pricedLines);
     const orderId =
-      params.orderId ?? `ord_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      // Unguessable: the id is the only key for a guest's invoice download.
+      params.orderId ?? `ord_${randomUUID()}`;
     const orderNumber =
       params.orderNumber ??
       `ORD-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;

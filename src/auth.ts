@@ -32,6 +32,8 @@ declare module 'next-auth/jwt' {
     phone?: string | null;
     customerStoreId?: string | null;
     mustChangePassword?: boolean;
+    /** Epoch ms when role/status were last confirmed against the database. */
+    verifiedAt?: number;
   }
 }
 
@@ -39,6 +41,12 @@ const authSecret = process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
 if (!authSecret) {
   throw new Error('AUTH_SECRET is required. Generate one with: openssl rand -base64 32');
 }
+
+/**
+ * How stale a staff session's role may get. JWTs live for 30 days, so without
+ * this a demoted or suspended admin would keep admin access until expiry.
+ */
+const STAFF_REVALIDATE_MS = 60_000;
 
 const authConfig = {
   secret: authSecret,
@@ -102,14 +110,31 @@ const authConfig = {
       }
       return true;
     },
-    jwt({ token, user }) {
+    async jwt({ token, user }) {
       if (user) {
         token.role = user.role;
         token.phone = user.phone;
         token.customerStoreId = user.customerStoreId;
         token.mustChangePassword = user.mustChangePassword === true;
         token.sub = user.id;
+        token.verifiedAt = Date.now();
+        return token;
       }
+      // Only staff sessions carry privileges worth re-checking; shopper sessions skip
+      // the lookup so storefront traffic never pays for it.
+      if (!isStaffRole(token.role) || Date.now() - (token.verifiedAt ?? 0) < STAFF_REVALIDATE_MS) {
+        return token;
+      }
+      const current =
+        token.sub !== undefined && token.sub !== ''
+          ? await new UserRepository().findById(token.sub)
+          : null;
+      if (!current || !current.isActive || current.status === 'suspended') {
+        return null; // Ends the session.
+      }
+      token.role = current.role;
+      token.mustChangePassword = current.mustChangePassword;
+      token.verifiedAt = Date.now();
       return token;
     },
     session({ session, token }) {

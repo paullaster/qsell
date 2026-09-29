@@ -28,13 +28,11 @@ import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
 
 interface StorefrontPageClientProps {
   productsPromise: Promise<Product[]>;
-  ordersPromise: Promise<Order[]>;
   companyPromise: Promise<CompanySettingsRow>;
 }
 
 export function StorefrontPageClient({
   productsPromise,
-  ordersPromise,
   companyPromise,
 }: StorefrontPageClientProps) {
   const router = useRouter();
@@ -368,7 +366,6 @@ export function StorefrontPageClient({
       <OrderTrackerModal
         isOpen={isTrackOrderOpen}
         onClose={() => setIsTrackOrderOpen(false)}
-        ordersPromise={ordersPromise}
       />
 
       <CustomerHelpModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />

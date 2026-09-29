@@ -58,7 +58,6 @@ const SEED_ROLES: SeedRole[] = [
       'dimensions:manage',
       'company:manage',
       'settings:manage',
-      'audits:read',
       'analytics:export',
     ],
   },
@@ -111,6 +110,10 @@ interface SeedResult {
  * first created so admins can safely customize them afterwards.
  */
 export async function seedAccessControl(repo: AccessControlRepository): Promise<SeedResult> {
+  return await repo.runExclusive(seedWithin);
+}
+
+async function seedWithin(repo: AccessControlRepository): Promise<SeedResult> {
   const catalog = ALL_PERMISSION_KEYS.map((key) => {
     const meta = PERMISSIONS[key];
     return {
@@ -139,11 +142,18 @@ export async function seedAccessControl(repo: AccessControlRepository): Promise<
     if (!role) throw new Error(`Failed to create role '${seed.key}'`);
     if (!existing) rolesCreated.push(seed.key);
 
-    const grants = seed.grants.map((grant) =>
-      typeof grant === 'string'
-        ? { permissionKey: grant, effect: 'allow' as const }
-        : { permissionKey: grant.key, effect: grant.effect },
-    );
+    // De-duplicated by key: role_permissions is unique per (role, permission), so a
+    // repeated key (e.g. one already in READ_PERMISSIONS) used to fail the whole
+    // insert and leave the role with no permissions at all.
+    const grantByKey = new Map<string, { permissionKey: string; effect: GrantEffect }>();
+    for (const grant of seed.grants) {
+      const entry =
+        typeof grant === 'string'
+          ? { permissionKey: grant, effect: 'allow' as const }
+          : { permissionKey: grant.key, effect: grant.effect };
+      grantByKey.set(entry.permissionKey, entry);
+    }
+    const grants = [...grantByKey.values()];
 
     // super_admin is a security invariant: full access is re-asserted on every
     // boot so the role can never be partially locked down (fine-grained grants
@@ -154,6 +164,12 @@ export async function seedAccessControl(repo: AccessControlRepository): Promise<
         ALL_PERMISSION_KEYS.map((key) => ({ permissionKey: key, effect: 'allow' as const })),
       );
     } else if (!existing) {
+      await repo.setRolePermissions(role.id, grants);
+    } else if ((await repo.countRolePermissions(role.id)) === 0) {
+      // Repair: an earlier seed bug (a duplicate grant) aborted the insert and left
+      // this role with no permissions. A role with zero bindings is never a useful
+      // customization (roles are switched off via isActive), so restore defaults.
+      console.warn(`[access-control] role '${seed.key}' had no permissions; restoring defaults`);
       await repo.setRolePermissions(role.id, grants);
     }
   }

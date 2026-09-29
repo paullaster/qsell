@@ -18,9 +18,13 @@ import {
   Eye,
   ArrowUpDown,
   Copy,
+  Upload,
 } from 'lucide-react';
 import { type Product, type Category } from '@/types/index';
 import { AppImage, PRODUCT_IMAGE_FALLBACK } from '@/components/ui/AppImage';
+import { buildProductsCsv } from '@/lib/productCsv';
+import { downloadCsv } from '@/lib/downloadPdf';
+import { ProductImportDialog } from '@/components/admin/ProductImportDialog';
 import {
   deleteProductAction,
   duplicateProductAction,
@@ -55,6 +59,7 @@ export function AdminProducts({
   const [duplicatingProductId, setDuplicatingProductId] = useState<string | null>(null);
   const [productActionMessage, setProductActionMessage] = useState<string | null>(null);
   const [productActionError, setProductActionError] = useState<string | null>(null);
+  const [isImportOpen, setIsImportOpen] = useState(false);
 
   // Filtering Logic
   const filteredProducts = products.filter((p) => {
@@ -153,47 +158,12 @@ export function AdminProducts({
     onRefresh();
   };
 
-  // Export to CSV
+  // Export the filtered list with every importable column (same contract as the import).
   const handleExportCSV = () => {
-    const headers = [
-      'SKU',
-      'Stock_Code',
-      'Name',
-      'Category',
-      'Price_KES',
-      'Cost_KES',
-      'Stock_Qty',
-      'Reserved_Qty',
-      'Low_Stock_Threshold',
-      'Status',
-    ];
-    const rows = filteredProducts.map((p) => [
-      p.sku,
-      p.stockCode,
-      `"${p.name.replace(/"/g, '""')}"`,
-      p.category,
-      p.price ?? '',
-      p.costPrice ?? '',
-      p.stockQuantity,
-      p.reservedQuantity,
-      p.lowStockThreshold,
-      p.isActive ? 'Active' : 'Draft',
-    ]);
-
-    const csvContent = `data:text/csv;charset=utf-8,${[
-      headers.join(','),
-      ...rows.map((r) => r.join(',')),
-    ].join('\n')}`;
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute(
-      'download',
-      `omnicommerce_products_${new Date().toISOString().slice(0, 10)}.csv`,
+    downloadCsv(
+      buildProductsCsv(filteredProducts),
+      `products_${new Date().toISOString().slice(0, 10)}.csv`,
     );
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
   };
 
   return (
@@ -211,24 +181,41 @@ export function AdminProducts({
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center sm:gap-3">
           <button
+            type="button"
             onClick={handleExportCSV}
-            className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-line-strong bg-surface-sunken px-3 py-2 text-xs font-semibold text-fg transition-colors hover:bg-hover hover:text-fg-strong"
+            className="flex min-h-10 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-line-strong bg-surface-sunken px-3 py-2 text-xs font-semibold text-fg transition-colors hover:bg-hover hover:text-fg-strong"
           >
-            <Download className="h-3.5 w-3.5" />
+            <Download className="h-3.5 w-3.5" aria-hidden="true" />
             Export CSV
           </button>
 
           <button
+            type="button"
+            onClick={() => setIsImportOpen(true)}
+            className="flex min-h-10 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-line-strong bg-surface-sunken px-3 py-2 text-xs font-semibold text-fg transition-colors hover:bg-hover hover:text-fg-strong"
+          >
+            <Upload className="h-3.5 w-3.5" aria-hidden="true" />
+            Import CSV
+          </button>
+
+          <button
+            type="button"
             onClick={onOpenCreateProduct}
-            className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-indigo-600/20 transition-colors hover:bg-indigo-500"
+            className="col-span-2 flex min-h-10 cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-indigo-600/20 transition-colors hover:bg-indigo-500"
           >
             <Plus className="h-4 w-4" />
             Add New Product
           </button>
         </div>
       </div>
+
+      <ProductImportDialog
+        isOpen={isImportOpen}
+        onClose={() => setIsImportOpen(false)}
+        onImported={onRefresh}
+      />
 
       {(productActionMessage || productActionError) && (
         <p

@@ -1,5 +1,7 @@
 'use server';
 
+import { requirePermission } from '@/server/domains/access-control/guard';
+
 import { revalidatePath } from 'next/cache';
 import { getContainer } from '@/server/di/container';
 import {
@@ -26,6 +28,7 @@ async function ensureBranchContext() {
 }
 
 export async function listBranchesAction(): Promise<BranchRow[]> {
+  await requirePermission('branches:read');
   const { company, branch } = await ensureBranchContext();
   const { branches } = getContainer();
   const list = await branches.listByCompany(company.id);
@@ -39,6 +42,7 @@ export async function createBranchAction(input: {
   kraPin?: string;
   publicBaseUrl?: string;
 }): Promise<BranchRow> {
+  await requirePermission('branches:manage');
   const { company } = await ensureBranchContext();
   const { branches, paymentConfigs } = getContainer();
   const created = await branches.create({
@@ -83,6 +87,7 @@ export async function updateBranchAction(
     isActive: boolean;
   }>,
 ): Promise<BranchRow> {
+  await requirePermission('branches:manage');
   const { branches } = getContainer();
   const updated = await branches.update(id, patch);
   revalidatePath('/admin/settings');
@@ -125,6 +130,7 @@ function toAdminView(row: PaymentProviderConfigRow): PaymentConfigAdminView {
 export async function listPaymentConfigsAction(
   branchId?: string,
 ): Promise<PaymentConfigAdminView[]> {
+  await requirePermission('payments:manage_gateways');
   const { branch } = await ensureBranchContext();
   const { paymentConfigs } = getContainer();
   const targetBranchId = branchId || branch.id;
@@ -153,6 +159,7 @@ export async function getPaymentConfigAction(
   branchId: string,
   providerCode: PaymentProviderCode,
 ): Promise<PaymentConfigAdminView> {
+  await requirePermission('payments:manage_gateways');
   await ensureBranchContext();
   const { paymentConfigs } = getContainer();
   let row = await paymentConfigs.getByBranchAndProvider(branchId, providerCode);
@@ -182,6 +189,7 @@ export async function savePaymentConfigAction(input: {
   /** When provided, replaces encrypted credentials. Omit to keep existing. */
   credentials?: Record<string, string> | null;
 }): Promise<PaymentConfigAdminView> {
+  await requirePermission('payments:manage_gateways');
   await ensureBranchContext();
   const { paymentConfigs } = getContainer();
   const meta = PAYMENT_PROVIDER_META[input.providerCode];
@@ -227,6 +235,7 @@ export async function savePaymentConfigAction(input: {
 }
 
 export async function updateCompanyPublicBaseUrlAction(url: string): Promise<void> {
+  await requirePermission('settings:manage');
   const { companySettings } = getContainer();
   await companySettings.update({
     publicBaseUrl: url.trim().replace(/\/$/, '') || null,
@@ -310,6 +319,7 @@ export async function getPaymentAttemptStatusAction(attemptId: string) {
 
 /** @deprecated Prefer initiateBranchPaymentAction — kept for transitional UI. */
 export async function initiateDarajaStkAction(orderId: string, _phone?: string) {
+  await requirePermission('orders:update');
   const res = await initiateBranchPaymentAction({
     orderId,
     providerCode: 'mpesa_daraja',
@@ -326,6 +336,7 @@ export async function initiateDarajaStkAction(orderId: string, _phone?: string) 
 
 /** @deprecated Prefer initiateBranchPaymentAction */
 export async function initiatePesapalPaymentAction(orderId: string) {
+  await requirePermission('orders:update');
   const res = await initiateBranchPaymentAction({
     orderId,
     providerCode: 'pesapal_v3',
@@ -341,6 +352,7 @@ export async function initiatePesapalPaymentAction(orderId: string) {
 }
 
 export async function submitPesapalOrderAction(orderId: string) {
+  await requirePermission('orders:update');
   return initiatePesapalPaymentAction(orderId);
 }
 
