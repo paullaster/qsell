@@ -178,10 +178,10 @@ export function AdminRolesClient({ setupPromise }: { setupPromise: Promise<Roles
 
   if (!canManage) {
     return (
-      <div className="mx-auto max-w-6xl space-y-6 p-6">
+      <div className="space-y-6">
         <div className="flex items-center gap-2 text-fg-strong">
-          <KeyRound className="h-5 w-5 text-indigo-400" />
-          <h1 className="text-xl font-semibold">Roles &amp; Permissions</h1>
+          <KeyRound className="h-5 w-5 text-indigo-500" aria-hidden="true" />
+          <h2 className="text-xl font-semibold">Roles &amp; Permissions</h2>
         </div>
         <p className="rounded-lg border border-amber-700/40 bg-amber-50 px-3 py-2 text-sm text-amber-800">
           You do not have the <code>roles:manage</code> permission.
@@ -191,12 +191,12 @@ export function AdminRolesClient({ setupPromise }: { setupPromise: Promise<Roles
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 p-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
+    <div className="space-y-6">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <div className="flex items-center gap-2 text-fg-strong">
-            <KeyRound className="h-5 w-5 text-indigo-400" />
-            <h1 className="text-xl font-semibold">Roles &amp; Permissions</h1>
+            <KeyRound className="h-5 w-5 text-indigo-500" aria-hidden="true" />
+            <h2 className="text-xl font-semibold">Roles &amp; Permissions</h2>
           </div>
           <p className="mt-1 max-w-2xl text-sm text-fg-muted">
             Roles bind permissions (RBAC). Lower priority numbers take precedence.
@@ -205,21 +205,27 @@ export function AdminRolesClient({ setupPromise }: { setupPromise: Promise<Roles
         <button
           type="button"
           onClick={openNew}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-500"
+          className="inline-flex min-h-11 w-full shrink-0 items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 sm:w-auto"
         >
-          <Plus className="h-4 w-4" />
+          <Plus className="h-4 w-4" aria-hidden="true" />
           New role
         </button>
-      </div>
+      </header>
 
       {error !== null ? (
-        <p className="rounded-lg border border-red-500/40 bg-red-50 px-3 py-2 text-sm text-red-800">
+        <p
+          className="rounded-lg border border-red-500/40 bg-red-50 px-3 py-2 text-sm text-red-800"
+          role="alert"
+        >
           {error}
         </p>
       ) : null}
 
       {showForm ? (
-        <section className="space-y-4 rounded-xl border border-line bg-surface-sunken/60 p-4">
+        <section
+          aria-label="Editor"
+          className="space-y-4 rounded-xl border border-line bg-surface-sunken/60 p-4 sm:p-5"
+        >
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-fg-strong">
               {form.id !== null ? 'Edit role' : 'New role'}
@@ -227,9 +233,10 @@ export function AdminRolesClient({ setupPromise }: { setupPromise: Promise<Roles
             <button
               type="button"
               onClick={() => setShowForm(false)}
-              className="text-fg-subtle hover:text-fg-strong"
+              aria-label="Close editor"
+              className="flex h-10 w-10 items-center justify-center rounded-lg text-fg-subtle hover:bg-hover hover:text-fg-strong"
             >
-              <X className="h-4 w-4" />
+              <X className="h-5 w-5" aria-hidden="true" />
             </button>
           </div>
 
@@ -280,6 +287,7 @@ export function AdminRolesClient({ setupPromise }: { setupPromise: Promise<Roles
             <label className="flex items-center gap-2 text-sm text-fg">
               <input
                 type="checkbox"
+                className="h-4 w-4"
                 checked={form.isActive}
                 onChange={(e) => setForm((f) => ({ ...f, isActive: e.target.checked }))}
               />
@@ -289,7 +297,7 @@ export function AdminRolesClient({ setupPromise }: { setupPromise: Promise<Roles
 
           {form.isSystem ? (
             <p className="flex items-center gap-2 rounded-lg border border-indigo-800 bg-indigo-50 px-3 py-2 text-xs text-indigo-600 dark:text-indigo-400">
-              <ShieldCheck className="h-3 w-3" />
+              <ShieldCheck className="h-3 w-3 shrink-0" aria-hidden="true" />
               System role. Its key, priority, and deletion are locked; permission bindings below
               still apply.
             </p>
@@ -310,9 +318,9 @@ export function AdminRolesClient({ setupPromise }: { setupPromise: Promise<Roles
               type="button"
               disabled={pending}
               onClick={save}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-500 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-500 disabled:opacity-50 min-h-10"
             >
-              {pending ? <RotateCw className="h-4 w-4 animate-spin" /> : null}
+              {pending ? <RotateCw className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
               {form.id !== null ? 'Save changes' : 'Create role'}
             </button>
             {form.id !== null && !form.isSystem ? (
@@ -323,16 +331,16 @@ export function AdminRolesClient({ setupPromise }: { setupPromise: Promise<Roles
                   const role = roles.find((r) => r.id === form.id);
                   if (role) removeRole(role);
                 }}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-red-800 px-3 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
+                className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-red-800 px-3 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
               >
-                <Trash2 className="h-4 w-4" />
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
                 Delete
               </button>
             ) : null}
             <button
               type="button"
               onClick={() => setShowForm(false)}
-              className="rounded-lg border border-line-strong px-3 py-2 text-sm text-fg"
+              className="min-h-10 rounded-lg border border-line-strong px-3 py-2 text-sm text-fg hover:bg-hover"
             >
               Close
             </button>
@@ -340,15 +348,67 @@ export function AdminRolesClient({ setupPromise }: { setupPromise: Promise<Roles
         </section>
       ) : null}
 
-      <div className="overflow-hidden rounded-xl border border-line">
-        <table className="w-full text-left text-sm text-fg">
+      {roles.length === 0 ? (
+        <p className="rounded-xl border border-line px-4 py-6 text-sm text-fg-subtle md:hidden">
+          No roles yet. Create one to start binding permissions.
+        </p>
+      ) : (
+        <ul className="space-y-3 md:hidden">
+          {roles.map((role) => (
+            <li key={role.id} className="space-y-2 rounded-xl border border-line bg-surface p-4">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="font-medium text-fg-strong">
+                    {role.name}{' '}
+                    {role.isSystem ? (
+                      <span className="text-[11px] text-indigo-700 dark:text-indigo-300">
+                        system
+                      </span>
+                    ) : null}
+                  </p>
+                  <p className="font-mono text-xs break-all text-fg-subtle">{role.key}</p>
+                </div>
+                <span
+                  className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] ${
+                    role.isActive
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : 'bg-surface-sunken text-fg-subtle'
+                  }`}
+                >
+                  {role.isActive ? 'active' : 'inactive'}
+                </span>
+              </div>
+              <p className="text-xs text-fg-muted">
+                Priority {role.priority} ·{' '}
+                {role.key === 'super_admin'
+                  ? 'Full access (bypasses checks)'
+                  : `${role.grants.filter((g) => g.effect === 'allow').length} allowed · ${role.grants.filter((g) => g.effect === 'deny').length} denied`}
+              </p>
+              <button
+                type="button"
+                onClick={() => openRole(role)}
+                aria-label={`Edit role ${role.name}`}
+                className="inline-flex min-h-10 w-full items-center justify-center gap-1.5 rounded-lg border border-line-strong px-3 py-2 text-sm text-fg hover:bg-hover"
+              >
+                <Pencil className="h-4 w-4" aria-hidden="true" /> Edit
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="hidden overflow-x-auto rounded-xl border border-line md:block">
+        <table className="w-full min-w-[36rem] text-left text-sm text-fg">
+          <caption className="sr-only">Roles</caption>
           <thead className="bg-surface-raised text-xs text-fg-subtle">
             <tr>
-              <th className="px-3 py-2">Role</th>
-              <th>Priority</th>
-              <th>Permissions</th>
-              <th>Status</th>
-              <th className="px-3 py-2 text-right"> </th>
+              <th scope="col" className="px-4 py-2 font-medium">Role</th>
+              <th scope="col" className="px-4 py-2 font-medium">Priority</th>
+              <th scope="col" className="px-4 py-2 font-medium">Permissions</th>
+              <th scope="col" className="px-4 py-2 font-medium">Status</th>
+              <th scope="col" className="px-4 py-2 text-right">
+                <span className="sr-only">Actions</span>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -361,22 +421,22 @@ export function AdminRolesClient({ setupPromise }: { setupPromise: Promise<Roles
             ) : (
               roles.map((role) => (
                 <tr key={role.id} className="border-t border-line hover:bg-hover">
-                  <td className="px-3 py-2">
+                  <td className="px-4 py-3">
                     <p className="text-fg-strong">
                       {role.name}{' '}
                       {role.isSystem ? (
-                        <span className="text-[11px] text-indigo-300">system</span>
+                        <span className="text-[11px] text-indigo-700 dark:text-indigo-300">system</span>
                       ) : null}
                     </p>
                     <p className="font-mono text-xs text-fg-subtle">{role.key}</p>
                   </td>
-                  <td className="py-2 font-mono text-xs text-fg-muted">{role.priority}</td>
-                  <td className="py-2 text-xs text-fg-muted">
+                  <td className="px-4 py-3 font-mono text-xs text-fg-muted">{role.priority}</td>
+                  <td className="px-4 py-3 text-xs text-fg-muted">
                     {role.key === 'super_admin'
                       ? 'Full access (bypasses checks)'
                       : `${role.grants.filter((g) => g.effect === 'allow').length} allowed · ${role.grants.filter((g) => g.effect === 'deny').length} denied`}
                   </td>
-                  <td className="py-2">
+                  <td className="px-4 py-3">
                     <span
                       className={`rounded-full px-2 py-0.5 text-[11px] ${
                         role.isActive
@@ -387,13 +447,14 @@ export function AdminRolesClient({ setupPromise }: { setupPromise: Promise<Roles
                       {role.isActive ? 'active' : 'inactive'}
                     </span>
                   </td>
-                  <td className="px-3 py-2 text-right">
+                  <td className="px-4 py-3 text-right">
                     <button
                       type="button"
                       onClick={() => openRole(role)}
-                      className="inline-flex items-center gap-1 text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-400 dark:hover:text-indigo-300"
+                      aria-label={`Edit role ${role.name}`}
+                      className="inline-flex min-h-9 items-center gap-1 rounded-lg px-2 text-xs text-indigo-700 hover:bg-hover dark:text-indigo-300"
                     >
-                      <Pencil className="h-3 w-3" /> Edit
+                      <Pencil className="h-3.5 w-3.5" aria-hidden="true" /> Edit
                     </button>
                   </td>
                 </tr>

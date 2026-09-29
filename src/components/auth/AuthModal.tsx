@@ -4,10 +4,19 @@ import { Suspense } from 'react';
 import { useRouter } from 'next/navigation';
 import { X } from 'lucide-react';
 import { AuthForm } from '@/components/auth/AuthForm';
+import { ForgotPasswordForm } from '@/components/auth/ForgotPasswordForm';
 
-export function AuthModal({ mode }: { mode: 'login' | 'register' }) {
+type AuthModalMode = 'login' | 'register' | 'forgot-password';
+
+const TITLES: Record<AuthModalMode, string> = {
+  login: 'Welcome back',
+  register: 'Create your customer account',
+  'forgot-password': 'Reset your password',
+};
+
+export function AuthModal({ mode }: { mode: AuthModalMode }) {
   const router = useRouter();
-  const title = mode === 'login' ? 'Welcome back' : 'Create your customer account';
+  const title = TITLES[mode];
 
   return (
     <div
@@ -45,7 +54,7 @@ export function AuthModal({ mode }: { mode: 'login' | 'register' }) {
             </div>
           }
         >
-          <AuthForm mode={mode} />
+          {mode === 'forgot-password' ? <ForgotPasswordForm /> : <AuthForm mode={mode} />}
         </Suspense>
       </section>
     </div>

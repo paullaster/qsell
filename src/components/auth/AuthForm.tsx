@@ -3,9 +3,15 @@
 import React, { useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowRight, UserPlus } from 'lucide-react';
-import { loginAction, registerCustomerAction } from '@/server/domains/auth/actions';
+import { ArrowRight, MailCheck, UserPlus } from 'lucide-react';
+import {
+  loginAction,
+  registerCustomerAction,
+  resendVerificationEmailAction,
+} from '@/server/domains/auth/actions';
 import { isStaffRole } from '@/server/domains/auth/roles';
+import { PASSWORD_MIN_LENGTH } from '@/lib/passwordPolicy';
+import { PasswordInput } from '@/components/auth/PasswordInput';
 
 export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
   const router = useRouter();
@@ -22,37 +28,45 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [needsVerification, setNeedsVerification] = useState(false);
+  const [registeredEmail, setRegisteredEmail] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const isRegister = mode === 'register';
 
-  const onSubmit = (e: React.FormEvent) => {
+  const onSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
     startTransition(async () => {
       try {
         setError(null);
+        setNeedsVerification(false);
         if (isRegister) {
           const result = await registerCustomerAction({ name, email, phone, password });
           if (!result.ok) {
             setError(result.error);
             return;
           }
-          router.push(safeCallbackUrl ?? '/');
-          router.refresh();
+          setPassword('');
+          setRegisteredEmail(email.trim().toLowerCase());
           return;
         }
         const res = await loginAction({ email: email.trim().toLowerCase(), password });
         if (!res.ok) {
           setError(res.error);
+          setNeedsVerification(res.code === 'EMAIL_NOT_VERIFIED');
           return;
         }
+        let destination: string;
         if (isStaffRole(res.role)) {
           // Staff must land in admin — ignore storefront callback leftovers (e.g. "/").
-          router.push(safeCallbackUrl?.startsWith('/admin') ? safeCallbackUrl : '/admin');
-        } else if (safeCallbackUrl) {
-          router.push(safeCallbackUrl);
+          destination = safeCallbackUrl?.startsWith('/admin') === true ? safeCallbackUrl : '/admin';
         } else {
-          router.push('/');
+          destination = safeCallbackUrl ?? '/';
         }
+        router.push(
+          res.mustChangePassword
+            ? `/change-password?callbackUrl=${encodeURIComponent(destination)}`
+            : destination,
+        );
         router.refresh();
       } catch (err) {
         setError(
@@ -63,6 +77,27 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
       }
     });
   };
+
+  if (registeredEmail !== null) {
+    return (
+      <section className="mx-auto w-full max-w-md space-y-4 rounded-2xl border border-line bg-surface-raised p-6">
+        <MailCheck className="h-8 w-8 text-indigo-500" aria-hidden="true" />
+        <h1 className="text-xl font-bold text-fg-strong">Check your email</h1>
+        <p className="text-sm text-fg-muted">
+          We sent a confirmation link to{' '}
+          <strong className="text-fg-strong">{registeredEmail}</strong>. Open it to activate your
+          account, then sign in.
+        </p>
+        <ResendVerification email={registeredEmail} />
+        <Link
+          href={authHref('login')}
+          className="flex min-h-12 w-full touch-manipulation items-center justify-center rounded-xl border border-line-strong bg-surface px-4 py-3 text-sm font-semibold text-fg-strong transition-colors hover:border-indigo-500 hover:bg-hover"
+        >
+          Go to sign in
+        </Link>
+      </section>
+    );
+  }
 
   return (
     <form
@@ -124,21 +159,27 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
       <label htmlFor="auth-password" className="sr-only">
         Password
       </label>
-      <input
+      <PasswordInput
         id="auth-password"
         name="password"
         required
-        type="password"
-        autoCapitalize="none"
-        autoCorrect="off"
         autoComplete={isRegister ? 'new-password' : 'current-password'}
         enterKeyHint="go"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         placeholder="Password"
-        minLength={isRegister ? 8 : undefined}
-        className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong"
+        minLength={isRegister ? PASSWORD_MIN_LENGTH : undefined}
       />
+      {isRegister ? null : (
+        <div className="-mt-2 text-right">
+          <Link
+            href="/forgot-password"
+            className="text-xs font-medium text-indigo-600 underline-offset-2 hover:underline dark:text-indigo-300"
+          >
+            Forgot password?
+          </Link>
+        </div>
+      )}
       {error ? (
         <p
           className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800"
@@ -147,6 +188,7 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
           {error}
         </p>
       ) : null}
+      {needsVerification ? <ResendVerification email={email} /> : null}
       <button
         type="submit"
         disabled={pending}
@@ -192,5 +234,43 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
         </div>
       )}
     </form>
+  );
+}
+
+function ResendVerification({ email }: { email: string }) {
+  const [status, setStatus] = useState<'idle' | 'sent' | 'error'>('idle');
+  const [message, setMessage] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  const resend = () => {
+    startTransition(async () => {
+      try {
+        const result = await resendVerificationEmailAction({ email });
+        setStatus(result.ok ? 'sent' : 'error');
+        setMessage(result.ok ? null : result.error);
+      } catch {
+        setStatus('error');
+        setMessage('We couldn’t send the email right now. Please try again.');
+      }
+    });
+  };
+
+  return (
+    <div className="space-y-2 text-xs text-fg-muted">
+      <button
+        type="button"
+        onClick={resend}
+        disabled={pending}
+        className="font-semibold text-indigo-600 underline-offset-2 hover:underline disabled:opacity-50 dark:text-indigo-300"
+      >
+        {pending ? 'Sending…' : 'Resend confirmation email'}
+      </button>
+      <p aria-live="polite">
+        {status === 'sent'
+          ? 'If that address needs confirming, a new link is on its way. It can take a minute to arrive — check spam too.'
+          : null}
+        {status === 'error' ? message : null}
+      </p>
+    </div>
   );
 }

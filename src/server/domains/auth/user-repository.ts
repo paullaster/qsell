@@ -1,9 +1,10 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { drizzleDb } from '@/server/db/drizzle/client';
 import { users, type UserRow } from '@/server/db/drizzle/schema';
 import { hash, compare } from 'bcryptjs';
 import type { ThemeMode } from '@/config/theme';
 import type { AppRole } from './roles';
+import type { DbExecutor } from './token-repository';
 
 export type { AppRole };
 
@@ -20,6 +21,13 @@ function superAdminEnv() {
   const name = process.env.SUPER_ADMIN_NAME || process.env.ADMIN_NAME || 'Super Admin';
   return { email, password, name };
 }
+
+/**
+ * The seed's inputs are env vars, fixed for the life of the process, so one
+ * successful run per process is enough. Without this, every sign-in paid for
+ * an extra bcrypt comparison (twice: loginAction and the Credentials provider).
+ */
+let superAdminSeed: Promise<UserRow> | null = null;
 
 export class UserRepository {
   constructor(private readonly db = drizzleDb) {}
@@ -54,6 +62,8 @@ export class UserRepository {
     role?: AppRole;
     customerStoreId?: string | null;
     canViewSuperAdmin?: boolean;
+    /** Self-service sign-ups start unverified; provisioned accounts are trusted. */
+    emailVerified?: boolean;
   }): Promise<UserRow> {
     const passwordHash = await hash(input.password, 12);
     const [row] = await this.db
@@ -66,9 +76,46 @@ export class UserRepository {
         role: input.role ?? 'customer',
         customerStoreId: input.customerStoreId ?? null,
         canViewSuperAdmin: input.canViewSuperAdmin ?? false,
+        emailVerifiedAt: input.emailVerified === true ? new Date() : null,
       })
       .returning();
     return row!;
+  }
+
+  /** Idempotent: keeps the original verification time if already verified. */
+  async markEmailVerified(userId: string, executor: DbExecutor = this.db): Promise<void> {
+    const now = new Date();
+    await executor
+      .update(users)
+      .set({ emailVerifiedAt: now, updatedAt: now })
+      .where(and(eq(users.id, userId), isNull(users.emailVerifiedAt)));
+  }
+
+  /**
+   * Replace the password hash. Completing a mailed reset also proves inbox
+   * control, so callers on that path pass `verifyEmail`.
+   */
+  async setPassword(
+    userId: string,
+    password: string,
+    options: { verifyEmail?: boolean; executor?: DbExecutor } = {},
+  ): Promise<boolean> {
+    const passwordHash = await hash(password, 12);
+    const now = new Date();
+    const executor = options.executor ?? this.db;
+    const rows = await executor
+      .update(users)
+      .set({
+        passwordHash,
+        mustChangePassword: false,
+        updatedAt: now,
+        ...(options.verifyEmail === true
+          ? { emailVerifiedAt: sql`coalesce(${users.emailVerifiedAt}, now())` }
+          : {}),
+      })
+      .where(eq(users.id, userId))
+      .returning({ id: users.id });
+    return rows.length > 0;
   }
 
   async verifyPassword(email: string, password: string): Promise<UserRow | null> {
@@ -79,11 +126,19 @@ export class UserRepository {
   }
 
   /**
-   * Always ensure the deployment super-admin exists from env.
-   * Re-asserts role, active flag, name, and password hash from env on every call
-   * so credentials stay the source of truth across deployments.
+   * Ensure the deployment super-admin exists from env, re-asserting role, active
+   * flag, name, and password hash so env stays the source of truth across
+   * deployments. Runs once per process; a failed run is retried on next call.
    */
   async ensureSuperAdminSeed(): Promise<UserRow> {
+    superAdminSeed ??= this.seedSuperAdmin().catch((error: unknown) => {
+      superAdminSeed = null;
+      throw error;
+    });
+    return await superAdminSeed;
+  }
+
+  private async seedSuperAdmin(): Promise<UserRow> {
     const { email, password, name } = superAdminEnv();
     if (!email || !password) {
       throw new Error('SUPER_ADMIN_EMAIL and SUPER_ADMIN_PASSWORD must be set');
@@ -99,6 +154,7 @@ export class UserRepository {
         phone: '0700000000',
         role: 'super_admin',
         canViewSuperAdmin: true,
+        emailVerified: true,
       });
     }
 
@@ -108,6 +164,7 @@ export class UserRepository {
       !existing.isActive ||
       existing.name !== name ||
       existing.canViewSuperAdmin !== true ||
+      existing.emailVerifiedAt === null ||
       !passwordMatches;
 
     if (!needsUpdate) return existing;
@@ -122,6 +179,7 @@ export class UserRepository {
         passwordHash,
         isActive: true,
         canViewSuperAdmin: true,
+        emailVerifiedAt: existing.emailVerifiedAt ?? new Date(),
         updatedAt: new Date(),
       })
       .where(eq(users.id, existing.id))

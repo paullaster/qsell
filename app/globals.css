@@ -1,6 +1,14 @@
 @import 'tailwindcss';
 
 /*
+ * `dark:` utilities follow the app's resolved theme, not the OS setting.
+ * Tailwind's default is prefers-color-scheme, which made `dark:` colours apply
+ * on a light-themed page whenever the OS was dark (e.g. near-invisible
+ * `dark:text-indigo-300` on white).
+ */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+/*
  * ─────────────────────────────────────────────────────────────────────────────
  * Design tokens
  * ─────────────────────────────────────────────────────────────────────────────

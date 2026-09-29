@@ -20,6 +20,11 @@ export class ConsoleEmailAdapter implements EmailPort {
   }
 }
 
+/** First value that is set and not blank; env vars are often present but empty. */
+function firstNonEmpty(...values: (string | undefined)[]): string | undefined {
+  return values.find((value): value is string => value !== undefined && value.trim() !== '');
+}
+
 export class NodemailerSmtpAdapter implements EmailPort {
   readonly name = 'smtp';
   private readonly transporter: nodemailer.Transporter;
@@ -33,12 +38,20 @@ export class NodemailerSmtpAdapter implements EmailPort {
     from?: string;
     secure?: boolean;
   }) {
-    const host = options?.host || process.env.SMTP_HOST || 'localhost';
-    const port = options?.port || Number(process.env.SMTP_PORT || 587);
-    const user = options?.user || process.env.SMTP_USER || '';
-    const pass = options?.pass || process.env.SMTP_PASS || '';
+    // Accept both SMTP_* and the EMAIL_SMTP_* names documented in .env.example.
+    const env = process.env;
+    const host = firstNonEmpty(options?.host, env.SMTP_HOST, env.EMAIL_SMTP_HOST) ?? 'localhost';
+    const port = options?.port ?? Number(firstNonEmpty(env.SMTP_PORT, env.EMAIL_SMTP_PORT) ?? 587);
+    const user = firstNonEmpty(options?.user, env.SMTP_USER, env.EMAIL_SMTP_USER) ?? '';
+    const pass = firstNonEmpty(options?.pass, env.SMTP_PASS, env.EMAIL_SMTP_PASSWORD) ?? '';
+    const fromAddress = firstNonEmpty(env.EMAIL_FROM);
+    const documentedFrom =
+      fromAddress === undefined
+        ? undefined
+        : `${firstNonEmpty(env.EMAIL_FROM_NAME) ?? 'OmniCommerce'} <${fromAddress}>`;
     this.from =
-      options?.from || process.env.SMTP_FROM || 'OmniCommerce <noreply@omnicommerce.ke>';
+      firstNonEmpty(options?.from, env.SMTP_FROM, documentedFrom) ??
+      'OmniCommerce <noreply@omnicommerce.ke>';
 
     this.transporter = nodemailer.createTransport({
       host,
