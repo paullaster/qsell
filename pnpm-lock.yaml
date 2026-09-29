@@ -11,6 +11,9 @@ importers:
       '@sentry/nextjs':
         specifier: ^11.0.0
         version: 11.0.0(next@16.3.4(@babel/core@7.29.7(supports-color@8.1.1))(@opentelemetry/api@1.9.1)(@types/node@22.20.4)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)
+      '@sentry/profiling-node':
+        specifier: 11.0.0
+        version: 11.0.0(rollup@4.63.5)
       bcryptjs:
         specifier: ^3.0.3
         version: 3.0.3
@@ -1358,6 +1361,10 @@ packages:
     peerDependencies:
       next: ^14.0 || ^15.0.0-rc.0 || ^16.0.0-0
 
+  '@sentry/node-cpu-profiler@2.4.4':
+    resolution: {integrity: sha512-FaYbFWxEyTTVqXLJccokJCkwx2cTuvTiRaM9kA+O4HbZVT49xYXqSV9cNLI5UqJhgdHiZDhelBd5LB4wj7IIRA==}
+    engines: {node: '>=18'}
+
   '@sentry/node@11.0.0':
     resolution: {integrity: sha512-ZHk2wYvnKPfaq05YHnva/a6EzZDLTG0EStcWnQdjSae/OxluwCfOfMqwlsKxaY8KDUkyqokTCUPqJITZpUH1Jw==}
     engines: {node: '>=20.19.0 <22.0.0 || >=22.12.0 <23.0.0 || >=23.2.0'}
@@ -1367,6 +1374,10 @@ packages:
     engines: {node: '>=20.19.0 <22.0.0 || >=22.12.0 <23.0.0 || >=23.2.0'}
     peerDependencies:
       '@opentelemetry/api': ^1.9.0
+
+  '@sentry/profiling-node@11.0.0':
+    resolution: {integrity: sha512-z97AALve8GE9emTYsKQhDOdPnyzXaT69pe9TLRzuzifWxqA1w4hqImtPCnV5ZDbjDSkcrgMRKmrzn2FocgnCFQ==}
+    engines: {node: '>=20.19.0 <22.0.0 || >=22.12.0 <23.0.0 || >=23.2.0'}
 
   '@sentry/react@11.0.0':
     resolution: {integrity: sha512-YMF4t9659byD3rYZ9zjE5vdL3NUVFBEQfHzbMJf4kow7h7eyDdQi8GN4K1qsOFBim5C/7/ry0dkP1r4p7qtEWA==}
@@ -2881,6 +2892,10 @@ packages:
       sass:
         optional: true
 
+  node-abi@3.96.0:
+    resolution: {integrity: sha512-rebQ/lz7i0EkoLzUVSrKRzA69zMkwLp95kKMWoMDkkM00Suxz0D7zEQPwRml5fQum24mj7bPvmlgLAmu2JCiYg==}
+    engines: {node: '>=10'}
+
   node-exports-info@1.6.2:
     resolution: {integrity: sha512-kXs9Go0cah0qHVV2v389IXQLdLCeE1xfFtjOAF+iobu0OIoG1pje8At2vMHyaPMiPMnG/LWP50twML21eMcAag==}
     engines: {node: '>= 0.4'}
@@ -4381,6 +4396,11 @@ snapshots:
       - react-router
       - webpack
 
+  '@sentry/node-cpu-profiler@2.4.4':
+    dependencies:
+      detect-libc: 2.1.2
+      node-abi: 3.96.0
+
   '@sentry/node@11.0.0(rollup@4.63.5)':
     dependencies:
       '@opentelemetry/api': 1.9.1
@@ -4399,6 +4419,15 @@ snapshots:
       '@opentelemetry/api': 1.9.1
       '@sentry/conventions': 0.23.0
       '@sentry/core': 11.0.0
+
+  '@sentry/profiling-node@11.0.0(rollup@4.63.5)':
+    dependencies:
+      '@sentry/core': 11.0.0
+      '@sentry/node': 11.0.0(rollup@4.63.5)
+      '@sentry/node-cpu-profiler': 2.4.4
+    transitivePeerDependencies:
+      - rollup
+      - webpack
 
   '@sentry/react@11.0.0(react@19.2.8)':
     dependencies:
@@ -6006,6 +6035,10 @@ snapshots:
       - '@babel/core'
       - '@types/node'
       - babel-plugin-macros
+
+  node-abi@3.96.0:
+    dependencies:
+      semver: 7.8.5
 
   node-exports-info@1.6.2:
     dependencies:

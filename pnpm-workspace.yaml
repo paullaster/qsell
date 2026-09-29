@@ -1,4 +1,5 @@
 allowBuilds:
+  '@sentry/node-cpu-profiler': true
   esbuild: false
   unrs-resolver: false
 # Corepack, CI setup, and Docker pin the executable to pnpm 12.6.0. Avoid

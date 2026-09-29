@@ -37,6 +37,16 @@ const nextConfig: NextConfig = {
       { protocol: 'http', hostname: '**' },
     ],
   },
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        // Gates the JS Self-Profiling API that browserProfilingIntegration needs.
+        // Without it, browser profiling silently no-ops even in Chromium.
+        headers: [{ key: 'Document-Policy', value: 'js-profiling' }],
+      },
+    ];
+  },
 };
 
 export default withSentryConfig(nextConfig, {
