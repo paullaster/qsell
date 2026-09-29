@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useId, useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
 import { KeyRound } from 'lucide-react';
 import { changeOwnPasswordAction, logoutAction } from '@/server/domains/auth/actions';
 import { isStaffRole } from '@/server/domains/auth/roles';
@@ -18,7 +17,6 @@ export function ChangePasswordForm({
   forced: boolean;
   callbackUrl: string | null;
 }) {
-  const router = useRouter();
   const hintId = useId();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -46,8 +44,8 @@ export function ChangePasswordForm({
           return;
         }
         const fallback = isStaffRole(result.role) ? '/admin' : '/';
-        router.push(callbackUrl ?? fallback);
-        router.refresh();
+        // Full navigation so every part of the app picks up the re-issued session.
+        window.location.assign(callbackUrl ?? fallback);
       } catch {
         setError(
           'We couldn’t change your password right now. Check your connection and try again.',

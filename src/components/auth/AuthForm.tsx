@@ -2,7 +2,7 @@
 
 import React, { useState, useTransition } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { ArrowRight, MailCheck, UserPlus } from 'lucide-react';
 import {
   loginAction,
@@ -14,7 +14,6 @@ import { PASSWORD_MIN_LENGTH } from '@/lib/passwordPolicy';
 import { PasswordInput } from '@/components/auth/PasswordInput';
 
 export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get('callbackUrl');
   const safeCallbackUrl =
@@ -62,14 +61,19 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
         } else {
           // Shoppers never land on admin routes, even if a stale callback points there.
           destination =
-            safeCallbackUrl !== null && !safeCallbackUrl.startsWith('/admin') ? safeCallbackUrl : '/';
+            safeCallbackUrl !== null && !safeCallbackUrl.startsWith('/admin')
+              ? safeCallbackUrl
+              : '/';
         }
-        router.push(
+        // A full navigation, not router.push: signing in changes the session for the
+        // whole app, and parts of it (the storefront navbar, cart, account) read the
+        // session once on load. A soft navigation left them showing "signed out" and,
+        // from the sign-in popup, never completed at all.
+        window.location.assign(
           res.mustChangePassword
             ? `/change-password?callbackUrl=${encodeURIComponent(destination)}`
             : destination,
         );
-        router.refresh();
       } catch (err) {
         setError(
           isRegister
