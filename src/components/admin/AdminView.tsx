@@ -86,6 +86,7 @@ export function AdminView({
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
   const [productToEdit, setProductToEdit] = useState<Product | null>(null);
+  const [productToDuplicate, setProductToDuplicate] = useState<Product | null>(null);
   const [companyPromise] = useState(() => getCompanySettingsAction());
 
   // We can safely read categories & taxes via Suspense inside the modal or pass an empty fallback
@@ -172,10 +173,17 @@ export function AdminView({
             categoriesPromise={categoriesPromise}
             onOpenCreateProduct={() => {
               setProductToEdit(null);
+              setProductToDuplicate(null);
               setIsProductModalOpen(true);
             }}
             onEditProduct={(p) => {
               setProductToEdit(p);
+              setProductToDuplicate(null);
+              setIsProductModalOpen(true);
+            }}
+            onDuplicateProduct={(p) => {
+              setProductToEdit(null);
+              setProductToDuplicate(p);
               setIsProductModalOpen(true);
             }}
             onRefresh={onRefreshAll}
@@ -254,6 +262,7 @@ export function AdminView({
         isOpen={isProductModalOpen}
         onClose={() => setIsProductModalOpen(false)}
         productToEdit={productToEdit}
+        duplicateFrom={productToDuplicate}
         categories={cachedCategories}
         itemTypes={[]}
         taxCategories={cachedTaxes}

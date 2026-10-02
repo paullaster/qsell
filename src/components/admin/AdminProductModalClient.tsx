@@ -7,17 +7,20 @@ import type { Product, Category, ItemType, TaxCategory } from '@/types/index';
 
 export function AdminProductModalClient({
   productPromise,
+  duplicateFromPromise,
   categoriesPromise,
   itemTypesPromise,
   taxesPromise,
 }: {
   productPromise: Promise<Product | null>;
+  duplicateFromPromise?: Promise<Product | null>;
   categoriesPromise: Promise<Category[]>;
   itemTypesPromise: Promise<ItemType[]>;
   taxesPromise: Promise<TaxCategory[]>;
 }) {
   const router = useRouter();
   const product = use(productPromise);
+  const duplicateFrom = duplicateFromPromise ? use(duplicateFromPromise) : null;
   const categories = use(categoriesPromise);
   const itemTypes = use(itemTypesPromise);
   const taxes = use(taxesPromise);
@@ -25,7 +28,7 @@ export function AdminProductModalClient({
 
   useEffect(() => {
     setOpen(true);
-  }, [product]);
+  }, [product, duplicateFrom]);
 
   return (
     <AdminProductModal
@@ -35,6 +38,7 @@ export function AdminProductModalClient({
         router.back();
       }}
       productToEdit={product}
+      duplicateFrom={duplicateFrom}
       categories={categories}
       itemTypes={itemTypes}
       taxCategories={taxes}
