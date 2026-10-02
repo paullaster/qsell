@@ -21,8 +21,15 @@ function slugify(value: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
-function isUniqueConstraintError(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505';
+/** Slugs are URL keys; a title-derived slug can collide, so suffix -2, -3… until free. */
+async function resolveUniqueSlug(base: string, excludeProductId?: string): Promise<string> {
+  const stem = slugify(base) || 'product';
+  for (let attempt = 1; attempt < 10000; attempt += 1) {
+    const candidate = attempt === 1 ? stem : `${stem}-${attempt}`;
+    const match = await repo().getProductBySlug(candidate);
+    if (!match || match.id === excludeProductId) return candidate;
+  }
+  throw new Error('Could not generate a unique URL slug for this product.');
 }
 
 export class CatalogService {
@@ -93,6 +100,7 @@ export class CatalogService {
     const newProduct: Product = {
       ...productData,
       id,
+      slug: await resolveUniqueSlug(productData.slug || productData.name),
       sku: productData.sku.trim().toUpperCase(),
       stockCode: productData.stockCode.trim().toUpperCase(),
       price,
@@ -131,63 +139,6 @@ export class CatalogService {
     return newProduct;
   }
 
-  static async duplicateProduct(id: string): Promise<Product> {
-    const source = await this.getProductById(id);
-    if (!source) throw new Error('Product not found. Refresh the catalog and try again.');
-
-    for (let copyNumber = 0; copyNumber < 10000; copyNumber += 1) {
-      const suffix = copyNumber === 0 ? 'COPY' : `COPY${copyNumber}`;
-      const candidateSku = `${source.sku}-${suffix}`.toUpperCase();
-      const candidateStockCode = `${source.stockCode}-${suffix}`.toUpperCase();
-      const candidateSlug =
-        `${source.slug}-copy${copyNumber === 0 ? '' : copyNumber}`.toLowerCase();
-      const [skuMatch, stockCodeMatch, slugMatch] = await Promise.all([
-        repo().getProductBySku(candidateSku),
-        repo().getProductByStockCode(candidateStockCode),
-        repo().getProductBySlug(candidateSlug),
-      ]);
-      if (!skuMatch && !stockCodeMatch && !slugMatch) {
-        try {
-          return await this.createProduct({
-            name: source.name,
-            sku: candidateSku,
-            stockCode: candidateStockCode,
-            slug: candidateSlug,
-            description: source.description,
-            category: source.category,
-            brand: source.brand,
-            itemTypeId: source.itemTypeId,
-            itemTypeName: source.itemTypeName,
-            itemTypeCode: source.itemTypeCode,
-            isSellable: source.isSellable,
-            price: source.price,
-            compareAtPrice: source.compareAtPrice,
-            costPrice: source.costPrice,
-            taxCategoryId: source.taxCategoryId,
-            taxCategoryName: source.taxCategoryName,
-            taxRate: source.taxRate,
-            isTaxInclusive: source.isTaxInclusive,
-            weight: source.weight,
-            specifications:
-              source.specifications?.map((specification) => ({ ...specification })) ?? [],
-            stockQuantity: source.stockQuantity,
-            lowStockThreshold: source.lowStockThreshold,
-            isActive: source.isActive,
-            imageUrl: source.imageUrl,
-            additionalImages: source.additionalImages?.slice() ?? [],
-            rating: source.rating,
-            reviewCount: source.reviewCount,
-            tags: source.tags.slice(),
-          });
-        } catch (error) {
-          if (isUniqueConstraintError(error)) continue;
-          throw error;
-        }
-      }
-    }
-    throw new Error('Could not generate unique product codes for this copy.');
-  }
-
   static async updateProduct(id: string, updates: Partial<Product>): Promise<Product> {
     const catalog = repo();
     const existingRow = await catalog.getProductById(id);
@@ -201,6 +152,21 @@ export class CatalogService {
     if (updates.stockCode !== undefined) {
       if (!updates.stockCode.trim()) throw new Error('Stock code is required');
       updates.stockCode = updates.stockCode.trim().toUpperCase();
+    }
+    if (updates.sku !== undefined && updates.sku !== existing.sku) {
+      const clash = await catalog.getProductBySku(updates.sku);
+      if (clash && clash.id !== id) {
+        throw new Error(`SKU ${updates.sku} is already used by "${clash.name}"`);
+      }
+    }
+    if (updates.stockCode !== undefined && updates.stockCode !== existing.stockCode) {
+      const clash = await catalog.getProductByStockCode(updates.stockCode);
+      if (clash && clash.id !== id) {
+        throw new Error(`Stock code ${updates.stockCode} is already used by "${clash.name}"`);
+      }
+    }
+    if (updates.slug !== undefined && updates.slug !== existing.slug) {
+      updates.slug = await resolveUniqueSlug(updates.slug || existing.name, id);
     }
 
     if (updates.itemTypeId) {

@@ -63,10 +63,19 @@ function generateProductCode(prefix: 'SKU' | 'STK', productName: string, suffix:
   return stem && suffix ? `${prefix}-${stem}-${suffix}` : '';
 }
 
+function slugifyTitle(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 interface AdminProductModalProps {
   isOpen: boolean;
   onClose: () => void;
   productToEdit: Product | null;
+  /** Unsaved draft prefilled from this product; the modal stays in create mode. */
+  duplicateFrom?: Product | null;
   categories: Category[];
   itemTypes?: ItemType[];
   taxCategories?: TaxCategory[];
@@ -77,6 +86,7 @@ export function AdminProductModal({
   isOpen,
   onClose,
   productToEdit,
+  duplicateFrom,
   categories,
   itemTypes: initialItemTypes,
   taxCategories: initialTaxCategories,
@@ -93,6 +103,7 @@ export function AdminProductModal({
   const [skuManuallyEdited, setSkuManuallyEdited] = useState(false);
   const [stockCodeManuallyEdited, setStockCodeManuallyEdited] = useState(false);
   const [slug, setSlug] = useState('');
+  const [slugManuallyEdited, setSlugManuallyEdited] = useState(false);
   const [category, setCategory] = useState('');
   const [brand, setBrand] = useState('');
   const [itemTypeId, setItemTypeId] = useState('');
@@ -187,35 +198,43 @@ export function AdminProductModal({
     setTab('basics');
     setError(null);
 
-    if (productToEdit) {
-      setName(productToEdit.name);
-      setSku(productToEdit.sku);
-      setStockCode(productToEdit.stockCode);
-      setCodeSuffix('');
-      setSkuManuallyEdited(true);
-      setStockCodeManuallyEdited(true);
-      setSlug(productToEdit.slug);
-      setCategory(productToEdit.category);
-      setBrand(productToEdit.brand || '');
-      setItemTypeId(productToEdit.itemTypeId || '');
-      setPrice(productToEdit.price != null ? String(productToEdit.price) : '');
-      setCompareAtPrice(
-        productToEdit.compareAtPrice != null ? String(productToEdit.compareAtPrice) : '',
-      );
-      setCostPrice(productToEdit.costPrice != null ? String(productToEdit.costPrice) : '');
-      setSelectedTaxId(productToEdit.taxCategoryId || '');
-      setStockQuantity(String(productToEdit.stockQuantity));
-      setLowStockThreshold(String(productToEdit.lowStockThreshold));
-      setWeight(productToEdit.weight != null ? String(productToEdit.weight) : '');
-      setImageUrl(productToEdit.imageUrl || '');
-      setDescription(productToEdit.description || '');
-      setTagsInput(productToEdit.tags?.join(', ') || '');
-      setIsActive(productToEdit.isActive);
-      setSpecifications(
-        productToEdit.specifications && productToEdit.specifications.length > 0
-          ? productToEdit.specifications
-          : [],
-      );
+    const template = productToEdit ?? duplicateFrom;
+    if (template) {
+      setName(template.name);
+      setItemTypeId(template.itemTypeId || '');
+      setCategory(template.category);
+      setBrand(template.brand || '');
+      setPrice(template.price != null ? String(template.price) : '');
+      setCompareAtPrice(template.compareAtPrice != null ? String(template.compareAtPrice) : '');
+      setCostPrice(template.costPrice != null ? String(template.costPrice) : '');
+      setSelectedTaxId(template.taxCategoryId || '');
+      setStockQuantity(String(template.stockQuantity));
+      setLowStockThreshold(String(template.lowStockThreshold));
+      setWeight(template.weight != null ? String(template.weight) : '');
+      setImageUrl(template.imageUrl || '');
+      setDescription(template.description || '');
+      setTagsInput(template.tags?.join(', ') || '');
+      setIsActive(template.isActive);
+      setSpecifications(template.specifications?.map((spec) => ({ ...spec })) ?? []);
+      if (productToEdit) {
+        setSku(productToEdit.sku);
+        setStockCode(productToEdit.stockCode);
+        setCodeSuffix('');
+        setSkuManuallyEdited(true);
+        setStockCodeManuallyEdited(true);
+        setSlug(productToEdit.slug);
+        setSlugManuallyEdited(true);
+      } else {
+        // A duplicate is a draft with its own identity: codes and slug follow the title.
+        const suffix = createCodeSuffix();
+        setCodeSuffix(suffix);
+        setSku(generateProductCode('SKU', template.name, suffix));
+        setStockCode(generateProductCode('STK', template.name, suffix));
+        setSkuManuallyEdited(false);
+        setStockCodeManuallyEdited(false);
+        setSlug(slugifyTitle(template.name));
+        setSlugManuallyEdited(false);
+      }
     } else {
       setName('');
       setSku('');
@@ -223,6 +242,7 @@ export function AdminProductModal({
       setCodeSuffix(createCodeSuffix());
       setSkuManuallyEdited(false);
       setStockCodeManuallyEdited(false);
+      setSlugManuallyEdited(false);
       setSlug('');
       setCategory('');
       setBrand('');
@@ -240,7 +260,7 @@ export function AdminProductModal({
       setIsActive(true);
       setSpecifications([]);
     }
-  }, [productToEdit, isOpen]);
+  }, [productToEdit, duplicateFrom, isOpen]);
 
   useEffect(() => {
     if (!isOpen || productToEdit || itemTypeId) return;
@@ -381,7 +401,7 @@ export function AdminProductModal({
       .split(',')
       .map((t) => t.trim())
       .filter(Boolean);
-    const autoSlug = slug.trim() || name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const autoSlug = slug.trim() || slugifyTitle(name);
     const stock = stockQuantity.trim() === '' ? 0 : Number(stockQuantity);
     const lowThreshold = lowStockThreshold.trim() === '' ? 0 : Number(lowStockThreshold);
     const weightValue = weight.trim() === '' ? undefined : Number(weight);
@@ -463,7 +483,11 @@ export function AdminProductModal({
             </div>
             <div className="min-w-0">
               <h3 className="truncate text-sm font-bold text-fg-strong sm:text-base">
-                {isEditing ? `Edit Product: ${productToEdit?.sku ?? ''}` : 'Create New Product'}
+                {isEditing
+                  ? `Edit Product: ${productToEdit?.sku ?? ''}`
+                  : duplicateFrom
+                    ? `Duplicate Product: ${duplicateFrom.sku}`
+                    : 'Create New Product'}
               </h3>
               <p className="truncate text-[11px] text-fg-muted">
                 {isEditing
@@ -518,23 +542,36 @@ export function AdminProductModal({
                     onChange={(e) => {
                       const nextName = e.target.value;
                       setName(nextName);
-                      if (!isEditing) {
-                        setSlug(nextName.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
-                        if (!skuManuallyEdited) {
-                          setSku(generateProductCode('SKU', nextName, codeSuffix));
-                        }
-                        if (!stockCodeManuallyEdited) {
-                          setStockCode(generateProductCode('STK', nextName, codeSuffix));
-                        }
+                      if (!slugManuallyEdited) setSlug(slugifyTitle(nextName));
+                      if (!skuManuallyEdited) {
+                        setSku(generateProductCode('SKU', nextName, codeSuffix));
+                      }
+                      if (!stockCodeManuallyEdited) {
+                        setStockCode(generateProductCode('STK', nextName, codeSuffix));
                       }
                     }}
                     placeholder="e.g. Sony WH-1000XM5 Wireless Headphones"
                     className={fieldClass}
                   />
-                  {!isEditing ? (
+                  {!skuManuallyEdited || !stockCodeManuallyEdited ? (
                     <p className="mt-1 text-[10px] text-fg-subtle">
-                      SKU and Stock Code fill from the title and can be edited.
+                      SKU and Stock Code follow the title until you edit them.
                     </p>
+                  ) : isEditing && name.trim() ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const suffix = createCodeSuffix();
+                        setCodeSuffix(suffix);
+                        setSku(generateProductCode('SKU', name, suffix));
+                        setStockCode(generateProductCode('STK', name, suffix));
+                        setSkuManuallyEdited(false);
+                        setStockCodeManuallyEdited(false);
+                      }}
+                      className="mt-1 min-h-11 text-[11px] font-semibold text-indigo-600 hover:underline focus-visible:outline-2 focus-visible:outline-indigo-500 sm:min-h-0"
+                    >
+                      Regenerate SKU and Stock Code from title
+                    </button>
                   ) : null}
                 </div>
                 <div>
@@ -543,8 +580,10 @@ export function AdminProductModal({
                     type="text"
                     value={sku}
                     onChange={(e) => {
-                      setSku(e.target.value.toUpperCase());
-                      setSkuManuallyEdited(true);
+                      const next = e.target.value.toUpperCase();
+                      setSku(next);
+                      // Clearing the field hands control back to the title.
+                      setSkuManuallyEdited(next.trim() !== '');
                     }}
                     autoComplete="off"
                     className={`${fieldClass} min-h-11 font-mono uppercase`}
@@ -556,8 +595,9 @@ export function AdminProductModal({
                     type="text"
                     value={stockCode}
                     onChange={(e) => {
-                      setStockCode(e.target.value.toUpperCase());
-                      setStockCodeManuallyEdited(true);
+                      const next = e.target.value.toUpperCase();
+                      setStockCode(next);
+                      setStockCodeManuallyEdited(next.trim() !== '');
                     }}
                     autoComplete="off"
                     className={`${fieldClass} min-h-11 font-mono uppercase`}
@@ -646,7 +686,10 @@ export function AdminProductModal({
                   <input
                     type="text"
                     value={slug}
-                    onChange={(e) => setSlug(e.target.value)}
+                    onChange={(e) => {
+                      setSlug(e.target.value);
+                      setSlugManuallyEdited(e.target.value.trim() !== '');
+                    }}
                     placeholder="sony-wh-1000xm5"
                     className={`${fieldClass} font-mono`}
                   />

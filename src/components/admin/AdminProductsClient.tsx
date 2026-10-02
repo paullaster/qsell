@@ -18,6 +18,9 @@ export function AdminProductsClient({
       categoriesPromise={categoriesPromise}
       onOpenCreateProduct={() => router.push('/admin/products/new')}
       onEditProduct={(product) => router.push(`/admin/products/${product.id}`)}
+      onDuplicateProduct={(product) =>
+        router.push(`/admin/products/new?duplicateFrom=${encodeURIComponent(product.id)}`)
+      }
       onRefresh={() => router.refresh()}
     />
   );

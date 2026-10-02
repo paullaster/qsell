@@ -36,15 +36,6 @@ export async function createProductAction(
   return product;
 }
 
-export async function duplicateProductAction(id: string): Promise<Product> {
-  await requirePermission('products:create');
-  const product = await CatalogService.duplicateProduct(id);
-  revalidatePath('/admin/products');
-  revalidatePath('/admin/inventory');
-  revalidatePath('/');
-  return product;
-}
-
 export async function updateProductAction(id: string, updates: Partial<Product>): Promise<Product> {
   await requirePermission('products:update');
   const product = await CatalogService.updateProduct(id, updates);
