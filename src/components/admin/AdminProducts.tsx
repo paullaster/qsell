@@ -27,7 +27,6 @@ import { downloadCsv } from '@/lib/downloadPdf';
 import { ProductImportDialog } from '@/components/admin/ProductImportDialog';
 import {
   deleteProductAction,
-  duplicateProductAction,
   updateProductAction,
 } from '@/server/domains/catalog/actions';
 
@@ -36,6 +35,7 @@ interface AdminProductsProps {
   categoriesPromise: Promise<Category[]>;
   onOpenCreateProduct: () => void;
   onEditProduct: (product: Product) => void;
+  onDuplicateProduct: (product: Product) => void;
   onRefresh: () => void;
 }
 
@@ -44,6 +44,7 @@ export function AdminProducts({
   categoriesPromise,
   onOpenCreateProduct,
   onEditProduct,
+  onDuplicateProduct,
   onRefresh,
 }: AdminProductsProps) {
   const products = use(productsPromise);
@@ -56,9 +57,6 @@ export function AdminProducts({
     'all',
   );
   const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(new Set());
-  const [duplicatingProductId, setDuplicatingProductId] = useState<string | null>(null);
-  const [productActionMessage, setProductActionMessage] = useState<string | null>(null);
-  const [productActionError, setProductActionError] = useState<string | null>(null);
   const [isImportOpen, setIsImportOpen] = useState(false);
 
   // Filtering Logic
@@ -133,25 +131,6 @@ export function AdminProducts({
     }
   };
 
-  const handleDuplicateSingle = async (product: Product) => {
-    try {
-      setDuplicatingProductId(product.id);
-      setProductActionError(null);
-      setProductActionMessage(null);
-      const copy = await duplicateProductAction(product.id);
-      setProductActionMessage(
-        `Created product copy with SKU ${copy.sku} and stock code ${copy.stockCode}.`,
-      );
-      onRefresh();
-    } catch (error) {
-      setProductActionError(
-        error instanceof Error ? error.message : `Could not duplicate ${product.name}.`,
-      );
-    } finally {
-      setDuplicatingProductId(null);
-    }
-  };
-
   // Toggle single product status
   const handleToggleStatus = async (p: Product) => {
     await updateProductAction(p.id, { isActive: !p.isActive });
@@ -216,15 +195,6 @@ export function AdminProducts({
         onClose={() => setIsImportOpen(false)}
         onImported={onRefresh}
       />
-
-      {(productActionMessage || productActionError) && (
-        <p
-          role={productActionError ? 'alert' : 'status'}
-          className={`rounded-lg border px-3 py-2 text-sm ${productActionError ? 'border-red-300 bg-red-50 text-red-800' : 'border-emerald-300 bg-emerald-50 text-emerald-800'}`}
-        >
-          {productActionError ?? productActionMessage}
-        </p>
-      )}
 
       {/* Filter and Search Bar */}
       <div className="space-y-3 rounded-xl border border-line bg-surface-raised p-4 text-xs">
@@ -485,9 +455,8 @@ export function AdminProducts({
                           </button>
                           <button
                             type="button"
-                            disabled={duplicatingProductId === p.id}
-                            onClick={() => void handleDuplicateSingle(p)}
-                            className="cursor-pointer rounded-lg bg-surface-sunken p-1.5 text-fg transition-colors hover:bg-indigo-50 hover:text-indigo-700 disabled:cursor-wait disabled:opacity-50"
+                            onClick={() => onDuplicateProduct(p)}
+                            className="cursor-pointer rounded-lg bg-surface-sunken p-1.5 text-fg transition-colors hover:bg-indigo-50 hover:text-indigo-700"
                             title="Duplicate Product"
                             aria-label={`Duplicate ${p.name}`}
                           >
