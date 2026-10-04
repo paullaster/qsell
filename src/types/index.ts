@@ -67,7 +67,63 @@ export interface Product {
   tags: string[];
   createdAt: string;
   updatedAt: string;
+  /** Ordered gallery (first is primary). Loaded on single-product staff reads only. */
+  media?: ProductMediaItem[];
 }
+
+/** A media-library asset as the UI sees it. Private assets expose the authorised route, never a provider URL. */
+export interface MediaAssetView {
+  id: string;
+  provider: 'local' | 'cloudinary' | 'external';
+  visibility: 'public' | 'private';
+  purpose: string;
+  url: string;
+  thumbUrl: string;
+  mime: string;
+  bytes: number | null;
+  width: number | null;
+  height: number | null;
+  altText: string;
+  originalName: string;
+  status: 'pending' | 'ready';
+  createdAt: string;
+}
+
+/** What the product form sends for each gallery slot; the first slot is the primary image. */
+export interface ProductMediaInput {
+  assetId: string;
+  /** Per-product alt text. Empty/absent falls back to the asset's own. */
+  altText?: string;
+}
+
+/** A gallery slot as read back: the input plus what is needed to render it. */
+export interface ProductMediaItem extends ProductMediaInput {
+  url: string;
+  thumbUrl: string;
+  /** The text screen readers get: this product's override, else the asset's. */
+  altText: string;
+  originalName: string;
+  provider: 'local' | 'cloudinary' | 'external';
+  width: number | null;
+  height: number | null;
+  isPrimary: boolean;
+  /** Client-only: uploaded or linked in this form and not saved yet, so it can be discarded safely. */
+  pending?: boolean;
+}
+
+/** A product as accepted by create: the gallery is given as asset references. */
+export type ProductWrite = Omit<Product, 'id' | 'createdAt' | 'updatedAt' | 'reservedQuantity' | 'media'> & {
+  media?: ProductMediaInput[];
+};
+
+/** A partial product as accepted by update. Omit `media` to leave the gallery untouched. */
+export type ProductPatch = Partial<Omit<Product, 'media'>> & { media?: ProductMediaInput[] };
+
+/**
+ * What the public storefront may see. Unit cost (margin) is staff-only, so it is
+ * removed on the server and absent from the type, not merely unused by the UI.
+ */
+export type PublicProduct = Omit<Product, 'costPrice'>;
 
 export type TaxType =
   'vat' | 'sales_tax' | 'gst' | 'excise' | 'custom' | 'exempt' | 'digital_service';
@@ -112,7 +168,8 @@ export type InventoryChangeType =
   | 'restock'
   | 'manual_adjustment'
   | 'reconciliation_correction'
-  | 'order_cancellation_release';
+  | 'order_cancellation_release'
+  | 'product_deleted';
 
 export interface InventoryLedgerEntry {
   id: string;

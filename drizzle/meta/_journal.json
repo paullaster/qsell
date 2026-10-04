@@ -120,6 +120,20 @@
       "when": 1790664880660,
       "tag": "0016_product_csv_imports",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790939638963,
+      "tag": "0017_product_soft_delete",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791005597890,
+      "tag": "0018_media_assets",
+      "breakpoints": true
     }
   ]
 }

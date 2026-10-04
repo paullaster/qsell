@@ -9,7 +9,14 @@ import { getContainer } from '@/server/di/container';
 import { buildProductTemplateCsv, MAX_IMPORT_BYTES } from '@/lib/productCsv';
 import { CatalogService } from './service';
 import type { ImportJobView, StageResult } from './import-service';
-import type { Product, Category, ItemType } from '@/types/index';
+import type {
+  Product,
+  ProductPatch,
+  ProductWrite,
+  PublicProduct,
+  Category,
+  ItemType,
+} from '@/types/index';
 
 export async function listProductsAction(): Promise<Product[]> {
   await requirePermission('products:read');
@@ -17,17 +24,22 @@ export async function listProductsAction(): Promise<Product[]> {
 }
 
 /** Active, sellable catalog for the customer storefront. */
-export async function listSellableProductsAction(): Promise<Product[]> {
+export async function listSellableProductsAction(): Promise<PublicProduct[]> {
   return CatalogService.getSellableProducts();
 }
 
+/** Staff lookup — returns the full record, including cost. */
 export async function getProductAction(id: string): Promise<Product | null> {
-  return (await CatalogService.getProductById(id)) ?? null;
+  await requirePermission('products:read');
+  return (await CatalogService.getProductWithMedia(id)) ?? null;
 }
 
-export async function createProductAction(
-  productData: Omit<Product, 'id' | 'createdAt' | 'updatedAt' | 'reservedQuantity'>,
-): Promise<Product> {
+/** Public lookup — published, sellable products only, without staff-only fields. */
+export async function getPublicProductAction(id: string): Promise<PublicProduct | null> {
+  return (await CatalogService.getPublicProduct(id)) ?? null;
+}
+
+export async function createProductAction(productData: ProductWrite): Promise<Product> {
   await requirePermission('products:create');
   const product = await CatalogService.createProduct(productData);
   revalidatePath('/admin/products');
@@ -36,7 +48,7 @@ export async function createProductAction(
   return product;
 }
 
-export async function updateProductAction(id: string, updates: Partial<Product>): Promise<Product> {
+export async function updateProductAction(id: string, updates: ProductPatch): Promise<Product> {
   await requirePermission('products:update');
   const product = await CatalogService.updateProduct(id, updates);
   revalidatePath('/admin/products');

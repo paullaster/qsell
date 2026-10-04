@@ -15,7 +15,11 @@ export async function startWorker(): Promise<void> {
     concurrency: Math.max(1, Number(process.env.WORKER_CONCURRENCY ?? 5)),
     pollInterval: Math.max(250, Number(process.env.WORKER_POLL_INTERVAL ?? 1000)),
     // Daily, off the hour to avoid the top-of-hour cron pile-up (UTC).
-    crontab: ['17 3 * * * purge-auth-tokens', '27 3 * * * purge-product-imports'].join('\n'),
+    crontab: [
+      '17 3 * * * purge-auth-tokens',
+      '27 3 * * * purge-product-imports',
+      '37 3 * * * purge-media',
+    ].join('\n'),
   });
 
   // Graceful shutdown

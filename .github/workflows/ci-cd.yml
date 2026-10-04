@@ -54,6 +54,10 @@ jobs:
           DATABASE_URL: postgresql://qsell:ci-only-password@localhost:5432/qsell
       - name: Typecheck
         run: pnpm typecheck
+      - name: Verify media storage adapters
+        # Runs the Cloudinary adapter against a local fake: retries, timeouts, signed private
+        # links and the "private upload must not land public" safety check. No credentials needed.
+        run: pnpm media:verify
       - name: Production build
         run: pnpm build
         env:
@@ -166,6 +170,30 @@ jobs:
           cd /opt/qsell
           test -s .env.runtime || { echo 'Missing /opt/qsell/.env.runtime'; exit 1; }
           test -s secrets/postgres_password || { echo 'Missing /opt/qsell/secrets/postgres_password'; exit 1; }
+          # ── Media storage pre-flight ─────────────────────────────────────────
+          # Runs before anything is pulled, migrated or replaced, so a bad setting stops the
+          # release with the old version still serving. Reads .env.runtime without printing values.
+          env_value() { sed -n "s/^$1=//p" .env.runtime | tail -n 1 | tr -d "'\""; }
+          env_has() { [ -n "$(env_value "$1")" ]; }
+          media_driver=$(env_value MEDIA_DRIVER | tr 'A-Z' 'a-z')
+          case "${media_driver:-local}" in
+            local)
+              echo '::notice::Media storage: local volume (persistent, single host). Set MEDIA_DRIVER=cloudinary in /opt/qsell/.env.runtime to use Cloudinary.'
+              ;;
+            cloudinary)
+              if env_has CLOUDINARY_URL || { env_has CLOUDINARY_CLOUD_NAME && env_has CLOUDINARY_API_KEY && env_has CLOUDINARY_API_SECRET; }; then
+                echo '::notice::Media storage: Cloudinary credentials are present.'
+              else
+                echo '::error::MEDIA_DRIVER=cloudinary but the credentials are missing from /opt/qsell/.env.runtime. Set CLOUDINARY_URL, or CLOUDINARY_CLOUD_NAME + CLOUDINARY_API_KEY + CLOUDINARY_API_SECRET. Nothing was deployed.'
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::Unknown MEDIA_DRIVER in /opt/qsell/.env.runtime (use 'local' or 'cloudinary'). Nothing was deployed."
+              exit 1
+              ;;
+          esac
+
           umask 077
           printf 'APP_IMAGE=%s\nWORKER_IMAGE=%s\nMIGRATOR_IMAGE=%s\n' \
             "$APP_IMAGE" "$WORKER_IMAGE" "$MIGRATOR_IMAGE" > .env.deploy
@@ -196,7 +224,15 @@ jobs:
             if compose exec -T app node -e "fetch('http://127.0.0.1:3069/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"; then
               echo 'Application health check passed.'
               rm -rf "$upload_backup"
-              exit 0
+
+              # The app is up; now confirm image uploads can actually work (config only, no network).
+              uploads_ready=$(compose exec -T app node -e "fetch('http://127.0.0.1:3069/api/health').then(r => r.json()).then(j => console.log(String(Boolean(j.media) && j.media.uploadsReady))).catch(() => console.log('unknown'))" || echo unknown)
+              if [ "$uploads_ready" = true ]; then
+                echo 'Image uploads are ready.'
+                exit 0
+              fi
+              echo "::error::The release is live, but image uploads are NOT ready (health reported: $uploads_ready). Check MEDIA_DRIVER and CLOUDINARY_* in /opt/qsell/.env.runtime, then: docker compose logs app"
+              exit 1
             fi
             sleep 5
           done
@@ -215,3 +251,25 @@ jobs:
             "curl --fail --silent --show-error --retry 20 --retry-delay 5 \
              --resolve omnicommerce.brainsporellc.com:443:127.0.0.1 \
              https://omnicommerce.brainsporellc.com/api/health"
+
+      - name: Smoke-test the media provider
+        # Last on purpose: the release is already live, so a failure here turns the run red
+        # (bad credentials, provider outage) without blocking the deploy itself.
+        # Uploads two tiny test images, reads them back, checks the private one is not publicly
+        # reachable, then deletes everything it created. Runs from the worker image, which has
+        # outbound network access and the production environment.
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+        run: |
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" sh -s <<'REMOTE'
+          set -eu
+          cd /opt/qsell
+          driver=$(sed -n 's/^MEDIA_DRIVER=//p' .env.runtime | tail -n 1 | tr -d "'\"" | tr 'A-Z' 'a-z')
+          if [ "${driver:-local}" != cloudinary ]; then
+            echo 'Media provider smoke test skipped: not using Cloudinary.'
+            exit 0
+          fi
+          docker compose --env-file .env.deploy -f compose.production.yaml \
+            run --rm -T --no-deps worker pnpm media:check
+          REMOTE

@@ -30,6 +30,8 @@ import { UserSessionRepository } from '@/server/domains/auth/session-repository'
 import { AuthTokenRepository } from '@/server/domains/auth/token-repository';
 import { AccountService } from '@/server/domains/auth/account-service';
 import { ProductImportService } from '@/server/domains/catalog/import-service';
+import { MediaService } from '@/server/domains/media/service';
+import { MediaPortRegistry } from '@/server/adapters/media/registry';
 import { getWorkerUtils } from '@/server/queue/worker';
 
 /** Installs/updates the job-queue schema once per process, before the first enqueue. */
@@ -74,6 +76,7 @@ export interface AppContainer {
   authTokens: AuthTokenRepository;
   accounts: AccountService;
   productImports: ProductImportService;
+  media: MediaService;
 }
 
 function createEmailPort(): EmailPort {
@@ -143,6 +146,8 @@ export function getContainer(): AppContainer {
     companySettings,
   });
 
+  const media = new MediaService(drizzleDb, new MediaPortRegistry());
+
   container = {
     db: drizzleDb,
     invoicePdf,
@@ -170,7 +175,8 @@ export function getContainer(): AppContainer {
     userSessions,
     authTokens,
     accounts,
-    productImports: new ProductImportService(drizzleDb, ensureQueueSchema),
+    productImports: new ProductImportService(drizzleDb, ensureQueueSchema, media),
+    media,
   };
 
   return container;

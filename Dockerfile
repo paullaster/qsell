@@ -50,10 +50,17 @@ ENV NODE_ENV=production \
     HOME=/home/nextjs \
     PNPM_HOME=/pnpm \
     COREPACK_HOME=/pnpm/corepack \
-    PATH=/pnpm:$PATH
+    PATH=/pnpm:$PATH \
+    # Media storage works out of the box: uploads go to this directory, which the production
+    # Compose file mounts as a persistent volume on BOTH the app and the worker. A value in
+    # .env.runtime (e.g. MEDIA_DRIVER=cloudinary) overrides these defaults.
+    MEDIA_DRIVER=local \
+    MEDIA_LOCAL_DIR=/app/storage/media
+# /app/storage/media is created here, owned by the app user, so a fresh named volume mounted
+# on it inherits that ownership and the unprivileged app can write to it.
 RUN addgroup --system --gid 1001 nextjs \
  && adduser --system --uid 1001 --ingroup nextjs nextjs \
- && mkdir -p /home/nextjs/.cache \
+ && mkdir -p /home/nextjs/.cache /app/storage/media \
  && corepack enable \
  && corepack prepare pnpm@12.6.0 --activate \
  && chown -R nextjs:nextjs /pnpm \
@@ -84,6 +91,9 @@ FROM runtime-base AS worker
 COPY --from=dependencies --chown=nextjs:nextjs /app/node_modules ./node_modules
 COPY --chown=nextjs:nextjs package.json pnpm-workspace.yaml tsconfig.json ./
 COPY --chown=nextjs:nextjs src ./src
+# Operational scripts (media provider check, manual sweep) run from this image so they
+# see the same dependencies, environment and network access as the real worker.
+COPY --chown=nextjs:nextjs scripts ./scripts
 USER nextjs
 CMD ["pnpm", "worker"]
 

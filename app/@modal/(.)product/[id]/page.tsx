@@ -1,4 +1,4 @@
-import { getProductAction } from '@/server/domains/catalog/actions';
+import { getPublicProductAction } from '@/server/domains/catalog/actions';
 import { ProductPageClient } from '@/components/store/ProductPageClient';
 
 export default async function InterceptedProductPage({
@@ -7,6 +7,6 @@ export default async function InterceptedProductPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const productPromise = getProductAction(id);
+  const productPromise = getPublicProductAction(id);
   return <ProductPageClient productPromise={productPromise} asModal />;
 }
