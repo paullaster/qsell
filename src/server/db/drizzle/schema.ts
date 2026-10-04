@@ -10,9 +10,12 @@ import {
   numeric,
   uniqueIndex,
   index,
+  check,
+  primaryKey,
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import type { CompanyUiConfigRaw } from '@/config/company-ui';
+import type { MediaVisibility, StoredMediaProvider } from '@/server/ports/media';
 import type {
   PaymentProviderCode,
   PaymentProviderEnvironment,
@@ -1000,14 +1003,101 @@ export const products = pgTable(
     tags: jsonb('tags').$type<string[]>().notNull().default([]),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * Soft delete. A deleted product keeps its row so the stock ledger and any
+     * order/quote history still resolve; every catalog read filters on this.
+     */
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
   },
   (t) => [
-    uniqueIndex('products_sku_uidx').on(t.sku),
-    uniqueIndex('products_stock_code_uidx').on(t.stockCode),
-    uniqueIndex('products_slug_uidx').on(t.slug),
+    // Partial: a deleted product must not hold on to its codes and slug.
+    uniqueIndex('products_sku_uidx').on(t.sku).where(sql`${t.deletedAt} is null`),
+    uniqueIndex('products_stock_code_uidx').on(t.stockCode).where(sql`${t.deletedAt} is null`),
+    uniqueIndex('products_slug_uidx').on(t.slug).where(sql`${t.deletedAt} is null`),
     index('products_category_idx').on(t.categoryId),
     index('products_item_type_idx').on(t.itemTypeId),
     index('products_active_idx').on(t.isActive),
+  ],
+);
+
+export type { MediaVisibility };
+/** Where an asset lives: a storage provider, or 'external' for a pasted link. */
+export type MediaProvider = StoredMediaProvider | 'external';
+export type MediaStatus = 'pending' | 'ready';
+
+/**
+ * One row per stored (or externally linked) file, independent of who uses it.
+ * Consumers (products today; logo, avatars, documents later) reference an asset
+ * id, never a provider URL, so the storage provider can change without touching
+ * them. `storage_key` is the provider's own handle; the URL is derived from it.
+ */
+export const mediaAssets = pgTable(
+  'media_assets',
+  {
+    id: text('id').primaryKey(),
+    provider: text('provider').$type<MediaProvider>().notNull(),
+    /** Private assets are only reachable through an authorised, signed delivery. */
+    visibility: text('visibility').$type<MediaVisibility>().notNull().default('public'),
+    resourceType: text('resource_type').notNull().default('image'),
+    /** Namespace / folder: 'product', 'company', 'avatar', 'document'… */
+    purpose: text('purpose').notNull().default('product'),
+    /** Provider handle (Cloudinary public_id, local relative path). Null for external links. */
+    storageKey: text('storage_key'),
+    /** The linked URL, external assets only. */
+    sourceUrl: text('source_url'),
+    mime: text('mime').notNull().default(''),
+    bytes: integer('bytes'),
+    width: integer('width'),
+    height: integer('height'),
+    sha256: text('sha256'),
+    originalName: text('original_name').notNull().default(''),
+    altText: text('alt_text').notNull().default(''),
+    /** 'pending' = uploaded but never attached; swept after a day. */
+    status: text('status').$type<MediaStatus>().notNull().default('ready'),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdByEmail: text('created_by_email').notNull().default(''),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('media_assets_storage_uidx')
+      .on(t.provider, t.storageKey)
+      .where(sql`${t.storageKey} is not null`),
+    uniqueIndex('media_assets_external_url_uidx')
+      .on(t.sourceUrl)
+      .where(sql`${t.provider} = 'external' and ${t.deletedAt} is null`),
+    index('media_assets_sha_idx').on(t.sha256),
+    index('media_assets_library_idx').on(t.status, t.purpose, t.createdAt),
+    check(
+      'media_assets_location_chk',
+      sql`(${t.provider} = 'external' and ${t.sourceUrl} is not null) or (${t.provider} <> 'external' and ${t.storageKey} is not null)`,
+    ),
+  ],
+);
+
+/** A product's gallery: ordered assets, exactly one primary. Assets are shared across products. */
+export const productMedia = pgTable(
+  'product_media',
+  {
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'cascade' }),
+    assetId: text('asset_id')
+      .notNull()
+      .references(() => mediaAssets.id, { onDelete: 'restrict' }),
+    position: integer('position').notNull().default(0),
+    isPrimary: boolean('is_primary').notNull().default(false),
+    /** Per-product alt text; falls back to the asset's. */
+    altText: text('alt_text'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.productId, t.assetId] }),
+    uniqueIndex('product_media_primary_uidx')
+      .on(t.productId)
+      .where(sql`${t.isPrimary}`),
+    index('product_media_asset_idx').on(t.assetId),
   ],
 );
 

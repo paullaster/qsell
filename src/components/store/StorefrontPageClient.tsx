@@ -21,12 +21,12 @@ import {
   listCurrenciesAction,
   listEnabledCheckoutProvidersAction,
 } from '@/server/actions';
-import type { Product, Order, PaymentProvider, CurrencyConfig } from '@/types/index';
+import type { PublicProduct, Order, PaymentProvider, CurrencyConfig } from '@/types/index';
 import { resolveBaseCurrency } from '@/lib/cartMoney';
 import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
 
 interface StorefrontPageClientProps {
-  productsPromise: Promise<Product[]>;
+  productsPromise: Promise<PublicProduct[]>;
   companyPromise: Promise<CompanySettingsRow>;
   /** Signed-in shopper's display name, resolved on the server; null for guests. */
   sessionNamePromise: Promise<string | null>;
@@ -110,7 +110,7 @@ export function StorefrontPageClient({
   const [completedOrder, setCompletedOrder] = useState<Order | null>(null);
 
   const handleAddToCart = useCallback(
-    (product: Product, quantity = 1) => {
+    (product: PublicProduct, quantity = 1) => {
       setCart((prev) => {
         const existing = prev.find((item) => item.product.id === product.id);
         const available = product.stockQuantity - product.reservedQuantity;
@@ -132,7 +132,7 @@ export function StorefrontPageClient({
   );
 
   const handleQuickBuy = useCallback(
-    (product: Product) => {
+    (product: PublicProduct) => {
       handleAddToCart(product, 1);
       setIsCartOpen(false);
       setIsCheckoutOpen(true);

@@ -57,16 +57,23 @@ The runtime environment must include at least `DATABASE_URL` and `AUTH_SECRET`.
 Configure enabled payment, email, encryption, and storage integrations there as
 needed. Do not place secrets in the repository or in the deployment workflow.
 
+Image uploads need **no extra setup**: they work out of the box on a persistent
+volume. To use Cloudinary instead, add the settings described under
+[Image uploads](#image-uploads-media-storage).
+
 ## Release path
 
 1. Open a pull request into `release`; CI installs the frozen pnpm lockfile,
    applies database migrations in its disposable PostgreSQL service, typechecks,
-   and builds Next.js.
+   runs the media storage adapter checks (`pnpm media:verify`), and builds
+   Next.js.
 2. Merge the pull request. The release workflow publishes immutable
    `sha-<commit>`, `worker-<commit>`, and `migrator-<commit>` images to GHCR.
 3. The workflow connects to the host with its SSH key, copies the Compose/Nginx
-   config, pulls those exact commit images, applies migrations, updates Compose,
-   and checks the app health endpoint.
+   config, **checks the media storage settings** (stopping with the old release
+   still serving if they are wrong), pulls those exact commit images, applies
+   migrations, updates Compose, checks the app health endpoint, confirms image
+   uploads are ready, and finally smoke-tests the media provider.
 
 Deploy logs are available under GitHub Actions → Release pipeline. On the host:
 
@@ -97,3 +104,73 @@ Tune `APP_MEMORY_LIMIT`, `POSTGRES_MEMORY_LIMIT`, `WORKER_MEMORY_LIMIT`, their
 CPU settings, database pool size, and worker concurrency to the actual host.
 Scale reads beyond one app instance only after configuring a shared Next.js
 cache and consistent multi-instance Server Action encryption key.
+
+## Image uploads (media storage)
+
+Product images can be uploaded (not just linked). Storage is a pluggable
+provider chosen by `MEDIA_DRIVER` in `/opt/qsell/.env.runtime`:
+
+| `MEDIA_DRIVER` | Where files go | Notes |
+| --- | --- | --- |
+| `local` (the default) | The persistent `media_data` volume, mounted at `/app/storage/media` | Single host. Survives releases. Back it up (below). |
+| `cloudinary` | Your Cloudinary account | Needs the settings below. Recommended for production. |
+
+### What a release does for you
+
+- **Schema:** the migration image creates the media tables and, on the first run,
+  turns every existing product image link into a library asset. Nothing to run.
+- **Storage:** the `media_data` volume is created on first deploy, owned by the
+  app user, and mounted on both the app and the worker (the nightly sweep deletes
+  files). It stays mounted after you switch to Cloudinary, so earlier uploads keep
+  working.
+- **Network:** the worker can reach the internet (needed to delete files from
+  Cloudinary). Before, it sat on an internal-only network.
+- **Checks:** before touching the running stack, the release validates the media
+  settings. After deploying it confirms the app reports `media.uploadsReady`, and
+  (Cloudinary only) uploads and removes two tiny test images to prove the
+  credentials work. A failure is shown as a red step with the reason.
+- **Sweep:** a nightly worker job removes uploads that were never attached to a
+  product and deleted images past their 30-day retention.
+
+### Using Cloudinary
+
+Add to `/opt/qsell/.env.runtime` (keep it `chmod 600`), then run a release or
+`docker compose --env-file .env.deploy -f compose.production.yaml up -d app worker`:
+
+```sh
+MEDIA_DRIVER=cloudinary
+# Either the single value from the Cloudinary console...
+CLOUDINARY_URL=cloudinary://API_KEY:API_SECRET@CLOUD_NAME
+# ...or the three parts:
+# CLOUDINARY_CLOUD_NAME=
+# CLOUDINARY_API_KEY=
+# CLOUDINARY_API_SECRET=
+# Optional: one root folder per environment inside the account (default: qsell)
+# CLOUDINARY_FOLDER=qsell
+```
+
+These are secrets; they live only on the host, like the rest of `.env.runtime`.
+No GitHub secret is needed.
+
+Switching providers affects new uploads only. Existing images keep being served
+from wherever they were stored.
+
+### Operating it
+
+```sh
+cd /opt/qsell
+# Check the configured provider end to end (uploads and removes two test images)
+docker compose --env-file .env.deploy -f compose.production.yaml run --rm -T --no-deps worker pnpm media:check
+# Run the cleanup sweep now instead of waiting for the nightly job
+docker compose --env-file .env.deploy -f compose.production.yaml run --rm -T worker pnpm media:purge
+# Back up locally stored images (when MEDIA_DRIVER=local)
+docker run --rm -v qsell_media_data:/media:ro -v "$PWD":/backup alpine \
+  tar czf "/backup/qsell-media-$(date -u +%F).tar.gz" -C /media .
+```
+
+`/api/health` includes `"media": { "uploadsReady": true }`. It is informational:
+it never makes the app report unhealthy, so a media misconfiguration cannot take
+the site down. If it is `false`, the app log names the setting that is wrong.
+
+If uploads are not configured, product forms still work and show a clear message;
+pasting an image link always works.

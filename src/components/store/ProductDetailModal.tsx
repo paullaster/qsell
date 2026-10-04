@@ -14,15 +14,15 @@ import {
   Smartphone,
   CreditCard,
 } from 'lucide-react';
-import { type Product } from '@/types/index';
+import { type PublicProduct } from '@/types/index';
 import { AppImage } from '@/components/ui/AppImage';
 import { ProductDescriptionView } from '@/components/ui/ProductDescriptionView';
 
 interface ProductDetailModalProps {
-  product: Product | null;
+  product: PublicProduct | null;
   onClose: () => void;
-  onAddToCart: (product: Product, quantity: number) => void;
-  onQuickBuy?: (product: Product) => void;
+  onAddToCart: (product: PublicProduct, quantity: number) => void;
+  onQuickBuy?: (product: PublicProduct) => void;
 }
 
 export function ProductDetailModal({

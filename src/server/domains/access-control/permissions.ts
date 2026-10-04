@@ -185,6 +185,24 @@ export const PERMISSIONS = {
     category: 'Products & Inventory',
     description: 'Adjust product stock levels',
   },
+  'media:read': {
+    resource: 'media',
+    action: 'read',
+    category: 'Products & Inventory',
+    description: 'Browse the media library',
+  },
+  'media:upload': {
+    resource: 'media',
+    action: 'upload',
+    category: 'Products & Inventory',
+    description: 'Upload images and add image links to the media library',
+  },
+  'media:delete': {
+    resource: 'media',
+    action: 'delete',
+    category: 'Products & Inventory',
+    description: 'Delete media from the library',
+  },
   'inventory:read': {
     resource: 'inventory',
     action: 'read',

@@ -16,6 +16,15 @@ export async function GET(): Promise<NextResponse> {
     checks.database = { status: 'unhealthy' };
   }
 
+  // Media storage is reported but deliberately NOT part of the overall status: a missing
+  // upload setting must not make the container unhealthy and take the whole app down.
+  let mediaReady = false;
+  try {
+    mediaReady = getContainer().media.uploadsReady();
+  } catch {
+    mediaReady = false;
+  }
+
   // Overall status
   const allHealthy = Object.values(checks).every((c) => c.status === 'healthy');
   const totalLatency = Date.now() - start;
@@ -26,6 +35,7 @@ export async function GET(): Promise<NextResponse> {
       timestamp: new Date().toISOString(),
       latency: totalLatency,
       checks,
+      media: { uploadsReady: mediaReady },
       version: process.env.npm_package_version ?? 'unknown',
       environment: process.env.NODE_ENV ?? 'unknown',
     },

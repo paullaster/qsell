@@ -2,16 +2,16 @@
 
 import React from 'react';
 import { ShoppingCart, Eye, Star, Zap, ShieldCheck, Check } from 'lucide-react';
-import { type Product } from '@/types/index';
+import { type PublicProduct } from '@/types/index';
 import { productDescriptionPlainText } from '@/lib/productDescription';
 import { AppImage } from '@/components/ui/AppImage';
 
 interface ProductCardProps {
   key?: React.Key;
-  product: Product;
-  onAddToCart: (product: Product) => void;
-  onQuickView: (product: Product) => void;
-  onQuickBuy?: (product: Product) => void;
+  product: PublicProduct;
+  onAddToCart: (product: PublicProduct) => void;
+  onQuickView: (product: PublicProduct) => void;
+  onQuickBuy?: (product: PublicProduct) => void;
   preloadImage?: boolean;
 }
 

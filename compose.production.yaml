@@ -41,6 +41,9 @@ services:
     volumes:
       - next_cache:/app/.next/cache
       - uploads_data:/app/public/uploads
+      # Product images when MEDIA_DRIVER=local (the default). Kept mounted even after
+      # switching to Cloudinary, because earlier uploads must keep resolving.
+      - media_data:/app/storage/media
     tmpfs:
       - /tmp:size=256m,mode=1777
     mem_limit: ${APP_MEMORY_LIMIT:-1500m}
@@ -75,12 +78,17 @@ services:
     environment:
       NODE_ENV: production
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-5}
+    volumes:
+      # The nightly media sweep deletes files, so it needs the same volume as the app.
+      - media_data:/app/storage/media
     mem_limit: ${WORKER_MEMORY_LIMIT:-512m}
     cpus: ${WORKER_CPUS:-1}
     depends_on:
       db:
         condition: service_healthy
-    networks: [data]
+    # `data` is internal (no internet). The worker must also reach the outside world: Cloudinary
+    # (deleting files), payment gateways and email. `egress` is outbound-only; nothing is published.
+    networks: [data, egress]
     security_opt:
       - no-new-privileges:true
 
@@ -122,6 +130,7 @@ volumes:
   postgres_data:
   next_cache:
   uploads_data:
+  media_data:
   caddy_data:
   caddy_config:
 
@@ -133,3 +142,4 @@ networks:
   data:
     internal: true
   edge:
+  egress:
