@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   Package,
@@ -18,6 +18,7 @@ import {
   type Category,
   type ItemType,
   type TaxCategory,
+  type ProductMediaItem,
   type ProductSpecification,
 } from '@/types/index';
 import {
@@ -33,7 +34,8 @@ import {
   mergeById,
   type CatalogShortcutDetail,
 } from '@/components/admin/catalog-shortcuts';
-import { AppImage, PRODUCT_IMAGE_FALLBACK } from '@/components/ui/AppImage';
+import { discardMediaUploadsAction } from '@/server/domains/media/actions';
+import { ProductMediaManager } from '@/components/admin/ProductMediaManager';
 
 type ProductFormTab = 'basics' | 'pricing' | 'inventory' | 'specs' | 'description' | 'media';
 
@@ -125,7 +127,10 @@ export function AdminProductModal({
   const [weight, setWeight] = useState('');
 
   // Media & Description
-  const [imageUrl, setImageUrl] = useState('');
+  const [gallery, setGallery] = useState<ProductMediaItem[]>([]);
+  const [mediaBusy, setMediaBusy] = useState(false);
+  /** Guards against a second Cancel/close while the first is still discarding unsaved uploads. */
+  const closing = useRef(false);
   const [description, setDescription] = useState('');
   const [tagsInput, setTagsInput] = useState('');
   const [isActive, setIsActive] = useState(true);
@@ -211,7 +216,8 @@ export function AdminProductModal({
       setStockQuantity(String(template.stockQuantity));
       setLowStockThreshold(String(template.lowStockThreshold));
       setWeight(template.weight != null ? String(template.weight) : '');
-      setImageUrl(template.imageUrl || '');
+      // Edit and duplicate both carry the gallery (assets are shared, so copying is free).
+      setGallery(template.media ?? []);
       setDescription(template.description || '');
       setTagsInput(template.tags?.join(', ') || '');
       setIsActive(template.isActive);
@@ -254,7 +260,7 @@ export function AdminProductModal({
       setStockQuantity('');
       setLowStockThreshold('');
       setWeight('');
-      setImageUrl('');
+      setGallery([]);
       setDescription('');
       setTagsInput('');
       setIsActive(true);
@@ -432,14 +438,24 @@ export function AdminProductModal({
         lowStockThreshold: Number.isFinite(lowThreshold) ? lowThreshold : 0,
         weight: weightValue != null && Number.isFinite(weightValue) ? weightValue : undefined,
         specifications,
-        imageUrl: imageUrl.trim(),
+        // The server derives the stored image columns from the gallery; this is just the main image.
+        imageUrl: gallery[0]?.url ?? '',
+        media: gallery.map(({ assetId, altText }) => ({ assetId, altText })),
         description: description.trim(),
         tags,
         isActive,
       };
 
       if (isEditing && productToEdit) {
-        await updateProductAction(productToEdit.id, productPayload);
+        // Send stock only when the admin changed it: the loaded number goes stale as
+        // orders reserve units, and re-sending it would overwrite them.
+        const { stockQuantity: editedStock, ...fieldUpdates } = productPayload;
+        await updateProductAction(
+          productToEdit.id,
+          editedStock !== productToEdit.stockQuantity
+            ? { ...fieldUpdates, stockQuantity: editedStock }
+            : fieldUpdates,
+        );
       } else {
         await createProductAction({
           ...productPayload,
@@ -463,6 +479,22 @@ export function AdminProductModal({
   const labelClass = 'mb-1 block text-[11px] font-semibold text-fg-muted';
 
   const tabIndex = TABS.findIndex((t) => t.id === tab);
+  // Closing without saving: delete files uploaded in this form that nothing references.
+  const handleClose = async () => {
+    if (closing.current) return;
+    closing.current = true;
+    const unsaved = gallery.filter((item) => item.pending === true).map((item) => item.assetId);
+    if (unsaved.length > 0) {
+      // Wait for the request (briefly): navigating away first can cancel it half-way.
+      await Promise.race([
+        discardMediaUploadsAction(unsaved).catch(() => undefined),
+        new Promise((resolve) => setTimeout(resolve, 2000)),
+      ]);
+    }
+    closing.current = false;
+    onClose();
+  };
+
   const goNext = () => {
     const next = TABS[tabIndex + 1];
     if (next) setTab(next.id);
@@ -474,7 +506,12 @@ export function AdminProductModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-backdrop/80 p-3 backdrop-blur-md sm:p-5">
-      <div className="relative flex h-[min(720px,90vh)] w-[90vw] max-w-6xl flex-col overflow-hidden rounded-2xl border border-line bg-surface-raised shadow-2xl">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="product-modal-title"
+        className="relative flex h-[min(720px,90vh)] w-[90vw] max-w-6xl flex-col overflow-hidden rounded-2xl border border-line bg-surface-raised shadow-2xl"
+      >
         {/* Header */}
         <div className="flex shrink-0 items-center justify-between border-b border-line bg-surface px-4 py-3 sm:px-5">
           <div className="flex min-w-0 items-center gap-2.5">
@@ -482,7 +519,7 @@ export function AdminProductModal({
               <Package className="h-4 w-4" />
             </div>
             <div className="min-w-0">
-              <h3 className="truncate text-sm font-bold text-fg-strong sm:text-base">
+              <h3 id="product-modal-title" className="truncate text-sm font-bold text-fg-strong sm:text-base">
                 {isEditing
                   ? `Edit Product: ${productToEdit?.sku ?? ''}`
                   : duplicateFrom
@@ -498,7 +535,7 @@ export function AdminProductModal({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => void handleClose()}
             className="cursor-pointer rounded-lg p-1 text-fg-muted hover:text-fg-strong"
             aria-label="Close"
           >
@@ -921,59 +958,35 @@ export function AdminProductModal({
             ) : null}
 
             {tab === 'media' ? (
-              <div className="space-y-3">
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto]">
-                  <div className="space-y-3">
-                    <div>
-                      <label className={labelClass}>Primary Image URL *</label>
-                      <input
-                        type="url"
-                        value={imageUrl}
-                        onChange={(e) => setImageUrl(e.target.value)}
-                        placeholder="https://..."
-                        className={`${fieldClass} font-mono`}
-                      />
-                    </div>
-                    <div>
-                      <label className={labelClass}>Tags (comma-separated)</label>
-                      <input
-                        type="text"
-                        value={tagsInput}
-                        onChange={(e) => setTagsInput(e.target.value)}
-                        placeholder="e.g. Apple, ANC, Gaming"
-                        className={fieldClass}
-                      />
-                    </div>
-                    <div>
-                      <label className={labelClass}>Publishing Status</label>
-                      <select
-                        value={isActive ? 'active' : 'draft'}
-                        onChange={(e) => setIsActive(e.target.value === 'active')}
-                        className={`${fieldClass} cursor-pointer sm:max-w-xs`}
-                      >
-                        <option value="active">Active (Published)</option>
-                        <option value="draft">Draft (Hidden)</option>
-                      </select>
-                    </div>
+              <div className="space-y-5">
+                <ProductMediaManager value={gallery} onChange={setGallery} onBusyChange={setMediaBusy} />
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label htmlFor="product-tags" className={labelClass}>
+                      Tags (comma-separated)
+                    </label>
+                    <input
+                      id="product-tags"
+                      type="text"
+                      value={tagsInput}
+                      onChange={(e) => setTagsInput(e.target.value)}
+                      placeholder="e.g. Apple, ANC, Gaming"
+                      className={fieldClass}
+                    />
                   </div>
-                  <div className="flex flex-col items-center justify-center rounded-xl border border-line bg-surface p-3 sm:w-32">
-                    <span className="mb-2 text-[10px] text-fg-subtle uppercase">Preview</span>
-                    {imageUrl ? (
-                      <AppImage
-                        src={imageUrl}
-                        alt="Product preview"
-                        width={96}
-                        height={96}
-                        sizes="96px"
-                        fallbackSrc={PRODUCT_IMAGE_FALLBACK}
-                        className="h-24 w-24 rounded-lg border border-line object-cover"
-                        referrerPolicy="no-referrer"
-                      />
-                    ) : (
-                      <div className="flex h-24 w-24 items-center justify-center rounded-lg border border-line bg-surface-raised text-fg-faint">
-                        No Image
-                      </div>
-                    )}
+                  <div>
+                    <label htmlFor="product-status" className={labelClass}>
+                      Publishing Status
+                    </label>
+                    <select
+                      id="product-status"
+                      value={isActive ? 'active' : 'draft'}
+                      onChange={(e) => setIsActive(e.target.value === 'active')}
+                      className={`${fieldClass} cursor-pointer`}
+                    >
+                      <option value="active">Active (Published)</option>
+                      <option value="draft">Draft (Hidden)</option>
+                    </select>
                   </div>
                 </div>
               </div>
@@ -1003,18 +1016,24 @@ export function AdminProductModal({
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={onClose}
+                onClick={() => void handleClose()}
                 className="cursor-pointer rounded-lg bg-surface-sunken px-3 py-2 text-xs font-medium text-fg hover:bg-hover"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                disabled={isSubmitting}
-                className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-indigo-600/20 hover:bg-indigo-500 disabled:opacity-50"
+                disabled={isSubmitting || mediaBusy}
+                className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-indigo-600/20 hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Save className="h-3.5 w-3.5" />
-                {isSubmitting ? 'Saving…' : isEditing ? 'Save Changes' : 'Create Product'}
+                {isSubmitting
+                  ? 'Saving…'
+                  : mediaBusy
+                    ? 'Uploading images…'
+                    : isEditing
+                      ? 'Save Changes'
+                      : 'Create Product'}
               </button>
             </div>
           </div>

@@ -23,7 +23,7 @@ const WRITE_OFF_LABELS: Record<string, string> = {
 export type WriteOffReason = keyof typeof WRITE_OFF_LABELS;
 
 /** Transaction handle — the only Drizzle surface these helpers need. */
-type Tx = Parameters<Parameters<typeof drizzleDb.transaction>[0]>[0];
+export type Tx = Parameters<Parameters<typeof drizzleDb.transaction>[0]>[0];
 
 interface StockDelta {
   productId: string;
@@ -31,6 +31,8 @@ interface StockDelta {
   delta: number;
   /** Signed change to `reserved_quantity`. */
   reservedDelta?: number;
+  /** Order settlement may still touch a product deleted after the order was placed. */
+  allowDeleted?: boolean;
   /** Clamp stock at zero rather than allowing a negative. */
   clampAtZero?: boolean;
   /** Set stock to an exact value (physical count / absolute correction). */
@@ -51,15 +53,19 @@ interface StockDelta {
  * concurrent checkouts so two buyers cannot both pass the availability check
  * and oversell the same units.
  */
-async function applyStockDelta(tx: Tx, params: StockDelta): Promise<number> {
-  const [locked] = await tx
-    .select()
-    .from(products)
-    .where(eq(products.id, params.productId))
-    .for('update')
-    .limit(1);
+export async function applyStockDelta(tx: Tx, params: StockDelta): Promise<number> {
+  const locked = (
+    await tx
+      .select()
+      .from(products)
+      .where(eq(products.id, params.productId))
+      .for('update')
+      .limit(1)
+  ).at(0);
 
-  if (!locked) throw new Error(`Product ${params.productId} not found`);
+  if (locked === undefined || (locked.deletedAt !== null && params.allowDeleted !== true)) {
+    throw new Error(`Product ${params.productId} not found`);
+  }
 
   const previousStock = locked.stockQuantity;
   const nextStock =
@@ -185,13 +191,17 @@ export class InventoryDomainService {
     if (quantity <= 0) throw new Error('Write-off quantity must be greater than 0');
 
     await drizzleDb.transaction(async (tx) => {
-      const [locked] = await tx
-        .select({ onHand: products.stockQuantity })
-        .from(products)
-        .where(eq(products.id, productId))
-        .for('update')
-        .limit(1);
-      if (!locked) throw new Error(`Product ${productId} not found`);
+      const locked = (
+        await tx
+          .select({ onHand: products.stockQuantity, deletedAt: products.deletedAt })
+          .from(products)
+          .where(eq(products.id, productId))
+          .for('update')
+          .limit(1)
+      ).at(0);
+      if (locked === undefined || locked.deletedAt !== null) {
+        throw new Error(`Product ${productId} not found`);
+      }
       if (quantity > locked.onHand) {
         throw new Error(
           `Cannot write off ${quantity} units; only ${locked.onHand} currently on hand.`,
@@ -222,13 +232,17 @@ export class InventoryDomainService {
     if (countedQuantity < 0) throw new Error('Physical count cannot be negative');
 
     const discrepancy = await drizzleDb.transaction(async (tx) => {
-      const [locked] = await tx
-        .select({ onHand: products.stockQuantity })
-        .from(products)
-        .where(eq(products.id, productId))
-        .for('update')
-        .limit(1);
-      if (!locked) throw new Error(`Product ${productId} not found`);
+      const locked = (
+        await tx
+          .select({ onHand: products.stockQuantity, deletedAt: products.deletedAt })
+          .from(products)
+          .where(eq(products.id, productId))
+          .for('update')
+          .limit(1)
+      ).at(0);
+      if (locked === undefined || locked.deletedAt !== null) {
+        throw new Error(`Product ${productId} not found`);
+      }
       const diff = countedQuantity - locked.onHand;
 
       await applyStockDelta(tx, {
@@ -309,13 +323,13 @@ export class InventoryDomainService {
           .from(products)
           .where(eq(products.id, item.productId))
           .limit(1);
-        // A product deleted after the order was placed cannot be restocked.
         if (!exists) continue;
 
         await applyStockDelta(tx, {
           productId: item.productId,
           delta: item.quantity,
           reservedDelta: -item.quantity,
+          allowDeleted: true,
           changeType: 'order_cancellation_release',
           referenceId: orderId,
           actor,

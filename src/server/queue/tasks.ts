@@ -324,6 +324,14 @@ export const purgeProductImports = async (_payload: unknown, helpers: JobHelpers
   helpers.logger.info(`Purged ${removed} finished product imports`);
 };
 
+/** Worker cron task: drop never-attached uploads and long-deleted media files. */
+export const purgeMedia = async (_payload: unknown, helpers: JobHelpers) => {
+  const result = await getContainer().media.purge();
+  helpers.logger.info(
+    `Media purge: ${result.stalePendingRemoved} unattached, ${result.expiredDeletedRemoved} deleted, ${result.failed} failed`,
+  );
+};
+
 export const tasks = {
   'process-payment-callback': processPaymentCallback,
   'process-webhook': processWebhook,
@@ -331,4 +339,5 @@ export const tasks = {
   'purge-auth-tokens': purgeAuthTokens,
   'process-product-import': processProductImport,
   'purge-product-imports': purgeProductImports,
+  'purge-media': purgeMedia,
 };

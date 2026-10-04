@@ -1,8 +1,8 @@
-import type { CurrencyConfig, Product } from '@/types/index';
+import type { CurrencyConfig, PublicProduct } from '@/types/index';
 import { formatPriceWithCurrency } from '@/lib/currency';
 import { computeCheckoutTotals, type PricedLine } from '@/lib/checkoutPricing';
 
-export function cartLine(product: Product, quantity: number): PricedLine {
+export function cartLine(product: PublicProduct, quantity: number): PricedLine {
   return {
     productId: product.id,
     quantity,
@@ -12,7 +12,7 @@ export function cartLine(product: Product, quantity: number): PricedLine {
   };
 }
 
-export function cartTotals(items: { product: Product; quantity: number }[]) {
+export function cartTotals(items: { product: PublicProduct; quantity: number }[]) {
   return computeCheckoutTotals(items.map((item) => cartLine(item.product, item.quantity)));
 }
 
@@ -28,7 +28,7 @@ function rawLineTax(line: PricedLine): number {
 export type CartTaxRow = { key: string; label: string; amount: number };
 
 /** Tax rows labeled from each product's tax category. Amounts sum to the order tax. */
-export function cartTaxRows(items: { product: Product; quantity: number }[]): CartTaxRow[] {
+export function cartTaxRows(items: { product: PublicProduct; quantity: number }[]): CartTaxRow[] {
   const totals = cartTotals(items);
   const groups = new Map<string, { label: string; amount: number }>();
 

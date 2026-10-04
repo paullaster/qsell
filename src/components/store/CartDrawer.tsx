@@ -2,12 +2,12 @@
 
 import { X, Trash2, ShoppingBag, ArrowRight, ShieldCheck, LogIn } from 'lucide-react';
 import Link from 'next/link';
-import { type Product, type CurrencyConfig } from '@/types/index';
+import { type PublicProduct, type CurrencyConfig } from '@/types/index';
 import { cartTaxRows, cartTotals, formatCartAmount } from '@/lib/cartMoney';
 import { AppImage } from '@/components/ui/AppImage';
 
 export interface CartItem {
-  product: Product;
+  product: PublicProduct;
   quantity: number;
 }
 

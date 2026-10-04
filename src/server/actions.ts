@@ -8,6 +8,7 @@ export {
   listProductsAction,
   listSellableProductsAction,
   getProductAction,
+  getPublicProductAction,
   createProductAction,
   updateProductAction,
   deleteProductAction,

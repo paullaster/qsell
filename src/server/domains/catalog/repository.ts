@@ -1,4 +1,4 @@
-import { and, asc, count, eq, getTableColumns, inArray, sql } from 'drizzle-orm';
+import { and, asc, count, eq, getTableColumns, inArray, isNull, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   categories,
@@ -112,7 +112,7 @@ export class CatalogRepository {
     const [row] = await this.db
       .select({ value: count() })
       .from(products)
-      .where(eq(products.categoryId, id));
+      .where(and(eq(products.categoryId, id), isNull(products.deletedAt)));
     return Number(row?.value ?? 0);
   }
 
@@ -317,45 +317,58 @@ export class CatalogRepository {
   }
 
   async listProducts(): Promise<ProductJoined[]> {
-    return this.productQuery().orderBy(asc(products.name));
+    return this.productQuery().where(isNull(products.deletedAt)).orderBy(asc(products.name));
   }
 
   async listActiveSellableProducts(): Promise<ProductJoined[]> {
     return this.productQuery()
-      .where(and(eq(products.isActive, true), eq(products.isSellable, true)))
+      .where(
+        and(eq(products.isActive, true), eq(products.isSellable, true), isNull(products.deletedAt)),
+      )
       .orderBy(asc(products.name));
   }
 
   async listLowStock(): Promise<ProductJoined[]> {
     return this.productQuery()
       .where(
-        sql`${products.stockQuantity} - ${products.reservedQuantity} <= ${products.lowStockThreshold}`,
+        and(
+          isNull(products.deletedAt),
+          sql`${products.stockQuantity} - ${products.reservedQuantity} <= ${products.lowStockThreshold}`,
+        ),
       )
       .orderBy(asc(products.name));
   }
 
   async getProductById(id: string): Promise<ProductJoined | null> {
-    const rows = await this.productQuery().where(eq(products.id, id)).limit(1);
+    const rows = await this.productQuery()
+      .where(and(eq(products.id, id), isNull(products.deletedAt)))
+      .limit(1);
     return rows[0] ?? null;
   }
 
   async getProductBySlug(slug: string): Promise<ProductJoined | null> {
-    const rows = await this.productQuery().where(eq(products.slug, slug)).limit(1);
+    const rows = await this.productQuery()
+      .where(and(eq(products.slug, slug), isNull(products.deletedAt)))
+      .limit(1);
     return rows[0] ?? null;
   }
 
   async getProductsByIds(ids: string[]): Promise<ProductJoined[]> {
     if (ids.length === 0) return [];
-    return this.productQuery().where(inArray(products.id, ids));
+    return this.productQuery().where(and(inArray(products.id, ids), isNull(products.deletedAt)));
   }
 
   async getProductBySku(sku: string): Promise<ProductJoined | null> {
-    const rows = await this.productQuery().where(eq(products.sku, sku)).limit(1);
+    const rows = await this.productQuery()
+      .where(and(eq(products.sku, sku), isNull(products.deletedAt)))
+      .limit(1);
     return rows[0] ?? null;
   }
 
   async getProductByStockCode(stockCode: string): Promise<ProductJoined | null> {
-    const rows = await this.productQuery().where(eq(products.stockCode, stockCode)).limit(1);
+    const rows = await this.productQuery()
+      .where(and(eq(products.stockCode, stockCode), isNull(products.deletedAt)))
+      .limit(1);
     return rows[0] ?? null;
   }
 
@@ -372,10 +385,6 @@ export class CatalogRepository {
     return this.getProductById(id);
   }
 
-  async deleteProduct(id: string): Promise<boolean> {
-    const rows = await this.db.delete(products).where(eq(products.id, id)).returning();
-    return rows.length > 0;
-  }
 
   // ── Inventory movements ───────────────────────────────────────────────────
 

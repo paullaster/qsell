@@ -1,7 +1,17 @@
+import { and, eq, isNull } from 'drizzle-orm';
 import { getContainer } from '@/server/di/container';
+import { drizzleDb } from '@/server/db/drizzle/client';
+import { inventoryMovements, products } from '@/server/db/drizzle/schema';
 import { broadcastRealtime } from '@/server/realtime';
-import type { Product, Category, ItemType } from '@/types/index';
-import { toCategory, toItemType, toProduct, productToRow } from './mappers';
+import type {
+  Product,
+  ProductPatch,
+  ProductWrite,
+  PublicProduct,
+  Category,
+  ItemType,
+} from '@/types/index';
+import { toCategory, toItemType, toProduct, toPublicProduct, productToRow } from './mappers';
 import type { CatalogRepository } from './repository';
 
 function repo(): CatalogRepository {
@@ -40,14 +50,28 @@ export class CatalogService {
     return rows.map(toProduct);
   }
 
-  static async getSellableProducts(): Promise<Product[]> {
+  static async getSellableProducts(): Promise<PublicProduct[]> {
     const rows = await repo().listActiveSellableProducts();
-    return rows.map(toProduct);
+    return rows.map((row) => toPublicProduct(toProduct(row)));
+  }
+
+  /** A single product as the storefront may see it: published and sellable only. */
+  static async getPublicProduct(id: string): Promise<PublicProduct | undefined> {
+    const row = await repo().getProductById(id);
+    if (!row || !row.isActive || !row.isSellable) return undefined;
+    return toPublicProduct(toProduct(row));
   }
 
   static async getProductById(id: string): Promise<Product | undefined> {
     const row = await repo().getProductById(id);
     return row ? toProduct(row) : undefined;
+  }
+
+  /** Staff single-product read: includes the ordered media gallery for the product form. */
+  static async getProductWithMedia(id: string): Promise<Product | undefined> {
+    const row = await repo().getProductById(id);
+    if (!row) return undefined;
+    return { ...toProduct(row), media: await getContainer().media.getProductGallery(id) };
   }
 
   static async getProductBySlug(slug: string): Promise<Product | undefined> {
@@ -60,10 +84,9 @@ export class CatalogService {
     return rows.map(toProduct);
   }
 
-  static async createProduct(
-    productData: Omit<Product, 'id' | 'createdAt' | 'updatedAt' | 'reservedQuantity'>,
-  ): Promise<Product> {
+  static async createProduct(productData: ProductWrite): Promise<Product> {
     const catalog = repo();
+    const { media: galleryInput, ...fields } = productData;
     const itemType =
       (productData.itemTypeId ? await catalog.getItemTypeById(productData.itemTypeId) : null) ??
       (await catalog.getDefaultItemType());
@@ -98,7 +121,7 @@ export class CatalogService {
 
     const now = new Date().toISOString();
     const newProduct: Product = {
-      ...productData,
+      ...fields,
       id,
       slug: await resolveUniqueSlug(productData.slug || productData.name),
       sku: productData.sku.trim().toUpperCase(),
@@ -116,19 +139,40 @@ export class CatalogService {
 
     const row = productToRow(newProduct);
     row.categoryId = category?.id ?? null;
-    await catalog.insertProduct(row);
 
-    await catalog.insertMovement({
-      id: newId('ledger'),
-      productId: id,
-      productName: newProduct.name,
-      changeAmount: newProduct.stockQuantity,
-      previousStock: 0,
-      newStock: newProduct.stockQuantity,
-      changeType: 'restock',
-      referenceId: 'PRODUCT_CREATION',
-      actor: 'admin',
-      note: `Created new product ${newProduct.sku} with initial inventory of ${newProduct.stockQuantity} units`,
+    // One transaction: a product must never exist with stock the ledger can't explain.
+    const mediaService = getContainer().media;
+    await drizzleDb.transaction(async (tx) => {
+      await tx.insert(products).values(row);
+      // The gallery commits with the product. Callers that only know image links
+      // (API, CSV-style input) still get proper assets so the model stays consistent.
+      let gallery: { imageUrl: string; additionalImages: string[] } | null = null;
+      if (galleryInput !== undefined) {
+        gallery = await mediaService.setProductGallery(tx, id, galleryInput);
+      } else {
+        const links = [newProduct.imageUrl, ...(newProduct.additionalImages ?? [])].filter(
+          (url) => url.trim() !== '',
+        );
+        if (links.length > 0) {
+          gallery = await mediaService.setProductGalleryFromUrls(tx, id, links, 'api');
+        }
+      }
+      if (gallery !== null) {
+        newProduct.imageUrl = gallery.imageUrl;
+        newProduct.additionalImages = gallery.additionalImages;
+      }
+      await tx.insert(inventoryMovements).values({
+        id: newId('ledger'),
+        productId: id,
+        productName: newProduct.name,
+        changeAmount: newProduct.stockQuantity,
+        previousStock: 0,
+        newStock: newProduct.stockQuantity,
+        changeType: 'restock',
+        referenceId: 'PRODUCT_CREATION',
+        actor: 'admin',
+        note: `Created new product ${newProduct.sku} with initial inventory of ${newProduct.stockQuantity} units`,
+      });
     });
 
     void broadcastRealtime('inventory_update', {
@@ -139,8 +183,9 @@ export class CatalogService {
     return newProduct;
   }
 
-  static async updateProduct(id: string, updates: Partial<Product>): Promise<Product> {
+  static async updateProduct(id: string, patchInput: ProductPatch): Promise<Product> {
     const catalog = repo();
+    const { media: galleryUpdate, ...updates } = patchInput;
     const existingRow = await catalog.getProductById(id);
     if (!existingRow) throw new Error(`Product ${id} not found`);
     const existing = toProduct(existingRow);
@@ -204,17 +249,15 @@ export class CatalogService {
     }
     if (updates.costPrice !== undefined) updates.costPrice = Number(nextCost);
 
-    // A stock change from the edit modal is a real inventory movement, so route
-    // it through the inventory service rather than writing the column blind.
-    if (updates.stockQuantity !== undefined && updates.stockQuantity !== existing.stockQuantity) {
-      const { InventoryDomainService } = await import('@/server/domains/inventory/service');
-      await InventoryDomainService.adjust(
-        id,
-        updates.stockQuantity,
-        'Updated via Product Edit Modal',
-        'admin',
-      );
-      delete updates.stockQuantity;
+    // Stock and reservations are owned by the inventory ledger, never by this patch:
+    // writing them from the snapshot read above would revert an adjustment made in the
+    // same save and clobber reservations placed since the read.
+    const stockChange =
+      updates.stockQuantity !== undefined && updates.stockQuantity !== existing.stockQuantity
+        ? updates.stockQuantity
+        : undefined;
+    if (stockChange !== undefined && (!Number.isInteger(stockChange) || stockChange < 0)) {
+      throw new Error('Stock quantity must be a whole number of 0 or more');
     }
 
     const merged: Product = { ...existing, ...updates, id, updatedAt: new Date().toISOString() };
@@ -225,14 +268,78 @@ export class CatalogService {
       const category = await catalog.getCategoryByName(updates.category);
       patch.categoryId = category?.id ?? null;
     }
+    const fieldPatch: Partial<typeof patch> = { ...patch };
+    delete fieldPatch.id;
+    delete fieldPatch.stockQuantity;
+    delete fieldPatch.reservedQuantity;
+    delete fieldPatch.createdAt;
 
-    const updated = await catalog.updateProduct(id, patch);
+    // One transaction: the field update and the stock movement succeed or fail together.
+    const { applyStockDelta } = await import('@/server/domains/inventory/service');
+    const mediaService = getContainer().media;
+    await drizzleDb.transaction(async (tx) => {
+      await tx
+        .update(products)
+        .set({ ...fieldPatch, updatedAt: new Date() })
+        .where(eq(products.id, id));
+      // After the field update: the gallery refreshes image_url / additional_images itself.
+      if (galleryUpdate !== undefined) {
+        await mediaService.setProductGallery(tx, id, galleryUpdate);
+      }
+      if (stockChange !== undefined) {
+        await applyStockDelta(tx, {
+          productId: id,
+          delta: 0,
+          setTo: stockChange,
+          changeType: 'manual_adjustment',
+          referenceId: `ADJ-${Date.now()}`,
+          actor: 'admin',
+          note: 'Updated via Product Edit Modal',
+        });
+      }
+    });
+
     void broadcastRealtime('inventory_update', { type: 'product_updated', productId: id });
+    const updated = await catalog.getProductById(id);
     return updated ? toProduct(updated) : merged;
   }
 
+  /**
+   * Soft delete: the row stays so the stock ledger (and order/quote history)
+   * keeps resolving, but it drops out of every catalog read and releases its
+   * SKU, stock code and slug for reuse.
+   */
   static async deleteProduct(id: string): Promise<boolean> {
-    const deleted = await repo().deleteProduct(id);
+    const deleted = await drizzleDb.transaction(async (tx) => {
+      const locked = (
+        await tx
+          .select()
+          .from(products)
+          .where(and(eq(products.id, id), isNull(products.deletedAt)))
+          .for('update')
+          .limit(1)
+      ).at(0);
+      if (locked === undefined) return false;
+
+      const now = new Date();
+      await tx
+        .update(products)
+        .set({ deletedAt: now, isActive: false, updatedAt: now })
+        .where(eq(products.id, id));
+      await tx.insert(inventoryMovements).values({
+        id: newId('ledger'),
+        productId: id,
+        productName: locked.name,
+        changeAmount: 0,
+        previousStock: locked.stockQuantity,
+        newStock: locked.stockQuantity,
+        changeType: 'product_deleted',
+        referenceId: `DELETE-${locked.sku}`,
+        actor: 'admin',
+        note: `Product ${locked.sku} deleted with ${locked.stockQuantity} units on hand`,
+      });
+      return true;
+    });
     if (deleted) {
       void broadcastRealtime('inventory_update', { type: 'product_deleted', productId: id });
     }

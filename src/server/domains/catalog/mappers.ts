@@ -6,6 +6,7 @@ import type {
   ItemType,
   PaymentGatewayConfig,
   Product,
+  PublicProduct,
   ReconciliationLog,
   TaxCategory,
   TransactionRecord,
@@ -151,6 +152,13 @@ export function toProduct(row: ProductJoined): Product {
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
   };
+}
+
+/** Strips staff-only fields (unit cost) before a product leaves the server for the storefront. */
+export function toPublicProduct(product: Product): PublicProduct {
+  const publicProduct: Partial<Product> = { ...product };
+  delete publicProduct.costPrice;
+  return publicProduct as PublicProduct;
 }
 
 export function toLedgerEntry(row: InventoryMovementRow): InventoryLedgerEntry {

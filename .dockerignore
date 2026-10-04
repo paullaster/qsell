@@ -12,4 +12,6 @@ out
 .env.deploy
 secrets
 .dev-exports
+# Local-adapter uploads from development; never part of an image
+storage
 .DS_Store

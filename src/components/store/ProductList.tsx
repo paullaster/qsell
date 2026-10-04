@@ -1,7 +1,7 @@
 'use client';
 
 import React, { use, useState, useMemo } from 'react';
-import { type Product } from '@/types/index';
+import { type PublicProduct } from '@/types/index';
 import { ProductCard } from './ProductCard';
 import { Package } from 'lucide-react';
 import { productGridClassName } from '@/config/company-ui';
@@ -9,11 +9,11 @@ import { useCompanyUiConfig } from '@/components/company/CompanyUiConfigProvider
 import { productDescriptionPlainText } from '@/lib/productDescription';
 
 interface ProductListProps {
-  productsPromise: Promise<Product[]>;
-  onAddToCart: (product: Product) => void;
-  onQuickView?: (product: Product) => void;
-  onSelectProduct?: (product: Product) => void;
-  onQuickBuy?: (product: Product) => void;
+  productsPromise: Promise<PublicProduct[]>;
+  onAddToCart: (product: PublicProduct) => void;
+  onQuickView?: (product: PublicProduct) => void;
+  onSelectProduct?: (product: PublicProduct) => void;
+  onQuickBuy?: (product: PublicProduct) => void;
   selectedCategory?: string;
   onSelectCategory?: (category: string) => void;
   searchQuery?: string;
@@ -49,7 +49,7 @@ export function ProductList({
     else setInternalCategory(cat);
   };
 
-  const handleInspect = (product: Product) => {
+  const handleInspect = (product: PublicProduct) => {
     if (onSelectProduct) onSelectProduct(product);
     else if (onQuickView) onQuickView(product);
   };

@@ -103,7 +103,7 @@ export function AdminProducts({
     if (selectedProductIds.size === 0) return;
     if (
       window.confirm(
-        `Are you sure you want to permanently delete ${selectedProductIds.size} selected products?`,
+        `Delete ${selectedProductIds.size} selected products? Their stock history is kept.`,
       )
     ) {
       for (const id of selectedProductIds) {
@@ -125,7 +125,7 @@ export function AdminProducts({
 
   // Single delete
   const handleDeleteSingle = async (p: Product) => {
-    if (window.confirm(`Are you sure you want to delete "${p.name}" (${p.sku})?`)) {
+    if (window.confirm(`Delete "${p.name}" (${p.sku})? Its stock history is kept.`)) {
       await deleteProductAction(p.id);
       onRefresh();
     }

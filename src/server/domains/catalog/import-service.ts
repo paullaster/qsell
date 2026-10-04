@@ -1,5 +1,6 @@
+import type { MediaService } from '@/server/domains/media/service';
 import { createHash, randomUUID } from 'node:crypto';
-import { and, asc, count, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   categories,
@@ -135,6 +136,8 @@ export class ProductImportService {
     private readonly db: DrizzleDb,
     /** Ensures the job queue's tables exist before the first enqueue. */
     private readonly ensureQueue: () => Promise<void>,
+    /** Imported image links become shared media assets, exactly like the product form's. */
+    private readonly media: MediaService,
   ) {}
 
   // ── Staging (request side) ────────────────────────────────────────────────
@@ -543,6 +546,15 @@ export class ProductImportService {
       updatedAt: now,
     };
     await db.insert(products).values(values);
+    const imageLinks = [draft.imageUrl, ...draft.additionalImages].filter((url) => url.trim() !== '');
+    if (imageLinks.length > 0) {
+      await this.media.setProductGalleryFromUrls(
+        db,
+        id,
+        imageLinks,
+        job.createdByEmail === '' ? 'import' : job.createdByEmail,
+      );
+    }
     await db.insert(inventoryMovements).values({
       id: `ledger_${randomUUID()}`,
       productId: id,
@@ -689,7 +701,9 @@ export class ProductImportService {
   }> {
     const rows = await this.db
       .select({ sku: products.sku, stockCode: products.stockCode, slug: products.slug })
-      .from(products);
+      .from(products)
+      // Deleted products released their codes (the unique indexes are partial).
+      .where(isNull(products.deletedAt));
     return {
       sku: new Set(rows.map((r) => r.sku.toUpperCase())),
       stockCode: new Set(rows.map((r) => r.stockCode.toUpperCase())),

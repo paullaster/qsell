@@ -3,14 +3,14 @@
 import { use } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import type { Product } from '@/types/index';
+import type { PublicProduct } from '@/types/index';
 import { ProductDetailModal } from '@/components/store/ProductDetailModal';
 
 export function ProductPageClient({
   productPromise,
   asModal = false,
 }: {
-  productPromise: Promise<Product | null>;
+  productPromise: Promise<PublicProduct | null>;
   asModal?: boolean;
 }) {
   const product = use(productPromise);

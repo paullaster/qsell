@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { drizzleDb } from '@/server/db/drizzle/client';
 import { inventoryMovements, orders, orderItems, products } from '@/server/db/drizzle/schema';
 import { getContainer } from '@/server/di/container';
@@ -73,7 +73,9 @@ export class InventoryReservationService {
       const locked = await tx
         .select()
         .from(products)
-        .where(inArray(products.id, ids))
+        // A deleted product can no longer be sold, but settling/releasing an
+        // existing order below still resolves it.
+        .where(and(inArray(products.id, ids), isNull(products.deletedAt)))
         .orderBy(products.id)
         .for('update');
 

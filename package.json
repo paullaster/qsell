@@ -17,12 +17,16 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:generate": "drizzle-kit generate",
-    "worker": "tsx src/server/queue/index.ts"
+    "worker": "tsx src/server/queue/index.ts",
+    "media:verify": "tsx scripts/verify-cloudinary-adapter.ts",
+    "media:check": "tsx scripts/check-media-provider.ts",
+    "media:purge": "tsx scripts/purge-media.ts"
   },
   "dependencies": {
     "@node-rs/bcrypt": "^1.10.9",
     "@sentry/nextjs": "^11.0.0",
     "@sentry/profiling-node": "11.0.0",
+    "cloudinary": "^2.11.0",
     "date-fns": "^4.4.0",
     "drizzle-orm": "^0.45.2",
     "graphile-worker": "^0.18.0",

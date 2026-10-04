@@ -1,15 +1,15 @@
 'use client';
 
 import React, { Suspense } from 'react';
-import { type Product } from '@/types/index';
+import { type PublicProduct } from '@/types/index';
 import { ProductList } from './ProductList';
 import { SkeletonGrid } from '@/components/ui/Skeletons';
 
 interface StorefrontViewProps {
-  productsPromise: Promise<Product[]>;
-  onSelectProduct: (product: Product) => void;
-  onAddToCart: (product: Product) => void;
-  onQuickBuy: (product: Product) => void;
+  productsPromise: Promise<PublicProduct[]>;
+  onSelectProduct: (product: PublicProduct) => void;
+  onAddToCart: (product: PublicProduct) => void;
+  onQuickBuy: (product: PublicProduct) => void;
   onRefresh: () => void;
   searchQuery?: string;
   selectedCategory?: string;
