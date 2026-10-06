@@ -134,6 +134,48 @@
       "when": 1791005597890,
       "tag": "0018_media_assets",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1791252805928,
+      "tag": "0019_tax_category_kra_codes",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1791258937001,
+      "tag": "0020_kra_mode_configs",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1791260662627,
+      "tag": "0021_etims_items",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1791263417145,
+      "tag": "0022_etims_items_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1791299145516,
+      "tag": "0023_kra_signing_controls",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791305990870,
+      "tag": "0024_credit_notes",
+      "breakpoints": true
     }
   ]
 }

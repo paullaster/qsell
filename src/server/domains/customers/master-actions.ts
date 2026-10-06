@@ -126,7 +126,7 @@ export async function lookupCheckoutCustomerAction(email: string): Promise<{
       blocked: false,
       creditLimit: 0,
       balance: 0,
-      transmitInvoicesToKra: false,
+      transmitInvoicesToKra: true,
     };
   }
   return {

@@ -23,6 +23,7 @@ import {
   DollarSign,
 } from 'lucide-react';
 import { type TaxCategory, type TaxType } from '@/types/index';
+import { ETIMS_TAX_CODES, TIMS_TAX_CODES } from '@/lib/kraTaxCodes';
 import {
   createTaxCategoryAction,
   updateTaxCategoryAction,
@@ -57,6 +58,8 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
     name: '',
     code: '',
     rate: 0,
+    timsCode: '',
+    etimsCode: '',
     type: 'vat' as TaxType,
     countryCode: '',
     countryName: '',
@@ -87,6 +90,8 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
         name: tax.name,
         code: tax.code,
         rate: tax.rate,
+        timsCode: tax.timsCode,
+        etimsCode: tax.etimsCode,
         type: tax.type,
         countryCode: tax.countryCode,
         countryName: tax.countryName,
@@ -101,6 +106,8 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
         name: '',
         code: '',
         rate: 0,
+        timsCode: '',
+        etimsCode: '',
         type: 'vat',
         countryCode: '',
         countryName: '',
@@ -260,7 +267,7 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
           <button
             onClick={() => handleOpenModal()}
             id="btn-add-tax-category"
-            className="flex cursor-pointer items-center gap-2 rounded-lg bg-indigo-600 text-white px-4 py-2.5 text-xs font-semibold shadow-lg shadow-indigo-600/25 transition-all hover:bg-indigo-500"
+            className="flex cursor-pointer items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-semibold text-white shadow-lg shadow-indigo-600/25 transition-all hover:bg-indigo-500"
           >
             <Plus className="h-4 w-4" />
             <span>Add Tax Rule</span>
@@ -456,6 +463,8 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
                 <th className="px-4 py-3">Tax Schedule & Jurisdiction</th>
                 <th className="px-4 py-3">Tax Code</th>
                 <th className="px-4 py-3">Rate (%)</th>
+                <th className="px-4 py-3">TIMS Code</th>
+                <th className="px-4 py-3">eTIMS Code</th>
                 <th className="px-4 py-3">Type</th>
                 <th className="px-4 py-3">Pricing Model</th>
                 <th className="px-4 py-3">Catalog Products</th>
@@ -466,7 +475,7 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
             <tbody className="divide-y divide-line/60 text-fg">
               {filteredTaxes.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-fg-subtle">
+                  <td colSpan={10} className="py-8 text-center text-fg-subtle">
                     {taxCategories.length === 0
                       ? 'No tax rules yet. Use Add Tax Rule to create one.'
                       : 'No tax rules match your filters.'}
@@ -504,6 +513,24 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
                       </td>
                       <td className="px-4 py-3.5">
                         <span className="text-sm font-bold text-emerald-600">{tax.rate}%</span>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        {tax.timsCode ? (
+                          <span className="rounded border border-line-strong/50 bg-surface-sunken px-2 py-0.5 font-mono text-fg">
+                            {tax.timsCode}
+                          </span>
+                        ) : (
+                          <span className="text-fg-subtle">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3.5">
+                        {tax.etimsCode ? (
+                          <span className="rounded border border-line-strong/50 bg-surface-sunken px-2 py-0.5 font-mono text-fg">
+                            {tax.etimsCode}
+                          </span>
+                        ) : (
+                          <span className="text-fg-subtle">—</span>
+                        )}
                       </td>
                       <td className="px-4 py-3.5">
                         <span className="rounded-full border border-line-strong bg-surface-sunken px-2 py-0.5 text-[10px] font-medium text-fg capitalize">
@@ -647,6 +674,39 @@ export function AdminTaxes({ taxesPromise, onRefreshAll }: AdminTaxesProps) {
                     className="w-full rounded-lg border border-line-strong bg-surface-sunken px-3 py-2 text-xs font-semibold text-fg-strong focus:border-indigo-500 focus:outline-none"
                     required
                   />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-fg">KRA TIMS Code</label>
+                  <select
+                    value={formData.timsCode}
+                    onChange={(e) => setFormData({ ...formData, timsCode: e.target.value })}
+                    className="w-full cursor-pointer rounded-lg border border-line-strong bg-surface-sunken px-3 py-2 text-xs text-fg-strong focus:border-indigo-500 focus:outline-none"
+                  >
+                    <option value="">Not mapped</option>
+                    {TIMS_TAX_CODES.map((o) => (
+                      <option key={o.code} value={o.code}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-fg">KRA eTIMS Code</label>
+                  <select
+                    value={formData.etimsCode}
+                    onChange={(e) => setFormData({ ...formData, etimsCode: e.target.value })}
+                    className="w-full cursor-pointer rounded-lg border border-line-strong bg-surface-sunken px-3 py-2 text-xs text-fg-strong focus:border-indigo-500 focus:outline-none"
+                  >
+                    <option value="">Not mapped</option>
+                    {ETIMS_TAX_CODES.map((o) => (
+                      <option key={o.code} value={o.code}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 

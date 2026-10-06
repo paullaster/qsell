@@ -18,7 +18,7 @@ export async function GET(): Promise<NextResponse> {
 
   // Media storage is reported but deliberately NOT part of the overall status: a missing
   // upload setting must not make the container unhealthy and take the whole app down.
-  let mediaReady = false;
+  let mediaReady: boolean;
   try {
     mediaReady = getContainer().media.uploadsReady();
   } catch {

@@ -304,7 +304,6 @@ export class InvoiceService {
           paymentMethod: order.paymentMethod,
           paymentReference: payload.paymentReference,
           transmitInvoicesToKra: order.transmitInvoicesToKra === true,
-          kraTransmissionStatus: order.transmitInvoicesToKra ? 'pending' : 'skipped',
           customerAccountType: order.customerAccountType ?? null,
           tradeCustomerId: order.tradeCustomerId ?? null,
         },
@@ -312,6 +311,13 @@ export class InvoiceService {
     } catch (error: unknown) {
       throw new Error(`Failed to save invoice record: ${dbErrorMessage(error)}`);
     }
+
+    // Whether this document is signed with KRA is the signing policy's call, and signing must
+    // never hold up the invoice (or the sale) it belongs to, so this is not awaited. The
+    // service records every decision and failure itself and does not throw.
+    void getContainer()
+      .kraSigning.processOrderDocument({ orderId: order.id, documentType, invoiceNumber })
+      .catch((error: unknown) => console.error('[kra-signing] hook failed', error));
 
     return {
       invoiceNumber,

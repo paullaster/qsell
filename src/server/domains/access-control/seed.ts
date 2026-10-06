@@ -55,6 +55,7 @@ const SEED_ROLES: SeedRole[] = [
       'transactions:reconcile',
       'transactions:export',
       'taxes:manage',
+      'credit_notes:create',
       'currencies:manage',
       'branches:manage',
       'dimensions:manage',
