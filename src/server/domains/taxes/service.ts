@@ -1,6 +1,7 @@
 import { getContainer } from '@/server/di/container';
 import { broadcastRealtime } from '@/server/realtime';
 import type { TaxCategory } from '@/types/index';
+import { isValidEtimsCode, isValidTimsCode } from '@/lib/kraTaxCodes';
 import { toTaxCategory } from '@/server/domains/catalog/mappers';
 
 function repo() {
@@ -9,6 +10,15 @@ function repo() {
 
 function newId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function assertKraCodes(codes: { timsCode?: string; etimsCode?: string }): void {
+  if (codes.timsCode !== undefined && !isValidTimsCode(codes.timsCode)) {
+    throw new Error(`Invalid KRA TIMS code "${codes.timsCode}"`);
+  }
+  if (codes.etimsCode !== undefined && !isValidEtimsCode(codes.etimsCode)) {
+    throw new Error(`Invalid KRA eTIMS code "${codes.etimsCode}"`);
+  }
 }
 
 /** VAT/GST/excise rate definitions, backed by the `tax_categories` table. */
@@ -26,6 +36,7 @@ export class TaxDomainService {
   static async create(
     data: Omit<TaxCategory, 'id' | 'createdAt' | 'updatedAt' | 'productCount'>,
   ): Promise<TaxCategory> {
+    assertKraCodes(data);
     const catalog = repo();
     if (data.isDefault) await catalog.clearDefaultTaxCategory('__none__');
 
@@ -34,6 +45,8 @@ export class TaxDomainService {
       name: data.name,
       code: data.code,
       rate: String(data.rate),
+      timsCode: data.timsCode ?? '',
+      etimsCode: data.etimsCode ?? '',
       type: data.type,
       countryCode: data.countryCode ?? '',
       countryName: data.countryName ?? '',
@@ -49,6 +62,7 @@ export class TaxDomainService {
   }
 
   static async update(id: string, updates: Partial<TaxCategory>): Promise<TaxCategory> {
+    assertKraCodes(updates);
     const catalog = repo();
     const existing = await catalog.getTaxCategoryById(id);
     if (!existing) throw new Error(`Tax category ${id} not found`);
@@ -59,6 +73,8 @@ export class TaxDomainService {
       ...(updates.name !== undefined ? { name: updates.name } : {}),
       ...(updates.code !== undefined ? { code: updates.code } : {}),
       ...(updates.rate !== undefined ? { rate: String(updates.rate) } : {}),
+      ...(updates.timsCode !== undefined ? { timsCode: updates.timsCode } : {}),
+      ...(updates.etimsCode !== undefined ? { etimsCode: updates.etimsCode } : {}),
       ...(updates.type !== undefined ? { type: updates.type } : {}),
       ...(updates.countryCode !== undefined ? { countryCode: updates.countryCode } : {}),
       ...(updates.countryName !== undefined ? { countryName: updates.countryName } : {}),

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Percent, X } from 'lucide-react';
 import { createTaxCategoryAction } from '@/server/actions';
 import { publishCatalogShortcut } from '@/components/admin/catalog-shortcuts';
+import { ETIMS_TAX_CODES, TIMS_TAX_CODES } from '@/lib/kraTaxCodes';
 import type { TaxType } from '@/types/index';
 
 export function TaxCategoryCreateModal({ presentation }: { presentation: 'intercepted' | 'page' }) {
@@ -12,6 +13,8 @@ export function TaxCategoryCreateModal({ presentation }: { presentation: 'interc
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [rate, setRate] = useState('');
+  const [timsCode, setTimsCode] = useState('');
+  const [etimsCode, setEtimsCode] = useState('');
   const [type, setType] = useState<TaxType>('vat');
   const [countryCode, setCountryCode] = useState('');
   const [countryName, setCountryName] = useState('');
@@ -24,7 +27,7 @@ export function TaxCategoryCreateModal({ presentation }: { presentation: 'interc
 
   const close = () => {
     if (presentation === 'intercepted') router.back();
-    else router.push('/admin/taxes');
+    else router.push('/admin/settings/tax-compliance/kra-tims-etims/classification');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -47,6 +50,8 @@ export function TaxCategoryCreateModal({ presentation }: { presentation: 'interc
         name: name.trim(),
         code: code.trim(),
         rate: parsedRate,
+        timsCode,
+        etimsCode,
         type,
         countryCode: countryCode.trim().toUpperCase(),
         countryName: countryName.trim(),
@@ -60,7 +65,7 @@ export function TaxCategoryCreateModal({ presentation }: { presentation: 'interc
         publishCatalogShortcut({ kind: 'tax', tax });
         router.back();
       } else {
-        router.push('/admin/taxes');
+        router.push('/admin/settings/tax-compliance/kra-tims-etims/classification');
         router.refresh();
       }
     } catch (err: unknown) {
@@ -140,6 +145,39 @@ export function TaxCategoryCreateModal({ presentation }: { presentation: 'interc
                 className={`${fieldClass} font-semibold`}
                 required
               />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-fg">KRA TIMS Code</label>
+              <select
+                value={timsCode}
+                onChange={(e) => setTimsCode(e.target.value)}
+                className={`${fieldClass} cursor-pointer`}
+              >
+                <option value="">Not mapped</option>
+                {TIMS_TAX_CODES.map((o) => (
+                  <option key={o.code} value={o.code}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-fg">KRA eTIMS Code</label>
+              <select
+                value={etimsCode}
+                onChange={(e) => setEtimsCode(e.target.value)}
+                className={`${fieldClass} cursor-pointer`}
+              >
+                <option value="">Not mapped</option>
+                {ETIMS_TAX_CODES.map((o) => (
+                  <option key={o.code} value={o.code}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 

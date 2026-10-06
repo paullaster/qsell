@@ -1,7 +1,5 @@
-import { listTaxCategoriesAction } from '@/server/domains/taxes/actions';
-import { AdminTaxesClient } from '@/components/admin/AdminTaxesClient';
+import { redirect } from 'next/navigation';
 
-export default async function Page() {
-  const taxesPromise = listTaxCategoriesAction();
-  return <AdminTaxesClient taxesPromise={taxesPromise} />;
+export default function Page() {
+  redirect('/admin/settings/tax-compliance/kra-tims-etims/classification');
 }

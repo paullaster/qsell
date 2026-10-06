@@ -411,7 +411,7 @@ export class CustomerMasterService {
       accountType: 'cash',
       creditLimit: 0,
       paymentTermDays: 0,
-      transmitInvoicesToKra: false,
+      transmitInvoicesToKra: true,
       dimensionCodes: emptyDimensionCodes(),
     });
   }
@@ -470,7 +470,7 @@ export class CustomerMasterService {
         accountType: 'cash',
         creditLimit: 0,
         paymentTermDays: 0,
-        transmitInvoicesToKra: false,
+        transmitInvoicesToKra: true,
         buyerKraPin: pin,
         dimensionCodes: emptyDimensionCodes(),
       });
@@ -554,7 +554,8 @@ export class CustomerMasterService {
       amount: money(amount),
       remainingAmount: money(openReceivable ? amount : 0),
       dueDate: due,
-      kraTransmissionStatus: input.customer.transmitInvoicesToKra ? 'pending' : 'skipped',
+      // Set to its final value by the signing service once the invoice has been considered.
+      kraTransmissionStatus: 'pending',
     });
 
     if (openReceivable) {

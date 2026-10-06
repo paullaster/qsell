@@ -12,6 +12,7 @@ import {
   Layers,
   Trash2,
   AlignLeft,
+  ShieldCheck,
 } from 'lucide-react';
 import {
   type Product,
@@ -36,8 +37,11 @@ import {
 } from '@/components/admin/catalog-shortcuts';
 import { discardMediaUploadsAction } from '@/server/domains/media/actions';
 import { ProductMediaManager } from '@/components/admin/ProductMediaManager';
+import { ProductEtimsPanel } from '@/components/admin/ProductEtimsPanel';
+import { listEtimsTargetsAction } from '@/server/domains/kra/etims/actions';
 
-type ProductFormTab = 'basics' | 'pricing' | 'inventory' | 'specs' | 'description' | 'media';
+type ProductFormTab =
+  'basics' | 'pricing' | 'inventory' | 'specs' | 'description' | 'media' | 'kra';
 
 const TABS: { id: ProductFormTab; label: string; icon: typeof Package }[] = [
   { id: 'basics', label: 'Basics', icon: Package },
@@ -46,6 +50,8 @@ const TABS: { id: ProductFormTab; label: string; icon: typeof Package }[] = [
   { id: 'specs', label: 'Specs', icon: Tag },
   { id: 'description', label: 'Description', icon: AlignLeft },
   { id: 'media', label: 'Media', icon: ImageIcon },
+  // Only meaningful once the product exists: registration needs a saved product.
+  { id: 'kra', label: 'KRA eTIMS', icon: ShieldCheck },
 ];
 
 function createCodeSuffix(): string {
@@ -96,6 +102,21 @@ export function AdminProductModal({
 }: AdminProductModalProps) {
   const isEditing = Boolean(productToEdit);
   const [tab, setTab] = useState<ProductFormTab>('basics');
+  // eTIMS UI exists only when the company, or an independent branch, is set to eTIMS.
+  const [etimsAvailable, setEtimsAvailable] = useState(false);
+  useEffect(() => {
+    if (!isOpen || !isEditing) {
+      setEtimsAvailable(false);
+      return;
+    }
+    let cancelled = false;
+    void listEtimsTargetsAction().then((res) => {
+      if (!cancelled) setEtimsAvailable(res.ok && res.data.length > 0);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, isEditing]);
 
   // Basic Information
   const [name, setName] = useState('');
@@ -478,7 +499,8 @@ export function AdminProductModal({
     'w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong placeholder-fg-subtle focus:border-indigo-500 focus:outline-none';
   const labelClass = 'mb-1 block text-[11px] font-semibold text-fg-muted';
 
-  const tabIndex = TABS.findIndex((t) => t.id === tab);
+  const visibleTabs = TABS.filter((t) => t.id !== 'kra' || (isEditing && etimsAvailable));
+  const tabIndex = visibleTabs.findIndex((t) => t.id === tab);
   // Closing without saving: delete files uploaded in this form that nothing references.
   const handleClose = async () => {
     if (closing.current) return;
@@ -496,11 +518,11 @@ export function AdminProductModal({
   };
 
   const goNext = () => {
-    const next = TABS[tabIndex + 1];
+    const next = visibleTabs[tabIndex + 1];
     if (next) setTab(next.id);
   };
   const goPrev = () => {
-    const prev = TABS[tabIndex - 1];
+    const prev = visibleTabs[tabIndex - 1];
     if (prev) setTab(prev.id);
   };
 
@@ -519,7 +541,10 @@ export function AdminProductModal({
               <Package className="h-4 w-4" />
             </div>
             <div className="min-w-0">
-              <h3 id="product-modal-title" className="truncate text-sm font-bold text-fg-strong sm:text-base">
+              <h3
+                id="product-modal-title"
+                className="truncate text-sm font-bold text-fg-strong sm:text-base"
+              >
                 {isEditing
                   ? `Edit Product: ${productToEdit?.sku ?? ''}`
                   : duplicateFrom
@@ -545,13 +570,13 @@ export function AdminProductModal({
 
         {/* Tabs */}
         <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-line bg-surface/80 px-3 py-2 sm:px-4">
-          {TABS.map(({ id, label, icon: Icon }) => (
+          {visibleTabs.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               type="button"
               onClick={() => setTab(id)}
               className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors sm:px-3 ${
-                tab === id ? 'bg-indigo-600 text-white' : 'hover:text-fg-muted hover:bg-hover'
+                tab === id ? 'bg-indigo-600 text-white' : 'hover:bg-hover hover:text-fg-muted'
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -785,7 +810,8 @@ export function AdminProductModal({
                     </select>
                     {taxCategories.length === 0 ? (
                       <p className="mt-1 text-[11px] text-amber-600">
-                        Create a tax category under Finance &amp; Compliance first.{' '}
+                        Create a tax category under Settings → Tax Compliance → Tax Classification
+                        first.{' '}
                         <CatalogCreateShortcut href="/admin/taxes/new">New</CatalogCreateShortcut>
                       </p>
                     ) : null}
@@ -959,7 +985,11 @@ export function AdminProductModal({
 
             {tab === 'media' ? (
               <div className="space-y-5">
-                <ProductMediaManager value={gallery} onChange={setGallery} onBusyChange={setMediaBusy} />
+                <ProductMediaManager
+                  value={gallery}
+                  onChange={setGallery}
+                  onBusyChange={setMediaBusy}
+                />
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
                     <label htmlFor="product-tags" className={labelClass}>
@@ -991,6 +1021,10 @@ export function AdminProductModal({
                 </div>
               </div>
             ) : null}
+
+            {tab === 'kra' && productToEdit && etimsAvailable ? (
+              <ProductEtimsPanel productId={productToEdit.id} />
+            ) : null}
           </div>
 
           {/* Sticky footer */}
@@ -1007,7 +1041,7 @@ export function AdminProductModal({
               <button
                 type="button"
                 onClick={goNext}
-                disabled={tabIndex === TABS.length - 1}
+                disabled={tabIndex === visibleTabs.length - 1}
                 className="cursor-pointer rounded-lg bg-surface-sunken px-3 py-2 text-xs font-medium text-fg hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Next

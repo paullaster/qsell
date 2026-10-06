@@ -892,6 +892,8 @@ export class SalesQuoteService {
       const result = await OrderWriteService.createOrder({
         orderId,
         orderNumber,
+        // A quote only ever has a proforma; signing starts once it is a sales order.
+        salesModule: 'sales_order',
         userId: quote.customerId,
         branchId: quote.branchId,
         customerName: quote.customerName,
@@ -998,6 +1000,12 @@ export class SalesQuoteService {
     if (!quote) throw new Error('Quote not found.');
     const company = await getContainer().companySettings.getProfile();
     const pdf = await this.renderPdf(quote, company);
+    // A quote only has a proforma, which is never signed. It still goes through the signing
+    // service so the log records that it was considered and why it was not signed. Not
+    // awaited: the PDF must not wait on bookkeeping.
+    void getContainer()
+      .kraSigning.processQuoteProforma(quote.id)
+      .catch((error: unknown) => console.error('[kra-signing] hook failed', error));
     return { filename: `${quote.quoteNumber}.pdf`, pdfBase64: pdf.toString('base64') };
   }
 

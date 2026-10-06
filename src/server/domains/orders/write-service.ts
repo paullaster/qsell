@@ -36,6 +36,11 @@ export class OrderWriteService {
     orderNumber?: string;
     currency: 'KES' | 'USD';
     paymentMethod: PaymentProvider;
+    /**
+     * The invoicing module this sale belongs to. Defaults to the store. A sale on account is
+     * always a credit sale, whatever channel it came through.
+     */
+    salesModule?: 'ecommerce' | 'sales_order' | 'pos_cash_sale';
     /** Flat fields (globalDimension1Code) or { global, shortcut } projection */
     dimensionFields?:
       | Record<string, string | null | undefined>
@@ -135,6 +140,8 @@ export class OrderWriteService {
       status: 'pending',
       paymentStatus: 'unpaid',
       paymentMethod: params.paymentMethod,
+      salesModule:
+        params.paymentMethod === 'on_account' ? 'credit_sale' : (params.salesModule ?? 'ecommerce'),
       dimensionSetId: null,
       dimensionCodes: { global: {}, shortcut: {} },
       createdAt: new Date().toISOString(),
@@ -180,7 +187,9 @@ export class OrderWriteService {
       order.tradeCustomerId = tradeCustomer.id;
       order.customerAccountType = tradeCustomer.accountType as 'cash' | 'credit';
       order.transmitInvoicesToKra = tradeCustomer.transmitInvoicesToKra;
-      order.kraTransmissionStatus = tradeCustomer.transmitInvoicesToKra ? 'pending' : 'skipped';
+      // Whether it is signed is decided when its tax invoice is issued, by the signing
+      // service, which then owns this status. 'pending' only means "not decided yet".
+      order.kraTransmissionStatus = 'pending';
 
       const { orders: orderRepo } = getContainer();
       await orderRepo.create(order, params.branchId);

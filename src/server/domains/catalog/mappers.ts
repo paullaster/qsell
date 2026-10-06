@@ -85,6 +85,8 @@ export function toTaxCategory(row: TaxCategoryRow, productCount?: number): TaxCa
     name: row.name,
     code: row.code,
     rate: num(row.rate),
+    timsCode: row.timsCode,
+    etimsCode: row.etimsCode,
     type: row.type as TaxCategory['type'],
     countryCode: row.countryCode,
     countryName: row.countryName,

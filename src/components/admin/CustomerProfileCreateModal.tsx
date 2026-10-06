@@ -21,7 +21,7 @@ export function CustomerProfileCreateModal({
   const [accountType, setAccountType] = useState<'cash' | 'credit'>('cash');
   const [creditLimit, setCreditLimit] = useState('0');
   const [paymentTermDays, setPaymentTermDays] = useState('0');
-  const [transmitInvoicesToKra, setTransmitInvoicesToKra] = useState(false);
+  const [transmitInvoicesToKra, setTransmitInvoicesToKra] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const cash = accountType === 'cash';

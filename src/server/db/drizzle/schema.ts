@@ -22,6 +22,21 @@ import type {
   PaymentAttemptStatus,
   EncryptedCredentialsBlob,
 } from '@/server/domains/payments/types';
+import type {
+  KraDocumentStatus,
+  ModuleSigning,
+  LoggedDocumentType,
+  SigningModule,
+  SigningOutcome,
+  SigningReason,
+} from '@/server/domains/kra/signing/types';
+import type { EtimsItemStatus } from '@/server/domains/kra/etims/item-types';
+import type {
+  KraConfigSource,
+  KraEnvironment,
+  KraMode,
+  KraTransmissionStatus,
+} from '@/server/domains/kra/types';
 
 /** Top-level tenant. */
 export const organizations = pgTable('organizations', {
@@ -149,6 +164,262 @@ export const paymentProviderConfigs = pgTable(
     uniqueIndex('payment_provider_configs_branch_provider_uidx').on(t.branchId, t.providerCode),
     index('payment_provider_configs_branch_idx').on(t.branchId),
   ],
+);
+
+/**
+ * KRA tax-invoicing mode for the whole company. Used for every branch that does NOT
+ * act independently. Kept in its own table so branch lookups can never touch it.
+ */
+export const companyKraConfigs = pgTable(
+  'company_kra_configs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    mode: text('mode').$type<KraMode>().notNull(),
+    isEnabled: boolean('is_enabled').notNull().default(false),
+    environment: text('environment').$type<KraEnvironment>().notNull().default('sandbox'),
+    /** eTIMS gateway base URL (stored in DB, not env). Unused for TIMS. */
+    apiBaseUrl: text('api_base_url'),
+    credentialsEncrypted: jsonb('credentials_encrypted').$type<EncryptedCredentialsBlob | null>(),
+    /** Non-secret mode settings (TIMS: ZFPLabServer URL, connection, CU serial). */
+    /** Explicit permission to sign invoices when this scope's mode is eTIMS. Off until chosen. */
+    allowEtimsSigning: boolean('allow_etims_signing').notNull().default(false),
+    /** Explicit permission to sign invoices when this scope's mode is TIMS. Off until chosen. */
+    allowTimsSigning: boolean('allow_tims_signing').notNull().default(false),
+    /**
+     * Per-module signing switches. Company: a missing module is off. Branch: a missing module
+     * is not set here and inherits the company's value.
+     */
+    moduleSigning: jsonb('module_signing').$type<ModuleSigning>().notNull().default({}),
+    settings: jsonb('settings').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('company_kra_configs_company_uidx').on(t.companyId)],
+);
+
+/**
+ * KRA tax-invoicing mode for one branch. Read ONLY when branches.acts_independently
+ * is true; it never falls back to the company row.
+ */
+export const branchKraConfigs = pgTable(
+  'branch_kra_configs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    branchId: uuid('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'cascade' }),
+    mode: text('mode').$type<KraMode>().notNull(),
+    isEnabled: boolean('is_enabled').notNull().default(false),
+    environment: text('environment').$type<KraEnvironment>().notNull().default('sandbox'),
+    apiBaseUrl: text('api_base_url'),
+    credentialsEncrypted: jsonb('credentials_encrypted').$type<EncryptedCredentialsBlob | null>(),
+    /** Explicit permission to sign invoices when this scope's mode is eTIMS. Off until chosen. */
+    allowEtimsSigning: boolean('allow_etims_signing').notNull().default(false),
+    /** Explicit permission to sign invoices when this scope's mode is TIMS. Off until chosen. */
+    allowTimsSigning: boolean('allow_tims_signing').notNull().default(false),
+    /**
+     * Per-module signing switches. Company: a missing module is off. Branch: a missing module
+     * is not set here and inherits the company's value.
+     */
+    moduleSigning: jsonb('module_signing').$type<ModuleSigning>().notNull().default({}),
+    settings: jsonb('settings').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('branch_kra_configs_branch_uidx').on(t.branchId)],
+);
+
+/** One row per invoice sent (or attempted) to KRA. trader_invoice_no makes retries idempotent. */
+export const kraTransmissions = pgTable(
+  'kra_transmissions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    orderId: text('order_id'),
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+    /** Which config row was used — recorded for audit. */
+    configSource: text('config_source').$type<KraConfigSource>().notNull(),
+    mode: text('mode').$type<KraMode>().notNull(),
+    traderInvoiceNo: text('trader_invoice_no').notNull(),
+    status: text('status').$type<KraTransmissionStatus>().notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    request: jsonb('request').$type<Record<string, unknown>>().notNull(),
+    response: jsonb('response').$type<Record<string, unknown> | null>(),
+    errorCode: text('error_code'),
+    errorMessage: text('error_message'),
+    scuReceiptNo: text('scu_receipt_no'),
+    verificationUrl: text('verification_url'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('kra_transmissions_trader_invoice_uidx').on(t.traderInvoiceNo),
+    index('kra_transmissions_status_idx').on(t.status),
+  ],
+);
+
+/**
+ * A product registered with KRA eTIMS, in exactly one scope — the same split as the KRA
+ * mode configuration:
+ *  - scope 'company': branch_id is null. Used by every branch that does NOT act independently.
+ *  - scope 'branch':  branch_id is set. Used only by that independently-acting branch.
+ * The two never mix: an invoice reads the scope its branch resolves to, nothing else.
+ */
+export const etimsItems = pgTable(
+  'etims_items',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'restrict' }),
+    /** Which configuration source owns this item. Column keeps its original name. */
+    scope: text('config_source').$type<KraConfigSource>().notNull(),
+    /** Null for company-scope items. */
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'restrict' }),
+    /** KRA-issued code. Null until KRA confirms it (pending, failed, unconfirmed). */
+    kraItemCode: text('kra_item_code'),
+    status: text('status').$type<EtimsItemStatus>().notNull().default('pending'),
+    name: text('name').notNull(),
+    orgCountryCode: text('org_country_code').notNull().default('KE'),
+    unitPrice: numeric('unit_price', { precision: 14, scale: 2 }).notNull().default('0'),
+    itemTypeCode: text('item_type_code').notNull(),
+    taxCode: text('tax_code').notNull(),
+    qtyUnitCode: text('qty_unit_code').notNull(),
+    pkgUnitCode: text('pkg_unit_code').notNull(),
+    itemClassCode: text('item_class_code').notNull(),
+    /** Last quantity we told KRA about. */
+    stockQuantity: integer('stock_quantity').notNull().default(0),
+    errorCode: text('error_code'),
+    errorMessage: text('error_message'),
+    lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check(
+      'etims_items_scope_branch_chk',
+      sql`(${t.scope} = 'company' and ${t.branchId} is null) or (${t.scope} = 'branch' and ${t.branchId} is not null)`,
+    ),
+    // A deleted registration frees the product to be registered again in that scope.
+    uniqueIndex('etims_items_company_product_uidx')
+      .on(t.companyId, t.productId)
+      .where(sql`${t.scope} = 'company' and ${t.status} <> 'deleted'`),
+    uniqueIndex('etims_items_branch_product_uidx')
+      .on(t.branchId, t.productId)
+      .where(sql`${t.scope} = 'branch' and ${t.status} <> 'deleted'`),
+    uniqueIndex('etims_items_company_code_uidx')
+      .on(t.companyId, t.kraItemCode)
+      .where(
+        sql`${t.scope} = 'company' and ${t.kraItemCode} is not null and ${t.status} <> 'deleted'`,
+      ),
+    uniqueIndex('etims_items_branch_code_uidx')
+      .on(t.branchId, t.kraItemCode)
+      .where(
+        sql`${t.scope} = 'branch' and ${t.kraItemCode} is not null and ${t.status} <> 'deleted'`,
+      ),
+    index('etims_items_branch_idx').on(t.branchId),
+  ],
+);
+
+/**
+ * Append-only log of what happened to a document on its way to KRA: the signing decision
+ * (every gate, the value it read and where that value came from) and, when a signing was
+ * attempted, its result. Reading a document's rows in order gives its whole flow, and
+ * `payload` keeps the settings that were in force at the time even if they change later.
+ */
+export const kraSigningEvents = pgTable(
+  'kra_signing_events',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+    /** Identifies the document across events, e.g. "order:ord_123:tax_invoice". */
+    documentKey: text('document_key').notNull(),
+    documentType: text('document_type').$type<LoggedDocumentType>().notNull(),
+    /** The source record (e.g. the order id) and a human reference (e.g. the order number). */
+    documentId: text('document_id').notNull(),
+    documentRef: text('document_ref'),
+    module: text('module').$type<SigningModule>().notNull(),
+    eventType: text('event_type').$type<'decision' | 'transmission'>().notNull(),
+    outcome: text('outcome').$type<SigningOutcome>().notNull(),
+    reason: text('reason').$type<SigningReason>().notNull(),
+    scope: text('scope').$type<KraConfigSource>(),
+    mode: text('mode').$type<KraMode>(),
+    /** Gate-by-gate trace for decisions; request/response summary for transmissions. */
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull().default({}),
+    transmissionId: uuid('transmission_id').references(() => kraTransmissions.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('kra_signing_events_document_idx').on(t.documentKey, t.createdAt),
+    index('kra_signing_events_created_idx').on(t.createdAt),
+    index('kra_signing_events_outcome_idx').on(t.outcome),
+  ],
+);
+
+/**
+ * A credit note against one tax invoice, from any module. The signing columns mirror what the
+ * signing service decided; nothing else writes `kra_status`.
+ */
+export const creditNotes = pgTable(
+  'credit_notes',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    /** The branch the original invoice was issued from. */
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+    module: text('module').$type<SigningModule>().notNull(),
+    /** The record the credit note belongs to (e.g. the order) and a human reference for it. */
+    sourceKind: text('source_kind').notNull(),
+    sourceId: text('source_id').notNull(),
+    sourceRef: text('source_ref').notNull(),
+    creditNoteNo: text('credit_note_no').notNull(),
+    /** Signing-log key of the tax invoice being credited, e.g. "order:ord_1:tax_invoice". */
+    originalDocumentKey: text('original_document_key').notNull(),
+    reasonCode: text('reason_code').notNull(),
+    reasonNote: text('reason_note'),
+    currency: text('currency').notNull(),
+    totalAmount: numeric('total_amount', { precision: 14, scale: 2 }).notNull(),
+    kraStatus: text('kra_status')
+      .$type<KraDocumentStatus | 'pending'>()
+      .notNull()
+      .default('pending'),
+    issuedBy: text('issued_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('credit_notes_no_uidx').on(t.creditNoteNo),
+    index('credit_notes_original_idx').on(t.originalDocumentKey),
+    index('credit_notes_source_idx').on(t.sourceKind, t.sourceId),
+  ],
+);
+
+export const creditNoteLines = pgTable(
+  'credit_note_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    creditNoteId: uuid('credit_note_id')
+      .notNull()
+      .references(() => creditNotes.id, { onDelete: 'cascade' }),
+    productId: text('product_id').notNull(),
+    description: text('description').notNull(),
+    quantity: integer('quantity').notNull(),
+    unitPrice: numeric('unit_price', { precision: 14, scale: 2 }).notNull(),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+  },
+  (t) => [index('credit_note_lines_cn_idx').on(t.creditNoteId)],
 );
 
 export const paymentAttempts = pgTable(
@@ -532,7 +803,9 @@ export const orders = pgTable(
       onDelete: 'set null',
     }),
     customerAccountType: text('customer_account_type'),
-    transmitInvoicesToKra: boolean('transmit_invoices_to_kra').notNull().default(false),
+    /** Which invoicing module the sale belongs to; decides which signing switch applies. */
+    salesModule: text('sales_module').$type<SigningModule>().notNull().default('ecommerce'),
+    transmitInvoicesToKra: boolean('transmit_invoices_to_kra').notNull().default(true),
     kraTransmissionStatus: text('kra_transmission_status').notNull().default('not_applicable'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -564,7 +837,7 @@ export const customerProfiles = pgTable(
     accountType: text('account_type').notNull(),
     creditLimit: numeric('credit_limit', { precision: 14, scale: 2 }).notNull().default('0'),
     paymentTermDays: integer('payment_term_days').notNull().default(0),
-    transmitInvoicesToKra: boolean('transmit_invoices_to_kra').notNull().default(false),
+    transmitInvoicesToKra: boolean('transmit_invoices_to_kra').notNull().default(true),
     dimensionCodes: jsonb('dimension_codes')
       .$type<{ global: Record<string, string>; shortcut: Record<string, string> }>()
       .notNull()
@@ -604,7 +877,7 @@ export const customers = pgTable(
     paymentTermDays: integer('payment_term_days').notNull().default(0),
     /** none | ship | invoice | all */
     blocked: text('blocked').notNull().default('none'),
-    transmitInvoicesToKra: boolean('transmit_invoices_to_kra').notNull().default(false),
+    transmitInvoicesToKra: boolean('transmit_invoices_to_kra').notNull().default(true),
     buyerKraPin: text('buyer_kra_pin'),
     dimensionSetId: uuid('dimension_set_id').references(() => dimensionSets.id, {
       onDelete: 'set null',
@@ -921,6 +1194,10 @@ export const taxCategories = pgTable(
     code: text('code').notNull(),
     /** Percentage, e.g. 16 for 16%. */
     rate: numeric('rate', { precision: 7, scale: 4 }).notNull(),
+    /** KRA TIMS (control unit) VAT class letter. Differs from the eTIMS letter for the same rate. */
+    timsCode: text('tims_code').notNull().default(''),
+    /** KRA eTIMS tax type code (A exempt, B 16%, C 0%, D non-VAT, E 8%). */
+    etimsCode: text('etims_code').notNull().default(''),
     type: text('type').notNull(),
     countryCode: text('country_code').notNull().default(''),
     countryName: text('country_name').notNull().default(''),
@@ -1011,9 +1288,15 @@ export const products = pgTable(
   },
   (t) => [
     // Partial: a deleted product must not hold on to its codes and slug.
-    uniqueIndex('products_sku_uidx').on(t.sku).where(sql`${t.deletedAt} is null`),
-    uniqueIndex('products_stock_code_uidx').on(t.stockCode).where(sql`${t.deletedAt} is null`),
-    uniqueIndex('products_slug_uidx').on(t.slug).where(sql`${t.deletedAt} is null`),
+    uniqueIndex('products_sku_uidx')
+      .on(t.sku)
+      .where(sql`${t.deletedAt} is null`),
+    uniqueIndex('products_stock_code_uidx')
+      .on(t.stockCode)
+      .where(sql`${t.deletedAt} is null`),
+    uniqueIndex('products_slug_uidx')
+      .on(t.slug)
+      .where(sql`${t.deletedAt} is null`),
     index('products_category_idx').on(t.categoryId),
     index('products_item_type_idx').on(t.itemTypeId),
     index('products_active_idx').on(t.isActive),
@@ -1656,6 +1939,14 @@ export type CategoryRow = typeof categories.$inferSelect;
 export type CategoryInsert = typeof categories.$inferInsert;
 export type ItemTypeRow = typeof itemTypes.$inferSelect;
 export type ItemTypeInsert = typeof itemTypes.$inferInsert;
+export type CompanyKraConfigRow = typeof companyKraConfigs.$inferSelect;
+export type BranchKraConfigRow = typeof branchKraConfigs.$inferSelect;
+export type CreditNoteRow = typeof creditNotes.$inferSelect;
+export type CreditNoteLineRow = typeof creditNoteLines.$inferSelect;
+export type KraSigningEventRow = typeof kraSigningEvents.$inferSelect;
+export type EtimsItemRow = typeof etimsItems.$inferSelect;
+export type KraTransmissionRow = typeof kraTransmissions.$inferSelect;
+
 export type TaxCategoryRow = typeof taxCategories.$inferSelect;
 export type TaxCategoryInsert = typeof taxCategories.$inferInsert;
 export type CurrencyRow = typeof currencies.$inferSelect;
