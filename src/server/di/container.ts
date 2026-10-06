@@ -32,6 +32,13 @@ import { AccountService } from '@/server/domains/auth/account-service';
 import { ProductImportService } from '@/server/domains/catalog/import-service';
 import { MediaService } from '@/server/domains/media/service';
 import { MediaPortRegistry } from '@/server/adapters/media/registry';
+import { KraConfigRepository } from '@/server/domains/kra/repository';
+import { KraConfigResolver } from '@/server/domains/kra/resolver';
+import { EtimsTransmissionService } from '@/server/domains/kra/etims/transmission-service';
+import { EtimsItemService } from '@/server/domains/kra/etims/item-service';
+import { KraSigningPolicy } from '@/server/domains/kra/signing/policy';
+import { CreditNoteService } from '@/server/domains/credit-notes/service';
+import { DocumentSigningService } from '@/server/domains/kra/signing/service';
 import { getWorkerUtils } from '@/server/queue/worker';
 
 /** Installs/updates the job-queue schema once per process, before the first enqueue. */
@@ -77,6 +84,12 @@ export interface AppContainer {
   accounts: AccountService;
   productImports: ProductImportService;
   media: MediaService;
+  kraConfigs: KraConfigRepository;
+  kraResolver: KraConfigResolver;
+  etimsTransmission: EtimsTransmissionService;
+  etimsItems: EtimsItemService;
+  kraSigning: DocumentSigningService;
+  creditNotes: CreditNoteService;
 }
 
 function createEmailPort(): EmailPort {
@@ -147,6 +160,17 @@ export function getContainer(): AppContainer {
   });
 
   const media = new MediaService(drizzleDb, new MediaPortRegistry());
+  const kraConfigs = new KraConfigRepository(drizzleDb);
+  const kraResolver = new KraConfigResolver(branches, kraConfigs);
+  const etimsTransmission = new EtimsTransmissionService(drizzleDb, kraResolver);
+  const etimsItems = new EtimsItemService(drizzleDb, kraResolver, branches);
+  const kraSigning = new DocumentSigningService(
+    drizzleDb,
+    new KraSigningPolicy(branches, kraConfigs, kraResolver),
+    etimsItems,
+    etimsTransmission,
+  );
+  const creditNotes = new CreditNoteService(drizzleDb, kraSigning);
 
   container = {
     db: drizzleDb,
@@ -177,6 +201,12 @@ export function getContainer(): AppContainer {
     accounts,
     productImports: new ProductImportService(drizzleDb, ensureQueueSchema, media),
     media,
+    kraConfigs,
+    kraResolver,
+    etimsTransmission,
+    etimsItems,
+    kraSigning,
+    creditNotes,
   };
 
   return container;

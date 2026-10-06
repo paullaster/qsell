@@ -222,6 +222,12 @@ export const PERMISSIONS = {
     category: 'Finance & Payments',
     description: 'Manage tax categories and compliance schedules',
   },
+  'credit_notes:create': {
+    resource: 'credit_notes',
+    action: 'create',
+    category: 'Finance & Payments',
+    description: 'Issue credit notes against tax invoices and retry their KRA signing',
+  },
   'currencies:manage': {
     resource: 'currencies',
     action: 'manage',
@@ -411,7 +417,12 @@ export function groupPermissionsByCategory(
   return order.flatMap((category) => {
     const items = grouped.get(category);
     return items
-      ? [{ category, permissions: items.sort((a, b) => a.meta.resource.localeCompare(b.meta.resource)) }]
+      ? [
+          {
+            category,
+            permissions: items.sort((a, b) => a.meta.resource.localeCompare(b.meta.resource)),
+          },
+        ]
       : [];
   });
 }

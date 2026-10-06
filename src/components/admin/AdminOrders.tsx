@@ -26,6 +26,7 @@ import { type Order, type OrderStatus } from '@/types/index';
 import { AppImage } from '@/components/ui/AppImage';
 import { updateOrderStatusAction, cancelOrderAction } from '@/server/actions';
 import { generateInvoicePdfAction, emailInvoiceAction } from '@/server/domains/invoices/actions';
+import { OrderCreditNotesPanel } from '@/components/admin/OrderCreditNotesPanel';
 import { downloadPdfBase64 } from '@/lib/downloadPdf';
 import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
 import { shownPaymentReference } from '@/lib/paymentReference';
@@ -629,6 +630,8 @@ export function AdminOrders({ ordersPromise, companyPromise, onRefresh }: AdminO
                   </button>
                 </div>
               </form>
+
+              <OrderCreditNotesPanel orderId={selectedOrder.id} />
             </div>
           </div>
         </div>

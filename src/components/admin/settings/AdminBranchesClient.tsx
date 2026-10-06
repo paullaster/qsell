@@ -1,18 +1,22 @@
 'use client';
 
-import React, { use, useState, useTransition } from 'react';
+import React, { use, useId, useState, useTransition } from 'react';
 import { GitBranch, Plus } from 'lucide-react';
 import type { BranchRow } from '@/server/db/drizzle/schema';
 import { createBranchAction, updateBranchAction } from '@/server/domains/payments/actions';
 
 const fieldClass =
-  'w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong placeholder:text-fg-faint focus:border-indigo-500 focus:outline-none';
+  'min-h-10 w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong placeholder:text-fg-faint focus:border-indigo-500 focus:outline-none';
 
 export function AdminBranchesClient({
   branchesPromise,
+  embedded = false,
 }: {
   branchesPromise: Promise<BranchRow[]>;
+  /** Inside a dialog that already shows the title. */
+  embedded?: boolean;
 }) {
+  const uid = useId();
   const initial = use(branchesPromise);
   const [branches, setBranches] = useState(initial);
   const [code, setCode] = useState('');
@@ -48,6 +52,17 @@ export function AdminBranchesClient({
     });
   };
 
+  const handleToggleIndependent = (id: string, actsIndependently: boolean) => {
+    startTransition(async () => {
+      try {
+        setError(null);
+        refreshLocal(await updateBranchAction(id, { actsIndependently }));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to update branch');
+      }
+    });
+  };
+
   const handleSetDefault = (id: string) => {
     startTransition(async () => {
       try {
@@ -67,17 +82,19 @@ export function AdminBranchesClient({
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="flex items-center gap-2 text-xl font-bold text-fg-strong">
-          <GitBranch className="h-5 w-5 text-indigo-400" />
-          Branches
-        </h2>
-        <p className="mt-1 max-w-2xl text-sm text-fg-muted">
+        {embedded ? null : (
+          <h2 className="flex items-center gap-2 text-xl font-bold text-fg-strong">
+            <GitBranch className="h-5 w-5 text-indigo-400" />
+            Branches
+          </h2>
+        )}
+        <p className={`${embedded ? '' : 'mt-1'}max-w-2xl text-sm text-fg-muted`}>
           Each branch can hold its own payment credentials, KRA PIN, and banking details when marked
           as independent.
         </p>
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-line">
+      <div className="overflow-x-auto rounded-xl border border-line">
         <table className="w-full text-left text-xs">
           <thead className="border-b border-line bg-surface text-[10px] tracking-wider text-fg-subtle uppercase">
             <tr>
@@ -85,7 +102,6 @@ export function AdminBranchesClient({
               <th className="px-4 py-3">Name</th>
               <th className="px-4 py-3 text-center">Independent</th>
               <th className="px-4 py-3 text-center">Default</th>
-              <th className="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line/80">
@@ -93,8 +109,15 @@ export function AdminBranchesClient({
               <tr key={b.id} className="hover:bg-hover">
                 <td className="px-4 py-3 font-mono text-fg">{b.code}</td>
                 <td className="px-4 py-3 font-semibold text-fg-strong">{b.name}</td>
-                <td className="px-4 py-3 text-center text-fg-muted">
-                  {b.actsIndependently ? 'Yes' : 'No'}
+                <td className="px-4 py-3 text-center">
+                  <input
+                    type="checkbox"
+                    checked={b.actsIndependently}
+                    disabled={pending}
+                    onChange={(e) => handleToggleIndependent(b.id, e.target.checked)}
+                    aria-label={`${b.name} acts independently`}
+                    className="h-5 w-5 cursor-pointer rounded border-line-strong"
+                  />
                 </td>
                 <td className="px-4 py-3 text-center">
                   {b.isDefault ? (
@@ -103,13 +126,12 @@ export function AdminBranchesClient({
                     <button
                       type="button"
                       onClick={() => handleSetDefault(b.id)}
-                      className="text-[10px] text-fg-subtle hover:text-indigo-400"
+                      className="min-h-10 cursor-pointer px-2 text-[11px] text-fg-subtle hover:text-indigo-400"
                     >
                       Make default
                     </button>
                   )}
                 </td>
-                <td className="px-4 py-3 text-right text-fg-subtle">—</td>
               </tr>
             ))}
           </tbody>
@@ -120,8 +142,14 @@ export function AdminBranchesClient({
         <h3 className="text-sm font-semibold text-fg-strong">Add branch</h3>
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <label className="mb-1 block text-[11px] font-semibold text-fg-muted">Code</label>
+            <label
+              htmlFor={`${uid}-code`}
+              className="mb-1 block text-[11px] font-semibold text-fg-muted"
+            >
+              Code
+            </label>
             <input
+              id={`${uid}-code`}
               value={code}
               onChange={(e) => setCode(e.target.value)}
               placeholder="e.g. NBO"
@@ -129,8 +157,14 @@ export function AdminBranchesClient({
             />
           </div>
           <div>
-            <label className="mb-1 block text-[11px] font-semibold text-fg-muted">Name</label>
+            <label
+              htmlFor={`${uid}-name`}
+              className="mb-1 block text-[11px] font-semibold text-fg-muted"
+            >
+              Name
+            </label>
             <input
+              id={`${uid}-name`}
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Nairobi Branch"
@@ -138,21 +172,25 @@ export function AdminBranchesClient({
             />
           </div>
         </div>
-        <label className="inline-flex items-center gap-2 text-xs text-fg">
+        <label className="inline-flex min-h-10 items-center gap-2 text-xs text-fg">
           <input
             type="checkbox"
             checked={actsIndependently}
             onChange={(e) => setActsIndependently(e.target.checked)}
-            className="rounded border-line-strong"
+            className="h-5 w-5 rounded border-line-strong"
           />
           Acts as independent unit (own KRA / paybill / bank)
         </label>
-        {error ? <p className="text-xs text-red-700">{error}</p> : null}
+        {error ? (
+          <p role="alert" className="text-xs text-red-700">
+            {error}
+          </p>
+        ) : null}
         <button
           type="button"
           onClick={handleCreate}
           disabled={pending || !code.trim() || !name.trim()}
-          className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+          className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
         >
           <Plus className="h-4 w-4" />
           {pending ? 'Creating…' : 'Create branch'}

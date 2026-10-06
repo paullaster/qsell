@@ -73,6 +73,7 @@ function newId(): string {
 
 export class MediaService {
   readonly repo: MediaRepository;
+  private reportedNotReady = false;
 
   constructor(
     private readonly db: DrizzleDb,
@@ -88,8 +89,17 @@ export class MediaService {
   uploadsReady(): boolean {
     try {
       this.ports.active();
+      this.reportedNotReady = false;
       return true;
-    } catch {
+    } catch (error) {
+      // A health probe calls this every few seconds: say what is wrong once, not on every poll.
+      if (!this.reportedNotReady) {
+        this.reportedNotReady = true;
+        console.error(
+          '[media] image uploads are NOT ready:',
+          error instanceof Error ? error.message : 'media storage is misconfigured',
+        );
+      }
       return false;
     }
   }

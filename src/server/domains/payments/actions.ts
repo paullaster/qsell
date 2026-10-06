@@ -17,6 +17,9 @@ import {
 import type { BranchRow, PaymentProviderConfigRow } from '@/server/db/drizzle/schema';
 import { extractPaymentReference } from '@/server/domains/payments/payment-reference';
 
+/** Which branches act independently decides what the KRA screens show, so they must refresh. */
+const KRA_SETTINGS_PATH = '/admin/settings/tax-compliance/kra-tims-etims';
+
 async function ensureBranchContext() {
   const { companySettings, organizations } = getContainer();
   const company = await companySettings.ensureSeeded();
@@ -72,6 +75,7 @@ export async function createBranchAction(input: {
 
   revalidatePath('/admin/settings');
   revalidatePath('/admin/settings/payments');
+  revalidatePath(KRA_SETTINGS_PATH, 'layout');
   return created;
 }
 
@@ -92,6 +96,7 @@ export async function updateBranchAction(
   const updated = await branches.update(id, patch);
   revalidatePath('/admin/settings');
   revalidatePath('/admin/settings/payments');
+  revalidatePath(KRA_SETTINGS_PATH, 'layout');
   return updated;
 }
 

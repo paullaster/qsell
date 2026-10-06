@@ -38,8 +38,9 @@ export function mapOrderRow(row: OrderRow, items: OrderItem[]): Order {
     tradeCustomerId: row.tradeCustomerId || null,
     customerAccountType: (row.customerAccountType as 'cash' | 'credit' | null) || null,
     transmitInvoicesToKra: row.transmitInvoicesToKra,
+    salesModule: row.salesModule,
     kraTransmissionStatus:
-      (row.kraTransmissionStatus as 'not_applicable' | 'pending' | 'skipped') || 'not_applicable',
+      (row.kraTransmissionStatus as NonNullable<Order['kraTransmissionStatus']>) || 'not_applicable',
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -76,7 +77,8 @@ export class OrderRepository {
       dimensionCodes: order.dimensionCodes || { global: {}, shortcut: {} },
       tradeCustomerId: order.tradeCustomerId || null,
       customerAccountType: order.customerAccountType || null,
-      transmitInvoicesToKra: order.transmitInvoicesToKra ?? false,
+      transmitInvoicesToKra: order.transmitInvoicesToKra ?? true,
+      salesModule: order.salesModule ?? 'ecommerce',
       kraTransmissionStatus: order.kraTransmissionStatus || 'not_applicable',
     });
 

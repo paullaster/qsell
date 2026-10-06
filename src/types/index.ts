@@ -133,6 +133,8 @@ export interface TaxCategory {
   name: string;
   code: string;
   rate: number; // percentage (e.g. 16 for 16%)
+  timsCode: string; // KRA TIMS VAT class, '' when not mapped
+  etimsCode: string; // KRA eTIMS tax type code, '' when not mapped
   type: TaxType;
   countryCode: string;
   countryName: string;
@@ -269,7 +271,9 @@ export interface Order {
   tradeCustomerId?: string | null;
   customerAccountType?: 'cash' | 'credit' | null;
   transmitInvoicesToKra?: boolean;
-  kraTransmissionStatus?: 'not_applicable' | 'pending' | 'skipped';
+  kraTransmissionStatus?: 'not_applicable' | 'pending' | 'skipped' | 'transmitted' | 'failed';
+  /** Invoicing module this sale belongs to; decides which signing switch applies. */
+  salesModule?: 'ecommerce' | 'sales_order' | 'credit_sale' | 'pos_cash_sale';
   createdAt: string;
   updatedAt: string;
 }
