@@ -1,11 +1,17 @@
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { communicationOutbox, customers, invoiceDocuments } from '@/server/db/drizzle/schema';
+import {
+  communicationOutbox,
+  customers,
+  invoiceDocuments,
+  orders,
+} from '@/server/db/drizzle/schema';
 import type { CompanySettingsRepository } from '@/server/domains/company/repository';
 import type { EmailPort, InvoicePayload, InvoicePdfPort } from '@/server/ports/communications';
 import type { Order } from '@/types/index';
 import { shownPaymentReference } from '@/lib/paymentReference';
 import { getContainer } from '@/server/di/container';
+import { businessDate } from '@/server/kernel/numbering/business-date';
 
 export type InvoiceDocumentType = 'tax_invoice' | 'proforma';
 
@@ -112,11 +118,7 @@ function buildInvoiceEmailHtml(args: {
         <p style="margin:16px 0 8px;font-weight:700;color:${escapeHtml(company.accentColor)};">Payment details</p>
         <ul style="margin:0;padding-left:18px;color:#374151;">
           <li>Preferred method: ${escapeHtml(order.paymentMethod.replace(/_/g, ' '))}</li>
-          ${
-            paymentReference
-              ? `<li>Reference: ${escapeHtml(paymentReference)}</li>`
-              : ''
-          }
+          ${paymentReference ? `<li>Reference: ${escapeHtml(paymentReference)}</li>` : ''}
           ${company.bankName ? `<li>Bank: ${escapeHtml(company.bankName)}</li>` : ''}
           ${company.bankAccountName ? `<li>Account name: ${escapeHtml(company.bankAccountName)}</li>` : ''}
           ${company.bankAccountNumber ? `<li>Account number: ${escapeHtml(company.bankAccountNumber)}</li>` : ''}
@@ -196,10 +198,78 @@ function buildInvoiceEmailHtml(args: {
 export class InvoiceService {
   constructor(private readonly deps: InvoiceServiceDeps) {}
 
-  private nextInvoiceNumber(prefix: string): string {
-    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const unique = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`.toUpperCase();
-    return `${prefix}-${stamp}-${unique}`;
+  /**
+   * The document's number, from the number series, once per order and document type: asking
+   * again (re-download, re-email) returns the same number and does not create another record.
+   * The number and the record are saved in one short transaction, so a gap-free series gives its
+   * number back if the save fails; the PDF is rendered afterwards, never while the lock is held.
+   */
+  private async numberDocument(order: Order, documentType: InvoiceDocumentType): Promise<string> {
+    const [existing] = await this.deps.db
+      .select({ invoiceNumber: invoiceDocuments.invoiceNumber })
+      .from(invoiceDocuments)
+      .where(
+        and(
+          eq(invoiceDocuments.orderId, order.id),
+          eq(invoiceDocuments.documentType, documentType),
+        ),
+      )
+      .limit(1);
+    if (existing) return existing.invoiceNumber;
+
+    const kind = documentType === 'proforma' ? 'proforma_invoice' : 'tax_invoice';
+    const company = await this.deps.companySettings.ensureSeeded();
+    const [row] = await this.deps.db
+      .select({ branchId: orders.branchId })
+      .from(orders)
+      .where(eq(orders.id, order.id))
+      .limit(1);
+
+    try {
+      return await this.deps.db.transaction(async (tx) => {
+        const { number } = await getContainer().numbering.assign(
+          kind,
+          {
+            companyId: company.id,
+            branchId: row?.branchId ?? null,
+            date: businessDate(),
+            document: { kind, id: order.id },
+          },
+          tx,
+        );
+        await tx
+          .insert(invoiceDocuments)
+          .values({
+            orderId: order.id,
+            orderNumber: order.orderNumber,
+            invoiceNumber: number,
+            documentType,
+            customerEmail: order.customerEmail,
+            customerName: order.customerName,
+            currency: order.currency,
+            subtotal: String(order.subtotal),
+            tax: String(order.tax),
+            shippingFee: String(order.shippingFee),
+            totalAmount: String(order.totalAmount),
+            pdfStorageKey: `${number}.pdf`,
+            emailStatus: 'not_sent',
+            meta: {
+              pdfAdapter: this.deps.invoicePdf.name,
+              documentType,
+              paymentMethod: order.paymentMethod,
+              paymentReference: shownPaymentReference(order),
+              transmitInvoicesToKra: order.transmitInvoicesToKra === true,
+              customerAccountType: order.customerAccountType ?? null,
+              tradeCustomerId: order.tradeCustomerId ?? null,
+            },
+          })
+          // Two requests for the same new document: both get the same number, one record.
+          .onConflictDoNothing({ target: invoiceDocuments.invoiceNumber });
+        return number;
+      });
+    } catch (error: unknown) {
+      throw new Error(`Failed to save invoice record: ${dbErrorMessage(error)}`);
+    }
   }
 
   private buildPayload(
@@ -275,42 +345,19 @@ export class InvoiceService {
   ): Promise<GeneratedInvoice> {
     const order = await this.resolveOrder(orderId);
     this.assertProformaAllowed(order, documentType);
+    // A tax invoice is a fiscal document: not before the sale has been approved.
+    if (
+      documentType === 'tax_invoice' &&
+      ['pending', 'rejected', 'draft'].includes(order.approvalStatus ?? 'none')
+    ) {
+      throw new Error('A tax invoice cannot be issued while this order is waiting for approval.');
+    }
     const company = await this.deps.companySettings.getProfile();
     const buyerTaxPin = await this.buyerTaxPin(order);
-    const prefix = documentType === 'proforma' ? 'PRO' : company.invoicePrefix;
-    const invoiceNumber = this.nextInvoiceNumber(prefix);
+    const invoiceNumber = await this.numberDocument(order, documentType);
     const payload = this.buildPayload(order, invoiceNumber, company, documentType, buyerTaxPin);
     const pdf = await this.deps.invoicePdf.generate(payload);
     const filename = `${invoiceNumber}.pdf`;
-
-    try {
-      await this.deps.db.insert(invoiceDocuments).values({
-        orderId: order.id,
-        orderNumber: order.orderNumber,
-        invoiceNumber,
-        documentType,
-        customerEmail: order.customerEmail,
-        customerName: order.customerName,
-        currency: order.currency,
-        subtotal: String(order.subtotal),
-        tax: String(order.tax),
-        shippingFee: String(order.shippingFee),
-        totalAmount: String(order.totalAmount),
-        pdfStorageKey: filename,
-        emailStatus: 'not_sent',
-        meta: {
-          pdfAdapter: this.deps.invoicePdf.name,
-          documentType,
-          paymentMethod: order.paymentMethod,
-          paymentReference: payload.paymentReference,
-          transmitInvoicesToKra: order.transmitInvoicesToKra === true,
-          customerAccountType: order.customerAccountType ?? null,
-          tradeCustomerId: order.tradeCustomerId ?? null,
-        },
-      });
-    } catch (error: unknown) {
-      throw new Error(`Failed to save invoice record: ${dbErrorMessage(error)}`);
-    }
 
     // Whether this document is signed with KRA is the signing policy's call, and signing must
     // never hold up the invoice (or the sale) it belongs to, so this is not awaited. The

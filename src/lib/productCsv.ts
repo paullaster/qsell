@@ -37,15 +37,15 @@ export const PRODUCT_CSV_COLUMNS = [
   {
     header: 'SKU',
     kind: 'text',
-    required: true,
-    help: 'Customer-facing code. Unique; stored in upper case.',
+    required: false,
+    help: 'Customer-facing code. Unique; stored in upper case. Leave blank to number it automatically.',
     example: 'SOL-PNL-400',
   },
   {
     header: 'Stock_Code',
     kind: 'text',
-    required: true,
-    help: 'Internal stock-control code. Unique; stored in upper case.',
+    required: false,
+    help: 'Internal stock-control code. Unique; stored in upper case. Leave blank to number it automatically.',
     example: 'STK-000123',
   },
   {
@@ -346,8 +346,8 @@ export function parseProductRow(
     return Number(value);
   };
 
-  const sku = text('SKU', true, 64).toUpperCase();
-  const stockCode = text('Stock_Code', true, 64).toUpperCase();
+  const sku = text('SKU', false, 64).toUpperCase();
+  const stockCode = text('Stock_Code', false, 64).toUpperCase();
   const name = text('Name', true);
   const slugRaw = text('Slug', false, 200).toLowerCase();
   if (slugRaw !== '' && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slugRaw)) {

@@ -4,6 +4,7 @@ import { requirePermission } from '@/server/domains/access-control/guard';
 
 import { revalidatePath } from 'next/cache';
 import { OrdersService } from './service';
+import { resubmitOrderForApproval } from './approval';
 import { getContainer } from '@/server/di/container';
 import type { Order, PaymentProvider } from '@/types/index';
 
@@ -39,10 +40,12 @@ export async function createOrderAction(orderPayload: {
   items: { productId: string; quantity: number }[];
   paymentMethod: PaymentProvider;
   currency?: 'KES' | 'USD';
-  dimensionFields?: Record<string, string | null | undefined> | {
-    global: Record<string, string>;
-    shortcut: Record<string, string>;
-  };
+  dimensionFields?:
+    | Record<string, string | null | undefined>
+    | {
+        global: Record<string, string>;
+        shortcut: Record<string, string>;
+      };
 }): Promise<Order> {
   const order = await OrdersService.createCheckout(orderPayload);
   revalidatePath('/admin/orders');
@@ -53,3 +56,21 @@ export async function createOrderAction(orderPayload: {
 }
 
 export const createCheckoutOrderAction = createOrderAction;
+
+/** Sends a reopened order back for approval. */
+export async function resubmitOrderApprovalAction(
+  orderId: string,
+): Promise<{ ok: true; status: 'pending' | 'approved' } | { ok: false; error: string }> {
+  const userId = await requirePermission('orders:update');
+  try {
+    const status = await resubmitOrderForApproval(orderId, userId);
+    revalidatePath('/admin/orders');
+    revalidatePath('/admin/approvals', 'layout');
+    return { ok: true, status };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Could not send it for approval.',
+    };
+  }
+}

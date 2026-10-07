@@ -1,5 +1,7 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { businessDate } from '@/server/kernel/numbering/business-date';
+import { withAfterCommit } from '@/server/kernel/after-commit';
 import { getContainer } from '@/server/di/container';
 import { drizzleDb } from '@/server/db/drizzle/client';
 import {
@@ -551,10 +553,10 @@ export class SalesQuoteService {
   private async save(userId: string, id: string | null, input: QuoteInput): Promise<SalesQuote> {
     const companyId = await this.companyId();
     const settings = await this.getSettings(companyId);
-    const quoteNumber = id
-      ? (await this.get(id))?.quoteNumber
-      : await this.allocateQuoteNumber(companyId);
-    if (!quoteNumber) throw new Error('Quote not found.');
+    // An existing quote keeps its number; a new one is numbered by the series inside the same
+    // transaction that saves it (see below), so a failed save leaves no gap.
+    const existingNumber = id ? (await this.get(id))?.quoteNumber : undefined;
+    if (id && !existingNumber) throw new Error('Quote not found.');
 
     const existing = id ? await this.get(id) : null;
     if (id && !existing) throw new Error('Quote not found.');
@@ -648,13 +650,33 @@ export class SalesQuoteService {
     const grossMarginPercent = subtotal > 0 ? (grossProfit / subtotal) * 100 : 0;
     const minimumMarginPercent = num(settings.minimumGrossMarginPercent);
     const belowFloor = grossMarginPercent < minimumMarginPercent;
-    const approvalStatus = belowFloor ? 'pending' : 'not_required';
-    const status: QuoteStatus = belowFloor ? 'pending_approval' : 'draft';
     const now = new Date();
     const { branch } = await getContainer().organizations.ensureDefaultOrgAndBranch(
       companyId,
       (await getContainer().companySettings.getProfile()).tradingName,
     );
+    // A configured approval workflow, if one applies, owns this quote's approval; otherwise the
+    // old margin-floor check does, exactly as before.
+    const approvalRequest = {
+      companyId,
+      trigger: 'sales_quote.submitted',
+      branchId: branch.id,
+      requestedBy: userId,
+      amount: totalAmount,
+      snapshot: {
+        discountPercent: Math.max(0, ...input.lines.map((l) => l.discountPercent)),
+        quoteDiscountPercent: input.discountPercent,
+        marginPercent: Math.round(grossMarginPercent * 1000) / 1000,
+        belowFloor,
+        customer: { id: input.customerId || null },
+      },
+    };
+    const byWorkflow = await getContainer().approvals.wouldRequire({
+      ...approvalRequest,
+      documentId: id ?? 'new',
+    });
+    const approvalStatus = byWorkflow || belowFloor ? 'pending' : 'not_required';
+    const status: QuoteStatus = byWorkflow || belowFloor ? 'pending_approval' : 'draft';
     const deliveryAddress = input.deliveryAddress ?? {};
     const header = {
       companyId,
@@ -662,7 +684,7 @@ export class SalesQuoteService {
       customerId: input.customerId || null,
       templateId: sourceTemplate?.id ?? null,
       templateName: sourceTemplate?.name ?? null,
-      quoteNumber,
+      quoteNumber: existingNumber ?? '',
       status,
       customerName,
       customerEmail: input.customerEmail?.trim().toLowerCase() || null,
@@ -681,6 +703,7 @@ export class SalesQuoteService {
       grossMarginPercent: grossMarginPercent.toFixed(3),
       minimumMarginPercent: minimumMarginPercent.toFixed(3),
       approvalStatus,
+      approvalManagedBy: byWorkflow ? 'workflow' : null,
       paymentMethod: input.paymentMethod,
       paymentTerms: input.paymentTerms?.trim() || null,
       showBillingAddress:
@@ -702,7 +725,8 @@ export class SalesQuoteService {
           .update(salesQuotes)
           .set({
             ...header,
-            status: existing.status === 'approved' && !belowFloor ? 'approved' : status,
+            status:
+              existing.status === 'approved' && !belowFloor && !byWorkflow ? 'approved' : status,
           })
           .where(eq(salesQuotes.id, existing.id))
           .returning();
@@ -711,9 +735,21 @@ export class SalesQuoteService {
         await tx.delete(salesQuoteLines).where(eq(salesQuoteLines.quoteId, quote.id));
         await tx.delete(salesQuoteSections).where(eq(salesQuoteSections.quoteId, quote.id));
       } else {
+        const quoteId = randomUUID();
+        const { number } = await getContainer().numbering.assign(
+          'sales_quote',
+          {
+            companyId,
+            branchId: header.branchId,
+            date: businessDate(),
+            document: { kind: 'sales_quote', id: quoteId },
+            actor: { type: 'user', id: userId },
+          },
+          tx,
+        );
         const [created] = await tx
           .insert(salesQuotes)
-          .values({ ...header, createdBy: userId })
+          .values({ ...header, id: quoteId, quoteNumber: number, createdBy: userId })
           .returning();
         quote = created!;
       }
@@ -731,6 +767,36 @@ export class SalesQuoteService {
       await tx
         .insert(salesQuoteLines)
         .values(lines.map((line) => ({ ...line, quoteId: quote.id })));
+      // Whatever was being approved is not what is saved now: close it out, then ask afresh.
+      if (existing) {
+        await getContainer().approvals.supersedePending(
+          companyId,
+          'sales_quote',
+          quote.id,
+          { userId },
+          'The quote was edited.',
+          tx,
+          // Edited so that no workflow applies any more: an earlier refusal no longer matters.
+          !byWorkflow,
+        );
+      }
+      if (byWorkflow) {
+        const outcome = await getContainer().approvals.submit(
+          { ...approvalRequest, documentId: quote.id },
+          tx,
+        );
+        if (!outcome.required) {
+          // Nothing applies after all (the rules changed a moment ago): fall back to the margin check.
+          await tx
+            .update(salesQuotes)
+            .set({
+              approvalManagedBy: null,
+              approvalStatus: belowFloor ? 'pending' : 'not_required',
+              status: belowFloor ? 'pending_approval' : 'draft',
+            })
+            .where(eq(salesQuotes.id, quote.id));
+        }
+      }
       await tx.insert(salesQuoteEvents).values({
         quoteId: quote.id,
         eventType: existing ? 'updated' : 'created',
@@ -739,7 +805,8 @@ export class SalesQuoteService {
           status,
           grossMarginPercent: Number(grossMarginPercent.toFixed(3)),
           minimumMarginPercent,
-          approvalRequired: belowFloor,
+          approvalRequired: belowFloor || byWorkflow,
+          approvalByWorkflow: byWorkflow,
         },
       });
       if (!existing && sourceTemplate) {
@@ -759,18 +826,53 @@ export class SalesQuoteService {
     return (await this.get(saved.id))!;
   }
 
-  private async allocateQuoteNumber(companyId: string) {
-    const [settings] = await drizzleDb
-      .insert(salesQuoteSettings)
-      .values({ companyId, nextQuoteNumber: 2 })
-      .onConflictDoUpdate({
-        target: salesQuoteSettings.companyId,
-        set: { nextQuoteNumber: sql`${salesQuoteSettings.nextQuoteNumber} + 1` },
-      })
-      .returning({ nextQuoteNumber: salesQuoteSettings.nextQuoteNumber });
-    const sequence = Math.max(1, (settings?.nextQuoteNumber ?? 2) - 1);
-    const year = new Date().getFullYear();
-    return `QTE-${year}-${String(sequence).padStart(5, '0')}`;
+  /** Sends a reopened quote back for approval, as it is now (the same as saving it again). */
+  async resubmitApproval(userId: string, id: string): Promise<SalesQuote> {
+    const quote = await this.get(id);
+    if (!quote) throw new Error('Quote not found.');
+    if (quote.approvalStatus !== 'draft' || quote.approvalManagedBy !== 'workflow') {
+      throw new Error('This quote is not waiting to be sent for approval again.');
+    }
+    const margin = num(quote.grossMarginPercent);
+    const belowFloor = margin < num(quote.minimumMarginPercent);
+    const request = {
+      companyId: quote.companyId,
+      trigger: 'sales_quote.submitted',
+      branchId: quote.branchId,
+      requestedBy: userId,
+      amount: num(quote.totalAmount),
+      snapshot: {
+        discountPercent: Math.max(0, ...quote.lines.map((l) => num(l.discountPercent))),
+        quoteDiscountPercent: num(quote.quoteDiscountPercent),
+        marginPercent: Math.round(margin * 1000) / 1000,
+        belowFloor,
+        customer: { id: quote.customerId },
+      },
+    };
+    const { approvals } = getContainer();
+    await withAfterCommit(drizzleDb, async (tx) => {
+      const outcome = await approvals.submit({ ...request, documentId: quote.id }, tx);
+      const held = outcome.required && !outcome.released;
+      if (held) {
+        await tx
+          .update(salesQuotes)
+          .set({ status: 'pending_approval', approvalStatus: 'pending', updatedAt: new Date() })
+          .where(eq(salesQuotes.id, quote.id));
+      } else if (!outcome.required) {
+        // Nothing needs approving any more: fall back to the margin check.
+        await tx
+          .update(salesQuotes)
+          .set({
+            approvalManagedBy: null,
+            status: belowFloor ? 'pending_approval' : 'draft',
+            approvalStatus: belowFloor ? 'pending' : 'not_required',
+            updatedAt: new Date(),
+          })
+          .where(eq(salesQuotes.id, quote.id));
+      }
+    });
+    await this.event(id, 'approval_resubmitted', userId, {});
+    return (await this.get(id))!;
   }
 
   async approve(userId: string, id: string) {
@@ -778,6 +880,11 @@ export class SalesQuoteService {
     if (!quote) throw new Error('Quote not found.');
     if (quote.status !== 'pending_approval')
       throw new Error('This quote is not awaiting approval.');
+    if (quote.approvalManagedBy === 'workflow') {
+      throw new Error(
+        'This quote is approved through the Approvals inbox, by the approvers set for it.',
+      );
+    }
     const [updated] = await drizzleDb
       .update(salesQuotes)
       .set({
@@ -830,7 +937,6 @@ export class SalesQuoteService {
     if (!quote) throw new Error('Quote not found.');
     if (quote.convertedOrderId) return getContainer().orders.getById(quote.convertedOrderId);
     const orderId = `ord_quote_${quote.id}`;
-    const orderNumber = `SO-${quote.quoteNumber}`;
     const alreadyCreatedOrder = await getContainer().orders.getById(orderId);
     if (alreadyCreatedOrder) {
       await drizzleDb
@@ -891,9 +997,12 @@ export class SalesQuoteService {
     try {
       const result = await OrderWriteService.createOrder({
         orderId,
-        orderNumber,
+        // The order is numbered by the sales order series, once: its id is fixed, so a retried
+        // conversion gets the same number back.
         // A quote only ever has a proforma; signing starts once it is a sales order.
         salesModule: 'sales_order',
+        // Staff placing it: approvals (if configured) are asked on their behalf.
+        requestedBy: userId,
         userId: quote.customerId,
         branchId: quote.branchId,
         customerName: quote.customerName,
@@ -953,6 +1062,12 @@ export class SalesQuoteService {
       throw new Error('Only draft or approved quotes can be sent.');
     if (quote.approvalStatus === 'pending')
       throw new Error('This quote needs approval before it can be sent.');
+    if (quote.approvalStatus === 'rejected')
+      throw new Error(
+        'Approval for this quote was refused. Reopen it from My requests, change it, and send it for approval again.',
+      );
+    if (quote.approvalStatus === 'draft')
+      throw new Error('Send this quote for approval again before it can be sent to the customer.');
     if (quote.validUntil && quote.validUntil < new Date())
       throw new Error('This quote has expired.');
     const [company, companySettings] = await Promise.all([

@@ -29,6 +29,7 @@ import type {
 import { downloadPdfBase64 } from '@/lib/downloadPdf';
 import {
   approveSalesQuoteAction,
+  resubmitSalesQuoteApprovalAction,
   cancelSalesQuoteAction,
   convertSalesQuoteToOrderAction,
   createSalesQuoteAction,
@@ -500,6 +501,7 @@ export function AdminSalesQuotes({
                             ) : null}
                             {expired ? 'expired' : statusLabel(quote.status)}
                           </span>
+                          <ApprovalNote quote={quote} />
                         </td>
                         <td className="px-4 py-3 text-xs text-fg-muted">
                           {quote.validUntil
@@ -538,26 +540,28 @@ export function AdminSalesQuotes({
                                   Edit
                                 </button>
                               )}
-                            {quote.status === 'pending_approval' && capabilities.canApprove && (
-                              <button
-                                type="button"
-                                title="Approve quote"
-                                disabled={busyId === quote.id}
-                                onClick={() =>
-                                  void withAction(
-                                    quote.id,
-                                    () => approveSalesQuoteAction(quote.id),
-                                    `${quote.quoteNumber} approved.`,
-                                  )
-                                }
-                                className="rounded-md p-2 text-emerald-700 hover:bg-emerald-50"
-                              >
-                                <BadgeCheck className="h-4 w-4" />
-                              </button>
-                            )}
+                            {quote.status === 'pending_approval' &&
+                              capabilities.canApprove &&
+                              quote.approvalManagedBy !== 'workflow' && (
+                                <button
+                                  type="button"
+                                  title="Approve quote"
+                                  disabled={busyId === quote.id}
+                                  onClick={() =>
+                                    void withAction(
+                                      quote.id,
+                                      () => approveSalesQuoteAction(quote.id),
+                                      `${quote.quoteNumber} approved.`,
+                                    )
+                                  }
+                                  className="rounded-md p-2 text-emerald-700 hover:bg-emerald-50"
+                                >
+                                  <BadgeCheck className="h-4 w-4" />
+                                </button>
+                              )}
                             {(quote.status === 'draft' || quote.status === 'approved') &&
                               capabilities.canUpdate &&
-                              quote.approvalStatus !== 'pending' && (
+                              !['pending', 'rejected', 'draft'].includes(quote.approvalStatus) && (
                                 <button
                                   type="button"
                                   title="Email quotation"
@@ -653,6 +657,13 @@ export function AdminSalesQuotes({
               details.id,
               () => approveSalesQuoteAction(details.id),
               `${details.quoteNumber} approved.`,
+            )
+          }
+          onResubmit={() =>
+            void withAction(
+              details.id,
+              () => resubmitSalesQuoteApprovalAction(details.id),
+              `${details.quoteNumber} sent for approval again.`,
             )
           }
           onAccept={() =>
@@ -1927,6 +1938,24 @@ function QuoteCataloguePicker({
   );
 }
 
+/** Where a workflow-approved quote stands, in a line under its status. */
+function ApprovalNote({
+  quote,
+}: {
+  quote: Pick<SalesQuote, 'approvalManagedBy' | 'approvalStatus'>;
+}) {
+  if (quote.approvalManagedBy !== 'workflow') return null;
+  const text =
+    quote.approvalStatus === 'pending'
+      ? 'Waiting for approval in the Approvals inbox'
+      : quote.approvalStatus === 'rejected'
+        ? 'Approval refused: reopen it from My requests'
+        : quote.approvalStatus === 'draft'
+          ? 'Reopened: change it or send it for approval again'
+          : null;
+  return text ? <p className="mt-1 text-xs text-fg-muted">{text}</p> : null;
+}
+
 function QuoteDetails({
   quote,
   canApprove,
@@ -1935,6 +1964,7 @@ function QuoteDetails({
   busy,
   onClose,
   onApprove,
+  onResubmit,
   onAccept,
   onReject,
   onCancel,
@@ -1949,6 +1979,7 @@ function QuoteDetails({
   busy: boolean;
   onClose: () => void;
   onApprove: () => void;
+  onResubmit: () => void;
   onAccept: () => void;
   onReject: () => void;
   onCancel: () => void;
@@ -2158,15 +2189,26 @@ function QuoteDetails({
           >
             Preview customer PDF
           </ActionButton>
-          {quote.status === 'pending_approval' && canApprove && (
+          {quote.approvalManagedBy === 'workflow' && quote.approvalStatus === 'draft' && (
             <ActionButton
-              onClick={onApprove}
+              onClick={onResubmit}
               disabled={busy}
               icon={<BadgeCheck className="h-4 w-4" />}
             >
-              Approve
+              Send for approval again
             </ActionButton>
           )}
+          {quote.status === 'pending_approval' &&
+            canApprove &&
+            quote.approvalManagedBy !== 'workflow' && (
+              <ActionButton
+                onClick={onApprove}
+                disabled={busy}
+                icon={<BadgeCheck className="h-4 w-4" />}
+              >
+                Approve
+              </ActionButton>
+            )}
           {quote.status === 'sent' && canApprove && (
             <>
               <ActionButton onClick={onAccept} disabled={busy} icon={<Check className="h-4 w-4" />}>

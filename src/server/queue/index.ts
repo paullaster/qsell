@@ -19,6 +19,8 @@ export async function startWorker(): Promise<void> {
       '17 3 * * * purge-auth-tokens',
       '27 3 * * * purge-product-imports',
       '37 3 * * * purge-media',
+      // Approvals are time-sensitive, so this one runs every five minutes.
+      '*/5 * * * * sweep-overdue-approvals',
     ].join('\n'),
   });
 

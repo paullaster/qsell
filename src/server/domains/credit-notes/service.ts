@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
@@ -13,6 +14,9 @@ import {
   type CreditNoteRow,
 } from '@/server/db/drizzle/schema';
 import { applyStockDelta, type Tx } from '@/server/domains/inventory/service';
+import { businessDate } from '@/server/kernel/numbering/business-date';
+import { afterCommit } from '@/server/kernel/after-commit';
+import type { NumberSeriesService } from '@/server/kernel/numbering/service';
 import type { DocumentSigningService } from '@/server/domains/kra/signing/service';
 import { CREDIT_NOTE_REASONS, type CreditNoteReason } from './reasons';
 import { isSigningModule, type SigningModule } from '@/server/domains/kra/signing/types';
@@ -83,11 +87,16 @@ export class CreditNoteService {
   constructor(
     private readonly db: DrizzleDb,
     private readonly signing: DocumentSigningService,
+    private readonly numbering: NumberSeriesService,
   ) {}
 
-  async issue(input: IssueCreditNoteInput): Promise<CreditNoteRow> {
+  /**
+   * Pass `outer` to issue inside a transaction you already hold (an approval releasing it): the
+   * credit note then commits or rolls back with it, and signing is queued for after that commit.
+   */
+  async issue(input: IssueCreditNoteInput, outer?: Tx): Promise<CreditNoteRow> {
     this.validateShape(input);
-    const created = await this.db.transaction(async (tx) => {
+    const body = async (tx: Tx) => {
       // One credit at a time per original invoice, so the over-credit check cannot race.
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${input.original.documentKey}))`);
 
@@ -100,11 +109,6 @@ export class CreditNoteService {
         .from(creditNoteLines)
         .innerJoin(creditNotes, eq(creditNotes.id, creditNoteLines.creditNoteId))
         .where(eq(creditNotes.originalDocumentKey, input.original.documentKey));
-      const [{ count }] = await tx
-        .select({ count: sql<number>`count(*)::int` })
-        .from(creditNotes)
-        .where(eq(creditNotes.originalDocumentKey, input.original.documentKey));
-
       const lines = this.priceLines(input, previous);
       const total = round2(lines.reduce((sum, l) => sum + l.amount, 0));
       const creditedBefore = round2(previous.reduce((sum, p) => sum + Number(p.amount), 0));
@@ -115,16 +119,31 @@ export class CreditNoteService {
         );
       }
 
+      // Numbered by the credit note series inside this same transaction (it is a fiscal document,
+      // so the series is gap-free): if anything below fails, the number is given back.
+      const creditNoteId = randomUUID();
+      const { number: creditNoteNo } = await this.numbering.assign(
+        'credit_note',
+        {
+          companyId: input.companyId,
+          branchId: input.branchId,
+          date: businessDate(),
+          document: { kind: 'credit_note', id: creditNoteId },
+          actor: { type: 'user', id: input.issuedBy },
+        },
+        tx,
+      );
       const [cn] = await tx
         .insert(creditNotes)
         .values({
+          id: creditNoteId,
           companyId: input.companyId,
           branchId: input.branchId,
           module: input.module,
           sourceKind: input.source.kind,
           sourceId: input.source.id,
           sourceRef: input.source.ref,
-          creditNoteNo: `${input.source.ref}-CN${count + 1}`,
+          creditNoteNo,
           originalDocumentKey: input.original.documentKey,
           reasonCode: input.reason.code,
           reasonNote: input.reason.note?.trim() || null,
@@ -148,12 +167,21 @@ export class CreditNoteService {
         .returning();
       await input.effects?.(tx, cn!, lineRows);
       return cn!;
-    });
+    };
 
     // After commit: sign in the background. Whatever happens there, the credit note stands.
-    void this.signing
-      .processCreditNote(created.id)
-      .catch((error: unknown) => console.error('[credit-note] signing hook failed', error));
+    const sign = (id: string) =>
+      void this.signing
+        .processCreditNote(id)
+        .catch((error: unknown) => console.error('[credit-note] signing hook failed', error));
+
+    if (outer) {
+      const created = await body(outer);
+      afterCommit(outer, () => sign(created.id));
+      return created;
+    }
+    const created = await this.db.transaction(body);
+    sign(created.id);
     return created;
   }
 
@@ -265,14 +293,17 @@ export class CreditNoteService {
    * restock of the credited units. Ledger reversal and refunds are not done by this
    * adapter; they need accounting rules that have not been defined.
    */
-  async issueForOrder(input: {
-    orderId: string;
-    lines: { productId: string; quantity: number }[];
-    reason: { code: CreditNoteReason; note?: string };
-    issuedBy: string;
-    /** Put the credited units back into stock. */
-    restock?: boolean;
-  }): Promise<CreditNoteRow> {
+  async issueForOrder(
+    input: {
+      orderId: string;
+      lines: { productId: string; quantity: number }[];
+      reason: { code: CreditNoteReason; note?: string };
+      issuedBy: string;
+      /** Put the credited units back into stock. */
+      restock?: boolean;
+    },
+    outer?: Tx,
+  ): Promise<CreditNoteRow> {
     const [order] = await this.db
       .select()
       .from(orders)
@@ -303,42 +334,112 @@ export class CreditNoteService {
     }
     const items = await this.db.select().from(orderItems).where(eq(orderItems.orderId, order.id));
 
-    return this.issue({
+    return this.issue(
+      {
+        companyId: await this.companyIdFor(order.tradeCustomerId, order.branchId),
+        branchId: order.branchId,
+        module: isSigningModule(order.salesModule) ? order.salesModule : 'ecommerce',
+        source: { kind: 'order', id: order.id, ref: order.orderNumber },
+        original: {
+          documentKey: `order:${order.id}:tax_invoice`,
+          currency: order.currency,
+          totalAmount: Number(order.totalAmount),
+          soldLines: items.map((i) => ({
+            productId: i.productId,
+            description: i.productName,
+            quantity: i.quantity,
+            unitPrice: Number(i.unitPrice),
+            amount: Number(i.totalPrice),
+          })),
+        },
+        lines: input.lines,
+        reason: input.reason,
+        issuedBy: input.issuedBy,
+        effects: input.restock
+          ? async (tx, cn, lines) => {
+              for (const l of lines) {
+                await applyStockDelta(tx, {
+                  productId: l.productId,
+                  delta: l.quantity,
+                  allowDeleted: true,
+                  changeType: 'credit_note_restock',
+                  referenceId: cn.id,
+                  actor: input.issuedBy,
+                  note: `Credit note ${cn.creditNoteNo}: returned to stock.`,
+                });
+              }
+            }
+          : undefined,
+      },
+      outer,
+    );
+  }
+
+  /**
+   * Issues the credit note, or parks it for approval when a workflow says a credit like this needs
+   * one (it is then issued, in the approver's transaction, when the last approval is given). With
+   * no workflow configured it is issued straight away, exactly as before.
+   */
+  async issueForOrderGated(
+    request: Parameters<CreditNoteService['issueForOrder']>[0],
+  ): Promise<
+    | { status: 'issued'; creditNote: CreditNoteRow }
+    | { status: 'pending_approval'; message: string }
+  > {
+    const { getContainer } = await import('@/server/di/container');
+    const preview = await this.previewForOrder(request.orderId, request.lines);
+    const outcome = await getContainer().approvalGate.gate(
+      {
+        trigger: 'credit_note.requested',
+        companyId: preview.companyId,
+        branchId: preview.branchId,
+        requestedBy: request.issuedBy,
+        amount: preview.amount,
+        facts: { reasonCode: request.reason.code, isFullReturn: preview.isFullReturn },
+        action: 'order_credit_note',
+        payload: request as unknown as Record<string, unknown>,
+        summary: `Issue a credit note of KES ${preview.amount.toLocaleString('en-KE')} against order ${preview.orderNumber} (${request.reason.code.replace(/_/g, ' ')}${request.restock ? ', returned to stock' : ''}).`,
+      },
+      () => this.issueForOrder(request),
+    );
+    if (outcome.parked) return { status: 'pending_approval', message: outcome.message };
+    return { status: 'issued', creditNote: outcome.value };
+  }
+
+  /**
+   * What an order credit would be worth and who it belongs to, for deciding whether it needs
+   * approval. Reads only; the real credit is still checked in full when it is issued.
+   */
+  async previewForOrder(
+    orderId: string,
+    lines: { productId: string; quantity: number }[],
+  ): Promise<{
+    companyId: string;
+    branchId: string | null;
+    orderNumber: string;
+    amount: number;
+    isFullReturn: boolean;
+  }> {
+    const [order] = await this.db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
+    if (!order) throw new CreditNoteError('NOT_FOUND', `Order ${orderId} not found.`);
+    const view = await this.creditableForOrder(orderId);
+    let amount = 0;
+    for (const l of lines) {
+      const sold = view.lines.find((x) => x.productId === l.productId);
+      if (!sold) continue;
+      const qty = Math.min(l.quantity, sold.remainingQuantity);
+      amount +=
+        qty === sold.remainingQuantity ? sold.remainingAmount : round2(sold.unitPrice * qty);
+    }
+    amount = round2(amount);
+    return {
       companyId: await this.companyIdFor(order.tradeCustomerId, order.branchId),
       branchId: order.branchId,
-      module: isSigningModule(order.salesModule) ? order.salesModule : 'ecommerce',
-      source: { kind: 'order', id: order.id, ref: order.orderNumber },
-      original: {
-        documentKey: `order:${order.id}:tax_invoice`,
-        currency: order.currency,
-        totalAmount: Number(order.totalAmount),
-        soldLines: items.map((i) => ({
-          productId: i.productId,
-          description: i.productName,
-          quantity: i.quantity,
-          unitPrice: Number(i.unitPrice),
-          amount: Number(i.totalPrice),
-        })),
-      },
-      lines: input.lines,
-      reason: input.reason,
-      issuedBy: input.issuedBy,
-      effects: input.restock
-        ? async (tx, cn, lines) => {
-            for (const l of lines) {
-              await applyStockDelta(tx, {
-                productId: l.productId,
-                delta: l.quantity,
-                allowDeleted: true,
-                changeType: 'credit_note_restock',
-                referenceId: cn.id,
-                actor: input.issuedBy,
-                note: `Credit note ${cn.creditNoteNo}: returned to stock.`,
-              });
-            }
-          }
-        : undefined,
-    });
+      orderNumber: order.orderNumber,
+      amount,
+      isFullReturn:
+        view.invoiceTotal > 0 && Math.abs(view.creditedTotal + amount - view.invoiceTotal) < 0.005,
+    };
   }
 
   // ── internals ─────────────────────────────────────────────────────────────

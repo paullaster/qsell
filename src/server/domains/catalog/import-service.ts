@@ -1,3 +1,5 @@
+import { businessDate } from '@/server/kernel/numbering/business-date';
+import type { NumberSeriesService } from '@/server/kernel/numbering/service';
 import type { MediaService } from '@/server/domains/media/service';
 import { createHash, randomUUID } from 'node:crypto';
 import { and, asc, count, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
@@ -65,6 +67,8 @@ const MAX_REPORTED_PROBLEMS = 1000;
 class RowRejected extends Error {}
 
 interface References {
+  /** The company the products are numbered under. */
+  companyId: string;
   categoryByName: Map<string, CategoryRow>;
   itemTypeByRef: Map<string, ItemTypeRow>;
   defaultItemType: ItemTypeRow | undefined;
@@ -138,6 +142,11 @@ export class ProductImportService {
     private readonly ensureQueue: () => Promise<void>,
     /** Imported image links become shared media assets, exactly like the product form's. */
     private readonly media: MediaService,
+    /** Numbering for products imported without a SKU or stock code. */
+    private readonly deps: {
+      numbering: () => NumberSeriesService;
+      companyId: () => Promise<string>;
+    },
   ) {}
 
   // ── Staging (request side) ────────────────────────────────────────────────
@@ -296,8 +305,9 @@ export class ProductImportService {
           report(line, column, `${column} "${value}" is also used on row ${first}.`);
         else seen[field].set(value, line);
       };
-      unique('sku', 'SKU', draft.sku);
-      unique('stockCode', 'Stock_Code', draft.stockCode);
+      // A blank code is numbered automatically when the row is created, so there is nothing to clash.
+      if (draft.sku !== '') unique('sku', 'SKU', draft.sku);
+      if (draft.stockCode !== '') unique('stockCode', 'Stock_Code', draft.stockCode);
 
       if (draft.slug !== null) {
         if (existing.slug.has(draft.slug))
@@ -512,10 +522,24 @@ export class ProductImportService {
 
     const now = new Date();
     const id = `prod_${randomUUID()}`;
+    // Blank codes are numbered by their series inside this row's own savepoint, so a rejected row
+    // gives its numbers back (the series allow gaps, so this is cheap and never contended).
+    const code = async (value: string, kind: 'product_sku' | 'product_stock_code') =>
+      value !== ''
+        ? value
+        : (
+            await this.deps
+              .numbering()
+              .assign(
+                kind,
+                { companyId: refs.companyId, date: businessDate(), document: { kind, id } },
+                db as never,
+              )
+          ).number.toUpperCase();
     const values: ProductInsert = {
       id,
-      sku: draft.sku,
-      stockCode: draft.stockCode,
+      sku: await code(draft.sku, 'product_sku'),
+      stockCode: await code(draft.stockCode, 'product_stock_code'),
       name: draft.name,
       slug: draft.slug ?? slugify(draft.name),
       description: draft.description,
@@ -546,7 +570,9 @@ export class ProductImportService {
       updatedAt: now,
     };
     await db.insert(products).values(values);
-    const imageLinks = [draft.imageUrl, ...draft.additionalImages].filter((url) => url.trim() !== '');
+    const imageLinks = [draft.imageUrl, ...draft.additionalImages].filter(
+      (url) => url.trim() !== '',
+    );
     if (imageLinks.length > 0) {
       await this.media.setProductGalleryFromUrls(
         db,
@@ -681,6 +707,7 @@ export class ProductImportService {
       taxByRef.set(key(tax.code), tax);
     }
     return {
+      companyId: await this.deps.companyId(),
       categoryByName: new Map(categoryRows.map((c) => [key(c.name), c])),
       itemTypeByRef,
       // Same fallbacks as the product form.

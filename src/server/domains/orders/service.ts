@@ -21,10 +21,12 @@ export class OrdersService {
     paymentMethod: PaymentProvider;
     currency?: 'KES' | 'USD';
     userId?: string;
-    dimensionFields?: Record<string, string | null | undefined> | {
-      global: Record<string, string>;
-      shortcut: Record<string, string>;
-    };
+    dimensionFields?:
+      | Record<string, string | null | undefined>
+      | {
+          global: Record<string, string>;
+          shortcut: Record<string, string>;
+        };
   }): Promise<Order> {
     const session = await auth();
     const { organizations, companySettings, branches } = getContainer();
@@ -36,11 +38,7 @@ export class OrdersService {
     const sellingBranch = (await branches.getDefault(company.id)) || branch;
 
     const result = await OrderWriteService.createOrder({
-      userId:
-        params.userId ||
-        session?.user?.customerStoreId ||
-        session?.user?.id ||
-        null,
+      userId: params.userId || session?.user?.customerStoreId || session?.user?.id || null,
       branchId: sellingBranch.id,
       customerName: params.customerName,
       customerEmail: params.customerEmail,
