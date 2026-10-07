@@ -15,7 +15,7 @@ import { AccessDeniedError } from '@/server/domains/access-control/engine';
 import { requirePermission } from '@/server/domains/access-control/guard';
 import type { PermissionKey } from '@/server/domains/access-control/permissions';
 import { ReasonError } from '@/server/kernel/reason-codes/service';
-import { PricingConfigError, type LineInput } from './config-service';
+import { PricingConfigError, type Gated, type LineInput } from './config-service';
 import { describeScopes, type RuleIssue } from './domain/rules';
 import {
   CHANNELS,
@@ -97,37 +97,8 @@ export interface PriceListView {
 type NameMap = Partial<Record<string, Record<string, string>>>;
 
 /** Names for the customers, groups and branches that lists are limited to. */
-async function scopeNames(lists: Array<{ scopes: Scopes }>): Promise<NameMap> {
-  const collect = (d: keyof Scopes) => [
-    ...new Set(lists.flatMap((l) => l.scopes[d]?.values ?? [])),
-  ];
-  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const ok = (ids: string[]) => ids.filter((i) => UUID.test(i));
-  const [c, g, b] = [ok(collect('customer')), ok(collect('customer_group')), ok(collect('branch'))];
-  const [cs, gs, bs] = await Promise.all([
-    c.length
-      ? drizzleDb
-          .select({ id: customers.id, name: customers.name })
-          .from(customers)
-          .where(inArray(customers.id, c))
-      : [],
-    g.length
-      ? drizzleDb
-          .select({ id: customerGroups.id, name: customerGroups.name })
-          .from(customerGroups)
-          .where(inArray(customerGroups.id, g))
-      : [],
-    b.length
-      ? drizzleDb
-          .select({ id: branches.id, name: branches.name })
-          .from(branches)
-          .where(inArray(branches.id, b))
-      : [],
-  ]);
-  const map = (rows: { id: string; name: string }[]) =>
-    Object.fromEntries(rows.map((r) => [r.id, r.name]));
-  return { customer: map(cs), customer_group: map(gs), branch: map(bs) };
-}
+const scopeNames = (lists: Array<{ scopes: Scopes }>): Promise<NameMap> =>
+  getContainer().pricingConfig.scopeNames(lists);
 
 function toView(
   row: Awaited<ReturnType<ReturnType<typeof getContainer>['pricingConfig']['getList']>>,
@@ -390,10 +361,10 @@ export async function updatePriceListAction(
   id: string,
   patch: Partial<Omit<PriceListFormInput, 'code' | 'currency' | 'kind'>>,
   reason: Reason,
-): Promise<PricingResult<{ version: number }>> {
+): Promise<PricingResult<Gated<{ version: number }>>> {
   return run('pricing:manage', async ({ companyId, actor }) => {
     const { validFrom, validTo, ...rest } = patch;
-    const row = await getContainer().pricingConfig.updateList(
+    const row = await getContainer().pricingConfig.updateListGated(
       companyId,
       id,
       {
@@ -405,29 +376,43 @@ export async function updatePriceListAction(
       reason,
     );
     revalidate();
-    return { version: row.version };
+    return row;
   });
 }
 
 export async function activatePriceListAction(
   id: string,
   reason: Reason,
-): Promise<PricingResult<{ status: PriceListStatus }>> {
+): Promise<
+  PricingResult<
+    | { status: PriceListStatus; pending: false }
+    | { status: PriceListStatus; pending: true; message: string }
+  >
+> {
   return run('pricing:manage', async ({ companyId, actor }) => {
-    const row = await getContainer().pricingConfig.activate(companyId, id, actor, reason);
+    // Goes live now, or is held for the approvers when a workflow applies to price lists.
+    const result = await getContainer().pricingConfig.requestActivation(
+      companyId,
+      id,
+      actor,
+      reason,
+    );
     revalidate();
-    return { status: row.status };
+    revalidatePath('/admin/approvals', 'layout');
+    return result.outcome === 'active'
+      ? { status: 'active' as const, pending: false as const }
+      : { status: 'draft' as const, pending: true as const, message: result.message };
   });
 }
 
 export async function retirePriceListAction(
   id: string,
   reason: Reason,
-): Promise<PricingResult<{ status: PriceListStatus }>> {
+): Promise<PricingResult<{ status: PriceListStatus; pending: false }>> {
   return run('pricing:manage', async ({ companyId, actor }) => {
     const row = await getContainer().pricingConfig.retire(companyId, id, actor, reason);
     revalidate();
-    return { status: row.status };
+    return { status: row.status, pending: false as const };
   });
 }
 
@@ -442,9 +427,9 @@ export async function savePriceLinesAction(
   }>,
   reason: Reason,
   opts: { validFrom?: string | null; overrideLock?: boolean } = {},
-): Promise<PricingResult<{ created: number; replaced: number; unchanged: number }>> {
+): Promise<PricingResult<Gated<{ created: number; replaced: number; unchanged: number }>>> {
   return run('pricing:manage', async ({ companyId, actor }) => {
-    const result = await getContainer().pricingConfig.setLines(
+    const result = await getContainer().pricingConfig.setLinesGated(
       companyId,
       id,
       rows.map<LineInput>((r) => ({ ...r, lockedUntil: date(r.lockedUntil) })),
@@ -462,9 +447,9 @@ export async function removePriceLinesAction(
   productIds: string[],
   reason: Reason,
   opts: { overrideLock?: boolean } = {},
-): Promise<PricingResult<{ removed: number }>> {
+): Promise<PricingResult<Gated<{ removed: number }>>> {
   return run('pricing:manage', async ({ companyId, actor }) => {
-    const result = await getContainer().pricingConfig.removeLines(
+    const result = await getContainer().pricingConfig.removeLinesGated(
       companyId,
       id,
       productIds,
@@ -486,7 +471,7 @@ export async function importPriceLinesAction(
   csv: string,
   reason: Reason,
   opts: { validFrom?: string | null; overrideLock?: boolean } = {},
-): Promise<PricingResult<{ created: number; replaced: number; unchanged: number }>> {
+): Promise<PricingResult<Gated<{ created: number; replaced: number; unchanged: number }>>> {
   return run('pricing:manage', async ({ companyId, actor }) => {
     const lines = csv
       .split(/\r?\n/)
@@ -558,7 +543,7 @@ export async function importPriceLinesAction(
         issues.slice(0, 20),
       );
     }
-    const result = await getContainer().pricingConfig.setLines(
+    const result = await getContainer().pricingConfig.setLinesGated(
       companyId,
       id,
       parsed.map((p) => ({

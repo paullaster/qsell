@@ -7,15 +7,21 @@ import type { Product, Category } from '@/types/index';
 export function AdminProductsClient({
   productsPromise,
   categoriesPromise,
+  canDelete,
+  canPurge,
 }: {
   productsPromise: Promise<Product[]>;
   categoriesPromise: Promise<Category[]>;
+  canDelete: boolean;
+  canPurge: boolean;
 }) {
   const router = useRouter();
   return (
     <AdminProducts
       productsPromise={productsPromise}
       categoriesPromise={categoriesPromise}
+      canDelete={canDelete}
+      canPurge={canPurge}
       onOpenCreateProduct={() => router.push('/admin/products/new')}
       onEditProduct={(product) => router.push(`/admin/products/${product.id}`)}
       onDuplicateProduct={(product) =>

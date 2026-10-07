@@ -144,6 +144,7 @@ export function PriceLinesPanel({
     );
     setBusy(false);
     if (r.ok) {
+      if (r.data.pending) return void (await finish(r.data.message));
       const { created, replaced, unchanged } = r.data;
       await finish(
         unchanged
@@ -165,7 +166,9 @@ export function PriceLinesPanel({
     setBusy(false);
     if (r.ok)
       await finish(
-        `${r.data.created} added, ${r.data.replaced} changed, ${r.data.unchanged} already as given.`,
+        r.data.pending
+          ? r.data.message
+          : `${r.data.created} added, ${r.data.replaced} changed, ${r.data.unchanged} already as given.`,
       );
     else fail(r);
   };
@@ -178,7 +181,10 @@ export function PriceLinesPanel({
       overrideLock: lockOverride,
     });
     setBusy(false);
-    if (r.ok) await finish(`${removing.name} is no longer priced in this list.`);
+    if (r.ok)
+      await finish(
+        r.data.pending ? r.data.message : `${removing.name} is no longer priced in this list.`,
+      );
     else fail(r);
   };
 
@@ -242,7 +248,8 @@ export function PriceLinesPanel({
       {live ? (
         <p className="text-xs text-fg-muted">
           This list is in force. A change starts now (or at the time you set) and applies to the
-          next sale; sales already made keep the price they were given.
+          next sale; sales already made keep the price they were given. Large or risky changes may
+          be held for approval first.
         </p>
       ) : null}
 

@@ -308,7 +308,7 @@ export function getContainer(): AppContainer {
     approvalConfig: new ApprovalConfigService(drizzleDb, decisionLog, reasonCodes),
     approvalGate,
     pricing,
-    pricingConfig: new PricingConfigService(drizzleDb, decisionLog, reasonCodes, pricing),
+    pricingConfig: new PricingConfigService(drizzleDb, decisionLog, reasonCodes, pricing, approvals, approvalGate),
   };
   registerApprovalHandlers(approvals, approvalGate);
 

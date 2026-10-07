@@ -100,6 +100,23 @@ export const TRIGGERS: TriggerDefinition[] = [
     label: 'Price list published',
     fields: [...common, { path: 'changedLines', label: 'Lines changed', type: 'number' }],
   },
+  {
+    code: 'price_list.live_change',
+    module: 'pricing',
+    documentKind: 'price_list_change',
+    label: 'Price change on a list in force',
+    fields: [
+      ...common,
+      { path: 'changedLines', label: 'Prices changed', type: 'number' },
+      { path: 'largestRisePercent', label: 'Largest price rise %', type: 'number' },
+      { path: 'largestCutPercent', label: 'Largest price cut %', type: 'number' },
+      { path: 'newProducts', label: 'Products newly priced', type: 'number' },
+      { path: 'removesPrices', label: 'Stops pricing products', type: 'boolean' },
+      { path: 'headerChange', label: 'Changes who or when the list applies', type: 'boolean' },
+      { path: 'listKind', label: 'List kind (list or contract)', type: 'text' },
+      { path: 'listCode', label: 'List code', type: 'text' },
+    ],
+  },
 ];
 
 export const DOCUMENT_KIND_LABELS: Record<string, string> = {
@@ -109,6 +126,7 @@ export const DOCUMENT_KIND_LABELS: Record<string, string> = {
   stock_adjustment: 'Stock adjustments',
   customer_credit_limit: 'Customer credit limits',
   price_list: 'Price lists',
+  price_list_change: 'Price changes',
 };
 
 export const MODULE_LABELS: Record<string, string> = {

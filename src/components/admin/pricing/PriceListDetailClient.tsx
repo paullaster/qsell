@@ -29,6 +29,7 @@ import { listStatusChip } from './PriceListsClient';
 const ACTIONS: Record<string, string> = {
   'pricing.list_created': 'Created as a draft',
   'pricing.list_changed': 'Settings changed',
+  'pricing.activation_requested': 'Sent for approval',
   'pricing.list_activated': 'Put in force',
   'pricing.list_retired': 'Retired',
   'pricing.prices_changed': 'Prices set',
@@ -68,10 +69,12 @@ export function PriceListDetailClient({
     if (r.ok) {
       setLifecycle(null);
       setReason({ code: '', text: '' });
+      const heldMessage = r.data.pending ? (r.data.message ?? 'Sent for approval.') : null;
       setMessage({
         kind: 'ok',
         text:
-          lifecycle === 'activate' ? 'The price list is in force.' : 'The price list is retired.',
+          heldMessage ??
+          (lifecycle === 'activate' ? 'The price list is in force.' : 'The price list is retired.'),
       });
       router.refresh();
     } else {
@@ -144,7 +147,17 @@ export function PriceListDetailClient({
         </dl>
         {waiting ? (
           <p role="status" className="text-sm text-amber-700">
-            Waiting for approval before it can go live. See Approvals.
+            Waiting for approval before it can go live. Settings and prices are locked until it is
+            decided. You can withdraw the request under{' '}
+            <Link href="/admin/approvals" className="underline">
+              Approvals
+            </Link>
+            .
+          </p>
+        ) : null}
+        {list.status === 'draft' && list.approvalStatus === 'rejected' ? (
+          <p role="status" className="text-sm text-red-700">
+            The approvers refused this list. Change it and put it in force again to ask once more.
           </p>
         ) : null}
         {list.status === 'draft' && issues.length > 0 ? (
@@ -166,7 +179,7 @@ export function PriceListDetailClient({
         <section aria-label="Confirm" className={`${cardClass} space-y-3`}>
           <p className="text-sm text-fg-strong">
             {lifecycle === 'activate'
-              ? 'Put this price list in force? Sales it applies to will be priced from it straight away.'
+              ? 'Put this price list in force? Sales it applies to will be priced from it straight away, unless an approval is required first.'
               : 'Retire this price list? It stops pricing sales at once and cannot be put back in force; its history stays.'}
           </p>
           <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
@@ -193,8 +206,9 @@ export function PriceListDetailClient({
           <h3 className="mb-3 text-sm font-bold text-fg-strong">Change settings</h3>
           {list.status === 'active' ? (
             <p className="mb-3 text-xs text-amber-700">
-              This list is in force, so a change affects live prices from now on. Changes that would
-              make it tie with another list are refused.
+              This list is in force, so a change to who it applies to, its priority, dates or tax
+              basis affects live prices. It may need approval first, and changes that would make it
+              tie with another list are refused.
             </p>
           ) : null}
           <PriceListForm
@@ -221,7 +235,10 @@ export function PriceListDetailClient({
               );
               if (r.ok) {
                 setEditing(false);
-                setMessage({ kind: 'ok', text: `Saved as version ${r.data.version}.` });
+                setMessage({
+                  kind: 'ok',
+                  text: r.data.pending ? r.data.message : `Saved as version ${r.data.version}.`,
+                });
                 router.refresh();
                 return { ok: true };
               }
