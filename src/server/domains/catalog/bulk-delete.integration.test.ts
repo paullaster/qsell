@@ -161,7 +161,7 @@ describe.skipIf(!url)('bulk product delete (database)', () => {
       expect(await row(a.id)).toBeDefined();
     });
 
-    it('erases clean products and leaves alone any that history depends on, saying why', async () => {
+    it('erases products with only stock movements (and their records), but leaves alone any that orders, KRA or live prices depend on', async () => {
       const clean = await product();
       const withStock = await product({ stockQuantity: 5 });
       const moved = await product();
@@ -208,8 +208,10 @@ describe.skipIf(!url)('bulk product delete (database)', () => {
       const ids = [clean.id, withStock.id, moved.id, priced.id];
       const sel = { mode: 'ids' as const, ids };
       const preview = await ProductBulkDelete.preview(sel, true);
-      expect(preview).toMatchObject({ total: 4, deletable: 1 });
-      expect(preview.blocked.map((b) => b.reason).sort()).toEqual(['history', 'priced', 'stock']);
+      expect(preview).toMatchObject({ total: 4, deletable: 3 });
+      expect(preview.blocked.map((b) => b.reason)).toEqual(['priced']);
+      // The person is told up front what else goes with them.
+      expect(preview.erases).toEqual({ movements: 1, productsWithStock: 1, units: 5 });
 
       const result = await ProductBulkDelete.delete(sel, {
         permanent: true,
@@ -217,12 +219,17 @@ describe.skipIf(!url)('bulk product delete (database)', () => {
         reason: 'Cleaning test data',
         actorId,
       });
-      expect(result).toMatchObject({ deleted: 1, skipped: 3, permanent: true });
-      expect(result.skippedSample.map((s) => s.id).sort()).toEqual(
-        [withStock.id, moved.id, priced.id].sort(),
-      );
-      expect(await row(clean.id)).toBeUndefined();
-      for (const id of [withStock.id, moved.id, priced.id]) expect(await row(id)).toBeDefined();
+      expect(result).toMatchObject({ deleted: 3, skipped: 1, permanent: true });
+      expect(result.skippedSample.map((s) => s.id)).toEqual([priced.id]);
+      for (const id of [clean.id, withStock.id, moved.id]) expect(await row(id)).toBeUndefined();
+      expect(await row(priced.id)).toBeDefined();
+      // The movement records went with the product.
+      expect(
+        await db
+          .select()
+          .from(schema.inventoryMovements)
+          .where(eq(schema.inventoryMovements.productId, moved.id)),
+      ).toHaveLength(0);
 
       // Once the list is retired its price no longer blocks, and goes with the product.
       await c.pricingConfig.retire(
@@ -246,7 +253,18 @@ describe.skipIf(!url)('bulk product delete (database)', () => {
         .select()
         .from(schema.decisionLog)
         .where(eq(schema.decisionLog.action, 'catalog.products_purged'));
-      expect(log.some((l) => l.reasonText === 'Cleaning test data')).toBe(true);
+      const mine = log.find((l) =>
+        (l.outcome as { sample: Array<{ id: string }> }).sample.some((x) => x.id === clean.id),
+      );
+      expect(mine?.reasonText).toBe('Cleaning test data');
+      expect(mine?.outcome).toMatchObject({ deleted: 3, movementsErased: 1, unitsOnHand: 5 });
+    });
+
+    it('does not erase a product while stock is reserved for it', async () => {
+      const p = await product({ stockQuantity: 5, reservedQuantity: 2 });
+      const preview = await ProductBulkDelete.preview({ mode: 'ids', ids: [p.id] }, true);
+      expect(preview).toMatchObject({ deletable: 0 });
+      expect(preview.blocked.map((b) => b.reason)).toEqual(['reserved']);
     });
 
     it('never erases a product that was sold', async () => {
@@ -282,6 +300,57 @@ describe.skipIf(!url)('bulk product delete (database)', () => {
       const preview = await ProductBulkDelete.preview({ mode: 'ids', ids: [p.id] }, true);
       expect(preview).toMatchObject({ deletable: 0 });
       expect(preview.blocked.map((b) => b.reason)).toEqual(['sold']);
+    });
+  });
+
+  describe('publishing and hiding in bulk', () => {
+    let ProductBulkStatus: typeof import('./bulk-status').ProductBulkStatus;
+    beforeAll(async () => {
+      ({ ProductBulkStatus } = await import('./bulk-status'));
+    });
+
+    it('marks products active or draft, counts the ones already there, and logs it', async () => {
+      const a = await product({ isActive: true });
+      const b = await product({ isActive: false });
+      const sel = { mode: 'ids' as const, ids: [a.id, b.id] };
+      const hide = await ProductBulkStatus.set(sel, false, { expectedCount: 2, actorId });
+      expect(hide).toMatchObject({ changed: 1, unchanged: 1, skipped: 0 });
+      expect((await row(a.id))!.isActive).toBe(false);
+      const show = await ProductBulkStatus.set(sel, true, { expectedCount: 2, actorId });
+      expect(show).toMatchObject({ changed: 2, unchanged: 0 });
+      expect((await row(b.id))!.isActive).toBe(true);
+      const log = await db
+        .select()
+        .from(schema.decisionLog)
+        .where(eq(schema.decisionLog.action, 'catalog.products_activated'));
+      expect(log.some((l) => l.actorId === actorId)).toBe(true);
+    });
+
+    it('will not publish a sold product that has no selling price, and says so', async () => {
+      const noPrice = await product({ isActive: false, price: null });
+      const ok = await product({ isActive: false });
+      const r = await ProductBulkStatus.set({ mode: 'ids', ids: [noPrice.id, ok.id] }, true, {
+        expectedCount: 2,
+        actorId,
+      });
+      expect(r).toMatchObject({ changed: 1, skipped: 1 });
+      expect(r.skippedSample[0]).toMatchObject({ id: noPrice.id });
+      expect((await row(noPrice.id))!.isActive).toBe(false);
+      // Hiding is always allowed.
+      const hide = await ProductBulkStatus.set({ mode: 'ids', ids: [ok.id] }, false, {
+        expectedCount: 1,
+        actorId,
+      });
+      expect(hide.changed).toBe(1);
+    });
+
+    it('refuses a selection that changed since it was chosen', async () => {
+      const a = await product();
+      expect(
+        await codeOf(
+          ProductBulkStatus.set({ mode: 'ids', ids: [a.id] }, true, { expectedCount: 5, actorId }),
+        ),
+      ).toBe('CHANGED');
     });
   });
 });

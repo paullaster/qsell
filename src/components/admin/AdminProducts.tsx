@@ -1,6 +1,6 @@
 'use client';
 
-import React, { use, useState } from 'react';
+import React, { use, useEffect, useRef, useState } from 'react';
 import {
   Package,
   Plus,
@@ -19,13 +19,14 @@ import {
   ArrowUpDown,
   Copy,
   Upload,
+  Loader2,
 } from 'lucide-react';
 import { type Product, type Category } from '@/types/index';
 import { AppImage, PRODUCT_IMAGE_FALLBACK } from '@/components/ui/AppImage';
 import { buildProductsCsv } from '@/lib/productCsv';
 import { downloadCsv } from '@/lib/downloadPdf';
 import { ProductImportDialog } from '@/components/admin/ProductImportDialog';
-import { updateProductAction } from '@/server/domains/catalog/actions';
+import { setProductsActiveAction } from '@/server/domains/catalog/actions';
 import { ProductDeleteDialog } from '@/components/admin/ProductDeleteDialog';
 import type { ProductSelection } from '@/server/domains/catalog/bulk-delete';
 
@@ -70,6 +71,22 @@ export function AdminProducts({
     label: string;
   } | null>(null);
   const [isImportOpen, setIsImportOpen] = useState(false);
+  /** Set while a bulk change runs: the screen is blocked and says what is happening. */
+  const [working, setWorking] = useState<string | null>(null);
+  const workingRef = useRef(false);
+  const [notice, setNotice] = useState<{
+    tone: 'ok' | 'warn' | 'error';
+    text: string;
+    details: string[];
+  } | null>(null);
+
+  // Leaving mid-change would not undo it, but the person would not see how it ended.
+  useEffect(() => {
+    if (working === null) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [working]);
 
   // Filtering Logic
   const filteredProducts = products.filter((p) => {
@@ -136,17 +153,50 @@ export function AdminProducts({
     });
   };
 
-  const handleBulkStatusChange = async (active: boolean) => {
-    if (selectionCount === 0) return;
-    const ids = allInCatalog
-      ? products.filter((p) => !excluded.has(p.id)).map((p) => p.id)
-      : [...selectedProductIds];
-    for (const id of ids) {
-      await updateProductAction(id, { isActive: active });
+  /** Publishes or hides products on the server in one request, with the screen blocked meanwhile. */
+  const runStatusChange = async (selection: ProductSelection, count: number, active: boolean) => {
+    if (workingRef.current || count === 0) return;
+    workingRef.current = true;
+    setNotice(null);
+    const what = `${count.toLocaleString('en-KE')} product${count === 1 ? '' : 's'}`;
+    setWorking(`${active ? 'Publishing' : 'Hiding'} ${what}…`);
+    const r = await setProductsActiveAction(selection, active, count);
+    workingRef.current = false;
+    setWorking(null);
+    if (!r.ok) {
+      setNotice({ tone: 'error', text: r.error, details: [] });
+      return;
     }
+    const d = r.data;
+    const state = active ? 'Active' : 'Draft';
+    const parts = [
+      d.changed > 0
+        ? `${d.changed.toLocaleString('en-KE')} product${d.changed === 1 ? '' : 's'} marked ${state}.`
+        : `Nothing changed.`,
+      d.unchanged > 0 ? `${d.unchanged.toLocaleString('en-KE')} already ${state}.` : '',
+      d.skipped > 0 ? `${d.skipped.toLocaleString('en-KE')} left as they were.` : '',
+    ].filter(Boolean);
+    setNotice({
+      tone: d.skipped > 0 ? 'warn' : 'ok',
+      text: parts.join(' '),
+      details: [
+        ...d.skippedSample.map((x) => `${x.name} (${x.sku}): ${x.reason}`),
+        ...(d.skipped > d.skippedSample.length
+          ? [`…and ${(d.skipped - d.skippedSample.length).toLocaleString('en-KE')} more.`]
+          : []),
+      ],
+    });
     clearSelection();
     onRefresh();
   };
+
+  const currentSelection = (): ProductSelection =>
+    allInCatalog
+      ? { mode: 'all', excludeIds: [...excluded] }
+      : { mode: 'ids', ids: [...selectedProductIds] };
+
+  const handleBulkStatusChange = (active: boolean) =>
+    runStatusChange(currentSelection(), selectionCount, active);
 
   const handleDeleteSingle = (p: Product) =>
     setDeleting({
@@ -156,10 +206,8 @@ export function AdminProducts({
     });
 
   // Toggle single product status
-  const handleToggleStatus = async (p: Product) => {
-    await updateProductAction(p.id, { isActive: !p.isActive });
-    onRefresh();
-  };
+  const handleToggleStatus = (p: Product) =>
+    runStatusChange({ mode: 'ids', ids: [p.id] }, 1, !p.isActive);
 
   // Export the filtered list with every importable column (same contract as the import).
   const handleExportCSV = () => {
@@ -219,6 +267,53 @@ export function AdminProducts({
         onClose={() => setIsImportOpen(false)}
         onImported={onRefresh}
       />
+
+      {working !== null ? (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4">
+          <div
+            role="status"
+            aria-live="polite"
+            className="flex max-w-sm items-center gap-3 rounded-xl border border-line bg-surface-raised p-4 shadow-2xl"
+          >
+            <Loader2 className="h-6 w-6 shrink-0 animate-spin text-indigo-600" aria-hidden="true" />
+            <div>
+              <p className="text-sm font-semibold text-fg-strong">{working}</p>
+              <p className="text-xs text-fg-muted">Please keep this page open until it finishes.</p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {notice ? (
+        <div
+          role={notice.tone === 'error' ? 'alert' : 'status'}
+          className={`flex items-start justify-between gap-3 rounded-xl border p-4 text-sm ${
+            notice.tone === 'error'
+              ? 'border-red-600/40 bg-red-500/10 text-red-700 dark:text-red-300'
+              : notice.tone === 'warn'
+                ? 'border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200'
+                : 'border-emerald-600/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
+          }`}
+        >
+          <div>
+            <p className="font-semibold">{notice.text}</p>
+            {notice.details.length > 0 ? (
+              <ul className="mt-1 max-h-40 list-disc space-y-0.5 overflow-y-auto pl-5 text-xs">
+                {notice.details.map((d, i) => (
+                  <li key={i}>{d}</li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            onClick={() => setNotice(null)}
+            className="min-h-9 shrink-0 cursor-pointer rounded px-2 text-xs font-semibold underline hover:no-underline"
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
 
       {deleting ? (
         <ProductDeleteDialog
@@ -309,22 +404,27 @@ export function AdminProducts({
 
               <div className="flex flex-wrap items-center gap-2">
                 <button
+                  type="button"
+                  disabled={working !== null}
                   onClick={() => handleBulkStatusChange(true)}
-                  className="min-h-9 cursor-pointer rounded border border-line-strong bg-surface-raised px-2.5 py-1 font-medium text-fg-strong hover:bg-hover"
+                  className="min-h-9 cursor-pointer rounded border border-line-strong bg-surface-raised px-2.5 py-1 font-medium text-fg-strong hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   Mark Active
                 </button>
                 <button
+                  type="button"
+                  disabled={working !== null}
                   onClick={() => handleBulkStatusChange(false)}
-                  className="min-h-9 cursor-pointer rounded border border-line-strong bg-surface-raised px-2.5 py-1 font-medium text-fg hover:bg-hover"
+                  className="min-h-9 cursor-pointer rounded border border-line-strong bg-surface-raised px-2.5 py-1 font-medium text-fg hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   Mark Draft
                 </button>
                 {canDelete ? (
                   <button
                     type="button"
+                    disabled={working !== null}
                     onClick={askDeleteSelected}
-                    className="min-h-9 cursor-pointer rounded bg-red-600 px-2.5 py-1 font-semibold text-white hover:bg-red-500"
+                    className="min-h-9 cursor-pointer rounded bg-red-600 px-2.5 py-1 font-semibold text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     Delete Selected
                   </button>
@@ -517,8 +617,11 @@ export function AdminProducts({
                       </td>
                       <td className="px-4 py-3.5 text-center">
                         <button
+                          type="button"
+                          disabled={working !== null}
+                          aria-label={`${p.name}: ${p.isActive ? 'Active' : 'Draft'}. Change`}
                           onClick={() => handleToggleStatus(p)}
-                          className={`inline-flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold transition-colors ${
+                          className={`inline-flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
                             p.isActive
                               ? 'border border-emerald-800 bg-emerald-50/80 text-emerald-700'
                               : 'border border-line-strong bg-surface-sunken text-fg-muted'

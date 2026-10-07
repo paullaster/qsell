@@ -25,13 +25,12 @@ export type ProductSelection =
   | { mode: 'all'; excludeIds: string[] };
 
 /** Why a product cannot be permanently deleted. Soft delete has no such limits. */
-export type BlockReason = 'sold' | 'kra' | 'stock' | 'history' | 'priced';
+export type BlockReason = 'sold' | 'kra' | 'reserved' | 'priced';
 
 export const BLOCK_REASON_TEXT: Record<BlockReason, string> = {
   sold: 'it appears on orders or credit notes',
   kra: 'it is registered with KRA',
-  stock: 'it has stock on hand or reserved',
-  history: 'it has stock movements that would be erased with it',
+  reserved: 'stock is reserved for it right now',
   priced: 'it is priced in a price list that is not retired',
 };
 
@@ -51,6 +50,8 @@ export interface DeletePreview {
   deletable: number;
   blocked: Array<{ reason: BlockReason; text: string; count: number }>;
   sample: Array<{ id: string; sku: string; name: string; blockedBy: BlockReason[] }>;
+  /** What a permanent delete would also erase, so it is never a surprise. Zero for a soft delete. */
+  erases: { movements: number; productsWithStock: number; units: number };
 }
 
 export interface DeleteResult {
@@ -108,9 +109,17 @@ export class ProductBulkDelete {
     const counts = new Map<BlockReason, number>();
     for (const reasons of blockedBy.values())
       for (const r of reasons) counts.set(r, (counts.get(r) ?? 0) + 1);
+    const erased = rows.filter((r) => !blockedBy.has(r.id));
     return {
       total: rows.length,
-      deletable: rows.length - blockedBy.size,
+      deletable: erased.length,
+      erases: permanent
+        ? {
+            movements: await countMovements(erased.map((r) => r.id)),
+            productsWithStock: erased.filter((r) => r.stockQuantity !== 0).length,
+            units: erased.reduce((n, r) => n + Math.max(0, r.stockQuantity), 0),
+          }
+        : { movements: 0, productsWithStock: 0, units: 0 },
       blocked: [...counts].map(([reason, count]) => ({
         reason,
         text: BLOCK_REASON_TEXT[reason],
@@ -211,10 +220,10 @@ async function blockers(
 ): Promise<Map<string, BlockReason[]>> {
   const out = new Map<string, BlockReason[]>();
   const add = (id: string, r: BlockReason) => out.set(id, [...(out.get(id) ?? []), r]);
-  for (const r of rows) if (r.stockQuantity !== 0 || r.reservedQuantity !== 0) add(r.id, 'stock');
+  for (const r of rows) if (r.reservedQuantity !== 0) add(r.id, 'reserved');
   for (let i = 0; i < rows.length; i += 5000) {
     const ids = rows.slice(i, i + 5000).map((r) => r.id);
-    const [sold, credited, kra, moved, priced] = await Promise.all([
+    const [sold, credited, kra, priced] = await Promise.all([
       db
         .selectDistinct({ id: orderItems.productId })
         .from(orderItems)
@@ -227,17 +236,6 @@ async function blockers(
         .selectDistinct({ id: etimsItems.productId })
         .from(etimsItems)
         .where(inArray(etimsItems.productId, ids)),
-      // The marker rows written when a product is created or soft-deleted carry no history.
-      db
-        .selectDistinct({ id: inventoryMovements.productId })
-        .from(inventoryMovements)
-        .where(
-          and(
-            inArray(inventoryMovements.productId, ids),
-            sql`${inventoryMovements.referenceId} <> 'PRODUCT_CREATION'`,
-            sql`${inventoryMovements.referenceId} not like 'DELETE-%'`,
-          ),
-        ),
       db
         .selectDistinct({ id: priceListLines.productId })
         .from(priceListLines)
@@ -246,11 +244,32 @@ async function blockers(
     ]);
     for (const { id } of [...sold, ...credited]) add(id, 'sold');
     for (const { id } of kra) add(id, 'kra');
-    for (const { id } of moved) add(id, 'history');
     for (const { id } of priced) add(id, 'priced');
   }
   for (const [id, reasons] of out) out.set(id, [...new Set(reasons)]);
   return out;
+}
+
+/** Real stock movements (not the markers written when a product is created or soft-deleted). */
+async function countMovements(
+  ids: string[],
+  db: Pick<typeof drizzleDb, 'select'> = drizzleDb,
+): Promise<number> {
+  let total = 0;
+  for (let i = 0; i < ids.length; i += 5000) {
+    const [row] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(inventoryMovements)
+      .where(
+        and(
+          inArray(inventoryMovements.productId, ids.slice(i, i + 5000)),
+          sql`${inventoryMovements.referenceId} <> 'PRODUCT_CREATION'`,
+          sql`${inventoryMovements.referenceId} not like 'DELETE-%'`,
+        ),
+      );
+    total += row?.n ?? 0;
+  }
+  return total;
 }
 
 const logDecision = (
@@ -259,6 +278,7 @@ const logDecision = (
   action: 'catalog.products_deleted' | 'catalog.products_purged',
   rows: ProductRow[],
   skipped: number,
+  extra: Record<string, unknown> = {},
 ) =>
   getContainer().decisionLog.record(
     {
@@ -272,6 +292,7 @@ const logDecision = (
       outcome: {
         deleted: rows.length,
         skipped,
+        ...extra,
         sample: rows.slice(0, 20).map((r) => ({ id: r.id, sku: r.sku, name: r.name })),
       },
     },
@@ -338,13 +359,21 @@ async function purgeChunk(tx: Tx, ids: string[], ctx: Ctx) {
       reasons: blocked.get(r.id)!.map((b) => BLOCK_REASON_TEXT[b]),
     }));
   if (eligible.length > 0) {
+    const movements = await countMovements(
+      eligible.map((r) => r.id),
+      tx,
+    );
+    const unitsOnHand = eligible.reduce((n, r) => n + Math.max(0, r.stockQuantity), 0);
     await tx.delete(products).where(
       inArray(
         products.id,
         eligible.map((r) => r.id),
       ),
     );
-    await logDecision(tx, ctx, 'catalog.products_purged', eligible, skipped.length);
+    await logDecision(tx, ctx, 'catalog.products_purged', eligible, skipped.length, {
+      movementsErased: movements,
+      unitsOnHand,
+    });
   }
   return { deleted: eligible.length, skipped };
 }
