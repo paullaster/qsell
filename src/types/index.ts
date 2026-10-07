@@ -272,6 +272,8 @@ export interface Order {
   customerAccountType?: 'cash' | 'credit' | null;
   transmitInvoicesToKra?: boolean;
   kraTransmissionStatus?: 'not_applicable' | 'pending' | 'skipped' | 'transmitted' | 'failed';
+  /** Waiting for approval, rejected, or reopened for resubmission: the order cannot move on. */
+  approvalStatus?: 'none' | 'pending' | 'approved' | 'rejected' | 'draft';
   /** Invoicing module this sale belongs to; decides which signing switch applies. */
   salesModule?: 'ecommerce' | 'sales_order' | 'credit_sale' | 'pos_cash_sale';
   createdAt: string;

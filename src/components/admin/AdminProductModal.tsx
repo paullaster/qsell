@@ -54,23 +54,6 @@ const TABS: { id: ProductFormTab; label: string; icon: typeof Package }[] = [
   { id: 'kra', label: 'KRA eTIMS', icon: ShieldCheck },
 ];
 
-function createCodeSuffix(): string {
-  return Math.random().toString(36).slice(2, 8).toUpperCase().padEnd(6, '0');
-}
-
-function generateProductCode(prefix: 'SKU' | 'STK', productName: string, suffix: string): string {
-  const stem = productName
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 32)
-    .replace(/-+$/g, '');
-
-  return stem && suffix ? `${prefix}-${stem}-${suffix}` : '';
-}
-
 function slugifyTitle(value: string): string {
   return value
     .toLowerCase()
@@ -122,9 +105,6 @@ export function AdminProductModal({
   const [name, setName] = useState('');
   const [sku, setSku] = useState('');
   const [stockCode, setStockCode] = useState('');
-  const [codeSuffix, setCodeSuffix] = useState('');
-  const [skuManuallyEdited, setSkuManuallyEdited] = useState(false);
-  const [stockCodeManuallyEdited, setStockCodeManuallyEdited] = useState(false);
   const [slug, setSlug] = useState('');
   const [slugManuallyEdited, setSlugManuallyEdited] = useState(false);
   const [category, setCategory] = useState('');
@@ -246,19 +226,13 @@ export function AdminProductModal({
       if (productToEdit) {
         setSku(productToEdit.sku);
         setStockCode(productToEdit.stockCode);
-        setCodeSuffix('');
-        setSkuManuallyEdited(true);
-        setStockCodeManuallyEdited(true);
         setSlug(productToEdit.slug);
         setSlugManuallyEdited(true);
       } else {
-        // A duplicate is a draft with its own identity: codes and slug follow the title.
-        const suffix = createCodeSuffix();
-        setCodeSuffix(suffix);
-        setSku(generateProductCode('SKU', template.name, suffix));
-        setStockCode(generateProductCode('STK', template.name, suffix));
-        setSkuManuallyEdited(false);
-        setStockCodeManuallyEdited(false);
+        // A duplicate is a draft with its own identity: its codes are numbered when it is saved,
+        // and its slug follows the title.
+        setSku('');
+        setStockCode('');
         setSlug(slugifyTitle(template.name));
         setSlugManuallyEdited(false);
       }
@@ -266,9 +240,6 @@ export function AdminProductModal({
       setName('');
       setSku('');
       setStockCode('');
-      setCodeSuffix(createCodeSuffix());
-      setSkuManuallyEdited(false);
-      setStockCodeManuallyEdited(false);
       setSlugManuallyEdited(false);
       setSlug('');
       setCategory('');
@@ -367,13 +338,14 @@ export function AdminProductModal({
       focusTabForError(msg);
       return;
     }
-    if (!sku.trim()) {
+    // New products are numbered automatically when left blank; an existing one must keep its codes.
+    if (isEditing && !sku.trim()) {
       const msg = 'SKU code is required.';
       setError(msg);
       focusTabForError(msg);
       return;
     }
-    if (!stockCode.trim()) {
+    if (isEditing && !stockCode.trim()) {
       const msg = 'Stock code is required.';
       setError(msg);
       focusTabForError(msg);
@@ -605,65 +577,42 @@ export function AdminProductModal({
                       const nextName = e.target.value;
                       setName(nextName);
                       if (!slugManuallyEdited) setSlug(slugifyTitle(nextName));
-                      if (!skuManuallyEdited) {
-                        setSku(generateProductCode('SKU', nextName, codeSuffix));
-                      }
-                      if (!stockCodeManuallyEdited) {
-                        setStockCode(generateProductCode('STK', nextName, codeSuffix));
-                      }
                     }}
                     placeholder="e.g. Sony WH-1000XM5 Wireless Headphones"
                     className={fieldClass}
                   />
-                  {!skuManuallyEdited || !stockCodeManuallyEdited ? (
-                    <p className="mt-1 text-[10px] text-fg-subtle">
-                      SKU and Stock Code follow the title until you edit them.
-                    </p>
-                  ) : isEditing && name.trim() ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const suffix = createCodeSuffix();
-                        setCodeSuffix(suffix);
-                        setSku(generateProductCode('SKU', name, suffix));
-                        setStockCode(generateProductCode('STK', name, suffix));
-                        setSkuManuallyEdited(false);
-                        setStockCodeManuallyEdited(false);
-                      }}
-                      className="mt-1 min-h-11 text-[11px] font-semibold text-indigo-600 hover:underline focus-visible:outline-2 focus-visible:outline-indigo-500 sm:min-h-0"
-                    >
-                      Regenerate SKU and Stock Code from title
-                    </button>
-                  ) : null}
                 </div>
                 <div>
-                  <label className={labelClass}>SKU *</label>
+                  <label className={labelClass}>SKU{isEditing ? ' *' : ''}</label>
                   <input
                     type="text"
                     value={sku}
-                    onChange={(e) => {
-                      const next = e.target.value.toUpperCase();
-                      setSku(next);
-                      // Clearing the field hands control back to the title.
-                      setSkuManuallyEdited(next.trim() !== '');
-                    }}
+                    onChange={(e) => setSku(e.target.value.toUpperCase())}
+                    placeholder={isEditing ? undefined : 'Numbered automatically'}
                     autoComplete="off"
                     className={`${fieldClass} min-h-11 font-mono uppercase`}
                   />
+                  {isEditing ? null : (
+                    <p className="mt-1 text-[10px] text-fg-subtle">
+                      Leave blank to number it automatically when you save.
+                    </p>
+                  )}
                 </div>
                 <div>
-                  <label className={labelClass}>Stock Code *</label>
+                  <label className={labelClass}>Stock Code{isEditing ? ' *' : ''}</label>
                   <input
                     type="text"
                     value={stockCode}
-                    onChange={(e) => {
-                      const next = e.target.value.toUpperCase();
-                      setStockCode(next);
-                      setStockCodeManuallyEdited(next.trim() !== '');
-                    }}
+                    onChange={(e) => setStockCode(e.target.value.toUpperCase())}
+                    placeholder={isEditing ? undefined : 'Numbered automatically'}
                     autoComplete="off"
                     className={`${fieldClass} min-h-11 font-mono uppercase`}
                   />
+                  {isEditing ? null : (
+                    <p className="mt-1 text-[10px] text-fg-subtle">
+                      Leave blank to number it automatically when you save.
+                    </p>
+                  )}
                 </div>
                 <div>
                   <div className="mb-1 flex items-center justify-between gap-2">

@@ -39,26 +39,32 @@ export interface CreditNoteView {
 }
 
 /** Issues a credit note against an order's tax invoice. Signing happens afterwards, in the background. */
+export type IssueCreditNoteOutcome =
+  | { status: 'issued'; creditNote: CreditNoteView }
+  /** A workflow asks for approval first; the credit note is issued when it is given. */
+  | { status: 'pending_approval'; message: string };
+
 export async function issueOrderCreditNoteAction(input: {
   orderId: string;
   lines: { productId: string; quantity: number }[];
   reasonCode: CreditNoteReason;
   reasonNote?: string;
   restock?: boolean;
-}): Promise<CreditNoteActionResult<CreditNoteView>> {
+}): Promise<CreditNoteActionResult<IssueCreditNoteOutcome>> {
   return run(async () => {
     const userId = await requirePermission('credit_notes:create');
-    const cn = await getContainer().creditNotes.issueForOrder({
+    const outcome = await getContainer().creditNotes.issueForOrderGated({
       orderId: input.orderId,
       lines: input.lines,
       reason: { code: input.reasonCode, note: input.reasonNote },
       issuedBy: userId,
       restock: input.restock,
     });
+    if (outcome.status === 'pending_approval') return outcome;
     // The orders page does not show credit notes (the panel loads its own), so it is not
     // revalidated: that would make this response wait for a full page re-render. Stock is.
     if (input.restock) revalidatePath('/admin/inventory');
-    return toView(cn);
+    return { status: 'issued' as const, creditNote: toView(outcome.creditNote) };
   });
 }
 

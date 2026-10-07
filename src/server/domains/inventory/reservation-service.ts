@@ -152,8 +152,10 @@ export class InventoryReservationService {
       changeAmount: number;
       note: string;
     }>,
+    /** For an order that was never saved: the lines that were reserved for it. */
+    knownItems?: { productId: string; quantity: number }[],
   ): Promise<void> {
-    const items = await this.orderLines(orderId);
+    const items = knownItems ?? (await this.orderLines(orderId));
     if (items.length === 0) return;
 
     // Cheap pre-check to skip the common already-settled case. The unique index
@@ -235,15 +237,22 @@ export class InventoryReservationService {
     orderId: string,
     reason: string,
     actor = 'system_timeout_releaser',
+    /** Pass the reserved lines when the order itself was never saved (creation failed). */
+    knownItems?: { productId: string; quantity: number }[],
   ): Promise<void> {
-    await this.settleLines(orderId, actor, async (product, quantity) => ({
-      // A release returns held units to available stock; on-hand is unchanged.
-      stockQuantity: product.stockQuantity,
-      reservedQuantity: Math.max(0, product.reservedQuantity - quantity),
-      changeType: 'order_cancellation_release' as const,
-      changeAmount: quantity,
-      note: `Released reservation of ${quantity} units for order ${orderId}. ${reason}`.trim(),
-    }));
+    await this.settleLines(
+      orderId,
+      actor,
+      async (product, quantity) => ({
+        // A release returns held units to available stock; on-hand is unchanged.
+        stockQuantity: product.stockQuantity,
+        reservedQuantity: Math.max(0, product.reservedQuantity - quantity),
+        changeType: 'order_cancellation_release' as const,
+        changeAmount: quantity,
+        note: `Released reservation of ${quantity} units for order ${orderId}. ${reason}`.trim(),
+      }),
+      knownItems,
+    );
 
     void broadcastRealtime('inventory_update', { type: 'release', orderId });
   }

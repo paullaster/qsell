@@ -228,6 +228,24 @@ export const PERMISSIONS = {
     category: 'Finance & Payments',
     description: 'Issue credit notes against tax invoices and retry their KRA signing',
   },
+  'approvals:act': {
+    resource: 'approvals',
+    action: 'act',
+    category: 'Orders & Sales',
+    description: 'See the approvals waiting on you and approve or reject them',
+  },
+  'approvals:manage': {
+    resource: 'approvals',
+    action: 'manage',
+    category: 'Company & Settings',
+    description: 'Design approval workflows, set approvers and limits, and switch approvals on or off',
+  },
+  'numbering:manage': {
+    resource: 'numbering',
+    action: 'manage',
+    category: 'Company & Settings',
+    description: 'Manage number series and which series numbers each document',
+  },
   'currencies:manage': {
     resource: 'currencies',
     action: 'manage',

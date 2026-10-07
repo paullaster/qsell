@@ -5,6 +5,10 @@ import { getContainer } from '@/server/di/container';
 import { CatalogService } from '@/server/domains/catalog/service';
 import { InventoryReservationService } from '@/server/domains/inventory/reservation-service';
 import { broadcastRealtime } from '@/server/realtime';
+import { businessDate } from '@/server/kernel/numbering/business-date';
+import { eq } from 'drizzle-orm';
+import { orders as ordersTable } from '@/server/db/drizzle/schema';
+import { needsApprovalCheck } from './approval';
 
 export class OrderWriteService {
   static async createOrder(params: {
@@ -41,6 +45,11 @@ export class OrderWriteService {
      * always a credit sale, whatever channel it came through.
      */
     salesModule?: 'ecommerce' | 'sales_order' | 'pos_cash_sale';
+    /**
+     * The staff member placing the order. Orders on the sales-order and credit channels are sent
+     * for approval when a workflow says so; without one (a shop checkout) they never are.
+     */
+    requestedBy?: string;
     /** Flat fields (globalDimension1Code) or { global, shortcut } projection */
     dimensionFields?:
       | Record<string, string | null | undefined>
@@ -103,9 +112,9 @@ export class OrderWriteService {
     const orderId =
       // Unguessable: the id is the only key for a guest's invoice download.
       params.orderId ?? `ord_${randomUUID()}`;
-    const orderNumber =
-      params.orderNumber ??
-      `ORD-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    // The order number comes from the number series, assigned inside the transaction that saves
+    // the order. A caller may still pass an explicit one (a typed-in number).
+    const explicitOrderNumber = params.orderNumber;
 
     const reservation = await InventoryReservationService.reserveForOrder(
       params.items,
@@ -125,7 +134,7 @@ export class OrderWriteService {
 
     const order: Order = {
       id: orderId,
-      orderNumber,
+      orderNumber: explicitOrderNumber ?? '',
       userId: resolvedUserId,
       customerName: params.customerName,
       customerEmail: params.customerEmail,
@@ -148,6 +157,8 @@ export class OrderWriteService {
       updatedAt: new Date().toISOString(),
     };
 
+    const gated = needsApprovalCheck(order.salesModule, params.requestedBy);
+
     try {
       const { companySettings, dimensionSets, customers } = getContainer();
       const company = await companySettings.ensureSeeded();
@@ -161,7 +172,11 @@ export class OrderWriteService {
         buyerKraPin: params.buyerKraPin,
         amount: totalAmount,
         onAccount,
+        allowOverLimit: gated,
       });
+      const overCreditLimit =
+        tradeCustomer.accountType === 'credit' &&
+        Number(tradeCustomer.balance) + totalAmount > Number(tradeCustomer.creditLimit);
       // The trade customer is the durable identity for this order.
       if (!resolvedUserId) resolvedUserId = tradeCustomer.id;
       const callerDimensions = params.dimensionFields;
@@ -191,8 +206,62 @@ export class OrderWriteService {
       // service, which then owns this status. 'pending' only means "not decided yet".
       order.kraTransmissionStatus = 'pending';
 
-      const { orders: orderRepo } = getContainer();
-      await orderRepo.create(order, params.branchId);
+      const { orders: orderRepo, numbering, approvals } = getContainer();
+      await orderRepo.create(
+        order,
+        params.branchId,
+        explicitOrderNumber
+          ? undefined
+          : async (tx) =>
+              (
+                await numbering.assign(
+                  'sales_order',
+                  {
+                    companyId: company.id,
+                    branchId: params.branchId ?? null,
+                    date: businessDate(),
+                    document: { kind: 'sales_order', id: order.id },
+                  },
+                  tx,
+                )
+              ).number,
+        gated
+          ? async (tx, saved) => {
+              const outcome = await approvals.submit(
+                {
+                  companyId: company.id,
+                  trigger: 'sales_order.submitted',
+                  documentId: saved.id,
+                  branchId: params.branchId ?? null,
+                  requestedBy: params.requestedBy!,
+                  amount: totalAmount,
+                  snapshot: {
+                    salesModule: order.salesModule,
+                    customer: {
+                      id: tradeCustomer.id,
+                      accountType: tradeCustomer.accountType,
+                      overCreditLimit,
+                      isBlocked: tradeCustomer.blocked !== 'none',
+                    },
+                  },
+                },
+                tx,
+              );
+              if (outcome.required && !outcome.released) {
+                await tx
+                  .update(ordersTable)
+                  .set({ approvalStatus: 'pending' })
+                  .where(eq(ordersTable.id, saved.id));
+                order.approvalStatus = 'pending';
+              } else if (overCreditLimit) {
+                // Over the limit and nothing releases it: that is exactly what the limit is for.
+                throw new Error(
+                  `${tradeCustomer.name} would exceed the credit limit of ${Number(tradeCustomer.creditLimit).toLocaleString()}.`,
+                );
+              }
+            }
+          : undefined,
+      );
       await customers.postInvoice({
         customer: tradeCustomer,
         orderId: order.id,
@@ -201,6 +270,15 @@ export class OrderWriteService {
         currency: order.currency,
       });
     } catch (err) {
+      // The order was not created, so the stock set aside for it must not stay reserved.
+      await InventoryReservationService.releaseOrder(
+        orderId,
+        'order creation failed',
+        'system',
+        params.items,
+      ).catch((releaseError: unknown) =>
+        console.error('[orders] could not release reservation', releaseError),
+      );
       return {
         success: false,
         error: err instanceof Error ? err.message : 'Customer or dimension assignment failed',

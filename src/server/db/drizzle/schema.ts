@@ -7,6 +7,7 @@ import {
   boolean,
   integer,
   jsonb,
+  bigint,
   numeric,
   uniqueIndex,
   index,
@@ -422,6 +423,489 @@ export const creditNoteLines = pgTable(
   (t) => [index('credit_note_lines_cn_idx').on(t.creditNoteId)],
 );
 
+/**
+ * KERNEL — decision log. Append-only record of every decision and state change: who, what,
+ * when, why (reason code + text), which policy version, and a snapshot of the inputs.
+ * The migration adds a trigger that rejects UPDATE and DELETE.
+ */
+export const decisionLog = pgTable(
+  'decision_log',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    /** Ties together everything done for one user request, job or integration call. */
+    correlationId: text('correlation_id').notNull(),
+    /** The event or decision that directly caused this one, if any. */
+    causationId: text('causation_id'),
+    subjectType: text('subject_type').notNull(),
+    subjectId: text('subject_id').notNull(),
+    action: text('action').notNull(),
+    actorType: text('actor_type').$type<'user' | 'system' | 'job' | 'integration'>().notNull(),
+    actorId: text('actor_id'),
+    reasonCode: text('reason_code'),
+    reasonText: text('reason_text'),
+    policyId: text('policy_id'),
+    policyVersion: text('policy_version'),
+    fromState: text('from_state'),
+    toState: text('to_state'),
+    inputs: jsonb('inputs').$type<Record<string, unknown>>().notNull().default({}),
+    outcome: jsonb('outcome').$type<Record<string, unknown>>().notNull().default({}),
+  },
+  (t) => [
+    index('decision_log_subject_idx').on(t.subjectType, t.subjectId, t.occurredAt),
+    index('decision_log_correlation_idx').on(t.correlationId),
+    index('decision_log_company_time_idx').on(t.companyId, t.occurredAt),
+  ],
+);
+
+/** KERNEL — controlled catalogue of reasons (Business Central "Reason Code"). */
+export const reasonCodes = pgTable(
+  'reason_codes',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    description: text('description').notNull(),
+    /** Actions or document kinds it may be used for; empty means anywhere. */
+    appliesTo: jsonb('applies_to').$type<string[]>().notNull().default([]),
+    requiresComment: boolean('requires_comment').notNull().default(false),
+    isSystem: boolean('is_system').notNull().default(false),
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('reason_codes_company_code_uidx').on(t.companyId, t.code)],
+);
+
+/** KERNEL — number series (Business Central "No. Series"), see the blueprint §4.4. */
+export const numberSeries = pgTable(
+  'number_series',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    description: text('description').notNull(),
+    /** gap_free: counter locked inside the document's transaction. allow_gaps: blocks of numbers. */
+    mode: text('mode').$type<'gap_free' | 'allow_gaps'>().notNull().default('gap_free'),
+    /** Numbers may be typed in by hand (and are checked for uniqueness). */
+    manualAllowed: boolean('manual_allowed').notNull().default(false),
+    /** Documents are numbered automatically. When false, a number must be typed in. */
+    defaultNumbers: boolean('default_numbers').notNull().default(true),
+    /** Reject a document dated before the last one numbered (gap-free only). */
+    dateOrder: boolean('date_order').notNull().default(false),
+    /** allow_gaps: how many numbers an app instance takes per trip to the database. */
+    blockSize: integer('block_size').notNull().default(50),
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('number_series_company_code_uidx').on(t.companyId, t.code)],
+);
+
+export const numberSeriesLines = pgTable(
+  'number_series_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    seriesId: uuid('series_id')
+      .notNull()
+      .references(() => numberSeries.id, { onDelete: 'cascade' }),
+    lineNo: integer('line_no').notNull(),
+    /** Null: applies to every branch. A branch-scoped line wins over a general one. */
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'restrict' }),
+    startsOn: text('starts_on').notNull(),
+    endsOn: text('ends_on'),
+    /** Tokens: {YYYY} {YY} {MM} {BRANCH}. */
+    prefix: text('prefix').notNull().default(''),
+    suffix: text('suffix').notNull().default(''),
+    digits: integer('digits').notNull().default(6),
+    startNo: bigint('start_no', { mode: 'number' }).notNull().default(1),
+    endNo: bigint('end_no', { mode: 'number' }),
+    increment: integer('increment').notNull().default(1),
+    warnAt: bigint('warn_at', { mode: 'number' }),
+    /** never | yearly | monthly: when the counter restarts at start_no. */
+    reset: text('reset').$type<'never' | 'yearly' | 'monthly'>().notNull().default('never'),
+    isOpen: boolean('is_open').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('number_series_lines_series_no_uidx').on(t.seriesId, t.lineNo),
+    index('number_series_lines_series_idx').on(t.seriesId),
+  ],
+);
+
+/** One counter per (line, period): the row that is locked (gap-free) or reserved in blocks. */
+export const numberSeriesCounters = pgTable(
+  'number_series_counters',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    lineId: uuid('line_id')
+      .notNull()
+      .references(() => numberSeriesLines.id, { onDelete: 'cascade' }),
+    /** '' for reset=never, 'YYYY' for yearly, 'YYYY-MM' for monthly. */
+    periodKey: text('period_key').notNull().default(''),
+    /** Last sequence number issued (or, for allow_gaps, the end of the last block reserved). */
+    lastNo: bigint('last_no', { mode: 'number' }),
+    lastDate: text('last_date'),
+    warned: boolean('warned').notNull().default(false),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('number_series_counters_line_period_uidx').on(t.lineId, t.periodKey)],
+);
+
+/**
+ * Every number ever issued. The unique (series, number) constraint is what makes a duplicate
+ * number impossible, whatever else goes wrong. Append-only (trigger in the migration).
+ */
+export const numberSeriesAllocations = pgTable(
+  'number_series_allocations',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    seriesId: uuid('series_id')
+      .notNull()
+      .references(() => numberSeries.id, { onDelete: 'restrict' }),
+    lineId: uuid('line_id').references(() => numberSeriesLines.id, { onDelete: 'restrict' }),
+    number: text('number').notNull(),
+    sequence: bigint('sequence', { mode: 'number' }),
+    periodKey: text('period_key').notNull().default(''),
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+    documentKind: text('document_kind'),
+    documentId: text('document_id'),
+    source: text('source').$type<'auto' | 'manual'>().notNull().default('auto'),
+    documentDate: text('document_date').notNull(),
+    allocatedBy: text('allocated_by'),
+    allocatedAt: timestamp('allocated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('number_series_alloc_number_uidx').on(t.seriesId, t.number),
+    // One document gets one number: asking again returns the same one.
+    uniqueIndex('number_series_alloc_document_uidx')
+      .on(t.companyId, t.documentKind, t.documentId)
+      .where(sql`${t.documentKind} is not null and ${t.documentId} is not null`),
+    index('number_series_alloc_time_idx').on(t.seriesId, t.allocatedAt),
+  ],
+);
+
+/** Which series numbers which document kind, with an optional per-branch override. */
+export const numberSeriesBindings = pgTable(
+  'number_series_bindings',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    documentKind: text('document_kind').notNull(),
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'cascade' }),
+    seriesId: uuid('series_id')
+      .notNull()
+      .references(() => numberSeries.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('number_series_bind_default_uidx')
+      .on(t.companyId, t.documentKind)
+      .where(sql`${t.branchId} is null`),
+    uniqueIndex('number_series_bind_branch_uidx')
+      .on(t.companyId, t.documentKind, t.branchId)
+      .where(sql`${t.branchId} is not null`),
+  ],
+);
+
+/** Alternatives a document may offer in place of its default series (BC "No. Series Relationship"). */
+export const numberSeriesRelationships = pgTable(
+  'number_series_relationships',
+  {
+    seriesId: uuid('series_id')
+      .notNull()
+      .references(() => numberSeries.id, { onDelete: 'cascade' }),
+    relatedSeriesId: uuid('related_series_id')
+      .notNull()
+      .references(() => numberSeries.id, { onDelete: 'cascade' }),
+  },
+  (t) => [primaryKey({ columns: [t.seriesId, t.relatedSeriesId] })],
+);
+
+/** KERNEL — approvals. Switches: a module or trigger (optionally per branch) turned on or off. */
+export const approvalSwitches = pgTable(
+  'approval_switches',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    module: text('module').notNull(),
+    /** Null = the whole module. */
+    trigger: text('trigger'),
+    /** Null = every branch. */
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'cascade' }),
+    enabled: boolean('enabled').notNull(),
+    changedBy: text('changed_by'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('approval_switches_scope_uidx').on(
+      t.companyId,
+      t.module,
+      sql`coalesce(${t.trigger}, '')`,
+      sql`coalesce(${t.branchId}::text, '')`,
+    ),
+  ],
+);
+
+/** One configurable approval rule for a trigger. Its steps and conditions live in versions. */
+export const approvalWorkflows = pgTable(
+  'approval_workflows',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    description: text('description'),
+    module: text('module').notNull(),
+    trigger: text('trigger').notNull(),
+    /** Null = every branch. */
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'cascade' }),
+    /** Lower runs first; only affects the order requests are created in. */
+    priority: integer('priority').notNull().default(100),
+    status: text('status')
+      .$type<'draft' | 'enabled' | 'disabled' | 'retired'>()
+      .notNull()
+      .default('draft'),
+    /** The work in progress, validated and frozen into a version when published. */
+    draft: jsonb('draft').$type<Record<string, unknown>>().notNull().default({}),
+    currentVersionId: uuid('current_version_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('approval_workflows_company_code_uidx').on(t.companyId, t.code),
+    index('approval_workflows_trigger_idx').on(t.companyId, t.trigger, t.status),
+  ],
+);
+
+/** Immutable once written: requests in flight keep the version they started under. */
+export const approvalWorkflowVersions = pgTable(
+  'approval_workflow_versions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    workflowId: uuid('workflow_id')
+      .notNull()
+      .references(() => approvalWorkflows.id, { onDelete: 'cascade' }),
+    version: integer('version').notNull(),
+    definition: jsonb('definition').$type<Record<string, unknown>>().notNull(),
+    publishedBy: text('published_by'),
+    publishedAt: timestamp('published_at', { withTimezone: true }).notNull().defaultNow(),
+    reason: text('reason'),
+  },
+  (t) => [uniqueIndex('approval_workflow_versions_uidx').on(t.workflowId, t.version)],
+);
+
+/** An approver: who is above them, who covers for them, and whether they can approve at all. */
+export const approverProfiles = pgTable(
+  'approver_profiles',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** The next link up the approval chain. */
+    approverUserId: uuid('approver_user_id').references(() => users.id, { onDelete: 'set null' }),
+    substituteUserId: uuid('substitute_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    substituteFrom: text('substitute_from'),
+    substituteTo: text('substitute_to'),
+    isActive: boolean('is_active').notNull().default(true),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('approver_profiles_user_uidx').on(t.companyId, t.userId)],
+);
+
+/** What an approver may approve, per kind of document, in the company's base currency. */
+export const approverLimits = pgTable(
+  'approver_limits',
+  {
+    profileId: uuid('profile_id')
+      .notNull()
+      .references(() => approverProfiles.id, { onDelete: 'cascade' }),
+    documentKind: text('document_kind').notNull(),
+    maxAmount: numeric('max_amount', { precision: 18, scale: 2 }),
+    unlimited: boolean('unlimited').notNull().default(false),
+  },
+  (t) => [primaryKey({ columns: [t.profileId, t.documentKind] })],
+);
+
+export const approverGroups = pgTable(
+  'approver_groups',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('approver_groups_company_code_uidx').on(t.companyId, t.code)],
+);
+
+export const approverGroupMembers = pgTable(
+  'approver_group_members',
+  {
+    groupId: uuid('group_id')
+      .notNull()
+      .references(() => approverGroups.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    sequence: integer('sequence').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.groupId, t.userId] }),
+    index('approver_group_members_seq_idx').on(t.groupId, t.sequence),
+  ],
+);
+
+/** One approval requirement for one document, under one workflow version. */
+export const approvalRequests = pgTable(
+  'approval_requests',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    /** Requests created by one submit; the document is released when all are approved. */
+    submissionId: uuid('submission_id').notNull(),
+    workflowId: uuid('workflow_id')
+      .notNull()
+      .references(() => approvalWorkflows.id, { onDelete: 'restrict' }),
+    workflowVersionId: uuid('workflow_version_id')
+      .notNull()
+      .references(() => approvalWorkflowVersions.id, { onDelete: 'restrict' }),
+    trigger: text('trigger').notNull(),
+    documentKind: text('document_kind').notNull(),
+    documentId: text('document_id').notNull(),
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+    requestedBy: uuid('requested_by')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    /** In the company's base currency; what approver limits are compared with. */
+    amount: numeric('amount', { precision: 18, scale: 2 }).notNull().default('0'),
+    /** The document as it was submitted; also what the conditions were evaluated on. */
+    snapshot: jsonb('snapshot').$type<Record<string, unknown>>().notNull(),
+    documentHash: text('document_hash').notNull(),
+    status: text('status')
+      .$type<'pending' | 'approved' | 'rejected' | 'canceled' | 'superseded' | 'reopened'>()
+      .notNull()
+      .default('pending'),
+    currentStep: integer('current_step').notNull(),
+    previousRequestId: uuid('previous_request_id'),
+    attempt: integer('attempt').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+  },
+  (t) => [
+    // One live request per document and workflow: the database, not the code, forbids duplicates.
+    uniqueIndex('approval_requests_one_pending_uidx')
+      .on(t.companyId, t.documentKind, t.documentId, t.workflowId)
+      .where(sql`${t.status} = 'pending'`),
+    index('approval_requests_document_idx').on(t.documentKind, t.documentId, t.createdAt),
+    index('approval_requests_submission_idx').on(t.submissionId),
+  ],
+);
+
+/** One approver's turn at one step. Created only when the previous approver has approved. */
+export const approvalEntries = pgTable(
+  'approval_entries',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    requestId: uuid('request_id')
+      .notNull()
+      .references(() => approvalRequests.id, { onDelete: 'cascade' }),
+    stepSequence: integer('step_sequence').notNull(),
+    /** Position inside the step: group member order, or hops up an approver chain. */
+    position: integer('position').notNull().default(0),
+    approverUserId: uuid('approver_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    /** Set when a substitute covers for this person. */
+    onBehalfOfUserId: uuid('on_behalf_of_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    status: text('status')
+      .$type<'open' | 'approved' | 'rejected' | 'canceled'>()
+      .notNull()
+      .default('open'),
+    comment: text('comment'),
+    reasonCode: text('reason_code'),
+    dueAt: timestamp('due_at', { withTimezone: true }),
+    /** The entry this one took over from, when it was escalated or rerouted. */
+    replacesEntryId: uuid('replaces_entry_id'),
+    /** Set once the overdue sweep has dealt with this entry (escalated it, or found nobody above). */
+    escalatedAt: timestamp('escalated_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    actedAt: timestamp('acted_at', { withTimezone: true }),
+  },
+  (t) => [
+    // The approver's inbox.
+    index('approval_entries_inbox_idx')
+      .on(t.approverUserId, t.createdAt)
+      .where(sql`${t.status} = 'open'`),
+    index('approval_entries_request_idx').on(t.requestId, t.stepSequence, t.position),
+    index('approval_entries_overdue_idx')
+      .on(t.dueAt)
+      .where(sql`${t.status} = 'open' and ${t.escalatedAt} is null`),
+  ],
+);
+
+/**
+ * An action (issue a credit note, change stock) waiting for approval. The action's inputs are kept
+ * here so it can be carried out, in the approver's transaction, the moment the last approval is given.
+ */
+export const approvalParkedActions = pgTable(
+  'approval_parked_actions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    /** The approval document kind this is parked under, e.g. credit_note. */
+    documentKind: text('document_kind').notNull(),
+    /** Which action, within that kind, e.g. order_credit_note or stock_write_off. */
+    action: text('action').notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    /** One plain sentence for the approver: what will happen if they approve. */
+    summary: text('summary').notNull(),
+    requestedBy: uuid('requested_by')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    status: text('status')
+      .$type<'parked' | 'applied' | 'rejected' | 'canceled'>()
+      .notNull()
+      .default('parked'),
+    /** What carrying it out produced (a credit note id, a stock reference ...). */
+    result: jsonb('result').$type<Record<string, unknown>>(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+  },
+  (t) => [index('approval_parked_actions_kind_idx').on(t.documentKind, t.status, t.createdAt)],
+);
+
 export const paymentAttempts = pgTable(
   'payment_attempts',
   {
@@ -805,6 +1289,11 @@ export const orders = pgTable(
     customerAccountType: text('customer_account_type'),
     /** Which invoicing module the sale belongs to; decides which signing switch applies. */
     salesModule: text('sales_module').$type<SigningModule>().notNull().default('ecommerce'),
+    /** 'none' until approvals apply; 'pending'/'rejected'/'draft' block the order from moving on. */
+    approvalStatus: text('approval_status')
+      .$type<'none' | 'pending' | 'approved' | 'rejected' | 'draft'>()
+      .notNull()
+      .default('none'),
     transmitInvoicesToKra: boolean('transmit_invoices_to_kra').notNull().default(true),
     kraTransmissionStatus: text('kra_transmission_status').notNull().default('not_applicable'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -1783,6 +2272,8 @@ export const salesQuotes = pgTable(
       .notNull()
       .default('0'),
     approvalStatus: text('approval_status').notNull().default('not_required'),
+    /** 'workflow' when the approvals engine owns this quote's approval; null for the old margin-floor check. */
+    approvalManagedBy: text('approval_managed_by'),
     paymentMethod: text('payment_method').notNull().default('mpesa_daraja'),
     validUntil: timestamp('valid_until', { withTimezone: true }),
     customerReference: text('customer_reference'),
@@ -1941,6 +2432,13 @@ export type ItemTypeRow = typeof itemTypes.$inferSelect;
 export type ItemTypeInsert = typeof itemTypes.$inferInsert;
 export type CompanyKraConfigRow = typeof companyKraConfigs.$inferSelect;
 export type BranchKraConfigRow = typeof branchKraConfigs.$inferSelect;
+export type DecisionLogRow = typeof decisionLog.$inferSelect;
+export type ReasonCodeRow = typeof reasonCodes.$inferSelect;
+export type NumberSeriesRow = typeof numberSeries.$inferSelect;
+export type NumberSeriesLineRow = typeof numberSeriesLines.$inferSelect;
+export type NumberSeriesCounterRow = typeof numberSeriesCounters.$inferSelect;
+export type NumberSeriesAllocationRow = typeof numberSeriesAllocations.$inferSelect;
+export type NumberSeriesBindingRow = typeof numberSeriesBindings.$inferSelect;
 export type CreditNoteRow = typeof creditNotes.$inferSelect;
 export type CreditNoteLineRow = typeof creditNoteLines.$inferSelect;
 export type KraSigningEventRow = typeof kraSigningEvents.$inferSelect;
@@ -1961,3 +2459,4 @@ export type ReconciliationLogRow = typeof reconciliationLogs.$inferSelect;
 export type ReconciliationLogInsert = typeof reconciliationLogs.$inferInsert;
 export type PaymentGatewayConfigRow = typeof paymentGatewayConfigs.$inferSelect;
 export type PaymentGatewayConfigInsert = typeof paymentGatewayConfigs.$inferInsert;
+export type ApprovalParkedActionRow = typeof approvalParkedActions.$inferSelect;

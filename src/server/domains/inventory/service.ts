@@ -1,8 +1,12 @@
+import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { getContainer } from '@/server/di/container';
 import { drizzleDb } from '@/server/db/drizzle/client';
 import { inventoryMovements, products } from '@/server/db/drizzle/schema';
 import { broadcastRealtime } from '@/server/realtime';
+import { businessDate } from '@/server/kernel/numbering/business-date';
+import { afterCommit, withAfterCommit } from '@/server/kernel/after-commit';
+import type { GateResult } from '@/server/kernel/approvals/parked-actions';
 import type { Product, InventoryLedgerEntry, Order, OrderStatus } from '@/types/index';
 import { InventoryReservationService } from './reservation-service';
 import { toLedgerEntry, toProduct } from '@/server/domains/catalog/mappers';
@@ -55,12 +59,7 @@ interface StockDelta {
  */
 export async function applyStockDelta(tx: Tx, params: StockDelta): Promise<number> {
   const locked = (
-    await tx
-      .select()
-      .from(products)
-      .where(eq(products.id, params.productId))
-      .for('update')
-      .limit(1)
+    await tx.select().from(products).where(eq(products.id, params.productId)).for('update').limit(1)
   ).at(0);
 
   if (locked === undefined || (locked.deletedAt !== null && params.allowDeleted !== true)) {
@@ -70,9 +69,7 @@ export async function applyStockDelta(tx: Tx, params: StockDelta): Promise<numbe
   const previousStock = locked.stockQuantity;
   const nextStock =
     params.setTo ??
-    (params.clampAtZero
-      ? Math.max(0, previousStock + params.delta)
-      : previousStock + params.delta);
+    (params.clampAtZero ? Math.max(0, previousStock + params.delta) : previousStock + params.delta);
 
   const patch: Partial<typeof products.$inferInsert> = {
     stockQuantity: nextStock,
@@ -102,9 +99,63 @@ export async function applyStockDelta(tx: Tx, params: StockDelta): Promise<numbe
   return nextStock - previousStock;
 }
 
+type StockDocumentKind = 'stock_adjustment' | 'stock_receipt' | 'stock_write_off' | 'stock_count';
+
+/**
+ * The reference for one stock document, from its number series, assigned inside the same
+ * transaction that moves the stock. (It used to be `ADJ-${Date.now()}`: two adjustments in the
+ * same millisecond collided, and nothing said who had used which number.)
+ *
+ * `companyId` must be looked up BEFORE the transaction opens: fetching it inside would need a
+ * second pooled connection while this one is held.
+ */
+async function stockReference(tx: Tx, companyId: string, kind: StockDocumentKind): Promise<string> {
+  const { number } = await getContainer().numbering.assign(
+    kind,
+    { companyId, date: businessDate(), document: { kind, id: randomUUID() } },
+    tx,
+  );
+  return number;
+}
+
+async function stockCompanyId(): Promise<string> {
+  return (await getContainer().companySettings.ensureSeeded()).id;
+}
+
 function toProducts(rows: ProductJoined[]): Product[] {
   return rows.map(toProduct);
 }
+
+/** An order waiting for, or refused, approval cannot be moved along (it can still be cancelled). */
+export function assertNotHeldForApproval(order: Order, next: OrderStatus): void {
+  if (next === 'cancelled') return;
+  const held = order.approvalStatus;
+  if (held === 'pending') {
+    throw new Error('This order is waiting for approval. It can move on once it is approved.');
+  }
+  if (held === 'rejected' || held === 'draft') {
+    throw new Error(
+      'Approval for this order was refused. Reopen it and send it for approval again, or cancel it.',
+    );
+  }
+}
+
+export type StockOp =
+  | { kind: 'adjust'; productId: string; newQuantity: number; reason: string; actor: string }
+  | {
+      kind: 'write_off';
+      productId: string;
+      quantity: number;
+      reasonCode: WriteOffReason;
+      notes?: string;
+      actor: string;
+    }
+  | { kind: 'count'; productId: string; countedQuantity: number; notes?: string; actor: string }
+  | {
+      kind: 'batch';
+      adjustments: { productId: string; newQuantity: number; reason: string }[];
+      actor: string;
+    };
 
 export class InventoryDomainService {
   static async getLedger(limit = 100): Promise<InventoryLedgerEntry[]> {
@@ -134,21 +185,7 @@ export class InventoryDomainService {
     reason = 'Manual Adjustment',
     actor = 'admin',
   ): Promise<Product> {
-    if (newQuantity < 0) throw new Error('Stock quantity cannot be negative');
-
-    await drizzleDb.transaction(async (tx) => {
-      await applyStockDelta(tx, {
-        productId,
-        delta: 0,
-        setTo: newQuantity,
-        changeType: 'manual_adjustment',
-        referenceId: `ADJ-${Date.now()}`,
-        actor,
-        note: reason,
-      });
-    });
-
-    void broadcastRealtime('inventory_update', { type: 'stock_adjusted', productId });
+    await this.runOp({ kind: 'adjust', productId, newQuantity, reason, actor });
     return this.requireProduct(productId);
   }
 
@@ -163,6 +200,7 @@ export class InventoryDomainService {
     actor = 'admin',
   ): Promise<Product> {
     if (quantity <= 0) throw new Error('Received quantity must be greater than 0');
+    const companyId = await stockCompanyId();
 
     await drizzleDb.transaction(async (tx) => {
       await applyStockDelta(tx, {
@@ -170,7 +208,8 @@ export class InventoryDomainService {
         delta: quantity,
         costPrice: unitCost,
         changeType: 'purchase_order_receipt',
-        referenceId: poNumber || `PO-${Date.now()}`,
+        // A purchase order number typed in by the user is kept; otherwise the receipt is numbered.
+        referenceId: poNumber || (await stockReference(tx, companyId, 'stock_receipt')),
         actor,
         note: `Received ${quantity} units from supplier "${supplier || 'Standard Supplier'}". ${notes || ''}`.trim(),
       });
@@ -188,37 +227,7 @@ export class InventoryDomainService {
     notes?: string,
     actor = 'admin',
   ): Promise<Product> {
-    if (quantity <= 0) throw new Error('Write-off quantity must be greater than 0');
-
-    await drizzleDb.transaction(async (tx) => {
-      const locked = (
-        await tx
-          .select({ onHand: products.stockQuantity, deletedAt: products.deletedAt })
-          .from(products)
-          .where(eq(products.id, productId))
-          .for('update')
-          .limit(1)
-      ).at(0);
-      if (locked === undefined || locked.deletedAt !== null) {
-        throw new Error(`Product ${productId} not found`);
-      }
-      if (quantity > locked.onHand) {
-        throw new Error(
-          `Cannot write off ${quantity} units; only ${locked.onHand} currently on hand.`,
-        );
-      }
-
-      await applyStockDelta(tx, {
-        productId,
-        delta: -quantity,
-        changeType: 'damage_writeoff',
-        referenceId: `WRITEOFF-${Date.now()}`,
-        actor,
-        note: `Stock Write-off (${WRITE_OFF_LABELS[reasonCode] || reasonCode}). ${notes || ''}`.trim(),
-      });
-    });
-
-    void broadcastRealtime('inventory_update', { type: 'stock_writeoff', productId });
+    await this.runOp({ kind: 'write_off', productId, quantity, reasonCode, notes, actor });
     return this.requireProduct(productId);
   }
 
@@ -229,36 +238,14 @@ export class InventoryDomainService {
     notes?: string,
     actor = 'inventory_auditor',
   ): Promise<{ product: Product; discrepancy: number }> {
-    if (countedQuantity < 0) throw new Error('Physical count cannot be negative');
-
-    const discrepancy = await drizzleDb.transaction(async (tx) => {
-      const locked = (
-        await tx
-          .select({ onHand: products.stockQuantity, deletedAt: products.deletedAt })
-          .from(products)
-          .where(eq(products.id, productId))
-          .for('update')
-          .limit(1)
-      ).at(0);
-      if (locked === undefined || locked.deletedAt !== null) {
-        throw new Error(`Product ${productId} not found`);
-      }
-      const diff = countedQuantity - locked.onHand;
-
-      await applyStockDelta(tx, {
-        productId,
-        delta: 0,
-        setTo: countedQuantity,
-        changeType: 'physical_audit',
-        referenceId: `AUDIT-${Date.now()}`,
-        actor,
-        note: `Physical Shelf Count Audit: Counted ${countedQuantity} (Discrepancy: ${diff >= 0 ? '+' : ''}${diff}). ${notes || ''}`.trim(),
-      });
-      return diff;
+    const { discrepancy } = await this.runOp({
+      kind: 'count',
+      productId,
+      countedQuantity,
+      notes,
+      actor,
     });
-
-    void broadcastRealtime('inventory_update', { type: 'audit_completed', productId });
-    return { product: await this.requireProduct(productId), discrepancy };
+    return { product: await this.requireProduct(productId), discrepancy: discrepancy ?? 0 };
   }
 
   /**
@@ -270,30 +257,180 @@ export class InventoryDomainService {
     actor = 'admin',
   ): Promise<Product[]> {
     if (adjustments.length === 0) return [];
-
-    await drizzleDb.transaction(async (tx) => {
-      for (const adj of adjustments) {
-        if (adj.newQuantity < 0) throw new Error('Stock quantity cannot be negative');
-        await applyStockDelta(tx, {
-          productId: adj.productId,
-          delta: 0,
-          setTo: adj.newQuantity,
-          changeType: 'manual_adjustment',
-          referenceId: `ADJ-${Date.now()}`,
-          actor,
-          note: adj.reason,
-        });
-      }
-    });
-
-    for (const adj of adjustments) {
-      void broadcastRealtime('inventory_update', {
-        type: 'stock_adjusted',
-        productId: adj.productId,
-      });
-    }
+    await this.runOp({ kind: 'batch', adjustments, actor });
     return toProducts(
       await getContainer().catalog.getProductsByIds(adjustments.map((a) => a.productId)),
+    );
+  }
+
+  // ── Approval gate ─────────────────────────────────────────────────────────
+
+  /** Runs a stock operation now: one transaction, with its realtime events sent after commit. */
+  static async runOp(op: StockOp): Promise<{ discrepancy?: number }> {
+    const companyId = await stockCompanyId();
+    return withAfterCommit(drizzleDb, (tx) => this.applyOp(tx, companyId, op));
+  }
+
+  /**
+   * The stock operation itself, inside the caller's transaction. Used directly, and by an
+   * approval when the last approver says yes.
+   */
+  static async applyOp(tx: Tx, companyId: string, op: StockOp): Promise<{ discrepancy?: number }> {
+    const lock = async (productId: string) => {
+      const locked = (
+        await tx
+          .select({ onHand: products.stockQuantity, deletedAt: products.deletedAt })
+          .from(products)
+          .where(eq(products.id, productId))
+          .for('update')
+          .limit(1)
+      ).at(0);
+      if (locked === undefined || locked.deletedAt !== null) {
+        throw new Error(`Product ${productId} not found`);
+      }
+      return locked;
+    };
+    const announce = (type: string, productId: string) =>
+      afterCommit(tx, () => void broadcastRealtime('inventory_update', { type, productId }));
+
+    switch (op.kind) {
+      case 'adjust': {
+        if (op.newQuantity < 0) throw new Error('Stock quantity cannot be negative');
+        await applyStockDelta(tx, {
+          productId: op.productId,
+          delta: 0,
+          setTo: op.newQuantity,
+          changeType: 'manual_adjustment',
+          referenceId: await stockReference(tx, companyId, 'stock_adjustment'),
+          actor: op.actor,
+          note: op.reason,
+        });
+        announce('stock_adjusted', op.productId);
+        return {};
+      }
+      case 'write_off': {
+        if (op.quantity <= 0) throw new Error('Write-off quantity must be greater than 0');
+        const locked = await lock(op.productId);
+        if (op.quantity > locked.onHand) {
+          throw new Error(
+            `Cannot write off ${op.quantity} units; only ${locked.onHand} currently on hand.`,
+          );
+        }
+        await applyStockDelta(tx, {
+          productId: op.productId,
+          delta: -op.quantity,
+          changeType: 'damage_writeoff',
+          referenceId: await stockReference(tx, companyId, 'stock_write_off'),
+          actor: op.actor,
+          note: `Stock Write-off (${WRITE_OFF_LABELS[op.reasonCode] || op.reasonCode}). ${op.notes || ''}`.trim(),
+        });
+        announce('stock_writeoff', op.productId);
+        return {};
+      }
+      case 'count': {
+        if (op.countedQuantity < 0) throw new Error('Physical count cannot be negative');
+        const locked = await lock(op.productId);
+        const diff = op.countedQuantity - locked.onHand;
+        await applyStockDelta(tx, {
+          productId: op.productId,
+          delta: 0,
+          setTo: op.countedQuantity,
+          changeType: 'physical_audit',
+          referenceId: await stockReference(tx, companyId, 'stock_count'),
+          actor: op.actor,
+          note: `Physical Shelf Count Audit: Counted ${op.countedQuantity} (Discrepancy: ${diff >= 0 ? '+' : ''}${diff}). ${op.notes || ''}`.trim(),
+        });
+        announce('audit_completed', op.productId);
+        return { discrepancy: diff };
+      }
+      case 'batch': {
+        // One batch is one document: every line carries the same reference.
+        const referenceId = await stockReference(tx, companyId, 'stock_adjustment');
+        for (const adj of op.adjustments) {
+          if (adj.newQuantity < 0) throw new Error('Stock quantity cannot be negative');
+          await applyStockDelta(tx, {
+            productId: adj.productId,
+            delta: 0,
+            setTo: adj.newQuantity,
+            changeType: 'manual_adjustment',
+            referenceId,
+            actor: op.actor,
+            note: adj.reason,
+          });
+          announce('stock_adjusted', adj.productId);
+        }
+        return {};
+      }
+    }
+  }
+
+  /**
+   * Runs a stock operation, or parks it for approval when a workflow says a change this size needs
+   * one. With no workflow configured it runs straight away, as it always did.
+   */
+  static async gatedOp(
+    op: StockOp,
+    requestedBy: string,
+  ): Promise<GateResult<{ discrepancy?: number }>> {
+    const companyId = await stockCompanyId();
+    const lines =
+      op.kind === 'batch'
+        ? op.adjustments.map((a) => ({
+            productId: a.productId,
+            target: a.newQuantity as number | null,
+            delta: null as number | null,
+          }))
+        : op.kind === 'write_off'
+          ? [{ productId: op.productId, target: null, delta: -op.quantity }]
+          : [
+              {
+                productId: op.productId,
+                target: (op.kind === 'adjust' ? op.newQuantity : op.countedQuantity) as
+                  number | null,
+                delta: null,
+              },
+            ];
+    const rows = await getContainer().catalog.getProductsByIds([
+      ...new Set(lines.map((l) => l.productId)),
+    ]);
+    const byId = new Map(rows.map((r) => [r.id, r]));
+
+    let quantity = 0;
+    let amount = 0;
+    let percent = 0;
+    const described: string[] = [];
+    for (const l of lines) {
+      const p = byId.get(l.productId);
+      if (!p) throw new Error(`Product ${l.productId} not found`);
+      const onHand = p.stockQuantity;
+      const change = l.delta ?? (l.target ?? onHand) - onHand;
+      quantity += Math.abs(change);
+      amount += Math.abs(change) * Number(p.costPrice ?? 0);
+      percent = Math.max(percent, (Math.abs(change) / Math.max(onHand, 1)) * 100);
+      described.push(`${change >= 0 ? '+' : '−'}${Math.abs(change)} × ${p.sku}`);
+    }
+    const reasonCode =
+      op.kind === 'write_off' ? op.reasonCode : op.kind === 'count' ? 'stock_count' : 'adjustment';
+    const verb = {
+      adjust: 'Adjust stock',
+      write_off: 'Write off stock',
+      count: 'Record a stock count',
+      batch: 'Adjust stock in bulk',
+    }[op.kind];
+    const summary = `${verb}: ${described.slice(0, 4).join(', ')}${described.length > 4 ? `, and ${described.length - 4} more` : ''}. Worth KES ${Math.round(amount).toLocaleString('en-KE')} at cost.`;
+
+    return getContainer().approvalGate.gate(
+      {
+        trigger: 'stock_adjustment.submitted',
+        companyId,
+        requestedBy,
+        amount: Math.round(amount * 100) / 100,
+        facts: { quantity, percentOfOnHand: Math.round(percent * 100) / 100, reasonCode },
+        action: 'stock_operation',
+        payload: { ...op, actor: requestedBy } as unknown as Record<string, unknown>,
+        summary,
+      },
+      () => this.runOp(op),
     );
   }
 
@@ -358,6 +495,7 @@ export class InventoryDomainService {
     const { orders } = getContainer();
     const existing = await orders.getById(orderId);
     if (!existing) throw new Error(`Order ${orderId} not found`);
+    assertNotHeldForApproval(existing, status);
 
     const now = new Date();
     const patch: Parameters<typeof orders.update>[1] = { status };
@@ -398,6 +536,14 @@ export class InventoryDomainService {
 
     void broadcastRealtime('order_updated', updated);
     return updated;
+  }
+
+  static async getProduct(productId: string): Promise<Product> {
+    return this.requireProduct(productId);
+  }
+
+  static async getProducts(ids: string[]): Promise<Product[]> {
+    return toProducts(await getContainer().catalog.getProductsByIds(ids));
   }
 
   private static async requireProduct(productId: string): Promise<Product> {

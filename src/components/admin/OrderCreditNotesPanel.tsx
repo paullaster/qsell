@@ -146,7 +146,9 @@ export function OrderCreditNotesPanel({ orderId }: { orderId: string }) {
           return;
         }
         setNotice(
-          `Credit note ${res.data.creditNoteNo} issued. Signing with KRA continues in the background.`,
+          res.data.status === 'pending_approval'
+            ? res.data.message
+            : `Credit note ${res.data.creditNote.creditNoteNo} issued. Signing with KRA continues in the background.`,
         );
         setOpen(false);
         setQty({});
