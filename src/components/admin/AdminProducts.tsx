@@ -25,10 +25,9 @@ import { AppImage, PRODUCT_IMAGE_FALLBACK } from '@/components/ui/AppImage';
 import { buildProductsCsv } from '@/lib/productCsv';
 import { downloadCsv } from '@/lib/downloadPdf';
 import { ProductImportDialog } from '@/components/admin/ProductImportDialog';
-import {
-  deleteProductAction,
-  updateProductAction,
-} from '@/server/domains/catalog/actions';
+import { updateProductAction } from '@/server/domains/catalog/actions';
+import { ProductDeleteDialog } from '@/components/admin/ProductDeleteDialog';
+import type { ProductSelection } from '@/server/domains/catalog/bulk-delete';
 
 interface AdminProductsProps {
   productsPromise: Promise<Product[]>;
@@ -37,6 +36,9 @@ interface AdminProductsProps {
   onEditProduct: (product: Product) => void;
   onDuplicateProduct: (product: Product) => void;
   onRefresh: () => void;
+  /** What the person may do; the server checks again. Defaults suit callers that do not know. */
+  canDelete?: boolean;
+  canPurge?: boolean;
 }
 
 export function AdminProducts({
@@ -46,6 +48,8 @@ export function AdminProducts({
   onEditProduct,
   onDuplicateProduct,
   onRefresh,
+  canDelete = true,
+  canPurge = false,
 }: AdminProductsProps) {
   const products = use(productsPromise);
   const categories = use(categoriesPromise);
@@ -57,6 +61,14 @@ export function AdminProducts({
     'all',
   );
   const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(new Set());
+  /** "Select all in the catalogue": every product, including ones the filters hide, minus `excluded`. */
+  const [allInCatalog, setAllInCatalog] = useState(false);
+  const [excluded, setExcluded] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState<{
+    selection: ProductSelection;
+    count: number;
+    label: string;
+  } | null>(null);
   const [isImportOpen, setIsImportOpen] = useState(false);
 
   // Filtering Logic
@@ -82,54 +94,66 @@ export function AdminProducts({
     return matchesSearch && matchesCategory && matchesStatus && matchesStock;
   });
 
-  // Select all checkbox
+  const isSelected = (id: string) =>
+    allInCatalog ? !excluded.has(id) : selectedProductIds.has(id);
+  const selectionCount = allInCatalog ? products.length - excluded.size : selectedProductIds.size;
+  const selectedInView = filteredProducts.filter((p) => isSelected(p.id)).length;
+  const clearSelection = () => {
+    setSelectedProductIds(new Set());
+    setAllInCatalog(false);
+    setExcluded(new Set());
+  };
+
+  // Header checkbox: everything in view, or nothing.
   const handleSelectAll = (checked: boolean) => {
-    if (checked) {
-      setSelectedProductIds(new Set(filteredProducts.map((p) => p.id)));
+    if (!checked) return clearSelection();
+    if (allInCatalog) {
+      const next = new Set(excluded);
+      for (const p of filteredProducts) next.delete(p.id);
+      setExcluded(next);
     } else {
-      setSelectedProductIds(new Set());
+      setSelectedProductIds(new Set([...selectedProductIds, ...filteredProducts.map((p) => p.id)]));
     }
   };
 
   const handleToggleSelectOne = (id: string) => {
-    const next = new Set(selectedProductIds);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    setSelectedProductIds(next);
+    const set = allInCatalog ? new Set(excluded) : new Set(selectedProductIds);
+    if (set.has(id)) set.delete(id);
+    else set.add(id);
+    if (allInCatalog) setExcluded(set);
+    else setSelectedProductIds(set);
   };
 
-  // Bulk Actions
-  const handleBulkDelete = async () => {
-    if (selectedProductIds.size === 0) return;
-    if (
-      window.confirm(
-        `Delete ${selectedProductIds.size} selected products? Their stock history is kept.`,
-      )
-    ) {
-      for (const id of selectedProductIds) {
-        await deleteProductAction(id);
-      }
-      setSelectedProductIds(new Set());
-      onRefresh();
-    }
+  // Deleting always goes through the confirmation dialog.
+  const askDeleteSelected = () => {
+    if (selectionCount === 0) return;
+    setDeleting({
+      selection: allInCatalog
+        ? { mode: 'all', excludeIds: [...excluded] }
+        : { mode: 'ids', ids: [...selectedProductIds] },
+      count: selectionCount,
+      label: `${selectionCount.toLocaleString('en-KE')} product${selectionCount === 1 ? '' : 's'}`,
+    });
   };
 
   const handleBulkStatusChange = async (active: boolean) => {
-    if (selectedProductIds.size === 0) return;
-    for (const id of selectedProductIds) {
+    if (selectionCount === 0) return;
+    const ids = allInCatalog
+      ? products.filter((p) => !excluded.has(p.id)).map((p) => p.id)
+      : [...selectedProductIds];
+    for (const id of ids) {
       await updateProductAction(id, { isActive: active });
     }
-    setSelectedProductIds(new Set());
+    clearSelection();
     onRefresh();
   };
 
-  // Single delete
-  const handleDeleteSingle = async (p: Product) => {
-    if (window.confirm(`Delete "${p.name}" (${p.sku})? Its stock history is kept.`)) {
-      await deleteProductAction(p.id);
-      onRefresh();
-    }
-  };
+  const handleDeleteSingle = (p: Product) =>
+    setDeleting({
+      selection: { mode: 'ids', ids: [p.id] },
+      count: 1,
+      label: `"${p.name}" (${p.sku})`,
+    });
 
   // Toggle single product status
   const handleToggleStatus = async (p: Product) => {
@@ -196,6 +220,20 @@ export function AdminProducts({
         onImported={onRefresh}
       />
 
+      {deleting ? (
+        <ProductDeleteDialog
+          selection={deleting.selection}
+          count={deleting.count}
+          label={deleting.label}
+          canPurge={canPurge}
+          onClose={() => setDeleting(null)}
+          onDeleted={() => {
+            clearSelection();
+            onRefresh();
+          }}
+        />
+      ) : null}
+
       {/* Filter and Search Bar */}
       <div className="space-y-3 rounded-xl border border-line bg-surface-raised p-4 text-xs">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
@@ -256,32 +294,72 @@ export function AdminProducts({
         </div>
 
         {/* Bulk Action Ribbon when items selected */}
-        {selectedProductIds.size > 0 && (
-          <div className="flex items-center justify-between rounded-lg border border-indigo-600 bg-indigo-50 p-2.5 text-indigo-600 dark:text-indigo-400">
-            <span className="font-semibold">
-              {selectedProductIds.size} product{selectedProductIds.size > 1 ? 's' : ''} selected
-            </span>
+        {selectionCount > 0 && (
+          <div
+            className="space-y-2 rounded-lg border border-indigo-600 bg-indigo-50 p-2.5 text-indigo-600 dark:text-indigo-400"
+            role="region"
+            aria-label="Selected products"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-semibold" role="status">
+                {allInCatalog && excluded.size === 0
+                  ? `All ${selectionCount.toLocaleString('en-KE')} products in the catalogue selected`
+                  : `${selectionCount.toLocaleString('en-KE')} product${selectionCount > 1 ? 's' : ''} selected`}
+              </span>
 
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => handleBulkStatusChange(true)}
-                className="cursor-pointer rounded border border-line-strong bg-surface-raised px-2.5 py-1 font-medium text-fg-strong hover:bg-hover"
-              >
-                Mark Active
-              </button>
-              <button
-                onClick={() => handleBulkStatusChange(false)}
-                className="cursor-pointer rounded border border-line-strong bg-surface-raised px-2.5 py-1 font-medium text-fg hover:bg-hover"
-              >
-                Mark Draft
-              </button>
-              <button
-                onClick={handleBulkDelete}
-                className="TW cursor-pointer rounded bg-red-100 px-2.5 py-1 font-medium hover:bg-red-100"
-              >
-                Delete Selected
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => handleBulkStatusChange(true)}
+                  className="min-h-9 cursor-pointer rounded border border-line-strong bg-surface-raised px-2.5 py-1 font-medium text-fg-strong hover:bg-hover"
+                >
+                  Mark Active
+                </button>
+                <button
+                  onClick={() => handleBulkStatusChange(false)}
+                  className="min-h-9 cursor-pointer rounded border border-line-strong bg-surface-raised px-2.5 py-1 font-medium text-fg hover:bg-hover"
+                >
+                  Mark Draft
+                </button>
+                {canDelete ? (
+                  <button
+                    type="button"
+                    onClick={askDeleteSelected}
+                    className="min-h-9 cursor-pointer rounded bg-red-600 px-2.5 py-1 font-semibold text-white hover:bg-red-500"
+                  >
+                    Delete Selected
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={clearSelection}
+                  className="min-h-9 cursor-pointer rounded px-2.5 py-1 font-medium underline hover:no-underline"
+                >
+                  Clear
+                </button>
+              </div>
             </div>
+            {!allInCatalog && products.length > selectionCount ? (
+              <p className="text-fg">
+                {selectedInView === filteredProducts.length && filteredProducts.length > 0
+                  ? filteredProducts.length < products.length
+                    ? `Everything matching the filters is selected. `
+                    : `Everything on this page is selected. `
+                  : ''}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAllInCatalog(true);
+                    setExcluded(new Set());
+                  }}
+                  className="min-h-9 cursor-pointer font-semibold text-indigo-700 underline hover:no-underline"
+                >
+                  Select all {products.length.toLocaleString('en-KE')} products in the catalogue
+                </button>
+                {filteredProducts.length < products.length
+                  ? ' (including ones the filters hide)'
+                  : ''}
+              </p>
+            ) : null}
           </div>
         )}
       </div>
@@ -295,10 +373,15 @@ export function AdminProducts({
                 <th className="w-8 px-3 py-3">
                   <input
                     type="checkbox"
+                    aria-label="Select all products in view"
                     checked={
-                      filteredProducts.length > 0 &&
-                      selectedProductIds.size === filteredProducts.length
+                      filteredProducts.length > 0 && selectedInView === filteredProducts.length
                     }
+                    ref={(el) => {
+                      if (el)
+                        el.indeterminate =
+                          selectedInView > 0 && selectedInView < filteredProducts.length;
+                    }}
                     onChange={(e) => handleSelectAll(e.target.checked)}
                     className="cursor-pointer rounded border-line-strong bg-surface text-indigo-600 focus:ring-0"
                   />
@@ -324,7 +407,7 @@ export function AdminProducts({
                   const available = p.stockQuantity - p.reservedQuantity;
                   const isLow = available <= p.lowStockThreshold && available > 0;
                   const isOut = available <= 0;
-                  const isSelected = selectedProductIds.has(p.id);
+                  const rowSelected = isSelected(p.id);
                   const cost = p.costPrice;
                   const sellPrice = p.price;
                   const marginPct =
@@ -335,12 +418,13 @@ export function AdminProducts({
                   return (
                     <tr
                       key={p.id}
-                      className={`transition-colors hover:bg-hover ${isSelected ? 'bg-indigo-50' : ''}`}
+                      className={`transition-colors hover:bg-hover ${rowSelected ? 'bg-indigo-50' : ''}`}
                     >
                       <td className="px-3 py-3.5">
                         <input
                           type="checkbox"
-                          checked={isSelected}
+                          aria-label={`Select ${p.name}`}
+                          checked={rowSelected}
                           onChange={() => handleToggleSelectOne(p.id)}
                           className="cursor-pointer rounded border-line-strong bg-surface text-indigo-600 focus:ring-0"
                         />
@@ -462,13 +546,17 @@ export function AdminProducts({
                           >
                             <Copy className="h-3.5 w-3.5" />
                           </button>
-                          <button
-                            onClick={() => handleDeleteSingle(p)}
-                            className="cursor-pointer rounded-lg bg-surface-sunken p-1.5 text-fg transition-colors hover:bg-red-100 hover:text-red-700"
-                            title="Delete Product"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                          {canDelete ? (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteSingle(p)}
+                              className="cursor-pointer rounded-lg bg-surface-sunken p-1.5 text-fg transition-colors hover:bg-red-100 hover:text-red-700"
+                              title="Delete Product"
+                              aria-label={`Delete ${p.name}`}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          ) : null}
                         </div>
                       </td>
                     </tr>

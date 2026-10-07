@@ -179,6 +179,12 @@ export const PERMISSIONS = {
     category: 'Products & Inventory',
     description: 'Delete products',
   },
+  'products:delete_permanently': {
+    resource: 'products',
+    action: 'delete_permanently',
+    category: 'Products & Inventory',
+    description: 'Permanently erase products (cannot be undone)',
+  },
   'products:adjust_stock': {
     resource: 'products',
     action: 'adjust_stock',

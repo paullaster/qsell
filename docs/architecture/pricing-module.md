@@ -350,3 +350,17 @@ Code: `src/server/domains/pricing/` (pure engine in `domain/`, `service.ts` read
 - Floor price is flagged on the trace (`belowFloor`) but does not yet stop a sale; the per-category soft floor with approval, manual-override limits, and the approval workflow for putting a list in force (`price_list.publish`; the `approval_status` column is reserved for it) come next.
 - The catalogue picker in the quote editor still shows (and requires) a standard price, so a product that has a list price but no standard price can be priced by the engine yet not picked there.
 - P-2 (discounts, promotions, coupons, budgets), P-3, P-4, P-5 as phased above.
+
+## Approval to put a list in force (built 2026-10)
+
+- `PricingConfigService.requestActivation` is what the "Put in force" button calls. If no workflow on the `price_list.publish` trigger applies, the list goes live at once (same as `activate`). If one applies, the list is held (`approval_status = pending`), the requester's reason is logged as `pricing.activation_requested`, and nothing prices from it.
+- `pricing/approval.ts` is the document handler: release activates the list in the approver's own transaction (logged as the requester's decision with their reason); reject sets `rejected`; reopen and withdraw return it to `none`. If the list can no longer go live at release (e.g. a tie appeared), the approval is not recorded and the approver sees why.
+- A pending list cannot be edited, re-requested or activated around the approval. Changing its prices voids the approval (the snapshot is the open price count).
+- Not covered: changes to a list already in force, floor and override limits.
+
+## Approval of changes to a list in force (built 2026-10)
+
+- Trigger `price_list.live_change` (document kind `price_list_change`). Facts for conditions: `changedLines`, `largestRisePercent`, `largestCutPercent`, `newProducts`, `removesPrices`, `headerChange`, `listKind`, `listCode`.
+- `setLinesGated`, `removeLinesGated` and `updateListGated` are what the screens and import call. A draft list is never held, an identical price is not a change, and a new name or description is not held. Locks, ties and bad input are refused up front, before anything is held.
+- A held change keeps its inputs (parked action). On release it is applied through the ordinary `setLines`/`removeLines`/`updateList` in the approver's transaction, as the requester and with their reason, and every check runs again against the list as it is then. A change that no longer fits (list retired, a tie, a lock) is not applied and the approver sees why. A start time that has passed while waiting becomes "now".
+- Several changes can wait at once; each is applied against the prices as they are at approval, not as they were when asked.

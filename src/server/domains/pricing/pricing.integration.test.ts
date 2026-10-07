@@ -446,6 +446,386 @@ describe.skipIf(!url)('pricing (database)', () => {
 
   // ── Wired into orders and quotes ───────────────────────────────────────
 
+  describe('approval to put a list in force', () => {
+    const asUser = async () => {
+      const [u] = await db
+        .insert(schema.users)
+        .values({
+          email: `req-${randomUUID()}@pricing.test`,
+          passwordHash: 'x',
+          name: 'Requester',
+          role: 'manager',
+        })
+        .returning();
+      return { type: 'user' as const, id: u!.id };
+    };
+    const tx = <T>(fn: (t: Parameters<Parameters<typeof db.transaction>[0]>[0]) => Promise<T>) =>
+      db.transaction(fn);
+
+    /** A workflow that only applies to lists asked for by `requester`, so other tests are unaffected. */
+    async function workflowFor(
+      requester: string,
+      approver: string,
+      trigger = 'price_list.publish',
+      extra: unknown[] = [],
+    ) {
+      const wf = await c.approvalConfig.createWorkflow(
+        companyId,
+        {
+          code: `PL-${randomUUID().slice(0, 8)}`,
+          name: 'Price list approval',
+          trigger,
+        },
+        actor,
+      );
+      await c.approvalConfig.saveDraft(
+        companyId,
+        wf.id,
+        {
+          conditions: {
+            op: 'and',
+            children: [{ op: 'eq', field: 'requestedBy', value: requester }, ...extra],
+          },
+          steps: [
+            { sequence: 1, name: 'Pricing manager', approver: { type: 'user', userId: approver } },
+          ],
+        } as never,
+        actor,
+      );
+      await c.approvalConfig.publish(companyId, wf.id, actor, reason);
+      return wf;
+    }
+    const approverUser = async () =>
+      (
+        await db
+          .insert(schema.users)
+          .values({
+            email: `appr-${randomUUID()}@pricing.test`,
+            passwordHash: 'x',
+            name: 'Approver',
+            role: 'manager',
+          })
+          .returning()
+      )[0]!.id;
+    const openEntry = async (listId: string) =>
+      (await c.approvals.forDocument(companyId, 'price_list', listId))
+        .flatMap((r) => r.entries)
+        .find((e) => e.status === 'open')!;
+
+    async function draftList() {
+      const cust = await customer();
+      const p = await product(1000);
+      const pl = await list(cust.id);
+      await c.pricingConfig.setLines(
+        companyId,
+        pl.id,
+        [{ productId: p, price: 700 }],
+        actor,
+        reason,
+      );
+      return { cust, p, pl };
+    }
+
+    const liveList = async () => {
+      const x = await draftList();
+      await c.pricingConfig.activate(companyId, x.pl.id, actor, reason);
+      return x;
+    };
+    const inboxEntry = async (approver: string) =>
+      (await c.approvals.inbox(approver)).find((e) => e.documentKind === 'price_list_change')!;
+
+    it('holds a change to a live price until approved, then applies it as the requester', async () => {
+      const requester = await asUser();
+      const approver = await approverUser();
+      await workflowFor(requester.id, approver, 'price_list.live_change');
+      const { cust, p, pl } = await liveList();
+
+      const r = await c.pricingConfig.setLinesGated(
+        companyId,
+        pl.id,
+        [{ productId: p, price: 800 }],
+        requester,
+        { code: 'POLICY_CHANGE', text: 'Supplier increase' },
+      );
+      expect(r).toMatchObject({ pending: true });
+      expect((await sell(cust.id, p)).unitPrice).toBe(700);
+
+      const entry = await inboxEntry(approver);
+      await tx((t) => c.approvals.approve(entry.entryId, approver, null, t));
+      c.pricing.invalidate(companyId);
+      expect((await sell(cust.id, p)).unitPrice).toBe(800);
+      const changed = (await c.decisionLog.timeline('price_list', pl.id)).find(
+        (e) => e.action === 'pricing.prices_changed' && e.actorId === requester.id,
+      );
+      expect(changed).toMatchObject({
+        reasonCode: 'POLICY_CHANGE',
+        reasonText: 'Supplier increase',
+      });
+    });
+
+    it('only holds what the workflow conditions say: small cuts go through, big ones wait', async () => {
+      const requester = await asUser();
+      const approver = await approverUser();
+      await workflowFor(requester.id, approver, 'price_list.live_change', [
+        { op: 'gt', field: 'largestCutPercent', value: 10 },
+      ]);
+      const { cust, p, pl } = await liveList();
+
+      const small = await c.pricingConfig.setLinesGated(
+        companyId,
+        pl.id,
+        [{ productId: p, price: 665 }],
+        requester,
+        reason,
+      );
+      expect(small).toMatchObject({ pending: false, replaced: 1 });
+      expect((await sell(cust.id, p)).unitPrice).toBe(665);
+
+      const big = await c.pricingConfig.setLinesGated(
+        companyId,
+        pl.id,
+        [{ productId: p, price: 500 }],
+        requester,
+        reason,
+      );
+      expect(big).toMatchObject({ pending: true });
+      expect((await sell(cust.id, p)).unitPrice).toBe(665);
+    });
+
+    it('never holds edits to a draft list, and re-sending the same price is not a change', async () => {
+      const requester = await asUser();
+      const approver = await approverUser();
+      await workflowFor(requester.id, approver, 'price_list.live_change');
+      const { p, pl } = await draftList();
+      expect(
+        await c.pricingConfig.setLinesGated(
+          companyId,
+          pl.id,
+          [{ productId: p, price: 650 }],
+          requester,
+          reason,
+        ),
+      ).toMatchObject({ pending: false, replaced: 1 });
+      await c.pricingConfig.activate(companyId, pl.id, actor, reason);
+      expect(
+        await c.pricingConfig.setLinesGated(
+          companyId,
+          pl.id,
+          [{ productId: p, price: 650 }],
+          requester,
+          reason,
+        ),
+      ).toMatchObject({ pending: false, unchanged: 1 });
+    });
+
+    it('a refused removal leaves the price in force', async () => {
+      const requester = await asUser();
+      const approver = await approverUser();
+      await workflowFor(requester.id, approver, 'price_list.live_change');
+      const { cust, p, pl } = await liveList();
+      const r = await c.pricingConfig.removeLinesGated(companyId, pl.id, [p], requester, reason);
+      expect(r).toMatchObject({ pending: true });
+      const entry = await inboxEntry(approver);
+      await tx((t) =>
+        c.approvals.reject(entry.entryId, approver, { reasonCode: 'OTHER', comment: 'Keep it' }, t),
+      );
+      c.pricing.invalidate(companyId);
+      expect((await sell(cust.id, p)).unitPrice).toBe(700);
+    });
+
+    it('holds changes to who or when a live list applies, but not a new name', async () => {
+      const requester = await asUser();
+      const approver = await approverUser();
+      await workflowFor(requester.id, approver, 'price_list.live_change', [
+        { op: 'eq', field: 'headerChange', value: true },
+      ]);
+      const { cust, p, pl } = await liveList();
+      expect(
+        await c.pricingConfig.updateListGated(
+          companyId,
+          pl.id,
+          { name: 'Renamed' },
+          requester,
+          reason,
+        ),
+      ).toMatchObject({ pending: false });
+      expect(
+        await c.pricingConfig.updateListGated(companyId, pl.id, { priority: 5 }, requester, reason),
+      ).toMatchObject({ pending: true });
+      expect((await c.pricingConfig.getList(companyId, pl.id)).priority).toBe(0);
+      const entry = await inboxEntry(approver);
+      await tx((t) => c.approvals.approve(entry.entryId, approver, null, t));
+      expect((await c.pricingConfig.getList(companyId, pl.id)).priority).toBe(5);
+      c.pricing.invalidate(companyId);
+      expect((await sell(cust.id, p)).unitPrice).toBe(700);
+    });
+
+    it('does not apply an approved change that no longer fits, so the approver sees why', async () => {
+      const requester = await asUser();
+      const approver = await approverUser();
+      await workflowFor(requester.id, approver, 'price_list.live_change');
+      const { p, pl } = await liveList();
+      await c.pricingConfig.setLinesGated(
+        companyId,
+        pl.id,
+        [{ productId: p, price: 800 }],
+        requester,
+        reason,
+      );
+      await c.pricingConfig.retire(companyId, pl.id, actor, reason);
+      const entry = await inboxEntry(approver);
+      await expect(
+        tx((t) => c.approvals.approve(entry.entryId, approver, null, t)),
+      ).rejects.toThrow(/retired/);
+    });
+
+    it('goes live straight away when no workflow applies', async () => {
+      const { cust, p, pl } = await draftList();
+      const r = await c.pricingConfig.requestActivation(companyId, pl.id, await asUser(), reason);
+      expect(r.outcome).toBe('active');
+      expect((await sell(cust.id, p)).unitPrice).toBe(700);
+    });
+
+    it("holds the list until approved, then puts it in force with the requester's reason", async () => {
+      const requester = await asUser();
+      const approver = await approverUser();
+      await workflowFor(requester.id, approver);
+      const { cust, p, pl } = await draftList();
+
+      const r = await c.pricingConfig.requestActivation(companyId, pl.id, requester, {
+        code: 'POLICY_CHANGE',
+        text: 'Q4 contract prices',
+      });
+      expect(r.outcome).toBe('pending');
+      const held = await c.pricingConfig.getList(companyId, pl.id);
+      expect(held).toMatchObject({ status: 'draft', approvalStatus: 'pending' });
+      // Nothing prices from it while it waits.
+      expect((await sell(cust.id, p)).unitPrice).toBe(1000);
+      // It cannot be changed, asked for twice, or activated around the approval.
+      await expect(
+        c.pricingConfig.setLines(companyId, pl.id, [{ productId: p, price: 1 }], actor, reason),
+      ).rejects.toMatchObject({ code: 'NOT_EDITABLE' });
+      await expect(
+        c.pricingConfig.requestActivation(companyId, pl.id, requester, reason),
+      ).rejects.toMatchObject({ code: 'NOT_EDITABLE' });
+
+      const entry = await openEntry(pl.id);
+      await tx((t) => c.approvals.approve(entry.id, approver, null, t));
+
+      const live = await c.pricingConfig.getList(companyId, pl.id);
+      expect(live).toMatchObject({ status: 'active', approvalStatus: 'none' });
+      c.pricing.invalidate(companyId);
+      expect((await sell(cust.id, p)).unitPrice).toBe(700);
+      const log = await c.decisionLog.timeline('price_list', pl.id);
+      const activated = log.find((e) => e.action === 'pricing.list_activated');
+      expect(log.map((e) => e.action)).toContain('pricing.activation_requested');
+      expect(activated).toMatchObject({ actorId: requester.id, reasonCode: 'POLICY_CHANGE' });
+      expect(activated?.reasonText).toBe('Q4 contract prices');
+    });
+
+    it('a refusal leaves a draft that can be changed and asked for again', async () => {
+      const requester = await asUser();
+      const approver = await approverUser();
+      await workflowFor(requester.id, approver);
+      const { cust, p, pl } = await draftList();
+      await c.pricingConfig.requestActivation(companyId, pl.id, requester, reason);
+
+      const entry = await openEntry(pl.id);
+      await tx((t) =>
+        c.approvals.reject(entry.id, approver, { reasonCode: 'OTHER', comment: 'Too low' }, t),
+      );
+      expect(await c.pricingConfig.getList(companyId, pl.id)).toMatchObject({
+        status: 'draft',
+        approvalStatus: 'rejected',
+      });
+      expect((await sell(cust.id, p)).unitPrice).toBe(1000);
+
+      await c.pricingConfig.setLines(
+        companyId,
+        pl.id,
+        [{ productId: p, price: 900 }],
+        actor,
+        reason,
+      );
+      const again = await c.pricingConfig.requestActivation(companyId, pl.id, requester, reason);
+      expect(again.outcome).toBe('pending');
+      const second = await openEntry(pl.id);
+      expect(second.id).not.toBe(entry.id);
+      await tx((t) => c.approvals.approve(second.id, approver, null, t));
+      c.pricing.invalidate(companyId);
+      expect((await sell(cust.id, p)).unitPrice).toBe(900);
+    });
+
+    it('withdrawing the request frees the list', async () => {
+      const requester = await asUser();
+      const approver = await approverUser();
+      await workflowFor(requester.id, approver);
+      const { pl } = await draftList();
+      await c.pricingConfig.requestActivation(companyId, pl.id, requester, reason);
+      const [request] = await c.approvals.forDocument(companyId, 'price_list', pl.id);
+      await tx((t) =>
+        c.approvals.cancel(
+          request!.submissionId,
+          { userId: requester.id },
+          { text: 'Not ready' },
+          t,
+        ),
+      );
+      expect(await c.pricingConfig.getList(companyId, pl.id)).toMatchObject({
+        status: 'draft',
+        approvalStatus: 'none',
+      });
+    });
+
+    it('voids the approval when the prices changed after it was asked for', async () => {
+      const requester = await asUser();
+      const approver = await approverUser();
+      await workflowFor(requester.id, approver);
+      const { pl } = await draftList();
+      await c.pricingConfig.requestActivation(companyId, pl.id, requester, reason);
+      // The list's only price is withdrawn behind the approval's back (as a direct write would).
+      await db
+        .update(schema.priceListLines)
+        .set({ validTo: new Date() })
+        .where(eq(schema.priceListLines.priceListId, pl.id));
+      const entry = await openEntry(pl.id);
+      const result = await tx((t) => c.approvals.approve(entry.id, approver, null, t));
+      expect(result.outcome).toBe('superseded');
+      expect(await c.pricingConfig.getList(companyId, pl.id)).toMatchObject({
+        status: 'draft',
+        approvalStatus: 'none',
+      });
+    });
+
+    it('does not release a list that would now tie with a live one, so the approver sees why', async () => {
+      const requester = await asUser();
+      const approver = await approverUser();
+      await workflowFor(requester.id, approver);
+      const { cust, p, pl } = await draftList();
+      await c.pricingConfig.requestActivation(companyId, pl.id, requester, reason);
+      // Meanwhile another list for the same customer, product and priority goes live.
+      const rival = await list(cust.id);
+      await c.pricingConfig.setLines(
+        companyId,
+        rival.id,
+        [{ productId: p, price: 650 }],
+        actor,
+        reason,
+      );
+      await c.pricingConfig.activate(companyId, rival.id, actor, reason);
+
+      const entry = await openEntry(pl.id);
+      await expect(tx((t) => c.approvals.approve(entry.id, approver, null, t))).rejects.toThrow(
+        /tie/,
+      );
+      // Nothing was recorded: still waiting, and the approver can reject instead.
+      expect(await c.pricingConfig.getList(companyId, pl.id)).toMatchObject({
+        status: 'draft',
+        approvalStatus: 'pending',
+      });
+    });
+  });
+
   describe('in sales orders and quotes', () => {
     let branchId: string;
     let requester: string;

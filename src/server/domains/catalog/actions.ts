@@ -1,6 +1,6 @@
 'use server';
 
-import { requirePermission } from '@/server/domains/access-control/guard';
+import { AccessDeniedError, requirePermission } from '@/server/domains/access-control/guard';
 import { revalidatePath } from 'next/cache';
 import { randomUUID } from 'node:crypto';
 import * as Sentry from '@sentry/nextjs';
@@ -8,6 +8,13 @@ import { auth } from '@/auth';
 import { getContainer } from '@/server/di/container';
 import { buildProductTemplateCsv, MAX_IMPORT_BYTES } from '@/lib/productCsv';
 import { CatalogService } from './service';
+import {
+  BulkDeleteError,
+  ProductBulkDelete,
+  type DeletePreview,
+  type DeleteResult,
+  type ProductSelection,
+} from './bulk-delete';
 import type { ImportJobView, StageResult } from './import-service';
 import type {
   Product,
@@ -64,6 +71,59 @@ export async function deleteProductAction(id: string): Promise<boolean> {
   revalidatePath('/admin/products');
   revalidatePath('/');
   return ok;
+}
+
+export type BulkDeleteOutcome<T> =
+  { ok: true; data: T } | { ok: false; error: string; code?: string; forbidden?: true };
+
+/** What a delete would do, shown in the confirmation before anything happens. */
+export async function previewProductDeleteAction(
+  selection: ProductSelection,
+  permanent: boolean,
+): Promise<BulkDeleteOutcome<DeletePreview>> {
+  try {
+    await requirePermission(permanent ? 'products:delete_permanently' : 'products:delete');
+    return { ok: true, data: await ProductBulkDelete.preview(selection, permanent) };
+  } catch (error: unknown) {
+    return deleteFailure(error);
+  }
+}
+
+/**
+ * Deletes the selected products: soft by default (stock history kept, SKU freed), or permanently,
+ * which needs its own permission and a reason, and is refused for products history depends on.
+ * `expectedCount` is the number the person confirmed; a different result deletes nothing.
+ */
+export async function deleteProductsAction(
+  selection: ProductSelection,
+  opts: { permanent: boolean; expectedCount: number; reason?: string },
+): Promise<BulkDeleteOutcome<DeleteResult>> {
+  try {
+    const actorId = await requirePermission(
+      opts.permanent ? 'products:delete_permanently' : 'products:delete',
+    );
+    const result = await ProductBulkDelete.delete(selection, { ...opts, actorId });
+    revalidatePath('/admin/products');
+    revalidatePath('/admin/inventory');
+    revalidatePath('/');
+    return { ok: true, data: result };
+  } catch (error: unknown) {
+    return deleteFailure(error);
+  }
+}
+
+function deleteFailure(error: unknown): {
+  ok: false;
+  error: string;
+  code?: string;
+  forbidden?: true;
+} {
+  if (error instanceof BulkDeleteError)
+    return { ok: false, error: error.message, code: error.code };
+  if (error instanceof AccessDeniedError)
+    return { ok: false, error: 'You do not have permission to do that.', forbidden: true };
+  Sentry.captureException(error);
+  return { ok: false, error: 'The products could not be deleted. Nothing further was changed.' };
 }
 
 export async function listCategoriesAction(): Promise<Category[]> {

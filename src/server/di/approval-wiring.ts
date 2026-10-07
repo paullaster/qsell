@@ -2,6 +2,7 @@ import { drizzleDb } from '@/server/db/drizzle/client';
 import type { ApprovalEngine } from '@/server/kernel/approvals/engine';
 import type { ParkedActions } from '@/server/kernel/approvals/parked-actions';
 import { orderApprovalHandler } from '@/server/domains/orders/approval';
+import { priceChangeExecutors, priceListApprovalHandler } from '@/server/domains/pricing/approval';
 import { quoteApprovalHandler } from '@/server/domains/quotes/approval';
 import type { CreditNoteReason } from '@/server/domains/credit-notes/reasons';
 import type { StockOp } from '@/server/domains/inventory/service';
@@ -14,6 +15,9 @@ import type { StockOp } from '@/server/domains/inventory/service';
 export function registerApprovalHandlers(engine: ApprovalEngine, gate: ParkedActions): void {
   engine.registerDocument('sales_order', orderApprovalHandler(drizzleDb));
   engine.registerDocument('sales_quote', quoteApprovalHandler(drizzleDb));
+  engine.registerDocument('price_list', priceListApprovalHandler(drizzleDb));
+
+  gate.attach('price_list_change', priceChangeExecutors());
 
   gate.attach('credit_note', {
     order_credit_note: {

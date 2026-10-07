@@ -6,6 +6,7 @@ import {
   customerGroupMembers,
   customerGroups,
   customers,
+  decisionLog,
   priceListLines,
   priceLists,
   priceSpecificityWeights,
@@ -23,6 +24,9 @@ import {
   type SpecificityWeights,
   type Tier,
 } from './domain/types';
+import { afterCommit, withAfterCommit } from '@/server/kernel/after-commit';
+import type { ApprovalEngine, Tx } from '@/server/kernel/approvals/engine';
+import type { ParkedActions } from '@/server/kernel/approvals/parked-actions';
 import type { PricingService } from './service';
 
 export class PricingConfigError extends Error {
@@ -42,6 +46,9 @@ export class PricingConfigError extends Error {
     this.name = 'PricingConfigError';
   }
 }
+
+/** A change that was made now, or held for approval. */
+export type Gated<T> = ({ pending: false } & T) | { pending: true; message: string };
 
 export type ListRow = typeof priceLists.$inferSelect;
 export type LineRow = typeof priceListLines.$inferSelect;
@@ -81,6 +88,16 @@ const sameTiers = (a: Tier[], b: Tier[]) =>
   a.length === b.length &&
   a.every((t, i) => t.fromQty === b[i]!.fromQty && t.price === b[i]!.price);
 
+/** The price in force already is exactly what is being asked for (so sending it again changes nothing). */
+const isSamePrice = (inForce: LineRow, input: LineInput, tiers: Tier[]) =>
+  Number(inForce.price) === input.price &&
+  same(inForce.floorPrice == null ? null : Number(inForce.floorPrice), input.floorPrice ?? null) &&
+  sameTiers(
+    (inForce.tiers ?? []).map((t) => ({ fromQty: Number(t.fromQty), price: Number(t.price) })),
+    tiers,
+  ) &&
+  (inForce.lockedUntil?.getTime() ?? null) === (input.lockedUntil?.getTime() ?? null);
+
 /**
  * Everything an administrator can change about pricing. Each change needs a reason from the
  * reason catalogue and is written to the decision log; prices are never edited in place, they are
@@ -92,6 +109,8 @@ export class PricingConfigService {
     private readonly decisions: DecisionLog,
     private readonly reasons: ReasonCodes,
     private readonly pricing: PricingService,
+    private readonly approvals: ApprovalEngine,
+    private readonly gate: ParkedActions,
   ) {}
 
   private why(companyId: string, reason: Why) {
@@ -278,11 +297,11 @@ export class PricingConfigService {
    * Changes how a list behaves. Each change adds a version. On a list in force this changes
    * live prices, so the same checks as activation run again.
    */
-  async updateList(
+  /** What a header change would do, and everything that can be refused about it, before it is held or written. */
+  private async planListUpdate(
     companyId: string,
     id: string,
     patch: Partial<Omit<ListInput, 'code' | 'currency' | 'kind'>>,
-    actor: Actor,
     reason: Why,
   ) {
     const why = await this.why(companyId, reason);
@@ -318,9 +337,21 @@ export class PricingConfigService {
     const changed = Object.entries(next).filter(
       ([k, v]) => JSON.stringify(v) !== JSON.stringify((current as Record<string, unknown>)[k]),
     );
+    return { why, current, next, changed };
+  }
+
+  async updateList(
+    companyId: string,
+    id: string,
+    patch: Partial<Omit<ListInput, 'code' | 'currency' | 'kind'>>,
+    actor: Actor,
+    reason: Why,
+    writer?: Tx,
+  ) {
+    const { why, current, next, changed } = await this.planListUpdate(companyId, id, patch, reason);
     if (changed.length === 0) return current;
 
-    const row = await this.db.transaction(async (tx) => {
+    const row = await this.inTx(writer, companyId, async (tx) => {
       const [updated] = await tx
         .update(priceLists)
         .set({ ...next, version: current.version + 1, updatedAt: new Date() })
@@ -344,8 +375,233 @@ export class PricingConfigService {
       );
       return updated!;
     });
-    this.pricing.invalidate(companyId);
     return row;
+  }
+
+  /** Runs a change in the caller's transaction (an approval releasing it) or in its own; the cache is cleared once it has committed. */
+  private async inTx<T>(writer: Tx | undefined, companyId: string, fn: (tx: Tx) => Promise<T>) {
+    if (writer) {
+      const result = await fn(writer);
+      afterCommit(writer, () => this.pricing.invalidate(companyId));
+      return result;
+    }
+    const result = await this.db.transaction(fn);
+    this.pricing.invalidate(companyId);
+    return result;
+  }
+
+  // ── Changes to a list in force, with approval ───────────────────────────
+
+  /**
+   * Sets prices. On a list in force this may need approval: the facts approvers' conditions look at
+   * are worked out here (how many prices change, the biggest rise and cut), and if a workflow
+   * applies the change is held and applied when it is approved. A draft list is never held.
+   */
+  async setLinesGated(
+    companyId: string,
+    id: string,
+    rows: LineInput[],
+    actor: { type: 'user'; id: string },
+    reason: Why,
+    opts: { validFrom?: Date; overrideLock?: boolean } = {},
+  ): Promise<Gated<Awaited<ReturnType<PricingConfigService['setLines']>>>> {
+    const { why, list, now, start, byProduct, ids } = await this.checkLines(
+      companyId,
+      id,
+      rows,
+      reason,
+      opts,
+    );
+    const direct = async () => ({
+      pending: false as const,
+      ...(await this.setLines(companyId, id, rows, actor, why, opts)),
+    });
+    if (list.status !== 'active') return direct();
+
+    const open = await this.db
+      .select()
+      .from(priceListLines)
+      .where(
+        and(
+          eq(priceListLines.priceListId, id),
+          inArray(priceListLines.productId, ids),
+          or(isNull(priceListLines.validTo), gt(priceListLines.validTo, start)),
+        ),
+      );
+    let changed = 0;
+    let added = 0;
+    let largestRise = 0;
+    let largestCut = 0;
+    for (const [pid, input] of byProduct) {
+      const tiers = [...(input.tiers ?? [])].sort((a, b) => a.fromQty - b.fromQty);
+      const mine = open.filter((r) => r.productId === pid);
+      const inForce = mine.find(
+        (r) => r.validFrom <= start && (r.validTo === null || r.validTo > start),
+      );
+      if (inForce && mine.every((r) => r === inForce) && isSamePrice(inForce, input, tiers))
+        continue;
+      if (inForce?.lockedUntil && inForce.lockedUntil > now && !opts.overrideLock)
+        throw new PricingConfigError(
+          'LOCKED',
+          `The price of ${pid} is locked until ${inForce.lockedUntil.toISOString().slice(0, 10)}.`,
+        );
+      changed++;
+      if (!inForce) added++;
+      else if (Number(inForce.price) > 0) {
+        const pct = ((input.price - Number(inForce.price)) / Number(inForce.price)) * 100;
+        largestRise = Math.max(largestRise, pct);
+        largestCut = Math.max(largestCut, -pct);
+      }
+    }
+    if (changed === 0) return direct();
+
+    const round1 = (n: number) => Math.round(n * 10) / 10;
+    const outcome = await this.gate.gate(
+      {
+        trigger: 'price_list.live_change',
+        companyId,
+        requestedBy: actor.id,
+        amount: 0,
+        facts: {
+          changedLines: changed,
+          largestRisePercent: round1(largestRise),
+          largestCutPercent: round1(largestCut),
+          newProducts: added,
+          removesPrices: false,
+          headerChange: false,
+          listKind: list.kind,
+          listCode: list.code,
+        },
+        action: 'set_lines',
+        payload: {
+          listId: id,
+          rows: rows.map((r) => ({ ...r, lockedUntil: r.lockedUntil?.toISOString() ?? null })),
+          reason: why,
+          validFrom: opts.validFrom?.toISOString() ?? null,
+          overrideLock: opts.overrideLock === true,
+        },
+        summary: `Change ${changed.toLocaleString('en-KE')} live price${changed === 1 ? '' : 's'} on ${list.code} (${list.name}): ${added} new, largest rise ${round1(largestRise)}%, largest cut ${round1(largestCut)}%. Reason: ${why.code.replace(/_/g, ' ').toLowerCase()}${why.text ? ` — ${why.text}` : ''}.`,
+      },
+      direct,
+    );
+    return outcome.parked ? { pending: true, message: outcome.message } : outcome.value;
+  }
+
+  /** Stops pricing products on a list. On a list in force this may need approval. */
+  async removeLinesGated(
+    companyId: string,
+    id: string,
+    productIds: string[],
+    actor: { type: 'user'; id: string },
+    reason: Why,
+    opts: { overrideLock?: boolean } = {},
+  ): Promise<Gated<{ removed: number }>> {
+    const why = await this.why(companyId, reason);
+    const list = await this.getList(companyId, id);
+    const direct = async () => ({
+      pending: false as const,
+      ...(await this.removeLines(companyId, id, productIds, actor, why, opts)),
+    });
+    if (list.status !== 'active') return direct();
+    if (productIds.length === 0 || productIds.length > MAX_LINES_PER_CALL)
+      throw new PricingConfigError('INVALID', 'Choose the products to remove.');
+    const open = await this.db
+      .select()
+      .from(priceListLines)
+      .where(
+        and(
+          eq(priceListLines.priceListId, id),
+          inArray(priceListLines.productId, productIds),
+          isNull(priceListLines.validTo),
+        ),
+      );
+    const locked = open.find((r) => r.lockedUntil && r.lockedUntil > new Date());
+    if (locked && !opts.overrideLock)
+      throw new PricingConfigError('LOCKED', `The price of ${locked.productId} is locked.`);
+    if (open.length === 0) return direct();
+    const outcome = await this.gate.gate(
+      {
+        trigger: 'price_list.live_change',
+        companyId,
+        requestedBy: actor.id,
+        amount: 0,
+        facts: {
+          changedLines: open.length,
+          largestRisePercent: 0,
+          largestCutPercent: 0,
+          newProducts: 0,
+          removesPrices: true,
+          headerChange: false,
+          listKind: list.kind,
+          listCode: list.code,
+        },
+        action: 'remove_lines',
+        payload: {
+          listId: id,
+          productIds,
+          reason: why,
+          overrideLock: opts.overrideLock === true,
+        },
+        summary: `Stop pricing ${open.length.toLocaleString('en-KE')} product${open.length === 1 ? '' : 's'} on ${list.code} (${list.name}); they fall back to other lists or the standard price. Reason: ${why.code.replace(/_/g, ' ').toLowerCase()}${why.text ? ` — ${why.text}` : ''}.`,
+      },
+      direct,
+    );
+    return outcome.parked ? { pending: true, message: outcome.message } : outcome.value;
+  }
+
+  /**
+   * Changes how a list behaves. On a list in force, a change to who it applies to, its priority,
+   * dates, tax basis or quantity rule moves live prices, so it may need approval; a new name or
+   * description never does.
+   */
+  async updateListGated(
+    companyId: string,
+    id: string,
+    patch: Partial<Omit<ListInput, 'code' | 'currency' | 'kind'>>,
+    actor: { type: 'user'; id: string },
+    reason: Why,
+  ): Promise<Gated<{ version: number }>> {
+    const direct = async () => ({
+      pending: false as const,
+      version: (await this.updateList(companyId, id, patch, actor, reason)).version,
+    });
+    const { why, current, changed } = await this.planListUpdate(companyId, id, patch, reason);
+    const affectsPrices = changed.filter(([k]) => k !== 'name' && k !== 'description');
+    if (current.status !== 'active' || affectsPrices.length === 0) return direct();
+    const fields = affectsPrices.map(([k]) => k);
+    const outcome = await this.gate.gate(
+      {
+        trigger: 'price_list.live_change',
+        companyId,
+        requestedBy: actor.id,
+        amount: 0,
+        facts: {
+          changedLines: 0,
+          largestRisePercent: 0,
+          largestCutPercent: 0,
+          newProducts: 0,
+          removesPrices: false,
+          headerChange: true,
+          changedFields: fields.join(','),
+          listKind: current.kind,
+          listCode: current.code,
+        },
+        action: 'update_list',
+        payload: {
+          listId: id,
+          patch: {
+            ...patch,
+            validFrom: patch.validFrom?.toISOString(),
+            validTo:
+              patch.validTo === undefined ? undefined : (patch.validTo?.toISOString() ?? null),
+          },
+          reason: why,
+        },
+        summary: `Change how live price list ${current.code} (${current.name}) applies: ${fields.join(', ')}. Reason: ${why.code.replace(/_/g, ' ').toLowerCase()}${why.text ? ` — ${why.text}` : ''}.`,
+      },
+      direct,
+    );
+    return outcome.parked ? { pending: true, message: outcome.message } : outcome.value;
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────────────
@@ -419,8 +675,126 @@ export class PricingConfigService {
     return issues;
   }
 
-  /** Puts the list in force. Called directly, or by the approval workflow once it releases. */
-  async activate(companyId: string, id: string, actor: Actor, reason: Why, writer?: DrizzleDb) {
+  /**
+   * Asks for a draft list to be put in force. If an approval workflow applies to it, the list is
+   * held (nothing prices from it) until the approvers release it; otherwise it goes live now,
+   * exactly as `activate` does. The requester's reason is kept in the decision log and reused when
+   * the approval releases the list.
+   */
+  async requestActivation(
+    companyId: string,
+    id: string,
+    actor: { type: 'user'; id: string },
+    reason: Why,
+  ): Promise<
+    | { outcome: 'active'; version: number }
+    | { outcome: 'pending'; version: number; message: string }
+  > {
+    const why = await this.why(companyId, reason);
+    const list = await this.getList(companyId, id);
+    if (list.approvalStatus === 'pending')
+      throw new PricingConfigError(
+        'NOT_EDITABLE',
+        'This price list is already waiting for approval.',
+      );
+    if (list.status !== 'draft')
+      throw new PricingConfigError('NOT_EDITABLE', 'Only a draft price list can be put in force.');
+    const issues = await this.activationIssues(companyId, id);
+    if (issues.length) throw new PricingConfigError('INVALID', issues[0]!.message, issues);
+
+    const request = await this.approvalRequest(companyId, id, actor.id);
+    if (!(await this.approvals.wouldRequire(request))) {
+      const row = await this.activate(companyId, id, actor, why);
+      return { outcome: 'active', version: row.version };
+    }
+
+    const held = await withAfterCommit(this.db, async (tx) => {
+      // Held first, in the same transaction as the request, so no sale can use a list that is
+      // waiting. Nothing else may have started a request since the check above.
+      const claimed = await tx
+        .update(priceLists)
+        .set({ approvalStatus: 'pending', updatedAt: new Date() })
+        .where(and(eq(priceLists.id, id), ne(priceLists.approvalStatus, 'pending')))
+        .returning({ id: priceLists.id });
+      if (claimed.length === 0)
+        throw new PricingConfigError(
+          'CONFLICT',
+          'This price list is already waiting for approval.',
+        );
+      // An earlier refusal no longer matters: the author has changed the list and asks again.
+      await this.approvals.supersedePending(
+        companyId,
+        'price_list',
+        id,
+        { userId: actor.id },
+        'Asked again.',
+        tx,
+        true,
+      );
+      await this.decisions.record(
+        {
+          companyId,
+          actor,
+          subject: { type: 'price_list', id },
+          action: 'pricing.activation_requested',
+          reason: why,
+          from: 'draft',
+          to: 'pending_approval',
+          inputs: { changedLines: request.snapshot.changedLines },
+        },
+        tx,
+      );
+      const outcome = await this.approvals.submit(request, tx);
+      if (!outcome.required) {
+        // The rules changed a moment ago: nothing needs approval after all.
+        await tx.update(priceLists).set({ approvalStatus: 'none' }).where(eq(priceLists.id, id));
+        return false;
+      }
+      return true;
+    });
+    if (!held) {
+      const row = await this.activate(companyId, id, actor, why);
+      return { outcome: 'active', version: row.version };
+    }
+    // The approval may have been released straight away (every step skipped).
+    const after = await this.getList(companyId, id);
+    this.pricing.invalidate(companyId);
+    if (after.status === 'active') return { outcome: 'active', version: after.version };
+    return {
+      outcome: 'pending',
+      version: after.version,
+      message:
+        'Sent for approval. The list goes live as soon as it is approved; follow it under My requests.',
+    };
+  }
+
+  private async approvalRequest(companyId: string, id: string, requestedBy: string) {
+    return {
+      companyId,
+      trigger: 'price_list.publish',
+      documentId: id,
+      branchId: null,
+      requestedBy,
+      amount: 0,
+      snapshot: { changedLines: await this.openLineCount(id) },
+    };
+  }
+
+  private openLineCount(id: string): Promise<number> {
+    return this.openLineCountIn(this.db, id);
+  }
+
+  /**
+   * Puts the list in force. Called directly, or by the approval workflow once it releases (with the
+   * approver's transaction as `writer`, so the list goes live in the same commit as the approval).
+   */
+  async activate(
+    companyId: string,
+    id: string,
+    actor: Actor,
+    reason: Why,
+    writer?: Pick<DrizzleDb, 'update' | 'insert'>,
+  ) {
     const why = await this.why(companyId, reason);
     const issues = await this.activationIssues(companyId, id);
     if (issues.length) throw new PricingConfigError('INVALID', issues[0]!.message, issues);
@@ -445,9 +819,89 @@ export class PricingConfigService {
       );
       return row!;
     };
-    const row = writer ? await run(writer) : await this.db.transaction(run);
+    if (writer) {
+      const row = await run(writer);
+      // Only once the approval's transaction has committed does the list really exist as active.
+      afterCommit(writer, () => this.pricing.invalidate(companyId));
+      return row;
+    }
+    const row = await this.db.transaction(run);
     this.pricing.invalidate(companyId);
     return row;
+  }
+
+  /** What an approval does to a list: held, released, refused, reopened or withdrawn. */
+  async setApprovalState(tx: Pick<DrizzleDb, 'update'>, id: string, state: 'none' | 'rejected') {
+    await tx
+      .update(priceLists)
+      .set({ approvalStatus: state, updatedAt: new Date() })
+      .where(eq(priceLists.id, id));
+  }
+
+  /** Names for the customers, groups and branches that lists are limited to. */
+  async scopeNames(lists: Array<{ scopes: Scopes }>) {
+    const collect = (d: keyof Scopes) => [
+      ...new Set(lists.flatMap((l) => l.scopes[d]?.values ?? [])),
+    ];
+    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const ok = (ids: string[]) => ids.filter((i) => UUID.test(i));
+    const [c, g, b] = [
+      ok(collect('customer')),
+      ok(collect('customer_group')),
+      ok(collect('branch')),
+    ];
+    const [cs, gs, bs] = await Promise.all([
+      c.length
+        ? this.db
+            .select({ id: customers.id, name: customers.name })
+            .from(customers)
+            .where(inArray(customers.id, c))
+        : [],
+      g.length
+        ? this.db
+            .select({ id: customerGroups.id, name: customerGroups.name })
+            .from(customerGroups)
+            .where(inArray(customerGroups.id, g))
+        : [],
+      b.length
+        ? this.db
+            .select({ id: branches.id, name: branches.name })
+            .from(branches)
+            .where(inArray(branches.id, b))
+        : [],
+    ]);
+    const map = (rows: { id: string; name: string }[]) =>
+      Object.fromEntries(rows.map((r) => [r.id, r.name]));
+    return { customer: map(cs), customer_group: map(gs), branch: map(bs) };
+  }
+
+  async openLineCountIn(db: Pick<DrizzleDb, 'select'>, id: string): Promise<number> {
+    const [row] = await db
+      .select({ n: count() })
+      .from(priceListLines)
+      .where(and(eq(priceListLines.priceListId, id), isNull(priceListLines.validTo)));
+    return Number(row?.n ?? 0);
+  }
+
+  /** The reason the requester gave, kept when they asked, to be recorded when the approval releases. */
+  async requestedWith(tx: Pick<DrizzleDb, 'select'>, id: string) {
+    const [row] = await tx
+      .select({
+        code: decisionLog.reasonCode,
+        text: decisionLog.reasonText,
+        actorId: decisionLog.actorId,
+      })
+      .from(decisionLog)
+      .where(
+        and(
+          eq(decisionLog.subjectType, 'price_list'),
+          eq(decisionLog.subjectId, id),
+          eq(decisionLog.action, 'pricing.activation_requested'),
+        ),
+      )
+      .orderBy(desc(decisionLog.occurredAt))
+      .limit(1);
+    return row ?? null;
   }
 
   async retire(companyId: string, id: string, actor: Actor, reason: Why) {
@@ -534,13 +988,13 @@ export class PricingConfigService {
    * added, so history is kept. A price starts now (or later), never in the past. A product whose
    * price is already exactly as given is left alone, so sending a file twice changes nothing.
    */
-  async setLines(
+  /** Everything that can be refused about a batch of prices, before anything is held or written. */
+  private async checkLines(
     companyId: string,
     id: string,
     rows: LineInput[],
-    actor: Actor,
     reason: Why,
-    opts: { validFrom?: Date; overrideLock?: boolean } = {},
+    opts: { validFrom?: Date },
   ) {
     const why = await this.why(companyId, reason);
     const list = await this.getList(companyId, id);
@@ -599,8 +1053,26 @@ export class PricingConfigService {
       const ties = await this.tiesForProducts(companyId, list, ids);
       if (ties.length) throw new PricingConfigError('CONFLICT', ties[0]!.message, ties);
     }
+    return { why, list, now, start, byProduct, ids };
+  }
 
-    const result = await this.db.transaction(async (tx) => {
+  async setLines(
+    companyId: string,
+    id: string,
+    rows: LineInput[],
+    actor: Actor,
+    reason: Why,
+    opts: { validFrom?: Date; overrideLock?: boolean; writer?: Tx } = {},
+  ) {
+    const { why, list, now, start, byProduct, ids } = await this.checkLines(
+      companyId,
+      id,
+      rows,
+      reason,
+      opts,
+    );
+
+    const result = await this.inTx(opts.writer, companyId, async (tx) => {
       const open = await tx
         .select()
         .from(priceListLines)
@@ -628,23 +1100,7 @@ export class PricingConfigService {
           (r) => r.validFrom <= start && (r.validTo === null || r.validTo > start),
         );
         const scheduled = rowsFor.filter((r) => r.validFrom > start);
-        if (
-          inForce &&
-          scheduled.length === 0 &&
-          Number(inForce.price) === input.price &&
-          same(
-            inForce.floorPrice == null ? null : Number(inForce.floorPrice),
-            input.floorPrice ?? null,
-          ) &&
-          sameTiers(
-            (inForce.tiers ?? []).map((t) => ({
-              fromQty: Number(t.fromQty),
-              price: Number(t.price),
-            })),
-            tiers,
-          ) &&
-          (inForce.lockedUntil?.getTime() ?? null) === (input.lockedUntil?.getTime() ?? null)
-        ) {
+        if (inForce && scheduled.length === 0 && isSamePrice(inForce, input, tiers)) {
           unchanged++;
           continue;
         }
@@ -699,7 +1155,6 @@ export class PricingConfigService {
       }
       return { created, replaced, unchanged };
     });
-    this.pricing.invalidate(companyId);
     return result;
   }
 
@@ -710,7 +1165,7 @@ export class PricingConfigService {
     productIds: string[],
     actor: Actor,
     reason: Why,
-    opts: { overrideLock?: boolean } = {},
+    opts: { overrideLock?: boolean; writer?: Tx } = {},
   ) {
     const why = await this.why(companyId, reason);
     const list = await this.getList(companyId, id);
@@ -719,7 +1174,7 @@ export class PricingConfigService {
     if (productIds.length === 0 || productIds.length > MAX_LINES_PER_CALL)
       throw new PricingConfigError('INVALID', 'Choose the products to remove.');
     const now = new Date();
-    const removed = await this.db.transaction(async (tx) => {
+    const removed = await this.inTx(opts.writer, companyId, async (tx) => {
       const open = await tx
         .select()
         .from(priceListLines)
@@ -755,7 +1210,6 @@ export class PricingConfigService {
       }
       return open.length;
     });
-    this.pricing.invalidate(companyId);
     return { removed };
   }
 
