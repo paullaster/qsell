@@ -2,7 +2,9 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { getContainer } from '@/server/di/container';
 import { drizzleDb } from '@/server/db/drizzle/client';
 import { inventoryMovements, products } from '@/server/db/drizzle/schema';
+import { randomUUID } from 'node:crypto';
 import { broadcastRealtime } from '@/server/realtime';
+import { businessDate } from '@/server/kernel/numbering/business-date';
 import type {
   Product,
   ProductPatch,
@@ -93,14 +95,17 @@ export class CatalogService {
     if (!itemType) {
       throw new Error('Create an item type first, then assign it to this product');
     }
-    if (!productData.sku.trim()) throw new Error('SKU code is required');
-    if (!productData.stockCode.trim()) throw new Error('Stock code is required');
+    // A blank SKU or stock code is numbered by its series when the product is saved (below).
 
     const isSellable = itemType.isSellable;
     let price: number | undefined;
 
     if (isSellable) {
-      if (productData.price == null || !Number.isFinite(Number(productData.price)) || Number(productData.price) <= 0) {
+      if (
+        productData.price == null ||
+        !Number.isFinite(Number(productData.price)) ||
+        Number(productData.price) <= 0
+      ) {
         throw new Error('Selling price is required for sellable item types');
       }
       price = Number(productData.price);
@@ -111,7 +116,11 @@ export class CatalogService {
       }
     }
 
-    if (productData.costPrice == null || !Number.isFinite(Number(productData.costPrice)) || Number(productData.costPrice) < 0) {
+    if (
+      productData.costPrice == null ||
+      !Number.isFinite(Number(productData.costPrice)) ||
+      Number(productData.costPrice) < 0
+    ) {
       throw new Error('Cost of goods is required');
     }
 
@@ -124,8 +133,8 @@ export class CatalogService {
       ...fields,
       id,
       slug: await resolveUniqueSlug(productData.slug || productData.name),
-      sku: productData.sku.trim().toUpperCase(),
-      stockCode: productData.stockCode.trim().toUpperCase(),
+      sku: (productData.sku ?? '').trim().toUpperCase(),
+      stockCode: (productData.stockCode ?? '').trim().toUpperCase(),
       price,
       costPrice: Number(productData.costPrice),
       itemTypeId: itemType.id,
@@ -142,7 +151,25 @@ export class CatalogService {
 
     // One transaction: a product must never exist with stock the ledger can't explain.
     const mediaService = getContainer().media;
+    // Looked up before the transaction opens: needing it inside would take a second connection.
+    const companyId =
+      row.sku === '' || row.stockCode === ''
+        ? (await getContainer().companySettings.ensureSeeded()).id
+        : '';
     await drizzleDb.transaction(async (tx) => {
+      for (const [field, kind] of [
+        ['sku', 'product_sku'],
+        ['stockCode', 'product_stock_code'],
+      ] as const) {
+        if (row[field] !== '') continue;
+        const { number } = await getContainer().numbering.assign(
+          kind,
+          { companyId, date: businessDate(), document: { kind, id } },
+          tx,
+        );
+        row[field] = number.toUpperCase();
+        newProduct[field] = row[field];
+      }
       await tx.insert(products).values(row);
       // The gallery commits with the product. Callers that only know image links
       // (API, CSV-style input) still get proper assets so the model stays consistent.
@@ -277,6 +304,9 @@ export class CatalogService {
     // One transaction: the field update and the stock movement succeed or fail together.
     const { applyStockDelta } = await import('@/server/domains/inventory/service');
     const mediaService = getContainer().media;
+    // Looked up before the transaction opens: needing it inside would take a second connection.
+    const stockCompanyId =
+      stockChange !== undefined ? (await getContainer().companySettings.ensureSeeded()).id : '';
     await drizzleDb.transaction(async (tx) => {
       await tx
         .update(products)
@@ -292,7 +322,17 @@ export class CatalogService {
           delta: 0,
           setTo: stockChange,
           changeType: 'manual_adjustment',
-          referenceId: `ADJ-${Date.now()}`,
+          referenceId: (
+            await getContainer().numbering.assign(
+              'stock_adjustment',
+              {
+                companyId: stockCompanyId,
+                date: businessDate(),
+                document: { kind: 'stock_adjustment', id: randomUUID() },
+              },
+              tx,
+            )
+          ).number,
           actor: 'admin',
           note: 'Updated via Product Edit Modal',
         });

@@ -13,6 +13,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
@@ -61,6 +63,7 @@
     "tailwindcss": "^4.1.14",
     "tsx": "^4.23.13",
     "typescript": "~5.8.2",
-    "typescript-eslint": "^8.46.2"
+    "typescript-eslint": "^8.46.2",
+    "vitest": "^5.0.3"
   }
 }

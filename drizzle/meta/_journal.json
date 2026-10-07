@@ -176,6 +176,41 @@
       "when": 1791305990870,
       "tag": "0024_credit_notes",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1791317621572,
+      "tag": "0025_kernel_decision_log_number_series",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1791342532733,
+      "tag": "0026_approvals_engine",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1791348993066,
+      "tag": "0027_approvals_escalation",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1791352433294,
+      "tag": "0028_approvals_wiring",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1791359752983,
+      "tag": "0029_quote_approval_source",
+      "breakpoints": true
     }
   ]
 }

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
@@ -13,6 +14,8 @@ import {
   type DimensionCodesProjection,
 } from '@/server/db/drizzle/schema';
 import { shownPaymentReference } from '@/lib/paymentReference';
+import { getContainer } from '@/server/di/container';
+import { businessDate } from '@/server/kernel/numbering/business-date';
 import { emptyDimensionCodes } from '@/server/domains/dimensions/projection';
 import type { DimensionSetService } from '@/server/domains/dimensions/set-service';
 import type { TransactionLedgerService } from '@/server/domains/transactions/ledger-service';
@@ -76,7 +79,11 @@ export class CustomerMasterService {
     if (!code) throw new Error('Profile code is required.');
     if (!name) throw new Error('Profile name is required.');
     this.assertAccountType(input.accountType);
-    const normalized = this.normalizeTerms(input.accountType, input.creditLimit, input.paymentTermDays);
+    const normalized = this.normalizeTerms(
+      input.accountType,
+      input.creditLimit,
+      input.paymentTermDays,
+    );
 
     const values = {
       code,
@@ -205,11 +212,20 @@ export class CustomerMasterService {
       return updated;
     }
 
-    const number = await this.nextNumber(companyId);
-    const [created] = await this.db
-      .insert(customers)
-      .values({ companyId, number, balance: '0', ...values })
-      .returning();
+    // Numbered by the customer series in the same transaction that saves the customer. (This used
+    // to be count(*)+1, which two simultaneous sign-ups could both read.)
+    const customerId = randomUUID();
+    const [created] = await this.db.transaction(async (tx) => {
+      const { number } = await getContainer().numbering.assign(
+        'customer',
+        { companyId, date: businessDate(), document: { kind: 'customer', id: customerId } },
+        tx,
+      );
+      return tx
+        .insert(customers)
+        .values({ id: customerId, companyId, number, balance: '0', ...values })
+        .returning();
+    });
     await this.syncDefaultAddressFromCard(created!);
     return created!;
   }
@@ -290,9 +306,7 @@ export class CustomerMasterService {
       .set({
         label: input.label !== undefined ? input.label.trim() || existing.label : existing.label,
         recipientName:
-          input.recipientName !== undefined
-            ? input.recipientName.trim()
-            : existing.recipientName,
+          input.recipientName !== undefined ? input.recipientName.trim() : existing.recipientName,
         recipientPhone:
           input.recipientPhone !== undefined
             ? input.recipientPhone.trim()
@@ -300,13 +314,9 @@ export class CustomerMasterService {
         street: input.street !== undefined ? input.street.trim() : existing.street,
         city: input.city !== undefined ? input.city.trim() : existing.city,
         countyOrState:
-          input.countyOrState !== undefined
-            ? input.countyOrState.trim()
-            : existing.countyOrState,
+          input.countyOrState !== undefined ? input.countyOrState.trim() : existing.countyOrState,
         postalCode:
-          input.postalCode !== undefined
-            ? input.postalCode?.trim() || null
-            : existing.postalCode,
+          input.postalCode !== undefined ? input.postalCode?.trim() || null : existing.postalCode,
         country: input.country !== undefined ? input.country.trim() : existing.country,
         isDefault: input.isDefault === true ? true : existing.isDefault,
         updatedAt: new Date(),
@@ -331,7 +341,9 @@ export class CustomerMasterService {
 
     await this.db
       .delete(customerAddresses)
-      .where(and(eq(customerAddresses.id, addressId), eq(customerAddresses.customerId, customerId)));
+      .where(
+        and(eq(customerAddresses.id, addressId), eq(customerAddresses.customerId, customerId)),
+      );
 
     if (target.isDefault) {
       const remaining = rows.filter((row) => row.id !== addressId);
@@ -454,6 +466,8 @@ export class CustomerMasterService {
     buyerKraPin?: string | null;
     amount: number;
     onAccount: boolean;
+    /** Let an order over the credit limit through; the caller must then get it approved. */
+    allowOverLimit?: boolean;
   }): Promise<CustomerRow> {
     let customer = await this.lookupByEmail(input.companyId, input.email);
     const pin = input.buyerKraPin?.trim().toUpperCase() || null;
@@ -521,7 +535,7 @@ export class CustomerMasterService {
 
     if (customer.accountType === 'credit') {
       const nextBalance = num(customer.balance) + input.amount;
-      if (nextBalance > num(customer.creditLimit)) {
+      if (nextBalance > num(customer.creditLimit) && !input.allowOverLimit) {
         throw new Error(
           `${customer.name} would exceed the credit limit of ${num(customer.creditLimit).toLocaleString()}.`,
         );
@@ -626,7 +640,8 @@ export class CustomerMasterService {
     const found = await this.getCustomer(companyId, customerId);
     if (!found) throw new Error('Customer not found.');
     const amount = Math.round(input.amount * 100) / 100;
-    if (!Number.isFinite(amount) || amount <= 0) throw new Error('Payment amount must be greater than 0.');
+    if (!Number.isFinite(amount) || amount <= 0)
+      throw new Error('Payment amount must be greater than 0.');
 
     const open = found.ledger
       .filter((entry) => entry.documentType === 'invoice' && num(entry.remainingAmount) > 0)
@@ -696,7 +711,10 @@ export class CustomerMasterService {
     return updated!;
   }
 
-  private async currencyForPosting(explicit: string | undefined, orderId?: string | null): Promise<string> {
+  private async currencyForPosting(
+    explicit: string | undefined,
+    orderId?: string | null,
+  ): Promise<string> {
     const given = explicit?.trim();
     if (given) return given.toUpperCase();
     if (orderId) {
@@ -717,7 +735,11 @@ export class CustomerMasterService {
     }
   }
 
-  private normalizeTerms(accountType: CustomerAccountType, creditLimit: number, paymentTermDays: number) {
+  private normalizeTerms(
+    accountType: CustomerAccountType,
+    creditLimit: number,
+    paymentTermDays: number,
+  ) {
     if (accountType === 'cash') return { creditLimit: 0, paymentTermDays: 0 };
     if (!Number.isFinite(creditLimit) || creditLimit < 0) {
       throw new Error('Credit limit must be 0 or greater.');
@@ -733,15 +755,6 @@ export class CustomerMasterService {
     if (existing && existing.id !== exceptId) {
       throw new Error(`A customer with email ${email} already exists (${existing.number}).`);
     }
-  }
-
-  private async nextNumber(companyId: string): Promise<string> {
-    const [row] = await this.db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(customers)
-      .where(eq(customers.companyId, companyId));
-    const n = (row?.count ?? 0) + 1;
-    return `C${String(n).padStart(5, '0')}`;
   }
 
   /** Mirror default address onto the customer card fields used by admin lists / invoices. */

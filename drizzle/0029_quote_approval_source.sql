@@ -1,0 +1,1 @@
+ALTER TABLE "sales_quotes" ADD COLUMN "approval_managed_by" text;

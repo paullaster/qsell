@@ -39,65 +39,84 @@ export function mapOrderRow(row: OrderRow, items: OrderItem[]): Order {
     customerAccountType: (row.customerAccountType as 'cash' | 'credit' | null) || null,
     transmitInvoicesToKra: row.transmitInvoicesToKra,
     salesModule: row.salesModule,
+    approvalStatus: row.approvalStatus,
     kraTransmissionStatus:
-      (row.kraTransmissionStatus as NonNullable<Order['kraTransmissionStatus']>) || 'not_applicable',
+      (row.kraTransmissionStatus as NonNullable<Order['kraTransmissionStatus']>) ||
+      'not_applicable',
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
 }
 
+type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
+
 export class OrderRepository {
   constructor(private readonly db: DrizzleDb) {}
 
-  async create(order: Order, branchId?: string | null): Promise<Order> {
-    await this.db.insert(orders).values({
-      id: order.id,
-      orderNumber: order.orderNumber,
-      userId: order.userId || null,
-      branchId: branchId || null,
-      customerName: order.customerName,
-      customerEmail: order.customerEmail.toLowerCase(),
-      customerPhone: order.customerPhone,
-      shippingAddress: order.shippingAddress,
-      subtotal: order.subtotal.toFixed(2),
-      tax: order.tax.toFixed(2),
-      shippingFee: order.shippingFee.toFixed(2),
-      totalAmount: order.totalAmount.toFixed(2),
-      currency: order.currency,
-      status: order.status,
-      paymentStatus: order.paymentStatus,
-      paymentMethod: order.paymentMethod,
-      shippingCourier: order.shippingCourier,
-      trackingNumber: order.trackingNumber,
-      internalNotes: order.internalNotes,
-      transactionReference: order.transactionReference,
-      mpesaReceiptNumber: order.mpesaReceiptNumber,
-      pesapalTrackingId: order.pesapalTrackingId,
-      dimensionSetId: order.dimensionSetId || null,
-      dimensionCodes: order.dimensionCodes || { global: {}, shortcut: {} },
-      tradeCustomerId: order.tradeCustomerId || null,
-      customerAccountType: order.customerAccountType || null,
-      transmitInvoicesToKra: order.transmitInvoicesToKra ?? true,
-      salesModule: order.salesModule ?? 'ecommerce',
-      kraTransmissionStatus: order.kraTransmissionStatus || 'not_applicable',
+  /**
+   * Saves the order and its lines atomically. When `assignNumber` is given it runs inside the same
+   * transaction, so a gap-free order series gives its number back if the save fails.
+   */
+  async create(
+    order: Order,
+    branchId?: string | null,
+    assignNumber?: (tx: Tx) => Promise<string>,
+    /** Runs after the order and its lines are saved, in the same transaction (e.g. asking for approval). */
+    afterSave?: (tx: Tx, order: Order) => Promise<void>,
+  ): Promise<Order> {
+    return this.db.transaction(async (tx) => {
+      if (assignNumber) order.orderNumber = await assignNumber(tx);
+      await tx.insert(orders).values({
+        id: order.id,
+        orderNumber: order.orderNumber,
+        userId: order.userId || null,
+        branchId: branchId || null,
+        customerName: order.customerName,
+        customerEmail: order.customerEmail.toLowerCase(),
+        customerPhone: order.customerPhone,
+        shippingAddress: order.shippingAddress,
+        subtotal: order.subtotal.toFixed(2),
+        tax: order.tax.toFixed(2),
+        shippingFee: order.shippingFee.toFixed(2),
+        totalAmount: order.totalAmount.toFixed(2),
+        currency: order.currency,
+        status: order.status,
+        paymentStatus: order.paymentStatus,
+        paymentMethod: order.paymentMethod,
+        shippingCourier: order.shippingCourier,
+        trackingNumber: order.trackingNumber,
+        internalNotes: order.internalNotes,
+        transactionReference: order.transactionReference,
+        mpesaReceiptNumber: order.mpesaReceiptNumber,
+        pesapalTrackingId: order.pesapalTrackingId,
+        dimensionSetId: order.dimensionSetId || null,
+        dimensionCodes: order.dimensionCodes || { global: {}, shortcut: {} },
+        tradeCustomerId: order.tradeCustomerId || null,
+        customerAccountType: order.customerAccountType || null,
+        transmitInvoicesToKra: order.transmitInvoicesToKra ?? true,
+        salesModule: order.salesModule ?? 'ecommerce',
+        kraTransmissionStatus: order.kraTransmissionStatus || 'not_applicable',
+        approvalStatus: order.approvalStatus ?? 'none',
+      });
+
+      if (order.items.length) {
+        await tx.insert(orderItems).values(
+          order.items.map((item) => ({
+            orderId: order.id,
+            productId: item.productId,
+            productName: item.productName,
+            sku: item.sku,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice.toFixed(2),
+            totalPrice: item.totalPrice.toFixed(2),
+            imageUrl: item.imageUrl || '',
+          })),
+        );
+      }
+
+      await afterSave?.(tx, order);
+      return order;
     });
-
-    if (order.items.length) {
-      await this.db.insert(orderItems).values(
-        order.items.map((item) => ({
-          orderId: order.id,
-          productId: item.productId,
-          productName: item.productName,
-          sku: item.sku,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice.toFixed(2),
-          totalPrice: item.totalPrice.toFixed(2),
-          imageUrl: item.imageUrl || '',
-        })),
-      );
-    }
-
-    return order;
   }
 
   async getById(id: string): Promise<Order | null> {
@@ -109,14 +128,8 @@ export class OrderRepository {
   }
 
   async listAll(limit = 500): Promise<Order[]> {
-    const rows = await this.db
-      .select()
-      .from(orders)
-      .orderBy(desc(orders.createdAt))
-      .limit(limit);
-    return Promise.all(
-      rows.map(async (row) => mapOrderRow(row, await this.loadItems(row.id))),
-    );
+    const rows = await this.db.select().from(orders).orderBy(desc(orders.createdAt)).limit(limit);
+    return Promise.all(rows.map(async (row) => mapOrderRow(row, await this.loadItems(row.id))));
   }
 
   async listByUserId(userId: string): Promise<Order[]> {
@@ -125,9 +138,7 @@ export class OrderRepository {
       .from(orders)
       .where(eq(orders.userId, userId))
       .orderBy(desc(orders.createdAt));
-    return Promise.all(
-      rows.map(async (row) => mapOrderRow(row, await this.loadItems(row.id))),
-    );
+    return Promise.all(rows.map(async (row) => mapOrderRow(row, await this.loadItems(row.id))));
   }
 
   async findByNumberAndContact(orderNumber: string, contact: string): Promise<Order | null> {
@@ -176,10 +187,7 @@ export class OrderRepository {
   }
 
   private async loadItems(orderId: string): Promise<OrderItem[]> {
-    const rows = await this.db
-      .select()
-      .from(orderItems)
-      .where(eq(orderItems.orderId, orderId));
+    const rows = await this.db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
     return rows.map((r) => ({
       productId: r.productId,
       productName: r.productName,

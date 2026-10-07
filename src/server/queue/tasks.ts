@@ -332,6 +332,16 @@ export const purgeMedia = async (_payload: unknown, helpers: JobHelpers) => {
   );
 };
 
+/** Worker cron task: hand approvals that are past their due time to the approver's own approver. */
+export const sweepOverdueApprovals = async (_payload: unknown, helpers: JobHelpers) => {
+  const r = await getContainer().approvals.sweepOverdue();
+  if (r.escalated || r.stuck || r.failed) {
+    helpers.logger.info(
+      `Approvals sweep: ${r.escalated} escalated, ${r.stuck} with nobody to escalate to, ${r.failed} failed`,
+    );
+  }
+};
+
 export const tasks = {
   'process-payment-callback': processPaymentCallback,
   'process-webhook': processWebhook,
@@ -340,4 +350,5 @@ export const tasks = {
   'process-product-import': processProductImport,
   'purge-product-imports': purgeProductImports,
   'purge-media': purgeMedia,
+  'sweep-overdue-approvals': sweepOverdueApprovals,
 };

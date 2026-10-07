@@ -16,24 +16,31 @@ export async function listLowStockAction(): Promise<Product[]> {
   return InventoryDomainService.getLowStock();
 }
 
+/** A change that a workflow wants approved first: nothing has changed yet. */
+export type StockPendingApproval = { pendingApproval: true; message: string };
+
 export async function adjustStockAction(
   productId: string,
   newQuantity: number,
   reason: string,
-): Promise<Product> {
-  await requirePermission('inventory:adjust');
-  const product = await InventoryDomainService.adjust(productId, newQuantity, reason);
+): Promise<Product | StockPendingApproval> {
+  const userId = await requirePermission('inventory:adjust');
+  const outcome = await InventoryDomainService.gatedOp(
+    { kind: 'adjust', productId, newQuantity, reason, actor: userId },
+    userId,
+  );
+  if (outcome.parked) return { pendingApproval: true, message: outcome.message };
   revalidatePath('/admin/inventory');
   revalidatePath('/admin/products');
   revalidatePath('/');
-  return product;
+  return InventoryDomainService.getProduct(productId);
 }
 
 export async function updateProductStockAction(
   productId: string,
   newQuantity: number,
   reason: string,
-): Promise<Product> {
+): Promise<Product | StockPendingApproval> {
   await requirePermission('inventory:adjust');
   return adjustStockAction(productId, newQuantity, reason);
 }
@@ -70,43 +77,63 @@ export async function writeOffStockAction(payload: {
     | 'shrinkage_loss'
     | 'sample_marketing';
   notes?: string;
-}): Promise<Product> {
-  await requirePermission('inventory:adjust');
-  const product = await InventoryDomainService.writeOff(
-    payload.productId,
-    payload.quantity,
-    payload.reasonCode,
-    payload.notes,
+}): Promise<Product | StockPendingApproval> {
+  const userId = await requirePermission('inventory:adjust');
+  const outcome = await InventoryDomainService.gatedOp(
+    {
+      kind: 'write_off',
+      productId: payload.productId,
+      quantity: payload.quantity,
+      reasonCode: payload.reasonCode,
+      notes: payload.notes,
+      actor: userId,
+    },
+    userId,
   );
+  if (outcome.parked) return { pendingApproval: true, message: outcome.message };
   revalidatePath('/admin/inventory');
   revalidatePath('/');
-  return product;
+  return InventoryDomainService.getProduct(payload.productId);
 }
 
 export async function auditStockCountAction(payload: {
   productId: string;
   countedQuantity: number;
   notes?: string;
-}): Promise<{ product: Product; discrepancy: number }> {
-  await requirePermission('inventory:adjust');
-  const result = await InventoryDomainService.audit(
-    payload.productId,
-    payload.countedQuantity,
-    payload.notes,
+}): Promise<{ product: Product; discrepancy: number } | StockPendingApproval> {
+  const userId = await requirePermission('inventory:adjust');
+  const outcome = await InventoryDomainService.gatedOp(
+    {
+      kind: 'count',
+      productId: payload.productId,
+      countedQuantity: payload.countedQuantity,
+      notes: payload.notes,
+      actor: userId,
+    },
+    userId,
   );
+  if (outcome.parked) return { pendingApproval: true, message: outcome.message };
   revalidatePath('/admin/inventory');
   revalidatePath('/');
-  return result;
+  return {
+    product: await InventoryDomainService.getProduct(payload.productId),
+    discrepancy: outcome.value.discrepancy ?? 0,
+  };
 }
 
 export async function batchAdjustStockAction(
   adjustments: { productId: string; newQuantity: number; reason: string }[],
-): Promise<Product[]> {
-  await requirePermission('inventory:adjust');
-  const products = await InventoryDomainService.batchAdjust(adjustments);
+): Promise<Product[] | StockPendingApproval> {
+  const userId = await requirePermission('inventory:adjust');
+  if (adjustments.length === 0) return [];
+  const outcome = await InventoryDomainService.gatedOp(
+    { kind: 'batch', adjustments, actor: userId },
+    userId,
+  );
+  if (outcome.parked) return { pendingApproval: true, message: outcome.message };
   revalidatePath('/admin/inventory');
   revalidatePath('/');
-  return products;
+  return InventoryDomainService.getProducts(adjustments.map((a) => a.productId));
 }
 
 export async function updateOrderStatusAction(

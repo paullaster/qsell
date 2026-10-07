@@ -92,11 +92,13 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
   const handleQuickAdjust = async (product: Product, delta: number) => {
     const newQty = Math.max(0, product.stockQuantity + delta);
     try {
-      await updateProductStockAction(
+      const res = await updateProductStockAction(
         product.id,
         newQty,
         `Quick adjustment by ${delta > 0 ? '+' : ''}${delta}`,
       );
+      // A workflow may want this approved first: nothing has changed yet, so say so.
+      if ('pendingApproval' in res) alert(res.message);
       onRefresh();
     } catch (err: any) {
       alert(`Adjustment error: ${err.message}`);
@@ -168,13 +170,17 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
     try {
       setIsSubmitting(true);
       setActionError(null);
-      await writeOffStockAction({
+      const res = await writeOffStockAction({
         productId: selectedProduct.id,
         quantity: Number(writeOffQty),
         reasonCode: writeOffReason,
         notes: writeOffNotes.trim(),
       });
-      setActionSuccess(`Successfully written off ${writeOffQty} units for ${selectedProduct.sku}`);
+      setActionSuccess(
+        'pendingApproval' in res
+          ? res.message
+          : `Successfully written off ${writeOffQty} units for ${selectedProduct.sku}`,
+      );
       setTimeout(() => {
         setModalType(null);
         onRefresh();
@@ -199,7 +205,9 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
         notes: auditNotes.trim(),
       });
       setActionSuccess(
-        `Audit reconciled. Discrepancy: ${res.discrepancy >= 0 ? '+' : ''}${res.discrepancy} units.`,
+        'pendingApproval' in res
+          ? res.message
+          : `Audit reconciled. Discrepancy: ${res.discrepancy >= 0 ? '+' : ''}${res.discrepancy} units.`,
       );
       setTimeout(() => {
         setModalType(null);

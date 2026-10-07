@@ -88,6 +88,14 @@ export async function approveSalesQuoteAction(id: string) {
   return quote;
 }
 
+export async function resubmitSalesQuoteApprovalAction(id: string) {
+  const userId = await requirePermission('quotes:update');
+  const quote = await service().resubmitApproval(userId, id);
+  revalidatePath('/admin/quotes');
+  revalidatePath('/admin/approvals', 'layout');
+  return quote;
+}
+
 export async function sendSalesQuoteAction(id: string) {
   const userId = await requirePermission('quotes:update');
   const quote = await service().send(userId, id);

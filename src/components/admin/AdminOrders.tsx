@@ -1,5 +1,6 @@
 'use client';
 
+import { OrderApprovalBanner } from './approvals/OrderApprovalBanner';
 import React, { use, useState } from 'react';
 import {
   ShoppingBag,
@@ -43,6 +44,9 @@ function money(amount: number, currency: string): string {
     maximumFractionDigits: 2,
   })}`;
 }
+
+const heldForApproval = (order: Order) =>
+  ['pending', 'rejected', 'draft'].includes(order.approvalStatus ?? 'none');
 
 export function AdminOrders({ ordersPromise, companyPromise, onRefresh }: AdminOrdersProps) {
   const orders = use(ordersPromise);
@@ -547,6 +551,14 @@ export function AdminOrders({ ordersPromise, companyPromise, onRefresh }: AdminO
                 </div>
               </div>
 
+              <OrderApprovalBanner
+                order={selectedOrder}
+                onChanged={() => {
+                  setSelectedOrder(null);
+                  onRefresh();
+                }}
+              />
+
               {/* Fulfillment Status Management Form */}
               <form
                 onSubmit={handleUpdateStatus}
@@ -623,8 +635,13 @@ export function AdminOrders({ ordersPromise, companyPromise, onRefresh }: AdminO
 
                   <button
                     type="submit"
-                    disabled={isSubmitting}
-                    className="cursor-pointer rounded-lg bg-indigo-600 px-5 py-2 font-bold text-white shadow-lg shadow-indigo-600/20 hover:bg-indigo-500"
+                    disabled={isSubmitting || heldForApproval(selectedOrder)}
+                    title={
+                      heldForApproval(selectedOrder)
+                        ? 'This order is held until it is approved.'
+                        : undefined
+                    }
+                    className="cursor-pointer rounded-lg bg-indigo-600 px-5 py-2 font-bold text-white shadow-lg shadow-indigo-600/20 hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {isSubmitting ? 'Saving...' : 'Save Fulfillment Changes'}
                   </button>

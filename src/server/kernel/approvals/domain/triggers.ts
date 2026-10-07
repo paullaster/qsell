@@ -1,0 +1,123 @@
+export interface TriggerField {
+  path: string;
+  label: string;
+  type: 'number' | 'text' | 'boolean';
+}
+
+export interface TriggerDefinition {
+  code: string;
+  module: string;
+  /** What approver limits are kept per. */
+  documentKind: string;
+  label: string;
+  fields: TriggerField[];
+}
+
+const common: TriggerField[] = [
+  { path: 'amount', label: 'Amount (base currency)', type: 'number' },
+  { path: 'branchId', label: 'Branch', type: 'text' },
+  { path: 'requestedBy', label: 'Requested by', type: 'text' },
+];
+
+/**
+ * The points where a module asks for approval. A developer adds one when a module gains a new
+ * place to ask; what happens at it (conditions, steps, approvers) is entirely configuration.
+ */
+export const TRIGGERS: TriggerDefinition[] = [
+  {
+    code: 'sales_order.submitted',
+    module: 'sales',
+    documentKind: 'sales_order',
+    label: 'Sales order submitted',
+    fields: [
+      ...common,
+      { path: 'discountPercent', label: 'Largest line discount %', type: 'number' },
+      { path: 'orderDiscountPercent', label: 'Whole-order discount %', type: 'number' },
+      { path: 'belowFloor', label: 'Any line below its price floor', type: 'boolean' },
+      { path: 'customer.id', label: 'Customer', type: 'text' },
+      { path: 'customer.accountType', label: 'Customer account type', type: 'text' },
+      {
+        path: 'customer.overCreditLimit',
+        label: 'Over the customer credit limit',
+        type: 'boolean',
+      },
+      { path: 'customer.isBlocked', label: 'Customer blocked', type: 'boolean' },
+      { path: 'salesModule', label: 'Sales channel', type: 'text' },
+    ],
+  },
+  {
+    code: 'sales_quote.submitted',
+    module: 'sales',
+    documentKind: 'sales_quote',
+    label: 'Quote submitted',
+    fields: [
+      ...common,
+      { path: 'discountPercent', label: 'Largest line discount %', type: 'number' },
+      { path: 'quoteDiscountPercent', label: 'Whole-quote discount %', type: 'number' },
+      { path: 'marginPercent', label: 'Gross margin %', type: 'number' },
+      { path: 'belowFloor', label: 'Margin below the company floor', type: 'boolean' },
+      { path: 'customer.id', label: 'Customer', type: 'text' },
+    ],
+  },
+  {
+    code: 'credit_note.requested',
+    module: 'finance',
+    documentKind: 'credit_note',
+    label: 'Credit note requested',
+    fields: [
+      ...common,
+      { path: 'reasonCode', label: 'Reason', type: 'text' },
+      { path: 'isFullReturn', label: 'Credits the whole invoice', type: 'boolean' },
+    ],
+  },
+  {
+    code: 'stock_adjustment.submitted',
+    module: 'inventory',
+    documentKind: 'stock_adjustment',
+    label: 'Stock adjustment submitted',
+    fields: [
+      ...common,
+      { path: 'quantity', label: 'Quantity change', type: 'number' },
+      { path: 'percentOfOnHand', label: 'Change as % of on-hand', type: 'number' },
+      { path: 'reasonCode', label: 'Reason', type: 'text' },
+    ],
+  },
+  {
+    code: 'customer.credit_limit_changed',
+    module: 'sales',
+    documentKind: 'customer_credit_limit',
+    label: 'Customer credit limit changed',
+    fields: [
+      ...common,
+      { path: 'newLimit', label: 'New limit', type: 'number' },
+      { path: 'oldLimit', label: 'Old limit', type: 'number' },
+    ],
+  },
+  {
+    code: 'price_list.publish',
+    module: 'pricing',
+    documentKind: 'price_list',
+    label: 'Price list published',
+    fields: [...common, { path: 'changedLines', label: 'Lines changed', type: 'number' }],
+  },
+];
+
+export const DOCUMENT_KIND_LABELS: Record<string, string> = {
+  sales_order: 'Sales orders',
+  sales_quote: 'Quotes',
+  credit_note: 'Credit notes',
+  stock_adjustment: 'Stock adjustments',
+  customer_credit_limit: 'Customer credit limits',
+  price_list: 'Price lists',
+};
+
+export const MODULE_LABELS: Record<string, string> = {
+  sales: 'Sales',
+  finance: 'Finance',
+  inventory: 'Inventory',
+  pricing: 'Pricing',
+};
+
+export function triggerByCode(code: string): TriggerDefinition | undefined {
+  return TRIGGERS.find((t) => t.code === code);
+}
