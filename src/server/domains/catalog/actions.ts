@@ -15,6 +15,7 @@ import {
   type DeleteResult,
   type ProductSelection,
 } from './bulk-delete';
+import { ProductBulkStatus, type StatusResult } from './bulk-status';
 import type { ImportJobView, StageResult } from './import-service';
 import type {
   Product,
@@ -112,6 +113,23 @@ export async function deleteProductsAction(
   }
 }
 
+/** Publishes (active) or hides (draft) the selected products in one go. */
+export async function setProductsActiveAction(
+  selection: ProductSelection,
+  active: boolean,
+  expectedCount: number,
+): Promise<BulkDeleteOutcome<StatusResult>> {
+  try {
+    const actorId = await requirePermission('products:update');
+    const result = await ProductBulkStatus.set(selection, active, { expectedCount, actorId });
+    revalidatePath('/admin/products');
+    revalidatePath('/');
+    return { ok: true, data: result };
+  } catch (error: unknown) {
+    return deleteFailure(error);
+  }
+}
+
 function deleteFailure(error: unknown): {
   ok: false;
   error: string;
@@ -123,7 +141,7 @@ function deleteFailure(error: unknown): {
   if (error instanceof AccessDeniedError)
     return { ok: false, error: 'You do not have permission to do that.', forbidden: true };
   Sentry.captureException(error);
-  return { ok: false, error: 'The products could not be deleted. Nothing further was changed.' };
+  return { ok: false, error: 'The change could not be completed. Nothing further was changed.' };
 }
 
 export async function listCategoriesAction(): Promise<Category[]> {
