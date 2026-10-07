@@ -211,6 +211,13 @@
       "when": 1791359752983,
       "tag": "0029_quote_approval_source",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1791370817048,
+      "tag": "0030_pricing_p1",
+      "breakpoints": true
     }
   ]
 }
