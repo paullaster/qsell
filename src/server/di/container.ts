@@ -2,6 +2,8 @@ import { ParkedActions } from '@/server/kernel/approvals/parked-actions';
 import { registerApprovalHandlers } from '@/server/di/approval-wiring';
 import { ApprovalConfigService } from '@/server/kernel/approvals/config-service';
 import { ApprovalEngine } from '@/server/kernel/approvals/engine';
+import { PricingConfigService } from '@/server/domains/pricing/config-service';
+import { PricingService } from '@/server/domains/pricing/service';
 import type { EmailPort, InvoicePdfPort } from '@/server/ports/communications';
 import { PdfKitInvoiceAdapter } from '@/server/adapters/pdf/pdfkit-invoice.adapter';
 import {
@@ -106,6 +108,9 @@ export interface AppContainer {
   approvalConfig: ApprovalConfigService;
   /** Parks actions that need approval and carries them out when approved. */
   approvalGate: ParkedActions;
+  /** Prices lines from price lists, with the reasons. Read only. */
+  pricing: PricingService;
+  pricingConfig: PricingConfigService;
 }
 
 function createEmailPort(): EmailPort {
@@ -257,6 +262,7 @@ export function getContainer(): AppContainer {
 
   const approvals = new ApprovalEngine(drizzleDb, decisionLog, reasonCodes);
   const approvalGate = new ParkedActions(drizzleDb, approvals);
+  const pricing = new PricingService(drizzleDb);
   container = {
     db: drizzleDb,
     invoicePdf,
@@ -301,6 +307,8 @@ export function getContainer(): AppContainer {
     approvals,
     approvalConfig: new ApprovalConfigService(drizzleDb, decisionLog, reasonCodes),
     approvalGate,
+    pricing,
+    pricingConfig: new PricingConfigService(drizzleDb, decisionLog, reasonCodes, pricing),
   };
   registerApprovalHandlers(approvals, approvalGate);
 

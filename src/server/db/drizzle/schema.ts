@@ -31,6 +31,14 @@ import type {
   SigningOutcome,
   SigningReason,
 } from '@/server/domains/kra/signing/types';
+import type {
+  PriceListKind,
+  PriceListStatus,
+  PriceTrace,
+  QuantityMode,
+  Scopes,
+  Tier,
+} from '@/server/domains/pricing/domain/types';
 import type { EtimsItemStatus } from '@/server/domains/kra/etims/item-types';
 import type {
   KraConfigSource,
@@ -1495,6 +1503,8 @@ export const orderItems = pgTable(
     unitPrice: numeric('unit_price', { precision: 14, scale: 2 }).notNull(),
     totalPrice: numeric('total_price', { precision: 14, scale: 2 }).notNull(),
     imageUrl: text('image_url').notNull().default(''),
+    /** Why this unit price: the pricing engine's recorded explanation. Null for older orders. */
+    priceTrace: jsonb('price_trace').$type<PriceTrace>(),
   },
   (t) => [index('order_items_order_idx').on(t.orderId)],
 );
@@ -2341,6 +2351,8 @@ export const salesQuoteLines = pgTable(
     taxAmount: numeric('tax_amount', { precision: 14, scale: 2 }).notNull(),
     lineAmount: numeric('line_amount', { precision: 14, scale: 2 }).notNull(),
     costAmount: numeric('cost_amount', { precision: 14, scale: 2 }).notNull(),
+    /** Why this unit price: the pricing engine's recorded explanation. Null for typed prices. */
+    priceTrace: jsonb('price_trace').$type<PriceTrace>(),
   },
   (t) => [uniqueIndex('sales_quote_lines_number_uidx').on(t.quoteId, t.lineNumber)],
 );
@@ -2460,3 +2472,134 @@ export type ReconciliationLogInsert = typeof reconciliationLogs.$inferInsert;
 export type PaymentGatewayConfigRow = typeof paymentGatewayConfigs.$inferSelect;
 export type PaymentGatewayConfigInsert = typeof paymentGatewayConfigs.$inferInsert;
 export type ApprovalParkedActionRow = typeof approvalParkedActions.$inferSelect;
+
+// ─── Pricing ─────────────────────────────────────────────────────────────────
+
+/**
+ * A named group of customers for pricing (Wholesale A, VIP, Government). A customer may be in
+ * several; the highest-priority group is the one that prices their sales.
+ */
+export const customerGroups = pgTable(
+  'customer_groups',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    description: text('description'),
+    /** Higher wins when a customer is in several groups. */
+    priority: integer('priority').notNull().default(0),
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('customer_groups_company_code_uidx').on(t.companyId, t.code)],
+);
+
+export const customerGroupMembers = pgTable(
+  'customer_group_members',
+  {
+    groupId: uuid('group_id')
+      .notNull()
+      .references(() => customerGroups.id, { onDelete: 'cascade' }),
+    customerId: uuid('customer_id')
+      .notNull()
+      .references(() => customers.id, { onDelete: 'cascade' }),
+    addedBy: text('added_by'),
+    addedAt: timestamp('added_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.groupId, t.customerId] }),
+    index('customer_group_members_customer_idx').on(t.customerId),
+  ],
+);
+
+/** How much each scope dimension counts towards a price list's specificity. Per company. */
+export const priceSpecificityWeights = pgTable(
+  'price_specificity_weights',
+  {
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    /** A scope dimension, or 'contract'. */
+    dimension: text('dimension').notNull(),
+    weight: integer('weight').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.companyId, t.dimension] })],
+);
+
+/**
+ * A price list header. Lines are effective-dated rows (never edited, only replaced), so a list of
+ * millions of lines is changed without copying. Changing the header bumps `version`; documents
+ * keep the version and line they were priced from in their trace.
+ */
+export const priceLists = pgTable(
+  'price_lists',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    description: text('description'),
+    kind: text('kind').$type<PriceListKind>().notNull().default('list'),
+    currency: text('currency').notNull(),
+    taxInclusive: boolean('tax_inclusive').notNull().default(true),
+    quantityMode: text('quantity_mode').$type<QuantityMode>().notNull().default('all_units'),
+    priority: integer('priority').notNull().default(0),
+    validFrom: timestamp('valid_from', { withTimezone: true }).notNull().defaultNow(),
+    validTo: timestamp('valid_to', { withTimezone: true }),
+    scopes: jsonb('scopes').$type<Scopes>().notNull().default({}),
+    status: text('status').$type<PriceListStatus>().notNull().default('draft'),
+    /** Set when activation is waiting on an approval workflow. */
+    approvalStatus: text('approval_status').notNull().default('none'),
+    version: integer('version').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('price_lists_company_code_uidx').on(t.companyId, t.code),
+    index('price_lists_company_status_idx').on(t.companyId, t.status),
+  ],
+);
+
+/**
+ * One price for a product in a list, in force from `valid_from` until `valid_to`. Changing a price
+ * closes the open row and adds a new one; the old one stays so a past sale can be explained.
+ */
+export const priceListLines = pgTable(
+  'price_list_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    priceListId: uuid('price_list_id')
+      .notNull()
+      .references(() => priceLists.id, { onDelete: 'cascade' }),
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'cascade' }),
+    price: numeric('price', { precision: 14, scale: 4 }).notNull(),
+    tiers: jsonb('tiers').$type<Tier[]>().notNull().default([]),
+    /** A soft floor: selling below it is flagged, and needs a decision elsewhere. */
+    floorPrice: numeric('floor_price', { precision: 14, scale: 4 }),
+    /** While in the future, this price cannot be replaced without an explicit override. */
+    lockedUntil: timestamp('locked_until', { withTimezone: true }),
+    validFrom: timestamp('valid_from', { withTimezone: true }).notNull().defaultNow(),
+    validTo: timestamp('valid_to', { withTimezone: true }),
+    reasonCode: text('reason_code'),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('price_list_lines_product_idx').on(t.productId, t.priceListId, t.validFrom),
+    index('price_list_lines_list_product_idx').on(t.priceListId, t.productId, t.validFrom),
+    // At most one open-ended price per product in a list; replaced rows are always closed.
+    uniqueIndex('price_list_lines_open_uidx')
+      .on(t.priceListId, t.productId)
+      .where(sql`${t.validTo} is null`),
+  ],
+);

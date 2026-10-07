@@ -229,6 +229,8 @@ export interface OrderItem {
   unitPrice: number;
   totalPrice: number;
   imageUrl: string;
+  /** Why the unit price is what it is (the pricing engine's trace). Absent on older orders. */
+  priceTrace?: import('@/server/domains/pricing/domain/types').PriceTrace | null;
 }
 
 export interface Order {

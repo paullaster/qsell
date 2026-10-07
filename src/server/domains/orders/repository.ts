@@ -110,6 +110,7 @@ export class OrderRepository {
             unitPrice: item.unitPrice.toFixed(2),
             totalPrice: item.totalPrice.toFixed(2),
             imageUrl: item.imageUrl || '',
+            priceTrace: item.priceTrace ?? null,
           })),
         );
       }
@@ -196,6 +197,7 @@ export class OrderRepository {
       unitPrice: num(r.unitPrice),
       totalPrice: num(r.totalPrice),
       imageUrl: r.imageUrl,
+      priceTrace: r.priceTrace ?? null,
     }));
   }
 }
