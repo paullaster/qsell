@@ -47,6 +47,8 @@ import {
 } from '@/server/domains/quotes/actions';
 import type { QuoteInput } from '@/server/domains/quotes/service';
 import { AdminSalesQuoteTemplates } from './AdminSalesQuoteTemplates';
+import { QuoteLinePriceNote } from './pricing/QuoteLinePriceNote';
+import { useQuotePricePreview } from './pricing/useQuotePricePreview';
 
 type QuoteLineInput = QuoteInput['lines'][number];
 
@@ -137,6 +139,8 @@ function quoteToInput(quote: SalesQuote): QuoteInput {
       sectionId: line.sectionId ? (sectionIdMap.get(line.sectionId) ?? null) : null,
       quantity: Number(line.quantity),
       unitPrice: Number(line.unitPrice),
+      // The price already agreed stays as it is until someone asks to reprice it.
+      priceMode: 'kept' as const,
       discountPercent: Number(line.discountPercent),
     })),
   };
@@ -192,6 +196,7 @@ function quoteInputFromTemplate(
         sectionId: line.sectionId ? (sectionIdMap.get(line.sectionId) ?? null) : null,
         quantity: Number(line.quantity),
         unitPrice: line.priceMode === 'fixed' ? Number(line.unitPrice ?? 0) : product?.price,
+        priceMode: line.priceMode === 'fixed' ? ('manual' as const) : ('catalog' as const),
         discountPercent: Number(line.discountPercent),
       };
     }),
@@ -830,7 +835,9 @@ function QuoteEditor({
         sectionId: sectionId ?? null,
         productId,
         quantity: 1,
+        // Shown at once, then replaced by the price lists' answer.
         unitPrice: product.price,
+        priceMode: 'catalog',
         discountPercent: 0,
       },
     ]);
@@ -859,6 +866,7 @@ function QuoteEditor({
       'lines',
       input.lines.map((line, lineIndex) => (lineIndex === index ? { ...line, ...patch } : line)),
     );
+  const { traces, problems } = useQuotePricePreview(input, setInput);
   const selectTemplate = (templateId: string) => {
     const template = templates.find((candidate) => candidate.id === templateId);
     if (!template) {
@@ -1091,9 +1099,21 @@ function QuoteEditor({
                           step="0.01"
                           value={entry.line.unitPrice ?? ''}
                           onChange={(event) =>
-                            patchLine(index, { unitPrice: Number(event.target.value) })
+                            patchLine(index, {
+                              unitPrice: Number(event.target.value),
+                              priceMode: 'manual',
+                            })
                           }
                           className="w-28 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong"
+                        />
+                        <QuoteLinePriceNote
+                          mode={
+                            entry.line.priceMode ??
+                            (entry.line.unitPrice != null ? 'manual' : 'catalog')
+                          }
+                          trace={traces[index]}
+                          problem={problems[index]}
+                          onUseLists={() => patchLine(index, { priceMode: 'catalog' })}
                         />
                       </td>
                       <td className="p-3">
@@ -1300,9 +1320,21 @@ function QuoteEditor({
                                   step="0.01"
                                   value={line.unitPrice ?? ''}
                                   onChange={(event) =>
-                                    patchLine(index, { unitPrice: Number(event.target.value) })
+                                    patchLine(index, {
+                                      unitPrice: Number(event.target.value),
+                                      priceMode: 'manual',
+                                    })
                                   }
                                   className="w-28 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong"
+                                />
+                                <QuoteLinePriceNote
+                                  mode={
+                                    line.priceMode ??
+                                    (line.unitPrice != null ? 'manual' : 'catalog')
+                                  }
+                                  trace={traces[index]}
+                                  problem={problems[index]}
+                                  onUseLists={() => patchLine(index, { priceMode: 'catalog' })}
                                 />
                               </td>
                               <td className="p-3">

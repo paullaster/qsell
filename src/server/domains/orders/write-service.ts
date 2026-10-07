@@ -9,6 +9,7 @@ import { businessDate } from '@/server/kernel/numbering/business-date';
 import { eq } from 'drizzle-orm';
 import { orders as ordersTable } from '@/server/db/drizzle/schema';
 import { needsApprovalCheck } from './approval';
+import type { PriceResult, PriceTrace } from '@/server/domains/pricing/domain/types';
 
 export class OrderWriteService {
   static async createOrder(params: {
@@ -34,6 +35,8 @@ export class OrderWriteService {
       lineAmount: number;
       taxRate: number;
       isTaxInclusive: boolean;
+      /** Why the quote priced it as it did; carried onto the order line. */
+      priceTrace?: PriceTrace | null;
     }[];
     quotedTotals?: { subtotal: number; tax: number; shippingFee: number; totalAmount: number };
     orderId?: string;
@@ -75,7 +78,46 @@ export class OrderWriteService {
     );
     const quotedItems = new Map((params.quotedItems ?? []).map((item) => [item.productId, item]));
 
-    for (const item of params.items) {
+    // Staff channels are priced from the price lists. The web shop keeps the standard price, so
+    // what a shopper is shown is what they are charged, until the storefront shows list prices.
+    const channel =
+      params.paymentMethod === 'on_account' ? 'credit_sale' : (params.salesModule ?? 'ecommerce');
+    const engine = new Map<number, PriceResult>();
+    if (channel !== 'ecommerce') {
+      const { companySettings, customers, pricing } = getContainer();
+      const company = await companySettings.ensureSeeded();
+      const known = await customers.lookupByEmail(company.id, params.customerEmail);
+      const toPrice: number[] = [];
+      params.items.forEach((item, i) => {
+        const prod = catalogProducts.get(item.productId);
+        if (prod && prod.isSellable !== false && !quotedItems.has(item.productId)) toPrice.push(i);
+      });
+      const priced = await pricing.priceLines(
+        company.id,
+        {
+          customerId: known?.id ?? null,
+          branchId: params.branchId ?? null,
+          salesType: channel === 'credit_sale' ? 'credit' : 'cash',
+          channel,
+        },
+        toPrice.map((i) => {
+          const item = params.items[i]!;
+          const prod = catalogProducts.get(item.productId)!;
+          const inclusive = prod.isTaxInclusive !== false;
+          return {
+            productId: item.productId,
+            quantity: item.quantity,
+            standardPrice: prod.price ?? null,
+            taxRate: prod.taxRate ?? 0,
+            lineTaxInclusive: inclusive,
+            standardTaxInclusive: inclusive,
+          };
+        }),
+      );
+      toPrice.forEach((i, n) => engine.set(i, priced[n]!));
+    }
+
+    for (const [index, item] of params.items.entries()) {
       const prod = catalogProducts.get(item.productId);
       if (!prod) {
         return { success: false, error: `Product ID ${item.productId} does not exist.` };
@@ -84,11 +126,30 @@ export class OrderWriteService {
       if (prod.isSellable === false && !quoted) {
         return { success: false, error: `${prod.name} is not sellable and cannot be ordered.` };
       }
-      if (!quoted && (prod.price == null || !Number.isFinite(prod.price) || prod.price <= 0)) {
+      const priced = engine.get(index);
+      if (priced && priced.unitPrice == null) {
+        return {
+          success: false,
+          error: `${prod.name} cannot be priced. ${priced.trace.steps.at(-1) ?? ''}`.trim(),
+        };
+      }
+      if (
+        !quoted &&
+        !priced &&
+        (prod.price == null || !Number.isFinite(prod.price) || prod.price <= 0)
+      ) {
         return { success: false, error: `${prod.name} has no valid selling price.` };
       }
-      const unitPrice = quoted ? quoted.lineAmount / Math.max(quoted.quantity, 1) : prod.price!;
-      const itemTotal = quoted ? quoted.lineAmount : unitPrice * item.quantity;
+      const unitPrice = quoted
+        ? quoted.lineAmount / Math.max(quoted.quantity, 1)
+        : priced
+          ? priced.lineTotal! / Math.max(item.quantity, 1)
+          : prod.price!;
+      const itemTotal = quoted
+        ? quoted.lineAmount
+        : priced
+          ? priced.lineTotal!
+          : unitPrice * item.quantity;
       orderItems.push({
         productId: prod.id,
         productName: quoted?.productName ?? prod.name,
@@ -97,6 +158,7 @@ export class OrderWriteService {
         unitPrice,
         totalPrice: itemTotal,
         imageUrl: prod.imageUrl,
+        priceTrace: quoted ? (quoted.priceTrace ?? null) : (priced?.trace ?? null),
       });
       pricedLines.push({
         productId: prod.id,

@@ -238,7 +238,20 @@ export const PERMISSIONS = {
     resource: 'approvals',
     action: 'manage',
     category: 'Company & Settings',
-    description: 'Design approval workflows, set approvers and limits, and switch approvals on or off',
+    description:
+      'Design approval workflows, set approvers and limits, and switch approvals on or off',
+  },
+  'pricing:read': {
+    resource: 'pricing',
+    action: 'read',
+    category: 'Orders & Sales',
+    description: 'See price lists, customer groups and check how a price is worked out',
+  },
+  'pricing:manage': {
+    resource: 'pricing',
+    action: 'manage',
+    category: 'Company & Settings',
+    description: 'Create and change price lists and prices, customer groups and pricing rules',
   },
   'numbering:manage': {
     resource: 'numbering',

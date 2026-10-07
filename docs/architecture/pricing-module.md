@@ -1,6 +1,6 @@
 # Pricing, Discounts and Promotions — Module Design
 
-**Status:** DRAFT for approval. Nothing here is built yet. Part of the [Sales Order Platform blueprint](./sales-order-blueprint.md).
+**Status:** P-1 built (see "What P-1 delivers" at the end); P-2 onward is still design. Part of the [Sales Order Platform blueprint](./sales-order-blueprint.md).
 **Goal:** one configurable engine that can express every pricing model a distributor-and-retailer needs, resolves a price deterministically, and can always explain _why_ the customer was charged exactly what they were.
 
 ---
@@ -316,3 +316,37 @@ Each step ships with property tests, a load test of the price endpoint at twice 
 5. Retail and B2B both display tax-inclusive prices.
 6. Loyalty cards and gift cards are in scope.
 7. Rebates are brought forward (P-4).
+
+---
+
+## What P-1 delivers (built 2026-10)
+
+Code: `src/server/domains/pricing/` (pure engine in `domain/`, `service.ts` reads, `config-service.ts` changes, `actions.ts` for the screens), screens under `/admin/pricing`, migration `0030_pricing_p1.sql`.
+
+**Behaviour**
+
+- Price lists with scope (customer, customer group, route, branch, sales type, channel, country; each "only these" or "all except"), kind (ordinary or contract), currency, tax basis, quantity mode (all units or step by step), priority, validity. Lifecycle: draft → in force → retired.
+- Choice of the winning price exactly as §3.2: most specific, then priority, then newest start, then lowest id. Specificity is the sum of configurable weights; the defaults are powers of two in the agreed order (customer 64, group 32, route 16, branch 8, sales type 4, channel 2, country 1, contract +1000), so one higher kind of limit always beats any mix of lower ones. "All except" limits add nothing.
+- A customer in several groups is priced by the highest-priority group (decision 2), then group code.
+- Quantity breaks both ways. Tax basis is converted to the document line's basis. A price list in the sale's currency beats a conversion from the base currency. No price is never a zero: the line cannot be priced and says why.
+- Every price comes with a trace (steps in plain language, every list considered and what happened to it). The trace is stored on the order line and the quote line (`price_trace`), so a past sale is explained from what was recorded, not recomputed.
+- **Lines are effective-dated rows, not copied versions.** Changing a price closes the open row and adds a new one, so a list of millions of lines is changed without copying and history is kept. Header changes bump `version`; the trace records the version and the exact line. A price may start now or later, never in the past; a change made now replaces anything scheduled after it; a price that is already exactly as given is left alone (so a file can be sent twice). A locked (contract) price cannot be replaced without an explicit, logged override.
+- Activation is refused for an empty list, one naming something that no longer exists, or one that would **tie** with a list already in force (same currency, equal specificity and priority, overlapping dates, a product in common). The same check runs when a live list's priority, scope or dates change and when a product is added to a live list.
+- Every change takes a reason from the reason catalogue and writes to the decision log (subject `price_list`, `customer_group`, `price_weights`); a batch of prices is one entry with counts and a sample.
+- Configuration is cached per process for 10 seconds and dropped at once when that process changes it, so another instance sees a change within 10 seconds. Pricing a basket is two queries however many lines it has.
+
+**Where it is used**
+
+- Staff sales orders, credit sales and POS cash sales are priced from the lists. A product in no list is sold at its standard price, so nothing changes until a list is put in force.
+- **The web shop keeps the standard price**: the storefront shows the standard price, and charging a different one would break "what you see is what you pay". It moves over when the storefront reads prices through the engine.
+- Quotes: each line has a price mode: from the lists (default for added items), typed by hand, or kept as saved. Re-saving a quote does not reprice it; "Reprice" hands lines back to the lists. A quote turned into an order carries each line's explanation.
+- Screens: price lists (create, scopes, quantity breaks, floor and lock, schedule, paste or upload a file, history per product, the list's own timeline), customer groups with members, **Price check** (the real engine on a sale you describe), price rules (weights), and the quote editor showing the price and "Why this price?" as the customer or quantity changes.
+
+**Not yet done (still in the design above)**
+
+- Variants and units of measure: the catalogue has neither, so lines are per product.
+- Route: documents do not record a route yet, so route-limited lists only match in the Price check for now.
+- Documents are priced in the base currency (as before); a price list in another currency applies to the Price check and to future documents that carry their own currency and rate.
+- Floor price is flagged on the trace (`belowFloor`) but does not yet stop a sale; the per-category soft floor with approval, manual-override limits, and the approval workflow for putting a list in force (`price_list.publish`; the `approval_status` column is reserved for it) come next.
+- The catalogue picker in the quote editor still shows (and requires) a standard price, so a product that has a list price but no standard price can be priced by the engine yet not picked there.
+- P-2 (discounts, promotions, coupons, budgets), P-3, P-4, P-5 as phased above.

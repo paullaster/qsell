@@ -70,6 +70,12 @@ export interface QuoteInput {
     productId: string;
     quantity: number;
     unitPrice?: number;
+    /**
+     * How the unit price is decided. `catalog`: priced from the price lists now. `manual`: the
+     * typed `unitPrice`. `kept`: the price already saved on this quote, with its explanation.
+     * Without it, a typed `unitPrice` is manual and no price at all is catalog.
+     */
+    priceMode?: 'catalog' | 'manual' | 'kept';
     discountPercent: number;
   }[];
 }
@@ -594,6 +600,43 @@ export class SalesQuoteService {
     if (input.lines.some((line) => line.sectionId && !sectionIds.has(line.sectionId))) {
       throw new Error('A quote line references a section that no longer exists.');
     }
+    const { branch } = await getContainer().organizations.ensureDefaultOrgAndBranch(
+      companyId,
+      (await getContainer().companySettings.getProfile()).tradingName,
+    );
+    // Lines priced from the price lists, and lines whose saved price is being kept. Amounts are in
+    // the base currency, as they were before price lists existed.
+    const modes = input.lines.map(
+      (line) => line.priceMode ?? (line.unitPrice != null ? 'manual' : 'catalog'),
+    );
+    const toPrice = input.lines.flatMap((line, i) => {
+      const product = products.get(line.productId);
+      return modes[i] === 'catalog' && product && product.isSellable !== false ? [i] : [];
+    });
+    const priced = await getContainer().pricing.priceLines(
+      companyId,
+      {
+        customerId: input.customerId || null,
+        branchId: branch.id,
+        salesType: input.paymentMethod === 'on_account' ? 'credit' : 'cash',
+        channel: 'sales_order',
+      },
+      toPrice.map((i) => {
+        const line = input.lines[i]!;
+        const product = products.get(line.productId)!;
+        const inclusive = product.isTaxInclusive !== false;
+        return {
+          productId: line.productId,
+          quantity: line.quantity,
+          standardPrice: product.price ?? null,
+          taxRate: Math.max(0, product.taxRate ?? 0),
+          lineTaxInclusive: inclusive,
+          standardTaxInclusive: inclusive,
+        };
+      }),
+    );
+    const engine = new Map(toPrice.map((i, n) => [i, priced[n]!]));
+    const keptFrom = new Set<string>();
     let subtotal = 0;
     let taxAmount = 0;
     let discountAmount = 0;
@@ -602,7 +645,27 @@ export class SalesQuoteService {
       const product = products.get(line.productId);
       if (!product || product.isSellable === false)
         throw new Error('A selected item is no longer sellable.');
-      const unitPrice = line.unitPrice ?? product.price;
+      const result = engine.get(index);
+      if (result && result.unitPrice == null) {
+        throw new Error(
+          `${product.name} cannot be priced. ${result.trace.steps.at(-1) ?? ''}`.trim(),
+        );
+      }
+      let priceTrace = result?.trace ?? null;
+      if (modes[index] === 'kept' && line.unitPrice != null) {
+        // Keep the saved price and its explanation, but only if it really is what was saved.
+        const was = existing?.lines.find(
+          (l) =>
+            !keptFrom.has(l.id) &&
+            l.productId === line.productId &&
+            Number(l.unitPrice) === Number(line.unitPrice),
+        );
+        if (was) {
+          keptFrom.add(was.id);
+          priceTrace = was.priceTrace ?? null;
+        }
+      }
+      const unitPrice = result ? result.unitPrice : (line.unitPrice ?? product.price);
       if (unitPrice == null || !Number.isFinite(unitPrice) || unitPrice < 0) {
         throw new Error(`${product.name} needs a valid selling price.`);
       }
@@ -638,6 +701,7 @@ export class SalesQuoteService {
         taxAmount: lineTax.toFixed(2),
         lineAmount: lineTotal.toFixed(2),
         costAmount: money(cost).toFixed(2),
+        priceTrace,
       };
     });
     subtotal = money(subtotal);
@@ -651,10 +715,6 @@ export class SalesQuoteService {
     const minimumMarginPercent = num(settings.minimumGrossMarginPercent);
     const belowFloor = grossMarginPercent < minimumMarginPercent;
     const now = new Date();
-    const { branch } = await getContainer().organizations.ensureDefaultOrgAndBranch(
-      companyId,
-      (await getContainer().companySettings.getProfile()).tradingName,
-    );
     // A configured approval workflow, if one applies, owns this quote's approval; otherwise the
     // old margin-floor check does, exactly as before.
     const approvalRequest = {
@@ -1024,6 +1084,7 @@ export class SalesQuoteService {
           lineAmount: num(line.lineAmount),
           taxRate: num(line.taxRate),
           isTaxInclusive: line.isTaxInclusive,
+          priceTrace: line.priceTrace ?? null,
         })),
         quotedTotals: {
           subtotal: num(quote.subtotal),
