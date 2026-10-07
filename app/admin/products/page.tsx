@@ -1,13 +1,18 @@
-import { listProductsAction, listCategoriesAction } from '@/server/domains/catalog/actions';
+import {
+  listProductsAction,
+  listCategoriesAction,
+  trashCountAction,
+} from '@/server/domains/catalog/actions';
 import { canPermission } from '@/server/domains/access-control/guard';
 import { AdminProductsClient } from '@/components/admin/AdminProductsClient';
 
 export default async function AdminProductsPage() {
   const productsPromise = listProductsAction();
   const categoriesPromise = listCategoriesAction();
-  const [canDelete, canPurge] = await Promise.all([
+  const [canDelete, canPurge, trashCount] = await Promise.all([
     canPermission('products:delete'),
     canPermission('products:delete_permanently'),
+    trashCountAction(),
   ]);
   return (
     <AdminProductsClient
@@ -15,6 +20,7 @@ export default async function AdminProductsPage() {
       categoriesPromise={categoriesPromise}
       canDelete={canDelete}
       canPurge={canPurge}
+      trashCount={trashCount}
     />
   );
 }

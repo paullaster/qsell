@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, notInArray, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { drizzleDb } from '@/server/db/drizzle/client';
 import {
@@ -17,6 +17,12 @@ import { broadcastRealtime } from '@/server/realtime';
 export const MAX_BULK_DELETE = 10_000;
 /** Products handled per transaction: a failure loses at most one part, never the whole run. */
 const CHUNK = 500;
+
+/** Which products a selection is about: the live catalogue, or the ones in the trash. */
+export type DeleteScope = 'live' | 'trash';
+
+const inScope = (scope: DeleteScope) =>
+  scope === 'trash' ? isNotNull(products.deletedAt) : isNull(products.deletedAt);
 
 export type ProductSelection =
   /** Exactly these products. */
@@ -77,7 +83,10 @@ interface ProductRow {
  */
 export class ProductBulkDelete {
   /** Turns a selection into product ids, refusing empty or oversized ones. */
-  static async resolve(selection: ProductSelection): Promise<string[]> {
+  static async resolve(
+    selection: ProductSelection,
+    scope: DeleteScope = 'live',
+  ): Promise<string[]> {
     if (selection.mode === 'ids') {
       const ids = [...new Set(selection.ids)];
       if (ids.length === 0) throw new BulkDeleteError('EMPTY', 'Choose at least one product.');
@@ -88,12 +97,7 @@ export class ProductBulkDelete {
     const rows = await drizzleDb
       .select({ id: products.id })
       .from(products)
-      .where(
-        and(
-          isNull(products.deletedAt),
-          exclude.length > 0 ? notInArray(products.id, exclude) : undefined,
-        ),
-      )
+      .where(and(inScope(scope), exclude.length > 0 ? notInArray(products.id, exclude) : undefined))
       .orderBy(products.id)
       .limit(MAX_BULK_DELETE + 1);
     if (rows.length === 0) throw new BulkDeleteError('EMPTY', 'Choose at least one product.');
@@ -102,9 +106,13 @@ export class ProductBulkDelete {
   }
 
   /** What deleting this selection would do, without doing it. */
-  static async preview(selection: ProductSelection, permanent: boolean): Promise<DeletePreview> {
-    const ids = await this.resolve(selection);
-    const rows = await liveProducts(ids);
+  static async preview(
+    selection: ProductSelection,
+    permanent: boolean,
+    scope: DeleteScope = 'live',
+  ): Promise<DeletePreview> {
+    const ids = await this.resolve(selection, scope);
+    const rows = await productsIn(ids, scope);
     const blockedBy = permanent ? await blockers(rows) : new Map<string, BlockReason[]>();
     const counts = new Map<BlockReason, number>();
     for (const reasons of blockedBy.values())
@@ -143,15 +151,20 @@ export class ProductBulkDelete {
       expectedCount: number;
       reason?: string;
       actorId: string;
+      /** 'trash' deletes products already in the trash for good; it is always permanent. */
+      scope?: DeleteScope;
     },
   ): Promise<DeleteResult> {
+    const scope = opts.scope ?? 'live';
+    if (scope === 'trash' && !opts.permanent)
+      throw new BulkDeleteError('REASON_REQUIRED', 'Products in the trash can only be erased.');
     const reason = opts.reason?.trim() ?? '';
     if (opts.permanent && reason.length < 3)
       throw new BulkDeleteError(
         'REASON_REQUIRED',
         'Say why these products are being permanently deleted.',
       );
-    const ids = await this.resolve(selection);
+    const ids = await this.resolve(selection, scope);
     if (ids.length !== opts.expectedCount)
       throw new BulkDeleteError(
         'CHANGED',
@@ -171,7 +184,7 @@ export class ProductBulkDelete {
       const part = ids.slice(i, i + CHUNK);
       const done = await drizzleDb.transaction((tx) =>
         opts.permanent
-          ? purgeChunk(tx, part, { companyId, batchId, reason, actorId: opts.actorId })
+          ? purgeChunk(tx, part, { companyId, batchId, reason, actorId: opts.actorId }, scope)
           : softChunk(tx, part, { companyId, batchId, reason, actorId: opts.actorId }),
       );
       result.deleted += done.deleted;
@@ -194,7 +207,7 @@ const tooMany = (n: number | string) =>
 type Tx = Parameters<Parameters<typeof drizzleDb.transaction>[0]>[0];
 type Ctx = { companyId: string; batchId: string; reason: string; actorId: string };
 
-async function liveProducts(ids: string[]): Promise<ProductRow[]> {
+async function productsIn(ids: string[], scope: DeleteScope): Promise<ProductRow[]> {
   const out: ProductRow[] = [];
   for (let i = 0; i < ids.length; i += 5000) {
     out.push(
@@ -207,7 +220,7 @@ async function liveProducts(ids: string[]): Promise<ProductRow[]> {
           reservedQuantity: products.reservedQuantity,
         })
         .from(products)
-        .where(and(inArray(products.id, ids.slice(i, i + 5000)), isNull(products.deletedAt)))),
+        .where(and(inArray(products.id, ids.slice(i, i + 5000)), inScope(scope)))),
     );
   }
   return out;
@@ -265,6 +278,7 @@ async function countMovements(
           inArray(inventoryMovements.productId, ids.slice(i, i + 5000)),
           sql`${inventoryMovements.referenceId} <> 'PRODUCT_CREATION'`,
           sql`${inventoryMovements.referenceId} not like 'DELETE-%'`,
+          sql`${inventoryMovements.referenceId} not like 'RESTORE-%'`,
         ),
       );
     total += row?.n ?? 0;
@@ -299,7 +313,7 @@ const logDecision = (
     tx,
   );
 
-async function lockLive(tx: Tx, ids: string[]): Promise<ProductRow[]> {
+async function lockLive(tx: Tx, ids: string[], scope: DeleteScope = 'live'): Promise<ProductRow[]> {
   return tx
     .select({
       id: products.id,
@@ -309,7 +323,7 @@ async function lockLive(tx: Tx, ids: string[]): Promise<ProductRow[]> {
       reservedQuantity: products.reservedQuantity,
     })
     .from(products)
-    .where(and(inArray(products.id, ids), isNull(products.deletedAt)))
+    .where(and(inArray(products.id, ids), inScope(scope)))
     .orderBy(products.id)
     .for('update');
 }
@@ -345,9 +359,9 @@ async function softChunk(tx: Tx, ids: string[], ctx: Ctx) {
   return { deleted: rows.length, skipped: [] };
 }
 
-async function purgeChunk(tx: Tx, ids: string[], ctx: Ctx) {
+async function purgeChunk(tx: Tx, ids: string[], ctx: Ctx, scope: DeleteScope) {
   // Rows are locked first so nothing can sell or restock them between the check and the delete.
-  const rows = await lockLive(tx, ids);
+  const rows = await lockLive(tx, ids, scope);
   const blocked = await blockers(rows, tx);
   const eligible = rows.filter((r) => !blocked.has(r.id));
   const skipped = rows

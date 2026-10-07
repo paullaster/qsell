@@ -24,6 +24,7 @@ export type AdminNavIconName =
   | 'LayoutGrid'
   | 'Tags'
   | 'Shapes'
+  | 'Trash2'
   | 'Settings'
   | 'GitBranch'
   | 'Receipt'

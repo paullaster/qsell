@@ -3,9 +3,11 @@
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Loader2, Trash2 } from 'lucide-react';
 import { deleteProductsAction, previewProductDeleteAction } from '@/server/domains/catalog/actions';
+import Link from 'next/link';
 import type {
   DeletePreview,
   DeleteResult,
+  DeleteScope,
   ProductSelection,
 } from '@/server/domains/catalog/bulk-delete';
 
@@ -16,6 +18,8 @@ interface Props {
   /** "3 products", or the product's name for a single delete. */
   label: string;
   canPurge: boolean;
+  /** 'trash': the products are already deleted, so the only choice is to erase them for good. */
+  scope?: DeleteScope;
   onClose: () => void;
   /** Called when the person closes the dialog after something was deleted. */
   onDeleted: () => void;
@@ -37,6 +41,7 @@ export function ProductDeleteDialog({
   count,
   label,
   canPurge,
+  scope = 'live',
   onClose,
   onDeleted,
 }: Props) {
@@ -47,7 +52,7 @@ export function ProductDeleteDialog({
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const asked = useRef(0);
 
-  const [permanent, setPermanent] = useState(false);
+  const [permanent, setPermanent] = useState(scope === 'trash');
   const [reason, setReason] = useState('');
   const [preview, setPreview] = useState<DeletePreview | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -67,7 +72,7 @@ export function ProductDeleteDialog({
   useEffect(() => {
     const ticket = ++asked.current;
     let live = true;
-    void previewProductDeleteAction(selection, permanent).then((r) => {
+    void previewProductDeleteAction(selection, permanent, scope).then((r) => {
       if (!live || ticket !== asked.current) return;
       if (r.ok) {
         setPreview(r.data);
@@ -80,7 +85,7 @@ export function ProductDeleteDialog({
     return () => {
       live = false;
     };
-  }, [selection, permanent]);
+  }, [selection, permanent, scope]);
 
   // Leaving mid-delete would not undo it, but the person would not see how it ended.
   useEffect(() => {
@@ -122,6 +127,7 @@ export function ProductDeleteDialog({
     setError(null);
     const r = await deleteProductsAction(selection, {
       permanent,
+      scope,
       expectedCount: count,
       reason: reason.trim() || undefined,
     });
@@ -151,7 +157,13 @@ export function ProductDeleteDialog({
         className="max-h-[90dvh] w-full overflow-y-auto rounded-t-2xl border border-line bg-surface-raised p-5 shadow-2xl sm:max-w-lg sm:rounded-2xl"
       >
         {result ? (
-          <Done result={result} titleId={titleId} descId={descId} onClose={close} />
+          <Done
+            result={result}
+            titleId={titleId}
+            descId={descId}
+            onClose={close}
+            offerTrash={scope === 'live'}
+          />
         ) : busy ? (
           <div role="status" aria-live="polite" aria-busy="true" className="py-6 text-center">
             <Loader2 className="mx-auto h-8 w-8 animate-spin text-red-600" aria-hidden="true" />
@@ -198,9 +210,9 @@ export function ProductDeleteDialog({
                 </div>
               ) : (
                 <p>
-                  {plural(count, 'product')} will be removed from the catalogue and the shop. Orders
-                  and stock history are kept, and their SKUs can be used again. You can also choose
-                  to delete permanently below.
+                  {plural(count, 'product')} will be moved to the Trash and removed from the
+                  catalogue and the shop. Orders and stock history are kept, their SKUs can be used
+                  again, and you can restore them from the Trash.
                 </p>
               )}
 
@@ -238,7 +250,7 @@ export function ProductDeleteDialog({
                 </div>
               ) : null}
 
-              {canPurge ? (
+              {scope === 'trash' ? null : canPurge ? (
                 <label className="flex min-h-10 cursor-pointer items-start gap-2.5 rounded-lg border border-line p-3">
                   <input
                     type="checkbox"
@@ -322,11 +334,13 @@ function Done({
   titleId,
   descId,
   onClose,
+  offerTrash,
 }: {
   result: DeleteResult;
   titleId: string;
   descId: string;
   onClose: () => void;
+  offerTrash: boolean;
 }) {
   const doneRef = useRef<HTMLButtonElement>(null);
   useEffect(() => doneRef.current?.focus(), []);
@@ -339,8 +353,17 @@ function Done({
       <div id={descId} className="mt-3 space-y-2 text-sm text-fg" role="status">
         <p>
           {plural(result.deleted, 'product')}{' '}
-          {result.permanent ? 'permanently deleted' : 'deleted. Their history is kept'}.
+          {result.permanent ? 'permanently deleted' : 'moved to the Trash. Their history is kept'}.
         </p>
+        {offerTrash && !result.permanent && result.deleted > 0 ? (
+          <p>
+            You can bring them back from the{' '}
+            <Link href="/admin/trash/products" className="font-semibold text-indigo-700 underline">
+              Trash
+            </Link>
+            .
+          </p>
+        ) : null}
         {result.skipped > 0 ? (
           <div>
             <p className="font-semibold text-amber-800 dark:text-amber-200">
