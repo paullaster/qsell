@@ -82,6 +82,14 @@ export function ProductDeleteDialog({
     };
   }, [selection, permanent]);
 
+  // Leaving mid-delete would not undo it, but the person would not see how it ended.
+  useEffect(() => {
+    if (!busy) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [busy]);
+
   const close = useCallback(() => {
     if (busy) return;
     if (result && result.deleted > 0) onDeleted();
@@ -144,6 +152,17 @@ export function ProductDeleteDialog({
       >
         {result ? (
           <Done result={result} titleId={titleId} descId={descId} onClose={close} />
+        ) : busy ? (
+          <div role="status" aria-live="polite" aria-busy="true" className="py-6 text-center">
+            <Loader2 className="mx-auto h-8 w-8 animate-spin text-red-600" aria-hidden="true" />
+            <h2 id={titleId} className="mt-3 text-base font-bold text-fg-strong">
+              {permanent ? 'Permanently deleting' : 'Deleting'} {label}…
+            </h2>
+            <p id={descId} className="mt-1 text-sm text-fg-muted">
+              This can take a little while for a long list. Please keep this window open; nothing
+              else can be changed until it finishes.
+            </p>
+          </div>
         ) : (
           <>
             <h2 id={titleId} className="flex items-center gap-2 text-base font-bold text-fg-strong">
@@ -163,9 +182,19 @@ export function ProductDeleteDialog({
                   </p>
                   <p className="mt-1">
                     {preview ? plural(gone, 'product') : 'The products'} will be erased for good,
-                    with their image links and entries in retired price lists. They cannot be
-                    restored or recovered afterwards.
+                    with their image links, stock movement records and entries in retired price
+                    lists. They cannot be restored or recovered afterwards.
                   </p>
+                  {preview &&
+                  (preview.erases.movements > 0 || preview.erases.productsWithStock > 0) ? (
+                    <p className="mt-1 font-semibold">
+                      That includes {plural(preview.erases.movements, 'stock movement record')}
+                      {preview.erases.productsWithStock > 0
+                        ? `, and ${plural(preview.erases.productsWithStock, 'product')} with stock on hand (${preview.erases.units.toLocaleString('en-KE')} units in total)`
+                        : ''}
+                      .
+                    </p>
+                  ) : null}
                 </div>
               ) : (
                 <p>
@@ -191,7 +220,7 @@ export function ProductDeleteDialog({
                 >
                   <p className="font-semibold">
                     {plural(preview.total - gone, 'product')} will be left as they are, because
-                    history depends on them:
+                    orders, KRA or a live price list depend on them:
                   </p>
                   <ul className="mt-1 list-disc space-y-0.5 pl-5">
                     {preview.blocked.map((b) => (
