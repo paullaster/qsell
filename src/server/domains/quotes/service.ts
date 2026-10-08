@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, ilike, or, sql } from 'drizzle-orm';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import { withAfterCommit } from '@/server/kernel/after-commit';
@@ -27,6 +27,8 @@ import type { GuardLine } from '@/server/domains/pricing/guard-service';
 import type { PricedItem, RuleApplication } from '@/server/domains/pricing/discount-service';
 import { kitCost, kitTax } from '@/server/domains/pricing/kit-service';
 import { mergeLinesForOrder } from './order-lines';
+import { quotePdfItems } from './pdf-items';
+import { templateDraftFromQuote, type TemplateDraft } from './template-from-quote';
 import type { PriceResult } from '@/server/domains/pricing/domain/types';
 
 const money = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
@@ -101,7 +103,7 @@ export interface QuoteInput {
   /** Coupon codes the customer gave; each can unlock a discount rule. */
   couponCodes?: string[];
   shippingFee: number;
-  sections: { id: string; title: string; description?: string | null }[];
+  sections: { id: string; title: string; description?: string | null; showLines?: boolean }[];
   lines: {
     sectionId?: string | null;
     productId: string;
@@ -117,6 +119,20 @@ export interface QuoteInput {
     /** A free gift the quote added. Gifts are worked out again on every save, so these are dropped. */
     isGift?: boolean;
   }[];
+}
+
+/** A quote as a search shows it. */
+export interface QuoteSearchHit {
+  id: string;
+  quoteNumber: string;
+  customerName: string;
+  customerEmail: string | null;
+  status: string;
+  currency: string;
+  totalAmount: number;
+  validUntil: string | null;
+  /** Past its valid-until date and still open. */
+  expired: boolean;
 }
 
 export interface SalesQuote extends SalesQuoteRow {
@@ -145,7 +161,7 @@ export interface QuoteTemplateInput {
   internalNotes?: string | null;
   tags: string[];
   isDefault: boolean;
-  sections: { id: string; title: string; description?: string | null }[];
+  sections: { id: string; title: string; description?: string | null; showLines?: boolean }[];
   lines: {
     sectionId?: string | null;
     productId: string;
@@ -382,6 +398,7 @@ export class SalesQuoteService {
             sectionNumber: (index + 1) * 10000,
             title: section.title.trim(),
             description: section.description?.trim() || null,
+            showLines: section.showLines === true,
           })),
         );
       }
@@ -439,6 +456,7 @@ export class SalesQuoteService {
         id: copiedSectionIds.get(section.id)!,
         title: section.title,
         description: section.description,
+        showLines: section.showLines,
       })),
       lines: original.lines.map((line) => ({
         sectionId: line.sectionId ? (copiedSectionIds.get(line.sectionId) ?? null) : null,
@@ -496,6 +514,72 @@ export class SalesQuoteService {
     return rows;
   }
 
+  /**
+   * Finds quotes of any status by number, customer name or email, or the customer's own
+   * reference, newest first, for choosing one to make a template from.
+   */
+  async searchQuotes(
+    term: string,
+    opts: { status?: string; limit?: number } = {},
+  ): Promise<QuoteSearchHit[]> {
+    const companyId = await this.companyId();
+    const t = term.trim().replace(/[%_\\]/g, '');
+    const rows = await drizzleDb
+      .select()
+      .from(salesQuotes)
+      .where(
+        and(
+          eq(salesQuotes.companyId, companyId),
+          opts.status ? eq(salesQuotes.status, opts.status) : undefined,
+          t
+            ? or(
+                ilike(salesQuotes.quoteNumber, `%${t}%`),
+                ilike(salesQuotes.customerName, `%${t}%`),
+                ilike(salesQuotes.customerEmail, `%${t}%`),
+                ilike(salesQuotes.customerReference, `%${t}%`),
+              )
+            : undefined,
+        ),
+      )
+      .orderBy(desc(salesQuotes.updatedAt))
+      .limit(Math.min(Math.max(1, opts.limit ?? 20), 30));
+    const now = new Date();
+    return rows.map((q) => ({
+      id: q.id,
+      quoteNumber: q.quoteNumber,
+      customerName: q.customerName,
+      customerEmail: q.customerEmail,
+      status: q.status,
+      currency: q.currency,
+      totalAmount: Number(q.totalAmount),
+      validUntil: q.validUntil?.toISOString() ?? null,
+      expired:
+        q.validUntil != null &&
+        q.validUntil < now &&
+        !['converted', 'rejected', 'cancelled'].includes(q.status),
+    }));
+  }
+
+  /** The template a quote of any status would make, to review in the template editor. */
+  async templateDraftFromQuote(id: string, keepCustomer = false): Promise<TemplateDraft> {
+    const quote = await this.get(id);
+    if (!quote) throw new Error('Quote not found.');
+    const productIds = [
+      ...new Set(quote.lines.map((l) => l.productId).filter((p): p is string => !!p)),
+    ];
+    const sellable = new Set(
+      (await CatalogService.getProductsByIds(productIds))
+        .filter((p) => p.isSellable)
+        .map((p) => p.id),
+    );
+    const takenNames = new Set((await this.listTemplates()).map((t) => t.name.toLowerCase()));
+    return templateDraftFromQuote(quote, {
+      keepCustomer,
+      takenNames,
+      canSell: (productId) => sellable.has(productId),
+    });
+  }
+
   async get(id: string): Promise<SalesQuote | null> {
     const companyId = await this.companyId();
     const [quote] = await drizzleDb
@@ -548,6 +632,7 @@ export class SalesQuoteService {
       sourceId: section.id,
       title: section.title,
       description: section.description,
+      showLines: section.showLines,
     }));
     const revised = await this.create(userId, {
       customerId: previous.customerId,
@@ -570,15 +655,18 @@ export class SalesQuoteService {
       discountPercent: num(previous.quoteDiscountPercent),
       shippingFee: num(previous.shippingFee),
       sections: revisedSections,
-      lines: previous.lines.map((line) => ({
-        sectionId: line.sectionId
-          ? revisedSections.find((section) => section.sourceId === line.sectionId)?.id
-          : null,
-        productId: line.productId ?? '',
-        quantity: num(line.quantity),
-        unitPrice: num(line.unitPrice),
-        discountPercent: num(line.discountPercent),
-      })),
+      // Free gifts are worked out again for the new quote, not copied.
+      lines: previous.lines
+        .filter((line) => !line.isGift)
+        .map((line) => ({
+          sectionId: line.sectionId
+            ? revisedSections.find((section) => section.sourceId === line.sectionId)?.id
+            : null,
+          productId: line.productId ?? '',
+          quantity: num(line.quantity),
+          unitPrice: num(line.unitPrice),
+          discountPercent: num(line.discountPercent),
+        })),
     });
     await drizzleDb
       .update(salesQuotes)
@@ -1087,6 +1175,7 @@ export class SalesQuoteService {
             sectionNumber: (index + 1) * 10000,
             title: section.title.trim(),
             description: section.description?.trim() || null,
+            showLines: section.showLines === true,
           })),
         );
       }
@@ -1482,32 +1571,7 @@ export class SalesQuoteService {
           country: quote.billingAddress.country ?? '',
         },
       },
-      items: [
-        ...quote.lines
-          .filter((line) => !line.sectionId)
-          .map((line) => ({
-            kind: 'item' as const,
-            sku: line.sku,
-            name: line.description,
-            quantity: num(line.quantity),
-            unitPrice: num(line.unitPrice),
-            totalPrice: num(line.lineAmount),
-          })),
-        ...quote.sections.map((section) => {
-          const lines = quote.lines.filter((line) => line.sectionId === section.id);
-          const total = lines.reduce((sum, line) => sum + num(line.lineAmount), 0);
-          return {
-            kind: 'section' as const,
-            sectionTotal: total,
-            sectionDescription: section.description,
-            sku: '',
-            name: section.title,
-            quantity: 0,
-            unitPrice: 0,
-            totalPrice: total,
-          };
-        }),
-      ],
+      items: quotePdfItems(quote),
       subtotal: num(quote.subtotal),
       tax: num(quote.taxAmount),
       taxLabel: 'Tax',
@@ -1578,6 +1642,7 @@ export class SalesQuoteService {
         id: salesQuoteSections.id,
         title: salesQuoteSections.title,
         description: salesQuoteSections.description,
+        showLines: salesQuoteSections.showLines,
       })
       .from(salesQuoteSections)
       .where(eq(salesQuoteSections.quoteId, quote.id))

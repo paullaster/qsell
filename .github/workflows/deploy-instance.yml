@@ -1,0 +1,271 @@
+name: Deploy release to instance
+
+on:
+  workflow_dispatch:
+    inputs:
+      instance:
+        description: Select the GitHub Environment for the installation to deploy
+        required: true
+        type: environment
+      release_sha:
+        description: Full 40-character SHA of a successfully published release
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: deploy-${{ inputs.instance }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.release_sha }} to ${{ inputs.instance }}
+    if: github.ref == 'refs/heads/release'
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.instance }}
+    steps:
+      - name: Validate instance and release selection
+        id: target
+        env:
+          INSTANCE_ID: ${{ inputs.instance }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+          PUBLIC_DOMAIN: ${{ vars.PUBLIC_DOMAIN }}
+          EDGE_HTTP_PORT: ${{ vars.EDGE_HTTP_PORT }}
+          PROJECT_NAME: ${{ vars.COMPOSE_PROJECT_NAME }}
+        run: |
+          set -eu
+          [[ "$INSTANCE_ID" =~ ^[a-z0-9][a-z0-9-]{0,39}$ ]] || { echo 'Invalid instance id.'; exit 1; }
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full 40-character commit SHA.'; exit 1; }
+          [[ "$DEPLOY_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || { echo 'Set this environment’s DEPLOY_HOST Actions variable.'; exit 1; }
+          [[ "$DEPLOY_USER" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'Set this environment’s DEPLOY_USER Actions variable.'; exit 1; }
+          [[ "$DEPLOY_PATH" =~ ^/[A-Za-z0-9/_-]+$ ]] || { echo 'Set DEPLOY_PATH to an absolute path containing only letters, numbers, slash, underscore, and hyphen.'; exit 1; }
+          [[ "$PUBLIC_DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]] || { echo 'Set this environment’s PUBLIC_DOMAIN Actions variable.'; exit 1; }
+          [[ "$EDGE_HTTP_PORT" =~ ^[0-9]{2,5}$ ]] || { echo 'Set EDGE_HTTP_PORT to a valid unused local TCP port (for example 8080 or 8081).'; exit 1; }
+          (( EDGE_HTTP_PORT >= 1024 && EDGE_HTTP_PORT <= 65535 )) || { echo 'EDGE_HTTP_PORT must be between 1024 and 65535.'; exit 1; }
+          [[ "$PROJECT_NAME" =~ ^[a-z0-9][a-z0-9_-]{0,49}$ ]] || { echo 'Set COMPOSE_PROJECT_NAME to a unique lowercase Compose project name. Preserve qsell for the existing installation.'; exit 1; }
+          printf 'instance_id=%s\nproject_name=%s\n' "$INSTANCE_ID" "$PROJECT_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Confirm release images were published by a successful release run
+        uses: actions/github-script@v7
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        with:
+          script: |
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'ci-cd.yml',
+              branch: 'release',
+              head_sha: process.env.RELEASE_SHA,
+              status: 'completed',
+              per_page: 50,
+            })
+            const successful = data.workflow_runs.some(run => run.conclusion === 'success')
+            if (!successful) {
+              core.setFailed(`No successful Release pipeline exists for ${process.env.RELEASE_SHA}; this SHA is not eligible for production deployment.`)
+              return
+            }
+            core.info(`Confirmed successful release build for ${process.env.RELEASE_SHA}`)
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha }}
+
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+
+      - name: Install pinned host key
+        env:
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          test -n "$DEPLOY_KNOWN_HOSTS" || { echo 'Set DEPLOY_KNOWN_HOSTS in the selected GitHub Environment.'; exit 1; }
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Check instance secrets and runtime configuration
+        env:
+          GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+          GHCR_USERNAME: ${{ vars.GHCR_USERNAME }}
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+        run: |
+          test -n "$GHCR_READ_TOKEN" || { echo 'Set GHCR_READ_TOKEN in the selected GitHub Environment.'; exit 1; }
+          test -n "$GHCR_USERNAME" || { echo 'Set GHCR_USERNAME in the selected GitHub Environment.'; exit 1; }
+          test -n "$DEPLOY_SSH_PRIVATE_KEY" || { echo 'Set DEPLOY_SSH_PRIVATE_KEY in the selected GitHub Environment.'; exit 1; }
+
+      - name: Copy Compose, Caddy, and Nginx location template to selected instance
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+        run: |
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH/deploy/nginx'"
+          scp compose.production.yaml Caddyfile "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+          scp deploy/nginx/omnicommerce-locations.conf "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/deploy/nginx/nginx-locations.template.conf"
+
+      - name: Authenticate selected server to GHCR
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          GHCR_USERNAME: ${{ vars.GHCR_USERNAME }}
+          GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+        run: |
+          printf '%s' "$GHCR_READ_TOKEN" | ssh "$DEPLOY_USER@$DEPLOY_HOST" \
+            "docker login ghcr.io --username '$GHCR_USERNAME' --password-stdin"
+
+      - name: Deploy only the selected installation
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+          PUBLIC_DOMAIN: ${{ vars.PUBLIC_DOMAIN }}
+          EDGE_HTTP_PORT: ${{ vars.EDGE_HTTP_PORT }}
+          INSTANCE_ID: ${{ steps.target.outputs.instance_id }}
+          COMPOSE_PROJECT_NAME: ${{ steps.target.outputs.project_name }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" \
+            "DEPLOY_PATH='$DEPLOY_PATH' PUBLIC_DOMAIN='$PUBLIC_DOMAIN' EDGE_HTTP_PORT='$EDGE_HTTP_PORT' \
+             INSTANCE_ID='$INSTANCE_ID' COMPOSE_PROJECT_NAME='$COMPOSE_PROJECT_NAME' \
+             APP_IMAGE='$IMAGE_NAME:sha-$RELEASE_SHA' \
+             WORKER_IMAGE='$IMAGE_NAME:worker-$RELEASE_SHA' \
+             MIGRATOR_IMAGE='$IMAGE_NAME:migrator-$RELEASE_SHA' sh -s" <<'REMOTE'
+          set -eu
+          cd "$DEPLOY_PATH"
+          test -s .env.runtime || { echo "Missing $DEPLOY_PATH/.env.runtime; refusing deployment."; exit 1; }
+          test -s secrets/postgres_password || { echo "Missing $DEPLOY_PATH/secrets/postgres_password; refusing deployment."; exit 1; }
+
+          # Every installation owns an in-stack Postgres service and its data volume.
+          runtime_db_url=$(sed -n 's/^DATABASE_URL=//p' .env.runtime | tail -n 1 | tr -d "'\"")
+          case "$runtime_db_url" in
+            *'@db:'*|*'@db/'*) ;;
+            *) echo 'DATABASE_URL must address this installation’s private Compose db service (host db). Do not share a production database across instances.'; exit 1 ;;
+          esac
+
+          env_value() { sed -n "s/^$1=//p" .env.runtime | tail -n 1 | tr -d "'\""; }
+          env_has() { [ -n "$(env_value "$1")" ]; }
+          media_driver=$(env_value MEDIA_DRIVER | tr 'A-Z' 'a-z')
+          case "${media_driver:-local}" in
+            local) echo 'Media storage: per-instance persistent local volumes.' ;;
+            cloudinary)
+              if env_has CLOUDINARY_URL || { env_has CLOUDINARY_CLOUD_NAME && env_has CLOUDINARY_API_KEY && env_has CLOUDINARY_API_SECRET; }; then
+                echo 'Media storage: Cloudinary credentials are present.'
+              else
+                echo 'MEDIA_DRIVER=cloudinary but this instance is missing Cloudinary credentials. Nothing was deployed.'; exit 1
+              fi
+              ;;
+            *) echo "Unknown MEDIA_DRIVER '$media_driver'. Nothing was deployed."; exit 1 ;;
+          esac
+
+          umask 077
+          # Keep the last deployed image set so a failed rollout can be reverted.
+          if [ -s .env.deploy ]; then cp -p .env.deploy .env.deploy.previous; fi
+          printf 'COMPOSE_PROJECT_NAME=%s\nPUBLIC_DOMAIN=%s\nEDGE_HTTP_PORT=%s\nAPP_IMAGE=%s\nWORKER_IMAGE=%s\nMIGRATOR_IMAGE=%s\n' \
+            "$COMPOSE_PROJECT_NAME" "$PUBLIC_DOMAIN" "$EDGE_HTTP_PORT" "$APP_IMAGE" "$WORKER_IMAGE" "$MIGRATOR_IMAGE" > .env.deploy
+
+          compose() { docker compose --env-file .env.deploy -f compose.production.yaml "$@"; }
+
+          # Reverts app/worker/Caddy to the previously deployed images. The database
+          # schema is NOT reverted, so migrations must stay backward-compatible
+          # (expand now, contract in a later release).
+          rollback() {
+            if [ -s .env.deploy.previous ]; then
+              echo 'Rolling back to the previously deployed images.'
+              cp -p .env.deploy.previous .env.deploy
+              compose up -d --remove-orphans || echo 'Rollback failed; manual intervention required.'
+            else
+              echo 'No previous release recorded (first deploy); nothing to roll back to.'
+            fi
+          }
+
+          compose --profile ops pull
+          compose --profile ops run --rm migrate || { echo 'Migration failed; the running release was not touched.'; exit 1; }
+
+          # Carry existing local uploads into the new per-instance named volume.
+          upload_backup=$(mktemp -d "$DEPLOY_PATH/.uploads-backup.XXXXXX")
+          old_app=$(compose ps -q app || true)
+          if [ -n "$old_app" ]; then docker cp "$old_app:/app/public/uploads/." "$upload_backup/" || true; fi
+          compose up -d --remove-orphans
+          new_app=$(compose ps -q app)
+          if [ -n "$new_app" ] && [ -d "$upload_backup/company" ]; then
+            docker cp "$upload_backup/company" "$new_app:/app/public/uploads/"
+            docker exec -u 0 "$new_app" chown -R 1001:1001 /app/public/uploads
+          fi
+
+          host_nginx_snippet="$DEPLOY_PATH/deploy/nginx/$INSTANCE_ID.conf"
+          sed "s/@@EDGE_HTTP_PORT@@/$EDGE_HTTP_PORT/g" deploy/nginx/nginx-locations.template.conf > "$host_nginx_snippet"
+          chmod 644 "$host_nginx_snippet"
+          # Installations created before per-instance snippets include
+          # deploy/nginx/omnicommerce-locations.conf from Nginx. Keep that file in
+          # sync so those hosts stay current until their include is switched.
+          if [ -f deploy/nginx/omnicommerce-locations.conf ]; then
+            cp "$host_nginx_snippet" deploy/nginx/omnicommerce-locations.conf
+            echo 'Refreshed legacy deploy/nginx/omnicommerce-locations.conf (switch the Nginx include to the instance file when convenient).'
+          fi
+          echo "Host Nginx snippet installed at $host_nginx_snippet. Include it in the HTTPS server block for $PUBLIC_DOMAIN and reload Nginx if this is a new domain/target."
+
+          for attempt in $(seq 1 30); do
+            if compose exec -T app node -e "fetch('http://127.0.0.1:3069/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"; then
+              rm -rf "$upload_backup"
+              uploads_ready=$(compose exec -T app node -e "fetch('http://127.0.0.1:3069/api/health').then(r => r.json()).then(j => console.log(String(Boolean(j.media) && j.media.uploadsReady))).catch(() => console.log('unknown'))" || echo unknown)
+              if [ "$uploads_ready" != true ]; then echo "Uploads not ready ($uploads_ready). Check the selected instance's MEDIA_DRIVER."; exit 1; fi
+              echo "Instance $INSTANCE_ID is healthy at image $RELEASE_SHA."
+              exit 0
+            fi
+            sleep 5
+          done
+          compose ps
+          compose logs --tail=100 app
+          rollback
+          exit 1
+          REMOTE
+
+      - name: Verify selected HTTPS origin
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          PUBLIC_DOMAIN: ${{ vars.PUBLIC_DOMAIN }}
+          INSTANCE_ID: ${{ steps.target.outputs.instance_id }}
+        run: |
+          # The first deploy of a new instance generates the Nginx snippet this check
+          # depends on. If Nginx does not reference it yet, warn instead of failing.
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" \
+            "if curl --fail --silent --show-error --retry 20 --retry-delay 5 \
+                --resolve '$PUBLIC_DOMAIN:443:127.0.0.1' 'https://$PUBLIC_DOMAIN/api/health'; then exit 0; fi
+             if grep -rqsF '$INSTANCE_ID.conf' /etc/nginx/ 2>/dev/null; then exit 1; fi
+             echo '::warning::Nginx does not include $INSTANCE_ID.conf yet. The stack is healthy; add the include, run nginx -t and reload.'
+             exit 0"
+
+      - name: Smoke-test the media provider
+        # Last on purpose: the release is already live, so a failure here turns the run
+        # red (bad credentials, provider outage) without blocking the deploy itself.
+        # Uploads and removes two tiny test images, from the worker image.
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+        run: |
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "DEPLOY_PATH='$DEPLOY_PATH' sh -s" <<'REMOTE'
+          set -eu
+          cd "$DEPLOY_PATH"
+          driver=$(sed -n 's/^MEDIA_DRIVER=//p' .env.runtime | tail -n 1 | tr -d "'\"" | tr 'A-Z' 'a-z')
+          if [ "${driver:-local}" != cloudinary ]; then
+            echo 'Media provider smoke test skipped: not using Cloudinary.'
+            exit 0
+          fi
+          docker compose --env-file .env.deploy -f compose.production.yaml \
+            run --rm -T --no-deps worker pnpm media:check
+          REMOTE

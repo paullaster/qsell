@@ -291,6 +291,56 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
       y = drawTableHeader(y);
       const footerReserve = isProforma ? 240 : 180;
 
+      // One priced row of the table. `indent` pushes a section's own items in under its title.
+      const drawRow = (
+        row: { name: string; quantity: number; unitPrice: number; totalPrice: number },
+        index: number,
+        indent = 0,
+      ) => {
+        doc.font('Helvetica').fontSize(8);
+        const nameHeight = Math.max(
+          12,
+          doc.heightOfString(row.name, {
+            width: cols.desc.w - 8 - indent,
+          }),
+        );
+        const rowH = Math.max(22, nameHeight + 10);
+
+        if (y + rowH > PAGE_H - footerReserve) {
+          doc.addPage();
+          doc.rect(0, 0, PAGE_W, 6).fill(accent);
+          y = 28;
+          y = drawTableHeader(y);
+        }
+
+        if (index % 2 === 0) {
+          doc.rect(M, y, CONTENT_W, rowH).fill('#F9FAFB');
+        }
+
+        const textY = y + 6;
+        doc.fillColor(ink).font('Helvetica').fontSize(8);
+        doc.text(row.name, cols.desc.x + 6 + indent, textY, {
+          width: cols.desc.w - 8 - indent,
+        });
+        doc.text(String(row.quantity), cols.qty.x, textY, {
+          width: cols.qty.w,
+          align: 'right',
+          lineBreak: false,
+        });
+        doc.text(money(row.unitPrice, payload.currency), cols.unit.x, textY, {
+          width: cols.unit.w,
+          align: 'right',
+          lineBreak: false,
+        });
+        doc.text(money(row.totalPrice, payload.currency), cols.amount.x, textY, {
+          width: cols.amount.w - 6,
+          align: 'right',
+          lineBreak: false,
+        });
+
+        y += rowH;
+      };
+
       for (const [index, item] of payload.items.entries()) {
         if (isQuote && item.kind === 'section') {
           const rowH = 38;
@@ -330,50 +380,12 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
               },
             );
           y += rowH;
+          // A section set to show its items lists them, indented, under its title and total.
+          for (const [lineIndex, line] of (item.sectionLines ?? []).entries())
+            drawRow(line, lineIndex + 1, 12);
           continue;
         }
-        doc.font('Helvetica').fontSize(8);
-        const nameHeight = Math.max(
-          12,
-          doc.heightOfString(item.name, {
-            width: cols.desc.w - 8,
-          }),
-        );
-        const rowH = Math.max(22, nameHeight + 10);
-
-        if (y + rowH > PAGE_H - footerReserve) {
-          doc.addPage();
-          doc.rect(0, 0, PAGE_W, 6).fill(accent);
-          y = 28;
-          y = drawTableHeader(y);
-        }
-
-        if (index % 2 === 0) {
-          doc.rect(M, y, CONTENT_W, rowH).fill('#F9FAFB');
-        }
-
-        const textY = y + 6;
-        doc.fillColor(ink).font('Helvetica').fontSize(8);
-        doc.text(item.name, cols.desc.x + 6, textY, {
-          width: cols.desc.w - 8,
-        });
-        doc.text(String(item.quantity), cols.qty.x, textY, {
-          width: cols.qty.w,
-          align: 'right',
-          lineBreak: false,
-        });
-        doc.text(money(item.unitPrice, payload.currency), cols.unit.x, textY, {
-          width: cols.unit.w,
-          align: 'right',
-          lineBreak: false,
-        });
-        doc.text(money(item.totalPrice, payload.currency), cols.amount.x, textY, {
-          width: cols.amount.w - 6,
-          align: 'right',
-          lineBreak: false,
-        });
-
-        y += rowH;
+        drawRow(item, index);
       }
 
       doc

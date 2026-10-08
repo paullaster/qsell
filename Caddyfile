@@ -4,7 +4,7 @@
 	auto_https off
 }
 
-http://omnicommerce.brainsporellc.com:8080 {
+http://{$PUBLIC_DOMAIN}:8080 {
 	encode zstd gzip
 
 	header {
