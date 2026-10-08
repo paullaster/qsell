@@ -154,7 +154,7 @@ export class PricingConfigService {
   }
 
   /** Checks that the customers, groups and branches a list names exist in this company. */
-  private async checkScopeReferences(companyId: string, scopes: Scopes): Promise<RuleIssue[]> {
+  async checkScopeReferences(companyId: string, scopes: Scopes): Promise<RuleIssue[]> {
     const issues: RuleIssue[] = [];
     const missing = async (
       dimension: string,

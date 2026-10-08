@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { orders } from '@/server/db/drizzle/schema';
+import { orderItems, orders } from '@/server/db/drizzle/schema';
+import { guardLines } from '@/server/domains/pricing/guard-text';
 import type { DocumentHandler } from '@/server/kernel/approvals/engine';
 import { afterCommit } from '@/server/kernel/after-commit';
 import { broadcastRealtime } from '@/server/realtime';
@@ -60,11 +61,15 @@ export function orderApprovalHandler(db: DrizzleDb): DocumentHandler {
         .from(orders)
         .where(eq(orders.id, orderId))
         .limit(1);
-      return o
-        ? {
-            title: `Sales order ${o.number} for ${o.name}: ${o.currency} ${Number(o.total).toLocaleString('en-KE')}.`,
-          }
-        : null;
+      if (!o) return null;
+      const items = await db
+        .select({ name: orderItems.productName, trace: orderItems.priceTrace })
+        .from(orderItems)
+        .where(eq(orderItems.orderId, orderId));
+      return {
+        title: `Sales order ${o.number} for ${o.name}: ${o.currency} ${Number(o.total).toLocaleString('en-KE')}.`,
+        lines: guardLines(items.map((i) => ({ name: i.name, guard: i.trace?.guard }))),
+      };
     },
   };
 }

@@ -4,6 +4,7 @@ import { broadcastRealtime } from '@/server/realtime';
 import { toTransaction, toGatewayConfig } from '@/server/domains/catalog/mappers';
 import { ReconciliationEngine } from '@/server/domains/reconciliation/service';
 import { InventoryReservationService } from '@/server/domains/inventory/reservation-service';
+import { amountDue } from '@/server/domains/orders/amount-due';
 
 export interface PesapalOrderRequest {
   orderId: string;
@@ -33,7 +34,7 @@ export class PesapalService {
       throw new Error('Pesapal payment gateway is disabled by administrator');
     }
 
-    const amount = params.amount || order.totalAmount;
+    const amount = params.amount || amountDue(order);
     const orderTrackingId = `pesa_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
     const merchantReference = `REF_${order.orderNumber}_${Date.now()}`;
     const transactionId = `tx_${Date.now()}_pesapal`;

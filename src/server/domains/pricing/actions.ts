@@ -788,6 +788,48 @@ export async function previewQuotePricesAction(input: {
         };
       }),
     );
+    // Line discounts apply on top of the list price, so the editor shows what the save will use.
+    const priced = lines.flatMap((l, i) => {
+      const r = results[i]!;
+      const p = byId.get(l.productId)!;
+      return r.unitPrice == null || r.lineTotal == null
+        ? []
+        : [
+            {
+              at: i,
+              item: {
+                productId: l.productId,
+                quantity: l.quantity,
+                unitPrice: r.unitPrice,
+                lineTotal: r.lineTotal,
+                taxRate: p.taxRate == null ? 0 : Number(p.taxRate),
+                lineTaxInclusive: p.isTaxInclusive !== false,
+                explicitFloorUnit: r.trace.floorPrice ?? null,
+                trace: r.trace,
+              },
+            },
+          ];
+    });
+    const basket = await getContainer().discounts.evaluate(
+      companyId,
+      {
+        customerId: input.customerId || null,
+        branchId: branch?.id ?? null,
+        salesType: input.paymentMethod === 'on_account' ? 'credit' : 'cash',
+        channel: 'sales_order',
+        paymentMethod: input.paymentMethod ?? null,
+      },
+      priced.map((x) => x.item),
+      { stages: { order: false } },
+    );
+    const discounted = new Map(priced.map((x, n) => [x.at, basket.lines[n]!]));
+    for (const [i, b] of discounted)
+      if (b.lineDiscount > 0 || b.trace.considered.length > 0)
+        results[i] = {
+          unitPrice: b.unitPriceAfter,
+          lineTotal: b.lineTotalAfter,
+          trace: { ...results[i]!.trace, discounts: b.trace },
+        };
     // Answers line for line, in the order asked.
     const answered = new Map(lines.map((l, i) => [l, results[i]!]));
     return input.lines.map((l) => {

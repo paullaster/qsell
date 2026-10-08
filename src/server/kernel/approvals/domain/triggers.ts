@@ -34,6 +34,11 @@ export const TRIGGERS: TriggerDefinition[] = [
       { path: 'discountPercent', label: 'Largest line discount %', type: 'number' },
       { path: 'orderDiscountPercent', label: 'Whole-order discount %', type: 'number' },
       { path: 'belowFloor', label: 'Any line below its price floor', type: 'boolean' },
+      {
+        path: 'floorShortfallPercent',
+        label: 'Biggest shortfall under a price floor %',
+        type: 'number',
+      },
       { path: 'customer.id', label: 'Customer', type: 'text' },
       { path: 'customer.accountType', label: 'Customer account type', type: 'text' },
       {
@@ -56,6 +61,18 @@ export const TRIGGERS: TriggerDefinition[] = [
       { path: 'quoteDiscountPercent', label: 'Whole-quote discount %', type: 'number' },
       { path: 'marginPercent', label: 'Gross margin %', type: 'number' },
       { path: 'belowFloor', label: 'Margin below the company floor', type: 'boolean' },
+      { path: 'belowPriceFloor', label: 'Any line below its price floor', type: 'boolean' },
+      {
+        path: 'floorShortfallPercent',
+        label: 'Biggest shortfall under a price floor %',
+        type: 'number',
+      },
+      { path: 'overridePercent', label: 'Biggest price reduction from list %', type: 'number' },
+      {
+        path: 'overrideOverLimit',
+        label: 'A price reduction beyond the requester’s limit',
+        type: 'boolean',
+      },
       { path: 'customer.id', label: 'Customer', type: 'text' },
     ],
   },
@@ -95,14 +112,52 @@ export const TRIGGERS: TriggerDefinition[] = [
   },
   {
     code: 'price_list.publish',
-    module: 'pricing',
+    module: 'sales',
     documentKind: 'price_list',
     label: 'Price list published',
     fields: [...common, { path: 'changedLines', label: 'Lines changed', type: 'number' }],
   },
   {
+    code: 'discount_rule.publish',
+    module: 'sales',
+    documentKind: 'discount_rule',
+    label: 'Discount rule put in force',
+    fields: [
+      ...common,
+      { path: 'ruleKind', label: 'Kind (line or order)', type: 'text' },
+      { path: 'rewardPercent', label: 'Largest percentage given', type: 'number' },
+      { path: 'budget', label: 'Budget (0 if none)', type: 'number' },
+      { path: 'hasEndDate', label: 'Has an end date', type: 'boolean' },
+      { path: 'requiresCoupon', label: 'Needs a coupon code', type: 'boolean' },
+      {
+        path: 'projectedGiveaway',
+        label: 'Projected give-away over the last 90 days of sales (0 if not estimated)',
+        type: 'number',
+      },
+      { path: 'projectedYearly', label: 'Projected give-away over a year', type: 'number' },
+      {
+        path: 'marginAfterPercent',
+        label: 'Margin % on the covered sales after it (0 if unknown)',
+        type: 'number',
+      },
+    ],
+  },
+  {
+    code: 'rebate.settle',
+    module: 'sales',
+    documentKind: 'rebate_settlement',
+    label: 'Rebate paid to a customer',
+    fields: [
+      ...common,
+      { path: 'programCode', label: 'Rebate programme', type: 'text' },
+      { path: 'periodKey', label: 'Period', type: 'text' },
+      { path: 'basis', label: 'Purchases counted', type: 'number' },
+      { path: 'percent', label: 'Rebate % reached', type: 'number' },
+    ],
+  },
+  {
     code: 'price_list.live_change',
-    module: 'pricing',
+    module: 'sales',
     documentKind: 'price_list_change',
     label: 'Price change on a list in force',
     fields: [
@@ -127,13 +182,14 @@ export const DOCUMENT_KIND_LABELS: Record<string, string> = {
   customer_credit_limit: 'Customer credit limits',
   price_list: 'Price lists',
   price_list_change: 'Price changes',
+  discount_rule: 'Discount rules',
+  rebate_settlement: 'Rebate payments',
 };
 
 export const MODULE_LABELS: Record<string, string> = {
   sales: 'Sales',
   finance: 'Finance',
   inventory: 'Inventory',
-  pricing: 'Pricing',
 };
 
 export function triggerByCode(code: string): TriggerDefinition | undefined {

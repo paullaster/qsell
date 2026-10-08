@@ -966,7 +966,8 @@ describe.skipIf(!url)('pricing (database)', () => {
       expect(Number(lines.get(p1)!.unitPrice)).toBe(700);
       expect(lines.get(p1)!.priceTrace?.winner?.listId).toBe(pl.id);
       expect(Number(lines.get(p2)!.unitPrice)).toBe(999);
-      expect(lines.get(p2)!.priceTrace).toBeNull();
+      // A typed price is explained as typed, not taken from a list.
+      expect(lines.get(p2)!.priceTrace?.source).toBe('none');
       expect(Number(lines.get(p3)!.unitPrice)).toBe(500); // the typed number is ignored in catalog mode
 
       // The list changes. Re-saving with the saved prices kept does not reprice the quote.

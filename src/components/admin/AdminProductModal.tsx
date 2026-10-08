@@ -669,6 +669,7 @@ export function AdminProductModal({
                     </option>
                     {categoryOptions.map((c) => (
                       <option key={c.id} value={c.name}>
+                        {'— '.repeat(c.depth ?? 0)}
                         {c.name}
                       </option>
                     ))}

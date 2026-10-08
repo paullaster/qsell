@@ -254,6 +254,25 @@ export class InventoryReservationService {
       knownItems,
     );
 
+    // A discount the order had used goes back to its budget and limits. Never fails the release.
+    try {
+      const { getContainer } = await import('@/server/di/container');
+      await drizzleDb.transaction((tx) =>
+        getContainer().discounts.reverse(tx, { type: 'order', id: orderId }),
+      );
+    } catch (error) {
+      console.error("[inventory] could not give back the order's discount use", orderId, error);
+    }
+
+    // Gift cards and points the order spent go back, points it earned are taken back, and its
+    // purchases stop counting towards rebates. Never fails the release.
+    try {
+      const { getContainer } = await import('@/server/di/container');
+      await drizzleDb.transaction((tx) => getContainer().tenders.reverseOrder(tx, orderId));
+    } catch (error) {
+      console.error('[inventory] could not reverse the order\'s tenders, points or rebates', orderId, error);
+    }
+
     void broadcastRealtime('inventory_update', { type: 'release', orderId });
   }
 

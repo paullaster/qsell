@@ -17,6 +17,15 @@ import {
 import { type Category, type Product } from '@/types/index';
 import { createCategoryAction, updateCategoryAction, deleteCategoryAction } from '@/server/actions';
 
+/** True when `c` is the category being edited or sits somewhere below it (it cannot be its own parent). */
+function isBelowOrSame(c: Category, edited: Category, all: Category[]): boolean {
+  for (let at: Category | undefined = c, hops = 0; at && hops < 10; hops++) {
+    if (at.id === edited.id) return true;
+    at = at.parentId ? all.find((x) => x.id === at!.parentId) : undefined;
+  }
+  return false;
+}
+
 interface AdminCategoriesProps {
   categoriesPromise: Promise<Category[]>;
   productsPromise: Promise<Product[]>;
@@ -42,6 +51,7 @@ export function AdminCategories({
   const [description, setDescription] = useState('');
   const [displayOrder, setDisplayOrder] = useState<number>(1);
   const [isActive, setIsActive] = useState(true);
+  const [parentId, setParentId] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const submitLabel = isSubmitting
@@ -67,6 +77,7 @@ export function AdminCategories({
     setDescription('');
     setDisplayOrder(categories.length + 1);
     setIsActive(true);
+    setParentId('');
     setFormError(null);
     setIsModalOpen(true);
   };
@@ -78,6 +89,7 @@ export function AdminCategories({
     setDescription(cat.description);
     setDisplayOrder(cat.displayOrder);
     setIsActive(cat.isActive);
+    setParentId(cat.parentId ?? '');
     setFormError(null);
     setIsModalOpen(true);
   };
@@ -101,6 +113,7 @@ export function AdminCategories({
           description: description.trim(),
           displayOrder: Number(displayOrder),
           isActive,
+          parentId: parentId || null,
         });
       } else {
         await createCategoryAction({
@@ -109,6 +122,7 @@ export function AdminCategories({
           description: description.trim(),
           displayOrder: Number(displayOrder),
           isActive,
+          parentId: parentId || null,
         });
       }
 
@@ -239,10 +253,21 @@ export function AdminCategories({
                     <tr key={cat.id} className="transition-colors hover:bg-hover">
                       <td className="px-4 py-3.5 font-mono text-fg-muted">#{cat.displayOrder}</td>
                       <td className="px-4 py-3.5">
-                        <div className="flex items-center gap-2 font-semibold text-fg-strong">
+                        <div
+                          className="flex items-center gap-2 font-semibold text-fg-strong"
+                          style={{ paddingLeft: `${(cat.depth ?? 0) * 18}px` }}
+                        >
                           <Tag className="h-3.5 w-3.5 text-indigo-400" />
                           {cat.name}
                         </div>
+                        {(cat.depth ?? 0) > 0 ? (
+                          <div
+                            className="text-[11px] text-fg-muted"
+                            style={{ paddingLeft: `${(cat.depth ?? 0) * 18 + 22}px` }}
+                          >
+                            {cat.path}
+                          </div>
+                        ) : null}
                       </td>
                       <td className="px-4 py-3.5 font-mono text-fg-muted">/{cat.slug}</td>
                       <td
@@ -322,6 +347,34 @@ export function AdminCategories({
                   {formError}
                 </div>
               )}
+
+              <div>
+                <label
+                  htmlFor="category-parent"
+                  className="mb-1 block text-xs font-semibold text-fg"
+                >
+                  Sits under
+                </label>
+                <select
+                  id="category-parent"
+                  value={parentId}
+                  onChange={(e) => setParentId(e.target.value)}
+                  className="w-full cursor-pointer rounded-lg border border-line bg-surface px-3.5 py-2 text-xs text-fg-strong focus:border-indigo-500 focus:outline-none"
+                >
+                  <option value="">Nothing: a top-level category</option>
+                  {categories
+                    .filter((c) => !categoryToEdit || !isBelowOrSame(c, categoryToEdit, categories))
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {'— '.repeat(c.depth ?? 0)}
+                        {c.name}
+                      </option>
+                    ))}
+                </select>
+                <p className="mt-1 text-[11px] text-fg-muted">
+                  Make this a sub-category. Price floors set on a category cover its sub-categories.
+                </p>
+              </div>
 
               <div>
                 <label className="mb-1 block text-xs font-semibold text-fg">Category Name *</label>

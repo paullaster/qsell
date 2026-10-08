@@ -49,11 +49,16 @@ import type { QuoteInput } from '@/server/domains/quotes/service';
 import { AdminSalesQuoteTemplates } from './AdminSalesQuoteTemplates';
 import { QuoteLinePriceNote } from './pricing/QuoteLinePriceNote';
 import { useQuotePricePreview } from './pricing/useQuotePricePreview';
+import { useQuoteGuardPreview } from './pricing/useQuoteGuardPreview';
+import { QuoteCoupons } from './pricing/QuoteCoupons';
+import { kitCost, kitTax } from '@/server/domains/pricing/domain/kits';
+import type { EditorKit } from '@/server/domains/quotes/actions';
 
 type QuoteLineInput = QuoteInput['lines'][number];
 
 interface EditorData {
   products: Product[];
+  kits: EditorKit[];
   customers: CustomerRow[];
   settings: {
     minimumGrossMarginPercent: string;
@@ -103,6 +108,7 @@ function newQuoteInput(): QuoteInput {
     internalNotes: '',
     discountPercent: 0,
     shippingFee: 0,
+    couponCodes: [],
     lines: [],
   };
 }
@@ -134,15 +140,19 @@ function quoteToInput(quote: SalesQuote): QuoteInput {
     internalNotes: quote.internalNotes,
     discountPercent: Number(quote.quoteDiscountPercent),
     shippingFee: Number(quote.shippingFee),
-    lines: quote.lines.map((line) => ({
-      productId: line.productId ?? '',
-      sectionId: line.sectionId ? (sectionIdMap.get(line.sectionId) ?? null) : null,
-      quantity: Number(line.quantity),
-      unitPrice: Number(line.unitPrice),
-      // The price already agreed stays as it is until someone asks to reprice it.
-      priceMode: 'kept' as const,
-      discountPercent: Number(line.discountPercent),
-    })),
+    couponCodes: quote.couponCodes ?? [],
+    // Free gifts are worked out again on every save, so they are not editable lines.
+    lines: quote.lines
+      .filter((line) => !line.isGift)
+      .map((line) => ({
+        productId: line.productId ?? '',
+        sectionId: line.sectionId ? (sectionIdMap.get(line.sectionId) ?? null) : null,
+        quantity: Number(line.quantity),
+        unitPrice: Number(line.unitPrice),
+        // The price already agreed stays as it is until someone asks to reprice it.
+        priceMode: 'kept' as const,
+        discountPercent: Number(line.discountPercent),
+      })),
   };
 }
 
@@ -630,6 +640,7 @@ export function AdminSalesQuotes({
       {editorOpen && (
         <QuoteEditor
           products={editorData.products}
+          kits={editorData.kits}
           customers={editorData.customers}
           templates={editorData.templates.filter((template) => template.status === 'active')}
           initial={editing ? quoteToInput(editing) : newQuoteInput()}
@@ -767,6 +778,7 @@ async function respondToQuote(id: string, accepted: boolean) {
 
 function QuoteEditor({
   products,
+  kits,
   customers,
   templates,
   initial,
@@ -776,6 +788,7 @@ function QuoteEditor({
   onSave,
 }: {
   products: Product[];
+  kits: EditorKit[];
   customers: CustomerRow[];
   templates: SalesQuoteTemplate[];
   initial: QuoteInput;
@@ -800,18 +813,26 @@ function QuoteEditor({
     const discount = (1 - line.discountPercent / 100) * (1 - input.discountPercent / 100);
     const gross = unit * line.quantity * discount;
     const rate = product?.taxRate ?? 0;
-    const net = product?.isTaxInclusive !== false && rate > 0 ? gross / (1 + rate / 100) : gross;
-    const tax = product?.isTaxInclusive !== false && rate > 0 ? gross - net : (net * rate) / 100;
+    const inclusive = product?.isTaxInclusive !== false;
+    // A kit is taxed and costed from what is in it, as the server will do when it is saved.
+    const kit = kits.find((k) => k.productId === line.productId);
+    const split = kit
+      ? kitTax(gross, line.quantity, kit, inclusive)
+      : {
+          net: inclusive && rate > 0 ? gross / (1 + rate / 100) : gross,
+          tax: inclusive && rate > 0 ? gross - gross / (1 + rate / 100) : (gross * rate) / 100,
+        };
+    const unitCost = kit ? kitCost(kit) : (product?.costPrice ?? 0);
+    const { net, tax } = split;
     return {
       line,
       product,
       net,
       tax,
       total: net + tax,
-      cost: (product?.costPrice ?? 0) * line.quantity,
-      grossProfit: net - (product?.costPrice ?? 0) * line.quantity,
-      grossMarginPercent:
-        net > 0 ? ((net - (product?.costPrice ?? 0) * line.quantity) / net) * 100 : 0,
+      cost: unitCost * line.quantity,
+      grossProfit: net - unitCost * line.quantity,
+      grossMarginPercent: net > 0 ? ((net - unitCost * line.quantity) / net) * 100 : 0,
     };
   });
   const standaloneLines = linesPreview.filter((entry) => !entry.line.sectionId);
@@ -867,6 +888,7 @@ function QuoteEditor({
       input.lines.map((line, lineIndex) => (lineIndex === index ? { ...line, ...patch } : line)),
     );
   const { traces, problems } = useQuotePricePreview(input, setInput);
+  const guards = useQuoteGuardPreview(input);
   const selectTemplate = (templateId: string) => {
     const template = templates.find((candidate) => candidate.id === templateId);
     if (!template) {
@@ -1096,7 +1118,7 @@ function QuoteEditor({
                           aria-label="Individual item unit price"
                           type="number"
                           min="0"
-                          step="0.01"
+                          step="0.0001"
                           value={entry.line.unitPrice ?? ''}
                           onChange={(event) =>
                             patchLine(index, {
@@ -1113,6 +1135,7 @@ function QuoteEditor({
                           }
                           trace={traces[index]}
                           problem={problems[index]}
+                          guard={guards[index]}
                           onUseLists={() => patchLine(index, { priceMode: 'catalog' })}
                         />
                       </td>
@@ -1334,6 +1357,7 @@ function QuoteEditor({
                                   }
                                   trace={traces[index]}
                                   problem={problems[index]}
+                                  guard={guards[index]}
                                   onUseLists={() => patchLine(index, { priceMode: 'catalog' })}
                                 />
                               </td>
@@ -1428,6 +1452,7 @@ function QuoteEditor({
                 className="mt-1 block w-full rounded-lg border border-line bg-surface px-3 py-2 text-fg-strong"
               />
             </label>
+            <QuoteCoupons input={input} onCodes={(codes) => setField('couponCodes', codes)} />
             <label className="flex items-center gap-2 text-sm font-medium text-fg sm:col-span-2">
               <input
                 type="checkbox"

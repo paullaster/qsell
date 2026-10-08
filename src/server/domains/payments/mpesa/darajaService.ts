@@ -5,6 +5,7 @@ import { toTransaction, toGatewayConfig } from '@/server/domains/catalog/mappers
 import { ReconciliationEngine } from '@/server/domains/reconciliation/service';
 import { InventoryReservationService } from '@/server/domains/inventory/reservation-service';
 import { extractPaymentReference } from '@/server/domains/payments/payment-reference';
+import { amountDue } from '@/server/domains/orders/amount-due';
 
 export interface StkPushRequest {
   orderId: string;
@@ -62,7 +63,7 @@ export class DarajaService {
     const checkoutRequestId = `ws_CO_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const merchantRequestId = `${Math.floor(10000 + Math.random() * 90000)}-${Date.now()}-1`;
     const transactionId = `tx_${Date.now()}_mpesa`;
-    const amount = params.amount || order.totalAmount;
+    const amount = params.amount || amountDue(order);
 
     const transaction: TransactionRecord = {
       id: transactionId,

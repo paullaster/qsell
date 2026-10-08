@@ -40,6 +40,8 @@ export function mapOrderRow(row: OrderRow, items: OrderItem[]): Order {
     transmitInvoicesToKra: row.transmitInvoicesToKra,
     salesModule: row.salesModule,
     approvalStatus: row.approvalStatus,
+    discounts: row.discounts ?? null,
+    tenderedAmount: num(row.tenderedAmount),
     kraTransmissionStatus:
       (row.kraTransmissionStatus as NonNullable<Order['kraTransmissionStatus']>) ||
       'not_applicable',
@@ -97,6 +99,7 @@ export class OrderRepository {
         salesModule: order.salesModule ?? 'ecommerce',
         kraTransmissionStatus: order.kraTransmissionStatus || 'not_applicable',
         approvalStatus: order.approvalStatus ?? 'none',
+        discounts: order.discounts ?? null,
       });
 
       if (order.items.length) {
@@ -111,6 +114,8 @@ export class OrderRepository {
             totalPrice: item.totalPrice.toFixed(2),
             imageUrl: item.imageUrl || '',
             priceTrace: item.priceTrace ?? null,
+            isGift: item.isGift ?? false,
+            unitCost: item.unitCost == null ? null : item.unitCost.toFixed(4),
           })),
         );
       }
@@ -198,6 +203,8 @@ export class OrderRepository {
       totalPrice: num(r.totalPrice),
       imageUrl: r.imageUrl,
       priceTrace: r.priceTrace ?? null,
+      isGift: r.isGift,
+      unitCost: r.unitCost == null ? null : Number(r.unitCost),
     }));
   }
 }

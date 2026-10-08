@@ -87,6 +87,25 @@ export function AdminProducts({
 
   useWarnBeforeLeaving(working !== null);
 
+  // Choosing a category includes the sub-categories under it.
+  const categoryNames = (() => {
+    if (selectedCategory === 'all') return null;
+    const root = categories.find((c) => c.name.toLowerCase() === selectedCategory.toLowerCase());
+    const names = new Set([selectedCategory.toLowerCase()]);
+    if (!root) return names;
+    const ids = new Set([root.id]);
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const c of categories)
+        if (c.parentId && ids.has(c.parentId) && !ids.has(c.id)) {
+          ids.add(c.id);
+          names.add(c.name.toLowerCase());
+          grew = true;
+        }
+    }
+    return names;
+  })();
+
   // Filtering Logic
   const filteredProducts = products.filter((p) => {
     const available = p.stockQuantity - p.reservedQuantity;
@@ -96,8 +115,7 @@ export function AdminProducts({
       p.stockCode.toLowerCase().includes(search.toLowerCase()) ||
       p.category.toLowerCase().includes(search.toLowerCase());
 
-    const matchesCategory =
-      selectedCategory === 'all' || p.category.toLowerCase() === selectedCategory.toLowerCase();
+    const matchesCategory = categoryNames === null || categoryNames.has(p.category.toLowerCase());
     const matchesStatus =
       statusFilter === 'all' || (statusFilter === 'active' ? p.isActive : !p.isActive);
 
@@ -323,6 +341,7 @@ export function AdminProducts({
               <option value="all">All Categories ({categories.length})</option>
               {categories.map((c) => (
                 <option key={c.id} value={c.name}>
+                  {'— '.repeat(c.depth ?? 0)}
                   {c.name}
                 </option>
               ))}

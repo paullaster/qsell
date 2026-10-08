@@ -1,6 +1,6 @@
 'use client';
 
-import type { PriceTrace } from '@/server/domains/pricing/domain/types';
+import type { GuardTrace, PriceTrace } from '@/server/domains/pricing/domain/types';
 import { PriceTraceView } from './PriceTraceView';
 
 /** Under a quote line's price: where the price came from, why, and how to change the source. */
@@ -8,11 +8,14 @@ export function QuoteLinePriceNote({
   mode,
   trace,
   problem,
+  guard,
   onUseLists,
 }: {
   mode: 'catalog' | 'manual' | 'kept';
   trace?: PriceTrace | null;
   problem?: string | null;
+  /** What the price floor and override limit checks found for this line. */
+  guard?: GuardTrace | null;
   onUseLists: () => void;
 }) {
   if (problem)
@@ -33,7 +36,14 @@ export function QuoteLinePriceNote({
             : 'Pricing…';
   return (
     <div className="mt-1 max-w-48 text-xs text-fg-muted">
+      <GuardNotes guard={guard} />
       <span>{source}</span>
+      {mode === 'catalog' && trace?.discounts && trace.discounts.applied.length > 0 ? (
+        <span className="ml-1 text-emerald-700">
+          · {trace.discounts.applied.map((a) => a.code).join(', ')} (−
+          {trace.discounts.applied.reduce((n, a) => n + a.amount, 0).toFixed(2)})
+        </span>
+      ) : null}
       {mode !== 'catalog' ? (
         <button
           type="button"
@@ -52,6 +62,31 @@ export function QuoteLinePriceNote({
             <PriceTraceView trace={trace} showCandidates={false} />
           </div>
         </details>
+      ) : null}
+    </div>
+  );
+}
+
+/** Warnings from the price floor and override limit, in plain words. */
+function GuardNotes({ guard }: { guard?: GuardTrace | null }) {
+  if (!guard || (!guard.belowFloor && !guard.overOverrideLimit)) return null;
+  return (
+    <div
+      role="status"
+      className="mb-1 space-y-0.5 rounded border border-amber-500/40 bg-amber-500/10 p-1.5 text-amber-800 dark:text-amber-200"
+    >
+      {guard.belowFloor ? (
+        <p>
+          {guard.enforcement === 'block'
+            ? `Below the price floor of ${guard.floorNet?.toFixed(2)} (before tax). This cannot be saved.`
+            : `${guard.shortfallPercent}% below the price floor of ${guard.floorNet?.toFixed(2)} (before tax). The quote will need approval.`}
+        </p>
+      ) : null}
+      {guard.overOverrideLimit ? (
+        <p>
+          Price is {guard.overridePercent}% below list; your limit is {guard.overrideLimitPercent}%.
+          The quote will need approval.
+        </p>
       ) : null}
     </div>
   );

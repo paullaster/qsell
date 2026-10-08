@@ -4,6 +4,18 @@ import { ApprovalConfigService } from '@/server/kernel/approvals/config-service'
 import { ApprovalEngine } from '@/server/kernel/approvals/engine';
 import { PricingConfigService } from '@/server/domains/pricing/config-service';
 import { PricingService } from '@/server/domains/pricing/service';
+import { PriceGuardService } from '@/server/domains/pricing/guard-service';
+import { RebateService } from '@/server/domains/pricing/rebate-service';
+import { RebateConfigService } from '@/server/domains/pricing/rebate-config-service';
+import { LoyaltyService } from '@/server/domains/pricing/loyalty-service';
+import { GiftCardService } from '@/server/domains/pricing/giftcard-service';
+import { OrderTenderService } from '@/server/domains/pricing/tender-service';
+import { InsightsService } from '@/server/domains/pricing/insights-service';
+import { PriceBookService } from '@/server/domains/pricing/price-book-service';
+import { DiscountService } from '@/server/domains/pricing/discount-service';
+import { DiscountConfigService } from '@/server/domains/pricing/discount-config-service';
+import { KitConfigService, KitService } from '@/server/domains/pricing/kit-service';
+import { PriceGuardConfigService } from '@/server/domains/pricing/guard-config-service';
 import type { EmailPort, InvoicePdfPort } from '@/server/ports/communications';
 import { PdfKitInvoiceAdapter } from '@/server/adapters/pdf/pdfkit-invoice.adapter';
 import {
@@ -111,6 +123,19 @@ export interface AppContainer {
   /** Prices lines from price lists, with the reasons. Read only. */
   pricing: PricingService;
   pricingConfig: PricingConfigService;
+  priceGuard: PriceGuardService;
+  priceGuardConfig: PriceGuardConfigService;
+  discounts: DiscountService;
+  discountConfig: DiscountConfigService;
+  kits: KitService;
+  kitConfig: KitConfigService;
+  rebates: RebateService;
+  rebateConfig: RebateConfigService;
+  loyalty: LoyaltyService;
+  giftCards: GiftCardService;
+  tenders: OrderTenderService;
+  insights: InsightsService;
+  priceBook: PriceBookService;
 }
 
 function createEmailPort(): EmailPort {
@@ -263,6 +288,21 @@ export function getContainer(): AppContainer {
   const approvals = new ApprovalEngine(drizzleDb, decisionLog, reasonCodes);
   const approvalGate = new ParkedActions(drizzleDb, approvals);
   const pricing = new PricingService(drizzleDb);
+  const priceGuard = new PriceGuardService(drizzleDb, accessControl);
+  const discounts = new DiscountService(drizzleDb, pricing, priceGuard);
+  const kits = new KitService(drizzleDb);
+  const rebates = new RebateService(drizzleDb, priceGuard, pricing);
+  const loyalty = new LoyaltyService(drizzleDb, decisionLog, reasonCodes);
+  const giftCards = new GiftCardService(drizzleDb, decisionLog, reasonCodes);
+  const insights = new InsightsService(drizzleDb, priceGuard);
+  const pricingConfig = new PricingConfigService(
+    drizzleDb,
+    decisionLog,
+    reasonCodes,
+    pricing,
+    approvals,
+    approvalGate,
+  );
   container = {
     db: drizzleDb,
     invoicePdf,
@@ -308,7 +348,29 @@ export function getContainer(): AppContainer {
     approvalConfig: new ApprovalConfigService(drizzleDb, decisionLog, reasonCodes),
     approvalGate,
     pricing,
-    pricingConfig: new PricingConfigService(drizzleDb, decisionLog, reasonCodes, pricing, approvals, approvalGate),
+    priceGuard,
+    priceGuardConfig: new PriceGuardConfigService(drizzleDb, decisionLog, reasonCodes, priceGuard),
+    pricingConfig,
+    discounts,
+    kits,
+    kitConfig: new KitConfigService(drizzleDb, decisionLog, reasonCodes, kits),
+    rebates,
+    rebateConfig: new RebateConfigService(drizzleDb, decisionLog, reasonCodes, rebates, approvals),
+    loyalty,
+    giftCards,
+    tenders: new OrderTenderService(drizzleDb, decisionLog, giftCards, loyalty, rebates),
+    discountConfig: new DiscountConfigService(
+      drizzleDb,
+      decisionLog,
+      reasonCodes,
+      discounts,
+      pricing,
+      pricingConfig,
+      approvals,
+      insights,
+    ),
+    insights,
+    priceBook: new PriceBookService(drizzleDb, pricing, priceGuard, discounts),
   };
   registerApprovalHandlers(approvals, approvalGate);
 

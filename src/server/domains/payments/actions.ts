@@ -16,6 +16,7 @@ import {
 } from '@/server/domains/payments/crypto';
 import type { BranchRow, PaymentProviderConfigRow } from '@/server/db/drizzle/schema';
 import { extractPaymentReference } from '@/server/domains/payments/payment-reference';
+import { amountDue } from '@/server/domains/orders/amount-due';
 
 /** Which branches act independently decides what the KRA screens show, so they must refresh. */
 const KRA_SETTINGS_PATH = '/admin/settings/tax-compliance/kra-tims-etims';
@@ -285,13 +286,14 @@ export async function initiateBranchPaymentAction(input: {
   const { payments, orders } = getContainer();
   const order = await orders.getById(input.orderId);
   if (!order) throw new Error('Order not found');
+  if (amountDue(order) <= 0) throw new Error('Nothing is left to pay on this order.');
 
   const { attempt, result } = await payments.initiatePayment({
     branch,
     providerCode: input.providerCode,
     orderId: order.id,
     orderNumber: order.orderNumber,
-    amount: order.totalAmount,
+    amount: amountDue(order),
     currency: order.currency,
     customerName: order.customerName,
     customerEmail: order.customerEmail,
