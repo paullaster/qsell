@@ -70,8 +70,9 @@ installations on one server.
 2. Merge to `release`. The build pipeline publishes immutable images tagged
    `sha-<commit>`, `worker-<commit>`, and `migrator-<commit>`.
 3. After that build succeeds, open GitHub Actions → **Deploy release to
-   instance**. Select a configured instance Environment and enter the full
-   40-character commit SHA. The workflow verifies that the SHA has a successful
+   instance**. Select a configured instance Environment. Leave the SHA empty to deploy the
+   newest successful release build, or enter a full 40-character commit SHA to
+   deploy or roll back to a specific one. The workflow verifies that the SHA has a successful
    release build, checks that target’s configuration, migrates that target’s
    database, deploys its app and worker, and verifies its HTTPS health endpoint.
 4. Repeat the manual deploy for any other targets you choose. No other

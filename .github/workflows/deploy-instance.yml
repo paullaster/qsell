@@ -8,8 +8,9 @@ on:
         required: true
         type: environment
       release_sha:
-        description: Full 40-character SHA of a successfully published release
-        required: true
+        description: Full 40-character SHA of a published release (leave empty for the newest successful release build)
+        required: false
+        default: ''
         type: string
 
 permissions:
@@ -26,7 +27,7 @@ env:
 
 jobs:
   deploy:
-    name: Deploy ${{ inputs.release_sha }} to ${{ inputs.instance }}
+    name: Deploy ${{ inputs.release_sha || 'latest release' }} to ${{ inputs.instance }}
     if: github.ref == 'refs/heads/release'
     runs-on: ubuntu-latest
     environment:
@@ -46,7 +47,7 @@ jobs:
         run: |
           set -eu
           [[ "$INSTANCE_ID" =~ ^[a-z0-9][a-z0-9-]{0,39}$ ]] || { echo 'Invalid instance id.'; exit 1; }
-          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full 40-character commit SHA.'; exit 1; }
+          [[ -z "$RELEASE_SHA" || "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be empty (latest release) or a full 40-character commit SHA.'; exit 1; }
           [[ "$DEPLOY_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || { echo 'Set this environment’s DEPLOY_HOST Actions variable.'; exit 1; }
           [[ "$DEPLOY_USER" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'Set this environment’s DEPLOY_USER Actions variable.'; exit 1; }
           [[ "$DEPLOY_PATH" =~ ^/[A-Za-z0-9/_-]+$ ]] || { echo 'Set DEPLOY_PATH to an absolute path containing only letters, numbers, slash, underscore, and hyphen.'; exit 1; }
@@ -56,31 +57,40 @@ jobs:
           [[ "$PROJECT_NAME" =~ ^[a-z0-9][a-z0-9_-]{0,49}$ ]] || { echo 'Set COMPOSE_PROJECT_NAME to a unique lowercase Compose project name. Preserve qsell for the existing installation.'; exit 1; }
           printf 'instance_id=%s\nproject_name=%s\n' "$INSTANCE_ID" "$PROJECT_NAME" >> "$GITHUB_OUTPUT"
 
-      - name: Confirm release images were published by a successful release run
+      - name: Resolve the release to deploy
+        id: release
         uses: actions/github-script@v7
         env:
-          RELEASE_SHA: ${{ inputs.release_sha }}
+          REQUESTED_SHA: ${{ inputs.release_sha }}
         with:
           script: |
+            const requested = process.env.REQUESTED_SHA
             const { data } = await github.rest.actions.listWorkflowRuns({
               owner: context.repo.owner,
               repo: context.repo.repo,
               workflow_id: 'ci-cd.yml',
               branch: 'release',
-              head_sha: process.env.RELEASE_SHA,
+              event: 'push',
               status: 'completed',
               per_page: 50,
             })
-            const successful = data.workflow_runs.some(run => run.conclusion === 'success')
-            if (!successful) {
-              core.setFailed(`No successful Release pipeline exists for ${process.env.RELEASE_SHA}; this SHA is not eligible for production deployment.`)
+            // Only push runs publish images; pull-request runs only validate.
+            const successful = data.workflow_runs.filter(run => run.conclusion === 'success')
+            const run = requested
+              ? successful.find(r => r.head_sha === requested)
+              : successful[0]
+            if (!run) {
+              core.setFailed(requested
+                ? `No successful Release build pipeline exists for ${requested}; this SHA is not eligible for deployment.`
+                : 'No successful Release build pipeline found on the release branch.')
               return
             }
-            core.info(`Confirmed successful release build for ${process.env.RELEASE_SHA}`)
+            core.setOutput('sha', run.head_sha)
+            core.info(`Deploying release ${run.head_sha} (${requested ? 'requested' : 'newest successful build'})`)
 
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_sha }}
+          ref: ${{ steps.release.outputs.sha }}
 
       - uses: webfactory/ssh-agent@v0.9.0
         with:
@@ -135,11 +145,11 @@ jobs:
           INSTANCE_ID: ${{ steps.target.outputs.instance_id }}
           COMPOSE_PROJECT_NAME: ${{ steps.target.outputs.project_name }}
           IMAGE_NAME: ${{ env.IMAGE_NAME }}
-          RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
         run: |
           ssh "$DEPLOY_USER@$DEPLOY_HOST" \
             "DEPLOY_PATH='$DEPLOY_PATH' PUBLIC_DOMAIN='$PUBLIC_DOMAIN' EDGE_HTTP_PORT='$EDGE_HTTP_PORT' \
-             INSTANCE_ID='$INSTANCE_ID' COMPOSE_PROJECT_NAME='$COMPOSE_PROJECT_NAME' \
+             INSTANCE_ID='$INSTANCE_ID' COMPOSE_PROJECT_NAME='$COMPOSE_PROJECT_NAME' RELEASE_SHA='$RELEASE_SHA' \
              APP_IMAGE='$IMAGE_NAME:sha-$RELEASE_SHA' \
              WORKER_IMAGE='$IMAGE_NAME:worker-$RELEASE_SHA' \
              MIGRATOR_IMAGE='$IMAGE_NAME:migrator-$RELEASE_SHA' sh -s" <<'REMOTE'
