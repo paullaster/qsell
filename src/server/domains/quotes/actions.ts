@@ -78,6 +78,18 @@ export async function saveSalesQuoteTemplateAction(id: string | null, input: Quo
   return template;
 }
 
+/** Quotes of any status to choose from when making a template. */
+export async function searchSalesQuotesAction(term: string, status?: string) {
+  await requirePermission('quotes:read');
+  return service().searchQuotes(term, { status: status || undefined });
+}
+
+/** What a quote would make as a template, for the template editor to start from. */
+export async function templateDraftFromQuoteAction(quoteId: string, keepCustomer = false) {
+  await requirePermission('quotes:create');
+  return service().templateDraftFromQuote(quoteId, keepCustomer);
+}
+
 export async function duplicateSalesQuoteTemplateAction(id: string) {
   const userId = await requirePermission('quotes:create');
   const template = await service().duplicateTemplate(userId, id);

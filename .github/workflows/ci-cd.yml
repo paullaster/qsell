@@ -1,4 +1,4 @@
-name: Release pipeline
+name: Release build pipeline
 
 on:
   pull_request:
@@ -54,6 +54,13 @@ jobs:
           DATABASE_URL: postgresql://qsell:ci-only-password@localhost:5432/qsell
       - name: Typecheck
         run: pnpm typecheck
+      - name: Run tests
+        # Integration tests run against the migrated database above (built from the
+        # migration SQL, so the hand-added append-only triggers are exercised).
+        # Lint is not gated yet: it crashes under ESLint 10 and has pre-existing violations.
+        run: pnpm test
+        env:
+          TEST_DATABASE_URL: postgresql://qsell:ci-only-password@localhost:5432/qsell
       - name: Verify media storage adapters
         # Runs the Cloudinary adapter against a local fake: retries, timeouts, signed private
         # links and the "private upload must not land public" safety check. No credentials needed.
@@ -118,158 +125,3 @@ jobs:
           tags: ${{ env.IMAGE_NAME }}:migrator-${{ github.sha }}
           cache-from: type=gha,scope=migrator
           cache-to: type=gha,mode=max,scope=migrator
-
-  deploy:
-    name: Deploy the published release
-    needs: publish
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - uses: actions/checkout@v4
-      - uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
-      - name: Install pinned host key
-        env:
-          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
-        run: |
-          install -d -m 700 ~/.ssh
-          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
-      - name: Copy Compose, Caddy, and host Nginx config
-        env:
-          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
-        run: |
-          test -n "$DEPLOY_HOST"
-          test -n "$DEPLOY_USER"
-          ssh "$DEPLOY_USER@$DEPLOY_HOST" 'mkdir -p /opt/qsell/deploy/nginx'
-          scp compose.production.yaml Caddyfile "$DEPLOY_USER@$DEPLOY_HOST:/opt/qsell/"
-          scp deploy/nginx/omnicommerce-locations.conf "$DEPLOY_USER@$DEPLOY_HOST:/opt/qsell/deploy/nginx/"
-      - name: Authenticate server to GHCR
-        env:
-          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
-          GHCR_USERNAME: ${{ vars.GHCR_USERNAME }}
-          GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-        run: |
-          printf '%s' "$GHCR_READ_TOKEN" | ssh "$DEPLOY_USER@$DEPLOY_HOST" \
-            "docker login ghcr.io --username '$GHCR_USERNAME' --password-stdin"
-      - name: Deploy images by commit tag
-        env:
-          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
-          IMAGE_NAME: ${{ env.IMAGE_NAME }}
-          RELEASE_SHA: ${{ github.sha }}
-        run: |
-          ssh "$DEPLOY_USER@$DEPLOY_HOST" \
-            "APP_IMAGE='$IMAGE_NAME:sha-$RELEASE_SHA' \
-             WORKER_IMAGE='$IMAGE_NAME:worker-$RELEASE_SHA' \
-             MIGRATOR_IMAGE='$IMAGE_NAME:migrator-$RELEASE_SHA' sh -s" <<'REMOTE'
-          set -eu
-          cd /opt/qsell
-          test -s .env.runtime || { echo 'Missing /opt/qsell/.env.runtime'; exit 1; }
-          test -s secrets/postgres_password || { echo 'Missing /opt/qsell/secrets/postgres_password'; exit 1; }
-          # ── Media storage pre-flight ─────────────────────────────────────────
-          # Runs before anything is pulled, migrated or replaced, so a bad setting stops the
-          # release with the old version still serving. Reads .env.runtime without printing values.
-          env_value() { sed -n "s/^$1=//p" .env.runtime | tail -n 1 | tr -d "'\""; }
-          env_has() { [ -n "$(env_value "$1")" ]; }
-          media_driver=$(env_value MEDIA_DRIVER | tr 'A-Z' 'a-z')
-          case "${media_driver:-local}" in
-            local)
-              echo '::notice::Media storage: local volume (persistent, single host). Set MEDIA_DRIVER=cloudinary in /opt/qsell/.env.runtime to use Cloudinary.'
-              ;;
-            cloudinary)
-              if env_has CLOUDINARY_URL || { env_has CLOUDINARY_CLOUD_NAME && env_has CLOUDINARY_API_KEY && env_has CLOUDINARY_API_SECRET; }; then
-                echo '::notice::Media storage: Cloudinary credentials are present.'
-              else
-                echo '::error::MEDIA_DRIVER=cloudinary but the credentials are missing from /opt/qsell/.env.runtime. Set CLOUDINARY_URL, or CLOUDINARY_CLOUD_NAME + CLOUDINARY_API_KEY + CLOUDINARY_API_SECRET. Nothing was deployed.'
-                exit 1
-              fi
-              ;;
-            *)
-              echo "::error::Unknown MEDIA_DRIVER in /opt/qsell/.env.runtime (use 'local' or 'cloudinary'). Nothing was deployed."
-              exit 1
-              ;;
-          esac
-
-          umask 077
-          printf 'APP_IMAGE=%s\nWORKER_IMAGE=%s\nMIGRATOR_IMAGE=%s\n' \
-            "$APP_IMAGE" "$WORKER_IMAGE" "$MIGRATOR_IMAGE" > .env.deploy
-
-          compose() {
-            docker compose --env-file .env.deploy -f compose.production.yaml "$@"
-          }
-
-          compose --profile ops pull
-          compose --profile ops run --rm migrate
-
-          # Preserve logos and other user uploads from the current writable
-          # container before replacing it with the image that mounts uploads_data.
-          upload_backup=$(mktemp -d /opt/qsell/.uploads-backup.XXXXXX)
-          old_app=$(compose ps -q app || true)
-          if [ -n "$old_app" ]; then
-            docker cp "$old_app:/app/public/uploads/." "$upload_backup/" || true
-          fi
-
-          compose up -d --remove-orphans
-          new_app=$(compose ps -q app)
-          if [ -n "$new_app" ] && [ -d "$upload_backup/company" ]; then
-            docker cp "$upload_backup/company" "$new_app:/app/public/uploads/"
-            docker exec -u 0 "$new_app" chown -R 1001:1001 /app/public/uploads
-          fi
-
-          for attempt in $(seq 1 30); do
-            if compose exec -T app node -e "fetch('http://127.0.0.1:3069/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"; then
-              echo 'Application health check passed.'
-              rm -rf "$upload_backup"
-
-              # The app is up; now confirm image uploads can actually work (config only, no network).
-              uploads_ready=$(compose exec -T app node -e "fetch('http://127.0.0.1:3069/api/health').then(r => r.json()).then(j => console.log(String(Boolean(j.media) && j.media.uploadsReady))).catch(() => console.log('unknown'))" || echo unknown)
-              if [ "$uploads_ready" = true ]; then
-                echo 'Image uploads are ready.'
-                exit 0
-              fi
-              echo "::error::The release is live, but image uploads are NOT ready (health reported: $uploads_ready). Check MEDIA_DRIVER and CLOUDINARY_* in /opt/qsell/.env.runtime, then: docker compose logs app"
-              exit 1
-            fi
-            sleep 5
-          done
-
-          compose ps
-          compose logs --tail=100 app
-          exit 1
-          REMOTE
-
-      - name: Verify HTTPS origin from deploy host
-        env:
-          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
-        run: |
-          ssh "$DEPLOY_USER@$DEPLOY_HOST" \
-            "curl --fail --silent --show-error --retry 20 --retry-delay 5 \
-             --resolve omnicommerce.brainsporellc.com:443:127.0.0.1 \
-             https://omnicommerce.brainsporellc.com/api/health"
-
-      - name: Smoke-test the media provider
-        # Last on purpose: the release is already live, so a failure here turns the run red
-        # (bad credentials, provider outage) without blocking the deploy itself.
-        # Uploads two tiny test images, reads them back, checks the private one is not publicly
-        # reachable, then deletes everything it created. Runs from the worker image, which has
-        # outbound network access and the production environment.
-        env:
-          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
-        run: |
-          ssh "$DEPLOY_USER@$DEPLOY_HOST" sh -s <<'REMOTE'
-          set -eu
-          cd /opt/qsell
-          driver=$(sed -n 's/^MEDIA_DRIVER=//p' .env.runtime | tail -n 1 | tr -d "'\"" | tr 'A-Z' 'a-z')
-          if [ "${driver:-local}" != cloudinary ]; then
-            echo 'Media provider smoke test skipped: not using Cloudinary.'
-            exit 0
-          fi
-          docker compose --env-file .env.deploy -f compose.production.yaml \
-            run --rm -T --no-deps worker pnpm media:check
-          REMOTE
