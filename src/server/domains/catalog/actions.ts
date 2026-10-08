@@ -13,9 +13,11 @@ import {
   ProductBulkDelete,
   type DeletePreview,
   type DeleteResult,
+  type DeleteScope,
   type ProductSelection,
 } from './bulk-delete';
 import { ProductBulkStatus, type StatusResult } from './bulk-status';
+import { ProductTrash, type RestoreResult, type TrashPage } from './trash';
 import type { ImportJobView, StageResult } from './import-service';
 import type {
   Product,
@@ -81,10 +83,11 @@ export type BulkDeleteOutcome<T> =
 export async function previewProductDeleteAction(
   selection: ProductSelection,
   permanent: boolean,
+  scope: DeleteScope = 'live',
 ): Promise<BulkDeleteOutcome<DeletePreview>> {
   try {
     await requirePermission(permanent ? 'products:delete_permanently' : 'products:delete');
-    return { ok: true, data: await ProductBulkDelete.preview(selection, permanent) };
+    return { ok: true, data: await ProductBulkDelete.preview(selection, permanent, scope) };
   } catch (error: unknown) {
     return deleteFailure(error);
   }
@@ -97,7 +100,7 @@ export async function previewProductDeleteAction(
  */
 export async function deleteProductsAction(
   selection: ProductSelection,
-  opts: { permanent: boolean; expectedCount: number; reason?: string },
+  opts: { permanent: boolean; expectedCount: number; reason?: string; scope?: DeleteScope },
 ): Promise<BulkDeleteOutcome<DeleteResult>> {
   try {
     const actorId = await requirePermission(
@@ -105,6 +108,7 @@ export async function deleteProductsAction(
     );
     const result = await ProductBulkDelete.delete(selection, { ...opts, actorId });
     revalidatePath('/admin/products');
+    revalidatePath('/admin/trash/products');
     revalidatePath('/admin/inventory');
     revalidatePath('/');
     return { ok: true, data: result };
@@ -123,6 +127,45 @@ export async function setProductsActiveAction(
     const actorId = await requirePermission('products:update');
     const result = await ProductBulkStatus.set(selection, active, { expectedCount, actorId });
     revalidatePath('/admin/products');
+    revalidatePath('/');
+    return { ok: true, data: result };
+  } catch (error: unknown) {
+    return deleteFailure(error);
+  }
+}
+
+/** Deleted products, newest first, for the Trash screen. */
+export async function listTrashAction(opts: {
+  search?: string;
+  page?: number;
+}): Promise<BulkDeleteOutcome<TrashPage>> {
+  try {
+    await requirePermission('products:delete');
+    return { ok: true, data: await ProductTrash.list(opts) };
+  } catch (error: unknown) {
+    return deleteFailure(error);
+  }
+}
+
+export async function trashCountAction(): Promise<number> {
+  try {
+    await requirePermission('products:delete');
+    return await ProductTrash.count();
+  } catch {
+    return 0;
+  }
+}
+
+/** Brings the selected products back from the trash, as drafts. */
+export async function restoreProductsAction(
+  selection: ProductSelection,
+  expectedCount: number,
+): Promise<BulkDeleteOutcome<RestoreResult>> {
+  try {
+    const actorId = await requirePermission('products:delete');
+    const result = await ProductTrash.restore(selection, { expectedCount, actorId });
+    revalidatePath('/admin/products');
+    revalidatePath('/admin/trash/products');
     revalidatePath('/');
     return { ok: true, data: result };
   } catch (error: unknown) {

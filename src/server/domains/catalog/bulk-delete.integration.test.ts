@@ -353,4 +353,137 @@ describe.skipIf(!url)('bulk product delete (database)', () => {
       ).toBe('CHANGED');
     });
   });
+
+  describe('the trash', () => {
+    let ProductTrash: typeof import('./trash').ProductTrash;
+    beforeAll(async () => {
+      ({ ProductTrash } = await import('./trash'));
+    });
+    const trashIt = async (id: string) =>
+      ProductBulkDelete.delete(
+        { mode: 'ids', ids: [id] },
+        { permanent: false, expectedCount: 1, actorId },
+      );
+
+    it('lists deleted products, newest first, and finds them by SKU', async () => {
+      const a = await product();
+      const b = await product();
+      await trashIt(a.id);
+      await trashIt(b.id);
+      const found = await ProductTrash.list({ search: a.sku });
+      expect(found.rows.map((r) => r.id)).toEqual([a.id]);
+      expect(found.rows[0]).toMatchObject({ sku: a.sku, restoreBlockedBy: null });
+      expect(await ProductTrash.count()).toBeGreaterThanOrEqual(2);
+    });
+
+    it('restores products as drafts, with a ledger marker and a log entry', async () => {
+      const a = await product({ stockQuantity: 4, isActive: true });
+      await trashIt(a.id);
+      const r = await ProductTrash.restore(
+        { mode: 'ids', ids: [a.id] },
+        { expectedCount: 1, actorId },
+      );
+      expect(r).toMatchObject({ restored: 1, skipped: 0 });
+      expect(await row(a.id)).toMatchObject({ deletedAt: null, isActive: false, stockQuantity: 4 });
+      const marker = await db
+        .select()
+        .from(schema.inventoryMovements)
+        .where(
+          and(
+            eq(schema.inventoryMovements.productId, a.id),
+            eq(schema.inventoryMovements.changeType, 'product_restored'),
+          ),
+        );
+      expect(marker).toHaveLength(1);
+      const log = await db
+        .select()
+        .from(schema.decisionLog)
+        .where(eq(schema.decisionLog.action, 'catalog.products_restored'));
+      expect(
+        log.some((l) =>
+          (l.outcome as { sample: Array<{ id: string }> }).sample.some((x) => x.id === a.id),
+        ),
+      ).toBe(true);
+    });
+
+    it('leaves a product in the trash when its SKU has been taken, and says so', async () => {
+      const a = await product();
+      await trashIt(a.id);
+      await product({ sku: a.sku });
+      const listed = await ProductTrash.list({ search: a.sku });
+      expect(listed.rows[0]!.restoreBlockedBy).toContain(`SKU ${a.sku}`);
+      const r = await ProductTrash.restore(
+        { mode: 'ids', ids: [a.id] },
+        { expectedCount: 1, actorId },
+      );
+      expect(r).toMatchObject({ restored: 0, skipped: 1 });
+      expect(r.skippedSample[0]!.reason).toContain('SKU');
+      expect((await row(a.id))!.deletedAt).not.toBeNull();
+    });
+
+    it('restores only one of two deleted products that shared a SKU', async () => {
+      const first = await product();
+      await trashIt(first.id);
+      const second = await product({ sku: first.sku });
+      await trashIt(second.id);
+      const r = await ProductTrash.restore(
+        { mode: 'ids', ids: [first.id, second.id] },
+        { expectedCount: 2, actorId },
+      );
+      expect(r).toMatchObject({ restored: 1, skipped: 1 });
+    });
+
+    it('refuses a restore whose selection changed, and does nothing', async () => {
+      const a = await product();
+      await trashIt(a.id);
+      expect(
+        await codeOf(
+          ProductTrash.restore({ mode: 'ids', ids: [a.id] }, { expectedCount: 2, actorId }),
+        ),
+      ).toBe('CHANGED');
+      expect((await row(a.id))!.deletedAt).not.toBeNull();
+    });
+
+    it('a live product addressed through the trash is left untouched', async () => {
+      const live = await product();
+      const sel = { mode: 'ids' as const, ids: [live.id] };
+      expect((await ProductBulkDelete.preview(sel, true, 'trash')).total).toBe(0);
+      const erased = await ProductBulkDelete.delete(sel, {
+        permanent: true,
+        expectedCount: 1,
+        reason: 'Mistaken id',
+        actorId,
+        scope: 'trash',
+      });
+      expect(erased.deleted).toBe(0);
+      const restored = await ProductTrash.restore(sel, { expectedCount: 1, actorId });
+      expect(restored.restored).toBe(0);
+      expect((await row(live.id))!.deletedAt).toBeNull();
+    });
+
+    it('erases products from the trash for good, but never without permanent intent', async () => {
+      const a = await product({ stockQuantity: 2 });
+      await trashIt(a.id);
+      expect(
+        await codeOf(
+          ProductBulkDelete.delete(
+            { mode: 'ids', ids: [a.id] },
+            { permanent: false, expectedCount: 1, actorId, scope: 'trash' },
+          ),
+        ),
+      ).not.toBe('OK');
+      const r = await ProductBulkDelete.delete(
+        { mode: 'ids', ids: [a.id] },
+        {
+          permanent: true,
+          expectedCount: 1,
+          reason: 'Emptying the trash',
+          actorId,
+          scope: 'trash',
+        },
+      );
+      expect(r).toMatchObject({ deleted: 1, permanent: true });
+      expect(await row(a.id)).toBeUndefined();
+    });
+  });
 });

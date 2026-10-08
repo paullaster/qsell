@@ -9,11 +9,13 @@ export function AdminProductsClient({
   categoriesPromise,
   canDelete,
   canPurge,
+  trashCount,
 }: {
   productsPromise: Promise<Product[]>;
   categoriesPromise: Promise<Category[]>;
   canDelete: boolean;
   canPurge: boolean;
+  trashCount: number;
 }) {
   const router = useRouter();
   return (
@@ -22,6 +24,7 @@ export function AdminProductsClient({
       categoriesPromise={categoriesPromise}
       canDelete={canDelete}
       canPurge={canPurge}
+      trashCount={trashCount}
       onOpenCreateProduct={() => router.push('/admin/products/new')}
       onEditProduct={(product) => router.push(`/admin/products/${product.id}`)}
       onDuplicateProduct={(product) =>
