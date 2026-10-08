@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useMemo, useState } from 'react';
+import { use, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   BadgeCheck,
@@ -52,6 +52,8 @@ import { useQuotePricePreview } from './pricing/useQuotePricePreview';
 import { useQuoteGuardPreview } from './pricing/useQuoteGuardPreview';
 import { QuoteCoupons } from './pricing/QuoteCoupons';
 import { kitCost, kitTax } from '@/server/domains/pricing/domain/kits';
+import { QuoteLayoutBoard } from './quote-layout/QuoteLayoutBoard';
+import type { QuoteSearchHit } from '@/server/domains/quotes/service';
 import type { EditorKit } from '@/server/domains/quotes/actions';
 
 type QuoteLineInput = QuoteInput['lines'][number];
@@ -133,6 +135,7 @@ function quoteToInput(quote: SalesQuote): QuoteInput {
       id: sectionIdMap.get(section.id)!,
       title: section.title,
       description: section.description,
+      showLines: section.showLines,
     })),
     validUntil: quote.validUntil?.toISOString().slice(0, 10) ?? null,
     customerReference: quote.customerReference,
@@ -198,6 +201,7 @@ function quoteInputFromTemplate(
       id: sectionIdMap.get(section.id)!,
       title: section.title,
       description: section.description,
+      showLines: section.showLines,
     })),
     lines: template.lines.map((line) => {
       const product = products.find((row) => row.id === line.productId);
@@ -243,6 +247,26 @@ export function AdminSalesQuotes({
   const [notice, setNotice] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [previewPdf, setPreviewPdf] = useState<string | null>(null);
+  /** A quote someone chose to make a template from: the Templates tab opens its editor on it. */
+  const [templateFrom, setTemplateFrom] = useState<QuoteSearchHit | null>(null);
+  const startTemplate = (quote: SalesQuoteRow) => {
+    setTemplateFrom({
+      id: quote.id,
+      quoteNumber: quote.quoteNumber,
+      customerName: quote.customerName,
+      customerEmail: quote.customerEmail,
+      status: quote.status,
+      currency: quote.currency,
+      totalAmount: Number(quote.totalAmount),
+      validUntil: quote.validUntil ? new Date(quote.validUntil).toISOString() : null,
+      expired:
+        quote.validUntil != null &&
+        new Date(quote.validUntil) < new Date() &&
+        !['converted', 'rejected', 'cancelled'].includes(quote.status),
+    });
+    setDetails(null);
+    setActiveTab('templates');
+  };
   const [marginFloor, setMarginFloor] = useState(
     Number(editorData.settings.minimumGrossMarginPercent),
   );
@@ -534,6 +558,17 @@ export function AdminSalesQuotes({
                             >
                               <Eye className="h-3.5 w-3.5" /> View
                             </button>
+                            {capabilities.canCreate && (
+                              <button
+                                type="button"
+                                title="Create a template from this quote"
+                                aria-label={`Create a template from ${quote.quoteNumber}`}
+                                onClick={() => startTemplate(quote)}
+                                className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-md text-fg-muted hover:bg-hover hover:text-fg-strong focus-visible:outline-2 focus-visible:outline-indigo-600"
+                              >
+                                <Files className="h-4 w-4" />
+                              </button>
+                            )}
                             <button
                               type="button"
                               title="Download PDF"
@@ -634,6 +669,8 @@ export function AdminSalesQuotes({
           onRefresh={refresh}
           onMessage={setNotice}
           onError={setError}
+          fromQuote={templateFrom}
+          onFromQuoteHandled={() => setTemplateFrom(null)}
         />
       )}
 
@@ -666,6 +703,7 @@ export function AdminSalesQuotes({
           canApprove={capabilities.canApprove}
           canDelete={capabilities.canDelete}
           canRevise={capabilities.canCreate}
+          onTemplate={() => startTemplate(details)}
           busy={busyId === details.id}
           onClose={() => setDetails(null)}
           onApprove={() =>
@@ -835,7 +873,6 @@ function QuoteEditor({
       grossMarginPercent: net > 0 ? ((net - unitCost * line.quantity) / net) * 100 : 0,
     };
   });
-  const standaloneLines = linesPreview.filter((entry) => !entry.line.sectionId);
   const subtotal = linesPreview.reduce((sum, line) => sum + line.net, 0);
   const tax = linesPreview.reduce((sum, line) => sum + line.tax, 0);
   const total = subtotal + tax + Number(input.shippingFee || 0);
@@ -862,25 +899,6 @@ function QuoteEditor({
         discountPercent: 0,
       },
     ]);
-  };
-  const addSection = () =>
-    setField('sections', [
-      ...(input.sections ?? []),
-      {
-        id: crypto.randomUUID(),
-        title: `Section ${(input.sections?.length ?? 0) + 1}`,
-        description: '',
-      },
-    ]);
-  const removeSection = (sectionId: string) => {
-    const remaining = (input.sections ?? []).filter((section) => section.id !== sectionId);
-    setInput((current) => ({
-      ...current,
-      sections: remaining,
-      lines: current.lines.map((line) =>
-        line.sectionId === sectionId ? { ...line, sectionId: null } : line,
-      ),
-    }));
   };
   const patchLine = (index: number, patch: Partial<QuoteLineInput>) =>
     setField(
@@ -1070,361 +1088,139 @@ function QuoteEditor({
 
         <section className="space-y-3 rounded-xl border border-line bg-surface-raised p-3 sm:p-4">
           <header>
-            <h3 className="font-semibold text-fg-strong">Individual quote items</h3>
+            <h3 className="font-semibold text-fg-strong">Quote items</h3>
             <p className="text-xs text-fg-muted">
-              These lines print individually. Add a section below when you want grouped lines to
-              appear as a single titled amount on the customer document.
+              Individual items print one by one. A section prints as its title with its total, or
+              with its items listed under it when you keep it expanded.
             </p>
           </header>
-          <div className="overflow-x-auto rounded-lg border border-line bg-surface">
-            <table className="w-full min-w-[900px] text-left text-sm">
-              <thead className="bg-surface-raised text-xs text-fg-muted">
-                <tr>
-                  <th className="p-3">Item</th>
-                  <th className="p-3">Qty</th>
-                  <th className="p-3">Unit price</th>
-                  <th className="p-3">Disc %</th>
-                  <th className="p-3 text-right">Cost</th>
-                  <th className="p-3 text-right">Gross profit</th>
-                  <th className="p-3 text-right">Margin</th>
-                  <th className="p-3 text-right">Amount</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-line">
-                {standaloneLines.map((entry) => {
-                  const index = input.lines.indexOf(entry.line);
-                  return (
-                    <tr key={`standalone-${entry.line.productId}-${index}`}>
-                      <td className="p-3">
-                        <div className="font-medium text-fg-strong">{entry.product?.name}</div>
-                        <div className="text-xs text-fg-muted">{entry.product?.sku}</div>
-                      </td>
-                      <td className="p-3">
-                        <input
-                          aria-label="Individual item quantity"
-                          type="number"
-                          min="0.001"
-                          step="0.001"
-                          value={entry.line.quantity}
-                          onChange={(event) =>
-                            patchLine(index, { quantity: Number(event.target.value) })
-                          }
-                          className="w-24 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong"
-                        />
-                      </td>
-                      <td className="p-3">
-                        <input
-                          aria-label="Individual item unit price"
-                          type="number"
-                          min="0"
-                          step="0.0001"
-                          value={entry.line.unitPrice ?? ''}
-                          onChange={(event) =>
-                            patchLine(index, {
-                              unitPrice: Number(event.target.value),
-                              priceMode: 'manual',
-                            })
-                          }
-                          className="w-28 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong"
-                        />
-                        <QuoteLinePriceNote
-                          mode={
-                            entry.line.priceMode ??
-                            (entry.line.unitPrice != null ? 'manual' : 'catalog')
-                          }
-                          trace={traces[index]}
-                          problem={problems[index]}
-                          guard={guards[index]}
-                          onUseLists={() => patchLine(index, { priceMode: 'catalog' })}
-                        />
-                      </td>
-                      <td className="p-3">
-                        <input
-                          aria-label="Individual item discount percent"
-                          type="number"
-                          min="0"
-                          max="100"
-                          step="0.1"
-                          value={entry.line.discountPercent}
-                          onChange={(event) =>
-                            patchLine(index, { discountPercent: Number(event.target.value) })
-                          }
-                          className="w-20 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong"
-                        />
-                      </td>
-                      <td className="p-3 text-right text-xs text-fg-muted">
-                        {money(entry.cost, input.currency)}
-                      </td>
-                      <td className="p-3 text-right text-xs font-semibold">
-                        {money(entry.grossProfit, input.currency)}
-                      </td>
-                      <td className="p-3 text-right text-xs font-semibold">
-                        {entry.grossMarginPercent.toFixed(1)}%
-                      </td>
-                      <td className="p-3 text-right font-mono font-semibold">
-                        {money(entry.total, input.currency)}
-                      </td>
-                      <td className="p-3">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setField(
-                              'lines',
-                              input.lines.filter((line) => line !== entry.line),
-                            )
-                          }
-                          aria-label="Remove individual quote item"
-                          className="rounded p-1 text-fg-muted hover:bg-red-50 hover:text-red-700"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {standaloneLines.length === 0 && (
-                  <tr>
-                    <td colSpan={9} className="p-6 text-center text-sm text-fg-muted">
-                      No individual items yet. Use Add quote item to browse the catalogue.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <section className="space-y-3 rounded-xl border border-line bg-surface-raised p-3 sm:p-4">
-          <header className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h3 className="font-semibold text-fg-strong">Quote sections</h3>
-              <p className="text-xs text-fg-muted">
-                Add regular quote items below, or create named sections. PDFs list regular items and
-                show section headings with their totals instead of printing section lines.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setCatalogSectionId(null);
-                setCatalogOpen(true);
-              }}
-              className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
-            >
-              <Plus className="h-4 w-4" /> Add quote item
-            </button>
-            <button
-              type="button"
-              onClick={addSection}
-              className="inline-flex items-center gap-2 rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-hover"
-            >
-              <Plus className="h-4 w-4" />
-              Add section
-            </button>
-          </header>
-          {(input.sections ?? []).map((section) => {
-            const sectionLines = linesPreview.filter(
-              (entry) => entry.line.sectionId === section.id,
-            );
-            const sectionTotal = sectionLines.reduce((sum, entry) => sum + entry.total, 0);
-            return (
-              <article
-                key={section.id}
-                className="overflow-hidden rounded-xl border border-line bg-surface"
-              >
-                <header className="flex flex-col justify-between gap-3 border-b border-line bg-surface-raised p-3 sm:flex-row sm:items-center">
-                  <div className="flex min-w-0 flex-1 items-center gap-2">
+          <QuoteLayoutBoard
+            noun="quote"
+            sections={input.sections ?? []}
+            lines={input.lines}
+            onChange={(next) => setInput((current) => ({ ...current, ...next }))}
+            onBrowse={(sectionId) => {
+              setCatalogSectionId(sectionId);
+              setCatalogOpen(true);
+            }}
+            lineName={(line) => products.find((p) => p.id === line.productId)?.name ?? 'item'}
+            sectionTotal={(sectionId) =>
+              money(
+                linesPreview
+                  .filter((entry) => entry.line.sectionId === sectionId)
+                  .reduce((sum, entry) => sum + entry.total, 0),
+                input.currency,
+              )
+            }
+            minWidth={1040}
+            columns={9}
+            head={
+              <>
+                <th className="p-3">Item</th>
+                <th className="p-3">Qty</th>
+                <th className="p-3">Unit price</th>
+                <th className="p-3">Disc %</th>
+                <th className="p-3 text-right">Cost</th>
+                <th className="p-3 text-right">Gross profit</th>
+                <th className="p-3 text-right">Margin</th>
+                <th className="p-3 text-right">Amount</th>
+              </>
+            }
+            renderCells={(line, index) => {
+              const entry = linesPreview[index]!;
+              return (
+                <>
+                  <td className="p-3">
+                    <div className="font-medium text-fg-strong">{entry.product?.name}</div>
+                    <div className="text-xs text-fg-muted">
+                      {entry.product?.sku} · tax {entry.product?.taxRate ?? 0}%
+                    </div>
+                  </td>
+                  <td className="p-3">
                     <input
-                      value={section.title}
+                      aria-label={`Quantity of ${entry.product?.name ?? 'item'}`}
+                      type="number"
+                      min="0.001"
+                      step="0.001"
+                      value={line.quantity}
                       onChange={(event) =>
+                        patchLine(index, { quantity: Number(event.target.value) })
+                      }
+                      className="w-24 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong"
+                    />
+                  </td>
+                  <td className="p-3">
+                    <input
+                      aria-label={`Unit price of ${entry.product?.name ?? 'item'}`}
+                      type="number"
+                      min="0"
+                      step="0.0001"
+                      value={line.unitPrice ?? ''}
+                      onChange={(event) =>
+                        patchLine(index, {
+                          unitPrice: Number(event.target.value),
+                          priceMode: 'manual',
+                        })
+                      }
+                      className="w-28 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong"
+                    />
+                    <QuoteLinePriceNote
+                      mode={line.priceMode ?? (line.unitPrice != null ? 'manual' : 'catalog')}
+                      trace={traces[index]}
+                      problem={problems[index]}
+                      guard={guards[index]}
+                      onUseLists={() => patchLine(index, { priceMode: 'catalog' })}
+                    />
+                  </td>
+                  <td className="p-3">
+                    <input
+                      aria-label={`Discount percent of ${entry.product?.name ?? 'item'}`}
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.1"
+                      value={line.discountPercent}
+                      onChange={(event) =>
+                        patchLine(index, { discountPercent: Number(event.target.value) })
+                      }
+                      className="w-20 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong"
+                    />
+                  </td>
+                  <td className="p-3 text-right text-xs text-fg-muted">
+                    {money(entry.cost, input.currency)}
+                  </td>
+                  <td
+                    className={`p-3 text-right text-xs font-semibold ${entry.grossProfit < 0 ? 'text-red-700' : 'text-fg-strong'}`}
+                  >
+                    {money(entry.grossProfit, input.currency)}
+                  </td>
+                  <td
+                    className={`p-3 text-right text-xs font-semibold ${entry.grossMarginPercent < minimumMargin ? 'text-amber-800' : 'text-emerald-700'}`}
+                  >
+                    {entry.grossMarginPercent.toFixed(1)}%
+                  </td>
+                  <td className="p-3 text-right font-mono font-semibold text-fg-strong">
+                    {money(entry.total, input.currency)}
+                  </td>
+                  <td className="p-3">
+                    <button
+                      type="button"
+                      onClick={() =>
                         setField(
-                          'sections',
-                          (input.sections ?? []).map((row) =>
-                            row.id === section.id ? { ...row, title: event.target.value } : row,
-                          ),
+                          'lines',
+                          input.lines.filter((item) => item !== line),
                         )
                       }
-                      className="min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 py-2 font-semibold text-fg-strong"
-                      aria-label="Section title"
-                    />
-                    <span className="shrink-0 rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-800">
-                      Section total {money(sectionTotal, input.currency)}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCatalogSectionId(section.id);
-                        setCatalogOpen(true);
-                      }}
-                      className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
-                    >
-                      <Plus className="h-4 w-4" /> Browse catalogue
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => removeSection(section.id)}
-                      className="rounded-lg p-2 text-fg-muted hover:bg-red-50 hover:text-red-700"
-                      title="Remove section and make its lines regular quote items"
+                      className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded text-fg-muted hover:bg-red-50 hover:text-red-700"
+                      aria-label={`Remove ${entry.product?.name ?? 'item'}`}
                     >
                       <X className="h-4 w-4" />
                     </button>
-                  </div>
-                </header>
-                {section.description !== undefined && (
-                  <input
-                    value={section.description ?? ''}
-                    onChange={(event) =>
-                      setField(
-                        'sections',
-                        (input.sections ?? []).map((row) =>
-                          row.id === section.id ? { ...row, description: event.target.value } : row,
-                        ),
-                      )
-                    }
-                    placeholder="Optional section description"
-                    className="m-3 w-[calc(100%-1.5rem)] rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg"
-                  />
-                )}
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[980px] text-left text-sm">
-                    <thead className="bg-surface text-xs text-fg-muted">
-                      <tr>
-                        <th className="p-3">Item</th>
-                        <th className="p-3">Qty</th>
-                        <th className="p-3">Unit price</th>
-                        <th className="p-3">Disc %</th>
-                        <th className="p-3 text-right">Cost</th>
-                        <th className="p-3 text-right">Gross profit</th>
-                        <th className="p-3 text-right">Gross margin</th>
-                        <th className="p-3 text-right">Gross line amount</th>
-                        <th />
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-line">
-                      {sectionLines.map(
-                        ({
-                          line,
-                          product,
-                          total: lineTotal,
-                          cost: lineCost,
-                          grossProfit: lineProfit,
-                          grossMarginPercent: lineMargin,
-                        }) => {
-                          const index = input.lines.findIndex((item) => item === line);
-                          return (
-                            <tr key={`${section.id}-${line.productId}-${index}`}>
-                              <td className="p-3">
-                                <div className="font-medium text-fg-strong">{product?.name}</div>
-                                <div className="text-xs text-fg-muted">
-                                  {product?.sku} · tax {product?.taxRate ?? 0}%
-                                </div>
-                              </td>
-                              <td className="p-3">
-                                <input
-                                  aria-label="Quantity"
-                                  type="number"
-                                  min="0.001"
-                                  step="0.001"
-                                  value={line.quantity}
-                                  onChange={(event) =>
-                                    patchLine(index, { quantity: Number(event.target.value) })
-                                  }
-                                  className="w-24 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong"
-                                />
-                              </td>
-                              <td className="p-3">
-                                <input
-                                  aria-label="Unit selling price"
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  value={line.unitPrice ?? ''}
-                                  onChange={(event) =>
-                                    patchLine(index, {
-                                      unitPrice: Number(event.target.value),
-                                      priceMode: 'manual',
-                                    })
-                                  }
-                                  className="w-28 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong"
-                                />
-                                <QuoteLinePriceNote
-                                  mode={
-                                    line.priceMode ??
-                                    (line.unitPrice != null ? 'manual' : 'catalog')
-                                  }
-                                  trace={traces[index]}
-                                  problem={problems[index]}
-                                  guard={guards[index]}
-                                  onUseLists={() => patchLine(index, { priceMode: 'catalog' })}
-                                />
-                              </td>
-                              <td className="p-3">
-                                <input
-                                  aria-label="Line discount percent"
-                                  type="number"
-                                  min="0"
-                                  max="100"
-                                  step="0.1"
-                                  value={line.discountPercent}
-                                  onChange={(event) =>
-                                    patchLine(index, {
-                                      discountPercent: Number(event.target.value),
-                                    })
-                                  }
-                                  className="w-20 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong"
-                                />
-                              </td>
-                              <td className="p-3 text-right text-xs text-fg-muted">
-                                {money(lineCost, input.currency)}
-                              </td>
-                              <td
-                                className={`p-3 text-right text-xs font-semibold ${lineProfit < 0 ? 'text-red-700' : 'text-fg-strong'}`}
-                              >
-                                {money(lineProfit, input.currency)}
-                              </td>
-                              <td
-                                className={`p-3 text-right text-xs font-semibold ${lineMargin < minimumMargin ? 'text-amber-800' : 'text-emerald-700'}`}
-                              >
-                                {lineMargin.toFixed(1)}%
-                              </td>
-                              <td className="p-3 text-right font-mono font-semibold text-fg-strong">
-                                {money(lineTotal, input.currency)}
-                              </td>
-                              <td className="p-3">
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setField(
-                                      'lines',
-                                      input.lines.filter((item) => item !== line),
-                                    )
-                                  }
-                                  className="rounded p-1 text-fg-muted hover:bg-red-50 hover:text-red-700"
-                                  aria-label="Remove line"
-                                >
-                                  <X className="h-4 w-4" />
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        },
-                      )}
-                      {sectionLines.length === 0 && (
-                        <tr>
-                          <td colSpan={9} className="p-8 text-center text-sm text-fg-muted">
-                            No items in this section yet. Browse the product catalogue to add items.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </article>
-            );
-          })}
+                  </td>
+                </>
+              );
+            }}
+          />
         </section>
 
         <section className="grid gap-4 lg:grid-cols-[1fr_320px]">
@@ -1635,7 +1431,15 @@ function QuoteEditor({
         <QuoteCataloguePicker
           products={products}
           currency={input.currency}
-          onClose={() => setCatalogSectionId(null)}
+          destination={
+            catalogSectionId
+              ? `section ${(input.sections ?? []).find((x) => x.id === catalogSectionId)?.title ?? ''}`.trim()
+              : 'the individual items'
+          }
+          onClose={() => {
+            setCatalogOpen(false);
+            setCatalogSectionId(null);
+          }}
           onSelect={(productId) => {
             addProduct(productId, catalogSectionId ?? undefined);
             setCatalogOpen(false);
@@ -1696,8 +1500,9 @@ function DraftQuotePreview({
           <div>
             <h2 className="font-semibold text-fg-strong">Customer quote preview</h2>
             <p className="text-xs text-fg-muted">
-              Regular items print individually; lines inside sections are summarized by section.
-              Cost, margins, internal notes, and delivery address stay private.
+              Individual items print one by one. A section prints as its title and total, with its
+              items listed under it when it is kept expanded. Cost, margins, internal notes, and
+              delivery address stay private.
             </p>
           </div>
           <button
@@ -1789,12 +1594,11 @@ function DraftQuotePreview({
                     <td className="p-3 text-right">{money(entry.total, input.currency)}</td>
                   </tr>
                 ))}
-              {input.sections.map((section) => {
-                const sectionTotal = lines
-                  .filter((entry) => entry.line.sectionId === section.id)
-                  .reduce((sum, entry) => sum + entry.total, 0);
-                return (
-                  <tr key={section.id} className="border-b border-slate-200">
+              {input.sections.flatMap((section) => {
+                const inSection = lines.filter((entry) => entry.line.sectionId === section.id);
+                const sectionTotal = inSection.reduce((sum, entry) => sum + entry.total, 0);
+                return [
+                  <tr key={section.id} className="border-b border-slate-200 bg-slate-50">
                     <td className="p-3" colSpan={3}>
                       <p className="font-semibold">{section.title}</p>
                       {section.description && (
@@ -1804,8 +1608,8 @@ function DraftQuotePreview({
                     <td className="p-3 text-right font-semibold">
                       {money(sectionTotal, input.currency)}
                     </td>
-                  </tr>
-                );
+                  </tr>,
+                ];
               })}
             </tbody>
           </table>
@@ -1871,15 +1675,27 @@ function PreviewText({ title, text }: { title: string; text: string }) {
 function QuoteCataloguePicker({
   products,
   currency,
+  destination,
   onClose,
   onSelect,
 }: {
   products: Product[];
   currency: string;
+  /** Where the chosen item will go, in words. */
+  destination: string;
   onClose: () => void;
   onSelect: (productId: string) => void;
 }) {
   const [search, setSearch] = useState('');
+  // Escape closes the catalogue, like its close button.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   const [category, setCategory] = useState('all');
   const categories = [...new Set(products.map((product) => product.category))].filter(Boolean);
   const available = products.filter((product) => {
@@ -1906,7 +1722,7 @@ function QuoteCataloguePicker({
           <div>
             <h2 className="font-semibold text-fg-strong">Product catalogue</h2>
             <p className="text-xs text-fg-muted">
-              Choose a sellable catalogue item to add to this quote section.
+              Choose a sellable catalogue item to add to {destination}.
             </p>
           </div>
           <button
@@ -2018,6 +1834,7 @@ function QuoteDetails({
   canApprove,
   canDelete,
   canRevise,
+  onTemplate,
   busy,
   onClose,
   onApprove,
@@ -2033,6 +1850,8 @@ function QuoteDetails({
   canApprove: boolean;
   canDelete: boolean;
   canRevise: boolean;
+  /** Make a template from this quote; offered to anyone who may create quotes. */
+  onTemplate: () => void;
   busy: boolean;
   onClose: () => void;
   onApprove: () => void;
@@ -2283,6 +2102,11 @@ function QuoteDetails({
               icon={<ShoppingCart className="h-4 w-4" />}
             >
               Convert to order
+            </ActionButton>
+          )}
+          {canRevise && (
+            <ActionButton onClick={onTemplate} disabled={busy} icon={<Files className="h-4 w-4" />}>
+              Create template from this quote
             </ActionButton>
           )}
           {canRevise && !['converted', 'cancelled'].includes(quote.status) && (

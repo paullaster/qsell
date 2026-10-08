@@ -113,9 +113,9 @@ export function PublicSalesQuote({ token, quote }: { token: string; quote: Share
                             </div>
                           </td>
                         </tr>,
-                        ...sectionLines.map((line, index) => (
+                        ...(section.showLines === true ? sectionLines : []).map((line, index) => (
                           <tr key={`${section.id}-${line.sku}-${index}`}>
-                            <td className="p-3">
+                            <td className="p-3 pl-8">
                               <div className="font-medium text-fg-strong">{line.description}</div>
                               <div className="text-xs text-fg-muted">{line.sku}</div>
                             </td>

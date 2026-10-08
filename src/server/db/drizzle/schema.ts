@@ -2222,6 +2222,8 @@ export const salesQuoteTemplateSections = pgTable(
     sectionNumber: integer('section_number').notNull(),
     title: text('title').notNull(),
     description: text('description'),
+    /** Print the section's items under its title; otherwise only the title and its total. */
+    showLines: boolean('show_lines').notNull().default(false),
   },
   (t) => [
     uniqueIndex('sales_quote_template_sections_number_uidx').on(t.templateId, t.sectionNumber),
@@ -2358,6 +2360,8 @@ export const salesQuoteSections = pgTable(
     sectionNumber: integer('section_number').notNull(),
     title: text('title').notNull(),
     description: text('description'),
+    /** Print the section's items under its title; otherwise only the title and its total. */
+    showLines: boolean('show_lines').notNull().default(false),
   },
   (t) => [uniqueIndex('sales_quote_sections_number_uidx').on(t.quoteId, t.sectionNumber)],
 );

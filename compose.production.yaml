@@ -1,4 +1,4 @@
-name: qsell
+name: ${COMPOSE_PROJECT_NAME:-qsell}
 
 services:
   db:
@@ -36,6 +36,7 @@ services:
       NODE_ENV: production
       PORT: 3069
       HOSTNAME: 0.0.0.0
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?Set PUBLIC_DOMAIN for this installation}
     expose:
       - '3069'
     volumes:
@@ -83,6 +84,12 @@ services:
       - media_data:/app/storage/media
     mem_limit: ${WORKER_MEMORY_LIMIT:-512m}
     cpus: ${WORKER_CPUS:-1}
+    healthcheck:
+      test: ['CMD', 'node', 'scripts/worker-healthcheck.mjs']
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 40s
     depends_on:
       db:
         condition: service_healthy
@@ -110,10 +117,12 @@ services:
     image: caddy:2.10-alpine
     restart: unless-stopped
     init: true
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?Set PUBLIC_DOMAIN for this installation}
     ports:
       # Existing host Nginx retains public 80/443 and forwards to Caddy here.
       # Caddy then routes requests to the web app over the Compose network.
-      - '127.0.0.1:8080:8080'
+      - '127.0.0.1:${EDGE_HTTP_PORT:-8080}:8080'
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

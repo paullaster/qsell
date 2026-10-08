@@ -260,6 +260,13 @@
       "when": 1791455741155,
       "tag": "0036_pricing_under_sales",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1791460280607,
+      "tag": "0037_quote_section_show_lines",
+      "breakpoints": true
     }
   ]
 }

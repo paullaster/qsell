@@ -429,3 +429,7 @@ Every generator now uses the number series: sales orders, quotes (conversion no 
 (in the issuing transaction), customers, stock references, product SKU and stock code (blank =
 automatic, including CSV import). Fiscal series number per branch and fall back to the default
 branch so a sale never fails for a missing branch.
+
+## Appendix C — Quote and template layout (2026-10)
+
+A quote and a quote template arrange their items the same way, with one shared board: individual items first, then named sections, each holding its own items. Items and sections are reordered by dragging or with arrow buttons (keyboard and phone friendly); an item can be moved within its place, into another section, or out to the individual items, and the arrows carry an item across the edge of a section into the next place. The arrangement is the order of the saved lines and sections, so it survives saving, copying a template, making a quote from a template, and revising a quote. A section has a "keep expanded on the printout" choice (off by default): off, the printout (PDF, shared page, preview) shows the section title with its total; on, it also lists the section's items under it with their own quantity, price and amount. Logic: `src/lib/quote-layout.ts` (pure, tested); screen: `QuoteLayoutBoard`.

@@ -1,0 +1,2 @@
+ALTER TABLE "sales_quote_sections" ADD COLUMN "show_lines" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "sales_quote_template_sections" ADD COLUMN "show_lines" boolean DEFAULT false NOT NULL;

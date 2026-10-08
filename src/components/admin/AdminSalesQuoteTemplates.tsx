@@ -1,16 +1,21 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Copy, FileStack, Plus, Search, Star, X } from 'lucide-react';
 import type { Product } from '@/types/index';
+import { QuoteLayoutBoard } from './quote-layout/QuoteLayoutBoard';
 import type { CustomerRow } from '@/server/db/drizzle/schema';
 import type { QuoteTemplateInput, SalesQuoteTemplate } from '@/server/domains/quotes/service';
+import type { QuoteSearchHit } from '@/server/domains/quotes/service';
+import type { TemplateDraft } from '@/server/domains/quotes/template-from-quote';
 import {
   archiveSalesQuoteTemplateAction,
   duplicateSalesQuoteTemplateAction,
   saveSalesQuoteTemplateAction,
   setDefaultSalesQuoteTemplateAction,
+  templateDraftFromQuoteAction,
 } from '@/server/domains/quotes/actions';
+import { QuoteSearchPicker } from './QuoteSearchPicker';
 
 const amount = (n: number, currency: string) =>
   `${currency} ${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -68,6 +73,7 @@ function templateInput(template: SalesQuoteTemplate): QuoteTemplateInput {
       id: sectionIdMap.get(section.id)!,
       title: section.title,
       description: section.description,
+      showLines: section.showLines,
     })),
     lines: template.lines.map((line) => ({
       sectionId: line.sectionId ? (sectionIdMap.get(line.sectionId) ?? null) : null,
@@ -90,6 +96,8 @@ export function AdminSalesQuoteTemplates({
   onRefresh,
   onMessage,
   onError,
+  fromQuote = null,
+  onFromQuoteHandled,
 }: {
   templates: SalesQuoteTemplate[];
   products: Product[];
@@ -100,9 +108,38 @@ export function AdminSalesQuoteTemplates({
   onRefresh: () => void;
   onMessage: (message: string) => void;
   onError: (message: string) => void;
+  /** A quote someone chose to make a template from, on a quote screen: the editor opens on it. */
+  fromQuote?: QuoteSearchHit | null;
+  onFromQuoteHandled?: () => void;
 }) {
   const [editing, setEditing] = useState<SalesQuoteTemplate | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [base, setBase] = useState<TemplateBase | null>(null);
+
+  useEffect(() => {
+    if (!fromQuote) return;
+    let live = true;
+    void templateDraftFromQuoteAction(fromQuote.id, false)
+      .then((draft) => {
+        if (!live) return;
+        setEditing(null);
+        setBase({ hit: fromQuote, draft, keepCustomer: false });
+        setEditorOpen(true);
+        onFromQuoteHandled?.();
+      })
+      .catch((error: unknown) => {
+        if (!live) return;
+        onError(
+          error instanceof Error ? error.message : 'Could not start a template from that quote.',
+        );
+        onFromQuoteHandled?.();
+      });
+    return () => {
+      live = false;
+    };
+    // Only a different quote starts it again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fromQuote?.id]);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const runTemplateAction = async (id: string, action: () => Promise<unknown>, message: string) => {
@@ -135,6 +172,7 @@ export function AdminSalesQuoteTemplates({
               type="button"
               onClick={() => {
                 setEditing(null);
+                setBase(null);
                 setEditorOpen(true);
               }}
               className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
@@ -280,13 +318,19 @@ export function AdminSalesQuoteTemplates({
 
       {editorOpen && (
         <TemplateEditor
-          initial={editing ? templateInput(editing) : emptyTemplate()}
+          initial={editing ? templateInput(editing) : (base?.draft.input ?? emptyTemplate())}
+          base={editing ? null : base}
+          canBase={!editing}
           products={products}
           customers={customers}
-          onClose={() => setEditorOpen(false)}
+          onClose={() => {
+            setEditorOpen(false);
+            setBase(null);
+          }}
           onSave={async (input) => {
             await saveSalesQuoteTemplateAction(editing?.id ?? null, input);
             setEditorOpen(false);
+            setBase(null);
             onMessage(`${input.name} template saved.`);
             onRefresh();
           }}
@@ -296,14 +340,26 @@ export function AdminSalesQuoteTemplates({
   );
 }
 
+/** The quote a template is being based on, and what making a template from it found. */
+interface TemplateBase {
+  hit: QuoteSearchHit;
+  draft: TemplateDraft;
+  keepCustomer: boolean;
+}
+
 function TemplateEditor({
   initial,
+  base: initialBase,
+  canBase,
   products,
   customers,
   onClose,
   onSave,
 }: {
   initial: QuoteTemplateInput;
+  base: TemplateBase | null;
+  /** Only a new template can be based on a quote. */
+  canBase: boolean;
   products: Product[];
   customers: CustomerRow[];
   onClose: () => void;
@@ -315,6 +371,41 @@ function TemplateEditor({
   const [error, setError] = useState<string | null>(null);
   const [catalogSectionId, setCatalogSectionId] = useState<string | null>(null);
   const [catalogOpen, setCatalogOpen] = useState(false);
+  const [startFrom, setStartFrom] = useState<'blank' | 'quote'>(initialBase ? 'quote' : 'blank');
+  const [base, setBase] = useState<TemplateBase | null>(initialBase);
+  /** A quote just chosen, waiting for a yes before it replaces items already added. */
+  const [pending, setPending] = useState<TemplateBase | null>(null);
+  const [baseBusy, setBaseBusy] = useState(false);
+  const [baseError, setBaseError] = useState<string | null>(null);
+
+  /** Fills the editor from a quote. What was typed as the name stays. */
+  const applyDraft = (next: TemplateBase) => {
+    setBase(next);
+    setPending(null);
+    setInput((current) => ({
+      ...next.draft.input,
+      name:
+        current.name.trim() && current.name !== base?.draft.input.name
+          ? current.name
+          : next.draft.input.name,
+    }));
+    setTagsText('');
+  };
+  const chooseQuote = async (hit: QuoteSearchHit, keepCustomer: boolean) => {
+    try {
+      setBaseBusy(true);
+      setBaseError(null);
+      const draft = await templateDraftFromQuoteAction(hit.id, keepCustomer);
+      const next = { hit, draft, keepCustomer };
+      // Items already added are not lost without asking.
+      if (!base && input.lines.length > 0) setPending(next);
+      else applyDraft(next);
+    } catch (err) {
+      setBaseError(err instanceof Error ? err.message : 'Could not read that quote.');
+    } finally {
+      setBaseBusy(false);
+    }
+  };
   const update = <K extends keyof QuoteTemplateInput>(key: K, value: QuoteTemplateInput[K]) =>
     setInput((current) => ({ ...current, [key]: value }));
   const addLine = (productId: string, sectionId?: string) => {
@@ -330,21 +421,6 @@ function TemplateEditor({
         discountPercent: 0,
       },
     ]);
-  };
-  const addSection = () =>
-    update('sections', [
-      ...input.sections,
-      { id: crypto.randomUUID(), title: `Section ${input.sections.length + 1}`, description: '' },
-    ]);
-  const removeSection = (sectionId: string) => {
-    const remaining = input.sections.filter((section) => section.id !== sectionId);
-    setInput((current) => ({
-      ...current,
-      sections: remaining,
-      lines: current.lines.map((line) =>
-        line.sectionId === sectionId ? { ...line, sectionId: null } : line,
-      ),
-    }));
   };
   const patchLine = (index: number, patch: Partial<QuoteTemplateInput['lines'][number]>) =>
     update(
@@ -432,6 +508,124 @@ function TemplateEditor({
             >
               {error}
             </p>
+          )}
+          {canBase && (
+            <fieldset className="space-y-3 rounded-xl border border-line p-3 sm:p-4">
+              <legend className="px-1 text-sm font-semibold text-fg-strong">Start from</legend>
+              <div className="flex flex-wrap gap-4">
+                <label className="flex min-h-10 cursor-pointer items-center gap-2 text-sm text-fg">
+                  <input
+                    type="radio"
+                    name="template-start"
+                    className="size-4"
+                    checked={startFrom === 'blank'}
+                    onChange={() => setStartFrom('blank')}
+                  />
+                  A blank template
+                </label>
+                <label className="flex min-h-10 cursor-pointer items-center gap-2 text-sm text-fg">
+                  <input
+                    type="radio"
+                    name="template-start"
+                    className="size-4"
+                    checked={startFrom === 'quote'}
+                    onChange={() => setStartFrom('quote')}
+                  />
+                  An existing quote (any status)
+                </label>
+              </div>
+              {startFrom === 'quote' && (
+                <div className="space-y-3">
+                  <QuoteSearchPicker
+                    value={base?.hit ?? null}
+                    onSelect={(hit) => void chooseQuote(hit, base?.keepCustomer ?? false)}
+                    onClear={() => {
+                      setBase(null);
+                      setPending(null);
+                    }}
+                    label="Quote to make a template from"
+                  />
+                  {baseBusy && (
+                    <p role="status" className="text-sm text-fg-muted">
+                      Reading the quote…
+                    </p>
+                  )}
+                  {baseError && (
+                    <p role="alert" className="text-sm text-red-700">
+                      {baseError}
+                    </p>
+                  )}
+                  {pending && (
+                    <div
+                      role="alert"
+                      className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+                    >
+                      <p>
+                        Replace the items already in this template with the ones from{' '}
+                        <strong>{pending.hit.quoteNumber}</strong>?
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => applyDraft(pending)}
+                          className="min-h-10 cursor-pointer rounded-lg bg-indigo-600 px-3 text-sm font-semibold text-white hover:bg-indigo-500"
+                        >
+                          Replace them
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPending(null)}
+                          className="min-h-10 cursor-pointer rounded-lg border border-line bg-surface px-3 text-sm text-fg hover:bg-hover"
+                        >
+                          Keep what I have
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {base && !pending && (
+                    <div className="space-y-2" role="status">
+                      <label className="flex min-h-10 cursor-pointer items-center gap-2 text-sm text-fg">
+                        <input
+                          type="checkbox"
+                          className="size-4"
+                          checked={base.keepCustomer}
+                          disabled={baseBusy}
+                          onChange={(e) => void chooseQuote(base.hit, e.target.checked)}
+                        />
+                        Keep the quote&apos;s customer and addresses
+                      </label>
+                      <p className="text-xs text-fg-muted">
+                        Made from {base.draft.quoteNumber}: {input.lines.length} item
+                        {input.lines.length === 1 ? '' : 's'} in {input.sections.length} section
+                        {input.sections.length === 1 ? '' : 's'}, kept in the same order. Prices
+                        from the price lists stay catalog prices, so the template follows
+                        today&apos;s prices; typed prices stay fixed. Review and change anything
+                        below, then save.
+                      </p>
+                      {base.draft.gifts > 0 && (
+                        <p className="text-xs text-fg-muted">
+                          {base.draft.gifts} free gift{base.draft.gifts === 1 ? '' : 's'} on the
+                          quote {base.draft.gifts === 1 ? 'was' : 'were'} not copied: they are
+                          worked out again for each new quote.
+                        </p>
+                      )}
+                      {base.draft.skipped.length > 0 && (
+                        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                          <p className="font-semibold">Left out of the template:</p>
+                          <ul className="list-disc pl-5">
+                            {base.draft.skipped.map((x, i) => (
+                              <li key={i}>
+                                {x.name}: {x.reason}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </fieldset>
           )}
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <label className="text-sm font-medium text-fg">
@@ -557,246 +751,155 @@ function TemplateEditor({
               />
             </label>
           </div>
-          <section className="rounded-xl border border-line">
-            <header className="flex flex-col justify-between gap-3 border-b border-line p-3 sm:flex-row sm:items-center">
-              <div>
-                <h3 className="font-semibold text-fg-strong">Reusable item bundle</h3>
-                <p className="text-xs text-fg-muted">
-                  Use catalog price to refresh selling price when applied, or fixed price to keep a
-                  negotiated rate.
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCatalogSectionId(null);
-                    setCatalogOpen(true);
-                  }}
-                  className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
-                >
-                  <Plus className="h-4 w-4" /> Add item
-                </button>
-                <button
-                  type="button"
-                  onClick={addSection}
-                  className="inline-flex items-center gap-2 rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-hover"
-                >
-                  <Plus className="h-4 w-4" /> Add section
-                </button>
-              </div>
+          <section className="space-y-3 rounded-xl border border-line p-3 sm:p-4">
+            <header>
+              <h3 className="font-semibold text-fg-strong">Reusable item bundle</h3>
+              <p className="text-xs text-fg-muted">
+                Use catalog price to refresh selling price when applied, or fixed price to keep a
+                negotiated rate. Items in a section stay in it when a quote is made from the
+                template.
+              </p>
             </header>
-            <div className="space-y-2 border-b border-line p-3">
-              {input.sections.map((section) => (
-                <div
-                  key={section.id}
-                  className="flex flex-col gap-2 rounded-lg border border-line bg-surface p-2 sm:flex-row sm:items-center"
-                >
-                  <input
-                    value={section.title}
-                    onChange={(event) =>
-                      update(
-                        'sections',
-                        input.sections.map((row) =>
-                          row.id === section.id ? { ...row, title: event.target.value } : row,
-                        ),
-                      )
-                    }
-                    aria-label="Template section title"
-                    className="flex-1 rounded-md border border-line bg-surface-raised px-2 py-1.5 text-sm font-semibold text-fg-strong"
-                  />
-                  <input
-                    value={section.description ?? ''}
-                    onChange={(event) =>
-                      update(
-                        'sections',
-                        input.sections.map((row) =>
-                          row.id === section.id ? { ...row, description: event.target.value } : row,
-                        ),
-                      )
-                    }
-                    placeholder="Section note (optional)"
-                    aria-label="Template section description"
-                    className="flex-1 rounded-md border border-line bg-surface-raised px-2 py-1.5 text-sm text-fg"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCatalogSectionId(section.id);
-                      setCatalogOpen(true);
-                    }}
-                    className="rounded-md bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500"
-                  >
-                    Browse catalogue
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => removeSection(section.id)}
-                    aria-label="Remove template section"
-                    className="rounded-md p-2 text-fg-muted hover:bg-red-50 hover:text-red-700"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-              ))}
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[850px] text-sm">
-                <thead className="bg-surface text-xs text-fg-muted">
-                  <tr>
-                    <th className="p-3 text-left">Product</th>
-                    <th className="p-3">Section</th>
-                    <th className="p-3">Qty</th>
-                    <th className="p-3">Price source</th>
-                    <th className="p-3">Fixed price</th>
-                    <th className="p-3">Discount %</th>
-                    <th className="p-3 text-right">Current estimated margin</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-line">
-                  {input.lines.map((line, index) => {
-                    const product = products.find((item) => item.id === line.productId);
-                    const sell =
-                      line.priceMode === 'fixed'
-                        ? Number(line.unitPrice ?? 0)
-                        : Number(product?.price ?? 0);
-                    const revenue =
-                      sell *
-                      line.quantity *
-                      (1 - line.discountPercent / 100) *
-                      (1 - input.quoteDiscountPercent / 100);
-                    const cost = Number(product?.costPrice ?? 0) * line.quantity;
-                    const taxRate = product?.taxRate ?? 0;
-                    const net =
-                      product?.isTaxInclusive !== false && taxRate > 0
-                        ? revenue / (1 + taxRate / 100)
-                        : revenue;
-                    const margin = net > 0 ? ((net - cost) / net) * 100 : 0;
-                    return (
-                      <tr key={`${line.sectionId ?? 'none'}-${line.productId}-${index}`}>
-                        <td className="p-3">
-                          <div className="font-medium text-fg-strong">
-                            {product?.name ?? line.productId}
-                          </div>
-                          <div className="text-xs text-fg-muted">
-                            {product?.sku} · current cost{' '}
-                            {amount(Number(product?.costPrice ?? 0), input.currency)}
-                          </div>
-                        </td>
-                        <td className="p-3">
-                          <select
-                            value={line.sectionId ?? ''}
-                            onChange={(event) =>
-                              patchLine(index, { sectionId: event.target.value || null })
-                            }
-                            className="max-w-40 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong"
-                            aria-label="Template line section"
-                          >
-                            <option value="">Individual item (not in a section)</option>
-                            {input.sections.map((section) => (
-                              <option key={section.id} value={section.id}>
-                                {section.title}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="p-3">
-                          <input
-                            type="number"
-                            min={0.001}
-                            step={0.001}
-                            value={line.quantity}
-                            onChange={(event) =>
-                              patchLine(index, { quantity: Number(event.target.value) })
-                            }
-                            className="w-24 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong"
-                            aria-label="Template quantity"
-                          />
-                        </td>
-                        <td className="p-3">
-                          <select
-                            value={line.priceMode}
-                            onChange={(event) =>
-                              patchLine(index, {
-                                priceMode: event.target.value as 'catalog' | 'fixed',
-                                unitPrice:
-                                  event.target.value === 'catalog'
-                                    ? null
-                                    : (line.unitPrice ?? product?.price ?? 0),
-                              })
-                            }
-                            className="rounded-md border border-line bg-surface px-2 py-1 text-fg-strong"
-                          >
-                            <option value="catalog">Catalog</option>
-                            <option value="fixed">Fixed</option>
-                          </select>
-                        </td>
-                        <td className="p-3">
-                          <input
-                            type="number"
-                            min={0}
-                            step={0.01}
-                            disabled={line.priceMode !== 'fixed'}
-                            value={
-                              line.priceMode === 'fixed'
-                                ? (line.unitPrice ?? '')
-                                : (product?.price ?? '')
-                            }
-                            onChange={(event) =>
-                              patchLine(index, { unitPrice: Number(event.target.value) })
-                            }
-                            className="w-28 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong disabled:opacity-50"
-                            aria-label="Fixed template price"
-                          />
-                        </td>
-                        <td className="p-3">
-                          <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            step={0.1}
-                            value={line.discountPercent}
-                            onChange={(event) =>
-                              patchLine(index, { discountPercent: Number(event.target.value) })
-                            }
-                            className="w-20 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong"
-                            aria-label="Template line discount"
-                          />
-                        </td>
-                        <td
-                          className={`p-3 text-right text-xs font-semibold ${margin < 0 ? 'text-red-700' : 'text-emerald-700'}`}
-                        >
-                          {margin.toFixed(1)}%
-                        </td>
-                        <td className="p-3">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              update(
-                                'lines',
-                                input.lines.filter((_, i) => i !== index),
-                              )
-                            }
-                            className="rounded p-1 text-red-700 hover:bg-red-50"
-                            aria-label="Remove template product"
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {input.lines.length === 0 && (
-                    <tr>
-                      <td colSpan={8} className="p-8 text-center text-sm text-fg-muted">
-                        Add products to create a reusable bundle.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+            <QuoteLayoutBoard
+              noun="template"
+              sections={input.sections}
+              lines={input.lines}
+              onChange={(next) => setInput((current) => ({ ...current, ...next }))}
+              onBrowse={(sectionId) => {
+                setCatalogSectionId(sectionId);
+                setCatalogOpen(true);
+              }}
+              lineName={(line) =>
+                products.find((item) => item.id === line.productId)?.name ?? 'item'
+              }
+              minWidth={900}
+              columns={7}
+              head={
+                <>
+                  <th className="p-3 text-left">Product</th>
+                  <th className="p-3">Qty</th>
+                  <th className="p-3">Price source</th>
+                  <th className="p-3">Fixed price</th>
+                  <th className="p-3">Discount %</th>
+                  <th className="p-3 text-right">Current estimated margin</th>
+                </>
+              }
+              renderCells={(line, index) => {
+                const product = products.find((item) => item.id === line.productId);
+                const sell =
+                  line.priceMode === 'fixed'
+                    ? Number(line.unitPrice ?? 0)
+                    : Number(product?.price ?? 0);
+                const revenue =
+                  sell *
+                  line.quantity *
+                  (1 - line.discountPercent / 100) *
+                  (1 - input.quoteDiscountPercent / 100);
+                const cost = Number(product?.costPrice ?? 0) * line.quantity;
+                const taxRate = product?.taxRate ?? 0;
+                const net =
+                  product?.isTaxInclusive !== false && taxRate > 0
+                    ? revenue / (1 + taxRate / 100)
+                    : revenue;
+                const margin = net > 0 ? ((net - cost) / net) * 100 : 0;
+                const name = product?.name ?? line.productId;
+                return (
+                  <>
+                    <td className="p-3">
+                      <div className="font-medium text-fg-strong">{name}</div>
+                      <div className="text-xs text-fg-muted">
+                        {product?.sku} · current cost{' '}
+                        {amount(Number(product?.costPrice ?? 0), input.currency)}
+                      </div>
+                    </td>
+                    <td className="p-3">
+                      <input
+                        type="number"
+                        min={0.001}
+                        step={0.001}
+                        value={line.quantity}
+                        onChange={(event) =>
+                          patchLine(index, { quantity: Number(event.target.value) })
+                        }
+                        className="w-24 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong"
+                        aria-label={`Quantity of ${name}`}
+                      />
+                    </td>
+                    <td className="p-3">
+                      <select
+                        value={line.priceMode}
+                        onChange={(event) =>
+                          patchLine(index, {
+                            priceMode: event.target.value as 'catalog' | 'fixed',
+                            unitPrice:
+                              event.target.value === 'catalog'
+                                ? null
+                                : (line.unitPrice ?? product?.price ?? 0),
+                          })
+                        }
+                        className="rounded-md border border-line bg-surface px-2 py-1 text-fg-strong"
+                        aria-label={`Price source of ${name}`}
+                      >
+                        <option value="catalog">Catalog</option>
+                        <option value="fixed">Fixed</option>
+                      </select>
+                    </td>
+                    <td className="p-3">
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.01}
+                        disabled={line.priceMode !== 'fixed'}
+                        value={
+                          line.priceMode === 'fixed'
+                            ? (line.unitPrice ?? '')
+                            : (product?.price ?? '')
+                        }
+                        onChange={(event) =>
+                          patchLine(index, { unitPrice: Number(event.target.value) })
+                        }
+                        className="w-28 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong disabled:opacity-50"
+                        aria-label={`Fixed price of ${name}`}
+                      />
+                    </td>
+                    <td className="p-3">
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        step={0.1}
+                        value={line.discountPercent}
+                        onChange={(event) =>
+                          patchLine(index, { discountPercent: Number(event.target.value) })
+                        }
+                        className="w-20 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong"
+                        aria-label={`Discount percent of ${name}`}
+                      />
+                    </td>
+                    <td
+                      className={`p-3 text-right text-xs font-semibold ${margin < 0 ? 'text-red-700' : 'text-emerald-700'}`}
+                    >
+                      {margin.toFixed(1)}%
+                    </td>
+                    <td className="p-3">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          update(
+                            'lines',
+                            input.lines.filter((_, i) => i !== index),
+                          )
+                        }
+                        className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded text-red-700 hover:bg-red-50"
+                        aria-label={`Remove ${name}`}
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </td>
+                  </>
+                );
+              }}
+            />
           </section>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="text-sm font-medium text-fg">
@@ -905,7 +1008,15 @@ function TemplateEditor({
         <TemplateCataloguePicker
           products={products}
           currency={input.currency}
-          onClose={() => setCatalogSectionId(null)}
+          destination={
+            catalogSectionId
+              ? `section ${input.sections.find((x) => x.id === catalogSectionId)?.title ?? ''}`.trim()
+              : 'the individual items'
+          }
+          onClose={() => {
+            setCatalogOpen(false);
+            setCatalogSectionId(null);
+          }}
           onSelect={(productId) => {
             addLine(productId, catalogSectionId ?? undefined);
             setCatalogOpen(false);
@@ -920,15 +1031,27 @@ function TemplateEditor({
 function TemplateCataloguePicker({
   products,
   currency,
+  destination,
   onClose,
   onSelect,
 }: {
   products: Product[];
   currency: string;
+  /** Where the chosen item will go, in words. */
+  destination: string;
   onClose: () => void;
   onSelect: (id: string) => void;
 }) {
   const [search, setSearch] = useState('');
+  // Escape closes the catalogue, like its close button.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   const matches = products.filter(
     (product) =>
       product.isSellable &&
@@ -950,7 +1073,10 @@ function TemplateCataloguePicker({
         className="max-h-[85dvh] w-full max-w-4xl overflow-hidden rounded-2xl border border-line bg-surface-raised shadow-2xl"
       >
         <header className="flex items-center justify-between border-b border-line p-4">
-          <h3 className="font-semibold text-fg-strong">Browse product catalogue</h3>
+          <div>
+            <h3 className="font-semibold text-fg-strong">Browse product catalogue</h3>
+            <p className="text-xs text-fg-muted">Adding to {destination}.</p>
+          </div>
           <button
             type="button"
             onClick={onClose}

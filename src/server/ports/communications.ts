@@ -35,6 +35,14 @@ export interface InvoiceLineItem {
   kind?: 'section' | 'item';
   sectionTotal?: number;
   sectionDescription?: string | null;
+  /** The section's own items, listed under its title when it is set to show them. */
+  sectionLines?: Array<{
+    sku: string;
+    name: string;
+    quantity: number;
+    unitPrice: number;
+    totalPrice: number;
+  }>;
   sku: string;
   name: string;
   quantity: number;
