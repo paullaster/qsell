@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { FolderTree, X } from 'lucide-react';
-import { createCategoryAction } from '@/server/actions';
+import { createCategoryAction, listCategoriesAction } from '@/server/actions';
+import type { Category } from '@/types/index';
 import { publishCatalogShortcut } from '@/components/admin/catalog-shortcuts';
 
 export function CategoryCreateModal({ presentation }: { presentation: 'intercepted' | 'page' }) {
@@ -13,8 +14,22 @@ export function CategoryCreateModal({ presentation }: { presentation: 'intercept
   const [description, setDescription] = useState('');
   const [displayOrder, setDisplayOrder] = useState('1');
   const [isActive, setIsActive] = useState(true);
+  const [parentId, setParentId] = useState('');
+  const [parents, setParents] = useState<Category[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    listCategoriesAction()
+      .then((list) => live && setParents(list))
+      .catch(() => {
+        /* the parent choice is optional; the form still works without it */
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const close = () => {
     if (presentation === 'intercepted') router.back();
@@ -43,6 +58,7 @@ export function CategoryCreateModal({ presentation }: { presentation: 'intercept
         description: description.trim(),
         displayOrder: parsedOrder,
         isActive,
+        parentId: parentId || null,
       });
 
       if (presentation === 'intercepted') {
@@ -88,6 +104,29 @@ export function CategoryCreateModal({ presentation }: { presentation: 'intercept
               {formError}
             </div>
           ) : null}
+
+          <div>
+            <label
+              htmlFor="new-category-parent"
+              className="mb-1 block text-xs font-semibold text-fg"
+            >
+              Sits under
+            </label>
+            <select
+              id="new-category-parent"
+              value={parentId}
+              onChange={(e) => setParentId(e.target.value)}
+              className="w-full cursor-pointer rounded-lg border border-line bg-surface px-3.5 py-2 text-xs text-fg-strong focus:border-indigo-500 focus:outline-none"
+            >
+              <option value="">Nothing: a top-level category</option>
+              {parents.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {'— '.repeat(c.depth ?? 0)}
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
 
           <div>
             <label className="mb-1 block text-xs font-semibold text-fg">Category Name *</label>

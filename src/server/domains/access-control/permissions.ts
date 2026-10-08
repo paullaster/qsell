@@ -256,8 +256,9 @@ export const PERMISSIONS = {
   'pricing:manage': {
     resource: 'pricing',
     action: 'manage',
-    category: 'Company & Settings',
-    description: 'Create and change price lists and prices, customer groups and pricing rules',
+    category: 'Orders & Sales',
+    description:
+      'Create and change price lists and prices, discounts, rebates, loyalty, gift cards, customer groups and pricing rules',
   },
   'numbering:manage': {
     resource: 'numbering',

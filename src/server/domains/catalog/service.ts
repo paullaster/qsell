@@ -15,6 +15,7 @@ import type {
 } from '@/types/index';
 import { toCategory, toItemType, toProduct, toPublicProduct, productToRow } from './mappers';
 import type { CatalogRepository } from './repository';
+import { inTreeOrder, parentProblem } from './category-tree';
 
 function repo(): CatalogRepository {
   return getContainer().catalog;
@@ -390,7 +391,26 @@ export class CatalogService {
 
   static async getAllCategories(): Promise<Category[]> {
     const rows = await repo().listCategories();
-    return rows.map((row) => toCategory(row, row.productCount));
+    // Shown as a tree: each sub-category under its parent, with its full path.
+    return inTreeOrder(rows).map((row) => ({
+      ...toCategory(row, row.productCount),
+      path: row.path,
+      depth: row.depth,
+    }));
+  }
+
+  /** Category names are how products and CSV imports refer to a category, so each must be unique. */
+  private static async assertCategoryNameFree(name: string, exceptId: string | null) {
+    const clash = await repo().getCategoryByName(name);
+    if (clash && clash.id !== exceptId)
+      throw new Error(
+        `A category called "${clash.name}" already exists. Names must be different, even under different parents.`,
+      );
+  }
+
+  private static async assertParent(id: string | null, parentId: string | null) {
+    const problem = parentProblem(id, parentId, await repo().categoryParents());
+    if (problem) throw new Error(problem);
   }
 
   static async getCategoryById(id: string): Promise<Category | undefined> {
@@ -401,8 +421,11 @@ export class CatalogService {
   static async createCategory(
     data: Omit<Category, 'id' | 'createdAt' | 'updatedAt' | 'productCount'>,
   ): Promise<Category> {
+    await CatalogService.assertCategoryNameFree(data.name, null);
+    await CatalogService.assertParent(null, data.parentId ?? null);
     const row = await repo().insertCategory({
       id: newId('cat'),
+      parentId: data.parentId ?? null,
       name: data.name,
       slug: data.slug || slugify(data.name),
       description: data.description ?? '',
@@ -419,6 +442,11 @@ export class CatalogService {
     const existing = await catalog.getCategoryById(id);
     if (!existing) throw new Error(`Category ${id} not found`);
 
+    if (updates.name !== undefined && updates.name !== existing.name)
+      await CatalogService.assertCategoryNameFree(updates.name, id);
+    if (updates.parentId !== undefined && (updates.parentId ?? null) !== existing.parentId)
+      await CatalogService.assertParent(id, updates.parentId ?? null);
+
     // Keep denormalized product labels in step with a rename.
     if (updates.name && updates.name !== existing.name) {
       await catalog.renameCategoryLabel(existing.name, updates.name);
@@ -431,6 +459,7 @@ export class CatalogService {
       ...(updates.imageUrl !== undefined ? { imageUrl: updates.imageUrl ?? null } : {}),
       ...(updates.isActive !== undefined ? { isActive: updates.isActive } : {}),
       ...(updates.displayOrder !== undefined ? { displayOrder: updates.displayOrder } : {}),
+      ...(updates.parentId !== undefined ? { parentId: updates.parentId ?? null } : {}),
     });
     if (!row) throw new Error(`Category ${id} not found`);
     void broadcastRealtime('category_update', { type: 'updated', category: toCategory(row) });
@@ -446,6 +475,12 @@ export class CatalogService {
     const existing = await catalog.getCategoryById(id);
     if (!existing) return { deleted: false, reassignedCount: 0, fallbackName: null };
 
+    const children = await catalog.countChildCategories(id);
+    if (children > 0) {
+      throw new Error(
+        `Cannot delete "${existing.name}" — it has ${children} sub-categor${children === 1 ? 'y' : 'ies'}. Move or delete them first.`,
+      );
+    }
     const blocked = await catalog.countProductsInCategory(id);
     if (blocked > 0) {
       throw new Error(

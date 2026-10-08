@@ -6,10 +6,18 @@ import { CatalogService } from '@/server/domains/catalog/service';
 import { InventoryReservationService } from '@/server/domains/inventory/reservation-service';
 import { broadcastRealtime } from '@/server/realtime';
 import { businessDate } from '@/server/kernel/numbering/business-date';
-import { eq } from 'drizzle-orm';
-import { orders as ordersTable } from '@/server/db/drizzle/schema';
+import { eq, inArray } from 'drizzle-orm';
+import { drizzleDb } from '@/server/db/drizzle/client';
+import { orders as ordersTable, products as productsTable } from '@/server/db/drizzle/schema';
 import { needsApprovalCheck } from './approval';
 import type { PriceResult, PriceTrace } from '@/server/domains/pricing/domain/types';
+import type { GuardLine } from '@/server/domains/pricing/guard-service';
+import type {
+  GiftLine,
+  PricedItem,
+  RuleApplication,
+} from '@/server/domains/pricing/discount-service';
+import { expandKits, KitError } from '@/server/domains/pricing/kit-service';
 
 export class OrderWriteService {
   static async createOrder(params: {
@@ -37,6 +45,8 @@ export class OrderWriteService {
       isTaxInclusive: boolean;
       /** Why the quote priced it as it did; carried onto the order line. */
       priceTrace?: PriceTrace | null;
+      /** A free gift the quote added, carried across as it was. */
+      isGift?: boolean;
     }[];
     quotedTotals?: { subtotal: number; tax: number; shippingFee: number; totalAmount: number };
     orderId?: string;
@@ -53,6 +63,14 @@ export class OrderWriteService {
      * for approval when a workflow says so; without one (a shop checkout) they never are.
      */
     requestedBy?: string;
+    /** Coupon codes the customer gave. A code that cannot be used refuses the order, saying why. */
+    couponCodes?: string[];
+    /**
+     * For an order made from a quote: the discounts the quote already applied. Their use is
+     * recorded with the order; nothing is repriced.
+     */
+    discountApplications?: RuleApplication[];
+    discountSummary?: Record<string, unknown>;
     /** Flat fields (globalDimension1Code) or { global, shortcut } projection */
     dimensionFields?:
       | Record<string, string | null | undefined>
@@ -83,10 +101,14 @@ export class OrderWriteService {
     const channel =
       params.paymentMethod === 'on_account' ? 'credit_sale' : (params.salesModule ?? 'ecommerce');
     const engine = new Map<number, PriceResult>();
+    let saleCompanyId = '';
+    let saleCustomerId: string | null = null;
     if (channel !== 'ecommerce') {
       const { companySettings, customers, pricing } = getContainer();
       const company = await companySettings.ensureSeeded();
       const known = await customers.lookupByEmail(company.id, params.customerEmail);
+      saleCompanyId = company.id;
+      saleCustomerId = known?.id ?? null;
       const toPrice: number[] = [];
       params.items.forEach((item, i) => {
         const prod = catalogProducts.get(item.productId);
@@ -116,6 +138,17 @@ export class OrderWriteService {
       );
       toPrice.forEach((i, n) => engine.set(i, priced[n]!));
     }
+
+    /** Lines the price lists priced: discounts apply to them, then they are checked against floors. */
+    const guarded: Array<{
+      itemIndex: number;
+      productId: string;
+      label: string;
+      quantity: number;
+      taxRate: number;
+      inclusive: boolean;
+      priced: PriceResult;
+    }> = [];
 
     for (const [index, item] of params.items.entries()) {
       const prod = catalogProducts.get(item.productId);
@@ -150,6 +183,17 @@ export class OrderWriteService {
         : priced
           ? priced.lineTotal!
           : unitPrice * item.quantity;
+      if (priced && !quoted) {
+        guarded.push({
+          itemIndex: orderItems.length,
+          productId: prod.id,
+          label: prod.name,
+          quantity: item.quantity,
+          taxRate: Math.max(0, prod.taxRate ?? 0),
+          inclusive: prod.isTaxInclusive !== false,
+          priced,
+        });
+      }
       orderItems.push({
         productId: prod.id,
         productName: quoted?.productName ?? prod.name,
@@ -159,6 +203,7 @@ export class OrderWriteService {
         totalPrice: itemTotal,
         imageUrl: prod.imageUrl,
         priceTrace: quoted ? (quoted.priceTrace ?? null) : (priced?.trace ?? null),
+        isGift: quoted?.isGift,
       });
       pricedLines.push({
         productId: prod.id,
@@ -168,6 +213,189 @@ export class OrderWriteService {
         isTaxInclusive: quoted?.isTaxInclusive ?? prod.isTaxInclusive !== false,
       });
     }
+
+    // Discounts: line rules, then order rules on what the lines now come to, then coupons. They
+    // never take a line below its floor. The explanation of each line records what happened.
+    let discountApplications: RuleApplication[] = [...(params.discountApplications ?? [])];
+    let discountSummary: Record<string, unknown> | null = params.discountSummary ?? null;
+    let gifts: GiftLine[] = [];
+    if (guarded.length > 0 && saleCompanyId) {
+      const { discounts } = getContainer();
+      const items: PricedItem[] = guarded.map((g) => ({
+        productId: g.productId,
+        quantity: g.quantity,
+        unitPrice: orderItems[g.itemIndex]!.unitPrice,
+        lineTotal: orderItems[g.itemIndex]!.totalPrice,
+        taxRate: g.taxRate,
+        lineTaxInclusive: g.inclusive,
+        explicitFloorUnit: g.priced.trace.floorPrice ?? null,
+        trace: g.priced.trace,
+      }));
+      const basket = await discounts.evaluate(
+        saleCompanyId,
+        {
+          customerId: saleCustomerId,
+          branchId: params.branchId ?? null,
+          salesType: channel === 'credit_sale' ? 'credit' : 'cash',
+          channel,
+          paymentMethod: params.paymentMethod,
+        },
+        items,
+        { couponCodes: params.couponCodes },
+      );
+      if (basket.couponProblems.length > 0) {
+        const bad = basket.couponProblems[0]!;
+        return { success: false, error: `Coupon ${bad.code}: ${bad.reason}` };
+      }
+      guarded.forEach((g, n) => {
+        const b = basket.lines[n]!;
+        const item = orderItems[g.itemIndex]!;
+        if (b.lineDiscount + b.orderDiscount > 0) {
+          item.unitPrice = b.unitPriceAfter;
+          item.totalPrice = b.lineTotalAfter;
+          pricedLines[g.itemIndex]!.unitPrice = b.unitPriceAfter;
+        }
+        if (item.priceTrace && (b.trace.applied.length > 0 || b.trace.considered.length > 0))
+          item.priceTrace = { ...item.priceTrace, discounts: b.trace };
+      });
+      discountApplications = [...discountApplications, ...basket.applications];
+      gifts = basket.gifts;
+      if (basket.totalDiscount > 0 || gifts.length > 0)
+        discountSummary = {
+          total: basket.totalDiscount,
+          applications: basket.applications,
+          couponCodes: (params.couponCodes ?? []).map((c) => c.trim().toUpperCase()),
+          order: basket.orderApplied,
+          gifts: gifts.map((g) => ({
+            code: g.code,
+            productId: g.productId,
+            name: g.productName,
+            quantity: g.quantity,
+            value: g.value,
+          })),
+        };
+    }
+
+    // Price floors. A sale below a floor needs approval (or is refused outright by a "refuse"
+    // floor). A till sale cannot wait for anyone, so it is refused. Measured after discounts.
+    let floorBreach: { text: string; shortfallPercent: number } | null = null;
+    if (guarded.length > 0) {
+      const { companySettings: cs, priceGuard } = getContainer();
+      const companyForGuard = await cs.ensureSeeded();
+      const guardLines: GuardLine[] = guarded.map((g) => {
+        const toNet = (v: number) => (g.inclusive && g.taxRate > 0 ? v / (1 + g.taxRate / 100) : v);
+        return {
+          productId: g.productId,
+          label: g.label,
+          quantity: g.quantity,
+          netUnit: toNet(orderItems[g.itemIndex]!.unitPrice),
+          explicitFloorNet:
+            g.priced.trace.floorPrice != null ? toNet(g.priced.trace.floorPrice) : null,
+        };
+      });
+      const verdict = await priceGuard.assess(
+        companyForGuard.id,
+        params.requestedBy ?? null,
+        guardLines,
+      );
+      guarded.forEach((g, n) => {
+        const item = orderItems[g.itemIndex]!;
+        if (item.priceTrace) item.priceTrace = { ...item.priceTrace, guard: verdict.lines[n]! };
+      });
+      if (verdict.blocked.length > 0) return { success: false, error: verdict.blocked[0]! };
+      if (verdict.belowFloor) {
+        const first = guarded.find((_, n) => verdict.lines[n]!.belowFloor)!;
+        const text = `${first.label} is priced below its floor.`;
+        if (!needsApprovalCheck(channel, params.requestedBy))
+          return {
+            success: false,
+            error: `${text} A sale at the till cannot wait for approval: change the price list, or sell it as a sales order.`,
+          };
+        floorBreach = { text, shortfallPercent: verdict.largestShortfallPercent };
+      }
+    }
+
+    // Free gifts a promotion has earned join the order at no charge (stock is held for them too).
+    for (const g of gifts) {
+      orderItems.push({
+        productId: g.productId,
+        productName: `${g.productName} (free gift)`,
+        sku: g.sku,
+        quantity: g.quantity,
+        unitPrice: 0,
+        totalPrice: 0,
+        imageUrl: g.imageUrl,
+        isGift: true,
+        priceTrace: {
+          engineVersion: 1,
+          at: new Date().toISOString(),
+          inputs: { productId: g.productId, quantity: g.quantity, currency: params.currency },
+          candidates: [],
+          steps: [`A free gift from ${g.ruleName} (${g.code}), worth ${g.value.toFixed(2)}.`],
+          source: 'none',
+          unitPrice: 0,
+          lineTotal: 0,
+        },
+      });
+      pricedLines.push({
+        productId: g.productId,
+        quantity: g.quantity,
+        unitPrice: 0,
+        taxRate: 0,
+        isTaxInclusive: true,
+      });
+    }
+
+    // A kit is sold as one line but becomes one line per component: stock leaves per component,
+    // each carries its own tax rate, and a partial return credits the right amount.
+    const kitDefs = await getContainer().kits.forProducts(
+      (await getContainer().companySettings.ensureSeeded()).id,
+      orderItems.map((i) => i.productId),
+    );
+    if (kitDefs.size > 0) {
+      try {
+        const expansion = expandKits(
+          orderItems.map((item, i) => ({
+            ...item,
+            taxRate: pricedLines[i]!.taxRate,
+            isTaxInclusive: pricedLines[i]!.isTaxInclusive,
+          })),
+          kitDefs,
+          params.currency,
+        );
+        orderItems.splice(
+          0,
+          orderItems.length,
+          ...expansion.lines.map((l) => ({
+            productId: l.productId,
+            productName: l.productName,
+            sku: l.sku,
+            quantity: l.quantity,
+            unitPrice: l.unitPrice,
+            totalPrice: l.totalPrice,
+            imageUrl: l.imageUrl,
+            priceTrace: l.priceTrace ?? null,
+            isGift: l.isGift,
+          })),
+        );
+        pricedLines.splice(
+          0,
+          pricedLines.length,
+          ...expansion.lines.map((l) => ({
+            productId: l.productId,
+            quantity: l.quantity,
+            unitPrice: l.quantity > 0 ? l.totalPrice / l.quantity : 0,
+            taxRate: l.taxRate,
+            isTaxInclusive: l.isTaxInclusive,
+          })),
+        );
+      } catch (error) {
+        if (error instanceof KitError) return { success: false, error: error.message };
+        throw error;
+      }
+    }
+    // Stock is held for what actually ships: components and gifts, not the kit itself.
+    const stockItems = orderItems.map((i) => ({ productId: i.productId, quantity: i.quantity }));
 
     const { subtotal, tax, shippingFee, totalAmount } =
       params.quotedTotals ?? computeCheckoutTotals(pricedLines);
@@ -179,7 +407,7 @@ export class OrderWriteService {
     const explicitOrderNumber = params.orderNumber;
 
     const reservation = await InventoryReservationService.reserveForOrder(
-      params.items,
+      stockItems,
       orderId,
       params.customerEmail,
     );
@@ -217,6 +445,7 @@ export class OrderWriteService {
       dimensionCodes: { global: {}, shortcut: {} },
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      discounts: discountSummary,
     };
 
     const gated = needsApprovalCheck(order.salesModule, params.requestedBy);
@@ -268,7 +497,21 @@ export class OrderWriteService {
       // service, which then owns this status. 'pending' only means "not decided yet".
       order.kraTransmissionStatus = 'pending';
 
-      const { orders: orderRepo, numbering, approvals } = getContainer();
+      const {
+        orders: orderRepo,
+        numbering,
+        approvals,
+        discounts: discountService,
+        rebates,
+        loyalty,
+      } = getContainer();
+      // What each unit cost today is kept with the sale, so its margin can be read years later.
+      const costs = await drizzleDb
+        .select({ id: productsTable.id, cost: productsTable.costPrice })
+        .from(productsTable)
+        .where(inArray(productsTable.id, [...new Set(orderItems.map((i) => i.productId))]));
+      const costOf = new Map(costs.map((c) => [c.id, Number(c.cost)]));
+      for (const item of orderItems) item.unitCost = costOf.get(item.productId) ?? null;
       await orderRepo.create(
         order,
         params.branchId,
@@ -287,42 +530,76 @@ export class OrderWriteService {
                   tx,
                 )
               ).number,
-        gated
-          ? async (tx, saved) => {
-              const outcome = await approvals.submit(
-                {
-                  companyId: company.id,
-                  trigger: 'sales_order.submitted',
-                  documentId: saved.id,
-                  branchId: params.branchId ?? null,
-                  requestedBy: params.requestedBy!,
-                  amount: totalAmount,
-                  snapshot: {
-                    salesModule: order.salesModule,
-                    customer: {
-                      id: tradeCustomer.id,
-                      accountType: tradeCustomer.accountType,
-                      overCreditLimit,
-                      isBlocked: tradeCustomer.blocked !== 'none',
-                    },
-                  },
+        async (tx, saved) => {
+          // What the discounts used is recorded in the same transaction as the order.
+          if (discountApplications.length > 0)
+            await discountService.commit(
+              tx,
+              company.id,
+              { type: 'order', id: saved.id, customerId: tradeCustomer.id },
+              discountApplications,
+            );
+          // What the order is worth to the customer's rebates and loyalty points, likewise.
+          const net = pricedLines.map((l) => {
+            const total = l.unitPrice * l.quantity;
+            return {
+              productId: l.productId,
+              net: l.isTaxInclusive ? total / (1 + Math.max(0, l.taxRate) / 100) : total,
+            };
+          });
+          await rebates.accrueOrder(
+            tx,
+            { companyId: company.id, customerId: tradeCustomer.id, branchId: params.branchId },
+            saved.id,
+            net,
+          );
+          await loyalty.earnOrder(tx, {
+            companyId: company.id,
+            customerId: tradeCustomer.id,
+            orderId: saved.id,
+            spend: subtotal,
+          });
+          if (!gated) return;
+          const outcome = await approvals.submit(
+            {
+              companyId: company.id,
+              trigger: 'sales_order.submitted',
+              documentId: saved.id,
+              branchId: params.branchId ?? null,
+              requestedBy: params.requestedBy!,
+              amount: totalAmount,
+              snapshot: {
+                salesModule: order.salesModule,
+                belowFloor: floorBreach !== null,
+                floorShortfallPercent: floorBreach?.shortfallPercent ?? 0,
+                customer: {
+                  id: tradeCustomer.id,
+                  accountType: tradeCustomer.accountType,
+                  overCreditLimit,
+                  isBlocked: tradeCustomer.blocked !== 'none',
                 },
-                tx,
-              );
-              if (outcome.required && !outcome.released) {
-                await tx
-                  .update(ordersTable)
-                  .set({ approvalStatus: 'pending' })
-                  .where(eq(ordersTable.id, saved.id));
-                order.approvalStatus = 'pending';
-              } else if (overCreditLimit) {
-                // Over the limit and nothing releases it: that is exactly what the limit is for.
-                throw new Error(
-                  `${tradeCustomer.name} would exceed the credit limit of ${Number(tradeCustomer.creditLimit).toLocaleString()}.`,
-                );
-              }
-            }
-          : undefined,
+              },
+            },
+            tx,
+          );
+          if (outcome.required && !outcome.released) {
+            await tx
+              .update(ordersTable)
+              .set({ approvalStatus: 'pending' })
+              .where(eq(ordersTable.id, saved.id));
+            order.approvalStatus = 'pending';
+          } else if (floorBreach && !outcome.required) {
+            // Below a floor and no approval workflow covers it: that is what the floor is for.
+            throw new Error(
+              `${floorBreach.text} It needs approval, but no approval workflow covers it. Ask an administrator to set one up for orders below their price floor.`,
+            );
+          } else if (overCreditLimit) {
+            // Over the limit and nothing releases it: that is exactly what the limit is for.
+            throw new Error(
+              `${tradeCustomer.name} would exceed the credit limit of ${Number(tradeCustomer.creditLimit).toLocaleString()}.`,
+            );
+          }
+        },
       );
       await customers.postInvoice({
         customer: tradeCustomer,
@@ -337,7 +614,7 @@ export class OrderWriteService {
         orderId,
         'order creation failed',
         'system',
-        params.items,
+        stockItems,
       ).catch((releaseError: unknown) =>
         console.error('[orders] could not release reservation', releaseError),
       );

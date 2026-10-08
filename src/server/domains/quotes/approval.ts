@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { salesQuoteEvents, salesQuotes } from '@/server/db/drizzle/schema';
+import { salesQuoteEvents, salesQuoteLines, salesQuotes } from '@/server/db/drizzle/schema';
+import { guardLines } from '@/server/domains/pricing/guard-text';
 import type { DocumentHandler } from '@/server/kernel/approvals/engine';
 
 type Tx = Parameters<DocumentHandler['onReleased']>[1];
@@ -65,11 +66,15 @@ export function quoteApprovalHandler(db: DrizzleDb): DocumentHandler {
         .from(salesQuotes)
         .where(eq(salesQuotes.id, quoteId))
         .limit(1);
-      return q
-        ? {
-            title: `Quote ${q.number} for ${q.customer}: ${q.currency} ${Number(q.total).toLocaleString('en-KE')}, gross margin ${Number(q.margin).toFixed(1)}%.`,
-          }
-        : null;
+      if (!q) return null;
+      const lines = await db
+        .select({ name: salesQuoteLines.description, trace: salesQuoteLines.priceTrace })
+        .from(salesQuoteLines)
+        .where(eq(salesQuoteLines.quoteId, quoteId));
+      return {
+        title: `Quote ${q.number} for ${q.customer}: ${q.currency} ${Number(q.total).toLocaleString('en-KE')}, gross margin ${Number(q.margin).toFixed(1)}%.`,
+        lines: guardLines(lines.map((l) => ({ name: l.name, guard: l.trace?.guard }))),
+      };
     },
   };
 }

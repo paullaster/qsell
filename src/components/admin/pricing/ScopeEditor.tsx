@@ -37,12 +37,15 @@ export function ScopeEditor({
   onChange,
   lookups,
   names,
+  dimensions,
 }: {
   value: Scopes;
   onChange: (next: Scopes) => void;
   lookups: PricingLookups;
   /** Names already known for customers chosen earlier. */
   names: Partial<Record<string, Record<string, string>>>;
+  /** Which limits to offer. Defaults to all of them. */
+  dimensions?: readonly ScopeDimension[];
 }) {
   const [customerNames, setCustomerNames] = useState<Record<string, string>>(names.customer ?? {});
   const set = (d: ScopeDimension, rule: Scopes[ScopeDimension]) => {
@@ -59,7 +62,7 @@ export function ScopeEditor({
         Leave everything off and the list applies to every sale. The more you limit it, the more
         specific it is, and the more specific a list, the sooner it wins.
       </p>
-      {SCOPE_DIMENSIONS.map((d) => {
+      {(dimensions ?? SCOPE_DIMENSIONS).map((d) => {
         const rule = value[d];
         return (
           <div key={d} className="rounded-lg border border-line p-3">

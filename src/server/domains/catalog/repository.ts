@@ -69,6 +69,22 @@ export class CatalogRepository {
     return rows.map((entry) => ({ ...entry.row, productCount: Number(entry.productCount) }));
   }
 
+  /** Every category's parent, for walking up the tree. Categories are few, so this is one cheap read. */
+  async categoryParents(): Promise<Map<string, string | null>> {
+    const rows = await this.db
+      .select({ id: categories.id, parentId: categories.parentId })
+      .from(categories);
+    return new Map(rows.map((r) => [r.id, r.parentId]));
+  }
+
+  async countChildCategories(id: string): Promise<number> {
+    const [row] = await this.db
+      .select({ value: count() })
+      .from(categories)
+      .where(eq(categories.parentId, id));
+    return Number(row?.value ?? 0);
+  }
+
   async getCategoryById(id: string): Promise<CategoryRow | null> {
     const rows = await this.db.select().from(categories).where(eq(categories.id, id)).limit(1);
     return rows[0] ?? null;

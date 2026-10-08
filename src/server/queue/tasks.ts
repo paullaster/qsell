@@ -342,6 +342,14 @@ export const sweepOverdueApprovals = async (_payload: unknown, helpers: JobHelpe
   }
 };
 
+/** Worker cron task: lapse loyalty points that were not spent in time. */
+export const expireLoyaltyPoints = async (_payload: unknown, helpers: JobHelpers) => {
+  const container = getContainer();
+  const company = await container.companySettings.ensureSeeded();
+  const lapsed = await container.loyalty.expireDue(company.id);
+  if (lapsed > 0) helpers.logger.info(`Loyalty expiry: ${lapsed} points lapsed`);
+};
+
 export const tasks = {
   'process-payment-callback': processPaymentCallback,
   'process-webhook': processWebhook,
@@ -351,4 +359,5 @@ export const tasks = {
   'purge-product-imports': purgeProductImports,
   'purge-media': purgeMedia,
   'sweep-overdue-approvals': sweepOverdueApprovals,
+  'expire-loyalty-points': expireLoyaltyPoints,
 };

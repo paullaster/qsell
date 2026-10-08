@@ -22,8 +22,43 @@ import { OrderWriteService } from '@/server/domains/orders/write-service';
 import type { CompanyProfile } from '@/server/ports/communications';
 import { broadcastRealtime } from '@/server/realtime';
 import type { PaymentProvider } from '@/types/index';
+import type { GuardTrace, PriceTrace } from '@/server/domains/pricing/domain/types';
+import type { GuardLine } from '@/server/domains/pricing/guard-service';
+import type { PricedItem, RuleApplication } from '@/server/domains/pricing/discount-service';
+import { kitCost, kitTax } from '@/server/domains/pricing/kit-service';
+import { mergeLinesForOrder } from './order-lines';
+import type { PriceResult } from '@/server/domains/pricing/domain/types';
 
 const money = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+
+/** The explanation kept for a price someone typed, so it can carry what the checks found. */
+function handTypedTrace(
+  line: { productId: string; quantity: string; unitPrice: string; lineAmount: string },
+  currency: string,
+): PriceTrace {
+  const unit = Number(line.unitPrice);
+  return {
+    engineVersion: 1,
+    at: new Date().toISOString(),
+    inputs: { productId: line.productId, quantity: Number(line.quantity), currency },
+    candidates: [],
+    steps: [`The price ${unit.toFixed(2)} was typed in by hand, not taken from a price list.`],
+    source: 'none',
+    unitPrice: unit,
+    lineTotal: Number(line.lineAmount),
+  };
+}
+
+/** What the checks recorded on a quote's lines when it was last saved, as facts for approvals. */
+export function guardFactsOf(lines: Array<{ priceTrace: PriceTrace | null }>) {
+  const g = lines.map((l) => l.priceTrace?.guard).filter((x): x is GuardTrace => x != null);
+  return {
+    belowPriceFloor: g.some((x) => x.belowFloor),
+    floorShortfallPercent: Math.max(0, ...g.map((x) => x.shortfallPercent)),
+    overridePercent: Math.max(0, ...g.map((x) => x.overridePercent)),
+    overrideOverLimit: g.some((x) => x.overOverrideLimit),
+  };
+}
 const num = (value: string | number | null | undefined) => Number(value ?? 0);
 const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
 const escapeHtml = (value: string) =>
@@ -63,6 +98,8 @@ export interface QuoteInput {
   publicNotes?: string | null;
   internalNotes?: string | null;
   discountPercent: number;
+  /** Coupon codes the customer gave; each can unlock a discount rule. */
+  couponCodes?: string[];
   shippingFee: number;
   sections: { id: string; title: string; description?: string | null }[];
   lines: {
@@ -77,6 +114,8 @@ export interface QuoteInput {
      */
     priceMode?: 'catalog' | 'manual' | 'kept';
     discountPercent: number;
+    /** A free gift the quote added. Gifts are worked out again on every save, so these are dropped. */
+    isGift?: boolean;
   }[];
 }
 
@@ -556,7 +595,9 @@ export class SalesQuoteService {
     return (await this.get(revised.id))!;
   }
 
-  private async save(userId: string, id: string | null, input: QuoteInput): Promise<SalesQuote> {
+  private async save(userId: string, id: string | null, sent: QuoteInput): Promise<SalesQuote> {
+    // Free gifts are decided by the rules each time, never typed in.
+    const input: QuoteInput = { ...sent, lines: sent.lines.filter((line) => !line.isGift) };
     const companyId = await this.companyId();
     const settings = await this.getSettings(companyId);
     // An existing quote keeps its number; a new one is numbered by the series inside the same
@@ -592,6 +633,10 @@ export class SalesQuoteService {
         (p) => [p.id, p],
       ),
     );
+    const kitDefs = await getContainer().kits.forProducts(
+      companyId,
+      input.lines.map((line) => line.productId),
+    );
     const sections = input.sections ?? [];
     const sectionIds = new Set(sections.map((section) => section.id));
     if (sections.some((section) => !section.title.trim())) {
@@ -613,29 +658,116 @@ export class SalesQuoteService {
       const product = products.get(line.productId);
       return modes[i] === 'catalog' && product && product.isSellable !== false ? [i] : [];
     });
+    const pricingContext = {
+      customerId: input.customerId || null,
+      branchId: branch.id,
+      salesType: (input.paymentMethod === 'on_account' ? 'credit' : 'cash') as 'credit' | 'cash',
+      channel: 'sales_order' as const,
+    };
+    const itemFor = (i: number) => {
+      const line = input.lines[i]!;
+      const product = products.get(line.productId)!;
+      const inclusive = product.isTaxInclusive !== false;
+      return {
+        productId: line.productId,
+        quantity: line.quantity,
+        standardPrice: product.price ?? null,
+        taxRate: Math.max(0, product.taxRate ?? 0),
+        lineTaxInclusive: inclusive,
+        standardTaxInclusive: inclusive,
+      };
+    };
     const priced = await getContainer().pricing.priceLines(
       companyId,
-      {
-        customerId: input.customerId || null,
-        branchId: branch.id,
-        salesType: input.paymentMethod === 'on_account' ? 'credit' : 'cash',
-        channel: 'sales_order',
-      },
-      toPrice.map((i) => {
-        const line = input.lines[i]!;
+      pricingContext,
+      toPrice.map(itemFor),
+    );
+    const engine = new Map(toPrice.map((i, n) => [i, priced[n]!]));
+    // What the lists say a hand-typed price replaces, so a reduction can be measured against it.
+    const manualAt = input.lines.flatMap((line, i) =>
+      modes[i] === 'manual' && products.get(line.productId)?.isSellable !== false ? [i] : [],
+    );
+    const reference = await getContainer().pricing.priceLines(
+      companyId,
+      pricingContext,
+      manualAt.map(itemFor),
+    );
+    const manualReference = new Map(manualAt.map((i, n) => [i, reference[n]!]));
+
+    // Discounts, first stage: the line rules, on the lines the price lists priced. The same rules
+    // are tried on the list price a typed price replaces, so a typed price is measured against
+    // what the customer would have paid (a promotion is not an override).
+    const { discounts: discountService } = getContainer();
+    const saleFacts = {
+      customerId: input.customerId || null,
+      branchId: branch.id,
+      salesType: pricingContext.salesType,
+      channel: 'sales_order',
+      paymentMethod: input.paymentMethod,
+    };
+    const itemOf = (i: number, r: PriceResult): PricedItem => {
+      const product = products.get(input.lines[i]!.productId)!;
+      return {
+        productId: input.lines[i]!.productId,
+        quantity: input.lines[i]!.quantity,
+        unitPrice: r.unitPrice!,
+        lineTotal: r.lineTotal!,
+        taxRate: Math.max(0, product.taxRate ?? 0),
+        lineTaxInclusive: product.isTaxInclusive !== false,
+        explicitFloorUnit: r.trace.floorPrice ?? null,
+        trace: r.trace,
+      };
+    };
+    const catalogAt = toPrice.filter((i) => engine.get(i)?.unitPrice != null);
+    const catalogBasket = await discountService.evaluate(
+      companyId,
+      saleFacts,
+      catalogAt.map((i) => itemOf(i, engine.get(i)!)),
+      { stages: { order: false } },
+    );
+    const catalogAfter = new Map(catalogAt.map((i, n) => [i, catalogBasket.lines[n]!]));
+    const manualAtOk = manualAt.filter((i) => manualReference.get(i)?.unitPrice != null);
+    const manualBasket = await discountService.evaluate(
+      companyId,
+      saleFacts,
+      manualAtOk.map((i) => itemOf(i, manualReference.get(i)!)),
+      { stages: { order: false } },
+    );
+    const manualAfter = new Map(manualAtOk.map((i, n) => [i, manualBasket.lines[n]!]));
+
+    // Second stage: order rules and coupons, on what each line now costs after its own discounts.
+    // The share for each line is kept as a percentage so the line's tax stays right.
+    const chargedUnit = (i: number): number => {
+      const line = input.lines[i]!;
+      const after = catalogAfter.get(i);
+      if (after) return after.unitPriceAfter;
+      const r = engine.get(i);
+      if (r?.unitPrice != null) return r.unitPrice;
+      return line.unitPrice ?? products.get(line.productId)?.price ?? 0;
+    };
+    const orderBasket = await discountService.evaluate(
+      companyId,
+      saleFacts,
+      input.lines.map((line, i) => {
         const product = products.get(line.productId)!;
-        const inclusive = product.isTaxInclusive !== false;
+        const manualPct = Math.min(100, Math.max(0, line.discountPercent)) / 100;
+        const unit = chargedUnit(i) * (1 - manualPct);
         return {
           productId: line.productId,
           quantity: line.quantity,
-          standardPrice: product.price ?? null,
+          unitPrice: unit,
+          lineTotal: unit * line.quantity,
           taxRate: Math.max(0, product.taxRate ?? 0),
-          lineTaxInclusive: inclusive,
-          standardTaxInclusive: inclusive,
+          lineTaxInclusive: product.isTaxInclusive !== false,
+          trace: engine.get(i)?.trace ?? null,
         };
       }),
+      { couponCodes: input.couponCodes, stages: { line: false } },
     );
-    const engine = new Map(toPrice.map((i, n) => [i, priced[n]!]));
+    if (orderBasket.couponProblems.length > 0) {
+      const bad = orderBasket.couponProblems[0]!;
+      throw new Error(`Coupon ${bad.code}: ${bad.reason}`);
+    }
     const keptFrom = new Set<string>();
     let subtotal = 0;
     let taxAmount = 0;
@@ -652,6 +784,13 @@ export class SalesQuoteService {
         );
       }
       let priceTrace = result?.trace ?? null;
+      const afterRules = catalogAfter.get(index);
+      if (
+        priceTrace &&
+        afterRules &&
+        (afterRules.trace.applied.length > 0 || afterRules.trace.considered.length > 0)
+      )
+        priceTrace = { ...priceTrace, discounts: afterRules.trace };
       if (modes[index] === 'kept' && line.unitPrice != null) {
         // Keep the saved price and its explanation, but only if it really is what was saved.
         const was = existing?.lines.find(
@@ -665,22 +804,42 @@ export class SalesQuoteService {
           priceTrace = was.priceTrace ?? null;
         }
       }
-      const unitPrice = result ? result.unitPrice : (line.unitPrice ?? product.price);
+      const unitPrice = afterRules
+        ? afterRules.unitPriceAfter
+        : result
+          ? result.unitPrice
+          : (line.unitPrice ?? product.price);
       if (unitPrice == null || !Number.isFinite(unitPrice) || unitPrice < 0) {
         throw new Error(`${product.name} needs a valid selling price.`);
       }
       this.assertPercent(line.discountPercent, `${product.name} discount`);
       const beforeDiscount = unitPrice * line.quantity;
+      const orderPct = orderBasket.lines[index]?.orderPercent ?? 0;
       const discountedGross =
-        beforeDiscount * (1 - line.discountPercent / 100) * (1 - input.discountPercent / 100);
+        beforeDiscount *
+        (1 - line.discountPercent / 100) *
+        (1 - orderPct / 100) *
+        (1 - input.discountPercent / 100);
       const rate = Math.max(0, product.taxRate ?? 0);
       const inclusive = product.isTaxInclusive !== false;
-      const net = inclusive && rate > 0 ? discountedGross / (1 + rate / 100) : discountedGross;
-      const tax = inclusive && rate > 0 ? discountedGross - net : net * (rate / 100);
+      // A kit is taxed component by component, each at its own rate, and costs what it holds.
+      const kit = kitDefs.get(product.id);
+      const split = kit ? kitTax(discountedGross, line.quantity, kit, inclusive) : null;
+      const net = split
+        ? split.net
+        : inclusive && rate > 0
+          ? discountedGross / (1 + rate / 100)
+          : discountedGross;
+      const tax = split
+        ? split.tax
+        : inclusive && rate > 0
+          ? discountedGross - net
+          : net * (rate / 100);
       const lineNet = money(net);
       const lineTax = money(tax);
       const lineTotal = money(lineNet + lineTax);
-      const cost = Math.max(0, product.costPrice || 0) * line.quantity;
+      const unitCost = kit ? kitCost(kit) : Math.max(0, product.costPrice || 0);
+      const cost = unitCost * line.quantity;
       subtotal += lineNet;
       taxAmount += lineTax;
       discountAmount += beforeDiscount - discountedGross;
@@ -693,10 +852,11 @@ export class SalesQuoteService {
         description: product.name,
         quantity: line.quantity.toFixed(3),
         unitPrice: unitPrice.toFixed(4),
-        unitCost: (product.costPrice || 0).toFixed(4),
+        unitCost: unitCost.toFixed(4),
         taxRate: rate.toFixed(3),
         isTaxInclusive: inclusive,
         discountPercent: line.discountPercent.toFixed(3),
+        ruleDiscountPercent: orderPct.toFixed(6),
         netAmount: lineNet.toFixed(2),
         taxAmount: lineTax.toFixed(2),
         lineAmount: lineTotal.toFixed(2),
@@ -704,6 +864,37 @@ export class SalesQuoteService {
         priceTrace,
       };
     });
+    // Free gifts the order rules have earned join the quote at no charge. What they cost is counted.
+    const giftRows = orderBasket.gifts.map((g, n) => ({
+      productId: g.productId,
+      sectionId: null,
+      lineNumber: (input.lines.length + n + 1) * 10000,
+      sku: g.sku,
+      description: `${g.productName} (free gift)`,
+      quantity: g.quantity.toFixed(3),
+      unitPrice: '0.0000',
+      unitCost: g.unitCost.toFixed(4),
+      taxRate: '0.000',
+      isTaxInclusive: true,
+      discountPercent: '0.000',
+      ruleDiscountPercent: '0.000000',
+      netAmount: '0.00',
+      taxAmount: '0.00',
+      lineAmount: '0.00',
+      costAmount: money(g.unitCost * g.quantity).toFixed(2),
+      isGift: true,
+      priceTrace: {
+        engineVersion: 1 as const,
+        at: new Date().toISOString(),
+        inputs: { productId: g.productId, quantity: g.quantity, currency: input.currency },
+        candidates: [],
+        steps: [`A free gift from ${g.ruleName} (${g.code}), worth ${g.value.toFixed(2)}.`],
+        source: 'none' as const,
+        unitPrice: 0,
+        lineTotal: 0,
+      },
+    }));
+    for (const g of orderBasket.gifts) totalCost += g.unitCost * g.quantity;
     subtotal = money(subtotal);
     taxAmount = money(taxAmount);
     discountAmount = money(discountAmount);
@@ -715,6 +906,75 @@ export class SalesQuoteService {
     const minimumMarginPercent = num(settings.minimumGrossMarginPercent);
     const belowFloor = grossMarginPercent < minimumMarginPercent;
     const now = new Date();
+    // Price floors and override limits, measured on what the customer pays net of tax.
+    const toNetUnit = (i: number, v: number) => {
+      const rate = lines[i]!.taxRate ? Number(lines[i]!.taxRate) : 0;
+      return lines[i]!.isTaxInclusive && rate > 0 ? v / (1 + rate / 100) : v;
+    };
+    const listNets = input.lines.map((line, i) => {
+      const product = products.get(line.productId)!;
+      const productPrice = product.price == null ? null : toNetUnit(i, product.price);
+      if (modes[i] === 'catalog') {
+        // What the customer would pay with promotions: a promotion is not an override.
+        const p = catalogAfter.get(i)?.unitPriceAfter ?? engine.get(i)?.unitPrice;
+        return p == null ? productPrice : toNetUnit(i, p);
+      }
+      if (modes[i] === 'manual') {
+        const p = manualAfter.get(i)?.unitPriceAfter ?? manualReference.get(i)?.unitPrice ?? null;
+        return p == null ? productPrice : toNetUnit(i, p);
+      }
+      // A kept price keeps the list price it was measured against when it was first saved.
+      const t = lines[i]!.priceTrace;
+      if (t?.guard?.listNetUnit != null) return t.guard.listNetUnit;
+      return t && t.source !== 'none' && t.unitPrice != null
+        ? toNetUnit(i, t.unitPrice)
+        : productPrice;
+    });
+    const guardLines: GuardLine[] = lines.map((l, i) => {
+      const qty = Number(l.quantity);
+      const explicit = engine.get(i)?.trace.floorPrice;
+      return {
+        productId: l.productId,
+        label: l.description,
+        quantity: qty,
+        netUnit: qty > 0 ? Number(l.netAmount) / qty : null,
+        overrideNetUnit: toNetUnit(i, Number(l.unitPrice) * (1 - Number(l.discountPercent) / 100)),
+        listNetUnit: listNets[i] ?? null,
+        explicitFloorNet: explicit == null ? null : toNetUnit(i, explicit),
+      };
+    });
+    const verdict = await getContainer().priceGuard.assess(companyId, userId, guardLines);
+    if (verdict.blocked.length > 0) throw new Error(verdict.blocked[0]);
+    lines.forEach((l, i) => {
+      l.priceTrace = {
+        ...(l.priceTrace ?? handTypedTrace(l, input.currency)),
+        guard: verdict.lines[i]!,
+      };
+    });
+    // What the discounts gave, kept on the quote so converting it records their use.
+    const mergedUse = new Map<string, (typeof catalogBasket.applications)[number]>();
+    for (const a of [...catalogBasket.applications, ...orderBasket.applications]) {
+      const cur = mergedUse.get(a.ruleId);
+      mergedUse.set(a.ruleId, cur ? { ...cur, amount: money(cur.amount + a.amount) } : a);
+    }
+    const ruleDiscountTotal = money(catalogBasket.totalDiscount + orderBasket.totalDiscount);
+    const discountSummary =
+      ruleDiscountTotal > 0 || orderBasket.gifts.length > 0
+        ? {
+            total: ruleDiscountTotal,
+            applications: [...mergedUse.values()],
+            order: orderBasket.orderApplied,
+            gifts: orderBasket.gifts.map((g) => ({
+              code: g.code,
+              productId: g.productId,
+              name: g.productName,
+              quantity: g.quantity,
+              value: g.value,
+            })),
+            couponCodes: (input.couponCodes ?? []).map((c) => c.trim().toUpperCase()),
+          }
+        : null;
+    const guardHold = verdict.needsApproval;
     // A configured approval workflow, if one applies, owns this quote's approval; otherwise the
     // old margin-floor check does, exactly as before.
     const approvalRequest = {
@@ -728,6 +988,10 @@ export class SalesQuoteService {
         quoteDiscountPercent: input.discountPercent,
         marginPercent: Math.round(grossMarginPercent * 1000) / 1000,
         belowFloor,
+        belowPriceFloor: verdict.belowFloor,
+        floorShortfallPercent: verdict.largestShortfallPercent,
+        overridePercent: verdict.largestOverridePercent,
+        overrideOverLimit: verdict.overOverrideLimit,
         customer: { id: input.customerId || null },
       },
     };
@@ -735,8 +999,9 @@ export class SalesQuoteService {
       ...approvalRequest,
       documentId: id ?? 'new',
     });
-    const approvalStatus = byWorkflow || belowFloor ? 'pending' : 'not_required';
-    const status: QuoteStatus = byWorkflow || belowFloor ? 'pending_approval' : 'draft';
+    const held = belowFloor || guardHold;
+    const approvalStatus = byWorkflow || held ? 'pending' : 'not_required';
+    const status: QuoteStatus = byWorkflow || held ? 'pending_approval' : 'draft';
     const deliveryAddress = input.deliveryAddress ?? {};
     const header = {
       companyId,
@@ -763,6 +1028,8 @@ export class SalesQuoteService {
       grossMarginPercent: grossMarginPercent.toFixed(3),
       minimumMarginPercent: minimumMarginPercent.toFixed(3),
       approvalStatus,
+      couponCodes: (input.couponCodes ?? []).map((c) => c.trim().toUpperCase()).filter(Boolean),
+      discounts: discountSummary,
       approvalManagedBy: byWorkflow ? 'workflow' : null,
       paymentMethod: input.paymentMethod,
       paymentTerms: input.paymentTerms?.trim() || null,
@@ -785,8 +1052,7 @@ export class SalesQuoteService {
           .update(salesQuotes)
           .set({
             ...header,
-            status:
-              existing.status === 'approved' && !belowFloor && !byWorkflow ? 'approved' : status,
+            status: existing.status === 'approved' && !held && !byWorkflow ? 'approved' : status,
           })
           .where(eq(salesQuotes.id, existing.id))
           .returning();
@@ -826,7 +1092,7 @@ export class SalesQuoteService {
       }
       await tx
         .insert(salesQuoteLines)
-        .values(lines.map((line) => ({ ...line, quoteId: quote.id })));
+        .values([...lines, ...giftRows].map((line) => ({ ...line, quoteId: quote.id })));
       // Whatever was being approved is not what is saved now: close it out, then ask afresh.
       if (existing) {
         await getContainer().approvals.supersedePending(
@@ -851,8 +1117,8 @@ export class SalesQuoteService {
             .update(salesQuotes)
             .set({
               approvalManagedBy: null,
-              approvalStatus: belowFloor ? 'pending' : 'not_required',
-              status: belowFloor ? 'pending_approval' : 'draft',
+              approvalStatus: held ? 'pending' : 'not_required',
+              status: held ? 'pending_approval' : 'draft',
             })
             .where(eq(salesQuotes.id, quote.id));
         }
@@ -865,7 +1131,7 @@ export class SalesQuoteService {
           status,
           grossMarginPercent: Number(grossMarginPercent.toFixed(3)),
           minimumMarginPercent,
-          approvalRequired: belowFloor || byWorkflow,
+          approvalRequired: held || byWorkflow,
           approvalByWorkflow: byWorkflow,
         },
       });
@@ -895,6 +1161,8 @@ export class SalesQuoteService {
     }
     const margin = num(quote.grossMarginPercent);
     const belowFloor = margin < num(quote.minimumMarginPercent);
+    const guardFacts = guardFactsOf(quote.lines);
+    const guardHold = guardFacts.belowPriceFloor || guardFacts.overrideOverLimit;
     const request = {
       companyId: quote.companyId,
       trigger: 'sales_quote.submitted',
@@ -906,6 +1174,7 @@ export class SalesQuoteService {
         quoteDiscountPercent: num(quote.quoteDiscountPercent),
         marginPercent: Math.round(margin * 1000) / 1000,
         belowFloor,
+        ...guardFacts,
         customer: { id: quote.customerId },
       },
     };
@@ -924,8 +1193,8 @@ export class SalesQuoteService {
           .update(salesQuotes)
           .set({
             approvalManagedBy: null,
-            status: belowFloor ? 'pending_approval' : 'draft',
-            approvalStatus: belowFloor ? 'pending' : 'not_required',
+            status: belowFloor || guardHold ? 'pending_approval' : 'draft',
+            approvalStatus: belowFloor || guardHold ? 'pending' : 'not_required',
             updatedAt: new Date(),
           })
           .where(eq(salesQuotes.id, quote.id));
@@ -1034,7 +1303,8 @@ export class SalesQuoteService {
     if (!address.street || !address.city || !address.countyOrState || !address.country) {
       throw new Error('Add a complete delivery address to the quote before converting it.');
     }
-    const items = quote.lines.map((line) => ({
+    const orderLines = mergeLinesForOrder(quote.lines);
+    const items = orderLines.map((line) => ({
       productId: line.productId ?? '',
       quantity: num(line.quantity),
     }));
@@ -1076,7 +1346,7 @@ export class SalesQuoteService {
           country: address.country,
         },
         items,
-        quotedItems: quote.lines.map((line) => ({
+        quotedItems: orderLines.map((line) => ({
           productId: line.productId!,
           quantity: num(line.quantity),
           productName: line.description,
@@ -1085,6 +1355,7 @@ export class SalesQuoteService {
           taxRate: num(line.taxRate),
           isTaxInclusive: line.isTaxInclusive,
           priceTrace: line.priceTrace ?? null,
+          isGift: line.isGift,
         })),
         quotedTotals: {
           subtotal: num(quote.subtotal),
@@ -1094,6 +1365,10 @@ export class SalesQuoteService {
         },
         currency: quote.currency as 'KES' | 'USD',
         paymentMethod: quote.paymentMethod as PaymentProvider,
+        // The quote's price stands. What its discounts used is recorded against the order.
+        discountApplications:
+          (quote.discounts as { applications?: RuleApplication[] } | null)?.applications ?? [],
+        discountSummary: quote.discounts ?? undefined,
       });
       if (!result.success || !result.order)
         throw new Error(result.error || 'Could not convert quote to an order.');
