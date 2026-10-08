@@ -4,6 +4,7 @@ import { drizzleDb } from '@/server/db/drizzle/client';
 import {
   creditNoteLines,
   etimsItems,
+  productKitComponents,
   inventoryMovements,
   orderItems,
   priceListLines,
@@ -31,12 +32,13 @@ export type ProductSelection =
   | { mode: 'all'; excludeIds: string[] };
 
 /** Why a product cannot be permanently deleted. Soft delete has no such limits. */
-export type BlockReason = 'sold' | 'kra' | 'reserved' | 'priced';
+export type BlockReason = 'sold' | 'kra' | 'reserved' | 'priced' | 'kit';
 
 export const BLOCK_REASON_TEXT: Record<BlockReason, string> = {
   sold: 'it appears on orders or credit notes',
   kra: 'it is registered with KRA',
   reserved: 'stock is reserved for it right now',
+  kit: 'it is a component of a kit',
   priced: 'it is priced in a price list that is not retired',
 };
 
@@ -236,7 +238,7 @@ async function blockers(
   for (const r of rows) if (r.reservedQuantity !== 0) add(r.id, 'reserved');
   for (let i = 0; i < rows.length; i += 5000) {
     const ids = rows.slice(i, i + 5000).map((r) => r.id);
-    const [sold, credited, kra, priced] = await Promise.all([
+    const [sold, credited, kra, priced, inKit] = await Promise.all([
       db
         .selectDistinct({ id: orderItems.productId })
         .from(orderItems)
@@ -254,10 +256,15 @@ async function blockers(
         .from(priceListLines)
         .innerJoin(priceLists, eq(priceLists.id, priceListLines.priceListId))
         .where(and(inArray(priceListLines.productId, ids), sql`${priceLists.status} <> 'retired'`)),
+      db
+        .selectDistinct({ id: productKitComponents.productId })
+        .from(productKitComponents)
+        .where(inArray(productKitComponents.productId, ids)),
     ]);
     for (const { id } of [...sold, ...credited]) add(id, 'sold');
     for (const { id } of kra) add(id, 'kra');
     for (const { id } of priced) add(id, 'priced');
+    for (const { id } of inKit) add(id, 'kit');
   }
   for (const [id, reasons] of out) out.set(id, [...new Set(reasons)]);
   return out;

@@ -6,6 +6,12 @@ export interface Category {
   imageUrl?: string;
   isActive: boolean;
   displayOrder: number;
+  /** The category this sits under, or null for a top-level one. */
+  parentId?: string | null;
+  /** "Shoes › Running": the names from the top down. Filled in when categories are listed. */
+  path?: string;
+  /** 0 for a top-level category, 1 for its sub-categories, and so on. */
+  depth?: number;
   productCount?: number;
   createdAt: string;
   updatedAt: string;
@@ -231,6 +237,10 @@ export interface OrderItem {
   imageUrl: string;
   /** Why the unit price is what it is (the pricing engine's trace). Absent on older orders. */
   priceTrace?: import('@/server/domains/pricing/domain/types').PriceTrace | null;
+  /** A free gift added by a promotion. */
+  isGift?: boolean;
+  /** What one unit cost when it was sold. Absent on older orders. */
+  unitCost?: number | null;
 }
 
 export interface Order {
@@ -280,6 +290,10 @@ export interface Order {
   salesModule?: 'ecommerce' | 'sales_order' | 'credit_sale' | 'pos_cash_sale';
   createdAt: string;
   updatedAt: string;
+  /** The discounts applied when the order was priced (rules, coupons, amounts). */
+  discounts?: Record<string, unknown> | null;
+  /** The part paid with gift cards or loyalty points, not through a payment gateway. */
+  tenderedAmount?: number;
 }
 
 export interface TransactionRecord {

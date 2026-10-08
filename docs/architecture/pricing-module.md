@@ -1,6 +1,8 @@
 # Pricing, Discounts and Promotions — Module Design
 
-**Status:** P-1 built (see "What P-1 delivers" at the end); P-2 onward is still design. Part of the [Sales Order Platform blueprint](./sales-order-blueprint.md).
+**Owner:** Sales. Pricing is a sub-module of Sales, not a module of its own: it is the commercial terms of selling (what a customer pays, what they are given back), and its only consumers are sales documents. The things it *uses* but does not own stay with their masters: product groups and kits (Products & Inventory), customer groups (Customers). Its approval triggers belong to the Sales approval module. Code stays in its own folder (`domains/pricing`) behind its services; the folder is a boundary, not a module.
+
+**Status:** P-1 to P-5 built (see the sections at the end); batch- and expiry-aware promotions wait for warehouse batches. Part of the [Sales Order Platform blueprint](./sales-order-blueprint.md).
 **Goal:** one configurable engine that can express every pricing model a distributor-and-retailer needs, resolves a price deterministically, and can always explain _why_ the customer was charged exactly what they were.
 
 ---
@@ -364,3 +366,67 @@ Code: `src/server/domains/pricing/` (pure engine in `domain/`, `service.ts` read
 - `setLinesGated`, `removeLinesGated` and `updateListGated` are what the screens and import call. A draft list is never held, an identical price is not a change, and a new name or description is not held. Locks, ties and bad input are refused up front, before anything is held.
 - A held change keeps its inputs (parked action). On release it is applied through the ordinary `setLines`/`removeLines`/`updateList` in the approver's transaction, as the requester and with their reason, and every check runs again against the list as it is then. A change that no longer fits (list retired, a tie, a lock) is not applied and the approver sees why. A start time that has passed while waiting becomes "now".
 - Several changes can wait at once; each is applied against the prices as they are at approval, not as they were when asked.
+
+## Price floors, override limits and sub-categories (built 2026-10)
+
+- **Sub-categories:** `categories.parent_id` (max 5 levels, no loops, names unique across the tree since products and CSV imports refer to categories by name). Categories list as a tree with `path` and `depth`.
+- **Floor:** cost x (1 + markup%), compared with the net-of-tax unit price after all discounts. Rules (`price_floor_rules`, one per scope): product > product group or brand (strictest wins) > category (nearest first) > company default. A price-list line's own `floorPrice` beats a rule. No cost on file means no floor, said so on the trace.
+- **A breach needs approval, or is refused.** Orders (sales_order, credit_sale): facts `belowFloor`, `floorShortfallPercent` go to the `sales_order.submitted` workflow; if no workflow holds it the order is refused (as for credit limit). Quotes: facts `belowPriceFloor`, `floorShortfallPercent`, `overridePercent`, `overrideOverLimit`; with no matching workflow the quote waits for a `quotes:approve` holder, as for the margin floor. A rule set to "refuse" blocks the sale or quote outright. Till sales (pos_cash_sale) below a floor are refused, since a till cannot wait. The web shop is not checked.
+- **Override limits** (`price_override_limits`, per role key, `*` = everyone else): how far below the list price a typed price or line discount may go. Most generous of a person's roles; super admin and "no limits configured" mean none. Only quotes have typed prices; orders do not.
+- Every line's price trace carries a `guard` block (floor, source, shortfall, override, limit); approvers see the flagged lines in the inbox.
+- Every change needs a reason and is written to the decision log. Screens: Price floors (with "Check a product"), Product groups, Override limits.
+
+
+## What P-2 delivers: discounts, coupons, limits (built 2026-10)
+
+- **Rules** (`discount_rules`, migration 0032): a line rule (percent, amount per unit, amount per line, set price) or an order rule (percent, amount), with quantity or order-value steps, a target (everything, categories with their sub-categories, brands, product groups, up to 200 named products), a scope (customer, group, branch, sales type, channel), conditions (minimum quantity or order value, payment methods, coupon required), a validity window with days of the week and a time window in the business time zone, and limits (uses, uses per customer, budget, a cap on the share of a line). Editing a rule adds a version; a rule that is pricing sales is never edited, it is paused first.
+- **Order of work** (`domain/discounts.ts`, pure and property-tested): line rules per line; order rules on what the lines then come to; guards last. Among eligible rules, the best *exclusive* rule and the whole *stackable* set (each applied to what is left) are compared and the customer gets the larger, never both. Ties go to higher priority, then the lower code. Promotions do not reduce a contract-priced line unless the rule says so.
+- **Guards:** a line never goes below its price floor (a rule's own floor, or the price list line's floor); the discount is cut back and the trace says so. A rule's share cap and budget are honoured; a budget is shared across the lines of one document.
+- **Order rules** spread their discount over the lines they cover in proportion, so tax and returns stay right line by line. A line already at its floor passes its share to lines with room.
+- **Coupons** (`discount_coupons`): typed or randomly generated (unambiguous alphabet, up to 1000 per call), each with its own validity and use limits (overall and per customer).
+- **Use is a fact:** `discount_usage` is append-only (database trigger), one use and one reversal per document and rule; `discount_counters` is sharded 8 ways so orders at once do not queue on one row. A limit may be passed by a few uses in a burst; a rule marked *strict* is checked under a row lock and holds exactly (the order is refused if it lost the race).
+- **Where it applies:** staff orders (`sales_order`, `credit_sale`, `pos_cash_sale`), with `couponCodes`, recorded on the order (`orders.discounts`, `price_trace.discounts`), counted in the order's own transaction, and given back when the order is cancelled or its reservation is released. Quotes: line rules set each catalog line's unit price; coupons and order rules become a per-line percentage (`sales_quote_lines.rule_discount_percent`) so the quote totals match what the order will be. A quote's discounts are counted when it becomes an order, not when it is saved, and are not repriced then. A typed price is measured for the override limit against what the customer would have paid with promotions, so a promotion is not an override.
+- **Lifecycle:** draft, in force, paused, retired. Putting a rule in force can need approval (`discount_rule.publish`: kind, largest percentage, budget, has an end date, needs a coupon); the requester's reason is logged when it is released.
+- **Screens:** Pricing > Discounts (rules, a plain-language sentence for each, "Try a sale" simulator that can try a draft as if it were in force), a form that checks as you type, coupon codes, recent use and history; the quote editor has a coupon field and shows what was applied.
+- **Not done:** product-mix promotions, bundles and free items (P-3); rebates and loyalty (P-4); free shipping (orders have no shipping rates yet); discounts for the web shop checkout; the impact preview with projected margin; per-branch budgets.
+
+## What P-3 delivers
+
+- **Product-mix deals** (`discount_rules.mix`): buy-and-get (buy 2 get 1 free, same set or another set), mix-and-match (any 3 for a price), bundle deals (fixed price for slots). Whole units only; a unit earns at most one deal; best-for-the-customer first. Floors and rule budgets still trim.
+- **Free gifts**: a rule with a trigger (order value and/or quantity of matching goods) adds zero-price `is_gift` lines. Gift stock is held, its value counts against the rule budget, cancelling gives both back.
+- **Kits and hampers** (`product_kits`, `product_kit_components`): priced as one line, expanded at order creation into component lines with their share of the price (list price, cost or explicit weights), own tax rate, own stock. Same-product lines merge. Kits cannot nest; a component cannot be permanently deleted while in a kit. Kit price floor uses the sum of component cost.
+- Screens: Pricing > Kits and hampers; discount form gains product deal and free gift kinds.
+- Not in P-3: pre-assembled kit stock, choice slots, gift tax/deemed supply, free shipping.
+
+## What P-4 delivers: rebates, loyalty points, gift cards (built 2026-10)
+
+**Rebates** (`rebate_programs`, `rebate_accruals`, `rebate_balances`, `rebate_settlements`)
+- A programme gives money back on a customer's purchases over a month, quarter or year, at a rate that steps up with the total. Tier mode `all_sales` (the step reached applies to everything) or `incremental` (each step only above its threshold). Scoped by customer, group or branch, and by product, category, brand or group.
+- Each order adds its net value (tax left out) to the customer's running total in the same transaction that saves it. Cancelling takes it back; a credit note takes back its returned share, capped at what the order counted. Accruals are append-only, balances are their sum.
+- A statement per period shows each customer's total, the rate reached, the rebate and how far the next step is. A finished period can be paid; paying goes through approval (`rebate.settle`), is re-checked when released (a changed total stops it), and posts a credit to the customer account, reducing open invoices oldest first.
+- Programmes in force cannot be edited; the period length is fixed once purchases are counted.
+
+**Loyalty points** (`loyalty_programs`, `loyalty_accounts`, `loyalty_ledger`)
+- One programme per company: points per 100 spent, what a point is worth, minimum and maximum share of an order, expiry months, tiers that earn faster from lifetime points.
+- Earned on the order's net value in the order's transaction; reversed on cancel; clawed back proportionally by credit notes; spent as a tender; staff can adjust with a reason; a daily job lapses expired points (spending counts against the oldest first).
+
+**Gift cards** (`gift_cards`, `gift_card_ledger`)
+- Issued in batches with unreadable-proof codes (no 0/O/1/I/L), optional expiry and customer. Spending is one atomic statement that cannot take a balance below zero, however many orders use a card at once. Can be blocked.
+
+**Tenders** (`order_tenders`, `orders.tendered_amount`)
+- Gift cards and points pay an order from the order screen. A tender is a payment, not a price change: the total, tax and invoice are unchanged, and `amountDue` (total less tendered) is what gateways are asked for and what reconciliation compares with. Paying in full marks the order paid and takes stock. Cancelling the order returns cards and points.
+
+**Not in P-4**
+- Settlement (early-payment) discounts: there is no cash application to attach them to.
+- Posting gift card, loyalty or rebate liabilities to the financial journal: the accounting rules (AC-1..AC-8) are not approved, so only the customer sub-ledger is written.
+- Rebates for cash customers (they have no account to credit) and rebates larger than what the customer owes.
+- Growth rebates (need prior-period actuals), combining several programmes' steps, a customer-facing balance or card screen, web-shop checkout use of cards and points.
+- A line's tax is not kept on the order, so a credit note's rebate and points effect uses the order's average net share.
+
+## What P-5 delivers: insights, impact preview, price book (built 2026-10)
+
+- **Cost kept with each sale** (`order_items.unit_cost`, migration 0035): what one unit cost when it was sold, for kit components and gifts too. Older orders have none; every margin figure says how much of the sales had a cost.
+- **Insights** (Pricing > Insights, read-only, cached a minute, periods up to 366 days): orders, net sales (tax left out), gross margin and cost coverage, discounts given, daily table; what each promotion cost, the margin on the orders it touched and how much of its budget is gone; floor breaches and override-limit breaches on orders, and by seller on quotes; products that sold at different prices in different branches; what is owed to customers (rebates earned and not paid, loyalty points, gift cards, expired balances); and a list of things that look wrong, most serious first (priced below cost, list below cost, no cost, no price, discounts with no end or no cap, kits with a component that cannot be sold, rebate payments waiting, expired cards with a balance).
+- **What a rule would have cost**: a discount's panel applies it to the last 90 days of real sales (line rules to the lines their target covers, order rules to the orders that reach the minimum, gifts at their cost) and shows the give-away, the yearly equivalent and the margin before and after. Product deals are not estimated (it depends on baskets). The same figures go to approvers as facts of `discount_rule.publish` (`projectedGiveaway`, `projectedYearly`, `marginAfterPercent`), so a workflow can say "above X needs a director".
+- **Price book** (Pricing > Price book): what each product sells for, one unit, for a chosen customer, branch, channel and sale type, worked out live by the engine with line discounts, floor and margin, paged and exportable (up to 5,000 rows; spreadsheet formulas neutralised). Nothing is stored.
+- **Not built**: a stored effective-price index (the engine already caches configuration and there is no measured load that needs one; a stored copy would need a fast path and invalidation that can go stale, so the live price book is the read model instead), and batch- and expiry-aware promotions (they need warehouse batches, which do not exist yet).

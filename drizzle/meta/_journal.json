@@ -218,6 +218,48 @@
       "when": 1791370817048,
       "tag": "0030_pricing_p1",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1791420000000,
+      "tag": "0031_pricing_floors",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1791430166376,
+      "tag": "0032_pricing_discounts",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1791438213890,
+      "tag": "0033_pricing_mix_kits",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1791445814304,
+      "tag": "0034_pricing_retrospective",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1791452414228,
+      "tag": "0035_pricing_insights",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1791455741155,
+      "tag": "0036_pricing_under_sales",
+      "breakpoints": true
     }
   ]
 }

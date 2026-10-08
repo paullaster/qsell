@@ -69,7 +69,7 @@ One deployable, strictly separated contexts, communicating through services and 
                     │ Decision log · State machines · Outbox/events · Idempotency · Numbering│
                     │ Approvals (workflow engine) · Notifications · Access control · Audit  │
                     └────────────────────────────────────────────────────────────────────────┘
- Catalog & Customer master ──► Pricing ──► SALES (inquiry, quote, sales order) ──► Credit
+ Catalog & Customer master ──► SALES (inquiry, quote, sales order, with Pricing inside it) ──► Credit
                                                │            │                         │
                                                │            ▼                         │
                                                │   Inventory (ledger, ATP, reserve)   │
@@ -393,7 +393,7 @@ Per-location stock ledger and balances (this is where the scale fix lands), deli
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Stock model          | Per **location**, where a location is a warehouse or a branch (§7).                                                                                                                                                                              |
 | Approvals            | Approvers assigned in the workflow with **priority**; the next approver's entry is created only when the previous approves; a **complete rejection flow** (§5.3).                                                                                |
-| Pricing              | A full configurable sub-module: customer, customer group, variants, sales types, branch, fixed/contract, route, channel and country prices; discounts, promotions, hampers/bundles, rebates. Design in [pricing-module.md](./pricing-module.md). |
+| Pricing              | A full configurable sub-module **of Sales** (Sales owns how a customer is priced; the catalogue and the customer master own the groups and kits it uses): customer, customer group, variants, sales types, branch, fixed/contract, route, channel and country prices; discounts, promotions, hampers/bundles, rebates. Design in [pricing-module.md](./pricing-module.md). |
 | Currency and country | Multi-currency from the start; country is a dimension extending a `countries` master with currency, nationality, KRA country code and more (§4.6a).                                                                                              |
 | Numbering            | Business Central–style number series, more configurable and scalable (§4.4); the first kernel slice built after the decision log.                                                                                                                |
 

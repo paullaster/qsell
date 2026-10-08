@@ -32,6 +32,8 @@ import type {
   SigningReason,
 } from '@/server/domains/kra/signing/types';
 import type {
+  FloorEnforcement,
+  FloorScopeType,
   PriceListKind,
   PriceListStatus,
   PriceTrace,
@@ -39,6 +41,20 @@ import type {
   Scopes,
   Tier,
 } from '@/server/domains/pricing/domain/types';
+import type { MixConfig } from '@/server/domains/pricing/domain/mix';
+import type { KitAllocation } from '@/server/domains/pricing/domain/kits';
+import type {
+  DiscountConditions,
+  DiscountKind,
+  DiscountLimits,
+  DiscountReward,
+  DiscountSchedule,
+  DiscountStatus,
+  DiscountTarget,
+  Stacking,
+} from '@/server/domains/pricing/domain/discounts';
+import type { RebateTier } from '@/server/domains/pricing/domain/rebate';
+import type { LoyaltyTier } from '@/server/domains/pricing/domain/loyalty';
 import type { EtimsItemStatus } from '@/server/domains/kra/etims/item-types';
 import type {
   KraConfigSource,
@@ -1302,6 +1318,10 @@ export const orders = pgTable(
       .$type<'none' | 'pending' | 'approved' | 'rejected' | 'draft'>()
       .notNull()
       .default('none'),
+    /** The discounts applied to this order (rules, coupons, amounts), as recorded when it was priced. */
+    discounts: jsonb('discounts').$type<Record<string, unknown>>(),
+    /** Paid with gift cards or loyalty points rather than through a payment gateway. */
+    tenderedAmount: numeric('tendered_amount', { precision: 14, scale: 2 }).notNull().default('0'),
     transmitInvoicesToKra: boolean('transmit_invoices_to_kra').notNull().default(true),
     kraTransmissionStatus: text('kra_transmission_status').notNull().default('not_applicable'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -1505,6 +1525,10 @@ export const orderItems = pgTable(
     imageUrl: text('image_url').notNull().default(''),
     /** Why this unit price: the pricing engine's recorded explanation. Null for older orders. */
     priceTrace: jsonb('price_trace').$type<PriceTrace>(),
+    /** A free gift added by a promotion, not something the customer asked for. */
+    isGift: boolean('is_gift').notNull().default(false),
+    /** What one unit cost when it was sold (null on orders from before this was kept). */
+    unitCost: numeric('unit_cost', { precision: 14, scale: 4 }),
   },
   (t) => [index('order_items_order_idx').on(t.orderId)],
 );
@@ -1650,11 +1674,16 @@ export const categories = pgTable(
     imageUrl: text('image_url'),
     isActive: boolean('is_active').notNull().default(true),
     displayOrder: integer('display_order').notNull().default(0),
+    /** The category this one sits under (a sub-category). Null for a top-level category. */
+    parentId: text('parent_id').references((): AnyPgColumn => categories.id, {
+      onDelete: 'restrict',
+    }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex('categories_slug_uidx').on(t.slug),
+    index('categories_parent_idx').on(t.parentId),
     index('categories_display_order_idx').on(t.displayOrder),
   ],
 );
@@ -2282,6 +2311,10 @@ export const salesQuotes = pgTable(
       .notNull()
       .default('0'),
     approvalStatus: text('approval_status').notNull().default('not_required'),
+    /** Coupon codes entered on the quote. */
+    couponCodes: jsonb('coupon_codes').$type<string[]>().notNull().default([]),
+    /** The discounts applied to the quote (rules, coupons, amounts), as recorded when it was priced. */
+    discounts: jsonb('discounts').$type<Record<string, unknown>>(),
     /** 'workflow' when the approvals engine owns this quote's approval; null for the old margin-floor check. */
     approvalManagedBy: text('approval_managed_by'),
     paymentMethod: text('payment_method').notNull().default('mpesa_daraja'),
@@ -2353,6 +2386,12 @@ export const salesQuoteLines = pgTable(
     costAmount: numeric('cost_amount', { precision: 14, scale: 2 }).notNull(),
     /** Why this unit price: the pricing engine's recorded explanation. Null for typed prices. */
     priceTrace: jsonb('price_trace').$type<PriceTrace>(),
+    /** A free gift added by a promotion, not something the customer asked for. */
+    isGift: boolean('is_gift').notNull().default(false),
+    /** What an order-level discount took off this line, as a percentage. */
+    ruleDiscountPercent: numeric('rule_discount_percent', { precision: 9, scale: 6 })
+      .notNull()
+      .default('0'),
   },
   (t) => [uniqueIndex('sales_quote_lines_number_uidx').on(t.quoteId, t.lineNumber)],
 );
@@ -2516,6 +2555,272 @@ export const customerGroupMembers = pgTable(
   ],
 );
 
+/**
+ * A named set of products chosen by hand (a supplier's range, a promotion line), so a price floor
+ * can be set for all of them at once. A product may be in several.
+ */
+export const productGroups = pgTable(
+  'product_groups',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    description: text('description'),
+    isActive: boolean('is_active').notNull().default(true),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('product_groups_company_code_uidx').on(t.companyId, t.code)],
+);
+
+export const productGroupMembers = pgTable(
+  'product_group_members',
+  {
+    groupId: uuid('group_id')
+      .notNull()
+      .references(() => productGroups.id, { onDelete: 'cascade' }),
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'cascade' }),
+    addedBy: text('added_by'),
+    addedAt: timestamp('added_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.groupId, t.productId] }),
+    index('product_group_members_product_idx').on(t.productId),
+  ],
+);
+
+/**
+ * The lowest a product may be sold for: its cost plus a markup. One rule per scope; the most
+ * specific rule that applies to a product wins (product, then a group or brand, then its category
+ * or the nearest category above it, then the company default).
+ */
+export const priceFloorRules = pgTable(
+  'price_floor_rules',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    scopeType: text('scope_type').$type<FloorScopeType>().notNull(),
+    /** Product id, product group id, brand, or category id. Empty for the company default. */
+    scopeRef: text('scope_ref').notNull().default(''),
+    /** Floor = cost x (1 + markup / 100). */
+    markupPercent: numeric('markup_percent', { precision: 8, scale: 3 }).notNull(),
+    /** 'approval': a sale below it needs approval. 'block': it is refused. */
+    enforcement: text('enforcement').$type<FloorEnforcement>().notNull().default('approval'),
+    isActive: boolean('is_active').notNull().default(true),
+    version: integer('version').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('price_floor_rules_scope_uidx').on(t.companyId, t.scopeType, t.scopeRef),
+    check('price_floor_rules_markup_chk', sql`${t.markupPercent} >= 0`),
+  ],
+);
+
+/**
+ * How far below the list price a person may take a price (a typed price, a line discount) before
+ * the sale needs approval. Per role; `*` is the default for roles without their own limit. Where
+ * a person holds several roles the most generous limit applies. No rows means no limit.
+ */
+export const priceOverrideLimits = pgTable(
+  'price_override_limits',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    roleKey: text('role_key').notNull(),
+    maxPercent: numeric('max_percent', { precision: 6, scale: 3 }).notNull(),
+    version: integer('version').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('price_override_limits_role_uidx').on(t.companyId, t.roleKey),
+    check('price_override_limits_pct_chk', sql`${t.maxPercent} >= 0 and ${t.maxPercent} <= 100`),
+  ],
+);
+
+/**
+ * A discount rule: a reduction on a line or on a whole order, with who it is for, what it covers,
+ * when it runs, what it gives, and how it combines with others. Changing one bumps `version`;
+ * documents record the version they used.
+ */
+export const discountRules = pgTable(
+  'discount_rules',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    description: text('description'),
+    kind: text('kind').$type<DiscountKind>().notNull(),
+    status: text('status').$type<DiscountStatus>().notNull().default('draft'),
+    /** Set while activation waits on an approval workflow. */
+    approvalStatus: text('approval_status').notNull().default('none'),
+    version: integer('version').notNull().default(1),
+    /** Higher wins a tie. */
+    priority: integer('priority').notNull().default(0),
+    stacking: text('stacking').$type<Stacking>().notNull().default('exclusive'),
+    validFrom: timestamp('valid_from', { withTimezone: true }).notNull().defaultNow(),
+    validTo: timestamp('valid_to', { withTimezone: true }),
+    schedule: jsonb('schedule').$type<DiscountSchedule>().notNull().default({}),
+    scopes: jsonb('scopes').$type<Scopes>().notNull().default({}),
+    target: jsonb('target').$type<DiscountTarget>().notNull().default({}),
+    conditions: jsonb('conditions').$type<DiscountConditions>().notNull().default({}),
+    /** What a line or order rule gives. Empty for a mix or gift rule, which is described by `mix`. */
+    reward: jsonb('reward').$type<DiscountReward>(),
+    /** The deal, for a mix or gift rule. */
+    mix: jsonb('mix').$type<MixConfig>(),
+    requiresCoupon: boolean('requires_coupon').notNull().default(false),
+    limits: jsonb('limits').$type<DiscountLimits>().notNull().default({}),
+    /** Check the limits exactly (one at a time) instead of allowing a small overshoot in a burst. */
+    strictLimits: boolean('strict_limits').notNull().default(false),
+    appliesToContract: boolean('applies_to_contract').notNull().default(false),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('discount_rules_company_code_uidx').on(t.companyId, t.code),
+    index('discount_rules_company_status_idx').on(t.companyId, t.status),
+  ],
+);
+
+/** A code a customer gives to unlock a coupon rule, with its own validity and limits. */
+export const discountCoupons = pgTable(
+  'discount_coupons',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    ruleId: uuid('rule_id')
+      .notNull()
+      .references(() => discountRules.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    validFrom: timestamp('valid_from', { withTimezone: true }).notNull().defaultNow(),
+    validTo: timestamp('valid_to', { withTimezone: true }),
+    maxUses: integer('max_uses'),
+    maxUsesPerCustomer: integer('max_uses_per_customer'),
+    status: text('status').$type<'active' | 'disabled'>().notNull().default('active'),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('discount_coupons_company_code_uidx').on(t.companyId, t.code),
+    index('discount_coupons_rule_idx').on(t.ruleId),
+  ],
+);
+
+/**
+ * Every use of a rule by a document. Append-only: a cancelled document adds a reversal, never
+ * edits or deletes. One use and one reversal per document and rule, so committing twice is safe.
+ */
+export const discountUsage = pgTable(
+  'discount_usage',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    ruleId: uuid('rule_id')
+      .notNull()
+      .references(() => discountRules.id, { onDelete: 'restrict' }),
+    ruleVersion: integer('rule_version').notNull(),
+    couponId: uuid('coupon_id').references(() => discountCoupons.id, { onDelete: 'restrict' }),
+    couponCode: text('coupon_code'),
+    customerId: uuid('customer_id'),
+    documentType: text('document_type').notNull(),
+    documentId: text('document_id').notNull(),
+    kind: text('kind').$type<'use' | 'reversal'>().notNull().default('use'),
+    /** What was given (positive), or given back (negative on a reversal). */
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('discount_usage_document_uidx').on(t.ruleId, t.documentType, t.documentId, t.kind),
+    index('discount_usage_customer_idx').on(t.ruleId, t.customerId),
+    index('discount_usage_coupon_idx').on(t.couponId, t.customerId),
+    index('discount_usage_occurred_idx').on(t.companyId, t.occurredAt),
+  ],
+);
+
+/**
+ * How many times each rule has been used and what it has given away, split into a few shards so
+ * many orders at once do not queue on one row. The total is the sum of the shards.
+ */
+export const discountCounters = pgTable(
+  'discount_counters',
+  {
+    ruleId: uuid('rule_id')
+      .notNull()
+      .references(() => discountRules.id, { onDelete: 'cascade' }),
+    shard: integer('shard').notNull(),
+    uses: integer('uses').notNull().default(0),
+    amount: numeric('amount', { precision: 16, scale: 2 }).notNull().default('0'),
+  },
+  (t) => [primaryKey({ columns: [t.ruleId, t.shard] })],
+);
+
+/**
+ * A kit or hamper: one product that is really several. Sold as one line; when the sale is saved
+ * it becomes one line per component, each with its share of the price.
+ */
+export const productKits = pgTable(
+  'product_kits',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    /** The product that is sold as the kit. Its own stock is not used: the components' is. */
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'cascade' }),
+    allocation: text('allocation').$type<KitAllocation>().notNull().default('list_price'),
+    isActive: boolean('is_active').notNull().default(true),
+    version: integer('version').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('product_kits_product_uidx').on(t.productId)],
+);
+
+export const productKitComponents = pgTable(
+  'product_kit_components',
+  {
+    kitId: uuid('kit_id')
+      .notNull()
+      .references(() => productKits.id, { onDelete: 'cascade' }),
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    quantity: integer('quantity').notNull().default(1),
+    /** For the "shares you set" method. */
+    weight: numeric('weight', { precision: 12, scale: 4 }),
+    sortOrder: integer('sort_order').notNull().default(0),
+  },
+  (t) => [
+    primaryKey({ columns: [t.kitId, t.productId] }),
+    index('product_kit_components_product_idx').on(t.productId),
+    check('product_kit_components_qty_chk', sql`${t.quantity} >= 1`),
+  ],
+);
+
 /** How much each scope dimension counts towards a price list's specificity. Per company. */
 export const priceSpecificityWeights = pgTable(
   'price_specificity_weights',
@@ -2603,3 +2908,273 @@ export const priceListLines = pgTable(
       .where(sql`${t.validTo} is null`),
   ],
 );
+
+/**
+ * A rebate programme: money given back after the fact on what a customer buys over a period, at a
+ * rate that steps up with the total. Editing a programme in force is not allowed; pause it first.
+ */
+export const rebatePrograms = pgTable(
+  'rebate_programs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    description: text('description'),
+    status: text('status')
+      .$type<'draft' | 'active' | 'paused' | 'retired'>()
+      .notNull()
+      .default('draft'),
+    version: integer('version').notNull().default(1),
+    period: text('period').$type<'month' | 'quarter' | 'year'>().notNull(),
+    tierMode: text('tier_mode').$type<'all_sales' | 'incremental'>().notNull().default('all_sales'),
+    tiers: jsonb('tiers').$type<RebateTier[]>().notNull().default([]),
+    scopes: jsonb('scopes').$type<Scopes>().notNull().default({}),
+    target: jsonb('target').$type<DiscountTarget>().notNull().default({}),
+    validFrom: timestamp('valid_from', { withTimezone: true }).notNull().defaultNow(),
+    validTo: timestamp('valid_to', { withTimezone: true }),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('rebate_programs_company_code_uidx').on(t.companyId, t.code),
+    index('rebate_programs_company_status_idx').on(t.companyId, t.status),
+  ],
+);
+
+/** What each order added to a customer's total for a programme period. Append-only. */
+export const rebateAccruals = pgTable(
+  'rebate_accruals',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    programId: uuid('program_id')
+      .notNull()
+      .references(() => rebatePrograms.id, { onDelete: 'restrict' }),
+    customerId: uuid('customer_id').notNull(),
+    periodKey: text('period_key').notNull(),
+    sourceType: text('source_type').$type<'order' | 'order_cancel' | 'credit_note'>().notNull(),
+    sourceId: text('source_id').notNull(),
+    /** Net purchases counted (negative when taken back). */
+    basisAmount: numeric('basis_amount', { precision: 16, scale: 2 }).notNull(),
+    programVersion: integer('program_version').notNull(),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('rebate_accruals_source_uidx').on(t.programId, t.sourceType, t.sourceId),
+    index('rebate_accruals_customer_idx').on(t.programId, t.customerId, t.periodKey),
+  ],
+);
+
+/** The running total per programme, customer and period: the sum of the accruals, kept in step with them. */
+export const rebateBalances = pgTable(
+  'rebate_balances',
+  {
+    programId: uuid('program_id')
+      .notNull()
+      .references(() => rebatePrograms.id, { onDelete: 'restrict' }),
+    customerId: uuid('customer_id').notNull(),
+    periodKey: text('period_key').notNull(),
+    basis: numeric('basis', { precision: 16, scale: 2 }).notNull().default('0'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.programId, t.customerId, t.periodKey] }),
+    index('rebate_balances_period_idx').on(t.programId, t.periodKey),
+  ],
+);
+
+/** A rebate paid out to a customer for a finished period, through an approval. */
+export const rebateSettlements = pgTable(
+  'rebate_settlements',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    programId: uuid('program_id')
+      .notNull()
+      .references(() => rebatePrograms.id, { onDelete: 'restrict' }),
+    customerId: uuid('customer_id')
+      .notNull()
+      .references(() => customers.id, { onDelete: 'restrict' }),
+    periodKey: text('period_key').notNull(),
+    basis: numeric('basis', { precision: 16, scale: 2 }).notNull(),
+    percent: numeric('percent', { precision: 9, scale: 4 }).notNull(),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    status: text('status')
+      .$type<'pending' | 'settled' | 'rejected' | 'cancelled'>()
+      .notNull()
+      .default('pending'),
+    approvalStatus: text('approval_status')
+      .$type<'none' | 'pending' | 'approved' | 'rejected' | 'draft'>()
+      .notNull()
+      .default('none'),
+    /** The credit posted to the customer's account. */
+    creditRef: text('credit_ref'),
+    requestedBy: text('requested_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    settledAt: timestamp('settled_at', { withTimezone: true }),
+  },
+  (t) => [
+    // A programme pays a customer once for a period (a refused or cancelled one can be asked again).
+    uniqueIndex('rebate_settlements_period_uidx')
+      .on(t.programId, t.customerId, t.periodKey)
+      .where(sql`${t.status} in ('pending', 'settled')`),
+    index('rebate_settlements_company_idx').on(t.companyId, t.status),
+  ],
+);
+
+/** The company's loyalty programme (one per company) and its rules. */
+export const loyaltyPrograms = pgTable(
+  'loyalty_programs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    name: text('name').notNull().default('Loyalty'),
+    status: text('status').$type<'active' | 'paused'>().notNull().default('paused'),
+    version: integer('version').notNull().default(1),
+    pointsPer100: numeric('points_per_100', { precision: 9, scale: 4 }).notNull(),
+    pointValue: numeric('point_value', { precision: 9, scale: 4 }).notNull(),
+    minRedeemPoints: integer('min_redeem_points').notNull().default(1),
+    maxRedeemPercent: numeric('max_redeem_percent', { precision: 5, scale: 2 })
+      .notNull()
+      .default('100'),
+    expiryMonths: integer('expiry_months'),
+    tiers: jsonb('tiers').$type<LoyaltyTier[]>().notNull().default([]),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('loyalty_programs_company_uidx').on(t.companyId)],
+);
+
+/** Each customer's points: the running balance and what was ever earned (for the tier). */
+export const loyaltyAccounts = pgTable(
+  'loyalty_accounts',
+  {
+    customerId: uuid('customer_id')
+      .primaryKey()
+      .references(() => customers.id, { onDelete: 'cascade' }),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    balance: bigint('balance', { mode: 'number' }).notNull().default(0),
+    lifetimeEarned: bigint('lifetime_earned', { mode: 'number' }).notNull().default(0),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check('loyalty_accounts_balance_chk', sql`${t.balance} >= 0`)],
+);
+
+/** Every movement of points. Append-only: a mistake is corrected by a later entry. */
+export const loyaltyLedger = pgTable(
+  'loyalty_ledger',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    customerId: uuid('customer_id')
+      .notNull()
+      .references(() => customers.id, { onDelete: 'cascade' }),
+    kind: text('kind')
+      .$type<'earn' | 'redeem' | 'reverse_earn' | 'reverse_redeem' | 'adjust' | 'expire'>()
+      .notNull(),
+    /** Positive adds points, negative takes them away. */
+    points: bigint('points', { mode: 'number' }).notNull(),
+    orderId: text('order_id'),
+    /** For earned points: when they lapse, if the programme says so. */
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    /** For earned points: how many are still unspent (kept on the earning row only). */
+    reasonCode: text('reason_code'),
+    note: text('note'),
+    actor: text('actor').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('loyalty_ledger_customer_idx').on(t.customerId, t.createdAt),
+    index('loyalty_ledger_order_idx').on(t.orderId),
+    uniqueIndex('loyalty_ledger_order_kind_uidx')
+      .on(t.orderId, t.kind, t.customerId)
+      .where(sql`${t.orderId} is not null and ${t.kind} in ('earn', 'redeem', 'reverse_redeem')`),
+  ],
+);
+
+/** A gift card: prepaid value that is spent as a payment, never as a price change. */
+export const giftCards = pgTable(
+  'gift_cards',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    initialValue: numeric('initial_value', { precision: 14, scale: 2 }).notNull(),
+    balance: numeric('balance', { precision: 14, scale: 2 }).notNull(),
+    currency: text('currency').notNull().default('KES'),
+    status: text('status').$type<'active' | 'blocked'>().notNull().default('active'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    customerId: uuid('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+    note: text('note'),
+    issuedBy: text('issued_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('gift_cards_code_uidx').on(t.companyId, t.code),
+    index('gift_cards_company_idx').on(t.companyId, t.createdAt),
+    check('gift_cards_balance_chk', sql`${t.balance} >= 0`),
+  ],
+);
+
+/** Every movement on a card. Append-only. */
+export const giftCardLedger = pgTable(
+  'gift_card_ledger',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    cardId: uuid('card_id')
+      .notNull()
+      .references(() => giftCards.id, { onDelete: 'restrict' }),
+    kind: text('kind').$type<'issue' | 'redeem' | 'reverse' | 'adjust'>().notNull(),
+    /** Positive adds value, negative spends it. */
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    orderId: text('order_id'),
+    reasonCode: text('reason_code'),
+    note: text('note'),
+    actor: text('actor').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('gift_card_ledger_card_idx').on(t.cardId, t.createdAt),
+    index('gift_card_ledger_order_idx').on(t.orderId),
+  ],
+);
+
+/** What of an order was paid with a gift card or points. Append-only; a cancelled order reverses it elsewhere. */
+export const orderTenders = pgTable(
+  'order_tenders',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    orderId: text('order_id')
+      .notNull()
+      .references(() => orders.id, { onDelete: 'restrict' }),
+    kind: text('kind').$type<'gift_card' | 'loyalty_points'>().notNull(),
+    /** The card, or the customer whose points were spent. */
+    reference: text('reference').notNull(),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    points: bigint('points', { mode: 'number' }),
+    actor: text('actor').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('order_tenders_order_idx').on(t.orderId)],
+);
+
+export type RebateProgramRow = typeof rebatePrograms.$inferSelect;
+export type RebateSettlementRow = typeof rebateSettlements.$inferSelect;
+export type LoyaltyProgramRow = typeof loyaltyPrograms.$inferSelect;
+export type LoyaltyAccountRow = typeof loyaltyAccounts.$inferSelect;
+export type GiftCardRow = typeof giftCards.$inferSelect;

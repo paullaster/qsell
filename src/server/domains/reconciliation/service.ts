@@ -2,6 +2,7 @@ import { getContainer } from '@/server/di/container';
 import { broadcastRealtime } from '@/server/realtime';
 import { toReconciliationLog, toTransaction } from '@/server/domains/catalog/mappers';
 import type { TransactionRecord, Order, ReconciliationLog } from '@/types/index';
+import { amountDue } from '@/server/domains/orders/amount-due';
 
 function newLogId(): string {
   return `recon_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
@@ -28,7 +29,8 @@ interface DiscrepancyVerdict {
 export class ReconciliationEngine {
   private static verdict(transaction: TransactionRecord, order: Order): DiscrepancyVerdict {
     const isSuccess = transaction.status === 'successful';
-    const amountDifference = Number(transaction.amount) - Number(order.totalAmount);
+    // What a gateway should have captured is the total less what gift cards or points covered.
+    const amountDifference = Number(transaction.amount) - amountDue(order);
 
     if (!isSuccess && order.paymentStatus === 'paid') {
       return {

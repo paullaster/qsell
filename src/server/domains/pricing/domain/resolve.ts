@@ -323,6 +323,7 @@ export function resolvePrice(
         listCode: header.code,
         listVersion: header.version,
         lineId: line.id,
+        listKind: header.kind,
       },
       floorPrice: out.floor,
       belowFloor: out.floor != null && out.unit < out.floor,

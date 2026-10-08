@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { canPermission, requirePermission } from '@/server/domains/access-control/guard';
 import { listProductsAction } from '@/server/domains/catalog/actions';
 import { listTradeCustomersAction } from '@/server/domains/customers/master-actions';
+import type { KitAllocation } from '@/server/domains/pricing/domain/kits';
 import { SalesQuoteService, type QuoteInput, type QuoteTemplateInput } from './service';
 
 const service = () => new SalesQuoteService();
@@ -18,15 +19,51 @@ export async function getSalesQuoteAction(id: string) {
   return service().get(id);
 }
 
+/**
+ * The kits on sale, with what the editor needs to show a kit line the way the server will work it
+ * out: its cost is its components' cost, and its tax is each component's share at its own rate.
+ */
+export interface EditorKit {
+  productId: string;
+  allocation: KitAllocation;
+  components: Array<{
+    productId: string;
+    quantity: number;
+    price: number;
+    cost: number;
+    weight: number | null;
+    taxRate: number;
+  }>;
+}
+
+async function editorKits(): Promise<EditorKit[]> {
+  const { getContainer } = await import('@/server/di/container');
+  const c = getContainer();
+  const company = await c.companySettings.ensureSeeded();
+  return [...(await c.kits.all(company.id)).values()].map((k) => ({
+    productId: k.productId,
+    allocation: k.allocation,
+    components: k.components.map((x) => ({
+      productId: x.productId,
+      quantity: x.quantity,
+      price: x.price,
+      cost: x.cost,
+      weight: x.weight,
+      taxRate: x.taxRate,
+    })),
+  }));
+}
+
 export async function getSalesQuoteEditorDataAction() {
   await requirePermission('quotes:read');
-  const [products, customers, settings, templates] = await Promise.all([
+  const [products, customers, settings, templates, kits] = await Promise.all([
     listProductsAction(),
     listTradeCustomersAction(),
     service().getSettings(),
     service().listTemplates(),
+    editorKits(),
   ]);
-  return { products, customers, settings, templates };
+  return { products, customers, settings, templates, kits };
 }
 
 export async function listSalesQuoteTemplatesAction() {

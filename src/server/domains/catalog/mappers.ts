@@ -59,6 +59,7 @@ export function toCategory(row: CategoryRow, productCount?: number): Category {
     imageUrl: row.imageUrl ?? undefined,
     isActive: row.isActive,
     displayOrder: row.displayOrder,
+    parentId: row.parentId ?? null,
     productCount,
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),

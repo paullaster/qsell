@@ -355,21 +355,40 @@ export class CreditNoteService {
         lines: input.lines,
         reason: input.reason,
         issuedBy: input.issuedBy,
-        effects: input.restock
-          ? async (tx, cn, lines) => {
-              for (const l of lines) {
-                await applyStockDelta(tx, {
-                  productId: l.productId,
-                  delta: l.quantity,
-                  allowDeleted: true,
-                  changeType: 'credit_note_restock',
-                  referenceId: cn.id,
-                  actor: input.issuedBy,
-                  note: `Credit note ${cn.creditNoteNo}: returned to stock.`,
-                });
-              }
+        effects: async (tx, cn, lines) => {
+          if (input.restock) {
+            for (const l of lines) {
+              await applyStockDelta(tx, {
+                productId: l.productId,
+                delta: l.quantity,
+                allowDeleted: true,
+                changeType: 'credit_note_restock',
+                referenceId: cn.id,
+                actor: input.issuedBy,
+                note: `Credit note ${cn.creditNoteNo}: returned to stock.`,
+              });
             }
-          : undefined,
+          }
+          // What was returned stops counting towards the customer's rebates and loyalty points.
+          // A line's tax is not kept on the order, so its net is the order's net share of its gross.
+          const goods = Number(order.subtotal) + Number(order.tax);
+          const netShare = goods > 0 ? Number(order.subtotal) / goods : 1;
+          const { getContainer } = await import('@/server/di/container');
+          const { rebates, loyalty } = getContainer();
+          await rebates.accrueCredit(
+            tx,
+            { companyId: cn.companyId, orderId: order.id, creditNoteId: cn.id },
+            lines.map((l) => ({ productId: l.productId, net: Number(l.amount) * netShare })),
+          );
+          if (Number(order.subtotal) > 0)
+            await loyalty.clawbackCredit(tx, {
+              orderId: order.id,
+              creditNoteNo: cn.creditNoteNo,
+              fraction:
+                (lines.reduce((n, l) => n + Number(l.amount), 0) * netShare) /
+                Number(order.subtotal),
+            });
+        },
       },
       outer,
     );
