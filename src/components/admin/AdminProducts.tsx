@@ -1,6 +1,6 @@
 'use client';
 
-import React, { use, useEffect, useRef, useState } from 'react';
+import React, { use, useRef, useState } from 'react';
 import {
   Package,
   Plus,
@@ -19,15 +19,21 @@ import {
   ArrowUpDown,
   Copy,
   Upload,
-  Loader2,
 } from 'lucide-react';
 import { type Product, type Category } from '@/types/index';
 import { AppImage, PRODUCT_IMAGE_FALLBACK } from '@/components/ui/AppImage';
 import { buildProductsCsv } from '@/lib/productCsv';
 import { downloadCsv } from '@/lib/downloadPdf';
+import Link from 'next/link';
 import { ProductImportDialog } from '@/components/admin/ProductImportDialog';
 import { setProductsActiveAction } from '@/server/domains/catalog/actions';
 import { ProductDeleteDialog } from '@/components/admin/ProductDeleteDialog';
+import {
+  BusyOverlay,
+  ResultNotice,
+  useWarnBeforeLeaving,
+  type BulkNotice,
+} from '@/components/admin/BulkFeedback';
 import type { ProductSelection } from '@/server/domains/catalog/bulk-delete';
 
 interface AdminProductsProps {
@@ -40,6 +46,8 @@ interface AdminProductsProps {
   /** What the person may do; the server checks again. Defaults suit callers that do not know. */
   canDelete?: boolean;
   canPurge?: boolean;
+  /** Products in the trash, shown on the link to it. */
+  trashCount?: number;
 }
 
 export function AdminProducts({
@@ -51,6 +59,7 @@ export function AdminProducts({
   onRefresh,
   canDelete = true,
   canPurge = false,
+  trashCount,
 }: AdminProductsProps) {
   const products = use(productsPromise);
   const categories = use(categoriesPromise);
@@ -74,19 +83,9 @@ export function AdminProducts({
   /** Set while a bulk change runs: the screen is blocked and says what is happening. */
   const [working, setWorking] = useState<string | null>(null);
   const workingRef = useRef(false);
-  const [notice, setNotice] = useState<{
-    tone: 'ok' | 'warn' | 'error';
-    text: string;
-    details: string[];
-  } | null>(null);
+  const [notice, setNotice] = useState<BulkNotice | null>(null);
 
-  // Leaving mid-change would not undo it, but the person would not see how it ended.
-  useEffect(() => {
-    if (working === null) return;
-    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
-    window.addEventListener('beforeunload', warn);
-    return () => window.removeEventListener('beforeunload', warn);
-  }, [working]);
+  useWarnBeforeLeaving(working !== null);
 
   // Filtering Logic
   const filteredProducts = products.filter((p) => {
@@ -242,6 +241,19 @@ export function AdminProducts({
             Export CSV
           </button>
 
+          {canDelete ? (
+            <Link
+              href="/admin/trash/products"
+              className="flex min-h-10 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-line-strong bg-surface-sunken px-3 py-2 text-xs font-semibold text-fg transition-colors hover:bg-hover hover:text-fg-strong"
+            >
+              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+              Trash
+              {trashCount !== undefined && trashCount > 0
+                ? ` (${trashCount.toLocaleString('en-KE')})`
+                : ''}
+            </Link>
+          ) : null}
+
           <button
             type="button"
             onClick={() => setIsImportOpen(true)}
@@ -268,52 +280,9 @@ export function AdminProducts({
         onImported={onRefresh}
       />
 
-      {working !== null ? (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4">
-          <div
-            role="status"
-            aria-live="polite"
-            className="flex max-w-sm items-center gap-3 rounded-xl border border-line bg-surface-raised p-4 shadow-2xl"
-          >
-            <Loader2 className="h-6 w-6 shrink-0 animate-spin text-indigo-600" aria-hidden="true" />
-            <div>
-              <p className="text-sm font-semibold text-fg-strong">{working}</p>
-              <p className="text-xs text-fg-muted">Please keep this page open until it finishes.</p>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      {working !== null ? <BusyOverlay text={working} /> : null}
 
-      {notice ? (
-        <div
-          role={notice.tone === 'error' ? 'alert' : 'status'}
-          className={`flex items-start justify-between gap-3 rounded-xl border p-4 text-sm ${
-            notice.tone === 'error'
-              ? 'border-red-600/40 bg-red-500/10 text-red-700 dark:text-red-300'
-              : notice.tone === 'warn'
-                ? 'border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200'
-                : 'border-emerald-600/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
-          }`}
-        >
-          <div>
-            <p className="font-semibold">{notice.text}</p>
-            {notice.details.length > 0 ? (
-              <ul className="mt-1 max-h-40 list-disc space-y-0.5 overflow-y-auto pl-5 text-xs">
-                {notice.details.map((d, i) => (
-                  <li key={i}>{d}</li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-          <button
-            type="button"
-            onClick={() => setNotice(null)}
-            className="min-h-9 shrink-0 cursor-pointer rounded px-2 text-xs font-semibold underline hover:no-underline"
-          >
-            Dismiss
-          </button>
-        </div>
-      ) : null}
+      {notice ? <ResultNotice notice={notice} onDismiss={() => setNotice(null)} /> : null}
 
       {deleting ? (
         <ProductDeleteDialog

@@ -110,6 +110,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         installed: true,
       },
       {
+        id: 'products-trash',
+        title: 'Trash',
+        name: 'products-trash',
+        href: '/admin/trash/products',
+        description: 'Deleted products: restore them as drafts, or erase them for good',
+        icon: 'Trash2',
+        installed: true,
+      },
+      {
         id: 'item-types',
         title: 'Item Types',
         name: 'item-types',
