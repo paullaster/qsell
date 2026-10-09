@@ -20,6 +20,11 @@ import { emptyDimensionCodes } from '@/server/domains/dimensions/projection';
 import type { DimensionSetService } from '@/server/domains/dimensions/set-service';
 import type { TransactionLedgerService } from '@/server/domains/transactions/ledger-service';
 
+function isUniqueViolation(error: unknown): boolean {
+  const e = error as { code?: unknown; cause?: { code?: unknown } } | null;
+  return e?.code === '23505' || e?.cause?.code === '23505';
+}
+
 export type CustomerAccountType = 'cash' | 'credit';
 export type CustomerBlock = 'none' | 'ship' | 'invoice' | 'all';
 
@@ -512,17 +517,23 @@ export class CustomerMasterService {
       });
       const addresses = await this.listAddresses(customer.id);
       if (addresses.length === 0 && input.address.street.trim() && input.address.city.trim()) {
-        await this.addAddress(customer.id, {
-          label: 'Delivery',
-          recipientName: input.name,
-          recipientPhone: input.phone,
-          street: input.address.street,
-          city: input.address.city,
-          countyOrState: input.address.countyOrState,
-          postalCode: input.address.postalCode,
-          country: input.address.country,
-          isDefault: true,
-        });
+        try {
+          await this.addAddress(customer.id, {
+            label: 'Delivery',
+            recipientName: input.name,
+            recipientPhone: input.phone,
+            street: input.address.street,
+            city: input.address.city,
+            countyOrState: input.address.countyOrState,
+            postalCode: input.address.postalCode,
+            country: input.address.country,
+            isDefault: true,
+          });
+        } catch (error) {
+          // Simultaneous first orders race to save the default address. The unique index lets
+          // one win; the others already have an address on file and carry on.
+          if (!isUniqueViolation(error)) throw error;
+        }
       }
     }
 
