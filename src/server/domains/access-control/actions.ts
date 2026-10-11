@@ -37,6 +37,7 @@ export async function createRoleAction(input: {
   name: string;
   description?: string;
   priority?: number;
+  isStaff?: boolean;
 }): Promise<{ id: string; key: string }> {
   const actorId = await requirePermission('roles:manage');
   if (input.key.trim().toLowerCase() === 'super_admin') {
@@ -49,6 +50,7 @@ export async function createRoleAction(input: {
     description: input.description,
     priority: input.priority,
     isSystem: false,
+    isStaff: input.isStaff === true && input.key.trim().toLowerCase() !== 'customer',
   });
   if (!role) throw new Error('Failed to create role');
   await writeAudit(actorId, 'roles:create', 'roles', role.key, {
@@ -61,17 +63,36 @@ export async function createRoleAction(input: {
 
 export async function updateRoleAction(
   roleId: string,
-  input: { name?: string; description?: string; priority?: number; isActive?: boolean },
+  input: {
+    name?: string;
+    description?: string;
+    priority?: number;
+    isActive?: boolean;
+    isStaff?: boolean;
+  },
 ): Promise<void> {
   const actorId = await requirePermission('roles:manage');
   const container = getContainer();
   const existing = await container.accessControl.repo.findRoleById(roleId);
   if (!existing) throw new Error('Role not found');
+  if (input.isStaff !== undefined && input.isStaff !== existing.isStaff) {
+    if (existing.key === 'super_admin') {
+      throw new Error("The 'super_admin' role is always a staff role and cannot be changed.");
+    }
+    if (existing.key === 'customer') {
+      throw new Error("The 'customer' role is the shopper role and cannot be a staff role.");
+    }
+  }
 
   await container.accessControl.repo.updateRole(roleId, input);
   await invalidateRoleUsers(existing.key);
   await writeAudit(actorId, 'roles:update', 'roles', existing.key, {
-    before: { name: existing.name, priority: existing.priority, isActive: existing.isActive },
+    before: {
+      name: existing.name,
+      priority: existing.priority,
+      isActive: existing.isActive,
+      isStaff: existing.isStaff,
+    },
     after: input,
   });
   revalidatePath('/admin/users/roles');

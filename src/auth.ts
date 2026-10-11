@@ -3,11 +3,11 @@ import Credentials from 'next-auth/providers/credentials';
 import type { NextAuthConfig } from 'next-auth';
 import type {} from 'next-auth/jwt';
 import { UserRepository } from '@/server/domains/auth/user-repository';
-import { isStaffRole } from '@/server/domains/auth/roles';
 
 declare module 'next-auth' {
   interface User {
     role?: string;
+    isStaff?: boolean;
     phone?: string | null;
     customerStoreId?: string | null;
     mustChangePassword?: boolean;
@@ -18,6 +18,8 @@ declare module 'next-auth' {
       email: string;
       name: string;
       role: string;
+      /** Primary role is a back-office role (roles.is_staff); gates /admin. */
+      isStaff: boolean;
       phone?: string | null;
       customerStoreId?: string | null;
       /** Set for admin-issued passwords; the user must choose their own before doing anything else. */
@@ -29,6 +31,7 @@ declare module 'next-auth' {
 declare module 'next-auth/jwt' {
   interface JWT {
     role?: string;
+    isStaff?: boolean;
     phone?: string | null;
     customerStoreId?: string | null;
     mustChangePassword?: boolean;
@@ -98,6 +101,7 @@ const authConfig = {
           email: user.email,
           name: user.name,
           role: user.role,
+          isStaff: await users.isStaffRoleKey(user.role),
           phone: user.phone,
           customerStoreId: user.customerStoreId,
           mustChangePassword: user.mustChangePassword,
@@ -109,7 +113,7 @@ const authConfig = {
     authorized({ auth, request }) {
       const path = request.nextUrl.pathname;
       if (path.startsWith('/admin')) {
-        if (!isStaffRole(auth?.user.role)) return false;
+        if (auth?.user.isStaff !== true) return false;
         if (auth?.user.mustChangePassword === true) {
           const target = new URL('/change-password', request.nextUrl);
           target.searchParams.set('callbackUrl', `${path}${request.nextUrl.search}`);
@@ -121,6 +125,7 @@ const authConfig = {
     async jwt({ token, user }) {
       if (user) {
         token.role = user.role;
+        token.isStaff = user.isStaff === true;
         token.phone = user.phone;
         token.customerStoreId = user.customerStoreId;
         token.mustChangePassword = user.mustChangePassword === true;
@@ -128,9 +133,13 @@ const authConfig = {
         token.verifiedAt = Date.now();
         return token;
       }
-      // Only staff sessions carry privileges worth re-checking; shopper sessions skip
-      // the lookup so storefront traffic never pays for it.
-      if (!isStaffRole(token.role) || Date.now() - (token.verifiedAt ?? 0) < STAFF_REVALIDATE_MS) {
+      // Only non-shopper sessions carry privileges worth re-checking; shopper sessions skip
+      // the lookup so storefront traffic never pays for it. Tokens issued before the staff
+      // flag existed (isStaff undefined) refresh immediately.
+      if (
+        token.role === 'customer' ||
+        (token.isStaff !== undefined && Date.now() - (token.verifiedAt ?? 0) < STAFF_REVALIDATE_MS)
+      ) {
         return token;
       }
       const current =
@@ -141,6 +150,7 @@ const authConfig = {
         return null; // Ends the session.
       }
       token.role = current.role;
+      token.isStaff = await new UserRepository().isStaffRoleKey(current.role);
       token.mustChangePassword = current.mustChangePassword;
       token.verifiedAt = Date.now();
       return token;
@@ -149,6 +159,7 @@ const authConfig = {
       if (session.user) {
         session.user.id = token.sub || '';
         session.user.role = (typeof token.role === 'string' ? token.role : null) || 'customer';
+        session.user.isStaff = token.isStaff === true;
         session.user.phone =
           typeof token.phone === 'string' || token.phone === null ? token.phone : null;
         session.user.customerStoreId =

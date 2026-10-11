@@ -1,5 +1,6 @@
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { evaluateCondition } from './condition';
+import { resolveGrant } from './resolve';
 import { ALL_PERMISSION_KEYS, type PermissionKey } from './permissions';
 import { AccessControlRepository, type PolicyMatch, type PermissionGrant, type UserAccessModel } from './repository';
 
@@ -8,12 +9,12 @@ import { AccessControlRepository, type PolicyMatch, type PermissionGrant, type U
  *
  * Evaluation order (first match wins):
  *   1. super_admin bypass            → allow
- *   2. direct (per-user) DENY        → deny           (strongest override, e.g. temporary ban)
- *   3. direct (per-user) ALLOW       → allow          (explicit grant beats roles)
- *   4. role DENY                     → deny           (a deny anywhere beats allows)
- *   5. role ALLOW                    → allow          (highest-precedence matching role)
- *   6. ABAC policies (priority asc)  → first enabled matching policy's effect
- *   7. default                       → deny           (fail closed)
+ *   2. RBAC grants, resolved per permission (see resolveGrant):
+ *        a. a direct (per-user) grant beats any role grant
+ *        b. among roles, the lowest priority number wins the collision
+ *   3. implied read (any allow on a resource lets you read it)
+ *   4. ABAC policies (priority asc)  → first enabled matching policy's effect
+ *   5. default                       → deny           (fail closed)
  *
  * Enforcement sits at the RBAC layer for coarse grants and the ABAC layer for
  * fine-grained, context-aware rules. Either layer alone is a total order: a
@@ -101,12 +102,20 @@ export class AccessControlService {
 
     const roleKeys = new Set<string>();
     const allowed = new Set<PermissionKey>();
+    const keys = new Set<string>();
     for (const grant of model.grants) {
       if (grant.roleKey !== null) roleKeys.add(grant.roleKey);
-      if (grant.effect === 'allow') {
-        allowed.add(grant.permissionKey as PermissionKey);
+      keys.add(grant.permissionKey);
+    }
+    // Same precedence as decide(); branch scope is ignored (the snapshot is context-free).
+    for (const key of keys) {
+      if (resolveGrant(model.grants, key, () => true)?.effect === 'allow') {
+        allowed.add(key as PermissionKey);
         // Mirror decide(): any allow on a resource implies reading it.
-        allowed.add(`${grant.permissionKey.split(':')[0] ?? ''}:read` as PermissionKey);
+        const read = `${key.split(':')[0] ?? ''}:read`;
+        if (resolveGrant(model.grants, read, () => true)?.effect !== 'deny') {
+          allowed.add(read as PermissionKey);
+        }
       }
     }
     const superAdmin = model.superAdmin;
@@ -154,48 +163,14 @@ export class AccessControlService {
     const inScope = (branchId: string | null): boolean =>
       branchId === null || branchId === (ctx?.branchId ?? null);
 
-    // 2. direct deny.
-    const directDeny = model.grants.reduce<PermissionGrant | null>(
-      (acc, g) =>
-        g.source === 'direct' && g.effect === 'deny' && g.permissionKey === key && inScope(g.scopeBranchId)
-          ? g
-          : acc,
-      null,
-    );
-    if (directDeny) return { allowed: false, reason: 'deny-grant' };
-
-    // 3. direct allow.
-    const directAllow = model.grants.reduce<PermissionGrant | null>(
-      (acc, g) =>
-        g.source === 'direct' && g.effect === 'allow' && g.permissionKey === key && inScope(g.scopeBranchId)
-          ? g
-          : acc,
-      null,
-    );
-    if (directAllow) return { allowed: true, source: 'direct' };
-
-    // 4. role deny anywhere beats role allow.
-    const roleDeny = model.grants.reduce<PermissionGrant | null>(
-      (acc, g) =>
-        g.source === 'role' && g.effect === 'deny' && g.permissionKey === key && inScope(g.scopeBranchId)
-          ? g
-          : acc,
-      null,
-    );
-    if (roleDeny) return { allowed: false, reason: 'deny-grant' };
-
-    // 5. role allow (pick the highest-precedence grant).
-    const roleAllow = model.grants.reduce<PermissionGrant | null>(
-      (acc, g) => {
-        if (g.source !== 'role' || g.effect !== 'allow' || g.permissionKey !== key || !inScope(g.scopeBranchId)) {
-          return acc;
-        }
-        if (!acc || g.rolePriority < acc.rolePriority) return g;
-        return acc;
-      },
-      null,
-    );
-    if (roleAllow) return { allowed: true, source: 'role', roleKey: roleAllow.roleKey ?? undefined };
+    // 2. RBAC: direct user grants beat role grants; among roles the lowest priority number wins.
+    const resolved = resolveGrant(model.grants, key, inScope);
+    if (resolved) {
+      if (resolved.effect === 'deny') return { allowed: false, reason: 'deny-grant' };
+      return resolved.source === 'direct'
+        ? { allowed: true, source: 'direct' }
+        : { allowed: true, source: 'role', roleKey: resolved.roleKey ?? undefined };
+    }
 
     // 5b. Any allow on a resource implies reading it (e.g. products:update ⇒ products:read).
     // Explicit read denies were already honoured in steps 2 and 4.

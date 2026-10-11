@@ -7,7 +7,6 @@ import {
   type AccessSnapshot,
 } from './engine';
 import { type PermissionKey } from './permissions';
-import { isStaffRole } from '@/server/domains/auth/roles';
 
 /**
  * Guards for server actions / route handlers. All guarded actions MUST call
@@ -15,7 +14,7 @@ import { isStaffRole } from '@/server/domains/auth/roles';
  */
 
 /** The signed-in user, or an access error. One session read per call. */
-async function signedInUser(): Promise<{ id: string; role: string }> {
+async function signedInUser(): Promise<{ id: string; role: string; isStaff: boolean }> {
   const session = await auth();
   const id = session?.user.id;
   if (id === undefined || id === '') {
@@ -25,7 +24,11 @@ async function signedInUser(): Promise<{ id: string; role: string }> {
   if (session?.user.mustChangePassword === true) {
     throw new Error('Change your temporary password before continuing.');
   }
-  return { id, role: session?.user.role ?? 'customer' };
+  return {
+    id,
+    role: session?.user.role ?? 'customer',
+    isStaff: session?.user.isStaff === true,
+  };
 }
 
 export async function requireUser(): Promise<string> {
@@ -33,12 +36,12 @@ export async function requireUser(): Promise<string> {
 }
 
 /**
- * Signed-in staff member (super_admin, admin or manager). The session role is
+ * Signed-in staff member (primary role flagged as a staff role). The session role is
  * re-validated against the database at least every minute (see auth.ts).
  */
 export async function requireStaff(): Promise<string> {
   const user = await signedInUser();
-  if (!isStaffRole(user.role)) {
+  if (!user.isStaff) {
     throw new AccessDeniedError('*', { allowed: false, reason: 'deny-grant' });
   }
   return user.id;
