@@ -2,7 +2,6 @@
 
 import { requirePermission } from '@/server/domains/access-control/guard';
 import { auth } from '@/auth';
-import { isStaffRole } from '@/server/domains/auth/roles';
 
 import { revalidatePath } from 'next/cache';
 import { getContainer } from '@/server/di/container';
@@ -116,7 +115,7 @@ export async function lookupCheckoutCustomerAction(email: string): Promise<{
   // so the lookup can't be used to probe which emails are customers.
   const session = await auth();
   const isSelf = session?.user.email.toLowerCase() === email.trim().toLowerCase();
-  const allowed = isSelf || isStaffRole(session?.user.role);
+  const allowed = isSelf || session?.user.isStaff === true;
   const customer = allowed ? await master().lookupByEmail(await companyId(), email) : null;
   if (!customer || !customer.isActive) {
     return {

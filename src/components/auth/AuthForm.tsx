@@ -9,7 +9,6 @@ import {
   registerCustomerAction,
   resendVerificationEmailAction,
 } from '@/server/domains/auth/actions';
-import { isStaffRole } from '@/server/domains/auth/roles';
 import { PASSWORD_MIN_LENGTH } from '@/lib/passwordPolicy';
 import { PasswordInput } from '@/components/auth/PasswordInput';
 
@@ -55,7 +54,7 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
           return;
         }
         let destination: string;
-        if (isStaffRole(res.role)) {
+        if (res.isStaff) {
           // Staff must land in admin — ignore storefront callback leftovers (e.g. "/").
           destination = safeCallbackUrl?.startsWith('/admin') === true ? safeCallbackUrl : '/admin';
         } else {

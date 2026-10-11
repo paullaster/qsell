@@ -3,7 +3,6 @@
 import { AuthError, CredentialsSignin } from 'next-auth';
 import { auth, EMAIL_NOT_VERIFIED_CODE, signIn, signOut } from '@/auth';
 import { UserRepository } from '@/server/domains/auth/user-repository';
-import { isStaffRole } from '@/server/domains/auth/roles';
 import { getContainer } from '@/server/di/container';
 import type { UserSession, CustomerAccount } from '@/types/index';
 import { SESSION_COOKIE } from './service';
@@ -285,7 +284,7 @@ export async function loginAction(input: {
   email: string;
   password: string;
 }): Promise<
-  | { ok: true; role: string; mustChangePassword: boolean }
+  | { ok: true; role: string; isStaff: boolean; mustChangePassword: boolean }
   | { ok: false; error: string; code?: 'EMAIL_NOT_VERIFIED' }
 > {
   const requestId = randomUUID();
@@ -307,6 +306,7 @@ export async function loginAction(input: {
     return {
       ok: true,
       role: user?.role ?? 'customer',
+      isStaff: user ? await new UserRepository().isStaffRoleKey(user.role) : false,
       mustChangePassword: user?.mustChangePassword === true,
     };
   } catch (err) {
@@ -419,7 +419,7 @@ export async function resetPasswordAction(input: {
 export async function changeOwnPasswordAction(input: {
   currentPassword: string;
   newPassword: string;
-}): Promise<{ ok: true; role: string } | { ok: false; error: string }> {
+}): Promise<{ ok: true; role: string; isStaff: boolean } | { ok: false; error: string }> {
   const currentPassword = typeof input.currentPassword === 'string' ? input.currentPassword : '';
   const newPassword = typeof input.newPassword === 'string' ? input.newPassword : '';
 
@@ -444,7 +444,11 @@ export async function changeOwnPasswordAction(input: {
     }
     await users.setPassword(verified.id, newPassword);
     await signIn('credentials', { email, password: newPassword, redirect: false });
-    return { ok: true, role: verified.role };
+    return {
+      ok: true,
+      role: verified.role,
+      isStaff: await users.isStaffRoleKey(verified.role),
+    };
   } catch (error) {
     const requestId = randomUUID();
     Sentry.captureException(error, {
@@ -499,7 +503,7 @@ export async function customerLoginAction(
 
 export async function ensureAdminSessionAction(): Promise<UserSession> {
   const session = await auth();
-  if (isStaffRole(session?.user?.role)) {
+  if (session?.user?.isStaff === true) {
     return toSessionShape({
       id: session!.user.id,
       email: session!.user.email!,

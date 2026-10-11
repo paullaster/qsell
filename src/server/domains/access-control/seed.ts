@@ -7,6 +7,7 @@ interface SeedRole {
   description: string;
   priority: number;
   isSystem: boolean;
+  isStaff: boolean;
   grants: (PermissionKey | { key: PermissionKey; effect: GrantEffect })[];
 }
 
@@ -19,6 +20,7 @@ const SEED_ROLES: SeedRole[] = [
     description: 'Full, unconditional access across the entire application.',
     priority: 0,
     isSystem: true,
+    isStaff: true,
     grants: ALL_PERMISSION_KEYS,
   },
   {
@@ -27,6 +29,7 @@ const SEED_ROLES: SeedRole[] = [
     description: 'Day-to-day business + configuration control, without security administration.',
     priority: 100,
     isSystem: true,
+    isStaff: true,
     grants: [
       ...READ_PERMISSIONS,
       'orders:create',
@@ -75,6 +78,7 @@ const SEED_ROLES: SeedRole[] = [
     description: 'Operational control over orders, customers, inventory, and payments.',
     priority: 200,
     isSystem: false,
+    isStaff: true,
     grants: [
       ...READ_PERMISSIONS,
       'orders:create',
@@ -105,6 +109,7 @@ const SEED_ROLES: SeedRole[] = [
     description: 'Limited self-service access for customer-store users.',
     priority: 1000,
     isSystem: false,
+    isStaff: false,
     grants: ['dashboard:read'],
   },
 ];
@@ -148,6 +153,7 @@ async function seedWithin(repo: AccessControlRepository): Promise<SeedResult> {
         description: seed.description,
         priority: seed.priority,
         isSystem: seed.isSystem,
+        isStaff: seed.isStaff,
       }));
     if (!role) throw new Error(`Failed to create role '${seed.key}'`);
     if (!existing) rolesCreated.push(seed.key);
