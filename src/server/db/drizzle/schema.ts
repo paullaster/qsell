@@ -1117,6 +1117,11 @@ export const roles = pgTable(
     description: text('description').notNull().default(''),
     /** Lower number = higher precedence; used to break ties between roles. */
     priority: integer('priority').notNull().default(100),
+    /**
+     * Back-office role: holders may sign in to /admin (their permissions still decide what they
+     * can do). Off by default for custom roles; locked for super_admin (always) and customer (never).
+     */
+    isStaff: boolean('is_staff').notNull().default(false),
     /** When true the role cannot be deleted (rank of the permission set only). */
     isSystem: boolean('is_system').notNull().default(false),
     isActive: boolean('is_active').notNull().default(true),

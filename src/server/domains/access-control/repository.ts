@@ -51,6 +51,7 @@ export interface RoleWithGrants {
   priority: number;
   isSystem: boolean;
   isActive: boolean;
+  isStaff: boolean;
   grants: { permissionKey: string; effect: GrantEffect }[];
 }
 
@@ -106,7 +107,7 @@ export class AccessControlRepository {
     const primaryRoleRows = await this.db
       .select()
       .from(roles)
-      .where(inArray(roles.key, [primaryRoleKey]))
+      .where(and(eq(roles.key, primaryRoleKey), eq(roles.isActive, true)))
       .limit(1);
     const primaryRole = primaryRoleRows.at(0) ?? null;
 
@@ -277,6 +278,7 @@ export class AccessControlRepository {
       priority: r.priority,
       isSystem: r.isSystem,
       isActive: r.isActive,
+      isStaff: r.isStaff,
       grants: [],
     }));
 
@@ -340,7 +342,7 @@ export class AccessControlRepository {
     return rows.at(0) ?? null;
   }
 
-  async createRole(input: { key: string; name: string; description?: string; priority?: number; isSystem?: boolean }) {
+  async createRole(input: { key: string; name: string; description?: string; priority?: number; isSystem?: boolean; isStaff?: boolean }) {
     const key = input.key.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-');
     if (key === '') throw new Error('Role key is required');
     const rows = await this.db
@@ -351,12 +353,13 @@ export class AccessControlRepository {
         description: input.description?.trim() ?? '',
         priority: input.priority ?? 100,
         isSystem: input.isSystem ?? false,
+        isStaff: input.isStaff ?? false,
       })
       .returning();
     return rows.at(0) ?? null;
   }
 
-  async updateRole(id: string, input: Partial<{ name: string; description: string; priority: number; isActive: boolean }>) {
+  async updateRole(id: string, input: Partial<{ name: string; description: string; priority: number; isActive: boolean; isStaff: boolean }>) {
     const rows = await this.db
       .update(roles)
       .set({ ...input, updatedAt: new Date() })

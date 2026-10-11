@@ -1,12 +1,12 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { drizzleDb } from '@/server/db/drizzle/client';
-import { users, type UserRow } from '@/server/db/drizzle/schema';
+import { roles, users, type UserRow } from '@/server/db/drizzle/schema';
 // Native bcrypt: hashes on libuv's thread pool, so password checks never block the
 // event loop (bcryptjs is pure JS and stalled every other request while hashing).
 // Hashes are the standard $2b$ format — existing bcryptjs hashes verify unchanged.
 import { hash, verify } from '@node-rs/bcrypt';
 import type { ThemeMode } from '@/config/theme';
-import type { AppRole } from './roles';
+import { BUILTIN_STAFF_ROLES, type AppRole } from './roles';
 import type { DbExecutor } from './token-repository';
 
 export type { AppRole };
@@ -47,6 +47,23 @@ export class UserRepository {
   async findById(id: string): Promise<UserRow | null> {
     const rows = await this.db.select().from(users).where(eq(users.id, id)).limit(1);
     return rows[0] ?? null;
+  }
+
+  /**
+   * Whether a primary role may use the back office. super_admin is always staff and customer
+   * never; other roles follow their admin-editable `is_staff` flag (inactive roles are not staff).
+   */
+  async isStaffRoleKey(roleKey: string): Promise<boolean> {
+    if (roleKey === 'super_admin') return true;
+    if (roleKey === 'customer' || roleKey.trim() === '') return false;
+    const rows = await this.db
+      .select({ isStaff: roles.isStaff, isActive: roles.isActive })
+      .from(roles)
+      .where(eq(roles.key, roleKey))
+      .limit(1);
+    const row = rows[0];
+    if (!row) return BUILTIN_STAFF_ROLES.includes(roleKey);
+    return row.isActive && row.isStaff;
   }
 
   /** Persist the account's colour-scheme choice so it follows the user to new devices. */

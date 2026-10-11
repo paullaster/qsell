@@ -3,7 +3,6 @@
 import React, { useId, useState, useTransition } from 'react';
 import { KeyRound } from 'lucide-react';
 import { changeOwnPasswordAction, logoutAction } from '@/server/domains/auth/actions';
-import { isStaffRole } from '@/server/domains/auth/roles';
 import { PASSWORD_MIN_LENGTH, validatePassword } from '@/lib/passwordPolicy';
 import { PasswordInput } from '@/components/auth/PasswordInput';
 
@@ -43,7 +42,7 @@ export function ChangePasswordForm({
           setError(result.error);
           return;
         }
-        const fallback = isStaffRole(result.role) ? '/admin' : '/';
+        const fallback = result.isStaff ? '/admin' : '/';
         // Full navigation so every part of the app picks up the re-issued session.
         window.location.assign(callbackUrl ?? fallback);
       } catch {

@@ -25,6 +25,7 @@ export interface RolesSetup {
     description: string;
     priority: number;
     isSystem: boolean;
+    isStaff: boolean;
     isActive: boolean;
     grants: { permissionKey: string; effect: GrantEffect }[];
   }[];
@@ -39,6 +40,7 @@ interface RoleFormState {
   priority: string;
   isActive: boolean;
   isSystem: boolean;
+  isStaff: boolean;
   grants: Partial<Record<PermissionKey, GrantValue>>;
 }
 
@@ -51,6 +53,7 @@ function emptyForm(): RoleFormState {
     priority: '100',
     isActive: true,
     isSystem: false,
+    isStaff: false,
     grants: {},
   };
 }
@@ -114,11 +117,15 @@ export function AdminRolesClient({ setupPromise }: { setupPromise: Promise<Roles
       priority: String(role.priority),
       isActive: role.isActive,
       isSystem: role.isSystem,
+      isStaff: role.isStaff,
       grants: grantsToState(role.grants),
     });
     setShowForm(true);
     setError(null);
   };
+
+  // super_admin is always staff and customer never; every other role's flag is editable.
+  const staffLocked = form.key === 'super_admin' || form.key === 'customer';
 
   const save = () => {
     startTransition(async () => {
@@ -136,6 +143,7 @@ export function AdminRolesClient({ setupPromise }: { setupPromise: Promise<Roles
             description: form.description.trim(),
             priority,
             isActive: form.isActive,
+            ...(staffLocked ? {} : { isStaff: form.isStaff }),
           });
           await setRolePermissionsAction(form.id, grants);
         } else {
@@ -145,6 +153,7 @@ export function AdminRolesClient({ setupPromise }: { setupPromise: Promise<Roles
             name: form.name.trim(),
             description: form.description,
             priority,
+            isStaff: form.isStaff,
           });
           await setRolePermissionsAction(created.id, grants);
         }
@@ -293,6 +302,26 @@ export function AdminRolesClient({ setupPromise }: { setupPromise: Promise<Roles
               />
               Active (assignable to users)
             </label>
+            <div className="sm:col-span-2">
+              <label className="flex items-center gap-2 text-sm text-fg">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={form.isStaff}
+                  disabled={staffLocked}
+                  aria-describedby="role-staff-help"
+                  onChange={(e) => setForm((f) => ({ ...f, isStaff: e.target.checked }))}
+                />
+                Staff role (can sign in to the admin console)
+              </label>
+              <p id="role-staff-help" className="mt-1 text-xs text-fg-subtle">
+                {staffLocked
+                  ? form.key === 'super_admin'
+                    ? 'The super admin role is always a staff role.'
+                    : 'The customer role is the shopper role and is never a staff role.'
+                  : 'Off by default. Users whose primary role is not a staff role are shoppers and cannot open the admin console, whatever permissions the role holds.'}
+              </p>
+            </div>
           </div>
 
           {form.isSystem ? (
@@ -379,7 +408,7 @@ export function AdminRolesClient({ setupPromise }: { setupPromise: Promise<Roles
                 </span>
               </div>
               <p className="text-xs text-fg-muted">
-                Priority {role.priority} ·{' '}
+                Priority {role.priority} · {role.isStaff ? 'Staff' : 'Not staff'} ·{' '}
                 {role.key === 'super_admin'
                   ? 'Full access (bypasses checks)'
                   : `${role.grants.filter((g) => g.effect === 'allow').length} allowed · ${role.grants.filter((g) => g.effect === 'deny').length} denied`}
@@ -404,6 +433,7 @@ export function AdminRolesClient({ setupPromise }: { setupPromise: Promise<Roles
             <tr>
               <th scope="col" className="px-4 py-2 font-medium">Role</th>
               <th scope="col" className="px-4 py-2 font-medium">Priority</th>
+              <th scope="col" className="px-4 py-2 font-medium">Staff</th>
               <th scope="col" className="px-4 py-2 font-medium">Permissions</th>
               <th scope="col" className="px-4 py-2 font-medium">Status</th>
               <th scope="col" className="px-4 py-2 text-right">
@@ -431,6 +461,7 @@ export function AdminRolesClient({ setupPromise }: { setupPromise: Promise<Roles
                     <p className="font-mono text-xs text-fg-subtle">{role.key}</p>
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-fg-muted">{role.priority}</td>
+                  <td className="px-4 py-3 text-xs text-fg-muted">{role.isStaff ? 'Yes' : 'No'}</td>
                   <td className="px-4 py-3 text-xs text-fg-muted">
                     {role.key === 'super_admin'
                       ? 'Full access (bypasses checks)'

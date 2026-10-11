@@ -1,7 +1,6 @@
 import { redirect } from 'next/navigation';
 import { auth } from '@/auth';
 import { AdminShell } from '@/components/admin/AdminShell';
-import { isStaffRole } from '@/server/domains/auth/roles';
 
 /**
  * Defence in depth behind proxy.ts: never render the admin shell for a
@@ -18,7 +17,7 @@ export default async function AdminLayout({
   create: React.ReactNode;
 }) {
   const session = await auth();
-  if (!isStaffRole(session?.user.role)) {
+  if (session?.user.isStaff !== true) {
     redirect('/login?callbackUrl=%2Fadmin');
   }
   if (session?.user.mustChangePassword === true) {
