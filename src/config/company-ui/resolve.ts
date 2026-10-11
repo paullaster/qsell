@@ -1,4 +1,5 @@
 import { DEFAULT_COMPANY_UI_CONFIG } from './defaults';
+import { resolveSupportConfig } from './support';
 import {
   PRODUCT_GRID_DESKTOP_COLUMNS,
   type CompanyUiConfig,
@@ -50,6 +51,7 @@ export function resolveCompanyUiConfig(raw: unknown): CompanyUiConfig {
       desktopColumns: parseDesktopColumns(productGridRaw.desktopColumns),
     },
     moduleLabels: sanitizeModuleLabels(source.moduleLabels),
+    support: resolveSupportConfig(source.support),
   };
 }
 
@@ -60,5 +62,6 @@ export function toCompanyUiConfigRaw(config: CompanyUiConfig): CompanyUiConfigRa
       desktopColumns: config.productGrid.desktopColumns,
     },
     moduleLabels: { ...config.moduleLabels },
+    support: config.support,
   };
 }
