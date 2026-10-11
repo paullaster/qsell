@@ -31,6 +31,7 @@ import {
   KeyRound,
   UserCog,
   Fingerprint,
+  LifeBuoy,
   Activity,
   type LucideIcon,
 } from 'lucide-react';
@@ -64,6 +65,7 @@ const ICONS: Record<AdminNavIconName, LucideIcon> = {
   KeyRound,
   UserCog,
   Fingerprint,
+  LifeBuoy,
   Activity: Activity,
 };
 

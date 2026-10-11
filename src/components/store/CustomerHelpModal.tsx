@@ -1,172 +1,202 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import {
   X,
-  Truck,
-  Smartphone,
-  CreditCard,
-  ShieldCheck,
   HelpCircle,
   Phone,
   Mail,
-  Clock,
+  MapPin,
+  MessageCircle,
+  Globe,
+  Send,
   CheckCircle2,
   ChevronDown,
+  ShieldCheck,
+  type LucideIcon,
 } from 'lucide-react';
+import { useCompanyUiConfig } from '@/components/company/CompanyUiConfigProvider';
+import { supportChannelHref, type SupportChannelKind } from '@/config/company-ui';
 
 interface CustomerHelpModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
+export const SUPPORT_CHANNEL_ICONS: Record<SupportChannelKind, LucideIcon> = {
+  phone: Phone,
+  whatsapp: MessageCircle,
+  sms: MessageCircle,
+  email: Mail,
+  location: MapPin,
+  website: Globe,
+  telegram: Send,
+  other: HelpCircle,
+};
+
 export function CustomerHelpModal({ isOpen, onClose }: CustomerHelpModalProps) {
-  const [openFaq, setOpenFaq] = useState<number | null>(0);
+  const { support } = useCompanyUiConfig();
+  const [openFaq, setOpenFaq] = useState<string | null>(null);
+  const titleId = useId();
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    closeRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      previouslyFocused?.focus?.();
+    };
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
-  const faqs = [
-    {
-      q: 'How does M-Pesa Express checkout work?',
-      a: 'When you select M-Pesa and click "Place Order", you will receive an instant pop-up prompt on your mobile phone. Simply enter your 4-digit M-Pesa PIN on your phone to complete payment. Your order and receipt are confirmed immediately.',
-    },
-    {
-      q: 'What are the delivery timelines across Kenya?',
-      a: 'Nairobi Metropolitan orders placed before 3:00 PM are dispatched same-day within 2 to 4 hours. Countrywide deliveries (Mombasa, Kisumu, Nakuru, Eldoret, Thika, etc.) are fulfilled via secure courier within 24 to 48 hours. Orders over KES 100,000 qualify for 100% Free Express Delivery.',
-    },
-    {
-      q: 'Can I pay with Visa, Mastercard, or Airtel Money?',
-      a: 'Yes! Select Pesapal v3.0 at checkout. You can securely pay with any Kenyan or International Visa, Mastercard, Airtel Money, or direct Bank transfer. Transactions are protected by 3D Secure 2.0 bank OTP verification.',
-    },
-    {
-      q: 'Do you provide official KRA eTIMS Tax Invoices?',
-      a: 'Yes. Every completed order automatically generates an electronic tax invoice compliant with Kenya Revenue Authority (KRA) eTIMS requirements with our PIN: P051892011Z, suitable for business expense deductions.',
-    },
-    {
-      q: 'What is your warranty and returns policy?',
-      a: 'All brand-new laptops, smartphones, audio gear, and accessories include a 1-Year Official Manufacturer Warranty. We offer a 7-day hassle-free replacement guarantee for any factory-sealed or transit-damaged items.',
-    },
-  ];
-
   return (
     <div className="animate-fade-in fixed inset-0 z-50 flex items-stretch justify-center overflow-y-auto bg-backdrop/85 p-0 backdrop-blur-md sm:items-center sm:p-4">
-      <div className="relative flex min-h-dvh w-full max-w-2xl flex-col overflow-hidden border border-line bg-surface-raised shadow-2xl sm:my-4 sm:min-h-0 sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl lg:max-h-[90vh]">
-        {/* Header */}
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="relative flex min-h-dvh w-full max-w-2xl flex-col overflow-hidden border border-line bg-surface-raised shadow-2xl sm:my-4 sm:max-h-[calc(100dvh-2rem)] sm:min-h-0 sm:rounded-2xl lg:max-h-[90vh]"
+      >
         <div className="flex items-center justify-between gap-2 border-b border-line bg-surface p-4 sm:p-6">
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-indigo-500/20 bg-indigo-600/10 text-indigo-400 sm:h-10 sm:w-10">
-              <HelpCircle className="h-4 w-4 sm:h-5 sm:w-5" />
+              <HelpCircle className="h-4 w-4 sm:h-5 sm:w-5" aria-hidden="true" />
             </div>
-            <div>
-              <h2 className="text-sm font-bold text-fg-strong sm:text-base">Customer Support & FAQs</h2>
-              <p className="line-clamp-1 text-[11px] text-fg-muted sm:text-xs">
-                Delivery details, payment instructions & warranties
-              </p>
+            <div className="min-w-0">
+              <h2 id={titleId} className="text-sm font-bold text-fg-strong sm:text-base">
+                {support.name}
+              </h2>
+              {support.subtitle ? (
+                <p className="text-[11px] text-fg-muted sm:text-xs">{support.subtitle}</p>
+              ) : null}
             </div>
           </div>
           <button
+            ref={closeRef}
+            type="button"
             onClick={onClose}
-            className="cursor-pointer rounded-lg border border-line bg-surface-raised p-2 text-fg-muted transition-colors hover:text-fg-strong"
+            aria-label="Close"
+            className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-line bg-surface-raised text-fg-muted transition-colors hover:text-fg-strong"
           >
-            <X className="h-5 w-5" />
+            <X className="h-5 w-5" aria-hidden="true" />
           </button>
         </div>
 
-        {/* Content */}
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4 sm:space-y-6 sm:p-6">
-          {/* Quick Contact Cards */}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div className="space-y-1 rounded-xl border border-line bg-surface p-3.5">
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-fg-strong">
-                <Phone className="h-3.5 w-3.5 text-emerald-600" /> Phone & WhatsApp
-              </div>
-              <p className="font-mono text-xs text-fg-muted">+254 712 345 678</p>
-              <span className="block text-[10px] text-fg-subtle">Mon-Sat 8AM - 8PM</span>
-            </div>
-
-            <div className="space-y-1 rounded-xl border border-line bg-surface p-3.5">
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-fg-strong">
-                <Mail className="h-3.5 w-3.5 text-indigo-400" /> Email Support
-              </div>
-              <p className="font-mono text-xs text-fg-muted">support@corecommerce.co.ke</p>
-              <span className="block text-[10px] text-fg-subtle">Fast 15-min response</span>
-            </div>
-
-            <div className="space-y-1 rounded-xl border border-line bg-surface p-3.5">
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-fg-strong">
-                <Truck className="h-3.5 w-3.5 text-amber-600" /> Nairobi Hub
-              </div>
-              <p className="text-xs text-fg-muted">Delta Corner, Westlands</p>
-              <span className="block text-[10px] text-fg-subtle">Express Dispatch Center</span>
-            </div>
-          </div>
-
-          {/* Delivery & Assurance Pills */}
-          <div className="space-y-3 rounded-xl border border-line bg-surface p-4">
-            <h4 className="flex items-center gap-1.5 text-xs font-bold tracking-wider text-fg-strong uppercase">
-              <ShieldCheck className="h-4 w-4 text-emerald-600" /> Our Customer Guarantees
-            </h4>
-            <div className="grid grid-cols-1 gap-2 text-xs text-fg sm:grid-cols-2">
-              <div className="flex items-start gap-2">
-                <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" />
-                <span>100% Genuine brand-new hardware with 1-Year Official Warranty</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" />
-                <span>Instant M-Pesa STK PIN reconciliation with zero delays</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" />
-                <span>eTIMS compliant electronic receipt emailed immediately</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" />
-                <span>Dedicated customer courier tracking from hub to door</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Accordion FAQs */}
-          <div className="space-y-2.5">
-            <h4 className="text-xs font-bold tracking-wider text-indigo-400 uppercase">
-              Frequently Asked Questions
-            </h4>
-            <div className="space-y-2">
-              {faqs.map((faq, index) => {
-                const isOpen = openFaq === index;
+          {support.channels.length > 0 ? (
+            <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {support.channels.map((channel) => {
+                const Icon = SUPPORT_CHANNEL_ICONS[channel.kind];
+                const href = supportChannelHref(channel);
+                const external = href?.startsWith('http') === true;
                 return (
-                  <div
-                    key={index}
-                    className="overflow-hidden rounded-xl border border-line bg-surface transition-colors"
+                  <li
+                    key={channel.id}
+                    className="space-y-1 rounded-xl border border-line bg-surface p-3.5"
                   >
-                    <button
-                      onClick={() => setOpenFaq(isOpen ? null : index)}
-                      className="flex w-full cursor-pointer items-center justify-between gap-3 p-3.5 text-left text-xs font-semibold text-fg-strong hover:text-indigo-300"
-                    >
-                      <span>{faq.q}</span>
-                      <ChevronDown
-                        className={`h-4 w-4 text-fg-muted transition-transform ${isOpen ? 'rotate-180 text-indigo-400' : ''}`}
-                      />
-                    </button>
-                    {isOpen && (
-                      <div className="border-t border-line/80 px-3.5 pt-2.5 pb-3.5 text-xs leading-relaxed text-fg-muted">
-                        {faq.a}
-                      </div>
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-fg-strong">
+                      <Icon className="h-3.5 w-3.5 text-indigo-400" aria-hidden="true" />
+                      {channel.label || channel.kind}
+                    </div>
+                    {href ? (
+                      <a
+                        href={href}
+                        {...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+                        className="block min-h-6 text-xs break-words text-indigo-400 underline-offset-2 hover:underline"
+                      >
+                        {channel.value}
+                      </a>
+                    ) : (
+                      <p className="text-xs break-words text-fg-muted">{channel.value}</p>
                     )}
-                  </div>
+                    {channel.detail ? (
+                      <span className="block text-[11px] text-fg-subtle">{channel.detail}</span>
+                    ) : null}
+                  </li>
                 );
               })}
-            </div>
-          </div>
+            </ul>
+          ) : null}
+
+          {support.guarantees.length > 0 ? (
+            <section className="space-y-3 rounded-xl border border-line bg-surface p-4">
+              <h3 className="flex items-center gap-1.5 text-xs font-bold tracking-wider text-fg-strong uppercase">
+                <ShieldCheck className="h-4 w-4 text-emerald-600" aria-hidden="true" />
+                {support.guaranteesTitle}
+              </h3>
+              <ul className="grid grid-cols-1 gap-2 text-xs text-fg sm:grid-cols-2">
+                {support.guarantees.map((g) => (
+                  <li key={g.id} className="flex items-start gap-2">
+                    <CheckCircle2
+                      className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600"
+                      aria-hidden="true"
+                    />
+                    <span>{g.text}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
+          {support.faqs.length > 0 ? (
+            <section className="space-y-2.5">
+              <h3 className="text-xs font-bold tracking-wider text-indigo-400 uppercase">
+                {support.faqsTitle}
+              </h3>
+              <div className="space-y-2">
+                {support.faqs.map((faq) => {
+                  const open = openFaq === faq.id;
+                  const panelId = `${titleId}-faq-${faq.id}`;
+                  return (
+                    <div
+                      key={faq.id}
+                      className="overflow-hidden rounded-xl border border-line bg-surface transition-colors"
+                    >
+                      <h4>
+                        <button
+                          type="button"
+                          aria-expanded={open}
+                          aria-controls={panelId}
+                          onClick={() => setOpenFaq(open ? null : faq.id)}
+                          className="flex min-h-11 w-full cursor-pointer items-center justify-between gap-3 p-3.5 text-left text-xs font-semibold text-fg-strong hover:text-indigo-300"
+                        >
+                          <span>{faq.question}</span>
+                          <ChevronDown
+                            aria-hidden="true"
+                            className={`h-4 w-4 shrink-0 text-fg-muted transition-transform ${open ? 'rotate-180 text-indigo-400' : ''}`}
+                          />
+                        </button>
+                      </h4>
+                      {open ? (
+                        <div
+                          id={panelId}
+                          className="border-t border-line/80 px-3.5 pt-2.5 pb-3.5 text-xs leading-relaxed whitespace-pre-line text-fg-muted"
+                        >
+                          {faq.answer}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
         </div>
 
-        {/* Footer */}
         <div className="flex items-center justify-end border-t border-line bg-surface p-4 sm:p-5">
           <button
+            type="button"
             onClick={onClose}
-            className="cursor-pointer rounded-lg bg-indigo-600 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-indigo-500"
+            className="min-h-11 cursor-pointer rounded-lg bg-indigo-600 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-indigo-500"
           >
-            Got It, Thanks!
+            Close
           </button>
         </div>
       </div>
