@@ -15,6 +15,8 @@ import {
 } from 'lucide-react';
 import { CompanyBrand } from '@/components/ui/CompanyBrand';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
+import { useCompanyUiConfig } from '@/components/company/CompanyUiConfigProvider';
+import { hasSupportContent } from '@/config/company-ui';
 import { logoutAction } from '@/server/domains/auth/actions';
 import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
 
@@ -43,6 +45,7 @@ export function Navbar({
   searchQuery = '',
   onSearchChange,
 }: NavbarProps) {
+  const { support } = useCompanyUiConfig();
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement>(null);
 
@@ -219,17 +222,19 @@ export function Navbar({
                 >
                   <Truck className="h-4 w-4" /> Track order
                 </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setIsAccountMenuOpen(false);
-                    onOpenHelp();
-                  }}
-                  className="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg hover:bg-hover"
-                >
-                  <HelpCircle className="h-4 w-4" /> Help & support
-                </button>
+                {hasSupportContent(support) ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setIsAccountMenuOpen(false);
+                      onOpenHelp();
+                    }}
+                    className="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg hover:bg-hover"
+                  >
+                    <HelpCircle className="h-4 w-4" /> {support.name}
+                  </button>
+                ) : null}
                 <div className="flex min-h-12 items-center justify-between border-t border-line px-3 py-1 sm:hidden">
                   <span className="text-sm text-fg">Appearance</span>
                   <ThemeToggle />

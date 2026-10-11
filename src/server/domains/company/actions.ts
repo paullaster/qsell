@@ -10,7 +10,9 @@ import { getContainer } from '@/server/di/container';
 import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
 import {
   resolveCompanyUiConfig,
+  resolveSupportConfig,
   toCompanyUiConfigRaw,
+  type CompanySupportConfig,
   type CompanyUiConfig,
   type CompanyUiConfigRaw,
 } from '@/config/company-ui';
@@ -22,6 +24,7 @@ function revalidateCompanySurfaces() {
   revalidatePath('/admin/company/profile');
   revalidatePath('/admin/company/appearance');
   revalidatePath('/admin/company/modules');
+  revalidatePath('/admin/company/support');
   revalidatePath('/admin/orders');
 }
 
@@ -71,9 +74,29 @@ export async function updateCompanySettingsAction(
   const payload = { ...updates };
   if (updates.uiConfig !== undefined) {
     // Persist only the sanitized/resolved shape so bad client data cannot accumulate.
-    payload.uiConfig = toCompanyUiConfigRaw(resolveCompanyUiConfig(updates.uiConfig));
+    // Support content is owned by updateCompanySupportAction: keep what is stored so a stale
+    // Appearance/Modules form can never overwrite it.
+    const current = await companySettings.ensureSeeded();
+    payload.uiConfig = {
+      ...toCompanyUiConfigRaw(resolveCompanyUiConfig(updates.uiConfig)),
+      support: resolveCompanyUiConfig(current.uiConfig).support,
+    };
   }
   const updated = await companySettings.update(payload);
+  revalidateCompanySurfaces();
+  return updated;
+}
+
+/** Replace the storefront help & support content (name, channels, guarantees, FAQs). */
+export async function updateCompanySupportAction(
+  support: Partial<CompanySupportConfig>,
+): Promise<CompanySettingsRow> {
+  await requirePermission('company:manage');
+  const { companySettings } = getContainer();
+  const updated = await companySettings.setUiConfigSection(
+    'support',
+    resolveSupportConfig(support),
+  );
   revalidateCompanySurfaces();
   return updated;
 }

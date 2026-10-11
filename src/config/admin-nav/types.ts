@@ -33,6 +33,7 @@ export type AdminNavIconName =
   | 'KeyRound'
   | 'UserCog'
   | 'Fingerprint'
+  | 'LifeBuoy'
   | 'Activity';
 
 export interface AdminNavItem {

@@ -1,4 +1,4 @@
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   companySettings,
@@ -125,6 +125,27 @@ export class CompanySettingsRepository {
       .update(companySettings)
       .set({
         ...updates,
+        updatedAt: new Date(),
+      })
+      .where(eq(companySettings.id, current.id))
+      .returning();
+    if (!updated) {
+      throw new Error('Failed to update company settings');
+    }
+    return updated;
+  }
+
+  /**
+   * Atomically replace one top-level key of `ui_config` without touching the others,
+   * so concurrent edits to different config sections cannot clobber each other.
+   */
+  async setUiConfigSection(key: string, value: unknown): Promise<CompanySettingsRow> {
+    const current = await this.ensureSeeded();
+    const patch = JSON.stringify({ [key]: value });
+    const [updated] = await this.db
+      .update(companySettings)
+      .set({
+        uiConfig: sql`coalesce(${companySettings.uiConfig}, '{}'::jsonb) || ${patch}::jsonb`,
         updatedAt: new Date(),
       })
       .where(eq(companySettings.id, current.id))

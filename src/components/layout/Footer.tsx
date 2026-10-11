@@ -1,8 +1,11 @@
 'use client';
 
 import React from 'react';
-import { Truck, Receipt, Phone, Mail } from 'lucide-react';
+import { Truck, Receipt } from 'lucide-react';
 import { CompanyBrand } from '@/components/ui/CompanyBrand';
+import { useCompanyUiConfig } from '@/components/company/CompanyUiConfigProvider';
+import { SUPPORT_CHANNEL_ICONS } from '@/components/store/CustomerHelpModal';
+import { supportChannelHref } from '@/config/company-ui';
 import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
 
 interface FooterProps {
@@ -13,8 +16,6 @@ interface FooterProps {
     | 'tagline'
     | 'logoUrl'
     | 'accentColor'
-    | 'phone'
-    | 'email'
     | 'streetAddress'
     | 'city'
     | 'country'
@@ -24,6 +25,8 @@ interface FooterProps {
 }
 
 export function Footer({ company, onOpenTrackOrder, onOpenHelp }: FooterProps) {
+  const { support } = useCompanyUiConfig();
+  const hasHelp = support.faqs.length > 0 || support.guarantees.length > 0;
   return (
     <footer className="mt-16 w-full border-t border-line bg-surface py-10 text-xs text-fg-muted">
       <div className="storefront-shell space-y-8">
@@ -44,44 +47,63 @@ export function Footer({ company, onOpenTrackOrder, onOpenHelp }: FooterProps) {
             </p>
           </div>
 
-          <div className="space-y-3">
+          <div className="space-y-3 md:col-span-2">
             <h4 className="text-[10px] font-bold tracking-wider text-fg-strong uppercase">
-              Customer Support
+              {support.name}
             </h4>
-            <ul className="space-y-2 text-xs text-fg-muted">
-              <li>
-                <button
-                  onClick={onOpenTrackOrder}
-                  className="flex cursor-pointer items-center gap-1.5 text-left transition-colors hover:text-fg-strong"
-                >
-                  <Truck className="h-3.5 w-3.5 text-indigo-400" /> Track My Order
-                </button>
-              </li>
-              <li>
-                <button
-                  onClick={onOpenHelp}
-                  className="flex cursor-pointer items-center gap-1.5 text-left transition-colors hover:text-fg-strong"
-                >
-                  <Receipt className="h-3.5 w-3.5 text-emerald-600" /> Help, Shipping & Returns
-                </button>
-              </li>
+            <ul className="grid grid-cols-1 gap-x-6 gap-y-2 text-xs text-fg-muted sm:grid-cols-2">
+              {onOpenTrackOrder ? (
+                <li>
+                  <button
+                    type="button"
+                    onClick={onOpenTrackOrder}
+                    className="flex min-h-8 cursor-pointer items-center gap-1.5 text-left transition-colors hover:text-fg-strong"
+                  >
+                    <Truck className="h-3.5 w-3.5 text-indigo-400" aria-hidden="true" /> Track My
+                    Order
+                  </button>
+                </li>
+              ) : null}
+              {onOpenHelp && hasHelp ? (
+                <li>
+                  <button
+                    type="button"
+                    onClick={onOpenHelp}
+                    className="flex min-h-8 cursor-pointer items-center gap-1.5 text-left transition-colors hover:text-fg-strong"
+                  >
+                    <Receipt className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />{' '}
+                    {support.faqs.length > 0 ? support.faqsTitle : support.guaranteesTitle}
+                  </button>
+                </li>
+              ) : null}
+              {support.channels.map((channel) => {
+                const Icon = SUPPORT_CHANNEL_ICONS[channel.kind];
+                const href = supportChannelHref(channel);
+                const external = href?.startsWith('http') === true;
+                return (
+                  <li key={channel.id} className="flex min-h-8 items-start gap-1.5">
+                    <Icon
+                      className="mt-0.5 h-3.5 w-3.5 shrink-0 text-indigo-400"
+                      aria-hidden="true"
+                    />
+                    {href ? (
+                      <a
+                        href={href}
+                        {...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+                        aria-label={
+                          channel.label ? `${channel.label}: ${channel.value}` : undefined
+                        }
+                        className="break-words text-fg hover:text-fg-strong hover:underline"
+                      >
+                        {channel.value}
+                      </a>
+                    ) : (
+                      <span className="break-words text-fg">{channel.value}</span>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
-          </div>
-
-          <div className="space-y-3">
-            <h4 className="text-[10px] font-bold tracking-wider text-fg-strong uppercase">
-              Contact & Inquiries
-            </h4>
-            <div className="space-y-2 text-xs text-fg-muted">
-              <div className="flex items-center gap-2">
-                <Phone className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
-                <span className="text-fg">{company.phone}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Mail className="h-3.5 w-3.5 shrink-0 text-indigo-400" />
-                <span className="text-fg">{company.email}</span>
-              </div>
-            </div>
           </div>
         </div>
 
