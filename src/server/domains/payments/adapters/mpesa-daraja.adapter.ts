@@ -1,9 +1,11 @@
-import type {
-  CallbackInput,
-  CallbackResult,
-  InitiatePaymentInput,
-  InitiatePaymentResult,
-  PaymentPort,
+import {
+  probeConnection,
+  type CallbackInput,
+  type CallbackResult,
+  type InitiatePaymentInput,
+  type InitiatePaymentResult,
+  type ConnectionTestResult,
+  type PaymentPort,
 } from '../port';
 import type { MpesaDarajaCredentials } from '../types';
 import { extractPaymentReference } from '../payment-reference';
@@ -29,6 +31,22 @@ function darajaTokenCacheKey(apiBaseUrl: string, consumerKey: string): string {
 
 export class MpesaDarajaAdapter implements PaymentPort {
   readonly code = 'mpesa_daraja' as const;
+  readonly capabilities = ['collect'] as const;
+
+  async testConnection(
+    credentials: Record<string, unknown>,
+    _settings: Record<string, unknown>,
+    apiBaseUrl: string,
+  ): Promise<ConnectionTestResult> {
+    const creds = credentials as unknown as MpesaDarajaCredentials;
+    return probeConnection('M-Pesa (Daraja)', async () => {
+      if (!creds.consumerKey || !creds.consumerSecret) throw new Error('The consumer key and secret are not saved yet.');
+      // Always ask Safaricom afresh: a cached token would say nothing about these credentials.
+      darajaTokenCache.delete(darajaTokenCacheKey(apiBaseUrl, creds.consumerKey.trim()));
+      await this.getAccessToken(apiBaseUrl, creds);
+    });
+  }
+
 
   private async getAccessToken(
     apiBaseUrl: string,

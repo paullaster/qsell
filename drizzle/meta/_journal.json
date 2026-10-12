@@ -281,6 +281,20 @@
       "when": 1791716197668,
       "tag": "0039_reporting_indexes_and_permissions",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1791773582955,
+      "tag": "0040_finance_f0_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1791807340951,
+      "tag": "0041_finance_f1_receivables",
+      "breakpoints": true
     }
   ]
 }

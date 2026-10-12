@@ -42,12 +42,50 @@ export interface CallbackResult {
   errorMessage?: string;
 }
 
+/** What a connected provider can do. The screens offer only what the adapter declares. */
+export type ProviderCapability =
+  | 'collect'
+  | 'payout'
+  | 'reverse'
+  | 'status_query'
+  | 'register_urls'
+  | 'balance'
+  | 'statement';
+
+export interface ConnectionTestResult {
+  ok: boolean;
+  /** Safe to show: never contains a credential. */
+  message: string;
+}
+
+/** Runs a harmless sign-in call and turns its outcome into a result a person can read. */
+export async function probeConnection(
+  label: string,
+  signIn: () => Promise<unknown>,
+): Promise<ConnectionTestResult> {
+  try {
+    await signIn();
+    return { ok: true, message: `Signed in to ${label} successfully.` };
+  } catch (error) {
+    const text = error instanceof Error ? error.message : String(error);
+    return { ok: false, message: text.replace(/\s+/g, ' ').trim().slice(0, 300) };
+  }
+}
+
 /**
  * Payment provider contract. Each gateway implements this independently;
  * PaymentService + registry handle DI, attempt persistence, and callback routing.
  */
 export interface PaymentPort {
   readonly code: PaymentProviderCode;
+  /** What this adapter can do today. */
+  readonly capabilities: readonly ProviderCapability[];
+  /** Signs in with the saved credentials without moving money. */
+  testConnection(
+    credentials: Record<string, unknown>,
+    settings: Record<string, unknown>,
+    apiBaseUrl: string,
+  ): Promise<ConnectionTestResult>;
   initiate(
     input: InitiatePaymentInput,
     credentials: Record<string, unknown>,

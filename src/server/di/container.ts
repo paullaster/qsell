@@ -61,6 +61,7 @@ import { KraSigningPolicy } from '@/server/domains/kra/signing/policy';
 import { DecisionLog } from '@/server/kernel/decision-log/service';
 import { ReasonCodes } from '@/server/kernel/reason-codes/service';
 import { NumberSeriesService } from '@/server/kernel/numbering/service';
+import { createFinanceServices, type FinanceServices } from '@/server/domains/finance';
 import { CreditNoteService } from '@/server/domains/credit-notes/service';
 import { DocumentSigningService } from '@/server/domains/kra/signing/service';
 import { getWorkerUtils } from '@/server/queue/worker';
@@ -118,6 +119,8 @@ export interface AppContainer {
   decisionLog: DecisionLog;
   reasonCodes: ReasonCodes;
   numbering: NumberSeriesService;
+  /** Chart of accounts, fiscal periods, posting setup, the posting engine, journals, ledger reports. */
+  finance: FinanceServices;
   approvals: ApprovalEngine;
   approvalConfig: ApprovalConfigService;
   /** Parks actions that need approval and carries them out when approved. */
@@ -347,6 +350,7 @@ export function getContainer(): AppContainer {
     decisionLog,
     reasonCodes,
     numbering,
+    finance: createFinanceServices(drizzleDb, decisionLog, { numbering, reasons: reasonCodes }),
     approvals,
     approvalConfig: new ApprovalConfigService(drizzleDb, decisionLog, reasonCodes),
     approvalGate,

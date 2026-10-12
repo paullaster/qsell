@@ -36,7 +36,10 @@ export type CallbackOutcome = 'successful' | 'failed' | 'pending' | 'unclassifie
 
 /** AES-GCM sealed credentials stored in payment_provider_configs.credentials_encrypted */
 export interface EncryptedCredentialsBlob {
-  v: 1;
+  /** 1 = sealed before key ids existed (opened with the current key); 2 = carries `kid`. */
+  v: 1 | 2;
+  /** Id of the master key that sealed this blob (v2). Lets keys be rotated. */
+  kid?: string;
   iv: string; // base64
   tag: string; // base64
   ciphertext: string; // base64

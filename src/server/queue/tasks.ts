@@ -350,6 +350,33 @@ export const expireLoyaltyPoints = async (_payload: unknown, helpers: JobHelpers
   if (lapsed > 0) helpers.logger.info(`Loyalty expiry: ${lapsed} points lapsed`);
 };
 
+/** Worker cron task: make sure the monthly ledger partitions exist well ahead of time. */
+export const financeEnsurePartitions = async (_payload: unknown, helpers: JobHelpers) => {
+  const created = await getContainer().finance.maintenance.ensurePartitions();
+  if (created > 0) helpers.logger.info(`Finance: created ${created} ledger partitions`);
+};
+
+/** Worker cron task: every stored shortcut figure must still agree with the record it summarises. */
+export const financeIntegrityCheck = async (_payload: unknown, helpers: JobHelpers) => {
+  const container = getContainer();
+  const company = await container.companySettings.ensureSeeded();
+  const report = await container.finance.maintenance.checkIntegrity(company.id);
+  if (!report.ok) {
+    helpers.logger.error(
+      `FINANCE INTEGRITY ALERT: balance drift ${report.balanceDrift}, customer ledger drift ${report.customerDrift}, chain problems ${JSON.stringify(report.chainProblems)}`,
+    );
+    // Failing the job makes it retry and shows up in the worker's failed-job list.
+    throw new Error('Finance integrity check found disagreements; see the audit trail.');
+  }
+};
+
+/** Worker cron task: seal provider credentials under the current master key. */
+export const resealProviderCredentials = async (_payload: unknown, helpers: JobHelpers) => {
+  const r = await getContainer().payments.resealCredentials();
+  if (r.resealed > 0) helpers.logger.info(`Credentials resealed under the current key: ${r.resealed}`);
+  if (r.failed.length > 0) helpers.logger.error(`Credentials that could not be resealed: ${JSON.stringify(r.failed)}`);
+};
+
 export const tasks = {
   'process-payment-callback': processPaymentCallback,
   'process-webhook': processWebhook,
@@ -360,4 +387,7 @@ export const tasks = {
   'purge-media': purgeMedia,
   'sweep-overdue-approvals': sweepOverdueApprovals,
   'expire-loyalty-points': expireLoyaltyPoints,
+  'finance-ensure-partitions': financeEnsurePartitions,
+  'finance-integrity-check': financeIntegrityCheck,
+  'reseal-provider-credentials': resealProviderCredentials,
 };

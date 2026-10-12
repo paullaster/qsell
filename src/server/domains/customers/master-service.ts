@@ -3,6 +3,7 @@ import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   customerAddresses,
+  customerDetailedEntries,
   customerLedgerEntries,
   customerProfiles,
   customers,
@@ -436,6 +437,13 @@ export class CustomerMasterService {
   async deleteCustomer(companyId: string, id: string): Promise<void> {
     const found = await this.getCustomer(companyId, id);
     if (!found) throw new Error('Customer not found.');
+    // The customer ledger is a record that cannot be deleted, so a customer with history is blocked
+    // instead (this also stops the database refusing the cascade with an unreadable message).
+    if (found.ledger.length > 0) {
+      throw new Error(
+        `${found.customer.name} has financial history and cannot be deleted. Block the customer instead.`,
+      );
+    }
     await this.db
       .delete(customers)
       .where(and(eq(customers.id, id), eq(customers.companyId, companyId)));
@@ -569,41 +577,72 @@ export class CustomerMasterService {
     due.setDate(due.getDate() + input.customer.paymentTermDays);
     const description = openReceivable ? 'Credit invoice' : 'Cash invoice';
 
-    await this.db.insert(customerLedgerEntries).values({
-      companyId: input.customer.companyId,
-      customerId: input.customer.id,
-      orderId: input.orderId,
-      documentType: 'invoice',
-      documentNo: input.orderNumber,
-      description,
-      amount: money(amount),
-      remainingAmount: money(openReceivable ? amount : 0),
-      dueDate: due,
-      // Set to its final value by the signing service once the invoice has been considered.
-      kraTransmissionStatus: 'pending',
-    });
-
-    if (openReceivable) {
-      await this.db
-        .update(customers)
-        .set({
-          balance: money(num(input.customer.balance) + amount),
-          updatedAt: new Date(),
+    // One transaction: the ledger entry, its history, the balance and the transaction-ledger debit
+    // either all exist or none do.
+    await this.db.transaction(async (tx) => {
+      const [entry] = await tx
+        .insert(customerLedgerEntries)
+        .values({
+          companyId: input.customer.companyId,
+          customerId: input.customer.id,
+          orderId: input.orderId,
+          documentType: 'invoice',
+          documentNo: input.orderNumber,
+          description,
+          amount: money(amount),
+          remainingAmount: money(openReceivable ? amount : 0),
+          dueDate: due,
+          // Set to its final value by the signing service once the invoice has been considered.
+          kraTransmissionStatus: 'pending',
+          postingDate: businessDate(),
+          currency: input.currency.trim().toUpperCase(),
         })
-        .where(eq(customers.id, input.customer.id));
-    }
+        .returning({ id: customerLedgerEntries.id });
+      const history: (typeof customerDetailedEntries.$inferInsert)[] = [
+        {
+          companyId: input.customer.companyId,
+          customerId: input.customer.id,
+          ledgerEntryId: entry!.id,
+          entryType: 'initial',
+          amount: money(amount),
+          postingDate: businessDate(),
+        },
+      ];
+      if (!openReceivable) {
+        // A cash customer pays at the sale, so nothing stays open on the invoice.
+        history.push({
+          companyId: input.customer.companyId,
+          customerId: input.customer.id,
+          ledgerEntryId: entry!.id,
+          entryType: 'application',
+          amount: money(-amount),
+          postingDate: businessDate(),
+        });
+      }
+      await tx.insert(customerDetailedEntries).values(history);
 
-    await this.ledger.post({
-      companyId: input.customer.companyId,
-      customerId: input.customer.id,
-      orderId: input.orderId,
-      documentType: 'invoice',
-      documentNo: input.orderNumber,
-      description,
-      direction: 'debit',
-      amount,
-      currency: input.currency,
-      idempotencyKey: `invoice:${input.orderId}`,
+      if (openReceivable) {
+        await tx
+          .update(customers)
+          .set({ balance: sql`${customers.balance} + ${money(amount)}::numeric`, updatedAt: new Date() })
+          .where(eq(customers.id, input.customer.id));
+      }
+
+      await this.ledger.post(
+        {
+          companyId: input.customer.companyId,
+          customerId: input.customer.id,
+          orderId: input.orderId,
+          documentType: 'invoice',
+          documentNo: input.orderNumber,
+          description,
+          direction: 'debit',
+          amount,
+          currency: input.currency,
+          idempotencyKey: `invoice:${input.orderId}`,
+        },
+        tx,
+      );
     });
   }
 
@@ -654,72 +693,108 @@ export class CustomerMasterService {
     if (!Number.isFinite(amount) || amount <= 0)
       throw new Error('Payment amount must be greater than 0.');
 
-    const open = found.ledger
-      .filter((entry) => entry.documentType === 'invoice' && num(entry.remainingAmount) > 0)
-      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-    const openTotal = open.reduce((sum, entry) => sum + num(entry.remainingAmount), 0);
-    if (amount > openTotal + 0.001) {
-      throw new Error('Payment is larger than the open balance.');
-    }
-
     const documentNo = input.reference?.trim() || '';
     if (!documentNo) {
       throw new Error('A payment needs the provider transaction reference.');
     }
-    const currency = await this.currencyForPosting(
-      input.currency,
-      input.orderId || open.find((entry) => entry.orderId)?.orderId,
-    );
 
-    let left = amount;
-    for (const entry of open) {
-      if (left <= 0) break;
-      const remaining = num(entry.remainingAmount);
-      const applied = Math.min(remaining, left);
-      await this.db
-        .update(customerLedgerEntries)
-        .set({ remainingAmount: money(remaining - applied) })
-        .where(eq(customerLedgerEntries.id, entry.id));
-      left -= applied;
-    }
+    return this.db.transaction(async (tx) => {
+      // Lock the open invoices so two payments arriving together cannot both settle the same one.
+      const open = await tx
+        .select()
+        .from(customerLedgerEntries)
+        .where(
+          and(
+            eq(customerLedgerEntries.customerId, customerId),
+            eq(customerLedgerEntries.documentType, 'invoice'),
+            sql`${customerLedgerEntries.remainingAmount} > 0`,
+          ),
+        )
+        .orderBy(asc(customerLedgerEntries.createdAt), asc(customerLedgerEntries.id))
+        .for('update');
+      const openTotal = open.reduce((sum, entry) => sum + num(entry.remainingAmount), 0);
+      if (amount > openTotal + 0.001) {
+        throw new Error('Payment is larger than the open balance.');
+      }
+      const currency = await this.currencyForPosting(
+        input.currency,
+        input.orderId || open.find((entry) => entry.orderId)?.orderId,
+      );
 
-    await this.db.insert(customerLedgerEntries).values({
-      companyId,
-      customerId,
-      orderId: input.orderId || null,
-      documentType: 'payment',
-      documentNo,
-      description: 'Customer payment',
-      amount: money(-amount),
-      remainingAmount: '0',
-      kraTransmissionStatus: 'not_applicable',
+      const [payment] = await tx
+        .insert(customerLedgerEntries)
+        .values({
+          companyId,
+          customerId,
+          orderId: input.orderId || null,
+          documentType: 'payment',
+          documentNo,
+          description: 'Customer payment',
+          amount: money(-amount),
+          remainingAmount: '0',
+          kraTransmissionStatus: 'not_applicable',
+          postingDate: businessDate(),
+          currency,
+        })
+        .returning({ id: customerLedgerEntries.id });
+
+      const history: (typeof customerDetailedEntries.$inferInsert)[] = [
+        {
+          companyId,
+          customerId,
+          ledgerEntryId: payment!.id,
+          entryType: 'initial',
+          amount: money(-amount),
+          postingDate: businessDate(),
+        },
+      ];
+      let left = amount;
+      for (const entry of open) {
+        if (left <= 0) break;
+        const remaining = num(entry.remainingAmount);
+        const applied = Math.min(remaining, left);
+        await tx
+          .update(customerLedgerEntries)
+          .set({ remainingAmount: money(remaining - applied) })
+          .where(eq(customerLedgerEntries.id, entry.id));
+        const base = { companyId, customerId, entryType: 'application' as const, postingDate: businessDate() };
+        history.push(
+          { ...base, ledgerEntryId: entry.id, amount: money(-applied), appliedToEntryId: payment!.id },
+          { ...base, ledgerEntryId: payment!.id, amount: money(applied), appliedToEntryId: entry.id },
+        );
+        left -= applied;
+      }
+      await tx.insert(customerDetailedEntries).values(history);
+
+      await this.ledger.post(
+        {
+          companyId,
+          customerId,
+          orderId: input.orderId || null,
+          documentType: 'payment',
+          documentNo,
+          description: 'Customer payment',
+          direction: 'credit',
+          amount,
+          currency,
+          transactionReference: documentNo,
+          idempotencyKey: input.orderId
+            ? `payment:${input.orderId}:${documentNo}:${money(amount)}`
+            : `payment:${customerId}:${documentNo}:${money(amount)}:${open.map((entry) => entry.id).join(',')}`,
+        },
+        tx,
+      );
+
+      const [updated] = await tx
+        .update(customers)
+        .set({
+          balance: sql`GREATEST(${customers.balance} - ${money(amount)}::numeric, 0)`,
+          updatedAt: new Date(),
+        })
+        .where(eq(customers.id, customerId))
+        .returning();
+      return updated!;
     });
-
-    await this.ledger.post({
-      companyId,
-      customerId,
-      orderId: input.orderId || null,
-      documentType: 'payment',
-      documentNo,
-      description: 'Customer payment',
-      direction: 'credit',
-      amount,
-      currency,
-      transactionReference: documentNo,
-      idempotencyKey: input.orderId
-        ? `payment:${input.orderId}:${documentNo}:${money(amount)}`
-        : `payment:${customerId}:${documentNo}:${money(amount)}:${open.map((entry) => entry.id).join(',')}`,
-    });
-
-    const [updated] = await this.db
-      .update(customers)
-      .set({
-        balance: money(Math.max(0, num(found.customer.balance) - amount)),
-        updatedAt: new Date(),
-      })
-      .where(eq(customers.id, customerId))
-      .returning();
-    return updated!;
   }
 
   private async currencyForPosting(

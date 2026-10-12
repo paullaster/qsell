@@ -1,15 +1,31 @@
-import type {
-  CallbackInput,
-  CallbackResult,
-  InitiatePaymentInput,
-  InitiatePaymentResult,
-  PaymentPort,
+import {
+  probeConnection,
+  type CallbackInput,
+  type CallbackResult,
+  type InitiatePaymentInput,
+  type InitiatePaymentResult,
+  type ConnectionTestResult,
+  type PaymentPort,
 } from '../port';
 import type { PesapalCredentials } from '../types';
 import { extractPaymentReference } from '../payment-reference';
 
 export class PesapalV3Adapter implements PaymentPort {
   readonly code = 'pesapal_v3' as const;
+  readonly capabilities = ['collect'] as const;
+
+  async testConnection(
+    credentials: Record<string, unknown>,
+    _settings: Record<string, unknown>,
+    apiBaseUrl: string,
+  ): Promise<ConnectionTestResult> {
+    const creds = credentials as unknown as PesapalCredentials;
+    return probeConnection('Pesapal', async () => {
+      if (!creds.consumerKey || !creds.consumerSecret) throw new Error('The consumer key and secret are not saved yet.');
+      await this.getAccessToken(apiBaseUrl, creds);
+    });
+  }
+
 
   private async getAccessToken(apiBaseUrl: string, creds: PesapalCredentials): Promise<string> {
     const res = await fetch(`${apiBaseUrl}/api/Auth/RequestToken`, {

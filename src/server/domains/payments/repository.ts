@@ -52,6 +52,14 @@ export class PaymentConfigRepository {
     return rows[0] ?? null;
   }
 
+  /** Remembers the last "Test connection" so the screen can show when it last worked. */
+  async recordTest(id: string, ok: boolean, message: string): Promise<void> {
+    await this.db
+      .update(paymentProviderConfigs)
+      .set({ lastTestAt: new Date(), lastTestOk: ok, lastTestMessage: message.slice(0, 500) })
+      .where(eq(paymentProviderConfigs.id, id));
+  }
+
   async upsert(input: {
     branchId: string;
     providerCode: PaymentProviderCode;
