@@ -32,6 +32,7 @@ const SEED_ROLES: SeedRole[] = [
     isStaff: true,
     grants: [
       ...READ_PERMISSIONS,
+      'reports:all_branches',
       'orders:create',
       'orders:update',
       'orders:approve',
@@ -80,7 +81,8 @@ const SEED_ROLES: SeedRole[] = [
     isSystem: false,
     isStaff: true,
     grants: [
-      ...READ_PERMISSIONS,
+      // Managers see operations; product costs (profit) are an owner/admin decision.
+      ...READ_PERMISSIONS.filter((key) => key !== 'report_profit:read'),
       'orders:create',
       'orders:update',
       'orders:cancel',
