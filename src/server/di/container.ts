@@ -24,6 +24,7 @@ import {
 } from '@/server/adapters/email/nodemailer.adapter';
 import { eq, sql } from 'drizzle-orm';
 import { companySettings, customers, salesQuoteSettings } from '@/server/db/drizzle/schema';
+import { ReportsService } from '@/server/domains/reports/service';
 import { drizzleDb, kernelDb, type DrizzleDb } from '@/server/db/drizzle/client';
 import { CompanySettingsRepository } from '@/server/domains/company/repository';
 import { InvoiceService } from '@/server/domains/invoices/service';
@@ -94,6 +95,7 @@ export interface AppContainer {
   users: UserRepository;
   usersAdmin: UsersAdminRepository;
   accessControl: AccessControlService;
+  reports: ReportsService;
   dimensions: DimensionRepository;
   dimensionSets: DimensionSetService;
   customers: CustomerMasterService;
@@ -319,6 +321,7 @@ export function getContainer(): AppContainer {
     users,
     usersAdmin,
     accessControl,
+    reports: new ReportsService(drizzleDb, accessControl),
     dimensions,
     dimensionSets,
     customers,

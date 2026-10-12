@@ -965,6 +965,9 @@ export const paymentAttempts = pgTable(
     index('payment_attempts_order_idx').on(t.orderId),
     index('payment_attempts_callback_token_idx').on(t.callbackToken),
     index('payment_attempts_branch_idx').on(t.branchId),
+    index('payment_attempts_settled_idx')
+      .on(t.paidAt)
+      .where(sql`${t.status} = 'successful'`),
   ],
 );
 
@@ -1337,6 +1340,10 @@ export const orders = pgTable(
     index('orders_customer_email_idx').on(t.customerEmail),
     index('orders_status_idx').on(t.status),
     index('orders_created_at_idx').on(t.createdAt),
+    index('orders_branch_created_idx').on(t.branchId, t.createdAt),
+    index('orders_payment_attention_idx')
+      .on(t.branchId)
+      .where(sql`${t.paymentStatus} in ('pending_verification', 'discrepancy')`),
     index('orders_dimension_set_idx').on(t.dimensionSetId),
     index('orders_trade_customer_idx').on(t.tradeCustomerId),
   ],
@@ -1479,6 +1486,9 @@ export const customerLedgerEntries = pgTable(
   (t) => [
     index('customer_ledger_customer_idx').on(t.customerId),
     index('customer_ledger_order_idx').on(t.orderId),
+    index('customer_ledger_open_due_idx')
+      .on(t.dueDate)
+      .where(sql`${t.remainingAmount} > 0`),
   ],
 );
 
@@ -2064,6 +2074,9 @@ export const paymentTransactions = pgTable(
     index('payment_transactions_order_idx').on(t.orderId),
     index('payment_transactions_ref_idx').on(t.transactionReference),
     index('payment_transactions_status_idx').on(t.status),
+    index('payment_transactions_settled_idx')
+      .on(t.updatedAt)
+      .where(sql`${t.status} = 'successful'`),
     index('payment_transactions_callback_audit_idx').on(t.callbackAuditId),
   ],
 );
@@ -3179,7 +3192,10 @@ export const orderTenders = pgTable(
     actor: text('actor').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('order_tenders_order_idx').on(t.orderId)],
+  (t) => [
+    index('order_tenders_order_idx').on(t.orderId),
+    index('order_tenders_created_idx').on(t.createdAt),
+  ],
 );
 
 export type RebateProgramRow = typeof rebatePrograms.$inferSelect;

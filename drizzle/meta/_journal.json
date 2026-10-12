@@ -274,6 +274,13 @@
       "when": 1791714099946,
       "tag": "0038_role_is_staff",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1791716197668,
+      "tag": "0039_reporting_indexes_and_permissions",
+      "breakpoints": true
     }
   ]
 }

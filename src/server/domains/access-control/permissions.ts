@@ -13,6 +13,7 @@ export const PERMISSION_CATEGORIES = [
   'Customers',
   'Products & Inventory',
   'Finance & Payments',
+  'Reports & Insights',
   'Company & Settings',
   'Users & Access',
 ] as const;
@@ -42,6 +43,43 @@ export const PERMISSIONS = {
     action: 'export',
     category: 'General',
     description: 'Export analytics reports',
+  },
+
+  'report_sales:read': {
+    resource: 'report_sales',
+    action: 'read',
+    category: 'Reports & Insights',
+    description: 'See sales value, order counts, trends and best-selling products',
+  },
+  'report_collections:read': {
+    resource: 'report_collections',
+    action: 'read',
+    category: 'Reports & Insights',
+    description: 'See money collected, broken down by configured payment method',
+  },
+  'report_profit:read': {
+    resource: 'report_profit',
+    action: 'read',
+    category: 'Reports & Insights',
+    description: 'See gross profit and margin (reveals product costs)',
+  },
+  'report_receivables:read': {
+    resource: 'report_receivables',
+    action: 'read',
+    category: 'Reports & Insights',
+    description: 'See what customers owe and what is overdue',
+  },
+  'report_inventory:read': {
+    resource: 'report_inventory',
+    action: 'read',
+    category: 'Reports & Insights',
+    description: 'See stock health: out of stock, low stock and stock value',
+  },
+  'reports:all_branches': {
+    resource: 'reports',
+    action: 'all_branches',
+    category: 'Reports & Insights',
+    description: 'Run reports across every branch instead of only your own branch',
   },
 
   'orders:read': {
