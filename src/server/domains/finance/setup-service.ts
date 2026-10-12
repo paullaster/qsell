@@ -355,6 +355,9 @@ export class FinanceSetupService {
           fxGainAccountId: acct(g.fxGain),
           fxLossAccountId: acct(g.fxLoss),
           serviceChargeAccountId: acct(g.serviceCharge),
+          rebateExpenseAccountId: acct(g.rebateExpense),
+          giftCardLiabilityAccountId: acct(g.giftCardLiability),
+          loyaltyProvisionAccountId: acct(g.loyaltyProvision),
         })),
       );
 
@@ -366,6 +369,7 @@ export class FinanceSetupService {
           baseCurrency,
           chartTemplate: template.code,
           chartAppliedAt: new Date(),
+          outputTaxAccountId: acct(template.outputTaxAccount),
         })
         .onConflictDoUpdate({
           target: financeSettings.companyId,

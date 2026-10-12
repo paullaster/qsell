@@ -664,6 +664,18 @@ export const PERMISSIONS = {
     category: 'Finance & Payments',
     description: 'Set the date from which sales documents post to the general ledger',
   },
+  'sales_posting:read': {
+    resource: 'sales_posting',
+    action: 'read',
+    category: 'Finance & Payments',
+    description: 'View sales waiting to be posted to the general ledger and the receivables reconciliation',
+  },
+  'sales_posting:retry': {
+    resource: 'sales_posting',
+    action: 'retry',
+    category: 'Finance & Payments',
+    description: 'Retry sales that could not be posted to the general ledger',
+  },
   'payments:read': {
     resource: 'payments',
     action: 'read',

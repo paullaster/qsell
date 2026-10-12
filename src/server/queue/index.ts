@@ -20,6 +20,8 @@ export async function startWorker(): Promise<void> {
       '27 3 * * * purge-product-imports',
       '37 3 * * * purge-media',
       '47 3 * * * expire-loyalty-points',
+      // Sales reach the ledger within a minute; failures retry with a growing delay.
+      '* * * * * finance-post-sales',
       '7 3 * * * finance-ensure-partitions',
       '57 3 * * * finance-integrity-check',
       '2 4 * * * reseal-provider-credentials',

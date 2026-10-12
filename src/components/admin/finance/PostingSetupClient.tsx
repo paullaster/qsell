@@ -4,6 +4,7 @@ import { useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   addPostingGroupAction,
+  saveCustomerGroupAction,
   saveGeneralSetupAction,
   type PostingSetupView,
 } from '@/server/domains/finance/actions';
@@ -25,7 +26,10 @@ const CUSTOMER: [string, string][] = [
   ['rounding', 'Rounding'],
   ['fx_gain', 'Exchange gains'],
   ['fx_loss', 'Exchange losses'],
-  ['service_charge', 'Service charges'],
+  ['service_charge', 'Shipping and service income'],
+  ['rebate_expense', 'Rebates given (cost)'],
+  ['gift_card_liability', 'Gift cards (owed to holders)'],
+  ['loyalty_provision', 'Loyalty points (owed)'],
 ];
 
 export function PostingSetupClient({ view }: { view: PostingSetupView }) {
@@ -36,6 +40,7 @@ export function PostingSetupClient({ view }: { view: PostingSetupView }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<Record<string, string>>({});
   const [from, setFrom] = useState(today());
+  const [custEdit, setCustEdit] = useState<{ code: string; accounts: Record<string, string> } | null>(null);
   const [group, setGroup] = useState<{ kind: 'business' | 'product'; code: string; name: string } | null>(null);
 
   const acctName = (id: string | null) => {
@@ -57,6 +62,18 @@ export function PostingSetupClient({ view }: { view: PostingSetupView }) {
     setAccounts(Object.fromEntries(GENERAL.map(([k]) => [k, row.accounts[k] ?? ''])));
     setFrom(today());
     setNotice(null);
+  };
+
+  const saveCust = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!custEdit) return;
+    setBusy(true);
+    const res = await attempt(saveCustomerGroupAction(custEdit.code, Object.fromEntries(CUSTOMER.map(([k]) => [k, custEdit.accounts[k] || null]))));
+    setBusy(false);
+    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    setNotice({ kind: 'ok', text: `Customer group ${custEdit.code} saved.` });
+    setCustEdit(null);
+    router.refresh();
   };
 
   const save = async (e: React.FormEvent) => {
@@ -164,16 +181,37 @@ export function PostingSetupClient({ view }: { view: PostingSetupView }) {
         <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           {view.customer.map((c) => (
             <li key={c.id} className="rounded-xl border border-line bg-surface-raised p-4">
-              <p className="text-sm font-bold text-fg-strong"><span className="font-mono">{c.code}</span> {c.name}</p>
-              <dl className="mt-2 space-y-1 text-xs">
-                {CUSTOMER.map(([k, label]) => (
-                  <div key={k} className="flex justify-between gap-3"><dt className="text-fg-muted">{label}</dt><dd className="text-right text-fg">{acctName(c.accounts[k] ?? null)}</dd></div>
-                ))}
-              </dl>
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-sm font-bold text-fg-strong"><span className="font-mono">{c.code}</span> {c.name}</p>
+                {view.canEdit && custEdit?.code !== c.code ? (
+                  <button type="button" className={buttonClass} onClick={() => setCustEdit({ code: c.code, accounts: Object.fromEntries(CUSTOMER.map(([k]) => [k, c.accounts[k] ?? ''])) })} aria-label={`Edit accounts of ${c.code}`}>Edit</button>
+                ) : null}
+              </div>
+              {custEdit?.code === c.code ? (
+                <form onSubmit={saveCust} className="mt-3 space-y-3" aria-label={`Accounts of ${c.code}`}>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    {CUSTOMER.map(([k, label]) => (
+                      <Field key={k} id={`${uid}-c-${c.code}-${k}`} label={label}>
+                        <select id={`${uid}-c-${c.code}-${k}`} value={custEdit.accounts[k] ?? ''} onChange={(e) => setCustEdit({ ...custEdit, accounts: { ...custEdit.accounts, [k]: e.target.value } })} className={fieldClass}>
+                          <option value="">— not set —</option>
+                          {view.accounts.map((a) => <option key={a.id} value={a.id}>{a.no} {a.name}</option>)}
+                        </select>
+                      </Field>
+                    ))}
+                  </div>
+                  <div className="flex gap-2"><button type="submit" className={primaryClass} disabled={busy}>Save accounts</button><button type="button" className={buttonClass} onClick={() => setCustEdit(null)}>Cancel</button></div>
+                </form>
+              ) : (
+                <dl className="mt-2 space-y-1 text-xs">
+                  {CUSTOMER.map(([k, label]) => (
+                    <div key={k} className="flex justify-between gap-3"><dt className="text-fg-muted">{label}</dt><dd className="text-right text-fg">{acctName(c.accounts[k] ?? null)}</dd></div>
+                  ))}
+                </dl>
+              )}
             </li>
           ))}
         </ul>
-        <p className="text-xs text-fg-muted">Customer group accounts are used by receivables, the customer wallet and refunds when those are built.</p>
+        <p className="text-xs text-fg-muted">Customer group accounts are used by receipts, credit invoices, cash sales, rebates, and later the customer wallet and refunds.</p>
       </section>
     </div>
   );

@@ -2856,6 +2856,43 @@ export const financeAttachments = pgTable(
   (t) => [index('finance_attachments_subject_idx').on(t.subjectType, t.subjectId)],
 );
 
+export type SalesPostingKind = 'invoice' | 'cash_sale' | 'credit_payment' | 'rebate_credit';
+export type SalesPostingStatus = 'pending' | 'posted' | 'failed' | 'skipped';
+
+/**
+ * Sales events waiting to reach the general ledger. A sale is saved first and posted a moment
+ * later, so a set-up mistake in the accounts can never stop a customer from buying: the event
+ * waits here, visible, and is retried until someone fixes the setup.
+ */
+export const financeSalesPostings = pgTable(
+  'finance_sales_postings',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    kind: text('kind').$type<SalesPostingKind>().notNull(),
+    /** The order id (invoice, cash sale) or the customer ledger entry id (credit payment, rebate credit). */
+    subjectId: text('subject_id').notNull(),
+    /** The date the event happened; decides whether it is on or after the go-live date. */
+    eventDate: date('event_date', { mode: 'string' }).notNull(),
+    status: text('status').$type<SalesPostingStatus>().notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+    registerId: uuid('register_id'),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    postedAt: timestamp('posted_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('finance_sales_postings_subject_uidx').on(t.companyId, t.kind, t.subjectId),
+    index('finance_sales_postings_due_idx')
+      .on(t.nextAttemptAt)
+      .where(sql`${t.status} IN ('pending','failed')`),
+  ],
+);
+export type FinanceSalesPostingRow = typeof financeSalesPostings.$inferSelect;
+
 export type BankAccountRow = typeof bankAccounts.$inferSelect;
 export type PaymentMethodRow = typeof paymentMethods.$inferSelect;
 export type BankLedgerEntryRow = typeof bankLedgerEntries.$inferSelect;
@@ -3555,6 +3592,13 @@ export const financeSettings = pgTable('finance_settings', {
   salesGlGoLive: date('sales_gl_go_live', { mode: 'string' }),
   /** The customer posting group a customer without one uses. */
   defaultCustomerGroup: text('default_customer_group').notNull().default('DOMESTIC'),
+  /** The business and product groups a sale uses until customers and products carry their own. */
+  defaultBusinessGroup: text('default_business_group').notNull().default('DOMESTIC'),
+  defaultProductGroup: text('default_product_group').notNull().default('GOODS'),
+  /** Where the tax charged on sales is owed (output VAT or sales tax). */
+  outputTaxAccountId: uuid('output_tax_account_id').references((): AnyPgColumn => glAccounts.id, {
+    onDelete: 'restrict',
+  }),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -3747,6 +3791,18 @@ export const customerPostingGroups = pgTable(
       onDelete: 'restrict',
     }),
     serviceChargeAccountId: uuid('service_charge_account_id').references(() => glAccounts.id, {
+      onDelete: 'restrict',
+    }),
+    /** Cost of a rebate credited to a customer's account. */
+    rebateExpenseAccountId: uuid('rebate_expense_account_id').references(() => glAccounts.id, {
+      onDelete: 'restrict',
+    }),
+    /** What is owed to holders of gift cards, debited when a card pays for a sale. */
+    giftCardLiabilityAccountId: uuid('gift_card_liability_account_id').references(() => glAccounts.id, {
+      onDelete: 'restrict',
+    }),
+    /** What is owed for loyalty points, debited when points pay for a sale. */
+    loyaltyProvisionAccountId: uuid('loyalty_provision_account_id').references(() => glAccounts.id, {
       onDelete: 'restrict',
     }),
   },

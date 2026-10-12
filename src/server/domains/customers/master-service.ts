@@ -628,6 +628,15 @@ export class CustomerMasterService {
           .where(eq(customers.id, input.customer.id));
       }
 
+      // A credit invoice reaches the general ledger once it is live; queued in this same transaction.
+      if (openReceivable) {
+        await getContainer().finance.salesPosting.enqueue(tx, {
+          companyId: input.customer.companyId,
+          kind: 'invoice',
+          subjectId: input.orderId,
+        });
+      }
+
       await this.ledger.post(
         {
           companyId: input.customer.companyId,
@@ -657,7 +666,16 @@ export class CustomerMasterService {
         ),
       )
       .limit(1);
-    if (!entry || num(entry.remainingAmount) <= 0) return;
+    if (!entry) return;
+    if (num(entry.remainingAmount) <= 0) {
+      // A cash customer's invoice is closed at the sale; the money arriving is what the books
+      // record now (the bank movement and, once live, the sale itself).
+      const [cust] = await this.db.select({ t: customers.accountType }).from(customers).where(eq(customers.id, entry.customerId));
+      if (cust?.t !== 'credit') {
+        await getContainer().finance.salesPosting.enqueue(this.db, { companyId: entry.companyId, kind: 'cash_sale', subjectId: orderId });
+      }
+      return;
+    }
 
     const [order] = await this.db
       .select({
@@ -698,6 +716,11 @@ export class CustomerMasterService {
       throw new Error('A payment needs the provider transaction reference.');
     }
 
+    if (!input.orderId && (await getContainer().finance.salesPosting.isLive(companyId))) {
+      // Money taken by hand needs a payment method and a bank account; the books are live, so it
+      // goes through Finance → Receipts, where those are recorded.
+      throw new Error('Sales now post to the general ledger. Record this payment under Finance → Receipts so it reaches the bank account and the books.');
+    }
     return this.db.transaction(async (tx) => {
       // Lock the open invoices so two payments arriving together cannot both settle the same one.
       const open = await tx
@@ -737,6 +760,10 @@ export class CustomerMasterService {
           currency,
         })
         .returning({ id: customerLedgerEntries.id });
+
+      if (input.orderId) {
+        await getContainer().finance.salesPosting.enqueue(tx, { companyId, kind: 'credit_payment', subjectId: payment!.id });
+      }
 
       const history: (typeof customerDetailedEntries.$inferInsert)[] = [
         {

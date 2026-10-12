@@ -169,6 +169,9 @@ export class PostingSetupService {
         fx_gain: r.fxGainAccountId,
         fx_loss: r.fxLossAccountId,
         service_charge: r.serviceChargeAccountId,
+        rebate_expense: r.rebateExpenseAccountId,
+        gift_card_liability: r.giftCardLiabilityAccountId,
+        loyalty_provision: r.loyaltyProvisionAccountId,
       },
     }));
     return resolveCustomer(groups, group, purpose);

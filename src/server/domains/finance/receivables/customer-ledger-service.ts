@@ -24,7 +24,7 @@ export type Writer = DrizzleDb | Tx;
 export interface NewLedgerEntry {
   companyId: string;
   customerId: string;
-  documentType: 'invoice' | 'payment' | 'credit_note' | 'refund';
+  documentType: 'invoice' | 'payment' | 'credit_note' | 'refund' | 'rebate_credit';
   documentNo: string;
   documentId?: string | null;
   orderId?: string | null;

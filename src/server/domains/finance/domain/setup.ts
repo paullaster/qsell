@@ -15,7 +15,10 @@ export type CustomerPurpose =
   | 'rounding'
   | 'fx_gain'
   | 'fx_loss'
-  | 'service_charge';
+  | 'service_charge'
+  | 'rebate_expense'
+  | 'gift_card_liability'
+  | 'loyalty_provision';
 
 export interface GeneralSetupRow {
   id: string;

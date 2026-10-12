@@ -725,6 +725,9 @@ export class RebateConfigService {
         left -= applied;
       }
       await tx.insert(customerDetailedEntries).values(history);
+      // Once the ledger is live the rebate's cost reaches it; queued here, in the same transaction.
+      const { getContainer } = await import('@/server/di/container');
+      await getContainer().finance.salesPosting.enqueue(tx, { companyId, kind: 'rebate_credit', subjectId: credit!.id });
       await tx
         .update(customers)
         .set({

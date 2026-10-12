@@ -7,6 +7,7 @@ import { formatAmount, parseAmount } from './domain/amount';
 import { registerHash } from './domain/hash';
 import type { CustomerLedgerService } from './receivables/customer-ledger-service';
 import type { FinanceReportsService } from './reports-service';
+import type { SalesPostingService } from './sales-posting-service';
 
 export interface IntegrityReport {
   ranAt: string;
@@ -16,6 +17,8 @@ export interface IntegrityReport {
   customerDrift: number;
   /** Hash chains whose most recent registers do not verify (should be 0). */
   chainProblems: { chainKey: string; problem: string }[];
+  /** Sales events that could not be posted and have been waiting over an hour (should be 0). */
+  stuckSalesPostings: number;
   ok: boolean;
 }
 
@@ -30,6 +33,7 @@ export class FinanceMaintenanceService {
     private readonly decisions: DecisionLog,
     private readonly reports: FinanceReportsService,
     private readonly customerLedger: CustomerLedgerService,
+    private readonly salesPosting: SalesPostingService,
   ) {}
 
   /** Makes sure monthly ledger partitions exist from this month for `monthsAhead` months. */
@@ -112,16 +116,19 @@ export class FinanceMaintenanceService {
       periods.length === 0
         ? 0
         : [...(await this.reports.balanceDrift(companyId, periods[0]!.startsOn, periods[periods.length - 1]!.endsOn))].length;
-    const [customerDrift, chainProblems] = await Promise.all([
+    const [customerDrift, chainProblems, stuck] = await Promise.all([
       this.customerLedger.drift(companyId),
       this.verifyChainTails(companyId),
+      this.db.execute<{ n: number }>(sql`SELECT count(*)::int AS n FROM finance_sales_postings WHERE company_id = ${companyId}::uuid AND status = 'failed' AND created_at < now() - interval '1 hour'`),
     ]);
+    const stuckSalesPostings = Number([...stuck][0]?.n ?? 0);
     const report: IntegrityReport = {
       ranAt: new Date().toISOString(),
       balanceDrift,
       customerDrift: customerDrift.length,
       chainProblems,
-      ok: balanceDrift === 0 && customerDrift.length === 0 && chainProblems.length === 0,
+      stuckSalesPostings,
+      ok: balanceDrift === 0 && customerDrift.length === 0 && chainProblems.length === 0 && stuckSalesPostings === 0,
     };
     await this.decisions.record({
       companyId,
@@ -129,7 +136,7 @@ export class FinanceMaintenanceService {
       action: report.ok ? 'finance.integrity_ok' : 'finance.integrity_alert',
       actor: { type: 'job', id: 'finance-integrity-check' },
       inputs: { checked: 'balances, customer ledger, hash-chain tails' },
-      outcome: { balanceDrift, customerDrift: customerDrift.length, chainProblems },
+      outcome: { balanceDrift, customerDrift: customerDrift.length, chainProblems, stuckSalesPostings },
     });
     return report;
   }

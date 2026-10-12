@@ -207,6 +207,9 @@ export async function postingSetupAction() {
           fx_gain: c.fxGainAccountId,
           fx_loss: c.fxLossAccountId,
           service_charge: c.serviceChargeAccountId,
+          rebate_expense: c.rebateExpenseAccountId,
+          gift_card_liability: c.giftCardLiabilityAccountId,
+          loyalty_provision: c.loyaltyProvisionAccountId,
         } as Record<string, string | null>,
       })),
       accounts: accounts
@@ -216,6 +219,15 @@ export async function postingSetupAction() {
     };
   });
 }
+export async function saveCustomerGroupAction(code: string, accounts: Record<string, string | null>) {
+  return run(
+    'posting_setup:edit',
+    { surface: 'finance/posting-setup', action: 'save_customer_group' },
+    async (ctx) => fin().salesPosting.saveCustomerGroupAccounts(ctx, code, accounts),
+    [`${ROOT}/posting-setup`, `${ROOT}/sales-posting`],
+  );
+}
+
 export type PostingSetupView = Extract<Awaited<ReturnType<typeof postingSetupAction>>, { ok: true }>['data'];
 
 export async function addPostingGroupAction(kind: 'business' | 'product', code: string, name: string) {

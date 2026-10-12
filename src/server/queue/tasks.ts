@@ -377,6 +377,12 @@ export const resealProviderCredentials = async (_payload: unknown, helpers: JobH
   if (r.failed.length > 0) helpers.logger.error(`Credentials that could not be resealed: ${JSON.stringify(r.failed)}`);
 };
 
+/** Worker cron task: post queued sales events to the general ledger (also retries failed ones). */
+export const financePostSales = async (_payload: unknown, helpers: JobHelpers) => {
+  const r = await getContainer().finance.salesPosting.processDue(300);
+  if (r.posted || r.failed) helpers.logger.info(`Sales posting: ${r.posted} posted, ${r.failed} waiting to be fixed`);
+};
+
 export const tasks = {
   'process-payment-callback': processPaymentCallback,
   'process-webhook': processWebhook,
@@ -387,6 +393,7 @@ export const tasks = {
   'purge-media': purgeMedia,
   'sweep-overdue-approvals': sweepOverdueApprovals,
   'expire-loyalty-points': expireLoyaltyPoints,
+  'finance-post-sales': financePostSales,
   'finance-ensure-partitions': financeEnsurePartitions,
   'finance-integrity-check': financeIntegrityCheck,
   'reseal-provider-credentials': resealProviderCredentials,

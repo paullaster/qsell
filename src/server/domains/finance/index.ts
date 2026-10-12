@@ -7,6 +7,7 @@ import { FiscalService } from './fiscal-service';
 import { JournalService } from './journal-service';
 import { FinanceMaintenanceService } from './maintenance-service';
 import { PostingSetupService } from './posting-setup-service';
+import { SalesPostingService } from './sales-posting-service';
 import { FinanceReportsService } from './reports-service';
 import { FinanceSetupService } from './setup-service';
 import { BankAccountService } from './receivables/bank-account-service';
@@ -29,6 +30,8 @@ export interface FinanceServices {
   receipts: ReceiptService;
   /** Scheduled jobs: ledger partitions and the nightly integrity check. */
   maintenance: FinanceMaintenanceService;
+  /** Takes invoices, cash sales, gateway payments and rebates to the general ledger. */
+  salesPosting: SalesPostingService;
 }
 
 export function createFinanceServices(
@@ -41,6 +44,7 @@ export function createFinanceServices(
   const postingSetup = new PostingSetupService(db, decisions);
   const customerLedger = new CustomerLedgerService(db, decisions);
   const reports = new FinanceReportsService(db);
+  const salesPosting = new SalesPostingService(db, decisions, engine, postingSetup);
   return {
     fiscal,
     engine,
@@ -51,7 +55,8 @@ export function createFinanceServices(
     customerLedger,
     bankAccounts: new BankAccountService(db, decisions),
     paymentMethods: new PaymentMethodService(db, decisions),
-    maintenance: new FinanceMaintenanceService(db, decisions, reports, customerLedger),
+    salesPosting,
+    maintenance: new FinanceMaintenanceService(db, decisions, reports, customerLedger, salesPosting),
     receipts: new ReceiptService(db, decisions, engine, customerLedger, deps.numbering, deps.reasons, postingSetup),
   };
 }

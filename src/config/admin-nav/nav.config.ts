@@ -446,6 +446,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
             installed: true,
           },
           {
+            id: 'ar-sales-posting',
+            title: 'Sales posting',
+            name: 'ar-sales-posting',
+            href: '/admin/finance/sales-posting',
+            description: 'Switch sales on for the ledger, see what is waiting, and check the books agree with customer accounts',
+            icon: 'BookOpen',
+            installed: true,
+          },
+          {
             id: 'ar-ageing',
             title: 'Receivables ageing',
             name: 'ar-ageing',

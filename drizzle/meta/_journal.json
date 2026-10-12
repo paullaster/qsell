@@ -295,6 +295,13 @@
       "when": 1791807340951,
       "tag": "0041_finance_f1_receivables",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1791831540224,
+      "tag": "0042_finance_f1c_sales_posting",
+      "breakpoints": true
     }
   ]
 }

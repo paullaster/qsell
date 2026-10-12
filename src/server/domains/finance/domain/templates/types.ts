@@ -64,5 +64,10 @@ export interface ChartTemplate {
     fxGain: string;
     fxLoss: string;
     serviceCharge: string;
+    rebateExpense: string;
+    giftCardLiability: string;
+    loyaltyProvision: string;
   }[];
+  /** Where tax charged on sales is owed. */
+  outputTaxAccount: string;
 }

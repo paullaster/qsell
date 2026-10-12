@@ -165,6 +165,10 @@ export const INTERNATIONAL_TEMPLATE: ChartTemplate = {
       fxGain: '4410',
       fxLoss: '6700',
       serviceCharge: '4400',
+      rebateExpense: '6310',
+      giftCardLiability: '2230',
+      loyaltyProvision: '2240',
     },
   ],
+  outputTaxAccount: '2310',
 };

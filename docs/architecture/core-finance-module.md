@@ -552,3 +552,32 @@ All nine recommendations accepted (2026-10-12): Finance top-level module; "Walle
 | Permission checks on provider actions use the new keys | The old Settings → Payments screen still uses `payments:manage_gateways` | Retire that screen when its functions are all here. |
 
 **Not in F-1 (still to do):** ageing bucket settings, credit-limit policy, per-product posting groups (sales posting), and the PDF evidence path. **Daraja has not been exercised against Safaricom's sandbox with real credentials in this slice:** Test connection is covered with a mocked HTTP layer and, in the browser, with deliberately wrong credentials (it reports the failure and refuses to switch the provider on). Enter your sandbox consumer key and secret on the screen and press Test connection to verify it end to end.
+
+---
+
+## 21. F-1c as built (2026-10-12): sales reach the general ledger
+
+**Built:**
+
+* **Credit invoice** (Dr trade debtors; Cr sales, tax owed, shipping income), **cash sale** at the moment it is confirmed paid (Dr the payment method's bank account and/or gift-card or loyalty-points liability; Cr sales, tax, shipping), **payment of a credit order** by gateway or tender (Dr bank / tender accounts; Cr trade debtors), and **rebates** credited to a customer (Dr rebate cost; Cr trade debtors).
+* **A sale never fails because of the books.** Each event is saved first and queued in the same transaction (`finance_sales_postings`); a worker posts the queue every minute and retries failures with a growing delay (1, 2, 4 … 60 minutes). A failure is visible on **Finance → Accounts Receivable → Sales posting** with its reason and a Retry button, and one older than an hour makes the nightly integrity check raise an alert.
+* **Go-live** is a screen, not a database edit. It shows what is ready and what is not, brings in what customers owe today as an opening balance against an equity account you choose (so the ledger and customer accounts start in agreement), and sets the date. It happens once. The order is safe against sales in flight at the moment of switching on.
+* **Reconciliation**: the receivables account in the books against the customer accounts, per account, on the same screen. After go-live it agrees to the cent in every test scenario.
+* **Customer posting groups are now editable** (Posting setup) and carry three new purposes: rebate cost, gift-card liability, loyalty-points liability. The template sets the tax-owed account; companies that already imported a chart get the template's account numbers filled in by the migration where they exist.
+* **Bank movements are recorded for gateway money whether or not the ledger is live**, so the bank-account screen is complete from now on. New orders get `payment_method_id` from the old provider code.
+* Manual "receive payment" on a customer card is refused once the books are live (it has no bank account); it goes through Receipts.
+* Migration `0042`, two permission keys (`sales_posting:read`, `sales_posting:retry`), and 12 new database tests.
+
+**Differences from the design above (decided while building):**
+
+| Design said | Built | Why / what remains |
+|---|---|---|
+| Gateway confirmations create a numbered receipt | A gateway or tender payment of a credit order is recorded as a **sales payment** (bank movement, customer-ledger payment entry, books), not a receipt document | The older flow already creates the customer payment entry; a receipt document would double it. Manual receipts remain receipts. |
+| Cash invoices post as a debtor, then are paid | A cash sale posts **when paid**, with no debtor | Cash invoices are closed at the sale in the customer ledger and reports; keeping that avoids changing every receivables report. An unpaid cash order never reaches the books. |
+| Dated exchange rate on every posting | **Sales in a foreign currency wait** with a clear reason; they are not posted at a guessed rate | Needs the dated-rate table (Tax & Currency slice). Such entries are left out of the reconciliation and counted. |
+| Per-product and per-customer posting groups | One business group and one product group (settings, default DOMESTIC and GOODS) for every sale | No screen yet to assign groups to products and customers. |
+| Cost of goods and stock on sale | **Not posted** | F-3 (with credit-note accounting and restock). |
+| Credit notes in the reconciliation | Not yet | F-3. Until then a credit note reduces the customer account but not the books, so the reconciliation will show a difference once one is issued after go-live. |
+| Loyalty earn/redeem and gift-card issue | Only the **settlement** side (points or a card paying a sale) | Issue/earn postings are F-3. |
+
+**Verify before relying on it:** set the tax-owed account and the customer group accounts on a real chart, issue one credit invoice and one cash sale in a test company, and read the postings. I have not run this against your accountant's chart.

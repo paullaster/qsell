@@ -426,6 +426,9 @@ describe.skipIf(!url)('receivables (database)', () => {
 
   describe('the existing sales flow keeps the same books', () => {
     it('an invoice and a payment through the older customer service leave consistent history', async () => {
+      // Money taken by hand is refused once the books are live (see sales posting); this checks the
+      // sub-ledger path as it is before go-live.
+      await db.update(schema.financeSettings).set({ salesGlGoLive: null }).where(eq(schema.financeSettings.companyId, companyId));
       const { CustomerMasterService } = await import('@/server/domains/customers/master-service');
       const { TransactionLedgerService } = await import('@/server/domains/transactions/ledger-service');
       const master = new CustomerMasterService(db, {} as never, new TransactionLedgerService(db));
