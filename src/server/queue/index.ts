@@ -27,6 +27,9 @@ export async function startWorker(): Promise<void> {
       '2 4 * * * reseal-provider-credentials',
       // Approvals are time-sensitive, so this one runs every five minutes.
       '*/5 * * * * sweep-overdue-approvals',
+      // Payments: pick up anything a lost job left half done, and compare with what Safaricom has received.
+      '* * * * * provider-sweep',
+      '*/10 * * * * provider-pull-sweep',
     ].join('\n'),
   });
 

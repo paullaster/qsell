@@ -1,32 +1,26 @@
-import { PesapalService } from '@/server/domains/payments/pesapal/pesapalService';
+import { getContainer } from '@/server/di/container';
+import { readIngest, reply } from '@/server/domains/payments/engine/http-ingest';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
-export async function POST(request: Request) {
+/**
+ * Pesapal notifications sent to an address with no secret in it (as registered before payments had their
+ * own addresses). Nothing here is believed: the notification is written down, the payment it names is
+ * found by Pesapal's tracking id, and that payment is counted only after Pesapal itself confirms it.
+ */
+async function handle(req: Request) {
+  const input = await readIngest(req);
+  let body: Record<string, unknown> = {};
   try {
-    const body = await request.json().catch(() => ({}));
-    const url = new URL(request.url);
-    const orderTrackingId =
-      body.OrderTrackingId || body.orderTrackingId || url.searchParams.get('OrderTrackingId') || '';
-    const merchantReference =
-      body.OrderMerchantReference ||
-      body.merchantReference ||
-      url.searchParams.get('OrderMerchantReference') ||
-      '';
-    const status = body.status || body.Status || 'COMPLETED';
-
-    const result = await PesapalService.processIpn(
-      String(orderTrackingId),
-      String(merchantReference),
-      String(status),
-    );
-    return Response.json(result);
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'IPN failed';
-    return Response.json({ success: false, message }, { status: 400 });
+    body = input.rawText ? (JSON.parse(input.rawText) as Record<string, unknown>) : {};
+  } catch {
+    body = {};
   }
+  const trackingId = String(body.OrderTrackingId ?? body.orderTrackingId ?? input.query.OrderTrackingId ?? '');
+  if (!trackingId) return Response.json({ success: false, message: 'No order tracking id' }, { status: 400 });
+  return reply(await getContainer().paymentEngine.ingestAttemptCallback({ ...input, trackingId }));
 }
 
-export async function GET(request: Request) {
-  return await POST(request);
-}
+export const POST = handle;
+export const GET = handle;

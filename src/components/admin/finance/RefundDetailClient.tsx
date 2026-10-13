@@ -32,7 +32,7 @@ export function RefundDetailClient({ view }: { view: View }) {
   };
   const submit = async () => { setBusy(true); setNotice(null); const res = await attempt(submitRefundAction(view.id)); done(res, res.ok ? (res.data.status === 'approved' ? 'Approved: the money is set aside, ready to pay.' : 'Sent for approval.') : ''); };
   const cancel = async (e: React.FormEvent) => { e.preventDefault(); setBusy(true); setNotice(null); done(await attempt(cancelRefundAction(view.id, { code: reason.code, text: reason.text.trim() || undefined })), 'Cancelled.'); };
-  const pay = async (e: React.FormEvent) => { e.preventDefault(); setBusy(true); setNotice(null); done(await attempt(recordRefundPayoutAction(view.id, { paidFromBankAccountId: bankId, reference: ref, payoutDate: when })), 'Payment recorded.'); };
+  const pay = async (e: React.FormEvent) => { e.preventDefault(); setBusy(true); setNotice(null); done(await attempt(recordRefundPayoutAction(view.id, { paidFromMethodId: bankId, reference: ref, payoutDate: when })), 'Payment recorded.'); };
   const upload = async (file: File) => {
     setBusy(true); setNotice(null);
     const body = new FormData(); body.set('file', file); body.set('refundId', view.id);
@@ -96,7 +96,7 @@ export function RefundDetailClient({ view }: { view: View }) {
           <h2 className="text-sm font-bold text-fg-strong">Record that {view.currency} {money(view.amount)} was paid</h2>
           <p className="text-xs text-fg-muted">The person who approved this cannot record the payment.</p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Field id="p-b" label="Paid from"><select id="p-b" value={bankId} onChange={(e) => setBankId(e.target.value)} className={fieldClass} required>{view.payFrom.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}</select></Field>
+            <Field id="p-b" label="Paid out through"><select id="p-b" value={bankId} onChange={(e) => setBankId(e.target.value)} className={fieldClass} required>{view.payFrom.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}</select></Field>
             <Field id="p-r" label="Payment reference"><input id="p-r" value={ref} onChange={(e) => setRef(e.target.value)} className={fieldClass} required maxLength={80} autoComplete="off" /></Field>
             <Field id="p-d" label="Date paid"><input id="p-d" type="date" max={today()} value={when} onChange={(e) => setWhen(e.target.value)} className={fieldClass} required /></Field>
           </div>

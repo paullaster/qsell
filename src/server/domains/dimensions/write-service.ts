@@ -1,6 +1,4 @@
 import type { DimensionRow, DimensionValueRow } from '@/server/db/drizzle/schema';
-import { PAYMENT_PROVIDER_META, type PaymentProviderCode } from '@/server/domains/payments/types';
-import { PaymentConfigRepository } from '@/server/domains/payments/repository';
 import { BranchRepository } from '@/server/domains/branches/repository';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { DimensionRepository } from './repository';
@@ -411,22 +409,6 @@ export class DimensionWriteService {
       isActive: input.isActive,
       actsIndependently: false,
     });
-
-    const configRepo = new PaymentConfigRepository(this.db);
-    for (const providerCode of Object.keys(PAYMENT_PROVIDER_META) as PaymentProviderCode[]) {
-      const meta = PAYMENT_PROVIDER_META[providerCode];
-      await configRepo.upsert({
-        branchId: created.id,
-        providerCode,
-        displayName: meta.label,
-        isEnabled: false,
-        environment: 'staging',
-        apiBaseUrl: meta.defaultStagingBaseUrl,
-        credentialsEncrypted: null,
-        settings: {},
-        replaceCredentials: true,
-      });
-    }
 
     return created.id;
   }

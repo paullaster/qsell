@@ -15,9 +15,8 @@ export interface BankAccountInput {
   name: string;
   kind: 'bank' | 'cash' | 'mobile_money' | 'clearing';
   currency: string;
-  glAccountId: string;
+  /** Where charges on this account post (bank charges, mobile-money charges). */
   feeGlAccountId?: string | null;
-  branchId?: string | null;
   providerConfigId?: string | null;
   details?: Record<string, string>;
   statementFormat?: string | null;
@@ -25,7 +24,10 @@ export interface BankAccountInput {
 
 const KINDS = ['bank', 'cash', 'mobile_money', 'clearing'] as const;
 
-/** Bank, cash, mobile-money and clearing accounts: where money sits, and which G/L account carries it. */
+/**
+ * Bank, cash, mobile-money and clearing accounts: the real-world accounts money sits in and statements
+ * come from. Which G/L account and which branch a payment posts to is chosen on the payment method.
+ */
 export class BankAccountService {
   constructor(
     private readonly db: DrizzleDb,
@@ -36,13 +38,12 @@ export class BankAccountService {
     const rows = await this.db
       .select({
         account: bankAccounts,
-        glNo: glAccounts.no,
-        glName: glAccounts.name,
-        balance: sql<string>`COALESCE((SELECT SUM(l.amount) FROM bank_ledger_entries l WHERE l.bank_account_id = ${bankAccounts.id}), 0)`,
-        methods: sql<number>`(SELECT COUNT(*)::int FROM payment_methods m WHERE m.balancing_bank_account_id = ${bankAccounts.id})`,
+        /** The G/L accounts the payment methods of this account post to. */
+        glNos: sql<string[]>`COALESCE((SELECT array_agg(DISTINCT g.no ORDER BY g.no) FROM bank_ledger_entries l JOIN gl_accounts g ON g.id = l.gl_account_id WHERE l.bank_account_id = "bank_accounts"."id"), ARRAY[]::text[])`,
+        balance: sql<string>`COALESCE((SELECT SUM(l.amount) FROM bank_ledger_entries l WHERE l.bank_account_id = "bank_accounts"."id"), 0)`,
+        methods: sql<number>`(SELECT COUNT(*)::int FROM payment_methods m WHERE m.balancing_bank_account_id = "bank_accounts"."id")`,
       })
       .from(bankAccounts)
-      .innerJoin(glAccounts, eq(glAccounts.id, bankAccounts.glAccountId))
       .where(eq(bankAccounts.companyId, companyId))
       .orderBy(asc(bankAccounts.code));
     return rows;
@@ -83,13 +84,6 @@ export class BankAccountService {
   async create(ctx: FinanceContext, input: BankAccountInput): Promise<BankAccountRow> {
     this.validate(input);
     return this.db.transaction(async (tx) => {
-      const gl = await this.checkGl(tx, ctx.companyId, input.glAccountId, 'ledger');
-      if (gl.category !== 'assets') {
-        throw new FinanceError('ACCOUNT_NOT_ASSET', `${gl.no} ${gl.name} is not an asset account; money held by the business is an asset.`);
-      }
-      if (gl.currencyPolicy !== 'any' && gl.currencyPolicy !== input.currency) {
-        throw new FinanceError('CURRENCY_MISMATCH', `${gl.no} only carries ${gl.currencyPolicy}.`);
-      }
       if (input.feeGlAccountId) await this.checkGl(tx, ctx.companyId, input.feeGlAccountId, 'fee');
       const [dup] = await tx
         .select({ id: bankAccounts.id })
@@ -104,9 +98,7 @@ export class BankAccountService {
           name: input.name.trim(),
           kind: input.kind,
           currency: input.currency,
-          glAccountId: input.glAccountId,
           feeGlAccountId: input.feeGlAccountId ?? null,
-          branchId: input.branchId ?? null,
           providerConfigId: input.providerConfigId ?? null,
           details: input.details ?? {},
           statementFormat: input.statementFormat ?? null,
@@ -120,7 +112,7 @@ export class BankAccountService {
           action: 'finance.bank_account_created',
           actor: ctx.actor,
           inputs: { origin: ctx.origin },
-          outcome: { code: row!.code, kind: row!.kind, glAccount: gl.no, currency: row!.currency },
+          outcome: { code: row!.code, kind: row!.kind, currency: row!.currency },
         },
         tx,
       );
@@ -141,9 +133,6 @@ export class BankAccountService {
         .from(bankLedgerEntries)
         .where(eq(bankLedgerEntries.bankAccountId, id));
       const used = (moved?.n ?? 0) > 0;
-      if (used && input.glAccountId && input.glAccountId !== current.glAccountId) {
-        throw new FinanceError('ACCOUNT_IN_USE', 'Money has moved through this account, so its ledger account cannot change.');
-      }
       if (used && input.currency && input.currency !== current.currency) {
         throw new FinanceError('ACCOUNT_IN_USE', 'Money has moved through this account, so its currency cannot change.');
       }
@@ -152,10 +141,6 @@ export class BankAccountService {
       }
       const next = { ...current, ...stripUndefined(input) } as BankAccountRow;
       this.validate({ ...next, details: next.details });
-      if (input.glAccountId) {
-        const gl = await this.checkGl(tx, ctx.companyId, input.glAccountId, 'ledger');
-        if (gl.category !== 'assets') throw new FinanceError('ACCOUNT_NOT_ASSET', `${gl.no} ${gl.name} is not an asset account.`);
-      }
       if (input.feeGlAccountId) await this.checkGl(tx, ctx.companyId, input.feeGlAccountId, 'fee');
       if (input.code && input.code !== current.code) {
         throw new FinanceError('CODE_FIXED', 'The code of a bank account does not change; block it and add a new one.');
@@ -166,9 +151,7 @@ export class BankAccountService {
           name: next.name,
           kind: next.kind,
           currency: next.currency,
-          glAccountId: next.glAccountId,
           feeGlAccountId: next.feeGlAccountId,
-          branchId: next.branchId,
           providerConfigId: next.providerConfigId,
           details: next.details,
           statementFormat: next.statementFormat,

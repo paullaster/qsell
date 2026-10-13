@@ -446,7 +446,7 @@ export class RefundService {
    * confirmation, an M-Pesa message, a signed receipt), a reference, and a person other than the
    * one who approved it.
    */
-  async recordPayout(ctx: FinanceContext, id: string, input: { paidFromBankAccountId: string; payoutDate?: string; reference: string; permissions?: PostingPermissions }) {
+  async recordPayout(ctx: FinanceContext, id: string, input: { paidFromMethodId: string; payoutDate?: string; reference: string; permissions?: PostingPermissions }) {
     const perms = input.permissions ?? NO_SPECIAL_PERMISSIONS;
     return this.db.transaction(async (tx) => {
       const r = await this.lock(tx, ctx.companyId, id);
@@ -458,8 +458,15 @@ export class RefundService {
       const today = businessDate();
       const date = input.payoutDate ?? today;
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > today) throw new FinanceError('DATE_INVALID', 'The payout date cannot be in the future.');
-      const [bank] = await tx.select().from(bankAccounts).where(and(eq(bankAccounts.companyId, ctx.companyId), eq(bankAccounts.id, input.paidFromBankAccountId)));
-      if (!bank || bank.blocked) throw new FinanceError('BANK_INVALID', 'Choose the account the money was paid from.');
+      // The money leaves through a payment method: its bank account is where it came from, its G/L account is what the books credit.
+      const [from] = await tx
+        .select({ method: paymentMethods, bank: bankAccounts })
+        .from(paymentMethods)
+        .innerJoin(bankAccounts, eq(bankAccounts.id, paymentMethods.balancingBankAccountId))
+        .where(and(eq(paymentMethods.companyId, ctx.companyId), eq(paymentMethods.id, input.paidFromMethodId)));
+      const bank = from?.bank;
+      const fromMethod = from?.method;
+      if (!bank || !fromMethod || bank.blocked || !fromMethod.enabled) throw new FinanceError('BANK_INVALID', 'Choose the payment method the money was paid out through.');
       if (bank.kind === 'clearing') throw new FinanceError('BANK_INVALID', 'Money is paid from a bank, cash or mobile-money account, not a clearing account.');
       if (bank.currency !== r.currency) throw new FinanceError('CURRENCY_MISMATCH', `${bank.code} holds ${bank.currency}; this refund is in ${r.currency}.`);
       const issues = await this.engine.dateIssues(tx, ctx.companyId, date, perms);
@@ -485,7 +492,7 @@ export class RefundService {
           rateSource: 'base',
           lines: [
             { accountId: payable.accountId, debit: fromCents(cents), credit: '0', description: `Refund ${r.number} paid`, sourceLedger: 'customer', sourceEntryId: r.customerId },
-            { accountId: bank.glAccountId, debit: '0', credit: fromCents(cents), description: `Refund ${r.number} ${reference}`, sourceLedger: 'bank', sourceEntryId: bank.id },
+            { accountId: fromMethod.glAccountId, debit: '0', credit: fromCents(cents), description: `Refund ${r.number} ${reference}`, sourceLedger: 'bank', sourceEntryId: bank.id },
           ],
           chainKey: r.branchId ?? 'general',
           branchId: r.branchId,
@@ -495,9 +502,9 @@ export class RefundService {
         };
         registerId = (await this.engine.post(req, perms, tx)).registerId;
       }
-      await tx.insert(bankLedgerEntries).values({ companyId: ctx.companyId, bankAccountId: bank.id, postingDate: date, documentType: 'refund', documentNo: r.number, documentId: r.id, description: `Refund ${r.number} ${reference}`, amount: fromCents(-cents), currency: r.currency, registerId, createdBy: ctx.actor.id });
+      await tx.insert(bankLedgerEntries).values({ companyId: ctx.companyId, bankAccountId: bank.id, glAccountId: fromMethod.glAccountId, postingDate: date, documentType: 'refund', documentNo: r.number, documentId: r.id, description: `Refund ${r.number} ${reference}`, amount: fromCents(-cents), currency: r.currency, registerId, createdBy: ctx.actor.id });
       await this.legacyLedger.post({ companyId: ctx.companyId, customerId: r.customerId, orderId: r.orderId, documentType: 'refund', documentNo: r.number, description: 'Refund paid', direction: 'debit', amount: cents / 100, currency: r.currency, transactionReference: reference, idempotencyKey: `refund:${r.id}` }, tx);
-      await this.move(tx, r, 'paid', { paidFromBankAccountId: bank.id, payoutReference: reference, payoutDate: date, paidBy: ctx.actor.id, paidAt: new Date(), payoutRegisterId: registerId });
+      await this.move(tx, r, 'paid', { paidFromBankAccountId: bank.id, paidFromMethodId: fromMethod.id, payoutReference: reference, payoutDate: date, paidBy: ctx.actor.id, paidAt: new Date(), payoutRegisterId: registerId });
       await this.event(tx, ctx, id, 'paid', 'approved', 'paid', { data: { bank: bank.code, reference, date, gl: live, registerId } });
 
       // "Refunded" only when the paid refunds against this order cover everything it was paid.

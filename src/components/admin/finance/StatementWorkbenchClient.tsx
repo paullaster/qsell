@@ -66,6 +66,7 @@ export function StatementWorkbenchClient({ view: initial }: { view: WorkbenchVie
   const [customer, setCustomer] = useState<{ id: string; name: string } | null>(null);
   const [methodId, setMethodId] = useState(initial.methods[0]?.id ?? '');
   const [allocate, setAllocate] = useState<'oldest_first' | 'none'>('oldest_first');
+  const [chargeGl, setChargeGl] = useState('');
   const acc = view.account;
 
   const reload = async (f: Filter = filter) => {
@@ -146,7 +147,17 @@ export function StatementWorkbenchClient({ view: initial }: { view: WorkbenchVie
             {(l.status === 'unmatched' || l.status === 'proposed') && !out && view.can.createReceipt && view.methods.length > 0 ? <button type="button" className={buttonClass} disabled={busy} aria-expanded={p?.kind === 'customer'} onClick={() => { close(); setPanel({ id: l.id, kind: 'customer' }); }}>It is a customer&apos;s payment</button> : null}
             {(l.status === 'unmatched' || l.status === 'proposed') && out && view.can.recordCharge ? (
               acc.hasFeeAccount
-                ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void act('Charge recorded and matched.', () => chargeFromStatementLineAction(acc.id, l.id))}>Record as a bank charge</button>
+                ? (
+                  <span className="flex flex-wrap items-center gap-2">
+                    {view.chargeGls.length > 1 ? (
+                      <select aria-label="G/L account the charge came out of" value={chargeGl} onChange={(e) => setChargeGl(e.target.value)} className={`${fieldClass} w-auto`}>
+                        <option value="">Which G/L account?</option>
+                        {view.chargeGls.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
+                      </select>
+                    ) : null}
+                    <button type="button" className={buttonClass} disabled={busy || (view.chargeGls.length > 1 && !chargeGl)} onClick={() => void act('Charge recorded and matched.', () => chargeFromStatementLineAction(acc.id, l.id, view.chargeGls.length > 1 ? chargeGl : undefined))}>Record as a bank charge</button>
+                  </span>
+                )
                 : <Chip tone="amber">No fee account set (Bank accounts)</Chip>
             ) : null}
             {(l.status === 'unmatched' || l.status === 'proposed') && view.can.ignore ? <button type="button" className={buttonClass} disabled={busy} aria-expanded={p?.kind === 'ignore'} onClick={() => { close(); setPanel({ id: l.id, kind: 'ignore' }); }}>Set aside</button> : null}

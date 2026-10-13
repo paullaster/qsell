@@ -1,20 +1,9 @@
-import {
-  listPaymentConfigsAction,
-  listBranchesAction,
-} from '@/server/domains/payments/actions';
-import { PAYMENT_PROVIDER_META, type PaymentProviderCode } from '@/server/domains/payments/types';
-import { getContainer } from '@/server/di/container';
-import { AdminPaymentsHubClient } from '@/components/admin/settings/AdminPaymentsHubClient';
+import { paymentSetupAction } from '@/server/domains/finance/payment-setup-actions';
+import { PaymentSetupClient } from '@/components/admin/settings/PaymentSetupClient';
+import { LoadFailed } from '@/components/admin/finance/ui';
 
-export default async function AdminSettingsPaymentsHubPage() {
-  const company = await getContainer().companySettings.ensureSeeded();
-
-  return (
-    <AdminPaymentsHubClient
-      branchesPromise={listBranchesAction()}
-      configsPromise={listPaymentConfigsAction()}
-      publicBaseUrl={company.publicBaseUrl}
-      providers={Object.keys(PAYMENT_PROVIDER_META) as PaymentProviderCode[]}
-    />
-  );
+export default async function AdminSettingsPaymentsPage() {
+  const res = await paymentSetupAction();
+  if (!res.ok) return <LoadFailed error={res.error} />;
+  return <PaymentSetupClient setup={res.data} />;
 }

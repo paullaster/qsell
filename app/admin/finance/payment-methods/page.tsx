@@ -1,16 +1,6 @@
-import { listPaymentMethodsAction } from '@/server/domains/finance/receivables/actions';
-import { PaymentMethodsClient } from '@/components/admin/finance/PaymentMethodsClient';
-import { FinanceGate } from '@/components/admin/finance/gate';
-import { LoadFailed } from '@/components/admin/finance/ui';
+import { redirect } from 'next/navigation';
 
-export default async function AdminPaymentMethodsPage() {
-  return (
-    <FinanceGate>
-      {async () => {
-        const res = await listPaymentMethodsAction();
-        if (!res.ok) return <LoadFailed error={res.error} />;
-        return <PaymentMethodsClient view={res.data} />;
-      }}
-    </FinanceGate>
-  );
+/** Payments are set up in one place: Settings → Payments. */
+export default function AdminFinancePaymentSetupRedirectPage() {
+  redirect('/admin/settings/payments');
 }

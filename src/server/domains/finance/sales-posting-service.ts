@@ -13,6 +13,7 @@ import {
   orderTenders,
   orders,
   paymentMethods,
+  paymentProviderConfigs,
   type FinanceSalesPostingRow,
   type SalesPostingKind,
 } from '@/server/db/drizzle/schema';
@@ -291,27 +292,34 @@ export class SalesPostingService {
     const bankCents = amountCents - gift - points - wallet;
     const settled: { accountId: string; cents: number; description: string }[] = [];
     if (bankCents > 0) {
-      const [m] = await tx
-        .select({ bankId: bankAccounts.id, gl: bankAccounts.glAccountId, name: paymentMethods.name })
-        .from(paymentMethods)
-        .innerJoin(bankAccounts, eq(bankAccounts.id, paymentMethods.balancingBankAccountId))
-        .where(
-          and(
-            eq(paymentMethods.companyId, row.companyId),
-            order.paymentMethodId
-              ? eq(paymentMethods.id, order.paymentMethodId)
-              : sql`${paymentMethods.legacyCodes} ? ${order.paymentMethod}`,
-          ),
-        )
-        .limit(1);
+      const find = (branchOnly: boolean) =>
+        tx
+          .select({ bankId: bankAccounts.id, gl: paymentMethods.glAccountId, name: paymentMethods.name })
+          .from(paymentMethods)
+          .innerJoin(bankAccounts, eq(bankAccounts.id, paymentMethods.balancingBankAccountId))
+          .innerJoin(paymentProviderConfigs, eq(paymentProviderConfigs.id, paymentMethods.providerId))
+          .where(
+            and(
+              eq(paymentMethods.companyId, row.companyId),
+              order.paymentMethodId
+                ? eq(paymentMethods.id, order.paymentMethodId)
+                : sql`(${paymentMethods.legacyCodes} ? ${order.paymentMethod} OR ${paymentProviderConfigs.providerCode} = ${order.paymentMethod})`,
+              !order.paymentMethodId && branchOnly ? sql`(${paymentMethods.branchId} IS NULL OR ${paymentMethods.branchId} = ${order.branchId}::uuid)` : undefined,
+            ),
+          )
+          // The order's own branch first, then every branch, then (so an old order still posts) any branch.
+          .orderBy(sql`(${paymentMethods.branchId} IS NULL) ASC`, sql`(${paymentProviderConfigs.providerCode} = ${order.paymentMethod}) DESC`, paymentMethods.sortOrder)
+          .limit(1);
+      const [m] = (await find(true))[0] ? await find(true) : await find(false);
       if (!m) {
         throw new Error(
-          `No payment method stands for "${order.paymentMethod}" (order ${label}). Add it under Finance → Payment methods (old provider codes).`,
+          `No payment method stands for "${order.paymentMethod}" (order ${label}). Add a payment method for it under Settings → Payments.`,
         );
       }
       await tx.insert(bankLedgerEntries).values({
         companyId: row.companyId,
         bankAccountId: m.bankId,
+        glAccountId: m.gl,
         postingDate: row.eventDate,
         documentType,
         documentNo: label,

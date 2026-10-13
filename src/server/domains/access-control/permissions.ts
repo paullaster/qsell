@@ -564,6 +564,48 @@ export const PERMISSIONS = {
     category: 'Finance & Payments',
     description: 'View payment provider connections (secrets stay hidden)',
   },
+  'payment_activity:read': {
+    resource: 'payment_activity',
+    action: 'read',
+    category: 'Finance & Payments',
+    description: 'View what happened on the payment platforms: requests, callbacks, confirmations and failures',
+  },
+  'payment_activity:resolve': {
+    resource: 'payment_activity',
+    action: 'resolve',
+    category: 'Finance & Payments',
+    description: 'Place or set aside a confirmed payment that nobody could place',
+  },
+  'payment_operations:run': {
+    resource: 'payment_operations',
+    action: 'run',
+    category: 'Finance & Payments',
+    description: 'Run a payment-platform operation (register addresses, check a transaction, QR code...)',
+  },
+  'payment_operations:request_payout': {
+    resource: 'payment_operations',
+    action: 'request_payout',
+    category: 'Finance & Payments',
+    description: 'Ask for money to be paid out through a payment provider (still needs approval)',
+  },
+  'payments:confirm_unverified': {
+    resource: 'payments',
+    action: 'confirm_unverified',
+    category: 'Finance & Payments',
+    description: 'Confirm or close a payment the platform could not confirm, with a reason',
+  },
+  'payment_providers:create': {
+    resource: 'payment_providers',
+    action: 'create',
+    category: 'Finance & Payments',
+    description: 'Add a payment provider (a connection to a payment service)',
+  },
+  'payment_providers:delete': {
+    resource: 'payment_providers',
+    action: 'delete',
+    category: 'Finance & Payments',
+    description: 'Delete a payment provider that nothing uses',
+  },
   'payment_providers:edit': {
     resource: 'payment_providers',
     action: 'edit',

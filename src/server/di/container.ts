@@ -63,6 +63,8 @@ import { DecisionLog } from '@/server/kernel/decision-log/service';
 import { ReasonCodes } from '@/server/kernel/reason-codes/service';
 import { NumberSeriesService } from '@/server/kernel/numbering/service';
 import { createFinanceServices, type FinanceServices } from '@/server/domains/finance';
+import { createPaymentEngine, type PaymentEngine } from '@/server/domains/payments/engine';
+import { FinanceC2bConsumer } from '@/server/domains/finance/receivables/c2b-consumer';
 import { CreditNoteService } from '@/server/domains/credit-notes/service';
 import { DocumentSigningService } from '@/server/domains/kra/signing/service';
 import { getWorkerUtils } from '@/server/queue/worker';
@@ -122,6 +124,8 @@ export interface AppContainer {
   numbering: NumberSeriesService;
   /** Chart of accounts, fiscal periods, posting setup, the posting engine, journals, ledger reports. */
   finance: FinanceServices;
+  /** The doors payment platforms knock on, and the checks that decide whether a payment is real. */
+  paymentEngine: PaymentEngine;
   approvals: ApprovalEngine;
   approvalConfig: ApprovalConfigService;
   /** Parks actions that need approval and carries them out when approved. */
@@ -291,7 +295,8 @@ export function getContainer(): AppContainer {
   const reasonCodes = new ReasonCodes(drizzleDb);
   const numbering = createNumbering(decisionLog, reasonCodes);
   const creditNotes = new CreditNoteService(drizzleDb, kraSigning, numbering);
-  const finance = createFinanceServices(drizzleDb, decisionLog, { numbering, reasons: reasonCodes });
+  const finance = createFinanceServices(drizzleDb, decisionLog, { numbering, reasons: reasonCodes, paymentConfigs, payments });
+  const paymentEngine = createPaymentEngine({ db: drizzleDb, registry: paymentRegistry, payments, consumer: new FinanceC2bConsumer(drizzleDb, finance.receipts) });
 
   const approvals = new ApprovalEngine(drizzleDb, decisionLog, reasonCodes);
   const approvalGate = new ParkedActions(drizzleDb, approvals);
@@ -354,6 +359,7 @@ export function getContainer(): AppContainer {
     reasonCodes,
     numbering,
     finance,
+    paymentEngine,
     approvals,
     approvalConfig: new ApprovalConfigService(drizzleDb, decisionLog, reasonCodes),
     approvalGate,

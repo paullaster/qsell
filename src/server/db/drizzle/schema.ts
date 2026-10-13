@@ -21,6 +21,7 @@ import type { CompanyUiConfigRaw } from '@/config/company-ui';
 import type { MediaVisibility, StoredMediaProvider } from '@/server/ports/media';
 import type {
   PaymentProviderCode,
+  StoredProviderCode,
   PaymentProviderEnvironment,
   PaymentAttemptStatus,
   EncryptedCredentialsBlob,
@@ -169,10 +170,18 @@ export const paymentProviderConfigs = pgTable(
   'payment_provider_configs',
   {
     id: uuid('id').defaultRandom().primaryKey(),
-    branchId: uuid('branch_id')
+    companyId: uuid('company_id')
       .notNull()
-      .references(() => branches.id, { onDelete: 'cascade' }),
-    providerCode: text('provider_code').$type<PaymentProviderCode>().notNull(),
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    /**
+     * Only for the older way of working: before payment methods are set up for a branch, the
+     * storefront still finds the provider that was configured for it. A provider belongs to the
+     * company; the branch is chosen on each payment method.
+     */
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+    providerCode: text('provider_code').$type<StoredProviderCode>().notNull(),
+    /** The built-in "Manual" provider: no outside service, cannot be deleted. */
+    isSystem: boolean('is_system').notNull().default(false),
     displayName: text('display_name').notNull(),
     isEnabled: boolean('is_enabled').notNull().default(false),
     environment: text('environment')
@@ -192,7 +201,8 @@ export const paymentProviderConfigs = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex('payment_provider_configs_branch_provider_uidx').on(t.branchId, t.providerCode),
+    uniqueIndex('payment_provider_configs_company_name_uidx').on(t.companyId, sql`lower(${t.displayName})`),
+    index('payment_provider_configs_company_idx').on(t.companyId),
     index('payment_provider_configs_branch_idx').on(t.branchId),
   ],
 );
@@ -2148,6 +2158,10 @@ export const integrationAuditLog = pgTable(
     callbackPayload: jsonb('callback_payload').$type<Record<string, unknown>>(),
     retryCount: integer('retry_count').notNull().default(0),
     queueJobId: text('queue_job_id'),
+    /** Which provider connection, and which operation, this call or callback belongs to. */
+    providerId: uuid('provider_id'),
+    operationId: uuid('operation_id'),
+    sourceIp: text('source_ip'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     retentionUntil: timestamp('retention_until', { withTimezone: true }),
   },
@@ -2156,6 +2170,7 @@ export const integrationAuditLog = pgTable(
     index('integration_audit_provider_op_idx').on(t.provider, t.operation),
     index('integration_audit_created_idx').on(t.createdAt),
     index('integration_audit_queue_job_idx').on(t.queueJobId),
+    index('integration_audit_operation_idx').on(t.operationId),
     index('integration_audit_retention_idx').on(t.retentionUntil),
   ],
 );
@@ -2567,12 +2582,8 @@ export const bankAccounts = pgTable(
     name: text('name').notNull(),
     kind: text('kind').$type<'bank' | 'cash' | 'mobile_money' | 'clearing'>().notNull(),
     currency: text('currency').notNull(),
-    glAccountId: uuid('gl_account_id')
-      .notNull()
-      .references(() => glAccounts.id, { onDelete: 'restrict' }),
     /** Where fees charged on this account post (bank charges, mobile-money charges). */
     feeGlAccountId: uuid('fee_gl_account_id').references(() => glAccounts.id, { onDelete: 'restrict' }),
-    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
     /** The provider account that fills this one (e.g. the Daraja paybill settling here). */
     providerConfigId: uuid('provider_config_id').references(() => paymentProviderConfigs.id, {
       onDelete: 'set null',
@@ -2587,7 +2598,6 @@ export const bankAccounts = pgTable(
   },
   (t) => [
     uniqueIndex('bank_accounts_company_code_uidx').on(t.companyId, t.code),
-    index('bank_accounts_gl_idx').on(t.glAccountId),
   ],
 );
 
@@ -2623,16 +2633,19 @@ export const paymentMethods = pgTable(
     requiresEvidence: boolean('requires_evidence').notNull().default(false),
     /** Cheque number, bank and drawer must be given. */
     requiresCounterparty: boolean('requires_counterparty').notNull().default(false),
-    /** Provider account used to collect (optional: a purely manual method has none). */
-    collectProviderConfigId: uuid('collect_provider_config_id').references(
-      () => paymentProviderConfigs.id,
-      { onDelete: 'set null' },
-    ),
-    /** Provider account used to pay out / refund (optional). */
-    payoutProviderConfigId: uuid('payout_provider_config_id').references(
-      () => paymentProviderConfigs.id,
-      { onDelete: 'set null' },
-    ),
+    /** The one provider this method goes through (the built-in "Manual" one for cash, cheques and the like). */
+    providerId: uuid('provider_id')
+      .notNull()
+      .references(() => paymentProviderConfigs.id, { onDelete: 'restrict' }),
+    /** The branch this method belongs to. Empty = every branch. */
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+    /** The G/L account its money posts to. */
+    glAccountId: uuid('gl_account_id')
+      .notNull()
+      .references(() => glAccounts.id, { onDelete: 'restrict' }),
+    /** What the number is (paybill, till, account) and the number itself. */
+    channelKind: text('channel_kind'),
+    channelNumber: text('channel_number'),
     /** customer_receipt | customer_refund | vendor_payment | vendor_receipt */
     usableFor: jsonb('usable_for').$type<string[]>().notNull().default(['customer_receipt']),
     settlementMode: text('settlement_mode')
@@ -2658,6 +2671,8 @@ export const paymentMethods = pgTable(
   (t) => [
     uniqueIndex('payment_methods_company_code_uidx').on(t.companyId, t.code),
     index('payment_methods_bank_idx').on(t.balancingBankAccountId),
+    index('payment_methods_provider_idx').on(t.providerId),
+    index('payment_methods_gl_idx').on(t.glAccountId),
   ],
 );
 
@@ -2677,6 +2692,10 @@ export const bankLedgerEntries = pgTable(
     documentNo: text('document_no').notNull(),
     documentId: uuid('document_id'),
     description: text('description'),
+    /** The G/L account this movement posted to (from the payment method it went through). */
+    glAccountId: uuid('gl_account_id')
+      .notNull()
+      .references(() => glAccounts.id, { onDelete: 'restrict' }),
     /** Positive = money in, negative = money out. */
     amount: numeric('amount', { precision: 20, scale: 4 }).notNull(),
     currency: text('currency').notNull(),
@@ -2687,6 +2706,7 @@ export const bankLedgerEntries = pgTable(
   },
   (t) => [
     index('bank_ledger_account_date_idx').on(t.bankAccountId, t.postingDate),
+    index('bank_ledger_gl_idx').on(t.glAccountId),
     index('bank_ledger_document_idx').on(t.documentId),
   ],
 );
@@ -3154,6 +3174,8 @@ export const refundRequests = pgTable(
     walletEntryId: bigint('wallet_entry_id', { mode: 'number' }),
     reserveRegisterId: uuid('reserve_register_id'),
     paidFromBankAccountId: uuid('paid_from_bank_account_id').references(() => bankAccounts.id, { onDelete: 'restrict' }),
+    /** The payment method the money was paid out through (its bank account and G/L account). */
+    paidFromMethodId: uuid('paid_from_method_id').references(() => paymentMethods.id, { onDelete: 'restrict' }),
     payoutReference: text('payout_reference'),
     payoutDate: date('payout_date', { mode: 'string' }),
     paidBy: text('paid_by'),
@@ -4494,3 +4516,186 @@ export const bankReconciliations = pgTable(
     index('bank_reconciliations_account_idx').on(t.bankAccountId, t.statementDate),
   ],
 );
+
+// ── F-6: payment platform engine ────────────────────────────────────────────
+
+export type ProviderOperationStatus =
+  | 'created'
+  | 'pending_approval'
+  | 'approved'
+  | 'queued'
+  | 'submitted'
+  | 'accepted'
+  | 'succeeded'
+  | 'failed'
+  | 'timed_out'
+  | 'in_doubt'
+  | 'cancelled'
+  | 'rejected';
+
+/**
+ * One request to a payment platform (collect, pay out, query, register...), from the moment it is
+ * asked for to the moment the platform's final answer has been confirmed. Never deleted.
+ */
+export const providerOperations = pgTable(
+  'provider_operations',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    providerId: uuid('provider_id')
+      .notNull()
+      .references(() => paymentProviderConfigs.id, { onDelete: 'restrict' }),
+    /** The payment method (shortcode, branch, bank account, G/L account) the operation runs for. */
+    methodId: uuid('method_id').references(() => paymentMethods.id, { onDelete: 'restrict' }),
+    operation: text('operation').notNull(),
+    status: text('status').$type<ProviderOperationStatus>().notNull().default('created'),
+    /** The same request asked twice is one operation. */
+    idempotencyKey: text('idempotency_key').notNull(),
+    /** The unique id we sent the platform (OriginatorConversationID, RequestRefID...). */
+    originatorId: text('originator_id'),
+    /** The platform's own id for the request (ConversationID, CheckoutRequestID...). */
+    conversationId: text('conversation_id'),
+    /** The transaction id the platform gave (M-Pesa receipt) once known. */
+    platformReference: text('platform_reference'),
+    subjectType: text('subject_type'),
+    subjectId: text('subject_id'),
+    amount: numeric('amount', { precision: 20, scale: 4 }),
+    currency: text('currency'),
+    /** What the operation was asked to do (no secrets): enough to send it again exactly as before. */
+    input: jsonb('input').$type<Record<string, unknown>>().notNull().default({}),
+    /** What was sent (secrets removed) and what came back. */
+    request: jsonb('request').$type<Record<string, unknown>>().notNull().default({}),
+    response: jsonb('response').$type<Record<string, unknown>>().notNull().default({}),
+    result: jsonb('result').$type<Record<string, unknown>>().notNull().default({}),
+    failureCode: text('failure_code'),
+    failureReason: text('failure_reason'),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    requestedBy: text('requested_by'),
+    origin: jsonb('origin').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('provider_operations_idem_uidx').on(t.companyId, t.idempotencyKey),
+    index('provider_operations_provider_idx').on(t.providerId, t.operation, t.status),
+    index('provider_operations_originator_idx').on(t.originatorId),
+    index('provider_operations_conversation_idx').on(t.conversationId),
+    index('provider_operations_subject_idx').on(t.subjectType, t.subjectId),
+    index('provider_operations_due_idx')
+      .on(t.nextAttemptAt)
+      .where(sql`${t.status} IN ('queued','submitted','accepted','timed_out','in_doubt')`),
+  ],
+);
+
+export type ProviderEventState =
+  | 'received'
+  | 'rejected'
+  | 'unmatched'
+  | 'mismatch'
+  | 'awaiting_verification'
+  | 'verified'
+  | 'unverified'
+  | 'consumed'
+  | 'ignored';
+
+/**
+ * Everything a platform sends us, exactly as it arrived, with who sent it, whether it could be
+ * trusted, and what was decided. A callback is a hint: only what we confirm ourselves counts.
+ */
+export const providerEvents = pgTable(
+  'provider_events',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    providerId: uuid('provider_id')
+      .notNull()
+      .references(() => paymentProviderConfigs.id, { onDelete: 'restrict' }),
+    kind: text('kind').notNull(),
+    sourceIp: text('source_ip'),
+    headers: jsonb('headers').$type<Record<string, string>>().notNull().default({}),
+    rawText: text('raw_text').notNull().default(''),
+    rawBody: jsonb('raw_body').$type<unknown>(),
+    bodyHash: text('body_hash').notNull(),
+    /** What the callback claims, read once when it arrived (the payer only as a fingerprint). */
+    claim: jsonb('claim').$type<Record<string, unknown>>(),
+    operationId: uuid('operation_id').references(() => providerOperations.id, { onDelete: 'set null' }),
+    attemptId: uuid('attempt_id'),
+    state: text('state').$type<ProviderEventState>().notNull().default('received'),
+    failureCode: text('failure_code'),
+    failureReason: text('failure_reason'),
+    platformReference: text('platform_reference'),
+    amount: numeric('amount', { precision: 20, scale: 4 }),
+    /** How many times the very same body has been seen (a replay is logged, not acted on twice). */
+    duplicateOf: uuid('duplicate_of'),
+    verifiedAt: timestamp('verified_at', { withTimezone: true }),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('provider_events_provider_idx').on(t.providerId, t.kind, t.state),
+    index('provider_events_ref_idx').on(t.platformReference),
+    index('provider_events_hash_idx').on(t.providerId, t.bodyHash),
+    index('provider_events_operation_idx').on(t.operationId),
+    index('provider_events_created_idx').on(t.createdAt),
+  ],
+);
+
+export type ProviderTransactionState = 'claimed' | 'verified' | 'review' | 'consumed' | 'rejected';
+
+/**
+ * Money the platform says moved into our account, one row per platform transaction id. Claimed from
+ * a callback, **verified by asking the platform**, and consumed exactly once.
+ */
+export const providerTransactions = pgTable(
+  'provider_transactions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    providerId: uuid('provider_id')
+      .notNull()
+      .references(() => paymentProviderConfigs.id, { onDelete: 'restrict' }),
+    methodId: uuid('method_id').references(() => paymentMethods.id, { onDelete: 'restrict' }),
+    /** stk | c2b | bill | gateway */
+    kind: text('kind').notNull(),
+    platformReference: text('platform_reference').notNull(),
+    amount: numeric('amount', { precision: 20, scale: 4 }).notNull(),
+    currency: text('currency').notNull().default('KES'),
+    payerMasked: text('payer_masked'),
+    payerHash: text('payer_hash'),
+    shortcode: text('shortcode'),
+    accountReference: text('account_reference'),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }),
+    state: text('state').$type<ProviderTransactionState>().notNull().default('claimed'),
+    /** What confirmed it: stk_query, transaction_status, pull, status_api... and what they said. */
+    verifiedBy: text('verified_by'),
+    evidence: jsonb('evidence').$type<Record<string, unknown>[]>().notNull().default([]),
+    verifiedAt: timestamp('verified_at', { withTimezone: true }),
+    consumedType: text('consumed_type'),
+    consumedId: text('consumed_id'),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+    failureCode: text('failure_code'),
+    failureReason: text('failure_reason'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // A platform transaction can be counted once, whatever number of callbacks announce it.
+    uniqueIndex('provider_transactions_ref_uidx').on(t.providerId, t.platformReference),
+    index('provider_transactions_state_idx').on(t.companyId, t.state),
+    index('provider_transactions_occurred_idx').on(t.providerId, t.occurredAt),
+  ],
+);
+
+export type ProviderOperationRow = typeof providerOperations.$inferSelect;
+export type ProviderEventRow = typeof providerEvents.$inferSelect;
+export type ProviderTransactionRow = typeof providerTransactions.$inferSelect;

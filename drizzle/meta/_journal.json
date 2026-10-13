@@ -337,6 +337,20 @@
       "when": 1791859815407,
       "tag": "0047_finance_f5_bank_statements",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1791865731684,
+      "tag": "0048_payment_providers_and_methods",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1791887685204,
+      "tag": "0049_payment_engine",
+      "breakpoints": true
     }
   ]
 }

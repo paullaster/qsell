@@ -32,11 +32,12 @@ export async function runAutoMatchAction(bankAccountId: string) {
 export async function statementWorkbenchAction(bankAccountId: string, filter: { status?: StatementLineStatus | 'open'; before?: number } = {}) {
   return run('bank_statements:read', { surface: 'finance/bank-statements/account', action: 'view' }, async (ctx) => {
     const w = await fin().bankStatements.workbench(ctx.companyId, bankAccountId, filter);
-    const [methods, reasons, recs, preview] = await Promise.all([
+    const [methods, reasons, recs, preview, chargeGls] = await Promise.all([
       fin().bankStatements.receiptMethods(ctx.companyId, bankAccountId),
       reasonList(ctx.companyId),
       fin().bankReconciliation.list(ctx.companyId, bankAccountId),
       fin().bankReconciliation.preview(ctx.companyId, bankAccountId, new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' })),
+      fin().bankStatements.chargeGlChoices(ctx.companyId, bankAccountId),
     ]);
     const entry = (e: { id: number; postingDate: string; documentType: string; documentNo: string; description: string | null; amount: string }) => ({ id: e.id, date: e.postingDate, type: e.documentType, no: e.documentNo, description: e.description ?? '', amount: e.amount });
     return {
@@ -56,6 +57,7 @@ export async function statementWorkbenchAction(bankAccountId: string, filter: { 
       bookBalance: w.bookBalance,
       hasFormat: !!w.format,
       methods,
+      chargeGls: chargeGls.map((g) => ({ id: g.glId, label: g.label })),
       reasons,
       reconciliations: recs.map((r) => ({ id: r.id, number: r.number, date: r.statementDate, balance: r.statementBalance, lines: r.lineCount, status: r.status, at: r.postedAt.toISOString() })),
       preview,
@@ -103,8 +105,8 @@ export async function receiptFromStatementLineAction(bankAccountId: string, line
   }, [`${ROOT}/${bankAccountId}`, '/admin/finance/receipts']);
 }
 
-export async function chargeFromStatementLineAction(bankAccountId: string, lineId: number) {
-  return run('bank_statements:record_charge', { surface: 'finance/bank-statements/account', action: 'record_charge' }, async (ctx) => fin().bankStatements.recordChargeFromLine(ctx, lineId, await postingPermissions()), [`${ROOT}/${bankAccountId}`]);
+export async function chargeFromStatementLineAction(bankAccountId: string, lineId: number, glAccountId?: string) {
+  return run('bank_statements:record_charge', { surface: 'finance/bank-statements/account', action: 'record_charge' }, async (ctx) => fin().bankStatements.recordChargeFromLine(ctx, lineId, { glAccountId, permissions: await postingPermissions() }), [`${ROOT}/${bankAccountId}`]);
 }
 
 export async function reconciliationPreviewAction(bankAccountId: string, statementDate: string) {

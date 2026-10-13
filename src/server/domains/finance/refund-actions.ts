@@ -54,7 +54,7 @@ export async function cancelRefundAction(id: string, reason: { code: string; tex
   return run('refunds:cancel', { surface: 'finance/refunds/detail', action: 'cancel' }, async (ctx) => fin().refunds.cancel(ctx, id, reason, await postingPermissions()), [ROOT, `${ROOT}/${id}`, '/admin/finance/receivables/credit-note-excess']);
 }
 
-export async function recordRefundPayoutAction(id: string, input: { paidFromBankAccountId: string; payoutDate?: string; reference: string }) {
+export async function recordRefundPayoutAction(id: string, input: { paidFromMethodId: string; payoutDate?: string; reference: string }) {
   return run('refunds:record_manual_payout', { surface: 'finance/refunds/detail', action: 'record_payout' }, async (ctx) => fin().refunds.recordPayout(ctx, id, { ...input, permissions: await postingPermissions() }), [ROOT, `${ROOT}/${id}`]);
 }
 
@@ -90,7 +90,7 @@ export async function refundDetailAction(id: string) {
     if (!d) throw new FinanceError('NOT_FOUND', 'That refund does not exist.');
     const media = getContainer().media;
     const attachments = await Promise.all(d.attachments.map(async (a) => ({ id: a.id, fileName: a.fileName, note: a.note, createdAt: a.createdAt.toISOString(), url: await media.deliveryUrlById(a.mediaAssetId).catch(() => null) })));
-    const [banks, reasons] = await Promise.all([fin().bankAccounts.list(ctx.companyId), getContainer().reasonCodes.list(ctx.companyId)]);
+    const [methods, reasons] = await Promise.all([fin().paymentMethods.list(ctx.companyId), getContainer().reasonCodes.list(ctx.companyId)]);
     const r = d.r;
     const name = (x: string | null) => (x ? (d.actors[x] ?? x) : null);
     return {
@@ -117,7 +117,7 @@ export async function refundDetailAction(id: string) {
       payoutDate: r.payoutDate,
       attachments,
       events: d.events.map((e) => ({ id: String(e.id), event: e.event, from: e.fromStatus, to: e.toStatus, reasonCode: e.reasonCode, reasonText: e.reasonText, by: name(e.actorId) ?? e.actorType, surface: (e.origin as { surface?: string }).surface ?? null, permission: (e.origin as { permissionUsed?: string }).permissionUsed ?? null, at: e.createdAt.toISOString(), data: e.data })),
-      payFrom: banks.filter((b) => !b.account.blocked && b.account.kind !== 'clearing' && b.account.currency === r.currency).map((b) => ({ id: b.account.id, label: `${b.account.code} — ${b.account.name}` })),
+      payFrom: methods.filter((m) => m.method.enabled && !m.bankBlocked && m.bankCurrency === r.currency && m.method.kind !== 'cheque').map((m) => ({ id: m.method.id, label: `${m.method.name} — ${m.bankCode}${m.branchName ? ` (${m.branchName})` : ''}` })),
       reasons: reasons.filter((x) => x.isActive).map((x) => ({ code: x.code, description: x.description, requiresComment: x.requiresComment })),
       can: {
         submit: await canPermission('refunds:submit'),
