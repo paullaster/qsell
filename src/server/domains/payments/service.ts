@@ -1,10 +1,10 @@
 import { v7 as uuidv7 } from 'uuid';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { companySettings, type BranchRow } from '@/server/db/drizzle/schema';
+import { companySettings, paymentProviderConfigs, type BranchRow } from '@/server/db/drizzle/schema';
 import { eq } from 'drizzle-orm';
 import { PaymentRegistry } from './registry';
 import { PaymentAttemptRepository, PaymentConfigRepository } from './repository';
-import { decryptCredentials } from './crypto';
+import { decryptCredentials, encryptCredentials, needsResealing } from './crypto';
 import { PAYMENT_PROVIDER_META, type PaymentProviderCode } from './types';
 import { classifyCallbackPayload } from './callback-status';
 import { extractPaymentReference } from './payment-reference';
@@ -55,6 +55,61 @@ export class PaymentService {
   ): string {
     const prefix = PAYMENT_PROVIDER_META[providerCode].callbackPathPrefix;
     return `${publicBaseUrl.replace(/\/$/, '')}${prefix}/${token}`;
+  }
+
+  /**
+   * Signs in to the provider with the credentials saved for this branch account, without moving
+   * money, and remembers the result. Never returns or logs a credential.
+   */
+  async testConnection(configId: string): Promise<{ ok: boolean; message: string; at: Date }> {
+    const config = await this.configs.getById(configId);
+    if (!config) throw new Error('That provider account does not exist.');
+    const code = config.providerCode as PaymentProviderCode;
+    let result: { ok: boolean; message: string };
+    try {
+      const credentials = decryptCredentials(config.credentialsEncrypted);
+      if (!credentials) {
+        result = { ok: false, message: 'No credentials are saved for this provider yet.' };
+      } else {
+        result = await this.registry
+          .resolve(code)
+          .testConnection(credentials, config.settings ?? {}, config.apiBaseUrl);
+      }
+    } catch (error) {
+      result = { ok: false, message: error instanceof Error ? error.message.slice(0, 300) : 'The test could not run.' };
+    }
+    await this.configs.recordTest(config.id, result.ok, result.message);
+    return { ...result, at: new Date() };
+  }
+
+  /**
+   * Seals credentials that were sealed under an older key (or before keys had ids) again under the
+   * current one, so a retired key can eventually be dropped. A row that cannot be opened is
+   * reported, never overwritten.
+   */
+  async resealCredentials(): Promise<{ resealed: number; failed: { id: string; reason: string }[] }> {
+    const rows = await this.db.select().from(paymentProviderConfigs);
+    let resealed = 0;
+    const failed: { id: string; reason: string }[] = [];
+    for (const row of rows) {
+      if (!needsResealing(row.credentialsEncrypted)) continue;
+      try {
+        const plain = decryptCredentials(row.credentialsEncrypted);
+        if (!plain) continue;
+        await this.db
+          .update(paymentProviderConfigs)
+          .set({ credentialsEncrypted: encryptCredentials(plain), updatedAt: new Date() })
+          .where(eq(paymentProviderConfigs.id, row.id));
+        resealed += 1;
+      } catch (error) {
+        failed.push({ id: row.id, reason: error instanceof Error ? error.message.slice(0, 160) : 'unknown' });
+      }
+    }
+    return { resealed, failed };
+  }
+
+  capabilitiesOf(code: PaymentProviderCode): readonly string[] {
+    return this.registry.resolve(code).capabilities;
   }
 
   async listEnabledProviders(branchId: string) {

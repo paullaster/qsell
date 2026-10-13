@@ -5,6 +5,8 @@ import { requirePermission } from '@/server/domains/access-control/guard';
 import { AccessDeniedError } from '@/server/domains/access-control/engine';
 import { getContainer } from '@/server/di/container';
 import { CreditNoteError } from './service';
+import { PostingError } from '@/server/domains/finance/engine';
+import { FinanceError } from '@/server/domains/finance/errors';
 import type { CreditNoteReason } from './reasons';
 
 /** `forbidden` lets the screen hide itself for people without the permission. */
@@ -22,7 +24,7 @@ async function run<T>(fn: () => Promise<T>): Promise<CreditNoteActionResult<T>> 
         forbidden: true,
       };
     }
-    if (error instanceof CreditNoteError) return { ok: false, error: error.message };
+    if (error instanceof CreditNoteError || error instanceof FinanceError || error instanceof PostingError) return { ok: false, error: error.message };
     console.error('[credit-notes]', error);
     return { ok: false, error: 'Something went wrong. Please try again.' };
   }
@@ -36,6 +38,10 @@ export interface CreditNoteView {
   kraStatus: string;
   reasonCode: string;
   createdAt: string;
+  /** What it did to the customer's account (absent for credit notes issued before this existed). */
+  accounting?: { applied: number; excessOpen: number; toWallet: number; toInvoices: number };
+  /** The goods expected back because of it. */
+  returnReceipt?: { id: string; number: string; status: string };
 }
 
 /** Issues a credit note against an order's tax invoice. Signing happens afterwards, in the background. */
@@ -83,9 +89,31 @@ export async function listOrderCreditNotesAction(
   orderId: string,
 ): Promise<CreditNoteActionResult<CreditNoteView[]>> {
   await requirePermission('credit_notes:create');
-  return run(async () =>
-    (await getContainer().creditNotes.listForSource('order', orderId)).map(toView),
-  );
+  return run(async () => {
+    const c = getContainer();
+    const notes = await c.creditNotes.listForSource('order', orderId);
+    const ids = notes.map((n) => n.id);
+    const companyId = notes[0]?.companyId;
+    const [acc, returns] = companyId ? await Promise.all([c.finance.creditNoteAccounting.summaries(companyId, ids), c.returns.forCreditNotes(ids)]) : [new Map(), new Map()];
+    return notes.map((n) => {
+      const a = acc.get(n.id);
+      const r = returns.get(n.id);
+      return {
+        ...toView(n),
+        ...(a
+          ? {
+              accounting: {
+                applied: Number(a.applied),
+                excessOpen: a.openCents / 100,
+                toWallet: a.resolutions.filter((x: { kind: string }) => x.kind === 'wallet').reduce((s: number, x: { amount: string }) => s + Number(x.amount), 0),
+                toInvoices: a.resolutions.filter((x: { kind: string }) => x.kind === 'applied').reduce((s: number, x: { amount: string }) => s + Number(x.amount), 0),
+              },
+            }
+          : {}),
+        ...(r ? { returnReceipt: { id: r.id, number: r.number, status: r.status } } : {}),
+      };
+    });
+  });
 }
 
 /** What the issue screen needs: per-line creditable quantities and whether restock applies. */

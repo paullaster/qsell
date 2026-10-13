@@ -2,6 +2,7 @@ import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   categories,
+  customerDetailedEntries,
   customerLedgerEntries,
   customers,
   decisionLog,
@@ -16,6 +17,7 @@ import {
 import { withAfterCommit } from '@/server/kernel/after-commit';
 import type { ApprovalEngine, Tx } from '@/server/kernel/approvals/engine';
 import type { Actor } from '@/server/kernel/context';
+import { businessDate } from '@/server/kernel/numbering/business-date';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { ReasonCodes, ReasonInput } from '@/server/kernel/reason-codes/service';
 import { PricingConfigError } from './config-service';
@@ -684,6 +686,28 @@ export class RebateConfigService {
           'INVALID',
           `${customer!.name} owes ${openTotal.toFixed(2)} on open invoices, less than the rebate of ${amount.toFixed(2)}. Settle it once there is enough owing to credit.`,
         );
+      const ref = `RBT-${s.periodKey}-${s.id.slice(0, 8).toUpperCase()}`;
+      const today = businessDate();
+      const currency = open[0]?.currency ?? 'KES';
+      const [credit] = await tx
+        .insert(customerLedgerEntries)
+        .values({
+          companyId,
+          customerId: s.customerId,
+          documentType: 'rebate_credit',
+          documentNo: ref,
+          description: `Rebate ${p!.code} ${periodLabel(s.periodKey)}`,
+          amount: (-amount).toFixed(2),
+          remainingAmount: '0',
+          kraTransmissionStatus: 'not_applicable',
+          postingDate: today,
+          currency,
+        })
+        .returning({ id: customerLedgerEntries.id });
+      // Its history: the credit, and each invoice it settled (so open amounts always equal history).
+      const history: (typeof customerDetailedEntries.$inferInsert)[] = [
+        { companyId, customerId: s.customerId, ledgerEntryId: credit!.id, entryType: 'initial', amount: (-amount).toFixed(2), postingDate: today },
+      ];
       let left = amount;
       for (const e of open) {
         if (left <= 0.004) break;
@@ -693,19 +717,17 @@ export class RebateConfigService {
           .update(customerLedgerEntries)
           .set({ remainingAmount: money(remaining - applied).toFixed(2) })
           .where(eq(customerLedgerEntries.id, e.id));
+        const base = { companyId, customerId: s.customerId, entryType: 'application' as const, postingDate: today };
+        history.push(
+          { ...base, ledgerEntryId: e.id, amount: (-applied).toFixed(2), appliedToEntryId: credit!.id },
+          { ...base, ledgerEntryId: credit!.id, amount: applied.toFixed(2), appliedToEntryId: e.id },
+        );
         left -= applied;
       }
-      const ref = `RBT-${s.periodKey}-${s.id.slice(0, 8).toUpperCase()}`;
-      await tx.insert(customerLedgerEntries).values({
-        companyId,
-        customerId: s.customerId,
-        documentType: 'rebate_credit',
-        documentNo: ref,
-        description: `Rebate ${p!.code} ${periodLabel(s.periodKey)}`,
-        amount: (-amount).toFixed(2),
-        remainingAmount: '0',
-        kraTransmissionStatus: 'not_applicable',
-      });
+      await tx.insert(customerDetailedEntries).values(history);
+      // Once the ledger is live the rebate's cost reaches it; queued here, in the same transaction.
+      const { getContainer } = await import('@/server/di/container');
+      await getContainer().finance.salesPosting.enqueue(tx, { companyId, kind: 'rebate_credit', subjectId: credit!.id });
       await tx
         .update(customers)
         .set({

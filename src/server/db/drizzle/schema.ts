@@ -9,6 +9,8 @@ import {
   jsonb,
   bigint,
   numeric,
+  date,
+  smallint,
   uniqueIndex,
   index,
   check,
@@ -182,6 +184,10 @@ export const paymentProviderConfigs = pgTable(
     credentialsEncrypted: jsonb('credentials_encrypted').$type<EncryptedCredentialsBlob | null>(),
     /** Non-secret provider settings (timeouts, till type flags, etc.). */
     settings: jsonb('settings').$type<Record<string, unknown>>().notNull().default({}),
+    /** The last "Test connection" and what it said. */
+    lastTestAt: timestamp('last_test_at', { withTimezone: true }),
+    lastTestOk: boolean('last_test_ok'),
+    lastTestMessage: text('last_test_message'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -1299,7 +1305,10 @@ export const orders = pgTable(
     currency: text('currency').notNull().default('KES'),
     status: text('status').notNull().default('pending'),
     paymentStatus: text('payment_status').notNull().default('unpaid'),
+    /** What the customer chose, as the provider/legacy code (kept; reports and rules read it). */
     paymentMethod: text('payment_method').notNull(),
+    /** The finance payment method this stands for (filled by a backfill and on new orders). */
+    paymentMethodId: uuid('payment_method_id'),
     shippingCourier: text('shipping_courier'),
     trackingNumber: text('tracking_number'),
     internalNotes: text('internal_notes'),
@@ -1415,6 +1424,8 @@ export const customers = pgTable(
       .$type<{ global: Record<string, string>; shortcut: Record<string, string> }>()
       .notNull()
       .default({ global: {}, shortcut: {} }),
+    /** Customer posting group code (which receivables / deposits accounts); null = the default. */
+    postingGroupCode: text('posting_group_code'),
     /** Open receivable. Cash customers stay at 0. */
     balance: numeric('balance', { precision: 14, scale: 2 }).notNull().default('0'),
     isActive: boolean('is_active').notNull().default(true),
@@ -1482,9 +1493,16 @@ export const customerLedgerEntries = pgTable(
     dueDate: timestamp('due_date', { withTimezone: true }),
     kraTransmissionStatus: text('kra_transmission_status').notNull().default('not_applicable'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    /** Date the entry belongs to in the books (not when the row was written). */
+    postingDate: date('posting_date', { mode: 'string' }),
+    currency: text('currency'),
+    /** The document behind it, when it is not an order: a receipt id. */
+    documentId: uuid('document_id'),
+    registerId: uuid('register_id'),
   },
   (t) => [
     index('customer_ledger_customer_idx').on(t.customerId),
+    index('customer_ledger_document_idx').on(t.documentId),
     index('customer_ledger_order_idx').on(t.orderId),
     index('customer_ledger_open_due_idx')
       .on(t.dueDate)
@@ -2534,6 +2552,696 @@ export type PaymentGatewayConfigRow = typeof paymentGatewayConfigs.$inferSelect;
 export type PaymentGatewayConfigInsert = typeof paymentGatewayConfigs.$inferInsert;
 export type ApprovalParkedActionRow = typeof approvalParkedActions.$inferSelect;
 
+
+// ─── Finance F-1: money containers, payment methods, receipts, receivables detail ────────
+
+/** Where money sits: a bank account, a cash drawer, a mobile-money settlement account, a clearing account. */
+export const bankAccounts = pgTable(
+  'bank_accounts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    kind: text('kind').$type<'bank' | 'cash' | 'mobile_money' | 'clearing'>().notNull(),
+    currency: text('currency').notNull(),
+    glAccountId: uuid('gl_account_id')
+      .notNull()
+      .references(() => glAccounts.id, { onDelete: 'restrict' }),
+    /** Where fees charged on this account post (bank charges, mobile-money charges). */
+    feeGlAccountId: uuid('fee_gl_account_id').references(() => glAccounts.id, { onDelete: 'restrict' }),
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+    /** The provider account that fills this one (e.g. the Daraja paybill settling here). */
+    providerConfigId: uuid('provider_config_id').references(() => paymentProviderConfigs.id, {
+      onDelete: 'set null',
+    }),
+    /** Non-secret facts: bank name, branch, account number, paybill, till number. */
+    details: jsonb('details').$type<Record<string, string>>().notNull().default({}),
+    statementFormat: text('statement_format'),
+    blocked: boolean('blocked').notNull().default(false),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('bank_accounts_company_code_uidx').on(t.companyId, t.code),
+    index('bank_accounts_gl_idx').on(t.glAccountId),
+  ],
+);
+
+export type PaymentMethodKind =
+  | 'cash'
+  | 'bank_transfer'
+  | 'bank_deposit'
+  | 'cheque'
+  | 'mobile_money'
+  | 'card'
+  | 'gateway'
+  | 'wallet'
+  | 'gift_card'
+  | 'offset'
+  | 'other';
+
+/** How a customer pays, and what that does to the books. Data, never code. */
+export const paymentMethods = pgTable(
+  'payment_methods',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    kind: text('kind').$type<PaymentMethodKind>().notNull(),
+    /** The bank / cash / clearing account the money lands in. Always set. */
+    balancingBankAccountId: uuid('balancing_bank_account_id')
+      .notNull()
+      .references(() => bankAccounts.id, { onDelete: 'restrict' }),
+    requiresReference: boolean('requires_reference').notNull().default(false),
+    requiresEvidence: boolean('requires_evidence').notNull().default(false),
+    /** Cheque number, bank and drawer must be given. */
+    requiresCounterparty: boolean('requires_counterparty').notNull().default(false),
+    /** Provider account used to collect (optional: a purely manual method has none). */
+    collectProviderConfigId: uuid('collect_provider_config_id').references(
+      () => paymentProviderConfigs.id,
+      { onDelete: 'set null' },
+    ),
+    /** Provider account used to pay out / refund (optional). */
+    payoutProviderConfigId: uuid('payout_provider_config_id').references(
+      () => paymentProviderConfigs.id,
+      { onDelete: 'set null' },
+    ),
+    /** customer_receipt | customer_refund | vendor_payment | vendor_receipt */
+    usableFor: jsonb('usable_for').$type<string[]>().notNull().default(['customer_receipt']),
+    settlementMode: text('settlement_mode')
+      .$type<'immediate' | 'delayed' | 'on_statement'>()
+      .notNull()
+      .default('immediate'),
+    settlementDays: integer('settlement_days').notNull().default(0),
+    feePolicy: jsonb('fee_policy').$type<Record<string, unknown>>().notNull().default({}),
+    limits: jsonb('limits').$type<{ min?: string; max?: string }>().notNull().default({}),
+    /** none | manual | automatic: may a refund be paid out through this method? */
+    refundDestination: text('refund_destination')
+      .$type<'none' | 'manual' | 'automatic'>()
+      .notNull()
+      .default('none'),
+    /** Old free-text provider codes (orders.payment_method) this method stands for. */
+    legacyCodes: jsonb('legacy_codes').$type<string[]>().notNull().default([]),
+    enabled: boolean('enabled').notNull().default(true),
+    sortOrder: integer('sort_order').notNull().default(100),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('payment_methods_company_code_uidx').on(t.companyId, t.code),
+    index('payment_methods_bank_idx').on(t.balancingBankAccountId),
+  ],
+);
+
+/** Movements on a bank or cash account. Append-only; reconciliation (F-5) marks them in its own table. */
+export const bankLedgerEntries = pgTable(
+  'bank_ledger_entries',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    bankAccountId: uuid('bank_account_id')
+      .notNull()
+      .references(() => bankAccounts.id, { onDelete: 'restrict' }),
+    postingDate: date('posting_date', { mode: 'string' }).notNull(),
+    documentType: text('document_type').notNull(),
+    documentNo: text('document_no').notNull(),
+    documentId: uuid('document_id'),
+    description: text('description'),
+    /** Positive = money in, negative = money out. */
+    amount: numeric('amount', { precision: 20, scale: 4 }).notNull(),
+    currency: text('currency').notNull(),
+    registerId: uuid('register_id'),
+    reversesEntryId: bigint('reverses_entry_id', { mode: 'number' }),
+    createdBy: text('created_by'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('bank_ledger_account_date_idx').on(t.bankAccountId, t.postingDate),
+    index('bank_ledger_document_idx').on(t.documentId),
+  ],
+);
+
+export type ReceiptStatus = 'draft' | 'posted' | 'reversed' | 'cancelled';
+export type ChequeStatus = 'received' | 'deposited' | 'cleared' | 'bounced';
+
+/** A payment received from a customer. Draft until posted; never edited after. */
+export const customerReceipts = pgTable(
+  'customer_receipts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    number: text('number').notNull(),
+    customerId: uuid('customer_id')
+      .notNull()
+      .references(() => customers.id, { onDelete: 'restrict' }),
+    paymentMethodId: uuid('payment_method_id')
+      .notNull()
+      .references(() => paymentMethods.id, { onDelete: 'restrict' }),
+    /** Where the money landed (the method's account at the time). */
+    bankAccountId: uuid('bank_account_id')
+      .notNull()
+      .references(() => bankAccounts.id, { onDelete: 'restrict' }),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    currency: text('currency').notNull(),
+    /** Rate of the receipt currency to the base currency (text, like the engine). */
+    rate: text('rate').notNull().default('1'),
+    paymentDate: date('payment_date', { mode: 'string' }).notNull(),
+    postingDate: date('posting_date', { mode: 'string' }).notNull(),
+    externalReference: text('external_reference'),
+    payerName: text('payer_name'),
+    /** Cheque number, drawer bank, drawer, cheque date; deposit slip number. */
+    counterparty: jsonb('counterparty').$type<Record<string, string>>().notNull().default({}),
+    narration: text('narration'),
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+    status: text('status').$type<ReceiptStatus>().notNull().default('draft'),
+    chequeStatus: text('cheque_status').$type<ChequeStatus>(),
+    source: text('source')
+      .$type<'manual' | 'gateway' | 'bank_statement' | 'pos' | 'portal' | 'import'>()
+      .notNull()
+      .default('manual'),
+    sourceRef: text('source_ref'),
+    orderId: text('order_id'),
+    /** An advance with no invoice behind it: the whole amount goes to the wallet when posted. */
+    isDeposit: boolean('is_deposit').notNull().default(false),
+    idempotencyKey: text('idempotency_key'),
+    ledgerEntryId: uuid('ledger_entry_id'),
+    registerId: uuid('register_id'),
+    postedAt: timestamp('posted_at', { withTimezone: true }),
+    postedBy: text('posted_by'),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('customer_receipts_company_number_uidx').on(t.companyId, t.number),
+    uniqueIndex('customer_receipts_idem_uidx')
+      .on(t.companyId, t.idempotencyKey)
+      .where(sql`${t.idempotencyKey} IS NOT NULL`),
+    // The same outside reference on the same method cannot be recorded twice (a bank or
+    // M-Pesa reference is one payment), unless the earlier one was cancelled or reversed.
+    uniqueIndex('customer_receipts_reference_uidx')
+      .on(t.companyId, t.paymentMethodId, t.externalReference)
+      .where(sql`${t.externalReference} IS NOT NULL AND ${t.status} IN ('draft','posted')`),
+    index('customer_receipts_customer_idx').on(t.customerId, t.createdAt),
+    index('customer_receipts_status_idx').on(t.companyId, t.status, t.createdAt),
+    check('customer_receipts_amount_chk', sql`${t.amount} > 0`),
+  ],
+);
+
+/** The life of a receipt: every step, who took it, why. Append-only. */
+export const receiptEvents = pgTable(
+  'receipt_events',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    receiptId: uuid('receipt_id')
+      .notNull()
+      .references(() => customerReceipts.id, { onDelete: 'cascade' }),
+    event: text('event').notNull(),
+    fromStatus: text('from_status'),
+    toStatus: text('to_status'),
+    reasonCode: text('reason_code'),
+    reasonText: text('reason_text'),
+    data: jsonb('data').$type<Record<string, unknown>>().notNull().default({}),
+    actorType: text('actor_type').notNull(),
+    actorId: text('actor_id'),
+    origin: jsonb('origin').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('receipt_events_receipt_idx').on(t.receiptId, t.id)],
+);
+
+export type CustomerDetailedEntryType =
+  | 'initial'
+  | 'application'
+  | 'unapplication'
+  | 'reversal'
+  | 'write_off'
+  | 'payment_discount'
+  | 'rounding'
+  | 'fx_gain'
+  | 'fx_loss'
+  | 'wallet_transfer'
+  | 'refund_transfer';
+
+/**
+ * Every change to what is open on a customer ledger entry. Append-only. An entry's remaining
+ * amount is the sum of its detailed entries (kept up to date in the same transaction and
+ * checked by `customerBalanceDrift`).
+ */
+export const customerDetailedEntries = pgTable(
+  'customer_detailed_entries',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    customerId: uuid('customer_id')
+      .notNull()
+      .references(() => customers.id, { onDelete: 'cascade' }),
+    ledgerEntryId: uuid('ledger_entry_id')
+      .notNull()
+      .references(() => customerLedgerEntries.id, { onDelete: 'restrict' }),
+    entryType: text('entry_type').$type<CustomerDetailedEntryType>().notNull(),
+    /** Signed, in the ledger entry's currency; the sum per ledger entry is what is open. */
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    /** For applications: the entry on the other side. */
+    appliedToEntryId: uuid('applied_to_entry_id'),
+    /** One id per apply / unapply action; both sides of it share it. */
+    applicationId: uuid('application_id'),
+    /** An unapplication names the application it undoes (each can be undone once). */
+    unappliesApplicationId: uuid('unapplies_application_id'),
+    postingDate: date('posting_date', { mode: 'string' }),
+    registerId: uuid('register_id'),
+    reasonCode: text('reason_code'),
+    reasonText: text('reason_text'),
+    createdBy: text('created_by'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('customer_detailed_entry_idx').on(t.ledgerEntryId),
+    index('customer_detailed_customer_idx').on(t.customerId, t.id),
+    index('customer_detailed_application_idx').on(t.applicationId),
+    // Each row of an application can be undone once (an application to several invoices has
+    // several rows on the receipt's side, one per invoice).
+    uniqueIndex('customer_detailed_unapply_once_uidx')
+      .on(t.unappliesApplicationId, t.ledgerEntryId, t.appliedToEntryId)
+      .where(sql`${t.unappliesApplicationId} IS NOT NULL`),
+  ],
+);
+
+/** A file kept as evidence for a finance document (deposit slip, screenshot, cheque image). */
+export const financeAttachments = pgTable(
+  'finance_attachments',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    subjectType: text('subject_type').notNull(),
+    subjectId: uuid('subject_id').notNull(),
+    mediaAssetId: text('media_asset_id').notNull(),
+    fileName: text('file_name').notNull(),
+    note: text('note'),
+    uploadedBy: text('uploaded_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('finance_attachments_subject_idx').on(t.subjectType, t.subjectId)],
+);
+
+export type SalesPostingKind = 'invoice' | 'cash_sale' | 'credit_payment' | 'rebate_credit' | 'wallet_use';
+export type SalesPostingStatus = 'pending' | 'posted' | 'failed' | 'skipped';
+
+// ─── Finance F-2: customer wallet ────────────────────────────────────────────────────────
+
+export type WalletEntryType =
+  | 'deposit'
+  | 'overpayment'
+  | 'utilisation'
+  | 'tender'
+  | 'credit_note'
+  | 'cash_out'
+  | 'reversal';
+
+/** A customer's credit held by the business, one per currency. A liability, never a debtor. */
+export const customerWallets = pgTable(
+  'customer_wallets',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    customerId: uuid('customer_id')
+      .notNull()
+      .references(() => customers.id, { onDelete: 'restrict' }),
+    currency: text('currency').notNull(),
+    status: text('status').$type<'active' | 'frozen'>().notNull().default('active'),
+    /** The sum of the wallet's entries, kept in step with them in the same transaction. */
+    balance: numeric('balance', { precision: 14, scale: 2 }).notNull().default('0'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('customer_wallets_customer_currency_uidx').on(t.customerId, t.currency),
+    index('customer_wallets_company_idx').on(t.companyId),
+    check('customer_wallets_not_negative_chk', sql`${t.balance} >= 0`),
+  ],
+);
+
+/** Every movement of a wallet. Append-only. */
+export const walletEntries = pgTable(
+  'wallet_entries',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    walletId: uuid('wallet_id')
+      .notNull()
+      .references(() => customerWallets.id, { onDelete: 'restrict' }),
+    customerId: uuid('customer_id').notNull(),
+    entryType: text('entry_type').$type<WalletEntryType>().notNull(),
+    /** Signed: money into the wallet is positive. */
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    currency: text('currency').notNull(),
+    /** What caused it: a receipt, an invoice, an order. */
+    sourceType: text('source_type'),
+    sourceId: text('source_id'),
+    /** The customer-ledger entry on the other side, when there is one. */
+    ledgerEntryId: uuid('ledger_entry_id'),
+    reasonCode: text('reason_code'),
+    reasonText: text('reason_text'),
+    registerId: uuid('register_id'),
+    postingDate: date('posting_date', { mode: 'string' }).notNull(),
+    actorType: text('actor_type').notNull(),
+    actorId: text('actor_id'),
+    origin: jsonb('origin').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('wallet_entries_wallet_idx').on(t.walletId, t.id),
+    index('wallet_entries_customer_idx').on(t.customerId, t.id),
+    index('wallet_entries_source_idx').on(t.sourceType, t.sourceId),
+  ],
+);
+
+/**
+ * The "refund or wallet" switch, effective-dated. A row with no group applies to the company; a
+ * row for a customer posting group overrides it for that group. The newest row in force wins.
+ */
+export const customerCreditPolicies = pgTable(
+  'customer_credit_policies',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    groupCode: text('group_code'),
+    effectiveFrom: date('effective_from', { mode: 'string' }).notNull(),
+    walletEnabled: boolean('wallet_enabled').notNull().default(false),
+    allowDeposits: boolean('allow_deposits').notNull().default(true),
+    /** What to do with money paid beyond what is owed: wallet | hold | ask. */
+    overpaymentDefault: text('overpayment_default').$type<'wallet' | 'hold' | 'ask'>().notNull().default('ask'),
+    /** On a credit invoice: apply the wallet automatically (oldest_first) or leave it (never). */
+    autoApply: text('auto_apply').$type<'never' | 'oldest_first'>().notNull().default('never'),
+    /** Where the part of a credit note that the invoice cannot absorb goes: wallet, or wait for a person (ask). */
+    creditNoteExcessDefault: text('credit_note_excess_default').$type<'wallet' | 'ask'>().notNull().default('ask'),
+    /** Can money be paid back out to customers at all? Off makes every excess go to the wallet. */
+    refundsEnabled: boolean('refunds_enabled').notNull().default(true),
+    /** May a customer's wallet be paid out in cash (a refund from the wallet)? */
+    walletCashOut: boolean('wallet_cash_out').notNull().default(false),
+    maxBalance: numeric('max_balance', { precision: 14, scale: 2 }),
+    /** What the customer sees it called: Wallet, Account credit, Store credit. */
+    label: text('label').notNull().default('Wallet'),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('customer_credit_policies_scope_uidx').on(t.companyId, sql`coalesce(${t.groupCode}, '')`, t.effectiveFrom),
+  ],
+);
+
+export type CustomerWalletRow = typeof customerWallets.$inferSelect;
+export type WalletEntryRow = typeof walletEntries.$inferSelect;
+export type CustomerCreditPolicyRow = typeof customerCreditPolicies.$inferSelect;
+
+// ─── Finance F-3: credit-note accounting and restock confirmation ────────────────────────────
+
+/** What a credit note did to the customer's account and the books. One row per credit note. */
+export const creditNoteAccounting = pgTable('credit_note_accounting', {
+  creditNoteId: uuid('credit_note_id')
+    .primaryKey()
+    .references(() => creditNotes.id, { onDelete: 'restrict' }),
+  companyId: uuid('company_id')
+    .notNull()
+    .references(() => companySettings.id, { onDelete: 'cascade' }),
+  customerId: uuid('customer_id').notNull(),
+  /** The credit entry on the customer's account. */
+  ledgerEntryId: uuid('ledger_entry_id').notNull(),
+  registerId: uuid('register_id'),
+  currency: text('currency').notNull(),
+  /** What was credited (goods and their tax). */
+  gross: numeric('gross', { precision: 14, scale: 2 }).notNull(),
+  taxAmount: numeric('tax_amount', { precision: 14, scale: 2 }).notNull(),
+  /** Taken off what the customer still owed on the original invoice. */
+  applied: numeric('applied', { precision: 14, scale: 2 }).notNull(),
+  /** The rest: the customer is owed it, and it waits for a decision until resolved. */
+  excess: numeric('excess', { precision: 14, scale: 2 }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** How a credit note's excess was settled. Append-only. */
+export const creditNoteResolutions = pgTable(
+  'credit_note_resolutions',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    creditNoteId: uuid('credit_note_id')
+      .notNull()
+      .references(() => creditNotes.id, { onDelete: 'restrict' }),
+    /** wallet = moved to the customer's wallet; applied = used against the customer's other invoices. */
+    kind: text('kind').$type<'wallet' | 'applied' | 'refund' | 'refund_undone'>().notNull(),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    walletEntryId: bigint('wallet_entry_id', { mode: 'number' }),
+    applicationId: uuid('application_id'),
+    registerId: uuid('register_id'),
+    reasonCode: text('reason_code'),
+    reasonText: text('reason_text'),
+    actorType: text('actor_type').notNull(),
+    actorId: text('actor_id'),
+    origin: jsonb('origin').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('credit_note_resolutions_cn_idx').on(t.creditNoteId, t.id)],
+);
+
+export type ReturnReceiptStatus = 'awaiting_goods' | 'partially_confirmed' | 'confirmed' | 'rejected';
+export type ReturnDisposition = 'return_to_stock' | 'quarantine' | 'scrap' | 'return_to_supplier';
+export type ReturnCondition = 'good' | 'damaged' | 'expired' | 'wrong_item';
+
+/** Goods expected back because of a credit note. Stock changes only when someone confirms them. */
+export const returnReceipts = pgTable(
+  'return_receipts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    number: text('number').notNull(),
+    creditNoteId: uuid('credit_note_id')
+      .notNull()
+      .references(() => creditNotes.id, { onDelete: 'restrict' }),
+    orderId: text('order_id').notNull(),
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+    status: text('status').$type<ReturnReceiptStatus>().notNull().default('awaiting_goods'),
+    requestedBy: text('requested_by').notNull(),
+    closedBy: text('closed_by'),
+    closeReasonCode: text('close_reason_code'),
+    closeReasonText: text('close_reason_text'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('return_receipts_company_number_uidx').on(t.companyId, t.number),
+    uniqueIndex('return_receipts_credit_note_uidx').on(t.creditNoteId),
+    index('return_receipts_status_idx').on(t.companyId, t.status, t.createdAt),
+  ],
+);
+
+export const returnReceiptLines = pgTable(
+  'return_receipt_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    receiptId: uuid('receipt_id')
+      .notNull()
+      .references(() => returnReceipts.id, { onDelete: 'cascade' }),
+    productId: text('product_id').notNull(),
+    description: text('description').notNull(),
+    expectedQty: integer('expected_qty').notNull(),
+    receivedQty: integer('received_qty').notNull().default(0),
+    /** What it cost when it was sold (kept with the sale), for the stock-value slice. */
+    unitCost: numeric('unit_cost', { precision: 14, scale: 4 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('return_receipt_lines_receipt_idx').on(t.receiptId), check('return_receipt_lines_qty_chk', sql`${t.receivedQty} >= 0 AND ${t.receivedQty} <= ${t.expectedQty}`)],
+);
+
+/** Each act of confirming goods: how many, in what condition, and what was done with them. Append-only. */
+export const returnReceiptConfirmations = pgTable(
+  'return_receipt_confirmations',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    receiptId: uuid('receipt_id')
+      .notNull()
+      .references(() => returnReceipts.id, { onDelete: 'cascade' }),
+    lineId: uuid('line_id')
+      .notNull()
+      .references(() => returnReceiptLines.id, { onDelete: 'cascade' }),
+    quantity: integer('quantity').notNull(),
+    condition: text('condition').$type<ReturnCondition>().notNull(),
+    disposition: text('disposition').$type<ReturnDisposition>().notNull(),
+    /** Set when stock was added, so the movement can be traced to this act. */
+    stockAdded: boolean('stock_added').notNull().default(false),
+    note: text('note'),
+    confirmedBy: text('confirmed_by').notNull(),
+    origin: jsonb('origin').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('return_receipt_confirmations_receipt_idx').on(t.receiptId, t.id)],
+);
+
+export type CreditNoteAccountingRow = typeof creditNoteAccounting.$inferSelect;
+export type CreditNoteResolutionRow = typeof creditNoteResolutions.$inferSelect;
+export type ReturnReceiptRow = typeof returnReceipts.$inferSelect;
+export type ReturnReceiptLineRow = typeof returnReceiptLines.$inferSelect;
+
+// ─── Finance F-4: refunds ────────────────────────────────────────────────────────────────
+
+export type RefundStatus = 'draft' | 'pending_approval' | 'approved' | 'paid' | 'rejected' | 'cancelled';
+export type RefundSource = 'credit_note_excess' | 'wallet' | 'receipt_unapplied';
+
+/**
+ * Money the business pays out to a customer because it owes them. Always made from a source
+ * obligation, so it can never be for more than is owed. A refund is a document with a life, not a flag.
+ */
+export const refundRequests = pgTable(
+  'refund_requests',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    number: text('number').notNull(),
+    customerId: uuid('customer_id')
+      .notNull()
+      .references(() => customers.id, { onDelete: 'restrict' }),
+    sourceKind: text('source_kind').$type<RefundSource>().notNull(),
+    /** The credit note, wallet or receipt the money is owed from. */
+    sourceId: text('source_id').notNull(),
+    /** The order it relates to, when there is one (for the "refunded" status). */
+    orderId: text('order_id'),
+    currency: text('currency').notNull(),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    status: text('status').$type<RefundStatus>().notNull().default('draft'),
+    reasonCode: text('reason_code').notNull(),
+    reasonText: text('reason_text'),
+    /** How it will be paid: a payment method, and the customer's details as given at the time. */
+    paymentMethodId: uuid('payment_method_id')
+      .notNull()
+      .references(() => paymentMethods.id, { onDelete: 'restrict' }),
+    payoutDetails: jsonb('payout_details').$type<Record<string, string>>().notNull().default({}),
+    /** The destination differs from what is on the customer's record (a fraud signal). */
+    detailsChanged: boolean('details_changed').notNull().default(false),
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+    requestedBy: text('requested_by').notNull(),
+    approvedBy: text('approved_by'),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    /** The credit taken out of the customer's account (or wallet) when it was approved. */
+    ledgerEntryId: uuid('ledger_entry_id'),
+    walletEntryId: bigint('wallet_entry_id', { mode: 'number' }),
+    reserveRegisterId: uuid('reserve_register_id'),
+    paidFromBankAccountId: uuid('paid_from_bank_account_id').references(() => bankAccounts.id, { onDelete: 'restrict' }),
+    payoutReference: text('payout_reference'),
+    payoutDate: date('payout_date', { mode: 'string' }),
+    paidBy: text('paid_by'),
+    paidAt: timestamp('paid_at', { withTimezone: true }),
+    /** Seen on a bank statement (set when a statement line is matched to the payout). */
+    bankMatchedAt: timestamp('bank_matched_at', { withTimezone: true }),
+    payoutRegisterId: uuid('payout_register_id'),
+    idempotencyKey: text('idempotency_key'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('refund_requests_company_number_uidx').on(t.companyId, t.number),
+    uniqueIndex('refund_requests_idem_uidx').on(t.companyId, t.idempotencyKey).where(sql`${t.idempotencyKey} IS NOT NULL`),
+    index('refund_requests_status_idx').on(t.companyId, t.status, t.createdAt),
+    index('refund_requests_source_idx').on(t.sourceKind, t.sourceId),
+    index('refund_requests_customer_idx').on(t.customerId, t.createdAt),
+    check('refund_requests_amount_chk', sql`${t.amount} > 0`),
+  ],
+);
+
+/** Every step of a refund's life: who, what, why, from where. Append-only. */
+export const refundEvents = pgTable(
+  'refund_events',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    refundId: uuid('refund_id')
+      .notNull()
+      .references(() => refundRequests.id, { onDelete: 'cascade' }),
+    event: text('event').notNull(),
+    fromStatus: text('from_status'),
+    toStatus: text('to_status'),
+    reasonCode: text('reason_code'),
+    reasonText: text('reason_text'),
+    data: jsonb('data').$type<Record<string, unknown>>().notNull().default({}),
+    actorType: text('actor_type').notNull(),
+    actorId: text('actor_id'),
+    origin: jsonb('origin').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('refund_events_refund_idx').on(t.refundId, t.id)],
+);
+
+export type RefundRequestRow = typeof refundRequests.$inferSelect;
+export type RefundEventRow = typeof refundEvents.$inferSelect;
+
+/**
+ * Sales events waiting to reach the general ledger. A sale is saved first and posted a moment
+ * later, so a set-up mistake in the accounts can never stop a customer from buying: the event
+ * waits here, visible, and is retried until someone fixes the setup.
+ */
+export const financeSalesPostings = pgTable(
+  'finance_sales_postings',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    kind: text('kind').$type<SalesPostingKind>().notNull(),
+    /** The order id (invoice, cash sale) or the customer ledger entry id (credit payment, rebate credit). */
+    subjectId: text('subject_id').notNull(),
+    /** The date the event happened; decides whether it is on or after the go-live date. */
+    eventDate: date('event_date', { mode: 'string' }).notNull(),
+    status: text('status').$type<SalesPostingStatus>().notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+    registerId: uuid('register_id'),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    postedAt: timestamp('posted_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('finance_sales_postings_subject_uidx').on(t.companyId, t.kind, t.subjectId),
+    index('finance_sales_postings_due_idx')
+      .on(t.nextAttemptAt)
+      .where(sql`${t.status} IN ('pending','failed')`),
+  ],
+);
+export type FinanceSalesPostingRow = typeof financeSalesPostings.$inferSelect;
+
+export type BankAccountRow = typeof bankAccounts.$inferSelect;
+export type PaymentMethodRow = typeof paymentMethods.$inferSelect;
+export type BankLedgerEntryRow = typeof bankLedgerEntries.$inferSelect;
+export type CustomerReceiptRow = typeof customerReceipts.$inferSelect;
+export type ReceiptEventRow = typeof receiptEvents.$inferSelect;
+export type CustomerDetailedEntryRow = typeof customerDetailedEntries.$inferSelect;
+export type FinanceAttachmentRow = typeof financeAttachments.$inferSelect;
+
 // ─── Pricing ─────────────────────────────────────────────────────────────────
 
 /**
@@ -3184,7 +3892,7 @@ export const orderTenders = pgTable(
     orderId: text('order_id')
       .notNull()
       .references(() => orders.id, { onDelete: 'restrict' }),
-    kind: text('kind').$type<'gift_card' | 'loyalty_points'>().notNull(),
+    kind: text('kind').$type<'gift_card' | 'loyalty_points' | 'wallet'>().notNull(),
     /** The card, or the customer whose points were spent. */
     reference: text('reference').notNull(),
     amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
@@ -3203,3 +3911,586 @@ export type RebateSettlementRow = typeof rebateSettlements.$inferSelect;
 export type LoyaltyProgramRow = typeof loyaltyPrograms.$inferSelect;
 export type LoyaltyAccountRow = typeof loyaltyAccounts.$inferSelect;
 export type GiftCardRow = typeof giftCards.$inferSelect;
+
+// ── Core Finance (F-0): chart of accounts, periods, posting setup, journals, ledgers ───────
+
+/** One row per company: the finance basics that everything else reads. */
+export const financeSettings = pgTable('finance_settings', {
+  companyId: uuid('company_id')
+    .primaryKey()
+    .references(() => companySettings.id, { onDelete: 'cascade' }),
+  baseCurrency: text('base_currency').notNull(),
+  chartTemplate: text('chart_template'),
+  chartAppliedAt: timestamp('chart_applied_at', { withTimezone: true }),
+  /** Company-wide posting window (inclusive). Null = no limit on that side. */
+  postingFrom: date('posting_from', { mode: 'string' }),
+  postingTo: date('posting_to', { mode: 'string' }),
+  /**
+   * From this date, receipts (and, when released, invoices) post to the general ledger. Null
+   * keeps the receivables sub-ledger and bank ledger running without touching the GL, so a
+   * company can set everything up and check it before the books start (like a go-live date).
+   */
+  salesGlGoLive: date('sales_gl_go_live', { mode: 'string' }),
+  /** The customer posting group a customer without one uses. */
+  defaultCustomerGroup: text('default_customer_group').notNull().default('DOMESTIC'),
+  /** The business and product groups a sale uses until customers and products carry their own. */
+  defaultBusinessGroup: text('default_business_group').notNull().default('DOMESTIC'),
+  defaultProductGroup: text('default_product_group').notNull().default('GOODS'),
+  /** Where the tax charged on sales is owed (output VAT or sales tax). */
+  outputTaxAccountId: uuid('output_tax_account_id').references((): AnyPgColumn => glAccounts.id, {
+    onDelete: 'restrict',
+  }),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const glAccounts = pgTable(
+  'gl_accounts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    no: text('no').notNull(),
+    name: text('name').notNull(),
+    type: text('type')
+      .$type<'posting' | 'heading' | 'begin_total' | 'end_total' | 'total'>()
+      .notNull(),
+    category: text('category').$type<
+      'assets' | 'liabilities' | 'equity' | 'income' | 'cost_of_sales' | 'expense'
+    >(),
+    subcategory: text('subcategory'),
+    normalBalance: text('normal_balance').$type<'debit' | 'credit'>().notNull(),
+    directPosting: boolean('direct_posting').notNull().default(true),
+    /** engine_only = a control account: only its sub-ledger may post to it. */
+    postingSource: text('posting_source').$type<'manual' | 'engine_only'>().notNull().default('manual'),
+    blocked: boolean('blocked').notNull().default(false),
+    /** "any", or the one currency this account may carry. */
+    currencyPolicy: text('currency_policy').notNull().default('any'),
+    dimensionRule: text('dimension_rule')
+      .$type<'none' | 'required' | 'forbidden'>()
+      .notNull()
+      .default('none'),
+    totaling: text('totaling'),
+    indent: integer('indent').notNull().default(0),
+    /** Set once the account has been posted to: number, type and currency policy freeze. */
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('gl_accounts_company_no_uidx').on(t.companyId, t.no),
+    index('gl_accounts_company_type_idx').on(t.companyId, t.type),
+  ],
+);
+
+export const fiscalYears = pgTable(
+  'fiscal_years',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    startsOn: date('starts_on', { mode: 'string' }).notNull(),
+    endsOn: date('ends_on', { mode: 'string' }).notNull(),
+    shape: text('shape').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('fiscal_years_company_code_uidx').on(t.companyId, t.code),
+    uniqueIndex('fiscal_years_company_start_uidx').on(t.companyId, t.startsOn),
+    check('fiscal_years_dates_chk', sql`${t.endsOn} >= ${t.startsOn}`),
+  ],
+);
+
+export const accountingPeriods = pgTable(
+  'accounting_periods',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    fiscalYearId: uuid('fiscal_year_id')
+      .notNull()
+      .references(() => fiscalYears.id, { onDelete: 'cascade' }),
+    no: integer('no').notNull(),
+    name: text('name').notNull(),
+    startsOn: date('starts_on', { mode: 'string' }).notNull(),
+    endsOn: date('ends_on', { mode: 'string' }).notNull(),
+    status: text('status')
+      .$type<'open' | 'soft_closed' | 'closed' | 'locked'>()
+      .notNull()
+      .default('open'),
+    statusChangedAt: timestamp('status_changed_at', { withTimezone: true }),
+    statusChangedBy: text('status_changed_by'),
+  },
+  (t) => [
+    uniqueIndex('accounting_periods_company_start_uidx').on(t.companyId, t.startsOn),
+    uniqueIndex('accounting_periods_year_no_uidx').on(t.fiscalYearId, t.no),
+    index('accounting_periods_company_dates_idx').on(t.companyId, t.startsOn, t.endsOn),
+    check('accounting_periods_dates_chk', sql`${t.endsOn} >= ${t.startsOn}`),
+  ],
+);
+
+export const businessPostingGroups = pgTable(
+  'business_posting_groups',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+  },
+  (t) => [uniqueIndex('business_posting_groups_company_code_uidx').on(t.companyId, t.code)],
+);
+
+export const productPostingGroups = pgTable(
+  'product_posting_groups',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+  },
+  (t) => [uniqueIndex('product_posting_groups_company_code_uidx').on(t.companyId, t.code)],
+);
+
+/** Business group × product group -> accounts. Effective-dated: the newest row in force wins. */
+export const generalPostingSetup = pgTable(
+  'general_posting_setup',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    businessGroupId: uuid('business_group_id')
+      .notNull()
+      .references(() => businessPostingGroups.id, { onDelete: 'restrict' }),
+    productGroupId: uuid('product_group_id')
+      .notNull()
+      .references(() => productPostingGroups.id, { onDelete: 'restrict' }),
+    effectiveFrom: date('effective_from', { mode: 'string' }).notNull(),
+    effectiveTo: date('effective_to', { mode: 'string' }),
+    salesAccountId: uuid('sales_account_id').references(() => glAccounts.id, { onDelete: 'restrict' }),
+    salesReturnsAccountId: uuid('sales_returns_account_id').references(() => glAccounts.id, {
+      onDelete: 'restrict',
+    }),
+    salesDiscountAccountId: uuid('sales_discount_account_id').references(() => glAccounts.id, {
+      onDelete: 'restrict',
+    }),
+    cogsAccountId: uuid('cogs_account_id').references(() => glAccounts.id, { onDelete: 'restrict' }),
+    inventoryAdjustmentAccountId: uuid('inventory_adjustment_account_id').references(
+      () => glAccounts.id,
+      { onDelete: 'restrict' },
+    ),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('general_posting_setup_uidx').on(
+      t.businessGroupId,
+      t.productGroupId,
+      t.effectiveFrom,
+    ),
+    index('general_posting_setup_company_idx').on(t.companyId),
+  ],
+);
+
+export const customerPostingGroups = pgTable(
+  'customer_posting_groups',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    receivablesAccountId: uuid('receivables_account_id').references(() => glAccounts.id, {
+      onDelete: 'restrict',
+    }),
+    customerDepositsAccountId: uuid('customer_deposits_account_id').references(() => glAccounts.id, {
+      onDelete: 'restrict',
+    }),
+    refundsPayableAccountId: uuid('refunds_payable_account_id').references(() => glAccounts.id, {
+      onDelete: 'restrict',
+    }),
+    paymentDiscountAccountId: uuid('payment_discount_account_id').references(() => glAccounts.id, {
+      onDelete: 'restrict',
+    }),
+    writeOffAccountId: uuid('write_off_account_id').references(() => glAccounts.id, {
+      onDelete: 'restrict',
+    }),
+    roundingAccountId: uuid('rounding_account_id').references(() => glAccounts.id, {
+      onDelete: 'restrict',
+    }),
+    fxGainAccountId: uuid('fx_gain_account_id').references(() => glAccounts.id, {
+      onDelete: 'restrict',
+    }),
+    fxLossAccountId: uuid('fx_loss_account_id').references(() => glAccounts.id, {
+      onDelete: 'restrict',
+    }),
+    serviceChargeAccountId: uuid('service_charge_account_id').references(() => glAccounts.id, {
+      onDelete: 'restrict',
+    }),
+    /** Cost of a rebate credited to a customer's account. */
+    rebateExpenseAccountId: uuid('rebate_expense_account_id').references(() => glAccounts.id, {
+      onDelete: 'restrict',
+    }),
+    /** What is owed to holders of gift cards, debited when a card pays for a sale. */
+    giftCardLiabilityAccountId: uuid('gift_card_liability_account_id').references(() => glAccounts.id, {
+      onDelete: 'restrict',
+    }),
+    /** What is owed for loyalty points, debited when points pay for a sale. */
+    loyaltyProvisionAccountId: uuid('loyalty_provision_account_id').references(() => glAccounts.id, {
+      onDelete: 'restrict',
+    }),
+  },
+  (t) => [uniqueIndex('customer_posting_groups_company_code_uidx').on(t.companyId, t.code)],
+);
+
+/** A named place to prepare journal lines. Lines are drafts until posted, then deleted. */
+export const journalBatches = pgTable(
+  'journal_batches',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('journal_batches_company_code_uidx').on(t.companyId, t.code)],
+);
+
+export const journalLines = pgTable(
+  'journal_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    batchId: uuid('batch_id')
+      .notNull()
+      .references(() => journalBatches.id, { onDelete: 'cascade' }),
+    lineNo: integer('line_no').notNull(),
+    postingDate: date('posting_date', { mode: 'string' }).notNull(),
+    documentNo: text('document_no').notNull(),
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => glAccounts.id, { onDelete: 'restrict' }),
+    description: text('description'),
+    debit: numeric('debit', { precision: 20, scale: 4 }).notNull().default('0'),
+    credit: numeric('credit', { precision: 20, scale: 4 }).notNull().default('0'),
+    currency: text('currency').notNull(),
+    rate: text('rate').notNull().default('1'),
+    dimensionSetId: uuid('dimension_set_id'),
+    createdBy: text('created_by').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('journal_lines_batch_idx').on(t.batchId, t.lineNo),
+    check('journal_lines_one_side_chk', sql`(${t.debit} = 0) <> (${t.credit} = 0)`),
+  ],
+);
+
+/** The head of one hash chain: locked while a register is appended to it. */
+export const ledgerRegisterChains = pgTable(
+  'ledger_register_chains',
+  {
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    chainKey: text('chain_key').notNull(),
+    lastSeq: bigint('last_seq', { mode: 'number' }).notNull().default(0),
+    lastHash: text('last_hash').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.companyId, t.chainKey] })],
+);
+
+/** One row per posting run. Append-only. */
+export const ledgerRegisters = pgTable(
+  'ledger_registers',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    chainKey: text('chain_key').notNull(),
+    seq: bigint('seq', { mode: 'number' }).notNull(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    documentType: text('document_type').notNull(),
+    documentNo: text('document_no').notNull(),
+    description: text('description'),
+    postingDate: date('posting_date', { mode: 'string' }).notNull(),
+    documentDate: date('document_date', { mode: 'string' }).notNull(),
+    periodId: uuid('period_id').notNull(),
+    currency: text('currency').notNull(),
+    rate: text('rate').notNull(),
+    rateSource: text('rate_source').notNull(),
+    totalDebit: numeric('total_debit', { precision: 20, scale: 4 }).notNull(),
+    totalCredit: numeric('total_credit', { precision: 20, scale: 4 }).notNull(),
+    baseTotalDebit: numeric('base_total_debit', { precision: 20, scale: 4 }).notNull(),
+    baseTotalCredit: numeric('base_total_credit', { precision: 20, scale: 4 }).notNull(),
+    lineCount: integer('line_count').notNull(),
+    branchId: uuid('branch_id'),
+    sourceType: text('source_type'),
+    sourceId: text('source_id'),
+    reversalOfId: uuid('reversal_of_id'),
+    postedByType: text('posted_by_type').notNull(),
+    postedById: text('posted_by_id'),
+    reasonCode: text('reason_code'),
+    reasonText: text('reason_text'),
+    /** Where in the system this came from (surface, action, request, ip, session, permission). */
+    origin: jsonb('origin').$type<Record<string, unknown>>().notNull(),
+    previousHash: text('previous_hash').notNull(),
+    hash: text('hash').notNull(),
+    postedAt: timestamp('posted_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('ledger_registers_idem_uidx').on(t.companyId, t.idempotencyKey),
+    uniqueIndex('ledger_registers_chain_seq_uidx').on(t.companyId, t.chainKey, t.seq),
+    index('ledger_registers_company_date_idx').on(t.companyId, t.postingDate),
+    index('ledger_registers_doc_idx').on(t.companyId, t.documentNo),
+    check('ledger_registers_balanced_chk', sql`${t.totalDebit} = ${t.totalCredit}`),
+    check('ledger_registers_base_balanced_chk', sql`${t.baseTotalDebit} = ${t.baseTotalCredit}`),
+  ],
+);
+
+/** Marks a register as reversed (unique per original), since registers themselves never change. */
+export const registerReversals = pgTable(
+  'register_reversals',
+  {
+    originalId: uuid('original_id')
+      .primaryKey()
+      .references(() => ledgerRegisters.id, { onDelete: 'restrict' }),
+    reversalId: uuid('reversal_id')
+      .notNull()
+      .references(() => ledgerRegisters.id, { onDelete: 'restrict' }),
+    reversedAt: timestamp('reversed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+);
+
+/**
+ * The general ledger. Append-only and range-partitioned by posting month (the partitioning and
+ * the `id` identity are declared in the migration SQL, which drizzle cannot express).
+ */
+export const glEntries = pgTable(
+  'gl_entries',
+  {
+    id: bigint('id', { mode: 'number' })
+      .notNull()
+      .default(sql`nextval('gl_entries_id_seq')`),
+    postingDate: date('posting_date', { mode: 'string' }).notNull(),
+    companyId: uuid('company_id').notNull(),
+    registerId: uuid('register_id').notNull(),
+    lineNo: integer('line_no').notNull(),
+    accountId: uuid('account_id').notNull(),
+    debit: numeric('debit', { precision: 20, scale: 4 }).notNull(),
+    credit: numeric('credit', { precision: 20, scale: 4 }).notNull(),
+    baseDebit: numeric('base_debit', { precision: 20, scale: 4 }).notNull(),
+    baseCredit: numeric('base_credit', { precision: 20, scale: 4 }).notNull(),
+    currency: text('currency').notNull(),
+    description: text('description'),
+    dimensionSetId: uuid('dimension_set_id'),
+    documentType: text('document_type').notNull(),
+    documentNo: text('document_no').notNull(),
+    branchId: uuid('branch_id'),
+    sourceLedger: text('source_ledger'),
+    sourceEntryId: text('source_entry_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.id, t.postingDate] }),
+    index('gl_entries_account_date_idx').on(t.companyId, t.accountId, t.postingDate),
+    index('gl_entries_register_idx').on(t.registerId),
+    index('gl_entries_document_idx').on(t.companyId, t.documentNo),
+  ],
+);
+
+/** Running totals per account × period × dimension set, sharded so hot accounts do not queue. */
+export const glAccountBalances = pgTable(
+  'gl_account_balances',
+  {
+    companyId: uuid('company_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    periodId: uuid('period_id').notNull(),
+    /** The nil UUID stands for "no dimensions". */
+    dimensionSetId: uuid('dimension_set_id')
+      .notNull()
+      .default(sql`'00000000-0000-0000-0000-000000000000'`),
+    shard: smallint('shard').notNull(),
+    baseDebit: numeric('base_debit', { precision: 20, scale: 4 }).notNull().default('0'),
+    baseCredit: numeric('base_credit', { precision: 20, scale: 4 }).notNull().default('0'),
+    entryCount: bigint('entry_count', { mode: 'number' }).notNull().default(0),
+  },
+  (t) => [
+    primaryKey({ columns: [t.companyId, t.accountId, t.periodId, t.dimensionSetId, t.shard] }),
+    index('gl_account_balances_period_idx').on(t.companyId, t.periodId),
+  ],
+);
+
+export type GlAccountRow = typeof glAccounts.$inferSelect;
+export type AccountingPeriodRow = typeof accountingPeriods.$inferSelect;
+export type LedgerRegisterRow = typeof ledgerRegisters.$inferSelect;
+export type GlEntryRow = typeof glEntries.$inferSelect;
+
+// ── F-5: bank statements and reconciliation ─────────────────────────────────
+
+export type StatementLineStatus = 'unmatched' | 'proposed' | 'matched' | 'ignored';
+
+/** How one bank's file is read: saved per bank account so the second import is one click. */
+export const bankStatementFormats = pgTable(
+  'bank_statement_formats',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    bankAccountId: uuid('bank_account_id')
+      .notNull()
+      .references(() => bankAccounts.id, { onDelete: 'cascade' }),
+    kind: text('kind').$type<'csv' | 'mt940'>().notNull(),
+    mapping: jsonb('mapping').$type<Record<string, unknown>>().notNull().default({}),
+    updatedBy: text('updated_by').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('bank_statement_formats_account_uidx').on(t.bankAccountId)],
+);
+
+/** One uploaded file. The same file cannot be imported twice into the same account. */
+export const bankStatementImports = pgTable(
+  'bank_statement_imports',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    bankAccountId: uuid('bank_account_id')
+      .notNull()
+      .references(() => bankAccounts.id, { onDelete: 'restrict' }),
+    fileName: text('file_name').notNull(),
+    fileHash: text('file_hash').notNull(),
+    format: text('format').notNull(),
+    lineCount: integer('line_count').notNull(),
+    skippedCount: integer('skipped_count').notNull().default(0),
+    totalIn: numeric('total_in', { precision: 20, scale: 4 }).notNull(),
+    totalOut: numeric('total_out', { precision: 20, scale: 4 }).notNull(),
+    dateFrom: date('date_from', { mode: 'string' }),
+    dateTo: date('date_to', { mode: 'string' }),
+    openingBalance: numeric('opening_balance', { precision: 20, scale: 4 }),
+    closingBalance: numeric('closing_balance', { precision: 20, scale: 4 }),
+    importedBy: text('imported_by').notNull(),
+    origin: jsonb('origin').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('bank_statement_imports_file_uidx').on(t.bankAccountId, t.fileHash)],
+);
+
+/** A line the bank reported. What it says never changes; only how it was dealt with does. */
+export const bankStatementLines = pgTable(
+  'bank_statement_lines',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    importId: uuid('import_id')
+      .notNull()
+      .references(() => bankStatementImports.id, { onDelete: 'restrict' }),
+    bankAccountId: uuid('bank_account_id')
+      .notNull()
+      .references(() => bankAccounts.id, { onDelete: 'restrict' }),
+    lineNo: integer('line_no').notNull(),
+    lineDate: date('line_date', { mode: 'string' }).notNull(),
+    description: text('description').notNull().default(''),
+    reference: text('reference'),
+    counterparty: text('counterparty'),
+    /** Positive = money in, negative = money out. */
+    amount: numeric('amount', { precision: 20, scale: 4 }).notNull(),
+    balance: numeric('balance', { precision: 20, scale: 4 }),
+    lineHash: text('line_hash').notNull(),
+    status: text('status').$type<StatementLineStatus>().notNull().default('unmatched'),
+    /** Ledger entries suggested by a rule that is not certain enough to apply itself. */
+    proposedEntryIds: jsonb('proposed_entry_ids').$type<number[]>().notNull().default([]),
+    matchRule: text('match_rule'),
+    ignoreReason: text('ignore_reason'),
+    reconciliationId: uuid('reconciliation_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('bank_statement_lines_hash_uidx').on(t.bankAccountId, t.lineHash),
+    index('bank_statement_lines_work_idx').on(t.bankAccountId, t.status, t.lineDate),
+    index('bank_statement_lines_import_idx').on(t.importId, t.lineNo),
+  ],
+);
+
+/** A statement line closed against a ledger entry. Undone, never deleted. */
+export const bankStatementMatches = pgTable(
+  'bank_statement_matches',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    lineId: bigint('line_id', { mode: 'number' })
+      .notNull()
+      .references(() => bankStatementLines.id, { onDelete: 'restrict' }),
+    bankEntryId: bigint('bank_entry_id', { mode: 'number' })
+      .notNull()
+      .references(() => bankLedgerEntries.id, { onDelete: 'restrict' }),
+    amount: numeric('amount', { precision: 20, scale: 4 }).notNull(),
+    rule: text('rule').notNull(),
+    actorType: text('actor_type').notNull(),
+    actorId: text('actor_id'),
+    origin: jsonb('origin').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    undoneAt: timestamp('undone_at', { withTimezone: true }),
+    undoneBy: text('undone_by'),
+    undoReasonCode: text('undo_reason_code'),
+    undoReasonText: text('undo_reason_text'),
+  },
+  (t) => [
+    index('bank_statement_matches_line_idx').on(t.lineId),
+    // A ledger entry can be closed against one line at a time.
+    uniqueIndex('bank_statement_matches_entry_open_uidx')
+      .on(t.bankEntryId)
+      .where(sql`${t.undoneAt} IS NULL`),
+  ],
+);
+
+export type BankReconciliationStatus = 'posted' | 'reversed';
+
+/** A reconciliation of one bank account to its statement, up to a date. Immutable once posted. */
+export const bankReconciliations = pgTable(
+  'bank_reconciliations',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    bankAccountId: uuid('bank_account_id')
+      .notNull()
+      .references(() => bankAccounts.id, { onDelete: 'restrict' }),
+    number: text('number').notNull(),
+    statementDate: date('statement_date', { mode: 'string' }).notNull(),
+    openingBalance: numeric('opening_balance', { precision: 20, scale: 4 }).notNull(),
+    statementBalance: numeric('statement_balance', { precision: 20, scale: 4 }).notNull(),
+    linesTotal: numeric('lines_total', { precision: 20, scale: 4 }).notNull(),
+    lineCount: integer('line_count').notNull(),
+    ignoredTotal: numeric('ignored_total', { precision: 20, scale: 4 }).notNull().default('0'),
+    notes: text('notes'),
+    status: text('status').$type<BankReconciliationStatus>().notNull().default('posted'),
+    postedBy: text('posted_by').notNull(),
+    postedAt: timestamp('posted_at', { withTimezone: true }).notNull().defaultNow(),
+    origin: jsonb('origin').$type<Record<string, unknown>>().notNull().default({}),
+    reversedBy: text('reversed_by'),
+    reversedAt: timestamp('reversed_at', { withTimezone: true }),
+    reverseReasonCode: text('reverse_reason_code'),
+    reverseReasonText: text('reverse_reason_text'),
+  },
+  (t) => [
+    uniqueIndex('bank_reconciliations_number_uidx').on(t.companyId, t.number),
+    index('bank_reconciliations_account_idx').on(t.bankAccountId, t.statementDate),
+  ],
+);

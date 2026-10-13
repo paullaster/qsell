@@ -301,7 +301,7 @@ Inquiry and quotation reuse the same document engine (types, partners, lines, pr
 
 - **Billing document** is a separate document from the order: per delivery, consolidated across deliveries, split by payer, or by billing plan (milestones, down payments). It is the **signable document** for KRA (the signing service's source kind extends to `billing`), with the existing gates, trace and "never blocks" guarantee.
 - **Receivables:** payments, cash application, partial payments and allocation to invoices, overdue and dunning levels (each level a configured, traced action), write-offs through approval.
-- **Credit and debit memos:** a _credit memo request_ goes through review and approval, then creates the credit note using the single credit-note service already built (policies CN-1…CN-14; the accounting rules pending your approval attach here).
+- **Credit and debit memos:** a _credit memo request_ goes through review and approval, then creates the credit note using the single credit-note service already built (policies CN-1…CN-14; the accounting rules are now specified in [core-finance-module.md](./core-finance-module.md) §9, awaiting approval). Finance (chart of accounts, general ledger, receivables, customer wallet, refunds) is its own module designed there; billing posts through its journal engine.
 
 ## 10. Returns
 

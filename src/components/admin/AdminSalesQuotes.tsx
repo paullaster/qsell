@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useEffect, useMemo, useState } from 'react';
+import { use, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   BadgeCheck,
@@ -14,12 +14,13 @@ import {
   RefreshCw,
   Search,
   Send,
+  MailWarning,
   Settings2,
   ShoppingCart,
   Files,
   X,
 } from 'lucide-react';
-import type { Product } from '@/types/index';
+import type { CatalogueProduct } from '@/lib/catalogue-entry';
 import type { CustomerRow, SalesQuoteRow } from '@/server/db/drizzle/schema';
 import type {
   QuoteTemplateInput,
@@ -53,13 +54,20 @@ import { useQuoteGuardPreview } from './pricing/useQuoteGuardPreview';
 import { QuoteCoupons } from './pricing/QuoteCoupons';
 import { kitCost, kitTax } from '@/server/domains/pricing/domain/kits';
 import { QuoteLayoutBoard } from './quote-layout/QuoteLayoutBoard';
+import { CataloguePicker } from './quote-layout/CataloguePicker';
+import { QuickAdd } from './quote-layout/QuickAdd';
+import { BulkAddDialog } from './quote-layout/BulkAddDialog';
+import { QuantityInput } from './quote-layout/QuantityInput';
+import { buildCatalogueIndex } from '@/lib/catalogue-entry';
+import { addCatalogueEntry, lastIndexOfProduct, type CatalogueEntry } from '@/lib/quote-layout';
 import type { QuoteSearchHit } from '@/server/domains/quotes/service';
 import type { EditorKit } from '@/server/domains/quotes/actions';
+import { unwrapQuoteAction } from '@/server/domains/quotes/action-result';
 
 type QuoteLineInput = QuoteInput['lines'][number];
 
 interface EditorData {
-  products: Product[];
+  products: CatalogueProduct[];
   kits: EditorKit[];
   customers: CustomerRow[];
   settings: {
@@ -161,7 +169,7 @@ function quoteToInput(quote: SalesQuote): QuoteInput {
 
 function quoteInputFromTemplate(
   template: SalesQuoteTemplate,
-  products: Product[],
+  products: CatalogueProduct[],
   customers: CustomerRow[],
 ): QuoteInput {
   const customer = customers.find((row) => row.id === template.customerId);
@@ -331,7 +339,7 @@ export function AdminSalesQuotes({
   const handleDownload = async (quote: SalesQuoteRow) => {
     try {
       setBusyId(quote.id);
-      const result = await generateSalesQuotePdfAction(quote.id);
+      const result = unwrapQuoteAction(await generateSalesQuotePdfAction(quote.id));
       downloadPdfBase64(result.pdfBase64, result.filename);
       setNotice(`${quote.quoteNumber} downloaded.`);
     } catch (err) {
@@ -344,7 +352,7 @@ export function AdminSalesQuotes({
   const handlePreview = async (id: string) => {
     try {
       setBusyId(id);
-      const result = await generateSalesQuotePdfAction(id);
+      const result = unwrapQuoteAction(await generateSalesQuotePdfAction(id));
       setPreviewPdf(result.pdfBase64);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not preview this quotation.');
@@ -355,7 +363,7 @@ export function AdminSalesQuotes({
 
   const saveMarginFloor = async () => {
     try {
-      await updateSalesQuoteSettingsAction(marginFloor);
+      unwrapQuoteAction(await updateSalesQuoteSettingsAction(marginFloor));
       setSettingsOpen(false);
       setNotice('Minimum gross margin setting saved.');
       refresh();
@@ -514,9 +522,19 @@ export function AdminSalesQuotes({
                         </td>
                         <td className="px-4 py-3">
                           <div className="font-medium text-fg-strong">{quote.customerName}</div>
-                          <div className="text-xs text-fg-muted">
-                            {quote.customerEmail || quote.customerReference || '—'}
-                          </div>
+                          {quote.customerEmail ? (
+                            <div className="text-xs text-fg-muted">{quote.customerEmail}</div>
+                          ) : (
+                            <div className="text-xs text-fg-muted">
+                              {quote.customerReference || '—'}
+                            </div>
+                          )}
+                          {!quote.customerEmail && ['draft', 'approved'].includes(quote.status) && (
+                            <span className="mt-1 inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-xs font-semibold text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
+                              <MailWarning className="h-3 w-3" aria-hidden="true" />
+                              No email: edit the quote to add one
+                            </span>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-right font-mono font-semibold text-fg-strong">
                           {money(Number(quote.totalAmount), quote.currency)}
@@ -600,7 +618,8 @@ export function AdminSalesQuotes({
                                   onClick={() =>
                                     void withAction(
                                       quote.id,
-                                      () => approveSalesQuoteAction(quote.id),
+                                      () =>
+                                        approveSalesQuoteAction(quote.id).then(unwrapQuoteAction),
                                       `${quote.quoteNumber} approved.`,
                                     )
                                   }
@@ -614,16 +633,25 @@ export function AdminSalesQuotes({
                               !['pending', 'rejected', 'draft'].includes(quote.approvalStatus) && (
                                 <button
                                   type="button"
-                                  title="Email quotation"
-                                  disabled={busyId === quote.id}
+                                  title={
+                                    quote.customerEmail
+                                      ? 'Email quotation'
+                                      : 'Add a customer email to this quote before sending it'
+                                  }
+                                  aria-label={
+                                    quote.customerEmail
+                                      ? `Email ${quote.quoteNumber}`
+                                      : `Cannot email ${quote.quoteNumber}: no customer email`
+                                  }
+                                  disabled={busyId === quote.id || !quote.customerEmail}
                                   onClick={() =>
                                     void withAction(
                                       quote.id,
-                                      () => sendSalesQuoteAction(quote.id),
+                                      () => sendSalesQuoteAction(quote.id).then(unwrapQuoteAction),
                                       `${quote.quoteNumber} emailed to ${quote.customerEmail || 'customer'}.`,
                                     )
                                   }
-                                  className="rounded-md p-2 text-indigo-700 hover:bg-indigo-50"
+                                  className="rounded-md p-2 text-indigo-700 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
                                 >
                                   <Send className="h-4 w-4" />
                                 </button>
@@ -637,7 +665,9 @@ export function AdminSalesQuotes({
                                   void withAction(
                                     quote.id,
                                     async () => {
-                                      const order = await convertSalesQuoteToOrderAction(quote.id);
+                                      const order = unwrapQuoteAction(
+                                        await convertSalesQuoteToOrderAction(quote.id),
+                                      );
                                       setNotice(`Converted to order ${order?.orderNumber ?? ''}.`);
                                     },
                                     `${quote.quoteNumber} converted to an order.`,
@@ -686,8 +716,8 @@ export function AdminSalesQuotes({
           onClose={() => setEditorOpen(false)}
           onSave={async (input) => {
             const quote = editing
-              ? await updateSalesQuoteAction(editing.id, input)
-              : await createSalesQuoteAction(input);
+              ? unwrapQuoteAction(await updateSalesQuoteAction(editing.id, input))
+              : unwrapQuoteAction(await createSalesQuoteAction(input));
             setEditorOpen(false);
             setNotice(
               `${quote.quoteNumber} saved${quote.approvalStatus === 'pending' ? ' and sent for approval' : ''}.`,
@@ -709,14 +739,14 @@ export function AdminSalesQuotes({
           onApprove={() =>
             void withAction(
               details.id,
-              () => approveSalesQuoteAction(details.id),
+              () => approveSalesQuoteAction(details.id).then(unwrapQuoteAction),
               `${details.quoteNumber} approved.`,
             )
           }
           onResubmit={() =>
             void withAction(
               details.id,
-              () => resubmitSalesQuoteApprovalAction(details.id),
+              () => resubmitSalesQuoteApprovalAction(details.id).then(unwrapQuoteAction),
               `${details.quoteNumber} sent for approval again.`,
             )
           }
@@ -737,14 +767,14 @@ export function AdminSalesQuotes({
           onCancel={() =>
             void withAction(
               details.id,
-              () => cancelSalesQuoteAction(details.id),
+              () => cancelSalesQuoteAction(details.id).then(unwrapQuoteAction),
               `${details.quoteNumber} cancelled.`,
             )
           }
           onRevise={() =>
             void (async () => {
               try {
-                const revised = await reviseSalesQuoteAction(details.id);
+                const revised = unwrapQuoteAction(await reviseSalesQuoteAction(details.id));
                 setDetails(null);
                 await openEdit(revised.id);
                 setNotice(`Created revision ${revised.quoteNumber}.`);
@@ -758,7 +788,7 @@ export function AdminSalesQuotes({
             void withAction(
               details.id,
               async () => {
-                const order = await convertSalesQuoteToOrderAction(details.id);
+                const order = unwrapQuoteAction(await convertSalesQuoteToOrderAction(details.id));
                 setNotice(`Converted to order ${order?.orderNumber ?? ''}.`);
               },
               `${details.quoteNumber} converted to an order.`,
@@ -811,7 +841,7 @@ export function AdminSalesQuotes({
 }
 
 async function respondToQuote(id: string, accepted: boolean) {
-  return respondToSalesQuoteAction(id, accepted);
+  return respondToSalesQuoteAction(id, accepted).then(unwrapQuoteAction);
 }
 
 function QuoteEditor({
@@ -825,7 +855,7 @@ function QuoteEditor({
   onClose,
   onSave,
 }: {
-  products: Product[];
+  products: CatalogueProduct[];
   kits: EditorKit[];
   customers: CustomerRow[];
   templates: SalesQuoteTemplate[];
@@ -844,16 +874,22 @@ function QuoteEditor({
   const [error, setError] = useState<string | null>(null);
   const [catalogSectionId, setCatalogSectionId] = useState<string | null>(null);
   const [catalogOpen, setCatalogOpen] = useState(false);
+  const catalogueIndex = useMemo(() => buildCatalogueIndex(products), [products]);
+  const productById = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
+  const kitById = useMemo(() => new Map(kits.map((k) => [k.productId, k])), [kits]);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const lastAdded = useRef<{ productId: string; sectionId: string | null } | null>(null);
+  const [focusLine, setFocusLine] = useState<{ index: number; nonce: number } | null>(null);
   const [draftPreviewOpen, setDraftPreviewOpen] = useState(false);
   const linesPreview = input.lines.map((line) => {
-    const product = products.find((candidate) => candidate.id === line.productId);
+    const product = productById.get(line.productId);
     const unit = line.unitPrice ?? product?.price ?? 0;
     const discount = (1 - line.discountPercent / 100) * (1 - input.discountPercent / 100);
     const gross = unit * line.quantity * discount;
     const rate = product?.taxRate ?? 0;
     const inclusive = product?.isTaxInclusive !== false;
     // A kit is taxed and costed from what is in it, as the server will do when it is saved.
-    const kit = kits.find((k) => k.productId === line.productId);
+    const kit = kitById.get(line.productId);
     const split = kit
       ? kitTax(gross, line.quantity, kit, inclusive)
       : {
@@ -883,23 +919,53 @@ function QuoteEditor({
 
   const setField = <K extends keyof QuoteInput>(key: K, value: QuoteInput[K]) =>
     setInput((current) => ({ ...current, [key]: value }));
-  const addProduct = (productId: string, sectionId?: string) => {
-    if (!productId) return;
-    const product = products.find((item) => item.id === productId);
-    if (!product) return;
-    setField('lines', [
-      ...input.lines,
-      {
-        sectionId: sectionId ?? null,
-        productId,
-        quantity: 1,
-        // Shown at once, then replaced by the price lists' answer.
-        unitPrice: product.price,
-        priceMode: 'catalog',
-        discountPercent: 0,
-      },
-    ]);
+  /** Adds items in one change, merging into lines that already hold the same item. */
+  const addEntries = (entries: CatalogueEntry[]) => {
+    if (entries.length === 0) return;
+    setInput((current) => {
+      let lines = current.lines;
+      for (const entry of entries) {
+        const product = productById.get(entry.productId);
+        if (!product) continue;
+        lines = addCatalogueEntry<QuoteLineInput>(
+          lines,
+          entry,
+          (e) => ({
+            sectionId: e.sectionId,
+            productId: e.productId,
+            quantity: e.quantity,
+            // The catalogue price shows at once, then the price lists' answer replaces it.
+            unitPrice: e.unitPrice ?? product.price,
+            priceMode: e.unitPrice === null ? 'catalog' : 'manual',
+            discountPercent: e.discountPercent,
+          }),
+          (line) => line.priceMode === 'manual',
+        ).lines;
+      }
+      return { ...current, lines };
+    });
+    const last = entries[entries.length - 1]!;
+    lastAdded.current = { productId: last.productId, sectionId: last.sectionId };
   };
+  /** After the catalogue closes, takes the person to the last item they added. */
+  const showLastAdded = () => {
+    const last = lastAdded.current;
+    lastAdded.current = null;
+    if (!last) return;
+    const index = lastIndexOfProduct(input.lines, last.productId, last.sectionId);
+    if (index >= 0) setFocusLine((current) => ({ index, nonce: (current?.nonce ?? 0) + 1 }));
+  };
+  /** How much of a product a place already holds, or null. */
+  const heldIn = (productId: string, slot: string | null) => {
+    const here = input.lines.filter(
+      (line) => line.productId === productId && (line.sectionId ?? null) === slot,
+    );
+    return here.length === 0 ? null : here.reduce((sum, line) => sum + line.quantity, 0);
+  };
+  const placeName = (slot: string | null) =>
+    slot === null
+      ? 'the individual items'
+      : `section ${(input.sections ?? []).find((x) => x.id === slot)?.title ?? ''}`.trim();
   const patchLine = (index: number, patch: Partial<QuoteLineInput>) =>
     setField(
       'lines',
@@ -1099,11 +1165,31 @@ function QuoteEditor({
             sections={input.sections ?? []}
             lines={input.lines}
             onChange={(next) => setInput((current) => ({ ...current, ...next }))}
+            focusLine={focusLine}
+            onBulkAdd={() => {
+              lastAdded.current = null;
+              setBulkOpen(true);
+            }}
+            lineSearchText={(line) => {
+              const product = productById.get(line.productId);
+              return `${product?.name ?? ''} ${product?.sku ?? ''} ${product?.stockCode ?? ''}`;
+            }}
+            quickAdd={(slot) => (
+              <QuickAdd
+                index={catalogueIndex}
+                currency={input.currency}
+                destination={placeName(slot)}
+                countHere={() => input.lines.filter((l) => (l.sectionId ?? null) === slot).length}
+                quantityHere={(productId) => heldIn(productId, slot)}
+                onAdd={(entry) => addEntries([{ ...entry, sectionId: slot }])}
+              />
+            )}
             onBrowse={(sectionId) => {
+              lastAdded.current = null;
               setCatalogSectionId(sectionId);
               setCatalogOpen(true);
             }}
-            lineName={(line) => products.find((p) => p.id === line.productId)?.name ?? 'item'}
+            lineName={(line) => productById.get(line.productId)?.name ?? 'item'}
             sectionTotal={(sectionId) =>
               money(
                 linesPreview
@@ -1137,16 +1223,10 @@ function QuoteEditor({
                     </div>
                   </td>
                   <td className="p-3">
-                    <input
-                      aria-label={`Quantity of ${entry.product?.name ?? 'item'}`}
-                      type="number"
-                      min="0.001"
-                      step="0.001"
+                    <QuantityInput
+                      label={`Quantity of ${entry.product?.name ?? 'item'}`}
                       value={line.quantity}
-                      onChange={(event) =>
-                        patchLine(index, { quantity: Number(event.target.value) })
-                      }
-                      className="w-24 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong"
+                      onChange={(value) => patchLine(index, { quantity: Number(value) })}
                     />
                   </td>
                   <td className="p-3">
@@ -1428,23 +1508,38 @@ function QuoteEditor({
         </footer>
       </form>
       {catalogOpen && (
-        <QuoteCataloguePicker
-          products={products}
+        <CataloguePicker
+          title="Product catalogue"
+          index={catalogueIndex}
           currency={input.currency}
-          destination={
-            catalogSectionId
-              ? `section ${(input.sections ?? []).find((x) => x.id === catalogSectionId)?.title ?? ''}`.trim()
-              : 'the individual items'
+          destination={placeName(catalogSectionId)}
+          priceHint="Leave the price empty to use the price lists. A price you type is kept as a manual price on the line."
+          quantityHere={(productId) => heldIn(productId, catalogSectionId)}
+          onAdd={(entries) =>
+            addEntries(entries.map((entry) => ({ ...entry, sectionId: catalogSectionId })))
           }
           onClose={() => {
             setCatalogOpen(false);
             setCatalogSectionId(null);
+            showLastAdded();
           }}
-          onSelect={(productId) => {
-            addProduct(productId, catalogSectionId ?? undefined);
-            setCatalogOpen(false);
-            setCatalogSectionId(null);
+        />
+      )}
+      {bulkOpen && (
+        <BulkAddDialog
+          noun="quote"
+          index={catalogueIndex}
+          places={[
+            { id: null, label: 'The individual items' },
+            ...(input.sections ?? []).map((x) => ({ id: x.id, label: `Section ${x.title}` })),
+          ]}
+          initialSlot={null}
+          onAdd={(entries) => {
+            addEntries(entries);
+            setBulkOpen(false);
+            showLastAdded();
           }}
+          onClose={() => setBulkOpen(false)}
         />
       )}
       {draftPreviewOpen && (
@@ -1474,7 +1569,7 @@ function DraftQuotePreview({
   input: QuoteInput;
   lines: {
     line: QuoteLineInput;
-    product: Product | undefined;
+    product: CatalogueProduct | undefined;
     total: number;
   }[];
   subtotal: number;
@@ -1669,145 +1764,6 @@ function PreviewText({ title, text }: { title: string; text: string }) {
       <h3 className="text-xs font-bold tracking-wider text-indigo-700 uppercase">{title}</h3>
       <p className="mt-2 text-sm whitespace-pre-wrap text-slate-700">{text}</p>
     </section>
-  );
-}
-
-function QuoteCataloguePicker({
-  products,
-  currency,
-  destination,
-  onClose,
-  onSelect,
-}: {
-  products: Product[];
-  currency: string;
-  /** Where the chosen item will go, in words. */
-  destination: string;
-  onClose: () => void;
-  onSelect: (productId: string) => void;
-}) {
-  const [search, setSearch] = useState('');
-  // Escape closes the catalogue, like its close button.
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  const [category, setCategory] = useState('all');
-  const categories = [...new Set(products.map((product) => product.category))].filter(Boolean);
-  const available = products.filter((product) => {
-    if (!product.isSellable) return false;
-    if (category !== 'all' && product.category !== category) return false;
-    const searchText =
-      `${product.name} ${product.sku} ${product.stockCode} ${product.brand ?? ''}`.toLowerCase();
-    return searchText.includes(search.trim().toLowerCase());
-  });
-  return (
-    <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-backdrop/70 p-3 backdrop-blur-sm sm:p-6"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-label="Product catalogue"
-        className="max-h-[90dvh] w-full max-w-5xl overflow-hidden rounded-2xl border border-line bg-surface-raised shadow-2xl"
-      >
-        <header className="flex items-center justify-between border-b border-line p-4">
-          <div>
-            <h2 className="font-semibold text-fg-strong">Product catalogue</h2>
-            <p className="text-xs text-fg-muted">
-              Choose a sellable catalogue item to add to {destination}.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg p-2 text-fg-muted hover:bg-hover"
-            aria-label="Close catalogue"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </header>
-        <div className="flex flex-col gap-3 border-b border-line p-4 sm:flex-row">
-          <input
-            autoFocus
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search name, SKU, brand…"
-            className="flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong"
-          />
-          <select
-            value={category}
-            onChange={(event) => setCategory(event.target.value)}
-            className="rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong"
-          >
-            <option value="all">All categories</option>
-            {categories.map((value) => (
-              <option key={value} value={value}>
-                {value}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="max-h-[65dvh] overflow-y-auto p-4">
-          {available.length === 0 ? (
-            <p className="p-10 text-center text-sm text-fg-muted">
-              No available products match this search.
-            </p>
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {available.map((product) => (
-                <article
-                  key={product.id}
-                  className="flex flex-col rounded-xl border border-line bg-surface p-3"
-                >
-                  <div className="flex min-h-16 gap-3">
-                    <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-surface-sunken">
-                      {product.imageUrl ? (
-                        <img src={product.imageUrl} alt="" className="h-full w-full object-cover" />
-                      ) : (
-                        <ShoppingCart className="h-5 w-5 text-fg-faint" />
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-semibold text-fg-strong">{product.name}</p>
-                      <p className="text-xs text-fg-muted">
-                        {product.sku} · {product.category}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-3 flex items-center justify-between gap-2">
-                    <div>
-                      <div className="font-mono text-sm font-semibold text-fg-strong">
-                        {product.price == null ? 'Price not set' : money(product.price, currency)}
-                      </div>
-                      <div className="text-[11px] text-fg-muted">
-                        {product.stockQuantity - product.reservedQuantity} available · tax{' '}
-                        {product.taxRate ?? 0}%
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={product.price == null}
-                      onClick={() => onSelect(product.id)}
-                      className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-40"
-                    >
-                      Add item
-                    </button>
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
-    </div>
   );
 }
 

@@ -170,3 +170,64 @@ export function removeSection<S extends { id: string }, L extends Placed>(
     lines: lines.map((l) => (slotOf(l) === id ? { ...l, sectionId: null } : l)),
   };
 }
+
+/** What the catalogue picker hands over for one item: where it goes and how it is set up. */
+export interface CatalogueEntry {
+  productId: string;
+  sectionId: Slot;
+  quantity: number;
+  /** A price the person typed. Null leaves the price to the price lists. */
+  unitPrice: number | null;
+  discountPercent: number;
+}
+
+/** A line that can take more of the same item. */
+type Stackable = Placed & { productId: string; quantity: number; discountPercent: number };
+
+/** Quantities are kept to three decimals, as the editors do, so repeated adds do not drift. */
+const addQuantities = (a: number, b: number) => Math.round((a + b) * 1000) / 1000;
+
+/**
+ * Adds an item to the lines. When the same product already sits in that place with the same
+ * discount and the same price (both left to the price lists, or both typed and equal), its quantity
+ * goes up instead of a second row appearing; otherwise the new line goes last. Returns the new
+ * list and the index of the line that took the item.
+ *
+ * `make` builds a new line; `typedPrice` says whether an existing line holds a typed price.
+ */
+export function addCatalogueEntry<L extends Stackable & { unitPrice?: number | null }>(
+  lines: L[],
+  entry: CatalogueEntry,
+  make: (entry: CatalogueEntry) => L,
+  typedPrice: (line: L) => boolean,
+): { lines: L[]; index: number } {
+  const hit = lines.findIndex(
+    (l) =>
+      l.productId === entry.productId &&
+      slotOf(l) === entry.sectionId &&
+      l.discountPercent === entry.discountPercent &&
+      (entry.unitPrice === null
+        ? !typedPrice(l)
+        : typedPrice(l) && Number(l.unitPrice) === entry.unitPrice),
+  );
+  if (hit < 0) return { lines: [...lines, make(entry)], index: lines.length };
+  return {
+    lines: lines.map((l, i) =>
+      i === hit ? { ...l, quantity: addQuantities(l.quantity, entry.quantity) } : l,
+    ),
+    index: hit,
+  };
+}
+
+/** Where the last line for a product sits in a place, or -1. */
+export function lastIndexOfProduct(
+  lines: Array<Placed & { productId: string }>,
+  productId: string,
+  slot: Slot,
+): number {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!;
+    if (line.productId === productId && slotOf(line) === slot) return i;
+  }
+  return -1;
+}

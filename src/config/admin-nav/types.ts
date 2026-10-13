@@ -3,7 +3,15 @@
  * Single source of truth for sidebar structure (max depth 5).
  */
 
+import type { PermissionKey } from '@/server/domains/access-control/permissions';
+
 export const ADMIN_NAV_MAX_DEPTH = 5;
+
+/** What the signed-in user may do; decides which nav items they are shown. */
+export interface AdminNavAccess {
+  superAdmin: boolean;
+  permissions: readonly PermissionKey[];
+}
 
 export type AdminNavIconName =
   | 'LayoutDashboard'
@@ -49,10 +57,17 @@ export interface AdminNavItem {
   description?: string;
   /** Lucide icon key resolved at render time */
   icon?: AdminNavIconName;
-  /** When true, item is visible but not navigable */
+  /**
+   * Switches the item off. Defaults to false. A disabled item is never shown
+   * to anyone, and neither is anything beneath it.
+   */
   disabled?: boolean;
-  /** When false, item is omitted from the rendered nav */
-  installed?: boolean;
+  /**
+   * The user needs at least one of these to see the item. Leave it off a
+   * section that has sub links: it then shows only when one of them does.
+   * A screen with no permission is never shown.
+   */
+  permission?: PermissionKey | readonly PermissionKey[];
   /** Nested navigation (depth capped at ADMIN_NAV_MAX_DEPTH) */
   subLinks?: AdminNavItem[];
 }

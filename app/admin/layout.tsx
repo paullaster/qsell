@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { auth } from '@/auth';
 import { AdminShell } from '@/components/admin/AdminShell';
+import { myAccessSnapshot } from '@/server/domains/access-control/guard';
 
 /**
  * Defence in depth behind proxy.ts: never render the admin shell for a
@@ -24,8 +25,10 @@ export default async function AdminLayout({
     redirect('/change-password?callbackUrl=%2Fadmin');
   }
 
+  const { superAdmin, permissions } = await myAccessSnapshot();
+
   return (
-    <AdminShell>
+    <AdminShell access={{ superAdmin, permissions }}>
       {children}
       {modal}
       {create}

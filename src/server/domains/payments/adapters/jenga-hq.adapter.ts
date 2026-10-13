@@ -1,10 +1,12 @@
 import { createSign } from 'node:crypto';
-import type {
-  CallbackInput,
-  CallbackResult,
-  InitiatePaymentInput,
-  InitiatePaymentResult,
-  PaymentPort,
+import {
+  probeConnection,
+  type CallbackInput,
+  type CallbackResult,
+  type InitiatePaymentInput,
+  type InitiatePaymentResult,
+  type ConnectionTestResult,
+  type PaymentPort,
 } from '../port';
 import type { JengaHqCredentials } from '../types';
 import { extractPaymentReference } from '../payment-reference';
@@ -15,6 +17,20 @@ import { extractPaymentReference } from '../payment-reference';
  */
 export class JengaHqAdapter implements PaymentPort {
   readonly code = 'jenga_hq' as const;
+  readonly capabilities = ['collect'] as const;
+
+  async testConnection(
+    credentials: Record<string, unknown>,
+    _settings: Record<string, unknown>,
+    apiBaseUrl: string,
+  ): Promise<ConnectionTestResult> {
+    const creds = credentials as unknown as JengaHqCredentials;
+    return probeConnection('Jenga', async () => {
+      if (!creds.merchantCode || !creds.consumerSecret || !creds.apiKey) throw new Error('The merchant code, consumer secret and API key are not all saved yet.');
+      await this.authenticate(apiBaseUrl, creds);
+    });
+  }
+
 
   private sign(plainText: string, privateKeyPem: string): string {
     const signer = createSign('RSA-SHA256');

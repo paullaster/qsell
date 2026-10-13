@@ -149,7 +149,7 @@ export function PriceListDetailClient({
           <p role="status" className="text-sm text-amber-700">
             Waiting for approval before it can go live. Settings and prices are locked until it is
             decided. You can withdraw the request under{' '}
-            <Link href="/admin/approvals" className="underline">
+            <Link href="/admin/approvals/inbox" className="underline">
               Approvals
             </Link>
             .

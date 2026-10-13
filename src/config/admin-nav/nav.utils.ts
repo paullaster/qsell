@@ -1,13 +1,50 @@
-import { ADMIN_NAV_MAX_DEPTH, type AdminNavActiveMatch, type AdminNavItem } from './types';
+import {
+  ADMIN_NAV_MAX_DEPTH,
+  type AdminNavAccess,
+  type AdminNavActiveMatch,
+  type AdminNavItem,
+} from './types';
 import { ADMIN_NAV } from './nav.config';
 import { applyModuleLabels } from '@/config/company-ui';
 
-function isInstalled(item: AdminNavItem): boolean {
-  return item.installed !== false;
+function isEnabled(item: AdminNavItem): boolean {
+  return item.disabled !== true;
+}
+
+function holds(access: AdminNavAccess, permission: AdminNavItem['permission']): boolean {
+  if (permission === undefined) return false;
+  if (access.superAdmin) return true;
+  const needed = typeof permission === 'string' ? [permission] : permission;
+  return needed.some((key) => access.permissions.includes(key));
 }
 
 /**
- * Normalize tree: drop uninstalled, clamp depth, fill safe defaults.
+ * Keep only what this user may open. Fails closed: a screen with no permission
+ * is hidden, and a section is hidden when none of its sub links remain.
+ */
+export function filterAdminNavByAccess(
+  items: AdminNavItem[],
+  access: AdminNavAccess | null,
+): AdminNavItem[] {
+  const allowed: AdminNavAccess = access ?? { superAdmin: false, permissions: [] };
+  const result: AdminNavItem[] = [];
+  for (const item of items) {
+    const isSection = (item.subLinks?.length ?? 0) > 0;
+    if (item.permission !== undefined && !holds(allowed, item.permission)) continue;
+    if (isSection) {
+      const subLinks = filterAdminNavByAccess(item.subLinks ?? [], allowed);
+      if (subLinks.length === 0) continue;
+      result.push({ ...item, subLinks });
+    } else {
+      if (!holds(allowed, item.permission)) continue;
+      result.push(item);
+    }
+  }
+  return result;
+}
+
+/**
+ * Normalize tree: drop disabled, clamp depth, fill safe defaults.
  * Fault-tolerant — bad nodes are skipped rather than crashing the sidebar.
  */
 export function normalizeAdminNav(
@@ -21,7 +58,7 @@ export function normalizeAdminNav(
 
   for (const raw of items) {
     if (typeof raw !== 'object') continue;
-    if (!isInstalled(raw)) continue;
+    if (!isEnabled(raw)) continue;
     if (typeof raw.id !== 'string' || raw.id.trim() === '') continue;
     if (typeof raw.title !== 'string' || raw.title.trim() === '') continue;
     if (typeof raw.name !== 'string' || raw.name.trim() === '') continue;
@@ -41,8 +78,7 @@ export function normalizeAdminNav(
       title: raw.title.trim(),
       name: raw.name.trim(),
       href: raw.href.trim(),
-      disabled: Boolean(raw.disabled),
-      installed: true,
+      disabled: false,
       subLinks: subLinks && subLinks.length > 0 ? subLinks : undefined,
     });
   }
@@ -53,8 +89,11 @@ export function normalizeAdminNav(
 /** Canonical nav tree used by UI (always normalized). */
 export function getAdminNav(
   moduleLabels?: Record<string, string> | null,
+  access?: AdminNavAccess | null,
 ): AdminNavItem[] {
-  const base = normalizeAdminNav(ADMIN_NAV);
+  const normalized = normalizeAdminNav(ADMIN_NAV);
+  // Omit `access` only for structure checks; every screen a user sees passes it.
+  const base = access === undefined ? normalized : filterAdminNavByAccess(normalized, access);
   if (!moduleLabels || Object.keys(moduleLabels).length === 0) return base;
   return applyModuleLabels(base, moduleLabels);
 }
@@ -117,7 +156,7 @@ export function findNavItemById(
 }
 
 export function getNavItemChildren(item: AdminNavItem): AdminNavItem[] {
-  return item.subLinks?.filter(isInstalled) ?? [];
+  return item.subLinks?.filter(isEnabled) ?? [];
 }
 
 export function hasSubLinks(item: AdminNavItem): boolean {

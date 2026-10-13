@@ -1,4 +1,4 @@
-import { and, desc, eq, or } from 'drizzle-orm';
+import { and, desc, eq, or, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { orders, orderItems, type OrderRow } from '@/server/db/drizzle/schema';
 import type { Order, OrderItem, OrderStatus, PaymentStatus, PaymentProvider } from '@/types/index';
@@ -85,6 +85,8 @@ export class OrderRepository {
         status: order.status,
         paymentStatus: order.paymentStatus,
         paymentMethod: order.paymentMethod,
+        // The finance payment method this old provider code stands for (null until one is set up).
+        paymentMethodId: sql`(SELECT id FROM payment_methods WHERE legacy_codes ? ${order.paymentMethod} ORDER BY sort_order LIMIT 1)`,
         shippingCourier: order.shippingCourier,
         trackingNumber: order.trackingNumber,
         internalNotes: order.internalNotes,

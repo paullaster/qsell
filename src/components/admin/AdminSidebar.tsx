@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { RefreshCw, Store, X } from 'lucide-react';
 import { CompanyBrand } from '@/components/ui/CompanyBrand';
 import { AdminNavTree } from '@/components/admin/nav/AdminNavTree';
+import { useAdminNavAccess } from '@/components/admin/nav/AdminNavAccessProvider';
 import {
   findActiveNavMatch,
   getAdminNav,
@@ -47,7 +48,8 @@ export function AdminSidebar({
 }: AdminSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const nav = useMemo(() => getAdminNav(moduleLabels), [moduleLabels]);
+  const access = useAdminNavAccess();
+  const nav = useMemo(() => getAdminNav(moduleLabels, access), [moduleLabels, access]);
 
   const match = useMemo(() => findActiveNavMatch(pathname, nav), [pathname, nav]);
   const trailIds = useMemo(() => new Set(match?.trailIds ?? []), [match]);

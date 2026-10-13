@@ -243,8 +243,13 @@ export async function savePaymentConfigAction(input: {
 export async function updateCompanyPublicBaseUrlAction(url: string): Promise<void> {
   await requirePermission('settings:manage');
   const { companySettings } = getContainer();
+  const cleaned = url.trim().replace(/\/$/, '');
+  // Payment providers only call back over https; plain http is allowed for a machine's own address.
+  if (cleaned && !/^https:\/\//i.test(cleaned) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(cleaned)) {
+    throw new Error('The public address must start with https:// (payment providers will not call back over plain http).');
+  }
   await companySettings.update({
-    publicBaseUrl: url.trim().replace(/\/$/, '') || null,
+    publicBaseUrl: cleaned || null,
   });
   revalidatePath('/admin/settings');
   revalidatePath('/admin/company');

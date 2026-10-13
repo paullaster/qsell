@@ -1,7 +1,6 @@
-import { listGatewaysAction } from '@/server/domains/gateways/actions';
-import { AdminPaymentConfigClient } from '@/components/admin/AdminPaymentConfigClient';
+import { redirect } from 'next/navigation';
 
-export default async function Page() {
-  const gatewaysPromise = listGatewaysAction();
-  return <AdminPaymentConfigClient gatewaysPromise={gatewaysPromise} />;
+/** The old gateway toggles were replaced by Finance → Payment Setup → Payment providers. */
+export default function AdminGatewaysPage() {
+  redirect('/admin/finance/payment-providers');
 }

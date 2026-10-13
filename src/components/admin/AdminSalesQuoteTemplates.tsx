@@ -1,9 +1,15 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Copy, FileStack, Plus, Search, Star, X } from 'lucide-react';
-import type { Product } from '@/types/index';
+import type { CatalogueProduct } from '@/lib/catalogue-entry';
 import { QuoteLayoutBoard } from './quote-layout/QuoteLayoutBoard';
+import { CataloguePicker } from './quote-layout/CataloguePicker';
+import { QuickAdd } from './quote-layout/QuickAdd';
+import { BulkAddDialog } from './quote-layout/BulkAddDialog';
+import { QuantityInput } from './quote-layout/QuantityInput';
+import { buildCatalogueIndex } from '@/lib/catalogue-entry';
+import { addCatalogueEntry, lastIndexOfProduct, type CatalogueEntry } from '@/lib/quote-layout';
 import type { CustomerRow } from '@/server/db/drizzle/schema';
 import type { QuoteTemplateInput, SalesQuoteTemplate } from '@/server/domains/quotes/service';
 import type { QuoteSearchHit } from '@/server/domains/quotes/service';
@@ -16,6 +22,8 @@ import {
   templateDraftFromQuoteAction,
 } from '@/server/domains/quotes/actions';
 import { QuoteSearchPicker } from './QuoteSearchPicker';
+
+type TemplateLine = QuoteTemplateInput['lines'][number];
 
 const amount = (n: number, currency: string) =>
   `${currency} ${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -100,7 +108,7 @@ export function AdminSalesQuoteTemplates({
   onFromQuoteHandled,
 }: {
   templates: SalesQuoteTemplate[];
-  products: Product[];
+  products: CatalogueProduct[];
   customers: CustomerRow[];
   canCreate: boolean;
   canUpdate: boolean;
@@ -360,7 +368,7 @@ function TemplateEditor({
   base: TemplateBase | null;
   /** Only a new template can be based on a quote. */
   canBase: boolean;
-  products: Product[];
+  products: CatalogueProduct[];
   customers: CustomerRow[];
   onClose: () => void;
   onSave: (input: QuoteTemplateInput) => Promise<void>;
@@ -371,6 +379,11 @@ function TemplateEditor({
   const [error, setError] = useState<string | null>(null);
   const [catalogSectionId, setCatalogSectionId] = useState<string | null>(null);
   const [catalogOpen, setCatalogOpen] = useState(false);
+  const catalogueIndex = useMemo(() => buildCatalogueIndex(products), [products]);
+  const productById = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const lastAdded = useRef<{ productId: string; sectionId: string | null } | null>(null);
+  const [focusLine, setFocusLine] = useState<{ index: number; nonce: number } | null>(null);
   const [startFrom, setStartFrom] = useState<'blank' | 'quote'>(initialBase ? 'quote' : 'blank');
   const [base, setBase] = useState<TemplateBase | null>(initialBase);
   /** A quote just chosen, waiting for a yes before it replaces items already added. */
@@ -408,20 +421,50 @@ function TemplateEditor({
   };
   const update = <K extends keyof QuoteTemplateInput>(key: K, value: QuoteTemplateInput[K]) =>
     setInput((current) => ({ ...current, [key]: value }));
-  const addLine = (productId: string, sectionId?: string) => {
-    if (!productId) return;
-    update('lines', [
-      ...input.lines,
-      {
-        sectionId: sectionId ?? null,
-        productId,
-        quantity: 1,
-        priceMode: 'catalog',
-        unitPrice: null,
-        discountPercent: 0,
-      },
-    ]);
+  /** Adds items in one change, merging into lines that already hold the same item. */
+  const addEntries = (entries: CatalogueEntry[]) => {
+    if (entries.length === 0) return;
+    setInput((current) => {
+      let lines = current.lines;
+      for (const entry of entries) {
+        lines = addCatalogueEntry<TemplateLine>(
+          lines,
+          entry,
+          (e) => ({
+            sectionId: e.sectionId,
+            productId: e.productId,
+            quantity: e.quantity,
+            priceMode: e.unitPrice === null ? 'catalog' : 'fixed',
+            unitPrice: e.unitPrice,
+            discountPercent: e.discountPercent,
+          }),
+          (line) => line.priceMode === 'fixed',
+        ).lines;
+      }
+      return { ...current, lines };
+    });
+    const last = entries[entries.length - 1]!;
+    lastAdded.current = { productId: last.productId, sectionId: last.sectionId };
   };
+  /** After the catalogue closes, takes the person to the last item they added. */
+  const showLastAdded = () => {
+    const last = lastAdded.current;
+    lastAdded.current = null;
+    if (!last) return;
+    const index = lastIndexOfProduct(input.lines, last.productId, last.sectionId);
+    if (index >= 0) setFocusLine((current) => ({ index, nonce: (current?.nonce ?? 0) + 1 }));
+  };
+  /** How much of a product a place already holds, or null. */
+  const heldIn = (productId: string, slot: string | null) => {
+    const here = input.lines.filter(
+      (line) => line.productId === productId && (line.sectionId ?? null) === slot,
+    );
+    return here.length === 0 ? null : here.reduce((sum, line) => sum + line.quantity, 0);
+  };
+  const placeName = (slot: string | null) =>
+    slot === null
+      ? 'the individual items'
+      : `section ${input.sections.find((x) => x.id === slot)?.title ?? ''}`.trim();
   const patchLine = (index: number, patch: Partial<QuoteTemplateInput['lines'][number]>) =>
     update(
       'lines',
@@ -765,13 +808,31 @@ function TemplateEditor({
               sections={input.sections}
               lines={input.lines}
               onChange={(next) => setInput((current) => ({ ...current, ...next }))}
+              focusLine={focusLine}
+              onBulkAdd={() => {
+                lastAdded.current = null;
+                setBulkOpen(true);
+              }}
+              lineSearchText={(line) => {
+                const product = productById.get(line.productId);
+                return `${product?.name ?? ''} ${product?.sku ?? ''} ${product?.stockCode ?? ''}`;
+              }}
+              quickAdd={(slot) => (
+                <QuickAdd
+                  index={catalogueIndex}
+                  currency={input.currency}
+                  destination={placeName(slot)}
+                  countHere={() => input.lines.filter((l) => (l.sectionId ?? null) === slot).length}
+                  quantityHere={(productId) => heldIn(productId, slot)}
+                  onAdd={(entry) => addEntries([{ ...entry, sectionId: slot }])}
+                />
+              )}
               onBrowse={(sectionId) => {
+                lastAdded.current = null;
                 setCatalogSectionId(sectionId);
                 setCatalogOpen(true);
               }}
-              lineName={(line) =>
-                products.find((item) => item.id === line.productId)?.name ?? 'item'
-              }
+              lineName={(line) => productById.get(line.productId)?.name ?? 'item'}
               minWidth={900}
               columns={7}
               head={
@@ -785,7 +846,7 @@ function TemplateEditor({
                 </>
               }
               renderCells={(line, index) => {
-                const product = products.find((item) => item.id === line.productId);
+                const product = productById.get(line.productId);
                 const sell =
                   line.priceMode === 'fixed'
                     ? Number(line.unitPrice ?? 0)
@@ -813,16 +874,10 @@ function TemplateEditor({
                       </div>
                     </td>
                     <td className="p-3">
-                      <input
-                        type="number"
-                        min={0.001}
-                        step={0.001}
+                      <QuantityInput
+                        label={`Quantity of ${name}`}
                         value={line.quantity}
-                        onChange={(event) =>
-                          patchLine(index, { quantity: Number(event.target.value) })
-                        }
-                        className="w-24 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong"
-                        aria-label={`Quantity of ${name}`}
+                        onChange={(value) => patchLine(index, { quantity: Number(value) })}
                       />
                     </td>
                     <td className="p-3">
@@ -1005,132 +1060,41 @@ function TemplateEditor({
         </form>
       </section>
       {catalogOpen && (
-        <TemplateCataloguePicker
-          products={products}
+        <CataloguePicker
+          title="Browse product catalogue"
+          index={catalogueIndex}
           currency={input.currency}
-          destination={
-            catalogSectionId
-              ? `section ${input.sections.find((x) => x.id === catalogSectionId)?.title ?? ''}`.trim()
-              : 'the individual items'
+          showCost
+          destination={placeName(catalogSectionId)}
+          priceHint="Leave the price empty to follow the catalogue price when the template is used. A price you type is kept as a fixed price."
+          quantityHere={(productId) => heldIn(productId, catalogSectionId)}
+          onAdd={(entries) =>
+            addEntries(entries.map((entry) => ({ ...entry, sectionId: catalogSectionId })))
           }
           onClose={() => {
             setCatalogOpen(false);
             setCatalogSectionId(null);
-          }}
-          onSelect={(productId) => {
-            addLine(productId, catalogSectionId ?? undefined);
-            setCatalogOpen(false);
-            setCatalogSectionId(null);
+            showLastAdded();
           }}
         />
       )}
-    </div>
-  );
-}
-
-function TemplateCataloguePicker({
-  products,
-  currency,
-  destination,
-  onClose,
-  onSelect,
-}: {
-  products: Product[];
-  currency: string;
-  /** Where the chosen item will go, in words. */
-  destination: string;
-  onClose: () => void;
-  onSelect: (id: string) => void;
-}) {
-  const [search, setSearch] = useState('');
-  // Escape closes the catalogue, like its close button.
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  const matches = products.filter(
-    (product) =>
-      product.isSellable &&
-      `${product.name} ${product.sku} ${product.stockCode} ${product.category}`
-        .toLowerCase()
-        .includes(search.trim().toLowerCase()),
-  );
-  return (
-    <div
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-backdrop/70 p-3 backdrop-blur-sm"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-label="Template product catalogue"
-        className="max-h-[85dvh] w-full max-w-4xl overflow-hidden rounded-2xl border border-line bg-surface-raised shadow-2xl"
-      >
-        <header className="flex items-center justify-between border-b border-line p-4">
-          <div>
-            <h3 className="font-semibold text-fg-strong">Browse product catalogue</h3>
-            <p className="text-xs text-fg-muted">Adding to {destination}.</p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close catalogue"
-            className="rounded-lg p-2 text-fg-muted hover:bg-hover"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </header>
-        <div className="border-b border-line p-3">
-          <div className="relative">
-            <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-fg-subtle" />
-            <input
-              autoFocus
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search products by name, SKU, stock code, or category"
-              className="w-full rounded-lg border border-line bg-surface py-2 pr-3 pl-9 text-sm text-fg-strong"
-            />
-          </div>
-        </div>
-        <div className="max-h-[65dvh] overflow-y-auto p-4">
-          <div className="grid gap-3 sm:grid-cols-2">
-            {matches.map((product) => (
-              <article
-                key={product.id}
-                className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface p-3"
-              >
-                <div>
-                  <p className="font-semibold text-fg-strong">{product.name}</p>
-                  <p className="text-xs text-fg-muted">
-                    {product.sku} · {product.category}
-                  </p>
-                  <p className="mt-1 text-xs text-fg-subtle">
-                    {product.price == null ? 'No catalog price' : amount(product.price, currency)} ·
-                    cost {amount(product.costPrice, currency)}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  disabled={product.price == null}
-                  onClick={() => onSelect(product.id)}
-                  className="shrink-0 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
-                >
-                  Add to template
-                </button>
-              </article>
-            ))}
-          </div>
-          {matches.length === 0 && (
-            <p className="p-8 text-center text-sm text-fg-muted">No products found.</p>
-          )}
-        </div>
-      </section>
+      {bulkOpen && (
+        <BulkAddDialog
+          noun="template"
+          index={catalogueIndex}
+          places={[
+            { id: null, label: 'The individual items' },
+            ...input.sections.map((x) => ({ id: x.id, label: `Section ${x.title}` })),
+          ]}
+          initialSlot={null}
+          onAdd={(entries) => {
+            addEntries(entries);
+            setBulkOpen(false);
+            showLastAdded();
+          }}
+          onClose={() => setBulkOpen(false)}
+        />
+      )}
     </div>
   );
 }

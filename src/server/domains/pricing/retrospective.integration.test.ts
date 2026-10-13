@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 
 /**
  * Rebates, loyalty points, gift cards and paying orders with them, against a real database.
@@ -377,16 +377,28 @@ describe.skipIf(!url)('rebates, loyalty, gift cards and tenders (database)', () 
         creditLimit: '1000000',
         balance: String(owed.reduce((n, x) => n + x, 0)),
       });
-      for (const [i, amount] of owed.entries())
-        await db.insert(schema.customerLedgerEntries).values({
+      for (const [i, amount] of owed.entries()) {
+        const [entry] = await db
+          .insert(schema.customerLedgerEntries)
+          .values({
+            companyId,
+            customerId: cust.id,
+            documentType: 'invoice',
+            documentNo: `INV-${randomUUID().slice(0, 6)}`,
+            amount: amount.toFixed(2),
+            remainingAmount: amount.toFixed(2),
+            createdAt: new Date(Date.now() - (10 - i) * 86400_000),
+          })
+          .returning();
+        // As every posted invoice has: its opening entry in the history.
+        await db.insert(schema.customerDetailedEntries).values({
           companyId,
           customerId: cust.id,
-          documentType: 'invoice',
-          documentNo: `INV-${randomUUID().slice(0, 6)}`,
+          ledgerEntryId: entry!.id,
+          entryType: 'initial',
           amount: amount.toFixed(2),
-          remainingAmount: amount.toFixed(2),
-          createdAt: new Date(Date.now() - (10 - i) * 86400_000),
         });
+      }
       return cust;
     };
     const earn = async (
@@ -430,6 +442,14 @@ describe.skipIf(!url)('rebates, loyalty, gift cards and tenders (database)', () 
       expect(ledger.find((l) => l.documentType === 'rebate_credit')).toMatchObject({
         amount: '-600.00',
       });
+      // What is open on every entry still equals the sum of its history.
+      const drift = await db.execute(sql`
+        SELECT e.id FROM customer_ledger_entries e
+        LEFT JOIN customer_detailed_entries d ON d.ledger_entry_id = e.id
+        WHERE e.customer_id = ${cust.id}::uuid
+        GROUP BY e.id, e.remaining_amount
+        HAVING e.remaining_amount <> COALESCE(SUM(d.amount), 0)`);
+      expect([...drift]).toEqual([]);
       const [after] = await db
         .select()
         .from(schema.customers)

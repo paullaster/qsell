@@ -1,0 +1,174 @@
+import type { AccountDraft } from '../chart';
+import type { ChartTemplate } from './types';
+
+type Row = [
+  no: string,
+  name: string,
+  kind: 'p' | 'h' | 'b' | 'e' | 't',
+  category: AccountDraft['category'],
+  normal: 'debit' | 'credit',
+  extra?: { control?: boolean; direct?: boolean; totaling?: string; indent?: number },
+];
+
+function build(rows: Row[]): AccountDraft[] {
+  const types = {
+    p: 'posting',
+    h: 'heading',
+    b: 'begin_total',
+    e: 'end_total',
+    t: 'total',
+  } as const;
+  return rows.map(([no, name, kind, category, normal, extra]) => ({
+    no,
+    name,
+    type: types[kind],
+    category: kind === 'p' ? category : null,
+    subcategory: null,
+    normalBalance: normal,
+    // Control accounts stay postable, but only by their sub-ledger or a holder of the control-account
+    // permission (postingSource); "direct posting" off would refuse everyone.
+    directPosting: kind === 'p' && extra?.direct !== false,
+    postingSource: extra?.control === true ? 'engine_only' : 'manual',
+    totaling: extra?.totaling ?? null,
+    indent: extra?.indent ?? 0,
+  }));
+}
+
+/** An IFRS-style chart in the standard order. A starting point: every row is editable. */
+export const INTERNATIONAL_ACCOUNTS: AccountDraft[] = build([
+  ['1000', 'ASSETS', 'b', null, 'debit'],
+  ['1100', 'Cash and bank', 'h', null, 'debit', { indent: 1 }],
+  ['1110', 'Cash on hand', 'p', 'assets', 'debit', { control: true, indent: 2 }],
+  ['1120', 'Bank accounts', 'p', 'assets', 'debit', { control: true, indent: 2 }],
+  ['1130', 'Mobile money clearing', 'p', 'assets', 'debit', { control: true, indent: 2 }],
+  ['1140', 'Cheques in transit', 'p', 'assets', 'debit', { control: true, indent: 2 }],
+  ['1200', 'Receivables', 'h', null, 'debit', { indent: 1 }],
+  ['1210', 'Trade debtors (control)', 'p', 'assets', 'debit', { control: true, indent: 2 }],
+  ['1220', 'Unapplied receipts (suspense)', 'p', 'assets', 'debit', { control: true, indent: 2 }],
+  ['1230', 'Other receivables', 'p', 'assets', 'debit', { indent: 2 }],
+  ['1240', 'Allowance for doubtful debts', 'p', 'assets', 'credit', { indent: 2 }],
+  ['1300', 'Inventory', 'h', null, 'debit', { indent: 1 }],
+  ['1310', 'Inventory (control)', 'p', 'assets', 'debit', { control: true, indent: 2 }],
+  ['1320', 'Goods in transit', 'p', 'assets', 'debit', { indent: 2 }],
+  ['1400', 'Prepayments and tax recoverable', 'h', null, 'debit', { indent: 1 }],
+  ['1410', 'Input tax (recoverable)', 'p', 'assets', 'debit', { control: true, indent: 2 }],
+  ['1420', 'Withholding tax recoverable', 'p', 'assets', 'debit', { indent: 2 }],
+  ['1430', 'Prepayments', 'p', 'assets', 'debit', { indent: 2 }],
+  ['1500', 'Property, plant and equipment', 'h', null, 'debit', { indent: 1 }],
+  ['1510', 'Equipment and fittings', 'p', 'assets', 'debit', { indent: 2 }],
+  ['1520', 'Accumulated depreciation', 'p', 'assets', 'credit', { indent: 2 }],
+  ['1999', 'TOTAL ASSETS', 'e', null, 'debit', { totaling: '1000..1999' }],
+
+  ['2000', 'LIABILITIES', 'b', null, 'credit'],
+  ['2100', 'Payables', 'h', null, 'credit', { indent: 1 }],
+  ['2110', 'Trade creditors (control)', 'p', 'liabilities', 'credit', { control: true, indent: 2 }],
+  ['2120', 'Accrued expenses', 'p', 'liabilities', 'credit', { indent: 2 }],
+  ['2200', 'Customer liabilities', 'h', null, 'credit', { indent: 1 }],
+  ['2210', 'Customer deposits (wallet control)', 'p', 'liabilities', 'credit', { control: true, indent: 2 }],
+  ['2220', 'Refunds payable', 'p', 'liabilities', 'credit', { control: true, indent: 2 }],
+  ['2230', 'Gift card liability', 'p', 'liabilities', 'credit', { control: true, indent: 2 }],
+  ['2240', 'Loyalty points provision', 'p', 'liabilities', 'credit', { indent: 2 }],
+  ['2250', 'Rebates payable', 'p', 'liabilities', 'credit', { indent: 2 }],
+  ['2300', 'Taxes payable', 'h', null, 'credit', { indent: 1 }],
+  ['2310', 'Output tax (payable)', 'p', 'liabilities', 'credit', { control: true, indent: 2 }],
+  ['2320', 'Income tax payable', 'p', 'liabilities', 'credit', { indent: 2 }],
+  ['2330', 'Payroll taxes payable', 'p', 'liabilities', 'credit', { indent: 2 }],
+  ['2400', 'Borrowings', 'h', null, 'credit', { indent: 1 }],
+  ['2410', 'Loans', 'p', 'liabilities', 'credit', { indent: 2 }],
+  ['2999', 'TOTAL LIABILITIES', 'e', null, 'credit', { totaling: '2000..2999' }],
+
+  ['3000', 'EQUITY', 'b', null, 'credit'],
+  ['3100', 'Share capital', 'p', 'equity', 'credit', { indent: 1 }],
+  ['3200', 'Retained earnings', 'p', 'equity', 'credit', { control: true, indent: 1 }],
+  ['3300', 'Owner drawings / dividends', 'p', 'equity', 'debit', { indent: 1 }],
+  ['3999', 'TOTAL EQUITY', 'e', null, 'credit', { totaling: '3000..3999' }],
+
+  ['4000', 'INCOME', 'b', null, 'credit'],
+  ['4100', 'Sales of goods', 'p', 'income', 'credit', { indent: 1 }],
+  ['4110', 'Sales of services', 'p', 'income', 'credit', { indent: 1 }],
+  ['4200', 'Sales returns and allowances', 'p', 'income', 'debit', { indent: 1 }],
+  ['4300', 'Sales discounts', 'p', 'income', 'debit', { indent: 1 }],
+  ['4400', 'Other income', 'p', 'income', 'credit', { indent: 1 }],
+  ['4410', 'Foreign exchange gains', 'p', 'income', 'credit', { indent: 1 }],
+  ['4420', 'Payment discounts received', 'p', 'income', 'credit', { indent: 1 }],
+  ['4999', 'TOTAL INCOME', 'e', null, 'credit', { totaling: '4000..4999' }],
+
+  ['5000', 'COST OF SALES', 'b', null, 'debit'],
+  ['5100', 'Cost of goods sold', 'p', 'cost_of_sales', 'debit', { indent: 1 }],
+  ['5200', 'Inventory adjustments and write-offs', 'p', 'cost_of_sales', 'debit', { indent: 1 }],
+  ['5999', 'TOTAL COST OF SALES', 'e', null, 'debit', { totaling: '5000..5999' }],
+
+  ['6000', 'EXPENSES', 'b', null, 'debit'],
+  ['6100', 'Salaries and wages', 'p', 'expense', 'debit', { indent: 1 }],
+  ['6200', 'Rent and utilities', 'p', 'expense', 'debit', { indent: 1 }],
+  ['6300', 'Marketing and promotions', 'p', 'expense', 'debit', { indent: 1 }],
+  ['6310', 'Rebates and loyalty cost', 'p', 'expense', 'debit', { indent: 1 }],
+  ['6400', 'Bank and payment charges', 'p', 'expense', 'debit', { indent: 1 }],
+  ['6500', 'Bad debts and write-offs', 'p', 'expense', 'debit', { indent: 1 }],
+  ['6600', 'Depreciation', 'p', 'expense', 'debit', { indent: 1 }],
+  ['6700', 'Foreign exchange losses', 'p', 'expense', 'debit', { indent: 1 }],
+  ['6800', 'Payment discounts allowed', 'p', 'expense', 'debit', { indent: 1 }],
+  ['6900', 'Rounding differences', 'p', 'expense', 'debit', { indent: 1 }],
+  ['6990', 'Other expenses', 'p', 'expense', 'debit', { indent: 1 }],
+  ['6999', 'TOTAL EXPENSES', 'e', null, 'debit', { totaling: '6000..6999' }],
+]);
+
+export const INTERNATIONAL_TEMPLATE: ChartTemplate = {
+  code: 'international',
+  name: 'International default (IFRS-style)',
+  description:
+    'A standard chart in the usual order: assets, liabilities, equity, income, cost of sales, expenses. Control accounts are marked so only sub-ledgers post to them.',
+  version: '1',
+  baseCurrency: 'USD',
+  fiscalYearStartMonth: 1,
+  calendarShape: 'monthly',
+  accounts: INTERNATIONAL_ACCOUNTS,
+  businessGroups: [
+    { code: 'DOMESTIC', name: 'Domestic' },
+    { code: 'EXPORT', name: 'Export' },
+  ],
+  productGroups: [
+    { code: 'GOODS', name: 'Goods' },
+    { code: 'SERVICES', name: 'Services' },
+  ],
+  generalSetup: [
+    { business: 'DOMESTIC', product: 'GOODS', sales: '4100', salesReturns: '4200', salesDiscount: '4300', cogs: '5100', inventoryAdjustment: '5200' },
+    { business: 'DOMESTIC', product: 'SERVICES', sales: '4110', salesReturns: '4200', salesDiscount: '4300', cogs: '5100', inventoryAdjustment: '5200' },
+    { business: 'EXPORT', product: 'GOODS', sales: '4100', salesReturns: '4200', salesDiscount: '4300', cogs: '5100', inventoryAdjustment: '5200' },
+    { business: 'EXPORT', product: 'SERVICES', sales: '4110', salesReturns: '4200', salesDiscount: '4300', cogs: '5100', inventoryAdjustment: '5200' },
+  ],
+  bankAccounts: [
+    { code: 'CASH', name: 'Cash on hand', kind: 'cash', glAccount: '1110' },
+    { code: 'BANK', name: 'Main bank account', kind: 'bank', glAccount: '1120', feeAccount: '6400' },
+    { code: 'MOBILE', name: 'Mobile money settlement', kind: 'mobile_money', glAccount: '1130', feeAccount: '6400' },
+    { code: 'CHQ-TRANSIT', name: 'Cheques in transit', kind: 'clearing', glAccount: '1140' },
+  ],
+  paymentMethods: [
+    { code: 'CASH', name: 'Cash', kind: 'cash', bankAccount: 'CASH', refundDestination: 'manual', sortOrder: 10 },
+    { code: 'BANK_TRANSFER', name: 'Bank transfer (EFT)', kind: 'bank_transfer', bankAccount: 'BANK', requiresReference: true, refundDestination: 'manual', sortOrder: 20 },
+    { code: 'BANK_DEPOSIT', name: 'Bank deposit slip', kind: 'bank_deposit', bankAccount: 'BANK', requiresReference: true, requiresEvidence: true, sortOrder: 30 },
+    { code: 'CHEQUE', name: 'Cheque', kind: 'cheque', bankAccount: 'CHQ-TRANSIT', requiresReference: true, requiresCounterparty: true, requiresEvidence: true, sortOrder: 40 },
+    { code: 'CARD', name: 'Card', kind: 'card', bankAccount: 'BANK', requiresReference: true, legacyCodes: ['pesapal_v3'], provider: 'pesapal_v3', sortOrder: 50 },
+    { code: 'MOBILE_MONEY', name: 'Mobile money', kind: 'mobile_money', bankAccount: 'MOBILE', requiresReference: true, refundDestination: 'manual', sortOrder: 60 },
+    { code: 'ONLINE_BANK', name: 'Online bank payment', kind: 'gateway', bankAccount: 'BANK', requiresReference: true, legacyCodes: ['jenga_hq'], provider: 'jenga_hq', sortOrder: 70 },
+  ],
+  customerGroups: [
+    {
+      code: 'DOMESTIC',
+      name: 'Domestic customers',
+      receivables: '1210',
+      customerDeposits: '2210',
+      refundsPayable: '2220',
+      paymentDiscount: '6800',
+      writeOff: '6500',
+      rounding: '6900',
+      fxGain: '4410',
+      fxLoss: '6700',
+      serviceCharge: '4400',
+      rebateExpense: '6310',
+      giftCardLiability: '2230',
+      loyaltyProvision: '2240',
+    },
+  ],
+  outputTaxAccount: '2310',
+};
