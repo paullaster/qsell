@@ -2,12 +2,34 @@
 
 import { revalidatePath } from 'next/cache';
 import { canPermission, requirePermission } from '@/server/domains/access-control/guard';
+import { AccessDeniedError } from '@/server/domains/access-control/engine';
+import type { QuoteActionResult } from './action-result';
+import type { CatalogueProduct } from '@/lib/catalogue-entry';
 import { listProductsAction } from '@/server/domains/catalog/actions';
 import { listTradeCustomersAction } from '@/server/domains/customers/master-actions';
 import type { KitAllocation } from '@/server/domains/pricing/domain/kits';
 import { SalesQuoteService, type QuoteInput, type QuoteTemplateInput } from './service';
 
 const service = () => new SalesQuoteService();
+
+/**
+ * Failures come back as data (see QuoteActionResult). The service states why in a plain `Error`;
+ * anything else (a database or library error) is logged and kept off the screen.
+ */
+async function run<T>(fn: () => Promise<T>): Promise<QuoteActionResult<T>> {
+  try {
+    return { ok: true, data: await fn() };
+  } catch (error: unknown) {
+    if (error instanceof AccessDeniedError) {
+      return { ok: false, error: 'You do not have permission to do that.' };
+    }
+    if (error instanceof Error && error.constructor === Error) {
+      return { ok: false, error: error.message };
+    }
+    console.error('[quotes]', error);
+    return { ok: false, error: 'Something went wrong. Please try again.' };
+  }
+}
 
 export async function listSalesQuotesAction() {
   await requirePermission('quotes:read');
@@ -63,7 +85,25 @@ export async function getSalesQuoteEditorDataAction() {
     service().listTemplates(),
     editorKits(),
   ]);
-  return { products, customers, settings, templates, kits };
+  // Only what the editors use: descriptions, specifications and media would make a long catalogue
+  // slow to open, and nothing on the screen shows them.
+  const slim: CatalogueProduct[] = products.map((p) => ({
+    id: p.id,
+    sku: p.sku,
+    stockCode: p.stockCode,
+    name: p.name,
+    category: p.category,
+    brand: p.brand,
+    isSellable: p.isSellable,
+    price: p.price,
+    costPrice: p.costPrice,
+    taxRate: p.taxRate,
+    isTaxInclusive: p.isTaxInclusive,
+    stockQuantity: p.stockQuantity,
+    reservedQuantity: p.reservedQuantity,
+    imageUrl: p.imageUrl,
+  }));
+  return { products: slim, customers, settings, templates, kits };
 }
 
 export async function listSalesQuoteTemplatesAction() {
@@ -110,82 +150,104 @@ export async function setDefaultSalesQuoteTemplateAction(id: string) {
 }
 
 export async function createSalesQuoteAction(input: QuoteInput) {
-  const userId = await requirePermission('quotes:create');
-  const quote = await service().create(userId, input);
-  revalidatePath('/admin/quotes');
-  return quote;
+  return run(async () => {
+    const userId = await requirePermission('quotes:create');
+    const quote = await service().create(userId, input);
+    revalidatePath('/admin/quotes');
+    return quote;
+  });
 }
 
 export async function updateSalesQuoteAction(id: string, input: QuoteInput) {
-  const userId = await requirePermission('quotes:update');
-  const quote = await service().update(userId, id, input);
-  revalidatePath('/admin/quotes');
-  return quote;
+  return run(async () => {
+    const userId = await requirePermission('quotes:update');
+    const quote = await service().update(userId, id, input);
+    revalidatePath('/admin/quotes');
+    return quote;
+  });
 }
 
 export async function reviseSalesQuoteAction(id: string) {
-  const userId = await requirePermission('quotes:create');
-  const quote = await service().revise(userId, id);
-  revalidatePath('/admin/quotes');
-  return quote;
+  return run(async () => {
+    const userId = await requirePermission('quotes:create');
+    const quote = await service().revise(userId, id);
+    revalidatePath('/admin/quotes');
+    return quote;
+  });
 }
 
 export async function approveSalesQuoteAction(id: string) {
-  const userId = await requirePermission('quotes:approve');
-  const quote = await service().approve(userId, id);
-  revalidatePath('/admin/quotes');
-  return quote;
+  return run(async () => {
+    const userId = await requirePermission('quotes:approve');
+    const quote = await service().approve(userId, id);
+    revalidatePath('/admin/quotes');
+    return quote;
+  });
 }
 
 export async function resubmitSalesQuoteApprovalAction(id: string) {
-  const userId = await requirePermission('quotes:update');
-  const quote = await service().resubmitApproval(userId, id);
-  revalidatePath('/admin/quotes');
-  revalidatePath('/admin/approvals', 'layout');
-  return quote;
+  return run(async () => {
+    const userId = await requirePermission('quotes:update');
+    const quote = await service().resubmitApproval(userId, id);
+    revalidatePath('/admin/quotes');
+    revalidatePath('/admin/approvals', 'layout');
+    return quote;
+  });
 }
 
 export async function sendSalesQuoteAction(id: string) {
-  const userId = await requirePermission('quotes:update');
-  const quote = await service().send(userId, id);
-  revalidatePath('/admin/quotes');
-  return quote;
+  return run(async () => {
+    const userId = await requirePermission('quotes:update');
+    const quote = await service().send(userId, id);
+    revalidatePath('/admin/quotes');
+    return quote;
+  });
 }
 
 export async function generateSalesQuotePdfAction(id: string) {
-  await requirePermission('quotes:read');
-  return service().generatePdf(id);
+  return run(async () => {
+    await requirePermission('quotes:read');
+    return service().generatePdf(id);
+  });
 }
 
 export async function respondToSalesQuoteAction(id: string, accepted: boolean) {
-  const userId = await requirePermission('quotes:approve');
-  const quote = await service().changeStatus(id, userId, accepted ? 'accepted' : 'rejected');
-  revalidatePath('/admin/quotes');
-  return quote;
+  return run(async () => {
+    const userId = await requirePermission('quotes:approve');
+    const quote = await service().changeStatus(id, userId, accepted ? 'accepted' : 'rejected');
+    revalidatePath('/admin/quotes');
+    return quote;
+  });
 }
 
 export async function cancelSalesQuoteAction(id: string) {
-  const userId = await requirePermission('quotes:delete');
-  const quote = await service().changeStatus(id, userId, 'cancelled');
-  revalidatePath('/admin/quotes');
-  return quote;
+  return run(async () => {
+    const userId = await requirePermission('quotes:delete');
+    const quote = await service().changeStatus(id, userId, 'cancelled');
+    revalidatePath('/admin/quotes');
+    return quote;
+  });
 }
 
 export async function convertSalesQuoteToOrderAction(id: string) {
-  const userId = await requirePermission('quotes:approve');
-  await requirePermission('orders:create');
-  const order = await service().convertToOrder(userId, id);
-  revalidatePath('/admin/quotes');
-  revalidatePath('/admin/orders');
-  revalidatePath('/admin/inventory');
-  return order;
+  return run(async () => {
+    const userId = await requirePermission('quotes:approve');
+    await requirePermission('orders:create');
+    const order = await service().convertToOrder(userId, id);
+    revalidatePath('/admin/quotes');
+    revalidatePath('/admin/orders');
+    revalidatePath('/admin/inventory');
+    return order;
+  });
 }
 
 export async function updateSalesQuoteSettingsAction(minimumGrossMarginPercent: number) {
-  const userId = await requirePermission('settings:manage');
-  const settings = await service().updateSettings(userId, minimumGrossMarginPercent);
-  revalidatePath('/admin/quotes');
-  return settings;
+  return run(async () => {
+    const userId = await requirePermission('settings:manage');
+    const settings = await service().updateSettings(userId, minimumGrossMarginPercent);
+    revalidatePath('/admin/quotes');
+    return settings;
+  });
 }
 
 export async function getPublicSalesQuoteAction(token: string) {

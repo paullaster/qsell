@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addCatalogueEntry,
   canNudgeLine,
+  type CatalogueEntry,
   dropLine,
   dropSection,
   indexesIn,
@@ -186,5 +188,77 @@ describe('sections', () => {
     expect(out.sections.map((s) => s.id)).toEqual(['B']);
     expect(names(out.lines, null)).toEqual(['i1', 'a1', 'i2', 'a2', 'i3']);
     expect(names(out.lines, 'B')).toEqual(['b1']);
+  });
+});
+
+describe('addCatalogueEntry', () => {
+  type Line = {
+    productId: string;
+    sectionId: string | null;
+    quantity: number;
+    discountPercent: number;
+    unitPrice: number | null;
+    priceMode: 'catalog' | 'manual';
+  };
+  const make = (e: CatalogueEntry): Line => ({
+    productId: e.productId,
+    sectionId: e.sectionId,
+    quantity: e.quantity,
+    discountPercent: e.discountPercent,
+    unitPrice: e.unitPrice,
+    priceMode: e.unitPrice === null ? 'catalog' : 'manual',
+  });
+  const typed = (l: Line) => l.priceMode === 'manual';
+  const entry = (patch: Partial<CatalogueEntry> = {}): CatalogueEntry => ({
+    productId: 'p1',
+    sectionId: 's1',
+    quantity: 2,
+    unitPrice: null,
+    discountPercent: 0,
+    ...patch,
+  });
+
+  it('appends a new line and says where it went', () => {
+    const r = addCatalogueEntry([], entry(), make, typed);
+    expect(r.lines).toHaveLength(1);
+    expect(r.index).toBe(0);
+  });
+
+  it('adds to the quantity of the same product in the same place', () => {
+    const first = addCatalogueEntry([], entry(), make, typed).lines;
+    const r = addCatalogueEntry(first, entry({ quantity: 1.5 }), make, typed);
+    expect(r.lines).toHaveLength(1);
+    expect(r.lines[0]!.quantity).toBe(3.5);
+    expect(r.index).toBe(0);
+  });
+
+  it('does not drift on repeated decimal adds', () => {
+    let lines: Line[] = [];
+    for (let i = 0; i < 3; i++) {
+      lines = addCatalogueEntry(lines, entry({ quantity: 0.1 }), make, typed).lines;
+    }
+    expect(lines[0]!.quantity).toBe(0.3);
+  });
+
+  it('keeps separate lines for another section, discount or price', () => {
+    const base = addCatalogueEntry([], entry(), make, typed).lines;
+    expect(addCatalogueEntry(base, entry({ sectionId: null }), make, typed).lines).toHaveLength(2);
+    expect(addCatalogueEntry(base, entry({ discountPercent: 5 }), make, typed).lines).toHaveLength(
+      2,
+    );
+    expect(addCatalogueEntry(base, entry({ unitPrice: 90 }), make, typed).lines).toHaveLength(2);
+  });
+
+  it('merges typed prices only when they are equal', () => {
+    const base = addCatalogueEntry([], entry({ unitPrice: 90 }), make, typed).lines;
+    expect(addCatalogueEntry(base, entry({ unitPrice: 90 }), make, typed).lines).toHaveLength(1);
+    expect(addCatalogueEntry(base, entry({ unitPrice: 80 }), make, typed).lines).toHaveLength(2);
+    expect(addCatalogueEntry(base, entry(), make, typed).lines).toHaveLength(2);
+  });
+
+  it('does not change the lines it was given', () => {
+    const base = addCatalogueEntry([], entry(), make, typed).lines;
+    addCatalogueEntry(base, entry(), make, typed);
+    expect(base[0]!.quantity).toBe(2);
   });
 });
