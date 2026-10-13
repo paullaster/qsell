@@ -88,6 +88,20 @@ export const TRIGGERS: TriggerDefinition[] = [
     ],
   },
   {
+    code: 'refund.payout',
+    module: 'finance',
+    documentKind: 'refund',
+    label: 'Refund to a customer',
+    fields: [
+      ...common,
+      { path: 'reasonCode', label: 'Reason', type: 'text' },
+      { path: 'methodKind', label: 'How it is paid (cash, mobile money, bank, cheque)', type: 'text' },
+      { path: 'source', label: 'What it is owed from (credit note, wallet, receipt)', type: 'text' },
+      { path: 'destinationChanged', label: 'Paid somewhere other than the customer\'s recorded details', type: 'boolean' },
+      { path: 'customer.id', label: 'Customer', type: 'text' },
+    ],
+  },
+  {
     code: 'stock_adjustment.submitted',
     module: 'inventory',
     documentKind: 'stock_adjustment',
@@ -178,6 +192,7 @@ export const DOCUMENT_KIND_LABELS: Record<string, string> = {
   sales_order: 'Sales orders',
   sales_quote: 'Quotes',
   credit_note: 'Credit notes',
+  refund: 'Refunds',
   stock_adjustment: 'Stock adjustments',
   customer_credit_limit: 'Customer credit limits',
   price_list: 'Price lists',

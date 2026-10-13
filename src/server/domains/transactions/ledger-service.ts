@@ -5,7 +5,7 @@ import {
   transactionLedgerEntries,
 } from '@/server/db/drizzle/schema';
 
-export const LEDGER_DOCUMENT_TYPES = ['invoice', 'payment'] as const;
+export const LEDGER_DOCUMENT_TYPES = ['invoice', 'payment', 'refund'] as const;
 export type LedgerDocumentType = (typeof LEDGER_DOCUMENT_TYPES)[number];
 export type LedgerDirection = 'debit' | 'credit';
 
@@ -72,8 +72,8 @@ export class TransactionLedgerService {
     if (!documentNo) throw new Error('A ledger entry needs a document number.');
 
     const transactionReference = input.transactionReference?.trim() || null;
-    if (input.documentType === 'payment' && !transactionReference) {
-      throw new Error('A payment ledger entry requires the provider transaction reference.');
+    if ((input.documentType === 'payment' || input.documentType === 'refund') && !transactionReference) {
+      throw new Error('A payment or refund ledger entry requires the transaction reference.');
     }
 
     const idempotencyKey = input.idempotencyKey.trim();
@@ -91,7 +91,7 @@ export class TransactionLedgerService {
         direction: input.direction,
         amount: amount.toFixed(2),
         currency,
-        transactionReference: input.documentType === 'payment' ? transactionReference : null,
+        transactionReference: input.documentType === 'payment' || input.documentType === 'refund' ? transactionReference : null,
         idempotencyKey,
       })
       .onConflictDoNothing({ target: transactionLedgerEntries.idempotencyKey });

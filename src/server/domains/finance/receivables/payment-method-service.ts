@@ -332,7 +332,7 @@ export class PaymentMethodService {
           requiresEvidence: m.requiresEvidence ?? false,
           requiresCounterparty: m.requiresCounterparty ?? false,
           collectProviderConfigId: m.provider ? (providerByCode.get(m.provider) ?? null) : null,
-          usableFor: ['customer_receipt'],
+          usableFor: (m.refundDestination ?? 'none') === 'none' ? ['customer_receipt'] : ['customer_receipt', 'customer_refund'],
           refundDestination: m.refundDestination ?? 'none',
           legacyCodes: m.legacyCodes ?? [],
           sortOrder: m.sortOrder,

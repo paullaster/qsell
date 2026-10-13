@@ -581,3 +581,88 @@ All nine recommendations accepted (2026-10-12): Finance top-level module; "Walle
 | Loyalty earn/redeem and gift-card issue | Only the **settlement** side (points or a card paying a sale) | Issue/earn postings are F-3. |
 
 **Verify before relying on it:** set the tax-owed account and the customer group accounts on a real chart, issue one credit invoice and one cash sale in a test company, and read the postings. I have not run this against your accountant's chart.
+
+---
+
+## 22. F-2 as built (2026-10-12): the customer wallet
+
+**Built:**
+
+* **Policy (§8.4), the "refund or wallet" switch.** `customer_credit_policies`, effective-dated, for the whole business with optional overrides per customer posting group (the company row names the wallet for everyone). With **no policy there is no wallet and nothing changes**: excess stays an unapplied credit on the account. Screen: Accounts Receivable → Wallet policy. The name customers see is a setting (Wallet, Account credit, Store credit) and every screen uses it.
+* **Money in.** (1) *Overpayment*: the unapplied part of a posted receipt moves into the wallet, by hand ("Move the unapplied … to the wallet") or automatically at posting when the policy says "put it in the wallet"; a frozen wallet or a limit leaves it unapplied and says why in the receipt's history. (2) *Advance deposit*: a receipt ticked "advance deposit" goes wholly to the wallet and is refused up front if the wallet is off or deposits are not allowed. Books, once live: Dr trade debtors, Cr customer deposits.
+* **Money out.** *Pay invoices from the wallet* (by hand, or automatically on a new credit invoice when the policy says so: it can never stop the sale) and *pay an order at the till* (a wallet tender, alongside gift cards and points). Undoing a use puts the money back and reopens the invoices; a cancelled order gives back what its wallet tender took.
+* **Safety.** One row per customer per currency, locked while it changes; the balance can never go below zero (checked in code and by a database constraint); two simultaneous uses of the same money cannot both succeed (tested); wallet entries are append-only and a wallet cannot be deleted (database triggers). A receipt that was partly moved to the wallet can be reversed only while that money is still there.
+* **Books.** Wallet use posts through the same retrying queue as sales (Dr customer deposits, Cr trade debtors); a wallet-paid cash sale debits customer deposits instead of a bank; go-live now also brings existing wallet balances in as a liability. Wallet liability page: what is owed to customers, who holds it, and the customer-deposits account against the wallets (it agrees in every test scenario).
+* Migration `0043`, seven permission keys, 23 new tests.
+
+**Differences from the design above (decided while building):**
+
+| Design said | Built | Why / what remains |
+|---|---|---|
+| Expiry of unclaimed balances | **Not built** (off by default, as decided) | Needs law-and-policy gating and approval; add when a business asks. |
+| Manual adjustment | **Not built** | It needs a counter-account and an approval limit; the other ways in and out cover the real cases. |
+| Wallet cash-out (a refund) | **Not built** | It is a refund destination: F-4. |
+| Credit-note excess and refund to wallet | **Not built** | F-3 and F-4 will call the same "credit the wallet" step. |
+| Policy attachable to customer, branch, payment method, reason | Company and customer posting group only | Enough to make both "no refunds" and "refunds only" businesses real; finer scopes later. |
+| Fields `refunds_enabled`, `credit_note_excess_default`, expiry, cash-out | Not in the policy table yet | They arrive with the slices that use them (F-3, F-4). |
+| Wallet use as a payment method at checkout | A **tender** on the order, like gift cards | The storefront has no tender screen for it yet; the admin tender action takes `wallet`. |
+
+---
+
+## 23. F-3 as built (2026-10-13): credit notes reach the account and the books; goods come back by confirmation
+
+**Built:**
+
+* **Post, apply, resolve (CN-AC-1 to 4).** Issuing a credit note now, in the same transaction: puts a credit on the customer's account; takes it off what is still owed on the original invoice (this frees credit limit at once); and, once the ledger is live, posts Dr sales returns and tax owed, Cr trade debtors. If the posting cannot be made the credit note is **not created** (tested: no credit note, no stock change, the invoice unchanged). Whatever the invoice cannot absorb (it was paid, or paid at the sale) is the **excess**: the customer is owed it, and it waits on **Finance → Accounts Receivable → Credit note excess** until it is **put in the customer's wallet** or **used on the customer's other unpaid invoices**. The wallet policy can say "credit note excess goes to the wallet" and then it happens by itself (a frozen wallet or a limit leaves it on the list). Cash customers are handled the same way: the whole credit is excess.
+* **Goods come back by confirmation (CN-AC-5, §11).** "Return to stock" on a credit note no longer adds stock; it **requests** the goods (a return, numbered RRC). Stock goes up only when someone with `restock:confirm` records what arrived: how many, in what condition, and what was done with it. Only good goods can go back on the shelf; damaged, expired or wrong items go to quarantine, scrap or back to the supplier. Confirming can be done in steps; it closes when everything expected has been seen, or someone with `restock:reject` closes the rest with a reason. Each act is recorded and cannot be changed; two people confirming at once cannot both add the same goods. The sale's recorded cost is kept on the return for the stock-value slice.
+* **Screens:** Credit note excess, Returns (with detail and history), and the order's credit-note panel now says what happened to the customer's account and links to the return.
+* Migration `0044`, five permission keys, 18 new tests (14 database, 4 unit).
+
+**Differences from the design above (decided while building):**
+
+| Design said | Built | Why / what remains |
+|---|---|---|
+| Resolve by wallet, **refund**, hold or write-off | Wallet, or use on other invoices. Refund is shown as "coming with refunds" (F-4); "hold" is simply leaving it on the list; **write-off is not built** | A write-off of an excess would mean forgiving what the business owes a customer; that needs its own approval design before it exists. |
+| Inventory and cost of sales posted on return (Dr Inventory, Cr cost of sales) | **Not posted.** Stock quantity changes and the return keeps the cost, but the ledger gets nothing | The books do not yet carry inventory or cost of sales at all (no stock receipts, adjustments or cost of goods on sale post), so a return posting would put stock value in with nothing to match it. It belongs to an inventory-accounting slice. |
+| Gift card, loyalty and rebate liability postings (CN-AC-10) | Only what exists already: settlement of cards and points, rebates when credited | Issue and earn postings need the point value and a card-sale flow; separate slice. |
+| Return receipts by location, with serials and evidence | Per line only; no location, serial, batch or attachment yet | Per-location stock is Phase 2 of the sales platform. |
+| Order `refunded` status only after a full refund (CN-AC-7) | Unchanged: nothing in F-3 sets it | F-4. |
+| `credit_notes:resolve_excess`, `restock:*` as separate keys | Added: `credit_note_excess:read`, `credit_notes:resolve_excess`, `return_receipts:read`, `restock:confirm`, `restock:reject` | `credit_notes:request_restock` is still the existing `credit_notes:create`. |
+
+## 24. F-4 as built (2026-10-13): refunds, paid by hand, with approval and evidence
+
+**Migration `0045_finance_f4_refunds.sql`.** Tables `refund_requests` (guarded by trigger: paid and cancelled never change; a rejected one may only go back to draft; after draft the amount, customer and source are fixed; no deletes) and `refund_events` (append-only). `customer_credit_policies` gains `refunds_enabled` (default true) and `wallet_cash_out` (default false). Document kind `refund` (RFD). Payment methods that can pay out gain `customer_refund` in `usable_for`.
+
+**What a refund is paid from** (`RefundService`, `receivables/refund-service.ts`): a credit note's excess, an unapplied receipt amount, or a wallet (only when the policy allows cash-out). The amount can never exceed what is left after refunds still waiting are counted. Refused with a reason when: refunds are off, the customer is blocked, the method cannot refund or pays automatically (F-6), payout details are missing for the method, the same amount was asked for the same customer and method within a day, or the destination (phone) differs from the customer's record and the person lacks `refunds:change_destination`.
+
+**Lifecycle.** draft → (submit) → pending approval → approved → paid; or rejected (reopen → draft) / cancelled. Submit uses the approval engine, trigger `refund.payout`. With no workflow it goes straight to approved, except a changed destination, which is refused until a workflow exists. Approval (or its absence) **sets the money aside**: the credit leaves the customer's account or wallet (sub-ledger, resolution row, wallet `cash_out` entry) and, once sales are live, the books post Dr debtors (or customer deposits) / Cr refunds payable. Cancelling after approval puts it all back, and reverses the posting.
+
+**Payment** (`refunds:record_manual_payout`): a different person from the approver; at least one evidence image (`refunds:upload_evidence`, route `/api/admin/finance/refund-evidence`); a reference; a bank/cash/mobile-money account of the same currency; a date not in the future. Writes bank ledger, legacy transaction ledger (`refund`), and Dr refunds payable / Cr bank. The order becomes `refunded` only when paid refunds cover its total.
+
+**Go-live** brings in refunds approved before the books started as an opening liability (Dr opening equity / Cr refunds payable).
+
+**Screens.** `/admin/finance/refunds` (list, 30-day report by status, reason and method, approved-but-unpaid over 3 days, books-vs-owed check), `/refunds/new`, `/refunds/[id]`. Entry points: credit note excess list, receipt detail, wallet panel.
+
+**Permissions.** `refunds:{read,create,submit,cancel,record_manual_payout,upload_evidence,change_destination}`; writes are super-admin until granted.
+
+**Not built (deliberately).** Waiving an excess (ambiguous, see F-3); refund-to-wallet as a destination (F-3 already puts excess in the wallet); returned/failed payouts; bank-file generation; velocity limits; moving the old `payments:refund` key; a separate payouts table (one manual payout per request; F-6 adds automated attempts). Foreign-currency refunds wait for the dated exchange-rate table when the books are live.
+
+## 25. F-5 as built (2026-10-13): bank statements, matching and reconciliation
+
+**Migration `0047_finance_f5_bank_statements.sql`.** `bank_statement_formats` (saved column choices per account), `bank_statement_imports` (append-only; a file hash makes the same file refusable twice), `bank_statement_lines` (what the bank said is fixed by trigger; only status and match fields move; a line in a posted reconciliation is frozen), `bank_statement_matches` (a unique index lets a ledger entry close against one line at a time; matches are undone, never deleted), `bank_reconciliations` (immutable apart from reversal). `refund_requests.bank_matched_at`. Document kinds `bank_reconciliation` (BRC) and `bank_charge` (BCH).
+
+**Import** (`/api/admin/finance/bank-statement-import`, multipart, up to 10 MB, permission `bank_statements:import`): CSV (any delimiter; quotes; day-first or month-first dates; one signed amount column or separate in/out columns; DR/CR, brackets and trailing minus), the **M-Pesa statement export** (recognised and pre-mapped) and **MT940**. The columns chosen are remembered per account. A "check the file" step shows counts, totals, the bank's own opening and closing balance and any place where the running balance does not follow. A row with money but an unreadable date or amount **refuses the import** with the row number; it is never dropped silently. Totals and carried-forward rows are skipped and counted. Future-dated lines are refused (usually day/month swapped). Lines already imported from an overlapping file are left out; identical real lines in one file are all kept. 200 000-line files are inserted in chunks.
+
+**Matching** (`domain/bank-statement.ts`, tested without a database). Same amount is always required. Rule 1: the line quotes our own reference (receipt number or the customer's payment reference, the refund payout reference, a document number of five characters or more) and exactly one entry fits: **matched by itself**. Rule 2: same amount within three days: **suggested**, nearest first, a person confirms. One line can close several entries that add up to it exactly; an entry closes against one line only (two people racing: one is told). Matching runs after every import and on request.
+
+**Turning a line into a record.** An unrecorded deposit becomes a customer receipt (dated the line's date, source `bank_statement`, posted, applied oldest first or left unapplied) and the line closes against it; a retry resumes. A charge on the statement is recorded against the account's fee account (Dr fee / Cr bank when the books are live) and the line closes. A line can be set aside with a reason when the bank moved money we will not record; it still counts in the reconciliation sum and is shown.
+
+**Reconciliation** is a document. Opening balance (the bank's, entered once for the first reconciliation, then carried from the previous one) plus every line dealt with up to the date must equal the balance the bank states, **to the cent**, with no line left unmatched or suggested. Posting freezes those lines. Only the latest reconciliation of an account can be reversed, with a reason. The screen also shows the proof against our books: bank ledger, entries not yet on a statement, and the general ledger account.
+
+**Refunds and receipts** that are matched are marked as seen by the bank (`bank_matched_at`, history entries), and cleared again if the match is undone.
+
+**Permissions.** `bank_statements:{read,import,match,unmatch,ignore,create_receipt,record_charge}`, `bank_reconciliation:{post,reverse}` (writes super-admin until granted). Creating a receipt from a line also needs `receipts:create`.
+
+**Screens.** `/admin/finance/bank-statements` (per account: book balance, lines to deal with, our entries not on a statement, last reconciled) and `/admin/finance/bank-statements/[accountId]` (import, lines with actions, our open entries, reconcile, history).
+
+**Not built (deliberately).** CAMT.053 and Excel (.xlsx) import (save as CSV); configurable matching rules (the two rules are fixed, window three days); matching by phone number or fuzzy narration; interest or other money-in recorded straight from a line (create a receipt, or set aside); fee lines that bundle several charges; reconciling cash drawers by count; bank-API statement feeds (F-6/F-7); closing a refund *from* the statement automatically (it is marked seen; the refund is already paid by hand with evidence).

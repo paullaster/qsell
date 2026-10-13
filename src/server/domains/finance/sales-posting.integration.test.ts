@@ -16,6 +16,8 @@ describe.skipIf(!url)('sales posting (database)', () => {
   let seq = 0;
   const run = Math.random().toString(36).slice(2, 7);
   const origin = { surface: 'test', action: 'run' };
+  // The day the books are on: policies and postings are dated by it, so the tests must be too.
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' });
 
   async function customer(type: 'credit' | 'cash') {
     seq += 1;
@@ -195,8 +197,8 @@ describe.skipIf(!url)('sales posting (database)', () => {
     await fin.salesPosting.processDue();
     // what the rebate settlement writes: a credit entry, applied to the invoice
     const [inv] = await db.select().from(schema.customerLedgerEntries).where(eq(schema.customerLedgerEntries.orderId, o.id));
-    const credit = await fin.customerLedger.addEntry(db, { companyId, customerId: c.id, documentType: 'rebate_credit', documentNo: `RBT-${run}`, amountCents: -60000, currency: 'KES', postingDate: '2026-10-12' });
-    await db.transaction((tx) => fin.customerLedger.applyIn(tx, ctx, { customerId: c.id, creditEntryId: credit, applications: [{ entryId: inv!.id, amountCents: 60000 }], postingDate: '2026-10-12', createdBy: null }));
+    const credit = await fin.customerLedger.addEntry(db, { companyId, customerId: c.id, documentType: 'rebate_credit', documentNo: `RBT-${run}`, amountCents: -60000, currency: 'KES', postingDate: today });
+    await db.transaction((tx) => fin.customerLedger.applyIn(tx, ctx, { customerId: c.id, creditEntryId: credit, applications: [{ entryId: inv!.id, amountCents: 60000 }], postingDate: today, createdBy: null }));
     await fin.salesPosting.enqueue(db, { companyId, kind: 'rebate_credit', subjectId: credit });
     await fin.salesPosting.processDue();
     const r = (await rows('rebate_credit')).find((x) => x.subjectId === credit)!;
@@ -218,7 +220,7 @@ describe.skipIf(!url)('sales posting (database)', () => {
     const o = await order(c, { total: 700 });
     await invoice(c, o, 700);
     await fin.salesPosting.processDue();
-    const r = await fin.receipts.create(ctx, { customerId: c.id, paymentMethodId: (await fin.paymentMethods.list(companyId)).find((m) => m.method.code === 'CASH')!.method.id, amount: '700', paymentDate: '2026-10-12' });
+    const r = await fin.receipts.create(ctx, { customerId: c.id, paymentMethodId: (await fin.paymentMethods.list(companyId)).find((m) => m.method.code === 'CASH')!.method.id, amount: '700', paymentDate: today });
     await fin.receipts.post(ctx, r.id, { allocate: 'oldest_first' });
     expect(await reconcile()).toEqual([0]);
   });

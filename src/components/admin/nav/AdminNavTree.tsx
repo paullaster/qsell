@@ -106,9 +106,7 @@ export function AdminNavTree({
         const isOpen = nested && openIds.has(item.id);
 
         let stateClass: string;
-        if (item.disabled === true) {
-          stateClass = 'cursor-not-allowed text-fg-faint opacity-50';
-        } else if (isActive) {
+        if (isActive) {
           stateClass = 'bg-indigo-600 text-white';
         } else if (inTrail) {
           stateClass = 'bg-surface-sunken text-indigo-400';
@@ -124,15 +122,10 @@ export function AdminNavTree({
         return (
           <li key={item.id}>
             <Link
-              href={item.disabled === true ? '#' : item.href}
-              aria-disabled={item.disabled === true ? true : undefined}
+              href={item.href}
               aria-current={isActive ? 'page' : undefined}
               aria-expanded={nested ? isOpen : undefined}
               onClick={(e) => {
-                if (item.disabled === true) {
-                  e.preventDefault();
-                  return;
-                }
                 if (nested) {
                   if (isOpen) {
                     e.preventDefault();

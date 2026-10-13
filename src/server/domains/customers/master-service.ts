@@ -630,6 +630,14 @@ export class CustomerMasterService {
 
       // A credit invoice reaches the general ledger once it is live; queued in this same transaction.
       if (openReceivable) {
+        // Paid from the customer's wallet first, when the policy says so (it can never stop the sale).
+        await getContainer().finance.wallets.autoApplyToInvoiceIn(tx, {
+          companyId: input.customer.companyId,
+          customerId: input.customer.id,
+          currency: input.currency.trim().toUpperCase(),
+          invoiceEntryId: entry!.id,
+          invoiceCents: Math.round(amount * 100),
+        });
         await getContainer().finance.salesPosting.enqueue(tx, {
           companyId: input.customer.companyId,
           kind: 'invoice',

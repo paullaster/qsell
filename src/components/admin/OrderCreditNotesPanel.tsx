@@ -234,6 +234,21 @@ export function OrderCreditNotesPanel({ orderId }: { orderId: string }) {
                     {money(n.totalAmount, n.currency)} ·{' '}
                     {REASON_LABEL[n.reasonCode as CreditNoteReason] ?? n.reasonCode}
                   </span>
+                  {n.accounting ? (
+                    <span className="block text-xs text-fg-muted">
+                      {n.accounting.applied > 0 ? `${money(n.accounting.applied, n.currency)} taken off what the customer owed. ` : ''}
+                      {n.accounting.toWallet > 0 ? `${money(n.accounting.toWallet, n.currency)} put in their wallet. ` : ''}
+                      {n.accounting.toInvoices > 0 ? `${money(n.accounting.toInvoices, n.currency)} used on other invoices. ` : ''}
+                      {n.accounting.excessOpen > 0 ? (
+                        <strong className="text-amber-700">{money(n.accounting.excessOpen, n.currency)} is owed to the customer and waits for a decision (Finance → Credit note excess).</strong>
+                      ) : null}
+                    </span>
+                  ) : null}
+                  {n.returnReceipt ? (
+                    <span className="block text-xs text-fg-muted">
+                      Goods expected back: <a className="font-semibold text-indigo-600 hover:underline" href={`/admin/finance/receivables/returns/${n.returnReceipt.id}`}>{n.returnReceipt.number}</a> ({n.returnReceipt.status.replace('_', ' ')}).
+                    </span>
+                  ) : null}
                 </span>
                 <span className="flex items-center gap-2">
                   <span
@@ -346,7 +361,7 @@ export function OrderCreditNotesPanel({ orderId }: { orderId: string }) {
                 disabled={!data.canRestock}
                 onChange={(e) => setRestock(e.target.checked)}
               />
-              Return the credited units to stock
+              Expect the credited units back (stock is added only when someone confirms they arrived)
             </label>
             {!data.canRestock ? (
               <p className="text-fg-muted">

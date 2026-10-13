@@ -3,15 +3,18 @@
 import Link from 'next/link';
 import { useId, useState } from 'react';
 import { customerStatementAction } from '@/server/domains/finance/receivables/actions';
+import { CustomerWalletPanel, type WalletView } from './CustomerWalletPanel';
 import { Chip, Field, Message, PageHeader, buttonClass, cardClass, fieldClass, money, primaryClass, type Notice, attempt } from './ui';
 
 type View = Extract<Awaited<ReturnType<typeof customerStatementAction>>, { ok: true }>['data'];
 
 const TYPE_LABEL: Record<string, string> = { invoice: 'Invoice', payment: 'Payment', credit_note: 'Credit note', refund: 'Refund' };
 
-export function CustomerStatementClient({ initial, canReceive }: { initial: View; canReceive: boolean }) {
+export function CustomerStatementClient({ initial, canReceive, wallet }: { initial: View; canReceive: boolean; wallet: WalletView | null }) {
   const uid = useId();
-  const [view, setView] = useState(initial);
+  // The position (owed, ageing) always follows the page; only the list of entries is what a date range replaces.
+  const [ranged, setRanged] = useState<View['lines'] | null>(null);
+  const view = ranged ? { ...initial, lines: ranged } : initial;
   const [range, setRange] = useState({ from: '', to: '' });
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
@@ -23,7 +26,7 @@ export function CustomerStatementClient({ initial, canReceive }: { initial: View
     setBusy(false);
     if (!res.ok) return setNotice({ kind: 'error', text: res.error });
     setNotice(null);
-    setView(res.data);
+    setRanged(res.data.lines);
   };
   const c = view.customer;
 
@@ -41,6 +44,8 @@ export function CustomerStatementClient({ initial, canReceive }: { initial: View
         <div className={cardClass}><p className="text-xs text-fg-muted">Net position</p><p className="text-lg font-bold tabular-nums text-fg-strong">{money(view.net)}</p></div>
         <div className={cardClass}><p className="text-xs text-fg-muted">Credit limit</p><p className="text-lg font-bold tabular-nums text-fg-strong">{c.accountType === 'credit' ? money(c.creditLimit) : '—'}</p></div>
       </section>
+
+      {wallet ? <CustomerWalletPanel customerId={c.id} view={wallet} /> : null}
 
       <section aria-labelledby={`${uid}-age`} className="space-y-2">
         <h3 id={`${uid}-age`} className="text-sm font-bold text-fg-strong">By age</h3>

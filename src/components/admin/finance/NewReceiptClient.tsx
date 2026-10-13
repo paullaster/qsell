@@ -12,7 +12,7 @@ import { Chip, Field, Message, PageHeader, buttonClass, cardClass, fieldClass, m
 type Options = Extract<Awaited<ReturnType<typeof receiptFormOptionsAction>>, { ok: true }>['data'];
 interface Found { id: string; number: string; name: string; phone: string | null; email: string | null; accountType: string; balance: string }
 
-export function NewReceiptClient({ options, presetCustomer }: { options: Options; presetCustomer: Found | null }) {
+export function NewReceiptClient({ options, presetCustomer, wallet }: { options: Options; presetCustomer: Found | null; wallet: { enabled: boolean; label: string; canDeposit: boolean } | null }) {
   const uid = useId();
   const router = useRouter();
   const [customer, setCustomer] = useState<Found | null>(presetCustomer);
@@ -29,6 +29,7 @@ export function NewReceiptClient({ options, presetCustomer }: { options: Options
   const [narration, setNarration] = useState('');
   const [rate, setRate] = useState('');
   const [allocate, setAllocate] = useState<'oldest_first' | 'none'>('oldest_first');
+  const [deposit, setDeposit] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
   const idem = useRef(crypto.randomUUID());
@@ -84,8 +85,9 @@ export function NewReceiptClient({ options, presetCustomer }: { options: Options
           counterparty: method.requiresCounterparty ? cheque : {},
           narration: narration.trim() || null,
           idempotencyKey: idem.current,
+          isDeposit: deposit,
         },
-        post ? { allocate } : undefined,
+        post ? { allocate: deposit ? 'none' : allocate } : undefined,
       ),
     );
     if (!created.ok) {
@@ -212,7 +214,14 @@ export function NewReceiptClient({ options, presetCustomer }: { options: Options
           <textarea id={`${uid}-note`} value={narration} onChange={(e) => setNarration(e.target.value)} className={`${fieldClass} min-h-20`} maxLength={500} />
         </Field>
 
-        <fieldset className="space-y-1">
+        {wallet?.enabled && wallet.canDeposit ? (
+          <label className="flex min-h-10 items-start gap-2 text-sm text-fg">
+            <input type="checkbox" checked={deposit} onChange={(e) => setDeposit(e.target.checked)} className="mt-1 h-4 w-4" />
+            <span><strong>Advance deposit</strong>: not for any invoice; keep all of it in the customer&apos;s {wallet.label.toLowerCase()}.</span>
+          </label>
+        ) : null}
+
+        <fieldset className={`space-y-1 ${deposit ? 'hidden' : ''}`}>
           <legend className="text-xs font-semibold text-fg">When posted</legend>
           <label className="flex min-h-10 items-center gap-2 text-sm text-fg">
             <input type="radio" name={`${uid}-alloc`} checked={allocate === 'oldest_first'} onChange={() => setAllocate('oldest_first')} className="h-4 w-4" />

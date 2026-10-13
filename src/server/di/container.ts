@@ -10,6 +10,7 @@ import { RebateConfigService } from '@/server/domains/pricing/rebate-config-serv
 import { LoyaltyService } from '@/server/domains/pricing/loyalty-service';
 import { GiftCardService } from '@/server/domains/pricing/giftcard-service';
 import { OrderTenderService } from '@/server/domains/pricing/tender-service';
+import { ReturnReceiptService } from '@/server/domains/returns/return-receipt-service';
 import { InsightsService } from '@/server/domains/pricing/insights-service';
 import { PriceBookService } from '@/server/domains/pricing/price-book-service';
 import { DiscountService } from '@/server/domains/pricing/discount-service';
@@ -139,6 +140,7 @@ export interface AppContainer {
   loyalty: LoyaltyService;
   giftCards: GiftCardService;
   tenders: OrderTenderService;
+  returns: ReturnReceiptService;
   insights: InsightsService;
   priceBook: PriceBookService;
 }
@@ -289,6 +291,7 @@ export function getContainer(): AppContainer {
   const reasonCodes = new ReasonCodes(drizzleDb);
   const numbering = createNumbering(decisionLog, reasonCodes);
   const creditNotes = new CreditNoteService(drizzleDb, kraSigning, numbering);
+  const finance = createFinanceServices(drizzleDb, decisionLog, { numbering, reasons: reasonCodes });
 
   const approvals = new ApprovalEngine(drizzleDb, decisionLog, reasonCodes);
   const approvalGate = new ParkedActions(drizzleDb, approvals);
@@ -350,7 +353,7 @@ export function getContainer(): AppContainer {
     decisionLog,
     reasonCodes,
     numbering,
-    finance: createFinanceServices(drizzleDb, decisionLog, { numbering, reasons: reasonCodes }),
+    finance,
     approvals,
     approvalConfig: new ApprovalConfigService(drizzleDb, decisionLog, reasonCodes),
     approvalGate,
@@ -365,7 +368,8 @@ export function getContainer(): AppContainer {
     rebateConfig: new RebateConfigService(drizzleDb, decisionLog, reasonCodes, rebates, approvals),
     loyalty,
     giftCards,
-    tenders: new OrderTenderService(drizzleDb, decisionLog, giftCards, loyalty, rebates),
+    returns: new ReturnReceiptService(drizzleDb, decisionLog, numbering, reasonCodes),
+    tenders: new OrderTenderService(drizzleDb, decisionLog, giftCards, loyalty, rebates, () => finance.wallets),
     discountConfig: new DiscountConfigService(
       drizzleDb,
       decisionLog,

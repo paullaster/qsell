@@ -649,7 +649,7 @@ export class InsightsService {
         title: 'Rebate payments waiting over two weeks',
         detail: 'Customers are owed these. Chase the approvers.',
         count: n(slow[0]?.total),
-        href: '/admin/approvals',
+        href: '/admin/approvals/inbox',
       });
 
       const breakage = await q(sql`

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useId, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { moveReceiptToWalletAction } from '@/server/domains/finance/wallet-actions';
 import {
   applyReceiptAction,
   bounceChequeAction,
@@ -152,6 +153,7 @@ export function ReceiptDetailClient({ view, postingFailed }: { view: View; posti
           <span className="flex flex-wrap items-center gap-2">
             <Chip tone={RECEIPT_STATUS[r.status]?.tone ?? 'gray'}>{RECEIPT_STATUS[r.status]?.label ?? r.status}</Chip>
             {r.chequeStatus ? <Chip tone={CHEQUE_STATUS[r.chequeStatus]?.tone ?? 'gray'}>{CHEQUE_STATUS[r.chequeStatus]?.label}</Chip> : null}
+            {view.isDeposit ? <Chip tone="sky">Advance deposit</Chip> : null}
             <span>from <Link className="font-semibold text-indigo-600 hover:underline" href={`/admin/finance/receivables/customer/${view.customer.id}`}>{view.customer.name}</Link> ({view.customer.number})</span>
           </span>
         }
@@ -195,6 +197,12 @@ export function ReceiptDetailClient({ view, postingFailed }: { view: View; posti
         ) : null}
         {r.status === 'draft' && view.can.cancel ? <button type="button" className={buttonClass} disabled={busy} onClick={() => setPanel('cancel')}>Cancel draft</button> : null}
         {r.status === 'posted' && view.can.apply && Number(view.unapplied) > 0 ? <button type="button" className={primaryClass} disabled={busy} onClick={openApply}>Apply to invoices</button> : null}
+        {r.status === 'posted' && view.wallet.enabled && view.can.moveToWallet && Number(view.unapplied) > 0 ? (
+          <button type="button" className={buttonClass} disabled={busy} onClick={async () => { setBusy(true); setNotice(null); const res = await attempt(moveReceiptToWalletAction(r.id)); finish(res, res.ok ? `${money(res.data.moved)} moved to the ${view.wallet.label.toLowerCase()}.` : ''); }}>
+            Move the unapplied {money(view.unapplied)} to the {view.wallet.label.toLowerCase()}
+          </button>
+        ) : null}
+        {r.status === 'posted' && Number(view.unapplied) > 0 ? <Link href={`/admin/finance/refunds/new?customer=${view.customer.id}&source=receipt_unapplied:${r.id}`} className={buttonClass}>Refund the unapplied {money(view.unapplied)}</Link> : null}
         {r.status === 'posted' && r.chequeStatus === 'received' && view.can.deposit ? <button type="button" className={buttonClass} disabled={busy} onClick={openDeposit}>Record deposit</button> : null}
         {r.status === 'posted' && r.chequeStatus === 'deposited' && view.can.clear ? (
           <button type="button" className={buttonClass} disabled={busy} onClick={async () => { setBusy(true); finish(await attempt(clearChequeAction(r.id)), 'Cheque marked as cleared.'); }}>Mark cleared</button>

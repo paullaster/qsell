@@ -302,6 +302,41 @@
       "when": 1791831540224,
       "tag": "0042_finance_f1c_sales_posting",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1791834608956,
+      "tag": "0043_finance_f2_wallet",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1791853311882,
+      "tag": "0044_finance_f3_credit_notes",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1791855036884,
+      "tag": "0045_finance_f4_refunds",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1791856036884,
+      "tag": "0046_approvals_request_permission",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1791859815407,
+      "tag": "0047_finance_f5_bank_statements",
+      "breakpoints": true
     }
   ]
 }

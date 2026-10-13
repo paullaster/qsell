@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation';
 import { canPermission } from '@/server/domains/access-control/guard';
 import { customerStatementAction } from '@/server/domains/finance/receivables/actions';
+import { customerWalletAction } from '@/server/domains/finance/wallet-actions';
 import { CustomerStatementClient } from '@/components/admin/finance/CustomerStatementClient';
 import { FinanceGate } from '@/components/admin/finance/gate';
 import { LoadFailed } from '@/components/admin/finance/ui';
@@ -15,7 +16,8 @@ export default async function AdminCustomerLedgerPage({ params }: { params: Prom
           if (res.code === 'NOT_FOUND') notFound();
           return <LoadFailed error={res.error} />;
         }
-        return <CustomerStatementClient initial={res.data} canReceive={await canPermission('receipts:create')} />;
+        const wallet = await customerWalletAction(id);
+        return <CustomerStatementClient initial={res.data} canReceive={await canPermission('receipts:create')} wallet={wallet.ok ? wallet.data : null} />;
       }}
     </FinanceGate>
   );

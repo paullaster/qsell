@@ -24,7 +24,9 @@ export type Writer = DrizzleDb | Tx;
 export interface NewLedgerEntry {
   companyId: string;
   customerId: string;
-  documentType: 'invoice' | 'payment' | 'credit_note' | 'refund' | 'rebate_credit';
+  documentType: 'invoice' | 'payment' | 'credit_note' | 'refund' | 'rebate_credit' | 'wallet_use';
+  /** Give the entry this id (so a record made at the same moment can point at it). */
+  id?: string;
   documentNo: string;
   documentId?: string | null;
   orderId?: string | null;
@@ -51,7 +53,7 @@ export class CustomerLedgerService {
 
   /** Adds a ledger entry and its opening detailed entry. Returns the entry id. */
   async addEntry(tx: Writer, e: NewLedgerEntry): Promise<string> {
-    const id = randomUUID();
+    const id = e.id ?? randomUUID();
     await tx.insert(customerLedgerEntries).values({
       id,
       companyId: e.companyId,
@@ -320,6 +322,48 @@ export class CustomerLedgerService {
       createdBy: input.createdBy,
     });
     await this.shiftRemaining(tx, new Map([[e.id, -remaining]]));
+  }
+
+  /** Application ids on an entry that are still in force (applied and not yet undone). */
+  async activeApplicationIds(tx: Writer, ledgerEntryId: string): Promise<string[]> {
+    const res = await tx.execute<{ application_id: string }>(sql`
+      SELECT DISTINCT d.application_id FROM customer_detailed_entries d
+      WHERE d.ledger_entry_id = ${ledgerEntryId}::uuid AND d.entry_type = 'application'
+        AND NOT EXISTS (SELECT 1 FROM customer_detailed_entries u WHERE u.unapplies_application_id = d.application_id)`);
+    return [...res].map((r) => r.application_id);
+  }
+
+  /**
+   * Moves part of an unapplied credit out of the customer's account (into the wallet), or back.
+   * Positive `cents` shrinks the credit; negative restores it. Locks the entry first.
+   */
+  async transferCreditIn(
+    tx: Tx,
+    ctx: FinanceContext,
+    entryId: string,
+    cents: number,
+    p: { postingDate: string; createdBy: string | null; registerId?: string | null; reasonCode?: string | null; reasonText?: string | null; type?: 'wallet_transfer' | 'refund_transfer' },
+  ): Promise<void> {
+    const locked = await this.lockEntries(tx, [entryId]);
+    const e = locked.get(entryId);
+    if (!e || e.companyId !== ctx.companyId) throw new FinanceError('NOT_FOUND', 'Ledger entry not found.');
+    const remaining = toCents(e.remainingAmount);
+    if (cents > 0 && -remaining < cents) {
+      throw new FinanceError('OVER_CREDIT', `Only ${fromCents(Math.max(-remaining, 0))} is unapplied on that receipt.`);
+    }
+    await tx.insert(customerDetailedEntries).values({
+      companyId: e.companyId,
+      customerId: e.customerId,
+      ledgerEntryId: e.id,
+      entryType: p.type ?? 'wallet_transfer',
+      amount: fromCents(cents),
+      postingDate: p.postingDate,
+      registerId: p.registerId ?? null,
+      reasonCode: p.reasonCode ?? null,
+      reasonText: p.reasonText ?? null,
+      createdBy: p.createdBy,
+    });
+    await this.shiftRemaining(tx, new Map([[e.id, cents]]));
   }
 
   /** Customers' open receivable follows their open invoices; never below zero. */

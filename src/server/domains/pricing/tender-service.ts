@@ -10,6 +10,7 @@ import { giftCardApplies, normaliseGiftCardCode } from './domain/giftcard';
 import type { GiftCardService } from './giftcard-service';
 import type { LoyaltyService } from './loyalty-service';
 import type { RebateService } from './rebate-service';
+import type { WalletService } from '@/server/domains/finance/receivables/wallet-service';
 
 const money = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
@@ -17,10 +18,12 @@ export interface TenderInput {
   giftCards?: Array<{ code: string; amount?: number }>;
   /** Points to spend, or 'all' for as many as can be used. */
   loyaltyPoints?: number | 'all';
+  /** Pay from the customer's wallet: an amount, or 'all' that can be used. */
+  wallet?: number | 'all';
 }
 
 export interface TenderResult {
-  applied: Array<{ kind: 'gift_card' | 'loyalty_points'; label: string; amount: number; points?: number }>;
+  applied: Array<{ kind: 'gift_card' | 'loyalty_points' | 'wallet'; label: string; amount: number; points?: number }>;
   tendered: number;
   due: number;
   paid: boolean;
@@ -40,6 +43,7 @@ export class OrderTenderService {
     private readonly cards: GiftCardService,
     private readonly loyalty: LoyaltyService,
     private readonly rebates: RebateService,
+    private readonly wallets: () => WalletService,
   ) {}
 
   async apply(
@@ -48,8 +52,8 @@ export class OrderTenderService {
     input: TenderInput,
     actor: { type: 'user'; id: string },
   ): Promise<TenderResult> {
-    if ((input.giftCards?.length ?? 0) === 0 && input.loyaltyPoints == null)
-      throw new PricingConfigError('INVALID', 'Choose a gift card or points to use.');
+    if ((input.giftCards?.length ?? 0) === 0 && input.loyaltyPoints == null && input.wallet == null)
+      throw new PricingConfigError('INVALID', 'Choose a gift card, points or the wallet to use.');
     if ((input.giftCards?.length ?? 0) > 5)
       throw new PricingConfigError('TOO_MANY', 'Use at most 5 gift cards on one order.');
 
@@ -105,6 +109,36 @@ export class OrderTenderService {
         });
         applied.push({ kind: 'loyalty_points', label: `${r.points} points`, amount: r.value, points: r.points });
         due = money(due - r.value);
+      }
+
+      if (input.wallet != null) {
+        if (!order.tradeCustomerId)
+          throw new PricingConfigError('INVALID', 'A wallet belongs to a customer account, and this order has none.');
+        const want = input.wallet === 'all' ? due : money(Number(input.wallet));
+        if (!(want > 0)) throw new PricingConfigError('INVALID', 'Enter an amount above zero.');
+        try {
+          const cents = await this.wallets().tenderIn(tx, {
+            companyId,
+            customerId: order.tradeCustomerId,
+            currency: order.currency.toUpperCase(),
+            maxCents: Math.round(Math.min(want, due) * 100),
+            orderId,
+            actorId,
+          });
+          await tx.insert(orderTenders).values({
+            orderId,
+            kind: 'wallet',
+            reference: order.tradeCustomerId,
+            amount: (cents / 100).toFixed(2),
+            actor: actorId,
+          });
+          applied.push({ kind: 'wallet', label: 'Wallet', amount: cents / 100 });
+          due = money(due - cents / 100);
+        } catch (error) {
+          if (error instanceof Error && 'code' in error && String((error as { code: unknown }).code).startsWith('WALLET'))
+            throw new PricingConfigError('INVALID', error.message);
+          throw error;
+        }
       }
 
       for (const c of input.giftCards ?? []) {
@@ -189,5 +223,6 @@ export class OrderTenderService {
     await this.cards.reverseOrder(tx, orderId);
     await this.loyalty.reverseOrder(tx, orderId);
     await this.rebates.reverseOrder(tx, orderId);
+    await this.wallets().reverseTenderIn(tx, orderId);
   }
 }

@@ -12,8 +12,14 @@ import { FinanceReportsService } from './reports-service';
 import { FinanceSetupService } from './setup-service';
 import { BankAccountService } from './receivables/bank-account-service';
 import { CustomerLedgerService } from './receivables/customer-ledger-service';
+import { CreditNoteAccountingService } from './receivables/credit-note-accounting-service';
+import { CreditPolicyService } from './receivables/credit-policy-service';
 import { PaymentMethodService } from './receivables/payment-method-service';
+import { WalletService } from './receivables/wallet-service';
 import { ReceiptService } from './receivables/receipt-service';
+import { RefundService } from './receivables/refund-service';
+import { BankStatementService } from './receivables/bank-statement-service';
+import { BankReconciliationService } from './receivables/bank-reconciliation-service';
 
 export interface FinanceServices {
   setup: FinanceSetupService;
@@ -32,6 +38,18 @@ export interface FinanceServices {
   maintenance: FinanceMaintenanceService;
   /** Takes invoices, cash sales, gateway payments and rebates to the general ledger. */
   salesPosting: SalesPostingService;
+  /** The refund-or-wallet switch. */
+  creditPolicy: CreditPolicyService;
+  /** Customer credit held by the business (a liability). */
+  wallets: WalletService;
+  /** What a credit note does to the customer's account and the books, and its excess. */
+  creditNoteAccounting: CreditNoteAccountingService;
+  /** Money paid back out to customers. */
+  refunds: RefundService;
+  /** What the bank says happened, matched to our own records. */
+  bankStatements: BankStatementService;
+  /** Closing a bank account against its statement. */
+  bankReconciliation: BankReconciliationService;
 }
 
 export function createFinanceServices(
@@ -45,6 +63,9 @@ export function createFinanceServices(
   const customerLedger = new CustomerLedgerService(db, decisions);
   const reports = new FinanceReportsService(db);
   const salesPosting = new SalesPostingService(db, decisions, engine, postingSetup);
+  const creditPolicy = new CreditPolicyService(db, decisions);
+  const wallets = new WalletService(db, decisions, engine, customerLedger, creditPolicy, salesPosting, postingSetup, deps.reasons);
+  const receipts = new ReceiptService(db, decisions, engine, customerLedger, deps.numbering, deps.reasons, postingSetup, wallets, creditPolicy);
   return {
     fiscal,
     engine,
@@ -56,7 +77,13 @@ export function createFinanceServices(
     bankAccounts: new BankAccountService(db, decisions),
     paymentMethods: new PaymentMethodService(db, decisions),
     salesPosting,
+    creditPolicy,
+    wallets,
+    creditNoteAccounting: new CreditNoteAccountingService(db, decisions, engine, customerLedger, wallets, creditPolicy, postingSetup),
+    refunds: new RefundService(db, decisions, engine, customerLedger, wallets, creditPolicy, postingSetup, deps.numbering, deps.reasons),
     maintenance: new FinanceMaintenanceService(db, decisions, reports, customerLedger, salesPosting),
-    receipts: new ReceiptService(db, decisions, engine, customerLedger, deps.numbering, deps.reasons, postingSetup),
+    receipts,
+    bankStatements: new BankStatementService(db, decisions, engine, receipts, deps.numbering, deps.reasons),
+    bankReconciliation: new BankReconciliationService(db, decisions, deps.numbering, deps.reasons),
   };
 }

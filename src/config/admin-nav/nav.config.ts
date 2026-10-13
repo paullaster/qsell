@@ -12,7 +12,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
     href: '/admin',
     description: 'Real-time sales revenue, order volume, and payment collections',
     icon: 'LayoutDashboard',
-    installed: true,
+    permission: 'dashboard:read',
   },
   {
     id: 'company',
@@ -21,7 +21,6 @@ export const ADMIN_NAV: AdminNavItem[] = [
     href: '/admin/company',
     description: 'Legal identity, storefront appearance, support, and module names',
     icon: 'Building2',
-    installed: true,
     subLinks: [
       {
         id: 'company-profile',
@@ -30,7 +29,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/company/profile',
         description: 'Logo, legal identity, address, contact, and banking',
         icon: 'Building2',
-        installed: true,
+        permission: 'company:read',
       },
       {
         id: 'company-appearance',
@@ -39,7 +38,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/company/appearance',
         description: 'Brand colors and product listing density',
         icon: 'Palette',
-        installed: true,
+        permission: 'company:read',
       },
       {
         id: 'company-modules',
@@ -48,7 +47,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/company/modules',
         description: 'Rename admin modules shown in the sidebar',
         icon: 'Tags',
-        installed: true,
+        permission: 'company:read',
       },
       {
         id: 'company-support',
@@ -57,7 +56,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/company/support',
         description: 'Storefront help: contact channels, guarantees and FAQs',
         icon: 'LifeBuoy',
-        installed: true,
+        permission: 'company:read',
       },
     ],
   },
@@ -68,16 +67,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
     href: '/admin/sales',
     description: 'Quotes, orders, customers and how they are priced',
     icon: 'ShoppingBag',
-    installed: true,
     subLinks: [
       {
         id: 'quotes',
-        title: 'Quotes',
+        title: 'Sales Quotes',
         name: 'quotes',
         href: '/admin/quotes',
         description: 'Prepare and manage proforma quotations from customer orders',
         icon: 'Receipt',
-        installed: true,
+        permission: 'quotes:read',
       },
       {
         id: 'orders',
@@ -86,7 +84,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/orders',
         description: 'Process orders, track couriers, and print packing slips',
         icon: 'ShoppingBag',
-        installed: true,
+        permission: 'orders:read',
       },
       {
         id: 'customers',
@@ -95,7 +93,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/customers',
         description: 'Cash and credit customer cards, profiles, dimensions, and KRA transmission',
         icon: 'Users',
-        installed: true,
+        permission: 'customers:read',
         subLinks: [
           {
             id: 'pricing-groups',
@@ -104,7 +102,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/pricing/groups',
             description: 'Wholesale, retail, VIP: who belongs to which price group',
             icon: 'Users',
-            installed: true,
+            permission: 'pricing:read',
           },
         ],
       },
@@ -115,7 +113,6 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/pricing',
         description: 'Price lists, customer groups, and how every price is worked out',
         icon: 'Tags',
-        installed: true,
         subLinks: [
           {
             id: 'pricing-lists',
@@ -124,7 +121,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/pricing',
             description: 'Prices by customer, group, branch and channel, with quantity breaks',
             icon: 'Tags',
-            installed: true,
+            permission: 'pricing:read',
           },
           {
             id: 'pricing-discounts',
@@ -133,7 +130,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/pricing/discounts',
             description: 'Percentage and amount discounts, order thresholds and coupon codes',
             icon: 'Percent',
-            installed: true,
+            permission: 'pricing:read',
           },
           {
             id: 'pricing-rebates',
@@ -142,7 +139,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/pricing/rebates',
             description: 'Money given back on what a customer buys over a period, paid by credit',
             icon: 'Receipt',
-            installed: true,
+            permission: 'pricing:read',
           },
           {
             id: 'pricing-loyalty',
@@ -151,7 +148,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/pricing/loyalty',
             description: 'Points customers earn on what they spend and use to pay',
             icon: 'Users',
-            installed: true,
+            permission: 'pricing:read',
           },
           {
             id: 'pricing-gift-cards',
@@ -160,7 +157,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/pricing/gift-cards',
             description: 'Prepaid cards that pay for orders',
             icon: 'Wallet',
-            installed: true,
+            permission: 'pricing:read',
           },
           {
             id: 'pricing-book',
@@ -169,7 +166,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/pricing/book',
             description: 'What every product sells for in a given situation, ready to export',
             icon: 'BookOpen',
-            installed: true,
+            permission: 'pricing:read',
           },
           {
             id: 'pricing-insights',
@@ -179,7 +176,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             description:
               'Margin, what promotions cost, overrides, price gaps, what is owed, what looks wrong',
             icon: 'Activity',
-            installed: true,
+            permission: 'pricing:read',
           },
           {
             id: 'pricing-floors',
@@ -189,7 +186,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             description:
               'The lowest a product may sell for: cost plus a markup, by product, group or category',
             icon: 'Scale',
-            installed: true,
+            permission: 'pricing:read',
           },
           {
             id: 'pricing-limits',
@@ -198,7 +195,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/pricing/limits',
             description: 'How far each role may take a price below list before approval is needed',
             icon: 'ShieldCheck',
-            installed: true,
+            permission: 'pricing:read',
           },
           {
             id: 'pricing-check',
@@ -207,7 +204,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/pricing/check',
             description: 'Try a sale and see exactly why it gets the price it does',
             icon: 'Scale',
-            installed: true,
+            permission: 'pricing:read',
           },
           {
             id: 'pricing-rules',
@@ -216,7 +213,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/pricing/rules',
             description: 'How much each kind of price list counts when several apply',
             icon: 'Settings',
-            installed: true,
+            permission: 'pricing:read',
           },
         ],
       },
@@ -230,7 +227,6 @@ export const ADMIN_NAV: AdminNavItem[] = [
     description:
       'Define what you sell (products & categories), then manage how much stock you hold',
     icon: 'Boxes',
-    installed: true,
     subLinks: [
       {
         id: 'products',
@@ -239,7 +235,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/products',
         description: 'SKU list, pricing, and product details — what customers can buy',
         icon: 'Package',
-        installed: true,
+        permission: 'products:read',
       },
       {
         id: 'products-trash',
@@ -248,7 +244,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/trash/products',
         description: 'Deleted products: restore them as drafts, or erase them for good',
         icon: 'Trash2',
-        installed: true,
+        permission: ['products:delete', 'products:delete_permanently'],
       },
       {
         id: 'item-types',
@@ -257,7 +253,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/item-types',
         description: 'Raw materials, finished goods, and other user-defined item classes',
         icon: 'Shapes',
-        installed: true,
+        permission: 'products:read',
       },
       {
         id: 'categories',
@@ -266,7 +262,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/categories',
         description: 'Departments used to organize products in the storefront',
         icon: 'FolderTree',
-        installed: true,
+        permission: 'products:read',
       },
       {
         id: 'pricing-kits',
@@ -275,7 +271,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/pricing/kits',
         description: 'One product made of several: priced as one, sold and taxed per component',
         icon: 'Boxes',
-        installed: true,
+        permission: 'pricing:read',
       },
       {
         id: 'pricing-product-groups',
@@ -284,7 +280,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/pricing/product-groups',
         description: 'Sets of products you choose, so a floor can cover them together',
         icon: 'Layers',
-        installed: true,
+        permission: 'pricing:read',
       },
       {
         id: 'stock-warehouse',
@@ -293,7 +289,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/inventory',
         description: 'On-hand quantity, receipts, write-offs, and warehouse audits',
         icon: 'Layers',
-        installed: true,
+        permission: 'inventory:read',
       },
     ],
   },
@@ -304,7 +300,6 @@ export const ADMIN_NAV: AdminNavItem[] = [
     href: '/admin/users',
     description: 'User accounts, roles, permissions, and ABAC access policies',
     icon: 'UserCog',
-    installed: true,
     subLinks: [
       {
         id: 'access-users',
@@ -313,7 +308,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/users',
         description: 'Create, update, deactivate, and search user accounts',
         icon: 'Users',
-        installed: true,
+        permission: 'users:read',
       },
       {
         id: 'access-roles',
@@ -322,7 +317,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/users/roles',
         description: 'Role catalog and permission bindings',
         icon: 'KeyRound',
-        installed: true,
+        permission: 'roles:read',
       },
       {
         id: 'access-policies',
@@ -331,7 +326,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/users/policies',
         description: 'Context-aware ABAC rules layered on top of roles',
         icon: 'Fingerprint',
-        installed: true,
+        permission: 'policies:read',
       },
     ],
   },
@@ -340,9 +335,9 @@ export const ADMIN_NAV: AdminNavItem[] = [
     title: 'Finance',
     name: 'finance',
     href: '/admin/finance',
-    description: 'General ledger, receivables, bank and cash, payment setup, tax, currencies, and reconciliation',
+    description:
+      'General ledger, receivables, bank and cash, payment setup, tax, currencies, and reconciliation',
     icon: 'ShieldCheck',
-    installed: true,
     subLinks: [
       {
         id: 'general-ledger',
@@ -351,7 +346,6 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/finance/accounts',
         description: 'Chart of accounts, journals, postings and the trial balance',
         icon: 'BookOpen',
-        installed: true,
         subLinks: [
           {
             id: 'gl-accounts',
@@ -360,7 +354,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/finance/accounts',
             description: 'Every account the books can post to',
             icon: 'Layers',
-            installed: true,
+            permission: 'gl_accounts:read',
           },
           {
             id: 'gl-journals',
@@ -369,7 +363,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/finance/journals',
             description: 'Prepare, preview and post journals',
             icon: 'Receipt',
-            installed: true,
+            permission: 'journals:read',
           },
           {
             id: 'gl-entries',
@@ -378,7 +372,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/finance/entries',
             description: 'Every posted ledger line',
             icon: 'BookOpen',
-            installed: true,
+            permission: 'gl_entries:read',
           },
           {
             id: 'gl-registers',
@@ -387,7 +381,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/finance/registers',
             description: 'Each posting with who, when, why and from where; reverse and verify',
             icon: 'ShieldCheck',
-            installed: true,
+            permission: 'ledger_registers:read',
           },
           {
             id: 'gl-trial-balance',
@@ -396,7 +390,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/finance/trial-balance',
             description: 'Opening, movement and closing balance per account',
             icon: 'Scale',
-            installed: true,
+            permission: 'trial_balance:read',
           },
           {
             id: 'gl-periods',
@@ -405,7 +399,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/finance/periods',
             description: 'Fiscal years and period status',
             icon: 'Settings',
-            installed: true,
+            permission: 'fiscal_calendar:read',
           },
           {
             id: 'gl-posting-setup',
@@ -414,7 +408,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/finance/posting-setup',
             description: 'Which account each kind of posting goes to',
             icon: 'Settings',
-            installed: true,
+            permission: 'posting_setup:read',
           },
         ],
       },
@@ -425,7 +419,6 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/finance/receipts',
         description: 'Money received from customers, applied to invoices, and what is still owed',
         icon: 'Receipt',
-        installed: true,
         subLinks: [
           {
             id: 'ar-receipts',
@@ -434,7 +427,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/finance/receipts',
             description: 'Cash, bank, cheque and mobile-money payments from customers',
             icon: 'Receipt',
-            installed: true,
+            permission: 'receipts:read',
           },
           {
             id: 'ar-new-receipt',
@@ -443,16 +436,62 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/finance/receipts/new',
             description: 'Record a payment a customer has made',
             icon: 'Wallet',
-            installed: true,
+            permission: 'receipts:create',
+          },
+          {
+            id: 'ar-credit-note-excess',
+            title: 'Credit note excess',
+            name: 'ar-credit-note-excess',
+            href: '/admin/finance/receivables/credit-note-excess',
+            description: 'Credit notes where the customer is owed more than the invoice held',
+            icon: 'Scale',
+            permission: 'credit_note_excess:read',
+          },
+          {
+            id: 'ar-refunds',
+            title: 'Refunds',
+            name: 'ar-refunds',
+            href: '/admin/finance/refunds',
+            description: 'Money paid back to customers, with approval and evidence',
+            icon: 'Wallet',
+            permission: 'refunds:read',
+          },
+          {
+            id: 'ar-returns',
+            title: 'Returns',
+            name: 'ar-returns',
+            href: '/admin/finance/receivables/returns',
+            description: 'Goods expected back: confirm what arrived before stock changes',
+            icon: 'Receipt',
+            permission: 'return_receipts:read',
+          },
+          {
+            id: 'ar-wallets',
+            title: 'Customer wallets',
+            name: 'ar-wallets',
+            href: '/admin/finance/receivables/wallets',
+            description: 'Credit held for customers: what is owed to them and who holds it',
+            icon: 'Wallet',
+            permission: 'wallet:read',
+          },
+          {
+            id: 'ar-wallet-policy',
+            title: 'Wallet policy',
+            name: 'ar-wallet-policy',
+            href: '/admin/finance/receivables/wallet-policy',
+            description: 'Whether customers can hold credit, and what happens to overpayments',
+            icon: 'Settings',
+            permission: 'customer_credit_policy:edit',
           },
           {
             id: 'ar-sales-posting',
             title: 'Sales posting',
             name: 'ar-sales-posting',
             href: '/admin/finance/sales-posting',
-            description: 'Switch sales on for the ledger, see what is waiting, and check the books agree with customer accounts',
+            description:
+              'Switch sales on for the ledger, see what is waiting, and check the books agree with customer accounts',
             icon: 'BookOpen',
-            installed: true,
+            permission: 'sales_posting:read',
           },
           {
             id: 'ar-ageing',
@@ -461,7 +500,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/finance/receivables/ageing',
             description: 'Who owes what, and for how long',
             icon: 'Scale',
-            installed: true,
+            permission: 'receivables_ageing:read',
           },
         ],
       },
@@ -472,7 +511,6 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/finance/bank-accounts',
         description: 'Bank accounts, cash drawers and mobile-money settlement accounts',
         icon: 'Building2',
-        installed: true,
         subLinks: [
           {
             id: 'bank-accounts',
@@ -481,7 +519,16 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/finance/bank-accounts',
             description: 'Where money sits, its balance and its movements',
             icon: 'Building2',
-            installed: true,
+            permission: 'bank_accounts:read',
+          },
+          {
+            id: 'bank-statements',
+            title: 'Bank statements',
+            name: 'bank-statements',
+            href: '/admin/finance/bank-statements',
+            description: 'Import what the bank says, match it to our records and reconcile',
+            icon: 'Scale',
+            permission: 'bank_statements:read',
           },
         ],
       },
@@ -492,7 +539,6 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/finance/payment-methods',
         description: 'How customers pay (methods) and the services that collect it (providers)',
         icon: 'CreditCard',
-        installed: true,
         subLinks: [
           {
             id: 'payment-methods',
@@ -501,16 +547,17 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/finance/payment-methods',
             description: 'Rules for each way of paying: where it lands and what must be recorded',
             icon: 'CreditCard',
-            installed: true,
+            permission: 'payment_methods:read',
           },
           {
             id: 'payment-providers',
             title: 'Payment providers',
             name: 'payment-providers',
             href: '/admin/finance/payment-providers',
-            description: 'M-Pesa, Pesapal, Jenga and KCB Buni connections: credentials, test and switch on',
+            description:
+              'M-Pesa, Pesapal, Jenga and KCB Buni connections: credentials, test and switch on',
             icon: 'Wallet',
-            installed: true,
+            permission: 'payment_providers:read',
           },
         ],
       },
@@ -521,7 +568,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/currencies',
         description: 'Multi-market currencies and exchange rates',
         icon: 'Coins',
-        installed: true,
+        permission: 'currencies:manage',
       },
       {
         id: 'transactions',
@@ -530,7 +577,6 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/transactions',
         description: 'Posted sales and payments',
         icon: 'Receipt',
-        installed: true,
         subLinks: [
           {
             id: 'transaction-ledger',
@@ -539,7 +585,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/transactions/ledger',
             description: 'Debits and credits posted by the ledger service',
             icon: 'BookOpen',
-            installed: true,
+            permission: 'transactions:read',
           },
           {
             id: 'transaction-reconcile',
@@ -548,7 +594,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/transactions/reconcile',
             description: 'Manually post missing ledger lines and classify callback dumps',
             icon: 'Scale',
-            installed: true,
+            permission: 'transactions:reconcile',
           },
         ],
       },
@@ -559,7 +605,6 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/payments',
         description: 'Gateways and settlement reconciliation',
         icon: 'Wallet',
-        installed: true,
         subLinks: [
           {
             id: 'reconciliation',
@@ -568,7 +613,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/reconciliation',
             description: 'Match payments to orders',
             icon: 'ShieldCheck',
-            installed: true,
+            permission: 'transactions:read',
           },
           {
             id: 'integration-audit',
@@ -577,7 +622,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/integration-audit',
             description: 'All outbound calls and inbound webhooks with full payload capture',
             icon: 'Activity',
-            installed: true,
+            permission: 'audits:read',
           },
         ],
       },
@@ -588,7 +633,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/analytics',
         description: 'Accounts and buying patterns',
         icon: 'Users',
-        installed: true,
+        permission: 'analytics:read',
       },
     ],
   },
@@ -599,16 +644,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
     href: '/admin/approvals',
     description: 'Requests waiting for your decision and the ones you have sent',
     icon: 'ShieldCheck',
-    installed: true,
     subLinks: [
       {
         id: 'approvals-inbox',
         title: 'Waiting on me',
         name: 'approvals-inbox',
-        href: '/admin/approvals',
+        href: '/admin/approvals/inbox',
         description: 'Approve or reject what has been sent to you',
         icon: 'Scale',
-        installed: true,
+        permission: 'approvals:act',
       },
       {
         id: 'approvals-requests',
@@ -617,7 +661,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/approvals/requests',
         description: 'Documents you sent for approval, and what happened to them',
         icon: 'Receipt',
-        installed: true,
+        permission: 'approvals:request',
       },
     ],
   },
@@ -628,7 +672,6 @@ export const ADMIN_NAV: AdminNavItem[] = [
     href: '/admin/settings',
     description: 'Branches, public URLs, and payment provider credentials',
     icon: 'Settings',
-    installed: true,
     subLinks: [
       {
         id: 'settings-dimensions',
@@ -637,7 +680,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/settings/dimensions',
         description: 'User-defined axes and values for identifying records',
         icon: 'Layers',
-        installed: true,
+        permission: 'settings:read',
       },
       {
         id: 'settings-branches',
@@ -646,7 +689,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/settings/branches',
         description: 'Operating units with independent tax and banking',
         icon: 'GitBranch',
-        installed: true,
+        permission: 'branches:read',
       },
       {
         id: 'settings-payments',
@@ -655,7 +698,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/settings/payments',
         description: 'Configure M-Pesa, Pesapal, Jenga HQ, and KCB Buni per branch',
         icon: 'Wallet',
-        installed: true,
+        permission: 'payments:manage_gateways',
       },
       {
         id: 'settings-number-series',
@@ -664,7 +707,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/settings/number-series',
         description: 'How documents are numbered: patterns, ranges, restarts and gap rules',
         icon: 'Tags',
-        installed: true,
+        permission: 'numbering:manage',
       },
       {
         id: 'settings-document-numbering',
@@ -673,7 +716,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/settings/number-series/bindings',
         description: 'Which series numbers each kind of document, per branch',
         icon: 'Layers',
-        installed: true,
+        permission: 'numbering:manage',
       },
       {
         id: 'settings-approvals',
@@ -682,7 +725,6 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/settings/approvals',
         description: 'Who approves what: workflows, approvers and limits, switches, monitor',
         icon: 'Scale',
-        installed: true,
         subLinks: [
           {
             id: 'settings-approvals-workflows',
@@ -691,7 +733,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/settings/approvals/workflows',
             description: 'When approval is needed and who gives it, step by step',
             icon: 'GitBranch',
-            installed: true,
+            permission: 'approvals:manage',
           },
           {
             id: 'settings-approvals-approvers',
@@ -700,7 +742,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/settings/approvals/approvers',
             description: 'Approval chain, substitutes, limits and groups',
             icon: 'UserCog',
-            installed: true,
+            permission: 'approvals:manage',
           },
           {
             id: 'settings-approvals-switches',
@@ -709,7 +751,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/settings/approvals/switches',
             description: 'Turn approvals on or off per area, situation or branch',
             icon: 'Settings',
-            installed: true,
+            permission: 'approvals:manage',
           },
           {
             id: 'settings-approvals-monitor',
@@ -718,7 +760,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/settings/approvals/monitor',
             description: 'Everything waiting on someone, and what is stuck',
             icon: 'Activity',
-            installed: true,
+            permission: 'approvals:manage',
           },
         ],
       },
@@ -729,7 +771,6 @@ export const ADMIN_NAV: AdminNavItem[] = [
         href: '/admin/settings/tax-compliance',
         description: 'Fiscal device and KRA invoice transmission settings',
         icon: 'ShieldCheck',
-        installed: true,
         subLinks: [
           {
             id: 'settings-kra-tims-etims',
@@ -738,7 +779,6 @@ export const ADMIN_NAV: AdminNavItem[] = [
             href: '/admin/settings/tax-compliance/kra-tims-etims',
             description: 'Tax classification and the TIMS or eTIMS mode per company and branch',
             icon: 'Receipt',
-            installed: true,
             subLinks: [
               {
                 id: 'kra-tax-classification',
@@ -747,7 +787,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
                 href: '/admin/settings/tax-compliance/kra-tims-etims/classification',
                 description: 'Tax rates with their KRA TIMS and eTIMS codes',
                 icon: 'Percent',
-                installed: true,
+                permission: 'products:read',
               },
               {
                 id: 'kra-etims-items',
@@ -756,7 +796,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
                 href: '/admin/settings/tax-compliance/kra-tims-etims/items',
                 description: 'Register, update, restock and delete items at KRA, per branch',
                 icon: 'Boxes',
-                installed: true,
+                permission: 'taxes:manage',
               },
               {
                 id: 'kra-signing-log',
@@ -766,7 +806,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
                 description:
                   'Why each invoice was or was not signed, and the settings that applied',
                 icon: 'Activity',
-                installed: true,
+                permission: 'taxes:manage',
               },
               {
                 id: 'kra-company-mode',
@@ -776,7 +816,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
                 description:
                   'Default TIMS or eTIMS mode used by every branch that does not override it',
                 icon: 'Building2',
-                installed: true,
+                permission: 'taxes:manage',
               },
               {
                 id: 'kra-branch-modes',
@@ -785,7 +825,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
                 href: '/admin/settings/tax-compliance/kra-tims-etims/branches',
                 description: 'Separate TIMS or eTIMS mode for branches that act independently',
                 icon: 'GitBranch',
-                installed: true,
+                permission: 'taxes:manage',
               },
             ],
           },

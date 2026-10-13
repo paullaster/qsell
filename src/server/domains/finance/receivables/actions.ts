@@ -500,6 +500,11 @@ export async function receiptDetailAction(id: string) {
       bank: { id: d.bank.id, code: d.bank.code, name: d.bank.name },
       depositedInto: d.depositedInto,
       unapplied: fromCents(d.unappliedCents),
+      isDeposit: d.receipt.isDeposit,
+      wallet: await (async () => {
+        const p = await getContainer().finance.creditPolicy.forCustomer(getContainer().db, ctx.companyId, d.customer.id, d.receipt.postingDate);
+        return { enabled: p.walletEnabled, label: p.label };
+      })(),
       applications: d.applications.map((a) => ({
         applicationId: a.application_id,
         invoiceNo: a.document_no,
@@ -533,6 +538,7 @@ export async function receiptDetailAction(id: string) {
         deposit: await canPermission('cheques:deposit'),
         clear: await canPermission('cheques:clear'),
         bounce: await canPermission('cheques:bounce'),
+        moveToWallet: await canPermission('wallet:move_receipt'),
       },
     };
   });
@@ -548,6 +554,9 @@ export async function createReceiptAction(input: ReceiptInput, post?: { allocate
     'receipts:create',
     { surface: 'finance/receipts/new', action: post ? 'create_and_post' : 'create_draft' },
     async (ctx) => {
+      if (input.isDeposit && !(await canPermission('wallet:deposit'))) {
+        throw new FinanceError('CANNOT_DEPOSIT', 'You may not record advance deposits.');
+      }
       if (post && !(await canPermission('receipts:post'))) {
         throw new FinanceError('CANNOT_POST', 'You may record receipts but not post them. Save it as a draft instead.');
       }

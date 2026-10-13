@@ -25,7 +25,9 @@ import type { PostingRequest } from '../domain/types';
 import { NO_SPECIAL_PERMISSIONS, type PostingEngine, type PostingPermissions, type Tx } from '../engine';
 import { FinanceError, type FinanceContext } from '../errors';
 import type { PostingSetupService } from '../posting-setup-service';
+import type { CreditPolicyService } from './credit-policy-service';
 import type { CustomerLedgerService } from './customer-ledger-service';
+import type { WalletService } from './wallet-service';
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -46,6 +48,8 @@ export interface ReceiptInput {
   sourceRef?: string | null;
   orderId?: string | null;
   idempotencyKey?: string | null;
+  /** An advance with no invoice: the whole amount goes to the customer's wallet when posted. */
+  isDeposit?: boolean;
 }
 
 export type AllocateMode = 'none' | 'oldest_first' | PlannedApplication[];
@@ -76,6 +80,8 @@ export class ReceiptService {
     private readonly numbering: NumberSeriesService,
     private readonly reasons: ReasonCodes,
     private readonly setup: PostingSetupService,
+    private readonly wallets: WalletService,
+    private readonly policies: CreditPolicyService,
   ) {
     this.legacyLedger = new TransactionLedgerService(db);
   }
@@ -205,6 +211,12 @@ export class ReceiptService {
       if (!DATE.test(paymentDate) || !DATE.test(postingDate)) throw new FinanceError('DATE_INVALID', 'Enter valid dates.');
       if (paymentDate > today) throw new FinanceError('DATE_FUTURE', 'The payment date cannot be in the future.');
 
+      if (input.isDeposit) {
+        // An advance must have somewhere to go: refuse now, not at posting.
+        const policy = await this.policies.forCustomer(tx, ctx.companyId, customer.id);
+        if (!policy.walletEnabled) throw new FinanceError('WALLET_OFF', `The ${policy.label.toLowerCase()} is not switched on, so an advance deposit has nowhere to go (Finance → Wallet policy).`);
+        if (!policy.allowDeposits) throw new FinanceError('DEPOSITS_OFF', `Advance deposits into the ${policy.label.toLowerCase()} are not allowed.`);
+      }
       if (reference) {
         const [dup] = await tx
           .select({ number: customerReceipts.number })
@@ -251,6 +263,7 @@ export class ReceiptService {
         source: input.source ?? 'manual',
         sourceRef: input.sourceRef ?? null,
         orderId: input.orderId ?? null,
+        isDeposit: input.isDeposit ?? false,
         idempotencyKey: input.idempotencyKey ?? null,
         createdBy: ctx.actor.id ?? 'system',
       });
@@ -441,6 +454,21 @@ export class ReceiptService {
           if (!(allocate === 'oldest_first' && e instanceof FinanceError && e.code === 'NOTHING_TO_APPLY')) throw e;
         }
       }
+      // Money paid beyond what is owed: into the wallet when the policy says so (an advance always).
+      const afterApply = ledgerEntryId ? await this.wallets.receiptUnappliedIn(tx, ledgerEntryId) : 0;
+      if (afterApply > 0) {
+        const policy = await this.policies.forCustomer(tx, ctx.companyId, customer.id, r.postingDate);
+        if (r.isDeposit || (policy.walletEnabled && policy.overpaymentDefault === 'wallet')) {
+          const posted = { ...r, status: 'posted' as const, ledgerEntryId, registerId };
+          try {
+            await tx.transaction((sp) => this.wallets.moveReceiptIn(sp, ctx, posted, { permissions: perms }));
+          } catch (e) {
+            // An advance that cannot be kept fails the receipt; an overpayment that cannot just stays unapplied.
+            if (r.isDeposit || !(e instanceof FinanceError)) throw e;
+            await this.event(tx, ctx, id, 'wallet_move_skipped', 'posted', 'posted', { reasonText: e.message });
+          }
+        }
+      }
       await this.decisions.record(
         {
           companyId: ctx.companyId,
@@ -534,6 +562,8 @@ export class ReceiptService {
       }
     }
     await this.assertDate(tx, ctx.companyId, opts.postingDate, opts.perms);
+    // Whatever went to the wallet must still be there; it comes back before the receipt is closed.
+    await this.wallets.returnReceiptCreditIn(tx, ctx, r, { code: opts.reasonCode, text: opts.reasonText });
     await this.ledger.closeCreditIn(tx, ctx, r.ledgerEntryId, {
       postingDate: opts.postingDate,
       reasonCode: opts.reasonCode,

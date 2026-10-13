@@ -6,6 +6,7 @@ import {
   bankLedgerEntries,
   customerLedgerEntries,
   customers,
+  walletEntries,
   financeSalesPostings,
   financeSettings,
   glAccounts,
@@ -218,6 +219,7 @@ export class SalesPostingService {
     const live = s.salesGlGoLive !== null && row.eventDate >= s.salesGlGoLive;
     if (row.kind === 'rebate_credit') return this.postRebate(tx, row, s);
     if (row.kind === 'credit_payment') return this.postCreditPayment(tx, row, s);
+    if (row.kind === 'wallet_use') return this.postWalletUse(tx, row, s);
     const [order] = await tx.select().from(orders).where(eq(orders.id, row.subjectId));
     if (!order) throw new Error(`Order ${row.subjectId} no longer exists.`);
     if (order.currency.toUpperCase() !== s.baseCurrency) {
@@ -276,14 +278,17 @@ export class SalesPostingService {
     const tenders = await tx.select().from(orderTenders).where(eq(orderTenders.orderId, order.id));
     let gift = 0;
     let points = 0;
+    let wallet = 0;
     for (const t of tenders) {
       if (t.kind === 'gift_card') gift += toCents(t.amount);
+      else if (t.kind === 'wallet') wallet += toCents(t.amount);
       else points += toCents(t.amount);
     }
     // A payment can be smaller than the order (part was tendered earlier); tenders count first.
     gift = Math.min(gift, amountCents);
     points = Math.min(points, amountCents - gift);
-    const bankCents = amountCents - gift - points;
+    wallet = Math.min(wallet, amountCents - gift - points);
+    const bankCents = amountCents - gift - points - wallet;
     const settled: { accountId: string; cents: number; description: string }[] = [];
     if (bankCents > 0) {
       const [m] = await tx
@@ -319,6 +324,9 @@ export class SalesPostingService {
     if (live && gift > 0) {
       settled.push({ accountId: (await this.setup.resolveCustomer(row.companyId, group, 'gift_card_liability')).accountId, cents: gift, description: `Gift card for ${label}` });
     }
+    if (live && wallet > 0) {
+      settled.push({ accountId: (await this.setup.resolveCustomer(row.companyId, group, 'customer_deposits')).accountId, cents: wallet, description: `Wallet for ${label}` });
+    }
     if (live && points > 0) {
       settled.push({ accountId: (await this.setup.resolveCustomer(row.companyId, group, 'loyalty_provision')).accountId, cents: points, description: `Loyalty points for ${label}` });
     }
@@ -351,6 +359,34 @@ export class SalesPostingService {
       branchId: order.branchId,
       sourceId: order.id,
       lines,
+    });
+  }
+
+  /** A customer's wallet paying an invoice: what is owed to them goes down, so does what they owe. */
+  private async postWalletUse(tx: Tx, row: FinanceSalesPostingRow, s: Awaited<ReturnType<SalesPostingService['settings']>>): Promise<string | null> {
+    const live = s.salesGlGoLive !== null && row.eventDate >= s.salesGlGoLive;
+    if (!live) return null;
+    const [e] = await tx.select().from(walletEntries).where(eq(walletEntries.id, Number(row.subjectId)));
+    if (!e) throw new Error('The wallet entry no longer exists.');
+    if (e.currency.toUpperCase() !== s.baseCurrency) {
+      throw new Error(`The wallet is in ${e.currency}; wallet use in a foreign currency is not posted to the general ledger yet.`);
+    }
+    const group = await this.groupFor(tx, e.customerId, s.defaultCustomerGroup);
+    const [deposits, receivables] = await Promise.all([
+      this.setup.resolveCustomer(row.companyId, group, 'customer_deposits'),
+      this.setup.resolveCustomer(row.companyId, group, 'receivables'),
+    ]);
+    const cents = -toCents(e.amount);
+    return this.submit(tx, row, s, {
+      documentType: 'wallet_use',
+      documentNo: `WAL-${e.id}`,
+      description: `Wallet used (${group})`,
+      branchId: null,
+      sourceId: String(e.id),
+      lines: [
+        { accountId: deposits.accountId, debitCents: cents, creditCents: 0, description: 'Customer deposits used', sourceLedger: 'wallet', sourceEntryId: e.customerId },
+        { accountId: receivables.accountId, debitCents: 0, creditCents: cents, description: 'Paid from wallet', sourceLedger: 'customer', sourceEntryId: e.customerId },
+      ],
     });
   }
 
@@ -445,6 +481,7 @@ export class SalesPostingService {
       ['rebate_expense', 'Rebates have a cost account'],
       ['gift_card_liability', 'Gift cards have a liability account'],
       ['loyalty_provision', 'Loyalty points have a liability account'],
+      ['customer_deposits', 'Customer wallets have a liability account'],
     ] as const) {
       let ok = true;
       let detail = `Group ${s.defaultCustomerGroup}.`;
@@ -465,6 +502,15 @@ export class SalesPostingService {
       salesDetail = e instanceof Error ? e.message : 'Missing.';
     }
     add('sales', 'Sales have an income account', salesOk, salesDetail);
+    let returnsOk = true;
+    let returnsDetail = 'Credit notes post to it.';
+    try {
+      await this.setup.resolveGeneral(companyId, s.defaultBusinessGroup, s.defaultProductGroup, 'sales_returns', today);
+    } catch (e) {
+      returnsOk = false;
+      returnsDetail = e instanceof Error ? e.message : 'Missing.';
+    }
+    add('returns', 'Credit notes have a sales-returns account (a credit note cannot be issued without it once live)', returnsOk, returnsDetail);
     const [{ n }] = (await this.db
       .select({ n: sql<number>`count(*)::int` })
       .from(paymentMethods)
@@ -536,6 +582,73 @@ export class SalesPostingService {
           tx,
         );
         opening.push({ group: f.group, amount: fromCents(f.netCents) });
+      }
+      // What customers already hold in their wallets is owed to them: it comes in as a liability.
+      const held = await tx.execute<{ grp: string; total: string }>(sql`
+        SELECT COALESCE(c.posting_group_code, ${s.defaultCustomerGroup}) AS grp, SUM(w.balance)::text AS total
+        FROM customer_wallets w JOIN customers c ON c.id = w.customer_id
+        WHERE w.company_id = ${ctx.companyId}::uuid AND w.currency = ${s.baseCurrency} AND w.balance > 0 GROUP BY 1`);
+      // Refunds already approved but not yet paid are owed too (set aside before the books started).
+      const owed = await tx.execute<{ grp: string; total: string }>(sql`
+        SELECT COALESCE(c.posting_group_code, ${s.defaultCustomerGroup}) AS grp, SUM(r.amount)::text AS total
+        FROM refund_requests r JOIN customers c ON c.id = r.customer_id
+        WHERE r.company_id = ${ctx.companyId}::uuid AND r.status = 'approved' AND r.reserve_register_id IS NULL AND r.currency = ${s.baseCurrency}
+        GROUP BY 1`);
+      for (const o of owed) {
+        const payable = (await this.setup.resolveCustomer(ctx.companyId, o.grp, 'refunds_payable')).accountId;
+        const cents = toCents(o.total);
+        await this.engine.post(
+          {
+            companyId: ctx.companyId,
+            idempotencyKey: `opening-refunds:${o.grp}`,
+            postingDate: today,
+            documentType: 'opening_balance',
+            documentNo: `OPEN-RFD-${o.grp}`,
+            description: `Opening refunds payable (${o.grp}) at go-live`,
+            currency: s.baseCurrency,
+            rate: '1',
+            rateSource: 'base',
+            lines: [
+              { accountId: offset.id, debit: fromCents(cents), credit: '0', description: 'Opening balance equity' },
+              { accountId: payable, debit: '0', credit: fromCents(cents), description: 'Opening refunds payable' },
+            ],
+            chainKey: 'general',
+            origin: ctx.origin,
+            source: { type: 'go_live', id: ctx.companyId },
+            postedBy: 'engine',
+          },
+          { canPostSoftClosed: true, canPostControlAccounts: true },
+          tx,
+        );
+        opening.push({ group: `${o.grp} (refunds payable)`, amount: fromCents(-cents) });
+      }
+      for (const h of held) {
+        const deposits = (await this.setup.resolveCustomer(ctx.companyId, h.grp, 'customer_deposits')).accountId;
+        const cents = toCents(h.total);
+        await this.engine.post(
+          {
+            companyId: ctx.companyId,
+            idempotencyKey: `opening-wallets:${h.grp}`,
+            postingDate: today,
+            documentType: 'opening_balance',
+            documentNo: `OPEN-WAL-${h.grp}`,
+            description: `Opening customer wallets (${h.grp}) at go-live`,
+            currency: s.baseCurrency,
+            rate: '1',
+            rateSource: 'base',
+            lines: [
+              { accountId: offset.id, debit: fromCents(cents), credit: '0', description: 'Opening balance equity' },
+              { accountId: deposits, debit: '0', credit: fromCents(cents), description: 'Opening customer wallets', sourceLedger: 'wallet' },
+            ],
+            chainKey: 'general',
+            origin: ctx.origin,
+            source: { type: 'go_live', id: ctx.companyId },
+            postedBy: 'engine',
+          },
+          { canPostSoftClosed: true, canPostControlAccounts: true },
+          tx,
+        );
+        opening.push({ group: `${h.grp} (wallets)`, amount: fromCents(-cents) });
       }
       await tx.update(financeSettings).set({ salesGlGoLive: today, updatedAt: new Date() }).where(eq(financeSettings.companyId, ctx.companyId));
       await this.decisions.record(

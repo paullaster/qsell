@@ -3,7 +3,8 @@
 import Link from 'next/link';
 import { ChevronRight } from 'lucide-react';
 import type { AdminNavItem } from '@/config/admin-nav';
-import { getNavItemChildren } from '@/config/admin-nav';
+import { filterAdminNavByAccess, getNavItemChildren } from '@/config/admin-nav';
+import { useAdminNavAccess } from './AdminNavAccessProvider';
 
 interface AdminNavHubProps {
   section: AdminNavItem;
@@ -11,7 +12,8 @@ interface AdminNavHubProps {
 
 /** Index screen for a nav parent — lists installed children from central config. */
 export function AdminNavHub({ section }: AdminNavHubProps) {
-  const children = getNavItemChildren(section);
+  const access = useAdminNavAccess();
+  const children = filterAdminNavByAccess(getNavItemChildren(section), access);
 
   return (
     <div className="space-y-6">
@@ -23,29 +25,19 @@ export function AdminNavHub({ section }: AdminNavHubProps) {
       </div>
 
       {children.length === 0 ? (
-        <p className="text-sm text-fg-subtle">No installed modules in this section yet.</p>
+        <p className="text-sm text-fg-subtle">Nothing in this section is available to you.</p>
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {children.map((child) => (
             <Link
               key={child.id}
-              href={child.disabled ? '#' : child.href}
-              aria-disabled={child.disabled || undefined}
-              className={`group flex items-start justify-between gap-3 rounded-xl border border-line bg-surface-sunken/50 p-4 transition-colors ${
-                child.disabled
-                  ? 'cursor-not-allowed opacity-50'
-                  : 'hover:border-indigo-500/40 hover:bg-hover'
-              }`}
+              href={child.href}
+              className="group flex items-start justify-between gap-3 rounded-xl border border-line bg-surface-sunken/50 p-4 transition-colors hover:border-indigo-500/40 hover:bg-hover"
             >
               <div className="min-w-0">
                 <p className="font-semibold text-fg-strong">{child.title}</p>
                 {child.description ? (
                   <p className="mt-1 text-xs leading-relaxed text-fg-muted">{child.description}</p>
-                ) : null}
-                {child.disabled ? (
-                  <p className="mt-2 text-[10px] tracking-wider text-amber-700 uppercase">
-                    Disabled
-                  </p>
                 ) : null}
               </div>
               <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-fg-faint group-hover:text-indigo-400" />
