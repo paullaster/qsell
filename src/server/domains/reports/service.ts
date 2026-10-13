@@ -613,7 +613,7 @@ export class ReportsService {
         key: 'pending_approvals',
         label: 'Approvals waiting for a decision',
         count: approvals,
-        href: '/admin/approvals',
+        href: '/admin/approvals/inbox',
         tone: 'warning',
       });
     }

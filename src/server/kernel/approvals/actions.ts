@@ -20,9 +20,24 @@ export type ApprovalResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: string; code?: string; issues?: DefinitionIssue[]; forbidden?: true };
 
+/** Passes when the caller holds any one of the permissions. */
+async function requireAny(permission: PermissionKey | readonly PermissionKey[]): Promise<string> {
+  if (typeof permission === 'string') return requirePermission(permission);
+  let denied: unknown;
+  for (const key of permission) {
+    try {
+      return await requirePermission(key);
+    } catch (error: unknown) {
+      if (!(error instanceof AccessDeniedError)) throw error;
+      denied = error;
+    }
+  }
+  throw denied;
+}
+
 /** Server action errors are masked in production, so failures come back as data. */
 async function run<T>(
-  permission: PermissionKey,
+  permission: PermissionKey | readonly PermissionKey[],
   fn: (ctx: {
     companyId: string;
     userId: string;
@@ -30,7 +45,7 @@ async function run<T>(
   }) => Promise<T>,
 ): Promise<ApprovalResult<T>> {
   try {
-    const userId = await requirePermission(permission);
+    const userId = await requireAny(permission);
     const company = await getContainer().companySettings.ensureSeeded();
     await getContainer().reasonCodes.ensureSystemReasons(company.id);
     return {
@@ -204,7 +219,7 @@ export async function listInboxAction(): Promise<ApprovalResult<InboxItem[]>> {
 export async function getRequestDetailAction(
   requestId: string,
 ): Promise<ApprovalResult<RequestDetail>> {
-  return run('approvals:act', async ({ companyId }) => {
+  return run(['approvals:act', 'approvals:request'], async ({ companyId }) => {
     const d = await getContainer().approvals.requestDetail(companyId, requestId);
     if (!d) throw new ApprovalError('ENTRY_NOT_FOUND', 'That request was not found.');
     const names = await namesOf([
@@ -351,7 +366,7 @@ function toMine(
 }
 
 export async function listMyRequestsAction(): Promise<ApprovalResult<MyRequest[]>> {
-  return run('approvals:act', async ({ companyId, userId }) => {
+  return run('approvals:request', async ({ companyId, userId }) => {
     const rows = await getContainer().approvals.requestsBy(companyId, userId);
     const names = await namesOf(
       rows.flatMap((r) => r.openEntries.flatMap((e) => [e.approverUserId, e.onBehalfOfUserId])),
@@ -364,7 +379,7 @@ export async function cancelRequestAction(
   submissionId: string,
   reason: string,
 ): Promise<ApprovalResult<null>> {
-  const result = await run('approvals:act', async ({ userId }) =>
+  const result = await run('approvals:request', async ({ userId }) =>
     withAfterCommit(drizzleDb, (tx) =>
       getContainer().approvals.cancel(submissionId, { userId }, { text: reason }, tx),
     ),
@@ -379,7 +394,7 @@ export async function reopenRequestAction(
   documentId: string,
   reason: string,
 ): Promise<ApprovalResult<null>> {
-  const result = await run('approvals:act', async ({ userId, companyId }) =>
+  const result = await run('approvals:request', async ({ userId, companyId }) =>
     withAfterCommit(drizzleDb, (tx) =>
       getContainer().approvals.reopen(
         documentKind,

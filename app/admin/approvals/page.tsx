@@ -1,9 +1,9 @@
-import { listInboxAction } from '@/server/kernel/approvals/actions';
-import { ApprovalInboxClient } from '@/components/admin/approvals/ApprovalInboxClient';
-import { ErrorNote } from '@/components/admin/approvals/ErrorNote';
+import { notFound } from 'next/navigation';
+import { findNavItemById } from '@/config/admin-nav';
+import { AdminNavHub } from '@/components/admin/nav/AdminNavHub';
 
-export default async function AdminApprovalsInboxPage() {
-  const result = await listInboxAction();
-  if (!result.ok) return <ErrorNote message={result.error} />;
-  return <ApprovalInboxClient items={result.data} />;
+export default function AdminApprovalsHubPage() {
+  const section = findNavItemById('approvals');
+  if (!section) notFound();
+  return <AdminNavHub section={section} />;
 }

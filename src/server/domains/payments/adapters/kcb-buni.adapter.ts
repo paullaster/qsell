@@ -1,9 +1,11 @@
-import type {
-  CallbackInput,
-  CallbackResult,
-  InitiatePaymentInput,
-  InitiatePaymentResult,
-  PaymentPort,
+import {
+  probeConnection,
+  type CallbackInput,
+  type CallbackResult,
+  type InitiatePaymentInput,
+  type InitiatePaymentResult,
+  type ConnectionTestResult,
+  type PaymentPort,
 } from '../port';
 import type { KcbBuniCredentials } from '../types';
 import { extractPaymentReference } from '../payment-reference';
@@ -17,6 +19,20 @@ function formatPhoneKe(phone: string): string {
 
 export class KcbBuniAdapter implements PaymentPort {
   readonly code = 'kcb_buni' as const;
+  readonly capabilities = ['collect'] as const;
+
+  async testConnection(
+    credentials: Record<string, unknown>,
+    _settings: Record<string, unknown>,
+    apiBaseUrl: string,
+  ): Promise<ConnectionTestResult> {
+    const creds = credentials as unknown as KcbBuniCredentials;
+    return probeConnection('KCB Buni', async () => {
+      if (!creds.consumerKey || !creds.consumerSecret) throw new Error('The consumer key and secret are not saved yet.');
+      await this.getAccessToken(apiBaseUrl, creds);
+    });
+  }
+
 
   private async getAccessToken(apiBaseUrl: string, creds: KcbBuniCredentials): Promise<string> {
     const auth = Buffer.from(`${creds.consumerKey}:${creds.consumerSecret}`).toString('base64');

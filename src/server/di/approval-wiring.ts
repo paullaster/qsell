@@ -9,6 +9,7 @@ import {
   priceListApprovalHandler,
 } from '@/server/domains/pricing/approval';
 import { quoteApprovalHandler } from '@/server/domains/quotes/approval';
+import { refundApprovalHandler } from '@/server/domains/finance/refund-approval';
 import type { CreditNoteReason } from '@/server/domains/credit-notes/reasons';
 import type { StockOp } from '@/server/domains/inventory/service';
 
@@ -23,6 +24,7 @@ export function registerApprovalHandlers(engine: ApprovalEngine, gate: ParkedAct
   engine.registerDocument('price_list', priceListApprovalHandler(drizzleDb));
   engine.registerDocument('discount_rule', discountRuleApprovalHandler(drizzleDb));
   engine.registerDocument('rebate_settlement', rebateSettlementApprovalHandler(drizzleDb));
+  engine.registerDocument('refund', refundApprovalHandler(drizzleDb));
 
   gate.attach('price_list_change', priceChangeExecutors());
 

@@ -13,7 +13,7 @@ import {
   type CreditNoteLineRow,
   type CreditNoteRow,
 } from '@/server/db/drizzle/schema';
-import { applyStockDelta, type Tx } from '@/server/domains/inventory/service';
+import type { Tx } from '@/server/domains/inventory/service';
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import { afterCommit } from '@/server/kernel/after-commit';
 import type { NumberSeriesService } from '@/server/kernel/numbering/service';
@@ -356,19 +356,18 @@ export class CreditNoteService {
         reason: input.reason,
         issuedBy: input.issuedBy,
         effects: async (tx, cn, lines) => {
+          const { getContainer: container } = await import('@/server/di/container');
+          // The goods are only *expected* back. Stock is added when a person confirms what arrived.
           if (input.restock) {
-            for (const l of lines) {
-              await applyStockDelta(tx, {
-                productId: l.productId,
-                delta: l.quantity,
-                allowDeleted: true,
-                changeType: 'credit_note_restock',
-                referenceId: cn.id,
-                actor: input.issuedBy,
-                note: `Credit note ${cn.creditNoteNo}: returned to stock.`,
-              });
-            }
+            await container().returns.requestIn(tx, { companyId: cn.companyId, creditNote: cn, lines, orderId: order.id, requestedBy: input.issuedBy });
           }
+          // What the customer owes, and (once live) the books: in this same transaction.
+          await container().finance.creditNoteAccounting.recordIn(tx, {
+            creditNote: cn,
+            orderId: order.id,
+            grossCents: Math.round(lines.reduce((n, l) => n + Number(l.amount), 0) * 100),
+            actorId: input.issuedBy,
+          });
           // What was returned stops counting towards the customer's rebates and loyalty points.
           // A line's tax is not kept on the order, so its net is the order's net share of its gross.
           const goods = Number(order.subtotal) + Number(order.tax);

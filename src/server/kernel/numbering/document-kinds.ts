@@ -100,6 +100,26 @@ export const DOCUMENT_KINDS = {
     fiscal: false,
     suggested: { code: 'RET', prefix: 'RET-{YY}-', digits: 8, reset: 'yearly', blockSize: 50 },
   },
+  refund: {
+    label: 'Refund',
+    fiscal: false,
+    suggested: { code: 'RFD', prefix: 'RFD-{YY}-', digits: 8, reset: 'yearly', blockSize: 20 },
+  },
+  return_receipt: {
+    label: 'Return receipt',
+    fiscal: false,
+    suggested: { code: 'RRC', prefix: 'RRC-{YY}-', digits: 8, reset: 'yearly', blockSize: 50 },
+  },
+  bank_reconciliation: {
+    label: 'Bank reconciliation',
+    fiscal: false,
+    suggested: { code: 'BRC', prefix: 'BRC-{YY}-', digits: 6, reset: 'yearly', blockSize: 5 },
+  },
+  bank_charge: {
+    label: 'Bank charge',
+    fiscal: false,
+    suggested: { code: 'BCH', prefix: 'BCH-{YY}-', digits: 8, reset: 'yearly', blockSize: 50 },
+  },
   customer_payment: {
     label: 'Customer payment',
     fiscal: false,
