@@ -15,6 +15,7 @@ import {
   financeSettings,
   orders,
   paymentMethods,
+  providerOperations,
   refundEvents,
   refundRequests,
   users,
@@ -203,7 +204,7 @@ export class RefundService {
       const [m] = await tx.select().from(paymentMethods).where(and(eq(paymentMethods.companyId, ctx.companyId), eq(paymentMethods.id, input.paymentMethodId)));
       if (!m || !m.enabled) throw new FinanceError('METHOD_INVALID', 'Choose how the customer will be paid.');
       if (!m.usableFor.includes('customer_refund') || m.refundDestination === 'none') throw new FinanceError('METHOD_NOT_FOR_REFUNDS', `${m.name} cannot be used to pay refunds.`);
-      if (m.refundDestination === 'automatic') throw new FinanceError('METHOD_AUTOMATIC', `${m.name} pays out through its provider, which is not available yet; choose a method paid by hand.`);
+      if (m.refundDestination === 'automatic' && (m.kind !== 'mobile_money' || !m.providerId)) throw new FinanceError('METHOD_AUTOMATIC', `${m.name} pays out through its provider, which only works for mobile-money methods that go through M-Pesa; choose a method paid by hand.`);
       const details = Object.fromEntries(Object.entries(input.payoutDetails).filter(([, v]) => typeof v === 'string' && v.trim()).map(([k, v]) => [k, v.trim()]));
       const bad = checkPayoutDetails(m.kind, details);
       if (bad) throw new FinanceError('PAYOUT_DETAILS', bad);
@@ -446,15 +447,19 @@ export class RefundService {
    * confirmation, an M-Pesa message, a signed receipt), a reference, and a person other than the
    * one who approved it.
    */
-  async recordPayout(ctx: FinanceContext, id: string, input: { paidFromMethodId: string; payoutDate?: string; reference: string; permissions?: PostingPermissions }) {
+  async recordPayout(ctx: FinanceContext, id: string, input: { paidFromMethodId: string; payoutDate?: string; reference: string; permissions?: PostingPermissions; automatic?: { operationId: string } }) {
     const perms = input.permissions ?? NO_SPECIAL_PERMISSIONS;
     return this.db.transaction(async (tx) => {
       const r = await this.lock(tx, ctx.companyId, id);
       if (r.status !== 'approved') throw new FinanceError('NOT_APPROVED', `Only an approved refund can be paid; this one is ${r.status.replace('_', ' ')}.`);
-      if (r.approvedBy && r.approvedBy === ctx.actor.id) throw new FinanceError('SAME_PERSON', 'The person who approved a refund cannot be the one who records its payment.');
+      if (!input.automatic) {
+        const live = await this.payoutOperations(tx, id, ['pending_approval', 'queued', 'submitted', 'accepted', 'timed_out', 'in_doubt']);
+        if (live.length > 0) throw new FinanceError('PAYOUT_IN_PROGRESS', 'This refund is being paid through M-Pesa and that has not finished or been checked yet; it cannot also be recorded as paid by hand until it is settled (see Payment activity).');
+      }
+      if (!input.automatic && r.approvedBy && r.approvedBy === ctx.actor.id) throw new FinanceError('SAME_PERSON', 'The person who approved a refund cannot be the one who records its payment.');
       const reference = input.reference.trim();
       if (!reference) throw new FinanceError('REFERENCE_REQUIRED', 'Enter the payment reference (M-Pesa code, bank reference, cheque number or receipt number).');
-      if ((await this.evidenceCount(tx, id)) === 0) throw new FinanceError('EVIDENCE_REQUIRED', 'Attach the evidence of payment first (a payment slip, bank confirmation, M-Pesa message or signed receipt).');
+      if (!input.automatic && (await this.evidenceCount(tx, id)) === 0) throw new FinanceError('EVIDENCE_REQUIRED', 'Attach the evidence of payment first (a payment slip, bank confirmation, M-Pesa message or signed receipt).');
       const today = businessDate();
       const date = input.payoutDate ?? today;
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > today) throw new FinanceError('DATE_INVALID', 'The payout date cannot be in the future.');
@@ -520,6 +525,57 @@ export class RefundService {
       }
       await this.decisions.record({ companyId: ctx.companyId, subject: { type: 'refund', id }, action: 'finance.refund_paid', actor: ctx.actor, from: 'approved', to: 'paid', inputs: { origin: ctx.origin, reference, bank: bank.code }, outcome: { amount: fromCents(cents), gl: live, order } }, tx);
       return { number: r.number, order, gl: live };
+    });
+  }
+
+  // ── automatic payout through the provider ───────────────────────────────
+
+  private async payoutOperations(tx: Tx | DrizzleDb, refundId: string, statuses: string[]) {
+    return tx.select({ id: providerOperations.id, status: providerOperations.status }).from(providerOperations).where(and(eq(providerOperations.subjectType, 'refund'), eq(providerOperations.subjectId, refundId), inArray(providerOperations.status, statuses as never)));
+  }
+
+  /**
+   * Checks an approved refund may be paid through M-Pesa and tells what to send. The approval it already
+   * has is the approval for the money; the person who sends it must not be the one who approved it.
+   */
+  async prepareAutomatic(ctx: FinanceContext, id: string) {
+    return this.db.transaction(async (tx) => {
+      const r = await this.lock(tx, ctx.companyId, id);
+      if (r.status !== 'approved') throw new FinanceError('NOT_APPROVED', `Only an approved refund can be paid; this one is ${r.status.replace('_', ' ')}.`);
+      if (r.approvedBy && r.approvedBy === ctx.actor.id) throw new FinanceError('SAME_PERSON', 'The person who approved a refund cannot be the one who sends its payment.');
+      const [m] = await tx.select().from(paymentMethods).where(eq(paymentMethods.id, r.paymentMethodId));
+      if (!m || m.refundDestination !== 'automatic' || m.kind !== 'mobile_money' || !m.providerId) throw new FinanceError('NOT_AUTOMATIC', 'This refund\'s payment method is not set to pay out through M-Pesa.');
+      if (!/^\d+$/.test(r.amount.split('.')[0]!) || Number(r.amount) % 1 !== 0) throw new FinanceError('AMOUNT_NOT_WHOLE', 'M-Pesa pays whole shillings only; pay this refund by hand.');
+      const phone = (r.payoutDetails as Record<string, string>).phone;
+      if (!phone) throw new FinanceError('PAYOUT_DETAILS', 'The refund has no phone number to pay.');
+      const live = await this.payoutOperations(tx, id, ['queued', 'submitted', 'accepted', 'timed_out', 'in_doubt', 'succeeded']);
+      if (live.length > 0) throw new FinanceError('PAYOUT_IN_PROGRESS', 'A payment for this refund has already been sent or is waiting for a check. See Payment activity.');
+      await this.event(tx, ctx, id, 'auto_payout_requested', 'approved', 'approved', { data: { methodId: m.id, amount: r.amount } });
+      await this.decisions.record({ companyId: ctx.companyId, subject: { type: 'refund', id }, action: 'finance.refund_auto_payout_requested', actor: ctx.actor, inputs: { origin: ctx.origin } }, tx);
+      const attempt = (await tx.select({ n: sql<string>`count(*)` }).from(providerOperations).where(and(eq(providerOperations.subjectType, 'refund'), eq(providerOperations.subjectId, id))))[0]?.n ?? '0';
+      return { providerId: m.providerId, methodId: m.id, phone, amount: r.amount, number: r.number, attempt: Number(attempt) + 1 };
+    });
+  }
+
+  /** The payout through M-Pesa finished (told by the payment engine): record it, or say why not. */
+  async onAutomaticPayoutFinished(op: { id: string; companyId: string; subjectId: string | null; status: string; platformReference: string | null; failureCode: string | null; failureReason: string | null }): Promise<void> {
+    if (!op.subjectId) return;
+    const ctx: FinanceContext = { companyId: op.companyId, actor: { type: 'system', id: null }, origin: { surface: 'payments/engine', action: 'refund_auto_payout' } };
+    const [r] = await this.db.select().from(refundRequests).where(eq(refundRequests.id, op.subjectId));
+    if (!r || r.status !== 'approved') return;
+    if (op.status === 'succeeded' && op.platformReference) {
+      try {
+        await this.recordPayout(ctx, r.id, { paidFromMethodId: r.paymentMethodId, reference: op.platformReference, automatic: { operationId: op.id } });
+      } catch (error) {
+        // The money is out. Say so, loudly, so a person records it by hand with this reference.
+        await this.db.transaction(async (tx) => {
+          await this.event(tx, ctx, r.id, 'auto_payout_paid_not_recorded', 'approved', 'approved', { data: { operation: op.id, reference: op.platformReference, reason: error instanceof Error ? error.message : 'unknown' } });
+        });
+      }
+      return;
+    }
+    await this.db.transaction(async (tx) => {
+      await this.event(tx, ctx, r.id, 'auto_payout_not_paid', 'approved', 'approved', { data: { operation: op.id, status: op.status, code: op.failureCode, reason: op.failureReason } });
     });
   }
 

@@ -20,6 +20,10 @@ export interface PayoutRequest {
   branchId?: string | null;
   origin?: Record<string, unknown>;
   idempotencyKey?: string;
+  /** What the payout is for (a refund...). */
+  subject?: { type: string; id: string };
+  /** Already approved by the document it belongs to (a refund approved by its own workflow): queued at once, still limited and logged. */
+  preApproved?: boolean;
 }
 
 /** Money leaves only after a different person approved this exact request; it is then sent once. */
@@ -70,14 +74,17 @@ export class DarajaDisbursements {
         operation: input.operation,
         idempotencyKey: input.idempotencyKey ?? `payout:${randomUUID()}`,
         originatorId: randomUUID(),
-        subjectType: 'payout',
+        subjectType: input.subject?.type ?? 'payout',
+        subjectId: input.subject?.id ?? null,
         amount,
         currency: 'KES',
         input: checked.input,
         requestedBy: input.requestedBy,
         origin: input.origin ?? {},
-        status: 'pending_approval',
+        status: input.preApproved ? 'queued' : 'pending_approval',
+        ...(input.preApproved ? { expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) } : {}),
       });
+      if (input.preApproved) return { op, status: 'queued' as const };
       if (!created) return { op, status: op.status === 'queued' ? ('queued' as const) : ('pending_approval' as const) };
       const outcome = await getContainer().approvals.submit(
         {

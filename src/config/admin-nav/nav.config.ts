@@ -587,6 +587,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
             permission: 'payment_activity:read',
           },
           {
+            id: 'payment-bills',
+            title: 'Bill Manager invoices',
+            name: 'payment-bills',
+            href: '/admin/payments/bills',
+            description: 'Send and cancel M-Pesa Bill Manager invoices from a paybill',
+            icon: 'Receipt',
+            permission: 'payment_activity:read',
+          },
+          {
             id: 'reconciliation',
             title: 'Reconciliation',
             name: 'reconciliation',

@@ -374,9 +374,9 @@ export class DarajaOperations {
         return { path: op.operation === 'bill_optin' ? '/v1/billmanager-invoice/optin' : '/v1/billmanager-invoice/change-optin-details', body: { shortcode, email: String(input.email), officialContact: String(input.officialContact), sendReminders: String(input.sendReminders ?? '1'), callbackurl: callbackUrl(ctx, secret, 'bill') } };
       }
       case 'bill_invoice':
-        return { path: '/v1/billmanager-invoice/single-invoicing', body: { externalReference: String(input.externalReference), billedFullName: String(input.billedFullName), billedPhoneNumber: toMsisdn(String(input.billedPhoneNumber)) ?? String(input.billedPhoneNumber), billedPeriod: String(input.billedPeriod), invoiceName: String(input.invoiceName), dueDate: `${String(input.dueDate)} 00:00:00.00`, accountReference: String(input.accountReference), amount: String(input.amount), invoiceItems: Array.isArray(input.invoiceItems) ? input.invoiceItems : [{ itemName: String(input.invoiceName), amount: String(input.amount) }] } };
+        return { path: '/v1/billmanager-invoice/single-invoicing', body: billInvoice(input) };
       case 'bill_invoice_bulk':
-        return { path: '/v1/billmanager-invoice/bulk-invoicing', body: Array.isArray(input.invoices) ? input.invoices : [] };
+        return { path: '/v1/billmanager-invoice/bulk-invoicing', body: Array.isArray(input.invoices) ? input.invoices.map((i) => billInvoice(i as Record<string, unknown>)) : [] };
       case 'bill_cancel':
         return { path: '/v1/billmanager-invoice/cancel-single-invoice', body: { externalReference: String(input.externalReference) } };
       case 'bill_cancel_bulk':
@@ -409,8 +409,11 @@ export class DarajaOperations {
       await this.ops.update(op.id, { status: 'in_doubt', conversationId: op.conversationId ?? result.conversationId, result: { resultCode: result.resultCode, resultDesc: result.resultDesc, params }, failureCode: 'NO_RECEIPT', failureReason: 'Safaricom said the payout succeeded but gave no transaction number. Check it on the M-Pesa statement before doing anything else.', nextAttemptAt: null });
       return { matched: true, op: (await this.ops.get(op.id))!, reason: 'Held: no transaction number.' };
     }
+    // A payout's "success" is only the callback's word until Safaricom's own record of the transaction agrees (settled by the engine).
+    const awaitingCheck = ok && moneyOut;
     await this.ops.update(op.id, {
-      status: ok ? 'succeeded' : 'failed',
+      status: awaitingCheck ? 'accepted' : ok ? 'succeeded' : 'failed',
+      ...(awaitingCheck ? { nextAttemptAt: new Date(Date.now() + 15 * 60_000) } : {}),
       conversationId: op.conversationId ?? result.conversationId,
       platformReference: receiptFromParams(params) ?? result.transactionId,
       result: { resultCode: result.resultCode, resultDesc: result.resultDesc, params, references: result.references, transactionId: result.transactionId },
@@ -435,4 +438,19 @@ export class DarajaOperations {
   paramsOf(result: Record<string, unknown>): Record<string, string> {
     return resultParameters({ ResultParameters: (result as { ResultParameters?: unknown }).ResultParameters });
   }
+}
+
+/** One invoice in the form Bill Manager takes: phone in 254 form, due date with a time, and at least one line item. */
+function billInvoice(input: Record<string, unknown>) {
+  return {
+    externalReference: String(input.externalReference),
+    billedFullName: String(input.billedFullName),
+    billedPhoneNumber: toMsisdn(String(input.billedPhoneNumber)) ?? String(input.billedPhoneNumber),
+    billedPeriod: String(input.billedPeriod),
+    invoiceName: String(input.invoiceName),
+    dueDate: /\d{2}:\d{2}/.test(String(input.dueDate)) ? String(input.dueDate) : `${String(input.dueDate)} 00:00:00.00`,
+    accountReference: String(input.accountReference),
+    amount: String(input.amount),
+    invoiceItems: Array.isArray(input.invoiceItems) ? input.invoiceItems : [{ itemName: String(input.invoiceName), amount: String(input.amount) }],
+  };
 }

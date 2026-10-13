@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { cancelRefundAction, recordRefundPayoutAction, submitRefundAction, type refundDetailAction } from '@/server/domains/finance/refund-actions';
+import { cancelRefundAction, recordRefundPayoutAction, payRefundThroughMpesaAction, submitRefundAction, type refundDetailAction } from '@/server/domains/finance/refund-actions';
 import { REFUND_STATUS } from './RefundsClient';
 import { Chip, Field, Message, PageHeader, buttonClass, cardClass, dangerClass, fieldClass, money, primaryClass, today, type Notice, attempt } from './ui';
 
@@ -33,6 +33,7 @@ export function RefundDetailClient({ view }: { view: View }) {
   const submit = async () => { setBusy(true); setNotice(null); const res = await attempt(submitRefundAction(view.id)); done(res, res.ok ? (res.data.status === 'approved' ? 'Approved: the money is set aside, ready to pay.' : 'Sent for approval.') : ''); };
   const cancel = async (e: React.FormEvent) => { e.preventDefault(); setBusy(true); setNotice(null); done(await attempt(cancelRefundAction(view.id, { code: reason.code, text: reason.text.trim() || undefined })), 'Cancelled.'); };
   const pay = async (e: React.FormEvent) => { e.preventDefault(); setBusy(true); setNotice(null); done(await attempt(recordRefundPayoutAction(view.id, { paidFromMethodId: bankId, reference: ref, payoutDate: when })), 'Payment recorded.'); };
+  const sendMpesa = async () => { setBusy(true); setNotice(null); done(await attempt(payRefundThroughMpesaAction(view.id)), 'Sent for payment through M-Pesa. It is recorded as paid once Safaricom confirms it; follow it under Payment activity.'); };
   const upload = async (file: File) => {
     setBusy(true); setNotice(null);
     const body = new FormData(); body.set('file', file); body.set('refundId', view.id);
@@ -64,6 +65,7 @@ export function RefundDetailClient({ view }: { view: View }) {
 
       <div className="flex flex-wrap gap-2">
         {s === 'draft' && view.can.submit ? <button type="button" className={primaryClass} disabled={busy} onClick={() => void submit()}>Send on</button> : null}
+        {s === 'approved' && view.method.automatic && view.can.payAutomatic ? <button type="button" className={primaryClass} disabled={busy} onClick={() => void sendMpesa()}>Pay through M-Pesa</button> : null}
         {s === 'approved' && view.can.pay ? <button type="button" className={primaryClass} disabled={busy} aria-expanded={panel === 'pay'} onClick={() => setPanel('pay')}>Record payment</button> : null}
         {canCancel ? <button type="button" className={dangerClass} disabled={busy} aria-expanded={panel === 'cancel'} onClick={() => setPanel('cancel')}>Cancel refund</button> : null}
       </div>

@@ -297,6 +297,7 @@ export function getContainer(): AppContainer {
   const creditNotes = new CreditNoteService(drizzleDb, kraSigning, numbering);
   const finance = createFinanceServices(drizzleDb, decisionLog, { numbering, reasons: reasonCodes, paymentConfigs, payments });
   const paymentEngine = createPaymentEngine({ db: drizzleDb, registry: paymentRegistry, payments, consumer: new FinanceC2bConsumer(drizzleDb, finance.receipts) });
+  paymentEngine.payoutConsumer = { finished: async (op) => { if (op.subjectType === 'refund') await finance.refunds.onAutomaticPayoutFinished(op); } };
 
   const approvals = new ApprovalEngine(drizzleDb, decisionLog, reasonCodes);
   const approvalGate = new ParkedActions(drizzleDb, approvals);

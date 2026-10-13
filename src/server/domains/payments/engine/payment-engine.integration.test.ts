@@ -853,6 +853,32 @@ describe.skipIf(!url)('payment engine (database)', () => {
       expect(await db.select().from(schema.providerTransactions).where(eq(schema.providerTransactions.platformReference, 'NLJ7RT61SV'))).toHaveLength(0);
     });
 
+    it('a payout counts as paid only when Safaricom\'s own record of the transaction agrees', async () => {
+      const p = await provider({ initiator: true, settings: { operations: { b2c: { enabled: true } } } });
+      const { c } = await payoutWorkflow();
+      fake.on('/oauth/v1/generate', () => ({ json: { access_token: 'tok', expires_in: '3599' } }));
+      fake.on('/mpesa/b2c/v3/paymentrequest', (b) => ({ json: { ConversationID: `AG_${b.Amount}`, OriginatorConversationID: b.OriginatorConversationID, ResponseCode: '0', ResponseDescription: 'Accept the service request successfully.' } }));
+      fake.on('/mpesa/transactionstatus/v1/query', (b) => ({ json: { ConversationID: 'AG_ST', OriginatorConversationID: 'x', ResponseCode: '0', ResponseDescription: 'Accept the service request successfully.' } }));
+      const resultUrl = () => (fake.calls.filter((x) => x.path === '/mpesa/b2c/v3/paymentrequest').at(-1)!.body as { ResultURL: string }).ResultURL;
+      const secret = () => resultUrl().split('/').pop()!;
+      const run = async (amount: string, receipt: string, statusAmount: number) => {
+        const r = await ask(p, { input: { phone: '0712345678', amount, commandId: 'BusinessPayment', remarks: 'Payout check' } });
+        await approveAll(c, r.op.id);
+        await engine.sweep();
+        const op = (await engine.ops.get(r.op.id))!;
+        const hook = (kind: 'result', body: unknown) => engine.ingestHook({ providerId: p.providerId, kind, secret: secret(), rawText: JSON.stringify(body), headers: {}, sourceIp: null, https: true, method: 'POST' } as never);
+        await hook('result', { Result: { ResultType: 0, ResultCode: 0, ResultDesc: 'ok', OriginatorConversationID: op.originatorId, ConversationID: op.conversationId, TransactionID: receipt, ResultParameters: { ResultParameter: [{ Key: 'TransactionReceipt', Value: receipt }] } } });
+        // reported as done, but not counted until the check comes back
+        expect((await engine.ops.get(op.id))!.status).toBe('accepted');
+        const [check] = await engine.ops.bySubject('provider_operation', op.id, 'transaction_status');
+        expect(check).toBeTruthy();
+        await hook('result', { Result: { ResultType: 0, ResultCode: 0, ResultDesc: 'ok', OriginatorConversationID: check!.originatorId, ConversationID: check!.conversationId, ResultParameters: { ResultParameter: [{ Key: 'ReceiptNo', Value: receipt }, { Key: 'Amount', Value: statusAmount }, { Key: 'TransactionStatus', Value: 'Completed' }] } } });
+        return (await engine.ops.get(op.id))!;
+      };
+      expect(await run('500', 'PAYOK00001', 500)).toMatchObject({ status: 'succeeded', platformReference: 'PAYOK00001' });
+      expect(await run('600', 'PAYBAD0001', 6)).toMatchObject({ status: 'in_doubt', failureCode: 'STATUS_AMOUNT_MISMATCH' });
+    });
+
     it('a rejected payout is never sent', async () => {
       const p = await provider({ initiator: true, settings: { operations: { b2c: { enabled: true } } } });
       const { c } = await payoutWorkflow();
@@ -864,6 +890,32 @@ describe.skipIf(!url)('payment engine (database)', () => {
       expect((await engine.ops.get(r.op.id))!.status).toBe('rejected');
       await engine.sweep();
       expect(b2cCalls().length).toBe(before);
+    });
+  });
+
+  describe('Bill Manager', () => {
+    it('builds sign-up, single and bulk invoices and cancellations as documented, and reads the platform\'s answer', async () => {
+      const p = await provider({ initiator: false });
+      fake.on('/oauth/v1/generate', () => ({ json: { access_token: 'tok', expires_in: '3599' } }));
+      const answer = (code: string) => () => ({ json: { rescode: code, resmsg: code === '200' ? 'Success' : 'Invalid request', Status_Message: '' } });
+      for (const path of ['optin', 'single-invoicing', 'bulk-invoicing', 'cancel-single-invoice', 'cancel-bulk-invoices']) fake.on(`/v1/billmanager-invoice/${path}`, answer('200'));
+      const last = (path: string) => fake.calls.filter((x) => x.path === `/v1/billmanager-invoice/${path}`).at(-1)!.body as Record<string, unknown> & unknown[];
+      const run = (operation: string, input: Record<string, unknown>) => engine.daraja.start({ providerId: p.providerId, methodId: p.methodId, operation: operation as never, input });
+      expect((await run('bill_optin', { email: 'a@b.co', officialContact: '0712345678', sendReminders: '1' })).op.status).toBe('succeeded');
+      expect(last('optin')).toMatchObject({ shortcode: '174379', email: 'a@b.co', sendReminders: '1' });
+      expect(String(last('optin').callbackurl)).toMatch(/\/api\/hooks\/pay\/.+\/bill\//);
+      const inv = { externalReference: 'INV-1', billedFullName: 'Jane', billedPhoneNumber: '0712345678', billedPeriod: 'October 2026', invoiceName: 'Rent', dueDate: '2026-10-31', accountReference: 'C0001', amount: '1500' };
+      expect((await run('bill_invoice', inv)).op.status).toBe('succeeded');
+      expect(last('single-invoicing')).toMatchObject({ externalReference: 'INV-1', billedPhoneNumber: '254712345678', amount: '1500', dueDate: '2026-10-31 00:00:00.00' });
+      expect((await run('bill_invoice_bulk', { invoices: [inv, { ...inv, externalReference: 'INV-2' }] })).op.status).toBe('succeeded');
+      expect(last('bulk-invoicing')).toHaveLength(2);
+      expect((last('bulk-invoicing') as unknown as Record<string, unknown>[])[1]).toMatchObject({ billedPhoneNumber: '254712345678', dueDate: '2026-10-31 00:00:00.00', invoiceItems: [{ itemName: 'Rent', amount: '1500' }] });
+      expect((await run('bill_cancel', { externalReference: 'INV-1' })).op.status).toBe('succeeded');
+      expect((await run('bill_cancel_bulk', { references: ['INV-1', 'INV-2'] })).op.status).toBe('succeeded');
+      expect(last('cancel-bulk-invoices')).toEqual([{ externalReference: 'INV-1' }, { externalReference: 'INV-2' }]);
+      fake.on('/v1/billmanager-invoice/single-invoicing', answer('400'));
+      const refused = (await run('bill_invoice', { ...inv, externalReference: 'INV-3' })).op;
+      expect(refused).toMatchObject({ status: 'failed', failureCode: '400' });
     });
   });
 

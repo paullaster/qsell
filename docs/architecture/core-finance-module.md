@@ -713,7 +713,13 @@ This replaces the provider/method/bank-account split described in §7.0 and buil
 * Jenga and KCB Buni have no verifiable status endpoint here: they fail closed.
 * The Safaricom sandbox and real credentials were never used; everything is tested against stand-ins that follow the published formats.
 * An STK payment that settles without a receipt waits for one before the ledger credit.
-* B2B Express Checkout and Bill Manager notices are kept as records only (the other business's word); nothing is credited from them. Bill Manager has operation builders but no invoice list/bulk screen.
-* A payout's success result is accepted on the authenticated callback with a transaction number; a follow-up Transaction Status query for payouts is not built.
-* Automatic refund payout by B2C and refund-by-reversal are not wired to refunds (a refund method set to *automatic* is still refused in words). B2C Account Top Up, Business to Pochi, Ratiba and IMSI/Swap are not built.
+* B2B Express Checkout and Bill Manager notices are kept as records only (the other business's word); nothing is credited from them. Bill Manager payments are not acknowledged back automatically (the reconciliation call exists but nothing triggers it), and the invoices page lists requests, not per-invoice state.
+* B2C Account Top Up, Business to Pochi, Ratiba and IMSI/Swap are not built. Refund-by-reversal is not wired to refunds.
 * The token cache and the Safaricom allow-list default are per process / empty.
+
+### 27.1 Later additions (2026-10-13)
+* **Payouts are checked.** A payout's success callback no longer finishes it: the engine asks Safaricom for its own record of that transaction (Transaction Status) and the payout counts as paid only if the status is Completed and the amount agrees; otherwise it is held *in doubt* with the reason.
+* **Automatic refund payout (B2C).** A refund whose method is mobile money, goes through an M-Pesa provider and is set to *automatic* can be sent from the refund screen ("Pay through M-Pesa", permission `refunds:pay_automatic`) once approved. The refund's own approval is the approval for the money (the sender cannot be the approver). The B2C operation is limited like any payout; manual recording is blocked while it is in flight. When Safaricom's record confirms it, the refund is recorded as paid by the system with the M-Pesa receipt as reference. If recording fails after the money left, an event says so loudly for a person to record it. Whole shillings only (KES 10 to 250,000).
+* **Bill Manager screen.** `/admin/payments/bills`: send up to 1,000 invoices (one per line) as a bulk request, cancel invoices, and follow requests. Sign-up stays under Settings → Payments → Run an operation.
+* Operation forms are validated against the catalog before anything is written down.
+* **Still unproven.** Safaricom's sandbox has not been used: reading the stored sandbox credentials from a script was blocked by the permission check, so the live exercise has to be run from Settings → Payments (test connection, QR, STK) or after explicit permission.

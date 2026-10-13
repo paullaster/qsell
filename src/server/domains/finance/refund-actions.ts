@@ -58,6 +58,28 @@ export async function recordRefundPayoutAction(id: string, input: { paidFromMeth
   return run('refunds:record_manual_payout', { surface: 'finance/refunds/detail', action: 'record_payout' }, async (ctx) => fin().refunds.recordPayout(ctx, id, { ...input, permissions: await postingPermissions() }), [ROOT, `${ROOT}/${id}`]);
 }
 
+/** Sends an approved refund to the customer's phone through M-Pesa. The refund's own approval is the approval for the money. */
+export async function payRefundThroughMpesaAction(id: string) {
+  return run('refunds:pay_automatic', { surface: 'finance/refunds/detail', action: 'pay_through_mpesa' }, async (ctx) => {
+    const { getContainer } = await import('@/server/di/container');
+    const c = getContainer();
+    const plan = await c.finance.refunds.prepareAutomatic(ctx, id);
+    const { OperationRefused } = await import('@/server/domains/payments/daraja/operations');
+    try {
+      const r = await c.paymentEngine.disbursements.request({
+        companyId: ctx.companyId, providerId: plan.providerId, methodId: plan.methodId, operation: 'b2c', preApproved: true,
+        input: { phone: plan.phone, amount: plan.amount.split('.')[0], commandId: 'BusinessPayment', remarks: `Refund ${plan.number}`.slice(0, 100) },
+        requestedBy: ctx.actor.id ?? 'system', subject: { type: 'refund', id }, idempotencyKey: `refund:${id}:payout:${plan.attempt}`,
+        origin: ctx.origin as unknown as Record<string, unknown>,
+      });
+      return { operationId: r.op.id, status: r.status };
+    } catch (error) {
+      if (error instanceof OperationRefused) throw new FinanceError(error.code, error.message);
+      throw error;
+    }
+  }, [ROOT, `${ROOT}/${id}`]);
+}
+
 export async function listRefundsAction(filter: { status?: RefundStatus; q?: string; before?: string } = {}) {
   return run('refunds:read', { surface: 'finance/refunds', action: 'list' }, async (ctx) => {
     const page = await fin().refunds.list(ctx.companyId, filter);
@@ -100,7 +122,7 @@ export async function refundDetailAction(id: string) {
       amount: r.amount,
       currency: r.currency,
       customer: { id: d.customer.id, name: d.customer.name, number: d.customer.number, phone: d.customer.phone },
-      method: { id: d.method.id, name: d.method.name, kind: d.method.kind, bankAccountId: d.method.balancingBankAccountId },
+      method: { id: d.method.id, name: d.method.name, kind: d.method.kind, bankAccountId: d.method.balancingBankAccountId, automatic: d.method.refundDestination === 'automatic' },
       source: d.sourceLabel,
       sourceKind: r.sourceKind,
       reason: r.reasonCode,
@@ -123,6 +145,7 @@ export async function refundDetailAction(id: string) {
         submit: await canPermission('refunds:submit'),
         cancel: await canPermission('refunds:cancel'),
         pay: await canPermission('refunds:record_manual_payout'),
+        payAutomatic: await canPermission('refunds:pay_automatic'),
         attach: await canPermission('refunds:upload_evidence'),
       },
     };

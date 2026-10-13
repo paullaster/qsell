@@ -7,6 +7,8 @@ import type { DarajaOperations } from '../daraja/operations';
 import type { DarajaDisbursements } from '../daraja/disbursements';
 import { parseB2bExpress, parseC2b } from '../daraja/parsers';
 import { looksLikeReceipt } from '../daraja/security';
+import { DARAJA_OPERATIONS, type DarajaOperationCode } from '../daraja/catalog';
+import { readStatusAnswer, statusAgrees } from '../daraja/verify';
 import type { PaymentRegistry } from '../registry';
 import type { PaymentProviderCode } from '../types';
 import type { PlatformContexts } from './context';
@@ -153,6 +155,8 @@ export class PaymentEngine {
           await this.events.setState(event.id, 'unmatched', { failureCode: 'NO_OPERATION', failureReason: done.reason ?? 'No operation of ours matches this result.' });
         } else if (done.op) {
           await this.events.setState(event.id, 'verified', { operationId: done.op.id, failureCode: null, failureReason: null });
+          if (DARAJA_OPERATIONS[done.op.operation as DarajaOperationCode]?.moneyOut && done.op.status === 'accepted') await this.checkPayout(done.op.id);
+          else await this.finished(done.op.id);
           await this.followUp(done.op.subjectType, done.op.subjectId);
         }
         return { httpStatus: 200, body: ACK };
@@ -190,14 +194,55 @@ export class PaymentEngine {
     }
   }
 
+  /** A payout reported success on its callback: ask Safaricom for its own record of that transaction before counting it. */
+  private async checkPayout(opId: string) {
+    const op = await this.ops.get(opId);
+    if (!op || op.status !== 'accepted' || !op.platformReference) return;
+    try {
+      await this.daraja.start({ providerId: op.providerId, methodId: op.methodId, operation: 'transaction_status', input: { transactionId: op.platformReference }, idempotencyKey: `payout-check:${op.id}`, subject: { type: 'provider_operation', id: op.id } });
+    } catch (error) {
+      await this.ops.update(op.id, { status: 'in_doubt', failureCode: 'CHECK_NOT_RUN', failureReason: `The payout was reported as done, but it could not be checked with Safaricom (${error instanceof Error ? error.message : 'unknown error'}). Check the M-Pesa statement.`, nextAttemptAt: null });
+    }
+  }
+
+  /** The check of a payout finished: it counts as paid only if Safaricom's record agrees on the transaction, status and amount. */
+  private async settlePayout(opId: string) {
+    const op = await this.ops.get(opId);
+    if (!op || op.status !== 'accepted' || !op.platformReference) return;
+    const [check] = await this.ops.bySubject('provider_operation', op.id, 'transaction_status');
+    if (!check || ['created', 'queued', 'submitted', 'accepted', 'timed_out'].includes(check.status)) return;
+    if (check.status !== 'succeeded') {
+      await this.ops.update(op.id, { status: 'in_doubt', failureCode: 'CHECK_FAILED', failureReason: `Safaricom's record of the payout could not be read (${check.failureReason ?? check.status}). Check the M-Pesa statement before doing anything else.`, nextAttemptAt: null });
+      await this.finished(op.id);
+      return;
+    }
+    const answer = readStatusAnswer(check.result as Record<string, unknown>);
+    const verdict = answer ? statusAgrees(answer, { receipt: op.platformReference, amountCents: Math.round(Number(op.amount ?? 0) * 100), shortcode: null }) : { ok: false as const, code: 'STATUS_UNREADABLE', reason: "Safaricom's answer could not be read." };
+    const done = async () => this.finished(op.id);
+    if (verdict.ok) await this.ops.update(op.id, { status: 'succeeded', failureCode: null, failureReason: null, result: { ...(op.result as Record<string, unknown>), verifiedBy: 'transaction_status', checkOperationId: check.id } });
+    else await this.ops.update(op.id, { status: 'in_doubt', failureCode: verdict.code, failureReason: `${verdict.reason} The payout is not counted until a person has checked it.`, nextAttemptAt: null });
+    await done();
+  }
+
   /** A status check finished: whoever was waiting for it can carry on. */
   private async followUp(subjectType: string | null, subjectId: string | null) {
     if (!subjectType || !subjectId) return;
+    if (subjectType === 'provider_operation') await this.settlePayout(subjectId);
     if (subjectType === 'payment_attempt') await this.jobs.verifyAttempt(subjectId, 0);
     if (subjectType === 'provider_transaction') await this.jobs.verifyTransaction(subjectId, 0);
   }
 
   /** The once-a-minute safety net: anything a lost job or a restart left half done is picked up again. */
+  /** Told when a payout finishes (paid, failed or held), so what it was for can follow. */
+  payoutConsumer: { finished(op: import('@/server/db/drizzle/schema').ProviderOperationRow): Promise<void> } | null = null;
+
+  private async finished(opId: string) {
+    const op = await this.ops.get(opId);
+    if (!op || !this.payoutConsumer || !DARAJA_OPERATIONS[op.operation as DarajaOperationCode]?.moneyOut) return;
+    if (!['succeeded', 'failed', 'in_doubt', 'rejected', 'cancelled'].includes(op.status)) return;
+    await this.payoutConsumer.finished(op).catch(() => undefined);
+  }
+
   async sweep(): Promise<{ resent: number; claimed: number; pending: number }> {
     let resent = 0;
     for (const op of await this.ops.due(100)) {
@@ -214,7 +259,10 @@ export class PaymentEngine {
         // No answer came. A query is safe to give up on; anything that moved money would be checked, never assumed.
         const query = ['transaction_status', 'stk_query', 'pull_query'].includes(op.operation);
         if (query) await this.ops.update(op.id, { status: 'failed', failureCode: 'NO_RESULT', failureReason: 'Safaricom did not send an answer in time.' });
-        else await this.ops.update(op.id, { status: 'in_doubt', failureCode: 'NO_RESULT', failureReason: 'No answer arrived. It must be checked with the platform before anything is done again.', nextAttemptAt: null });
+        else {
+          await this.ops.update(op.id, { status: 'in_doubt', failureCode: 'NO_RESULT', failureReason: 'No answer arrived. It must be checked with the platform before anything is done again.', nextAttemptAt: null });
+          await this.finished(op.id);
+        }
         if (query && op.subjectType) await this.followUp(op.subjectType, op.subjectId);
       }
     }

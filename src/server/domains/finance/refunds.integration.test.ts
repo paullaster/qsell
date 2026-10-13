@@ -238,6 +238,38 @@ describe.skipIf(!url)('refunds (database)', () => {
     });
   });
 
+  describe('paying through M-Pesa automatically', () => {
+    it('sends only what is approved, never twice, and records the payment from the confirmed result with the receipt as reference', async () => {
+      const o = await owed();
+      const { id: providerId } = await fin.paymentProviders.create(ctx, { providerCode: 'mpesa_daraja', displayName: `RF auto ${run}` });
+      const [before] = await db.select().from(schema.paymentMethods).where(eq(schema.paymentMethods.id, methodId.MPESA!));
+      await db.update(schema.paymentMethods).set({ providerId, refundDestination: 'automatic' }).where(eq(schema.paymentMethods.id, methodId.MPESA!));
+      try {
+        const r = await request(o.customer.id, 'credit_note_excess', o.cn.id, '300', { paymentMethodId: methodId.MPESA, payoutDetails: { phone: o.customer.phone! } });
+        // not approved yet: nothing to send
+        expect(await codeOf(fin.refunds.prepareAutomatic(reqCtx, r.id))).toBe('NOT_APPROVED');
+        await fin.refunds.submit(reqCtx, r.id);
+        const plan = await fin.refunds.prepareAutomatic(reqCtx, r.id);
+        expect(plan).toMatchObject({ providerId, methodId: methodId.MPESA, amount: '300.00', phone: o.customer.phone });
+        // someone has already sent it: no second send, and no payment by hand on top of it
+        const [op] = await db.insert(schema.providerOperations).values({ companyId, providerId, methodId: methodId.MPESA, operation: 'b2c', status: 'accepted', idempotencyKey: `refund:${r.id}:payout:1`, subjectType: 'refund', subjectId: r.id, amount: '300', input: {} }).returning();
+        expect(await codeOf(fin.refunds.prepareAutomatic(reqCtx, r.id))).toBe('PAYOUT_IN_PROGRESS');
+        expect(await codeOf(payOut(r.id))).toBe('PAYOUT_IN_PROGRESS');
+        // it was not paid (held for a check): the refund stays approved and says why
+        await fin.refunds.onAutomaticPayoutFinished({ ...op!, status: 'in_doubt', failureCode: 'STATUS_AMOUNT_MISMATCH', failureReason: 'differs' });
+        expect(await status(r.id)).toBe('approved');
+        // confirmed: recorded as paid, by the system, with the M-Pesa receipt as the reference and no evidence file needed
+        await fin.refunds.onAutomaticPayoutFinished({ ...op!, status: 'succeeded', platformReference: 'RFAUTO0001' });
+        const [paid] = await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, r.id));
+        expect(paid).toMatchObject({ status: 'paid', payoutReference: 'RFAUTO0001' });
+        const [bank] = await db.select().from(schema.bankLedgerEntries).where(eq(schema.bankLedgerEntries.documentId, r.id));
+        expect(Number(bank!.amount)).toBe(-300);
+      } finally {
+        await db.update(schema.paymentMethods).set({ providerId: before!.providerId, refundDestination: before!.refundDestination }).where(eq(schema.paymentMethods.id, methodId.MPESA!));
+      }
+    });
+  });
+
   describe('with an approval workflow', () => {
     beforeAll(async () => {
       await workflow('refund.payout', boss);

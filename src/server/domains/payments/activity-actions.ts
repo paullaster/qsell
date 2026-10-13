@@ -4,6 +4,7 @@ import { canPermission } from '@/server/domains/access-control/guard';
 import { getContainer } from '@/server/di/container';
 import { run } from '@/server/domains/finance/action-runner';
 import { FinanceError } from '@/server/domains/finance/errors';
+import { DARAJA_OPERATIONS, validateOperationInput } from './daraja/catalog';
 import { OperationRefused, type DarajaOperationCode } from './daraja/operations';
 
 const engine = () => getContainer().paymentEngine;
@@ -93,7 +94,11 @@ export async function setAsidePaymentAction(transactionId: string, reason: strin
 export async function runProviderOperationAction(input: { providerId: string; operation: DarajaOperationCode; methodId?: string; input: Record<string, unknown> }) {
   return run('payment_operations:run', { surface: 'settings/payments', action: `operation_${input.operation}` }, async (ctx, userId) => {
     try {
-      const { op } = await engine().daraja.start({ providerId: input.providerId, methodId: input.methodId ?? null, operation: input.operation, input: input.input, requestedBy: userId, origin: ctx.origin as unknown as Record<string, unknown> });
+      const info = DARAJA_OPERATIONS[input.operation];
+      if (!info || info.internal) throw new OperationRefused('NOT_A_FORM', `${input.operation} is not something to run by hand.`);
+      const checked = validateOperationInput(info, input.input);
+      if (!checked.ok) throw new OperationRefused('INVALID_INPUT', checked.error);
+      const { op } = await engine().daraja.start({ providerId: input.providerId, methodId: input.methodId ?? null, operation: input.operation, input: checked.input, requestedBy: userId, origin: ctx.origin as unknown as Record<string, unknown> });
       const result = op.result as Record<string, unknown>;
       return { id: op.id, status: op.status, failureCode: op.failureCode, failureReason: op.failureReason, qrCode: typeof result.QRCode === 'string' ? result.QRCode : null, detail: JSON.stringify(op.operation === 'qr_generate' ? { ...result, QRCode: '(image)' } : result, null, 2).slice(0, 4000) };
     } catch (error) {

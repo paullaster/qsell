@@ -588,6 +588,12 @@ export const PERMISSIONS = {
     category: 'Finance & Payments',
     description: 'Ask for money to be paid out through a payment provider (still needs approval)',
   },
+  'refunds:pay_automatic': {
+    resource: 'refunds',
+    action: 'pay_automatic',
+    category: 'Finance & Payments',
+    description: 'Send an approved refund to the customer through M-Pesa',
+  },
   'payments:confirm_unverified': {
     resource: 'payments',
     action: 'confirm_unverified',
