@@ -5,6 +5,8 @@ import { withAfterCommit } from '@/server/kernel/after-commit';
 import { getContainer } from '@/server/di/container';
 import { drizzleDb } from '@/server/db/drizzle/client';
 import {
+  currencies,
+  customers,
   salesQuoteEvents,
   salesQuoteLines,
   salesQuotes,
@@ -28,6 +30,7 @@ import type { GuardTrace, PriceTrace } from '@/server/domains/pricing/domain/typ
 import type { GuardLine } from '@/server/domains/pricing/guard-service';
 import type { PricedItem, RuleApplication } from '@/server/domains/pricing/discount-service';
 import { kitCost, kitTax } from '@/server/domains/pricing/kit-service';
+import { PAYMENT_METHOD_LABELS } from '@/lib/payment-method-labels';
 import { mergeLinesForOrder } from './order-lines';
 import { quotePdfItems } from './pdf-items';
 import { templateDraftFromQuote, type TemplateDraft } from './template-from-quote';
@@ -731,6 +734,7 @@ export class SalesQuoteService {
     const customerName = input.customerName.trim();
     if (!customerName) throw new Error('Choose a customer or enter a customer name.');
     if (!input.lines.length) throw new Error('Add at least one item to the quote.');
+    await this.assertCurrencyAndPayment(companyId, input);
     if (input.lines.some((line) => !Number.isFinite(line.quantity) || line.quantity <= 0)) {
       throw new Error('Each quote line needs a quantity greater than zero.');
     }
@@ -1866,6 +1870,39 @@ export class SalesQuoteService {
     await drizzleDb
       .insert(salesQuoteTemplateEvents)
       .values({ templateId, eventType, actorId, details });
+  }
+
+  /**
+   * What the browser says about the currency and how the quote is paid is checked here: the
+   * currency must be enabled, the method must be one we know, and paying on account is only for
+   * a customer of this company with a credit account.
+   */
+  private async assertCurrencyAndPayment(
+    companyId: string,
+    input: Pick<QuoteInput, 'currency' | 'paymentMethod' | 'customerId'>,
+  ) {
+    const code = String(input.currency).trim().toUpperCase();
+    const [currency] = await drizzleDb
+      .select({ isEnabled: currencies.isEnabled })
+      .from(currencies)
+      .where(eq(currencies.code, code));
+    if (currency?.isEnabled !== true) throw new Error('Choose an enabled currency.');
+    if (!Object.hasOwn(PAYMENT_METHOD_LABELS, input.paymentMethod)) {
+      throw new Error('Choose a valid payment method.');
+    }
+    if (input.paymentMethod === 'on_account') {
+      const customerId = input.customerId ?? null;
+      const [customer] =
+        customerId === null
+          ? []
+          : await drizzleDb
+              .select({ accountType: customers.accountType })
+              .from(customers)
+              .where(and(eq(customers.id, customerId), eq(customers.companyId, companyId)));
+      if (customer?.accountType !== 'credit') {
+        throw new Error('Paying on account needs a customer with a credit account.');
+      }
+    }
   }
 
   private assertPercent(value: number, label: string) {

@@ -62,6 +62,10 @@ import { BulkAddDialog } from './quote-layout/BulkAddDialog';
 import { QuantityInput } from './quote-layout/QuantityInput';
 import { TemplateSwapDialog } from './quote-layout/TemplateSwapDialog';
 import { LookupAutocomplete } from '@/components/ui/autocomplete/LookupAutocomplete';
+import type { LookupOption } from '@/lib/lookup';
+import { methodLabel } from '@/lib/payment-method-labels';
+import { statusFilterLabel, type QuoteStatusFilter } from '@/lib/quote-statuses';
+import { chooseQuoteCustomerAction } from '@/server/domains/quotes/form-actions';
 import type { SwapSummary } from '@/server/domains/quotes/template-swap-service';
 import {
   addSectionFromTemplateAction,
@@ -89,19 +93,6 @@ interface EditorData {
   templates: SalesQuoteTemplate[];
   sectionTemplates: SectionTemplate[];
 }
-
-const STATUSES = [
-  'all',
-  'draft',
-  'pending_approval',
-  'approved',
-  'sent',
-  'accepted',
-  'rejected',
-  'converted',
-  'expired',
-  'cancelled',
-] as const;
 
 const money = (value: number, currency: string) =>
   `${currency} ${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -207,7 +198,7 @@ export function AdminSalesQuotes({
   const router = useRouter();
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState<'quotes' | 'templates' | 'sections'>('quotes');
-  const [statusFilter, setStatusFilter] = useState<(typeof STATUSES)[number]>('all');
+  const [statusFilter, setStatusFilter] = useState<QuoteStatusFilter>('all');
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<SalesQuote | null>(null);
   const [details, setDetails] = useState<SalesQuote | null>(null);
@@ -432,18 +423,18 @@ export function AdminSalesQuotes({
                 className="w-full rounded-lg border border-line bg-surface py-2 pr-3 pl-9 text-sm text-fg-strong placeholder:text-fg-subtle"
               />
             </div>
-            <select
+            <LookupAutocomplete
+              source="quote-statuses"
+              label="Filter quotes by status"
+              hideLabel
               value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value as (typeof STATUSES)[number])}
-              className="rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong"
-              aria-label="Filter quotes by status"
-            >
-              {STATUSES.map((status) => (
-                <option key={status} value={status}>
-                  {status === 'all' ? 'All statuses' : statusLabel(status)}
-                </option>
-              ))}
-            </select>
+              valueLabel={statusFilterLabel(statusFilter)}
+              clearable={false}
+              onChange={(option) => {
+                if (option !== null) setStatusFilter(option.id as QuoteStatusFilter);
+              }}
+              className="w-full sm:w-56"
+            />
           </div>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[850px] text-left text-sm">
@@ -689,7 +680,6 @@ export function AdminSalesQuotes({
         <QuoteEditor
           products={editorData.products}
           kits={editorData.kits}
-          customers={editorData.customers}
           initial={editing ? quoteToInput(editing) : newQuoteInput()}
           quoteNumber={editing?.quoteNumber}
           minimumMargin={marginFloor}
@@ -827,7 +817,6 @@ async function respondToQuote(id: string, accepted: boolean) {
 function QuoteEditor({
   products,
   kits,
-  customers,
   initial,
   quoteNumber,
   minimumMargin,
@@ -836,7 +825,6 @@ function QuoteEditor({
 }: {
   products: CatalogueProduct[];
   kits: EditorKit[];
-  customers: CustomerRow[];
   initial: QuoteInput;
   quoteNumber?: string;
   minimumMargin: number;
@@ -1014,29 +1002,19 @@ function QuoteEditor({
     );
   };
 
-  const chooseCustomer = (id: string) => {
-    const customer = customers.find((item) => item.id === id);
-    if (!customer) {
-      setInput((current) => ({ ...current, customerId: null }));
-      return;
+  /** The server fills the form from the customer chosen (or clears it) and decides how it is paid. */
+  const chooseCustomer = async (option: LookupOption | null) => {
+    try {
+      setSwitching(true);
+      setError(null);
+      const result = await chooseQuoteCustomerAction(input, option === null ? null : option.id);
+      if (!result.ok) throw new Error(result.error);
+      setInput(result.data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not choose that customer.');
+    } finally {
+      setSwitching(false);
     }
-    const address = {
-      street: customer.street ?? '',
-      city: customer.city ?? '',
-      countyOrState: customer.countyOrState ?? '',
-      postalCode: customer.postalCode ?? '',
-      country: customer.country ?? 'Kenya',
-    };
-    setInput((current) => ({
-      ...current,
-      customerId: customer.id,
-      customerName: customer.name,
-      customerEmail: customer.email ?? '',
-      customerPhone: customer.phone ?? '',
-      billingAddress: address,
-      deliveryAddress: address,
-      paymentMethod: customer.accountType === 'credit' ? 'on_account' : current.paymentMethod,
-    }));
   };
 
   const submit = async (event: React.FormEvent) => {
@@ -1093,21 +1071,19 @@ function QuoteEditor({
           />
         )}
         <section className="grid gap-3 sm:grid-cols-2">
-          <label className="text-sm font-medium text-fg">
-            Trade customer
-            <select
-              value={input.customerId ?? ''}
-              onChange={(event) => chooseCustomer(event.target.value)}
-              className="mt-1 block w-full rounded-lg border border-line bg-surface px-3 py-2 text-fg-strong"
-            >
-              <option value="">New / one-time customer</option>
-              {customers.map((customer) => (
-                <option key={customer.id} value={customer.id}>
-                  {customer.number} · {customer.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <LookupAutocomplete
+            source="trade-customers"
+            label="Trade customer"
+            value={input.customerId ?? null}
+            valueLabel={
+              input.customerId === null || input.customerId === undefined
+                ? null
+                : input.customerName
+            }
+            placeholder="New / one-time customer"
+            disabled={switching}
+            onChange={(option) => void chooseCustomer(option)}
+          />
           <label className="text-sm font-medium text-fg">
             Customer name
             <input
@@ -1151,35 +1127,28 @@ function QuoteEditor({
               className="mt-1 block w-full rounded-lg border border-line bg-surface px-3 py-2 text-fg-strong"
             />
           </label>
-          <label className="text-sm font-medium text-fg">
-            Currency
-            <select
-              value={input.currency}
-              onChange={(event) => setField('currency', event.target.value)}
-              className="mt-1 block w-full rounded-lg border border-line bg-surface px-3 py-2 text-fg-strong"
-            >
-              <option>KES</option>
-              <option>USD</option>
-            </select>
-          </label>
-          <label className="text-sm font-medium text-fg">
-            Payment method
-            <select
-              value={input.paymentMethod}
-              onChange={(event) =>
-                setField('paymentMethod', event.target.value as QuoteInput['paymentMethod'])
-              }
-              className="mt-1 block w-full rounded-lg border border-line bg-surface px-3 py-2 text-fg-strong"
-            >
-              <option value="mpesa_daraja">M-Pesa</option>
-              <option value="pesapal_v3">Pesapal</option>
-              <option value="jenga_hq">Jenga</option>
-              <option value="kcb_buni">KCB Buni</option>
-              {input.customerId &&
-                customers.find((customer) => customer.id === input.customerId)?.accountType ===
-                  'credit' && <option value="on_account">On account</option>}
-            </select>
-          </label>
+          <LookupAutocomplete
+            source="currencies"
+            label="Currency"
+            value={input.currency}
+            valueLabel={input.currency}
+            clearable={false}
+            onChange={(option) => {
+              if (option !== null) setField('currency', option.id);
+            }}
+          />
+          <LookupAutocomplete
+            source="payment-methods"
+            filters={{ customer: input.customerId ?? '' }}
+            label="Payment method"
+            value={input.paymentMethod}
+            valueLabel={methodLabel(input.paymentMethod)}
+            clearable={false}
+            onChange={(option) => {
+              if (option !== null)
+                setField('paymentMethod', option.id as QuoteInput['paymentMethod']);
+            }}
+          />
           <label className="text-sm font-medium text-fg">
             Payment terms
             <input

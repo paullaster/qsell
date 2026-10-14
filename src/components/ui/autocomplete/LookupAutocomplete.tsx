@@ -31,5 +31,6 @@ export function LookupAutocomplete({ source, filters, ...props }: LookupAutocomp
     },
     [source, filterKey],
   );
-  return <Autocomplete {...props} loadOptions={loadOptions} />;
+  // A change of filters is a different list: start the field afresh so it never shows the old one.
+  return <Autocomplete key={filterKey} {...props} loadOptions={loadOptions} />;
 }

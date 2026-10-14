@@ -96,3 +96,54 @@ export function tableSource(config: TableSourceConfig): LookupSource {
     },
   };
 }
+
+interface StaticSourceConfig {
+  key: string;
+  permission: PermissionKey;
+  /** The whole list, when it is small and fixed or comes from code; may depend on the filters. */
+  items: (input: SourceInput) => Promise<LookupOption[]> | LookupOption[];
+}
+
+/**
+ * A source over a short list the server already has (not a table), such as the payment methods.
+ * It is searched and paged the same way as any other, so the browser cannot tell the difference:
+ * typed text is compared with the label and description, and the cursor is the last label seen.
+ */
+export function staticSource(config: StaticSourceConfig): LookupSource {
+  return {
+    key: config.key,
+    permission: config.permission,
+    async search(input) {
+      const needle = input.query.toLowerCase();
+      const all = (await config.items(input))
+        .filter(
+          (option) =>
+            needle === '' ||
+            option.label.toLowerCase().includes(needle) ||
+            (option.description ?? '').toLowerCase().includes(needle),
+        )
+        .sort((a, b) => {
+          const byLabel = a.label.localeCompare(b.label);
+          return byLabel === 0 ? a.id.localeCompare(b.id) : byLabel;
+        });
+      const after = input.after;
+      const rest =
+        after === null
+          ? all
+          : all.filter(
+              (option) =>
+                option.label.localeCompare(after.k) > 0 ||
+                (option.label === after.k && option.id.localeCompare(after.id) > 0),
+            );
+      const page = rest.slice(0, input.limit);
+      const last = page.at(-1);
+      return {
+        options: page,
+        nextCursor:
+          rest.length > input.limit && last !== undefined
+            ? encodeCursor({ k: last.label, id: last.id })
+            : null,
+      };
+    },
+  };
+}

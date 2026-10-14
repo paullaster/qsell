@@ -1,6 +1,20 @@
-import { eq } from 'drizzle-orm';
-import { salesQuoteTemplates, salesSectionTemplates } from '@/server/db/drizzle/schema';
-import { acceptFilters, tableSource, type LookupSource } from './runner';
+import { and, eq } from 'drizzle-orm';
+import { drizzleDb } from '@/server/db/drizzle/client';
+import {
+  currencies,
+  customers,
+  salesQuoteTemplates,
+  salesSectionTemplates,
+} from '@/server/db/drizzle/schema';
+import { methodLabel, QUOTE_PAYMENT_METHODS } from '@/lib/payment-method-labels';
+import { QUOTE_STATUS_FILTERS, statusFilterLabel } from '@/lib/quote-statuses';
+import {
+  acceptFilters,
+  LookupFilterError,
+  staticSource,
+  tableSource,
+  type LookupSource,
+} from './runner';
 
 /** The non-empty strings joined with a dot, or null when there are none. */
 function joinText(parts: unknown[]): string | null {
@@ -74,8 +88,91 @@ const sectionTemplates = tableSource({
   }),
 });
 
+const tradeCustomers = tableSource({
+  key: 'trade-customers',
+  permission: 'customers:read',
+  table: customers,
+  id: customers.id,
+  label: customers.name,
+  searchColumns: [customers.name, customers.number, customers.email, customers.phone],
+  select: { number: customers.number, email: customers.email, accountType: customers.accountType },
+  scope: ({ companyId, filters }) => {
+    acceptFilters(filters, {});
+    return [eq(customers.companyId, companyId), eq(customers.isActive, true)];
+  },
+  toOption: (row) => ({
+    id: String(row.id),
+    label: String(row.label),
+    description: joinText([row.number, row.email]),
+    badge: row.accountType === 'credit' ? 'Credit' : null,
+  }),
+});
+
+const enabledCurrencies = tableSource({
+  key: 'currencies',
+  permission: 'quotes:read',
+  table: currencies,
+  id: currencies.code,
+  label: currencies.code,
+  searchColumns: [currencies.code, currencies.name],
+  select: { name: currencies.name, symbol: currencies.symbol, isBase: currencies.isBaseCurrency },
+  scope: ({ filters }) => {
+    acceptFilters(filters, {});
+    return [eq(currencies.isEnabled, true)];
+  },
+  toOption: (row) => ({
+    id: String(row.id),
+    label: String(row.label),
+    description: joinText([row.name]),
+    badge: row.isBase === true ? 'Base' : null,
+  }),
+});
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** How a quote can be paid. "On account" is offered only when the quote's customer has credit. */
+const paymentMethods = staticSource({
+  key: 'payment-methods',
+  permission: 'quotes:read',
+  async items({ companyId, filters }) {
+    const { customer = '', ...rest } = filters;
+    if (Object.keys(rest).length > 0) throw new LookupFilterError('Unsupported filter.');
+    const methods = [...QUOTE_PAYMENT_METHODS];
+    if (customer !== '') {
+      if (!UUID.test(customer)) throw new LookupFilterError('Unsupported filter.');
+      const rows = await drizzleDb
+        .select({ accountType: customers.accountType })
+        .from(customers)
+        .where(and(eq(customers.id, customer), eq(customers.companyId, companyId)));
+      if (rows.at(0)?.accountType === 'credit') methods.push('on_account');
+    }
+    return methods.map((method) => ({ id: method, label: methodLabel(method), description: null }));
+  },
+});
+
+/** The states to filter the quotes list by. */
+const quoteStatuses = staticSource({
+  key: 'quote-statuses',
+  permission: 'quotes:read',
+  items: ({ filters }) => {
+    acceptFilters(filters, {});
+    return QUOTE_STATUS_FILTERS.map((status) => ({
+      id: status,
+      label: statusFilterLabel(status),
+      description: null,
+    }));
+  },
+});
+
 const SOURCES: ReadonlyMap<string, LookupSource> = new Map(
-  [quoteTemplates, sectionTemplates].map((source) => [source.key, source]),
+  [
+    quoteTemplates,
+    sectionTemplates,
+    tradeCustomers,
+    enabledCurrencies,
+    paymentMethods,
+    quoteStatuses,
+  ].map((source) => [source.key, source]),
 );
 
 export const getLookupSource = (key: string): LookupSource | undefined => SOURCES.get(key);

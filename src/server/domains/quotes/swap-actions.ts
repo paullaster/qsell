@@ -1,6 +1,7 @@
 'use server';
 
 import { requirePermission } from '@/server/domains/access-control/guard';
+import { requireQuoteAuthor } from './authoring';
 import type { QuoteInput } from './service';
 import { runQuoteAction } from './run';
 import { TemplateSwapService, type SwapSummary } from './template-swap-service';
@@ -18,7 +19,7 @@ export async function planQuoteTemplateSwapAction(
   templateId: string | null,
 ): Promise<QuoteActionResult<SwapSummary>> {
   return await runQuoteAction(async () => {
-    await requirePermission('quotes:update');
+    await requireQuoteAuthor();
     if (templateId !== null && typeof templateId !== 'string') throw new Error('Invalid template.');
     return await swaps().planQuoteSwap(input, templateId);
   });
@@ -30,7 +31,7 @@ export async function planSectionTemplateSwapAction(
   templateId: string | null,
 ): Promise<QuoteActionResult<SwapSummary>> {
   return await runQuoteAction(async () => {
-    await requirePermission('quotes:update');
+    await requireQuoteAuthor();
     if (typeof sectionId !== 'string') throw new Error('Invalid section.');
     if (templateId !== null && typeof templateId !== 'string') throw new Error('Invalid template.');
     return await swaps().planSectionSwap(input, sectionId, templateId);
@@ -42,7 +43,7 @@ export async function addSectionFromTemplateAction(
   templateId: string,
 ): Promise<QuoteActionResult<QuoteInput>> {
   return await runQuoteAction(async () => {
-    await requirePermission('quotes:update');
+    await requireQuoteAuthor();
     if (typeof templateId !== 'string') throw new Error('Invalid template.');
     return await swaps().addSection(input, templateId);
   });
