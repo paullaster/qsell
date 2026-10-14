@@ -54,8 +54,30 @@ export async function cancelRefundAction(id: string, reason: { code: string; tex
   return run('refunds:cancel', { surface: 'finance/refunds/detail', action: 'cancel' }, async (ctx) => fin().refunds.cancel(ctx, id, reason, await postingPermissions()), [ROOT, `${ROOT}/${id}`, '/admin/finance/receivables/credit-note-excess']);
 }
 
-export async function recordRefundPayoutAction(id: string, input: { paidFromBankAccountId: string; payoutDate?: string; reference: string }) {
+export async function recordRefundPayoutAction(id: string, input: { paidFromMethodId: string; payoutDate?: string; reference: string }) {
   return run('refunds:record_manual_payout', { surface: 'finance/refunds/detail', action: 'record_payout' }, async (ctx) => fin().refunds.recordPayout(ctx, id, { ...input, permissions: await postingPermissions() }), [ROOT, `${ROOT}/${id}`]);
+}
+
+/** Sends an approved refund to the customer's phone through M-Pesa. The refund's own approval is the approval for the money. */
+export async function payRefundThroughMpesaAction(id: string) {
+  return run('refunds:pay_automatic', { surface: 'finance/refunds/detail', action: 'pay_through_mpesa' }, async (ctx) => {
+    const { getContainer } = await import('@/server/di/container');
+    const c = getContainer();
+    const plan = await c.finance.refunds.prepareAutomatic(ctx, id);
+    const { OperationRefused } = await import('@/server/domains/payments/daraja/operations');
+    try {
+      const r = await c.paymentEngine.disbursements.request({
+        companyId: ctx.companyId, providerId: plan.providerId, methodId: plan.methodId, operation: 'b2c', preApproved: true,
+        input: { phone: plan.phone, amount: plan.amount.split('.')[0], commandId: 'BusinessPayment', remarks: `Refund ${plan.number}`.slice(0, 100) },
+        requestedBy: ctx.actor.id ?? 'system', subject: { type: 'refund', id }, idempotencyKey: `refund:${id}:payout:${plan.attempt}`,
+        origin: ctx.origin as unknown as Record<string, unknown>,
+      });
+      return { operationId: r.op.id, status: r.status };
+    } catch (error) {
+      if (error instanceof OperationRefused) throw new FinanceError(error.code, error.message);
+      throw error;
+    }
+  }, [ROOT, `${ROOT}/${id}`]);
 }
 
 export async function listRefundsAction(filter: { status?: RefundStatus; q?: string; before?: string } = {}) {
@@ -90,7 +112,7 @@ export async function refundDetailAction(id: string) {
     if (!d) throw new FinanceError('NOT_FOUND', 'That refund does not exist.');
     const media = getContainer().media;
     const attachments = await Promise.all(d.attachments.map(async (a) => ({ id: a.id, fileName: a.fileName, note: a.note, createdAt: a.createdAt.toISOString(), url: await media.deliveryUrlById(a.mediaAssetId).catch(() => null) })));
-    const [banks, reasons] = await Promise.all([fin().bankAccounts.list(ctx.companyId), getContainer().reasonCodes.list(ctx.companyId)]);
+    const [methods, reasons] = await Promise.all([fin().paymentMethods.list(ctx.companyId), getContainer().reasonCodes.list(ctx.companyId)]);
     const r = d.r;
     const name = (x: string | null) => (x ? (d.actors[x] ?? x) : null);
     return {
@@ -100,7 +122,7 @@ export async function refundDetailAction(id: string) {
       amount: r.amount,
       currency: r.currency,
       customer: { id: d.customer.id, name: d.customer.name, number: d.customer.number, phone: d.customer.phone },
-      method: { id: d.method.id, name: d.method.name, kind: d.method.kind, bankAccountId: d.method.balancingBankAccountId },
+      method: { id: d.method.id, name: d.method.name, kind: d.method.kind, bankAccountId: d.method.balancingBankAccountId, automatic: d.method.refundDestination === 'automatic' },
       source: d.sourceLabel,
       sourceKind: r.sourceKind,
       reason: r.reasonCode,
@@ -117,12 +139,13 @@ export async function refundDetailAction(id: string) {
       payoutDate: r.payoutDate,
       attachments,
       events: d.events.map((e) => ({ id: String(e.id), event: e.event, from: e.fromStatus, to: e.toStatus, reasonCode: e.reasonCode, reasonText: e.reasonText, by: name(e.actorId) ?? e.actorType, surface: (e.origin as { surface?: string }).surface ?? null, permission: (e.origin as { permissionUsed?: string }).permissionUsed ?? null, at: e.createdAt.toISOString(), data: e.data })),
-      payFrom: banks.filter((b) => !b.account.blocked && b.account.kind !== 'clearing' && b.account.currency === r.currency).map((b) => ({ id: b.account.id, label: `${b.account.code} — ${b.account.name}` })),
+      payFrom: methods.filter((m) => m.method.enabled && !m.bankBlocked && m.bankCurrency === r.currency && m.method.kind !== 'cheque').map((m) => ({ id: m.method.id, label: `${m.method.name} — ${m.bankCode}${m.branchName ? ` (${m.branchName})` : ''}` })),
       reasons: reasons.filter((x) => x.isActive).map((x) => ({ code: x.code, description: x.description, requiresComment: x.requiresComment })),
       can: {
         submit: await canPermission('refunds:submit'),
         cancel: await canPermission('refunds:cancel'),
         pay: await canPermission('refunds:record_manual_payout'),
+        payAutomatic: await canPermission('refunds:pay_automatic'),
         attach: await canPermission('refunds:upload_evidence'),
       },
     };

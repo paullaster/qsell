@@ -2,6 +2,7 @@ import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   bankAccounts,
+  bankLedgerEntries,
   branches,
   customerReceipts,
   financeSettings,
@@ -14,6 +15,7 @@ import {
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { findTemplate } from '../domain/templates';
 import { toCents } from '../domain/receivables';
+import { ensureManualProvider } from '@/server/domains/payments/manual-provider';
 import { FinanceError, type FinanceContext } from '../errors';
 
 export const METHOD_KINDS: PaymentMethodKind[] = [
@@ -25,12 +27,20 @@ export interface PaymentMethodInput {
   code: string;
   name: string;
   kind: PaymentMethodKind;
+  /** The real bank, cash or mobile-money account the money lands in (statements come from it). */
   balancingBankAccountId: string;
+  /** The one provider this method goes through. Required; the built-in Manual one for cash and cheques. */
+  providerId: string;
+  /** The branch it belongs to. Empty = every branch. */
+  branchId?: string | null;
+  /** The G/L account its money posts to. */
+  glAccountId: string;
+  /** What the number is (paybill, till, account) and the number itself. */
+  channelKind?: string | null;
+  channelNumber?: string | null;
   requiresReference?: boolean;
   requiresEvidence?: boolean;
   requiresCounterparty?: boolean;
-  collectProviderConfigId?: string | null;
-  payoutProviderConfigId?: string | null;
   usableFor?: string[];
   settlementMode?: 'immediate' | 'delayed' | 'on_statement';
   settlementDays?: number;
@@ -57,11 +67,17 @@ export class PaymentMethodService {
         bankCurrency: bankAccounts.currency,
         bankBlocked: bankAccounts.blocked,
         providerName: paymentProviderConfigs.displayName,
+        providerCode: paymentProviderConfigs.providerCode,
         providerEnabled: paymentProviderConfigs.isEnabled,
+        branchName: branches.name,
+        glNo: glAccounts.no,
+        glName: glAccounts.name,
       })
       .from(paymentMethods)
       .innerJoin(bankAccounts, eq(bankAccounts.id, paymentMethods.balancingBankAccountId))
-      .leftJoin(paymentProviderConfigs, eq(paymentProviderConfigs.id, paymentMethods.collectProviderConfigId))
+      .innerJoin(paymentProviderConfigs, eq(paymentProviderConfigs.id, paymentMethods.providerId))
+      .innerJoin(glAccounts, eq(glAccounts.id, paymentMethods.glAccountId))
+      .leftJoin(branches, eq(branches.id, paymentMethods.branchId))
       .where(eq(paymentMethods.companyId, companyId))
       .orderBy(asc(paymentMethods.sortOrder), asc(paymentMethods.code));
   }
@@ -100,11 +116,26 @@ export class PaymentMethodService {
       .limit(1);
     if (!bank) throw new FinanceError('BANK_NOT_FOUND', 'Choose the bank or cash account this method pays into.');
     if (bank.blocked) throw new FinanceError('BANK_BLOCKED', `${bank.code} is blocked.`);
-    for (const pid of [input.collectProviderConfigId, input.payoutProviderConfigId]) {
-      if (!pid) continue;
-      const [p] = await db.select({ id: paymentProviderConfigs.id }).from(paymentProviderConfigs).where(eq(paymentProviderConfigs.id, pid)).limit(1);
-      if (!p) throw new FinanceError('PROVIDER_NOT_FOUND', 'The chosen payment provider does not exist.');
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuid.test(input.providerId ?? '')) throw new FinanceError('PROVIDER_REQUIRED', 'Choose the payment provider this method goes through (cash and cheques use the built-in Manual one).');
+    if (!uuid.test(input.glAccountId ?? '')) throw new FinanceError('GL_REQUIRED', 'Choose the G/L account this method posts to.');
+    const [provider] = await db
+      .select({ id: paymentProviderConfigs.id })
+      .from(paymentProviderConfigs)
+      .where(and(eq(paymentProviderConfigs.companyId, companyId), eq(paymentProviderConfigs.id, input.providerId)))
+      .limit(1);
+    if (!provider) throw new FinanceError('PROVIDER_REQUIRED', 'Choose the payment provider this method goes through (cash and cheques use the built-in Manual one).');
+    if (input.branchId) {
+      const [b] = await db.select({ id: branches.id }).from(branches).where(and(eq(branches.companyId, companyId), eq(branches.id, input.branchId))).limit(1);
+      if (!b) throw new FinanceError('BRANCH_NOT_FOUND', 'That branch does not exist.');
     }
+    const [gl] = await db.select().from(glAccounts).where(and(eq(glAccounts.companyId, companyId), eq(glAccounts.id, input.glAccountId))).limit(1);
+    if (!gl) throw new FinanceError('GL_REQUIRED', 'Choose the G/L account this method posts to.');
+    if (gl.type !== 'posting') throw new FinanceError('ACCOUNT_NOT_POSTING', `${gl.no} ${gl.name} is a heading; pick an account that can be posted to.`);
+    if (gl.blocked) throw new FinanceError('ACCOUNT_BLOCKED', `${gl.no} ${gl.name} is blocked.`);
+    if (gl.category !== 'assets') throw new FinanceError('ACCOUNT_NOT_ASSET', `${gl.no} ${gl.name} is not an asset account; money received is an asset.`);
+    if (gl.currencyPolicy !== 'any' && gl.currencyPolicy !== bank.currency) throw new FinanceError('CURRENCY_MISMATCH', `${gl.no} only carries ${gl.currencyPolicy}, and ${bank.code} holds ${bank.currency}.`);
+    if (input.channelNumber && input.channelNumber.length > 40) throw new FinanceError('INVALID', 'The paybill, till or account number is too long.');
     return bank;
   }
 
@@ -127,8 +158,11 @@ export class PaymentMethodService {
           requiresReference: input.requiresReference ?? false,
           requiresEvidence: input.requiresEvidence ?? false,
           requiresCounterparty: input.requiresCounterparty ?? false,
-          collectProviderConfigId: input.collectProviderConfigId ?? null,
-          payoutProviderConfigId: input.payoutProviderConfigId ?? null,
+          providerId: input.providerId,
+          branchId: input.branchId ?? null,
+          glAccountId: input.glAccountId,
+          channelKind: input.channelKind?.trim() || null,
+          channelNumber: input.channelNumber?.trim() || null,
           usableFor: input.usableFor ?? ['customer_receipt'],
           settlementMode: input.settlementMode ?? 'immediate',
           settlementDays: input.settlementDays ?? 0,
@@ -147,7 +181,7 @@ export class PaymentMethodService {
           action: 'finance.payment_method_created',
           actor: ctx.actor,
           inputs: { origin: ctx.origin },
-          outcome: { code: row!.code, kind: row!.kind, bankAccountId: row!.balancingBankAccountId },
+          outcome: { code: row!.code, kind: row!.kind, bankAccountId: row!.balancingBankAccountId, providerId: row!.providerId, branchId: row!.branchId, glAccountId: row!.glAccountId },
         },
         tx,
       );
@@ -174,8 +208,11 @@ export class PaymentMethodService {
         requiresReference: patch.requiresReference ?? current.requiresReference,
         requiresEvidence: patch.requiresEvidence ?? current.requiresEvidence,
         requiresCounterparty: patch.requiresCounterparty ?? current.requiresCounterparty,
-        collectProviderConfigId: patch.collectProviderConfigId === undefined ? current.collectProviderConfigId : patch.collectProviderConfigId,
-        payoutProviderConfigId: patch.payoutProviderConfigId === undefined ? current.payoutProviderConfigId : patch.payoutProviderConfigId,
+        providerId: patch.providerId ?? current.providerId,
+        branchId: patch.branchId === undefined ? current.branchId : patch.branchId,
+        glAccountId: patch.glAccountId ?? current.glAccountId,
+        channelKind: patch.channelKind === undefined ? current.channelKind : patch.channelKind,
+        channelNumber: patch.channelNumber === undefined ? current.channelNumber : patch.channelNumber,
         usableFor: patch.usableFor ?? current.usableFor,
         settlementMode: patch.settlementMode ?? current.settlementMode,
         settlementDays: patch.settlementDays ?? current.settlementDays,
@@ -186,6 +223,11 @@ export class PaymentMethodService {
         sortOrder: patch.sortOrder ?? current.sortOrder,
       };
       await this.check(tx, ctx.companyId, merged);
+      if (patch.glAccountId && patch.glAccountId !== current.glAccountId) {
+        const [moved] = await tx.select({ id: bankLedgerEntries.id }).from(bankLedgerEntries).where(eq(bankLedgerEntries.glAccountId, current.glAccountId)).limit(1);
+        const [used] = await tx.select({ id: customerReceipts.id }).from(customerReceipts).where(eq(customerReceipts.paymentMethodId, id)).limit(1);
+        if (used && moved) throw new FinanceError('METHOD_IN_USE', 'Receipts were posted through this method, so its G/L account cannot change. Switch it off and add a new method.');
+      }
       const [row] = await tx
         .update(paymentMethods)
         .set({
@@ -195,8 +237,11 @@ export class PaymentMethodService {
           requiresReference: merged.requiresReference,
           requiresEvidence: merged.requiresEvidence,
           requiresCounterparty: merged.requiresCounterparty,
-          collectProviderConfigId: merged.collectProviderConfigId ?? null,
-          payoutProviderConfigId: merged.payoutProviderConfigId ?? null,
+          providerId: merged.providerId,
+          branchId: merged.branchId ?? null,
+          glAccountId: merged.glAccountId,
+          channelKind: merged.channelKind?.trim() || null,
+          channelNumber: merged.channelNumber?.trim() || null,
           usableFor: merged.usableFor,
           settlementMode: merged.settlementMode,
           settlementDays: merged.settlementDays,
@@ -288,8 +333,7 @@ export class PaymentMethodService {
       let banksCreated = 0;
       for (const b of template.bankAccounts) {
         if (existingBanks.has(b.code)) continue;
-        const glId = gl.get(b.glAccount);
-        if (!glId) continue; // the company removed that account from its chart: skip rather than guess
+        if (!gl.get(b.glAccount)) continue; // the company removed that account from its chart: skip rather than guess
         const [row] = await tx
           .insert(bankAccounts)
           .values({
@@ -298,7 +342,6 @@ export class PaymentMethodService {
             name: b.name,
             kind: b.kind,
             currency: settings.baseCurrency,
-            glAccountId: glId,
             feeGlAccountId: b.feeAccount ? (gl.get(b.feeAccount) ?? null) : null,
             createdBy: ctx.actor.id ?? 'system',
           })
@@ -307,12 +350,16 @@ export class PaymentMethodService {
         banksCreated += 1;
       }
 
+      const manual = await ensureManualProvider(tx, ctx.companyId);
       const providers = await tx
         .select({ id: paymentProviderConfigs.id, code: paymentProviderConfigs.providerCode })
         .from(paymentProviderConfigs)
-        .innerJoin(branches, eq(branches.id, paymentProviderConfigs.branchId))
-        .where(and(eq(branches.companyId, ctx.companyId), eq(branches.isDefault, true)));
-      const providerByCode = new Map(providers.map((p) => [p.code as string, p.id]));
+        .where(eq(paymentProviderConfigs.companyId, ctx.companyId))
+        .orderBy(asc(paymentProviderConfigs.createdAt));
+      // A method that stands for an outside service goes through the first provider of that service, if there is one.
+      const providerByCode = new Map<string, string>();
+      for (const p of providers) if (!providerByCode.has(p.code as string)) providerByCode.set(p.code as string, p.id);
+      const glByBank = new Map(template.bankAccounts.map((b) => [b.code, gl.get(b.glAccount)]));
 
       const existingMethods = new Set(
         (await tx.select({ code: paymentMethods.code }).from(paymentMethods).where(eq(paymentMethods.companyId, ctx.companyId))).map((m) => m.code),
@@ -321,7 +368,8 @@ export class PaymentMethodService {
       for (const m of template.paymentMethods) {
         if (existingMethods.has(m.code)) continue;
         const bankId = existingBanks.get(m.bankAccount);
-        if (!bankId) continue;
+        const glId = glByBank.get(m.bankAccount);
+        if (!bankId || !glId) continue;
         await tx.insert(paymentMethods).values({
           companyId: ctx.companyId,
           code: m.code,
@@ -331,7 +379,8 @@ export class PaymentMethodService {
           requiresReference: m.requiresReference ?? false,
           requiresEvidence: m.requiresEvidence ?? false,
           requiresCounterparty: m.requiresCounterparty ?? false,
-          collectProviderConfigId: m.provider ? (providerByCode.get(m.provider) ?? null) : null,
+          providerId: (m.provider ? providerByCode.get(m.provider) : undefined) ?? manual.id,
+          glAccountId: glId,
           usableFor: (m.refundDestination ?? 'none') === 'none' ? ['customer_receipt'] : ['customer_receipt', 'customer_refund'],
           refundDestination: m.refundDestination ?? 'none',
           legacyCodes: m.legacyCodes ?? [],
@@ -393,21 +442,21 @@ export class PaymentMethodService {
     return total;
   }
 
-  /** Providers a method can be bound to (each branch has its own account per provider). */
+  /** The providers a method can go through (the built-in Manual one is always there). */
   async providerChoices(companyId: string) {
+    await ensureManualProvider(this.db, companyId);
     return this.db
       .select({
         id: paymentProviderConfigs.id,
         providerCode: paymentProviderConfigs.providerCode,
         displayName: paymentProviderConfigs.displayName,
-        branchName: branches.name,
         isEnabled: paymentProviderConfigs.isEnabled,
+        isSystem: paymentProviderConfigs.isSystem,
         environment: paymentProviderConfigs.environment,
       })
       .from(paymentProviderConfigs)
-      .innerJoin(branches, eq(branches.id, paymentProviderConfigs.branchId))
-      .where(eq(branches.companyId, companyId))
-      .orderBy(asc(branches.name), asc(paymentProviderConfigs.providerCode));
+      .where(eq(paymentProviderConfigs.companyId, companyId))
+      .orderBy(asc(paymentProviderConfigs.isSystem), asc(paymentProviderConfigs.displayName));
   }
 
   async methodsByIds(ids: string[]) {

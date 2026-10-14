@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 
-/** The old gateway toggles were replaced by Finance → Payment Setup → Payment providers. */
+/** The old gateway toggles were replaced by Settings → Payments. */
 export default function AdminGatewaysPage() {
-  redirect('/admin/finance/payment-providers');
+  redirect('/admin/settings/payments');
 }

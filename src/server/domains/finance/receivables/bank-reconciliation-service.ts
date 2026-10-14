@@ -62,10 +62,13 @@ export class BankReconciliationService {
       SELECT COALESCE(SUM(e.amount), 0)::text AS n, COUNT(*)::int AS c FROM bank_ledger_entries e
       WHERE e.bank_account_id = ${bankAccountId}::uuid AND e.posting_date <= ${statementDate}::date
         AND NOT EXISTS (SELECT 1 FROM bank_statement_matches m WHERE m.bank_entry_id = e.id AND m.undone_at IS NULL)`);
+    // The books carry this bank account in the G/L accounts its payment methods post to.
     const [gl] = await this.db
       .select({ n: sql<string>`COALESCE(SUM(${glAccountBalances.baseDebit} - ${glAccountBalances.baseCredit}), 0)` })
       .from(glAccountBalances)
-      .where(eq(glAccountBalances.accountId, account.glAccountId));
+      .where(sql`${glAccountBalances.accountId} IN (
+        SELECT gl_account_id FROM bank_ledger_entries WHERE bank_account_id = ${bankAccountId}::uuid
+        UNION SELECT gl_account_id FROM payment_methods WHERE balancing_bank_account_id = ${bankAccountId}::uuid)`);
     const opening = prev ? prev.statementBalance : (first?.opening ?? null);
     const totals = closing.reduce((n, l) => n + centsOf(l.amount), 0);
     return {

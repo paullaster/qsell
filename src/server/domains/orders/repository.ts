@@ -85,8 +85,13 @@ export class OrderRepository {
         status: order.status,
         paymentStatus: order.paymentStatus,
         paymentMethod: order.paymentMethod,
-        // The finance payment method this old provider code stands for (null until one is set up).
-        paymentMethodId: sql`(SELECT id FROM payment_methods WHERE legacy_codes ? ${order.paymentMethod} ORDER BY sort_order LIMIT 1)`,
+        // The finance payment method this payment stands for: the branch's own method first, then one for
+        // every branch; one through the provider of that code before one that only carries the old code.
+        paymentMethodId: sql`(
+          SELECT m.id FROM payment_methods m JOIN payment_provider_configs p ON p.id = m.provider_id
+          WHERE (m.legacy_codes ? ${order.paymentMethod} OR p.provider_code = ${order.paymentMethod})
+            AND (m.branch_id IS NULL OR m.branch_id = ${branchId || null}::uuid)
+          ORDER BY m.enabled DESC, (m.branch_id IS NULL) ASC, (p.provider_code = ${order.paymentMethod}) DESC, m.sort_order ASC LIMIT 1)`,
         shippingCourier: order.shippingCourier,
         trackingNumber: order.trackingNumber,
         internalNotes: order.internalNotes,
@@ -172,6 +177,7 @@ export class OrderRepository {
       status: OrderStatus;
       paymentStatus: PaymentStatus;
       paymentMethod: PaymentProvider;
+      paymentMethodId: string | null;
       transactionReference: string | null;
       mpesaReceiptNumber: string | null;
       pesapalTrackingId: string | null;

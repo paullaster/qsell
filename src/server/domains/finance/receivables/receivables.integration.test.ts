@@ -81,7 +81,7 @@ describe.skipIf(!url)('receivables (database)', () => {
     const { createFinanceServices } = await import('../index');
     const decisions = new DecisionLog(db);
     const reasons = new ReasonCodes(db);
-    fin = createFinanceServices(db, decisions, { numbering: new NumberSeriesService(db, decisions, reasons, {}), reasons });
+    fin = createFinanceServices(db, decisions, { numbering: new NumberSeriesService(db, decisions, reasons, {}), reasons, paymentConfigs: undefined as never, payments: undefined as never });
 
     const [company] = await db
       .insert(schema.companySettings)
@@ -108,10 +108,15 @@ describe.skipIf(!url)('receivables (database)', () => {
 
     it('guards bank accounts and methods', async () => {
       const gl = (await fin.setup.listAccounts(companyId)).find((a) => a.no === '6200')!;
-      expect(await codeOf(fin.bankAccounts.create(ctx, { code: 'X', name: 'X', kind: 'bank', currency: 'KES', glAccountId: gl.id }))).toBe('ACCOUNT_NOT_ASSET');
-      expect(await codeOf(fin.bankAccounts.create(ctx, { code: 'bad code', name: 'X', kind: 'bank', currency: 'KES', glAccountId: gl.id }))).toBe('CODE_INVALID');
-      expect(await codeOf(fin.paymentMethods.create(ctx, { code: 'CASH', name: 'Dup', kind: 'cash', balancingBankAccountId: ids.banks['CASH']! }))).toBe('DUPLICATE');
-      expect(await codeOf(fin.paymentMethods.create(ctx, { code: 'LIM', name: 'L', kind: 'cash', balancingBankAccountId: ids.banks['CASH']!, limits: { min: '10', max: '5' } }))).toBe('LIMIT_INVALID');
+      const manual = (await fin.paymentMethods.providerChoices(companyId)).find((p) => p.isSystem)!;
+      const cashGl = (await fin.paymentMethods.list(companyId)).find((m) => m.method.code === 'CASH')!.method.glAccountId;
+      const base = { name: 'X', kind: 'cash' as const, balancingBankAccountId: ids.banks['CASH']!, providerId: manual.id, glAccountId: cashGl };
+      expect(await codeOf(fin.bankAccounts.create(ctx, { code: 'bad code', name: 'X', kind: 'bank', currency: 'KES' }))).toBe('CODE_INVALID');
+      expect(await codeOf(fin.paymentMethods.create(ctx, { ...base, code: 'X', glAccountId: gl.id }))).toBe('ACCOUNT_NOT_ASSET');
+      expect(await codeOf(fin.paymentMethods.create(ctx, { ...base, code: 'X', providerId: '' }))).toBe('PROVIDER_REQUIRED');
+      expect(await codeOf(fin.paymentMethods.create(ctx, { ...base, code: 'X', glAccountId: '' }))).toBe('GL_REQUIRED');
+      expect(await codeOf(fin.paymentMethods.create(ctx, { ...base, code: 'CASH', name: 'Dup' }))).toBe('DUPLICATE');
+      expect(await codeOf(fin.paymentMethods.create(ctx, { ...base, code: 'LIM', name: 'L', limits: { min: '10', max: '5' } }))).toBe('LIMIT_INVALID');
       expect(await codeOf(fin.paymentMethods.update(ctx, ids.methods['CASH']!, { code: 'OTHER' }))).toBe('CODE_FIXED');
     });
 
@@ -377,8 +382,8 @@ describe.skipIf(!url)('receivables (database)', () => {
       const bal = async (code: string) => Number((await db.execute<{ s: string }>(sql`SELECT COALESCE(SUM(l.amount),0) s FROM bank_ledger_entries l JOIN bank_accounts b ON b.id = l.bank_account_id WHERE b.code = ${code} AND l.document_id = ${r.id}::uuid`))[0]!.s);
       expect(await bal('CHQ-TRANSIT')).toBe(800);
       expect(await codeOf(fin.receipts.clearCheque(ctx, r.id))).toBe('CHEQUE_STATE'); // not deposited yet
-      expect(await codeOf(fin.receipts.depositCheque(ctx, r.id, { bankAccountId: ids.banks['CASH']! }))).toBe('BANK_KIND');
-      await fin.receipts.depositCheque(ctx, r.id, { bankAccountId: ids.banks['BANK']! });
+      expect(await codeOf(fin.receipts.depositCheque(ctx, r.id, { depositMethodId: ids.methods['CASH']! }))).toBe('BANK_KIND');
+      await fin.receipts.depositCheque(ctx, r.id, { depositMethodId: ids.methods['BANK_TRANSFER']! });
       await fin.receipts.clearCheque(ctx, r.id);
       expect(await bal('CHQ-TRANSIT')).toBe(0);
       expect(await bal('BANK')).toBe(800);
@@ -512,9 +517,9 @@ describe.skipIf(!url)('receivables (database)', () => {
       const garbage = { v: 1 as const, iv: legacy.iv, tag: legacy.tag, ciphertext: Buffer.from('not the real ciphertext').toString('base64') };
       const [b1] = await db.insert(schema.branches).values({ companyId, code: `RB${seq}A`, name: 'Reseal A', isDefault: false }).returning();
       const [b2] = await db.insert(schema.branches).values({ companyId, code: `RB${seq}B`, name: 'Reseal B', isDefault: false }).returning();
-      const [good] = await db.insert(schema.paymentProviderConfigs).values({ branchId: b1!.id, providerCode: 'pesapal_v3', displayName: 'P', apiBaseUrl: 'https://x.test', credentialsEncrypted: legacy }).returning();
-      const [bad] = await db.insert(schema.paymentProviderConfigs).values({ branchId: b2!.id, providerCode: 'pesapal_v3', displayName: 'P', apiBaseUrl: 'https://x.test', credentialsEncrypted: garbage }).returning();
-      const [current] = await db.insert(schema.paymentProviderConfigs).values({ branchId: b1!.id, providerCode: 'jenga_hq', displayName: 'J', apiBaseUrl: 'https://x.test', credentialsEncrypted: encryptCredentials({ apiKey: 'k' }) }).returning();
+      const [good] = await db.insert(schema.paymentProviderConfigs).values({ companyId, branchId: b1!.id, providerCode: 'pesapal_v3', displayName: `P ${seq}a`, apiBaseUrl: 'https://x.test', credentialsEncrypted: legacy }).returning();
+      const [bad] = await db.insert(schema.paymentProviderConfigs).values({ companyId, branchId: b2!.id, providerCode: 'pesapal_v3', displayName: `P ${seq}b`, apiBaseUrl: 'https://x.test', credentialsEncrypted: garbage }).returning();
+      const [current] = await db.insert(schema.paymentProviderConfigs).values({ companyId, branchId: b1!.id, providerCode: 'jenga_hq', displayName: `J ${seq}`, apiBaseUrl: 'https://x.test', credentialsEncrypted: encryptCredentials({ apiKey: 'k' }) }).returning();
       const out = await new PaymentService(db, new PaymentRegistry()).resealCredentials();
       expect(out.resealed).toBeGreaterThanOrEqual(1);
       expect(out.failed.map((f) => f.id)).toContain(bad!.id);

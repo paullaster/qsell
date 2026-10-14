@@ -7,7 +7,6 @@ import {
   blockBankAccountAction,
   createBankAccountAction,
   deleteBankAccountAction,
-  seedPaymentSetupAction,
   updateBankAccountAction,
   type listBankAccountsAction,
 } from '@/server/domains/finance/receivables/actions';
@@ -30,16 +29,14 @@ interface FormState {
   name: string;
   kind: Kind;
   currency: string;
-  glAccountId: string;
   feeGlAccountId: string;
-  providerConfigId: string;
   bankName: string;
   accountNumber: string;
   paybill: string;
 }
 
 const blank = (currency: string): FormState => ({
-  id: null, code: '', name: '', kind: 'bank', currency, glAccountId: '', feeGlAccountId: '', providerConfigId: '', bankName: '', accountNumber: '', paybill: '',
+  id: null, code: '', name: '', kind: 'bank', currency, feeGlAccountId: '', bankName: '', accountNumber: '', paybill: '',
 });
 
 export function BankAccountsClient({ view }: { view: View }) {
@@ -51,14 +48,13 @@ export function BankAccountsClient({ view }: { view: View }) {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [movements, setMovements] = useState<{ account: { code: string; name: string; currency: string }; entries: { id: string; postingDate: string; documentType: string; documentNo: string; description: string | null; amount: string; running: string }[] } | null>(null);
 
-  const assets = view.glChoices.filter((a) => a.category === 'assets');
   const expenses = view.glChoices.filter((a) => a.category === 'expense');
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setForm((f) => (f ? { ...f, [k]: v } : f));
 
   const edit = (a: Account) =>
     setForm({
-      id: a.id, code: a.code, name: a.name, kind: a.kind, currency: a.currency, glAccountId: a.glAccountId,
-      feeGlAccountId: a.feeGlAccountId ?? '', providerConfigId: a.providerConfigId ?? '',
+      id: a.id, code: a.code, name: a.name, kind: a.kind, currency: a.currency,
+      feeGlAccountId: a.feeGlAccountId ?? '',
       bankName: a.details.bankName ?? '', accountNumber: a.details.accountNumber ?? '', paybill: a.details.paybill ?? '',
     });
 
@@ -75,9 +71,7 @@ export function BankAccountsClient({ view }: { view: View }) {
       name: form.name,
       kind: form.kind,
       currency: form.currency.toUpperCase(),
-      glAccountId: form.glAccountId,
       feeGlAccountId: form.feeGlAccountId || null,
-      providerConfigId: form.providerConfigId || null,
       details,
     };
     const res = form.id
@@ -107,14 +101,6 @@ export function BankAccountsClient({ view }: { view: View }) {
     if (res.ok) router.refresh();
   };
 
-  const seed = async () => {
-    setBusy(true);
-    const res = await attempt(seedPaymentSetupAction());
-    setBusy(false);
-    setNotice(res.ok ? { kind: 'ok', text: `Added ${res.data.bankAccounts} bank accounts and ${res.data.methods} payment methods.` } : { kind: 'error', text: res.error });
-    if (res.ok) router.refresh();
-  };
-
   const showMovements = async (a: Account) => {
     setBusy(true);
     const res = await attempt(bankLedgerAction(a.id));
@@ -127,12 +113,9 @@ export function BankAccountsClient({ view }: { view: View }) {
     <div className="max-w-6xl space-y-5">
       <PageHeader
         title="Bank and cash accounts"
-        intro="Where money sits: bank accounts, cash drawers, mobile-money settlement accounts and clearing accounts. Each one is carried by a ledger account, and every payment method pays into one of them."
+        intro="The real accounts money sits in: bank accounts, cash drawers, mobile-money accounts and clearing accounts. Statements are reconciled per account. Which branch and which G/L account a payment posts to is set on each payment method (Settings → Payments)."
         actions={
           <>
-            {view.accounts.length === 0 && view.can.seed ? (
-              <button type="button" className={buttonClass} disabled={busy} onClick={seed}>Add the standard accounts and methods</button>
-            ) : null}
             {view.can.create ? (
               <button type="button" className={primaryClass} aria-expanded={form !== null} onClick={() => setForm(form ? null : blank(view.baseCurrency ?? 'KES'))}>
                 Add account
@@ -160,12 +143,6 @@ export function BankAccountsClient({ view }: { view: View }) {
             <Field id={`${uid}-cur`} label="Currency" hint="An account holds one currency.">
               <input id={`${uid}-cur`} value={form.currency} onChange={(e) => set('currency', e.target.value.toUpperCase())} className={fieldClass} required maxLength={3} pattern="[A-Za-z]{3}" autoComplete="off" />
             </Field>
-            <Field id={`${uid}-gl`} label="Ledger account" hint="The asset account that carries this money in the books.">
-              <select id={`${uid}-gl`} value={form.glAccountId} onChange={(e) => set('glAccountId', e.target.value)} className={fieldClass} required>
-                <option value="">Choose…</option>
-                {assets.map((a) => <option key={a.id} value={a.id}>{a.no} {a.name}</option>)}
-              </select>
-            </Field>
             <Field id={`${uid}-fee`} label="Fees go to" hint="Where bank or mobile-money charges post (optional).">
               <select id={`${uid}-fee`} value={form.feeGlAccountId} onChange={(e) => set('feeGlAccountId', e.target.value)} className={fieldClass}>
                 <option value="">None</option>
@@ -181,12 +158,6 @@ export function BankAccountsClient({ view }: { view: View }) {
             {form.kind === 'mobile_money' ? (
               <Field id={`${uid}-pb`} label="Paybill or till number"><input id={`${uid}-pb`} value={form.paybill} onChange={(e) => set('paybill', e.target.value)} className={fieldClass} maxLength={20} inputMode="numeric" autoComplete="off" /></Field>
             ) : null}
-            <Field id={`${uid}-prov`} label="Filled by provider" hint="The provider account that settles into this one (optional).">
-              <select id={`${uid}-prov`} value={form.providerConfigId} onChange={(e) => set('providerConfigId', e.target.value)} className={fieldClass}>
-                <option value="">None (manual)</option>
-                {view.providers.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-              </select>
-            </Field>
           </div>
           <div className="flex flex-wrap gap-2">
             <button type="submit" className={primaryClass} disabled={busy}>{form.id ? 'Save changes' : 'Add account'}</button>
@@ -196,7 +167,7 @@ export function BankAccountsClient({ view }: { view: View }) {
       ) : null}
 
       {view.accounts.length === 0 ? (
-        <p className="text-sm text-fg-muted">No bank or cash accounts yet.{view.can.seed ? ' Add the standard set above, or add your own.' : ''}</p>
+        <p className="text-sm text-fg-muted">No bank or cash accounts yet. Add one, or add the standard set under Settings → Payments.</p>
       ) : (
         <ul className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
           {view.accounts.map((a) => (
@@ -209,7 +180,7 @@ export function BankAccountsClient({ view }: { view: View }) {
                 {a.blocked ? <Chip tone="red">Blocked</Chip> : <Chip tone="green">Open</Chip>}
               </div>
               <dl className="grid grid-cols-2 gap-2 text-xs">
-                <div><dt className="text-fg-muted">Ledger account</dt><dd className="font-semibold text-fg-strong">{a.glNo} {a.glName}</dd></div>
+                <div><dt className="text-fg-muted">Posts to</dt><dd className="font-semibold text-fg-strong">{a.glNos.length > 0 ? a.glNos.join(', ') : 'Nothing yet'}</dd></div>
                 <div><dt className="text-fg-muted">Balance</dt><dd className="font-semibold tabular-nums text-fg-strong">{a.currency} {money(a.balance)}</dd></div>
                 <div><dt className="text-fg-muted">Used by</dt><dd className="font-semibold text-fg-strong">{a.methods} payment {a.methods === 1 ? 'method' : 'methods'}</dd></div>
                 {a.details.paybill || a.details.accountNumber ? (

@@ -8,8 +8,7 @@ import {
   type BranchInsert,
   type OrganizationRow,
 } from '@/server/db/drizzle/schema';
-import { PAYMENT_PROVIDER_META, type PaymentProviderCode } from '@/server/domains/payments/types';
-import { PaymentConfigRepository } from '@/server/domains/payments/repository';
+import { ensureManualProvider } from '@/server/domains/payments/manual-provider';
 
 export class BranchRepository {
   constructor(private readonly db: DrizzleDb) {}
@@ -172,22 +171,8 @@ export class OrganizationRepository {
         isActive: true,
       });
 
-      // Seed empty provider config rows (disabled) so admin UI has something to edit.
-      const configRepo = new PaymentConfigRepository(this.db);
-      for (const code of Object.keys(PAYMENT_PROVIDER_META) as PaymentProviderCode[]) {
-        const meta = PAYMENT_PROVIDER_META[code];
-        await configRepo.upsert({
-          branchId: branch.id,
-          providerCode: code,
-          displayName: meta.label,
-          isEnabled: false,
-          environment: 'staging',
-          apiBaseUrl: meta.defaultStagingBaseUrl,
-          credentialsEncrypted: null,
-          settings: {},
-          replaceCredentials: true,
-        });
-      }
+      // Providers belong to the company, not the branch: only the built-in Manual one is made here.
+      await ensureManualProvider(this.db, company.id);
     }
 
     return { organization, branch };

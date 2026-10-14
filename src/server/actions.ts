@@ -75,8 +75,6 @@ export {
   submitPesapalOrderAction,
   simulatePesapalPaymentAction,
   listBranchesAction,
-  listPaymentConfigsAction,
-  savePaymentConfigAction,
   listEnabledCheckoutProvidersAction,
   initiateBranchPaymentAction,
   getPaymentAttemptStatusAction,

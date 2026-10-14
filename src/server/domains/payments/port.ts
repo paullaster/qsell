@@ -1,4 +1,5 @@
 import type { PaymentProviderCode } from './types';
+import type { InboundClaim, PlatformContext, VerificationOutcome, VerifyAttemptInput } from './engine/types';
 
 export interface InitiatePaymentInput {
   attemptId: string;
@@ -97,6 +98,14 @@ export interface PaymentPort {
     credentials: Record<string, unknown>,
     settings: Record<string, unknown>,
   ): Promise<CallbackResult>;
+  /** Reads a callback body into what it claims. Never trusted: see verifyAttempt. */
+  parseCallback?(body: unknown): InboundClaim | null;
+  /**
+   * Asks the platform itself whether a payment we started exists and succeeded, and whether it agrees
+   * with what we asked for. Only a `confirmed` outcome may be consumed. A platform that cannot be asked
+   * leaves this out, and its payments are never consumed automatically.
+   */
+  verifyAttempt?(input: VerifyAttemptInput, ctx: PlatformContext): Promise<VerificationOutcome>;
   queryStatus?(
     refs: { providerReference?: string; externalReference?: string },
     credentials: Record<string, unknown>,

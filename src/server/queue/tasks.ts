@@ -29,223 +29,62 @@ interface RetryFailedCallPayload {
   attempt: number;
 }
 
-/** Worker task: process a payment gateway callback (M-Pesa, Pesapal, etc.). */
+/**
+ * Worker task: a payment callback that was queued before payments were checked with the platform. It is
+ * read and written down like any other callback, and the payment is verified, never taken on its word.
+ */
 export const processPaymentCallback = async (
   payload: ProcessPaymentCallbackPayload,
   helpers: { logger: any },
 ) => {
   const { auditId, correlationId, provider, rawPayload, headers } = payload;
-  helpers.logger.info(`Processing ${provider} callback`, { auditId, correlationId });
-
+  helpers.logger.info(`Processing ${provider} callback (verified path)`, { auditId, correlationId });
   const container = getContainer();
-
-  // Tokenized callbacks belong to PaymentAttempt, not the legacy payment
-  // transaction table. Reuse the canonical provider callback handler so the
-  // attempt, order, inventory, and customer ledger stay in sync.
-  if (payload.callbackToken) {
-    try {
-      const attempt = await container.paymentAttempts.getByCallbackToken(payload.callbackToken);
-      const request = new Request('http://worker.internal/payment-callback', {
-        method: 'POST',
-        headers,
-        body: rawPayload,
-      });
-      const result = await container.payments.handleProviderCallback({
-        providerCode: provider as PaymentProviderCode,
-        callbackToken: payload.callbackToken,
-        receiptEventId: payload.callbackEventId,
-        request,
-      });
-      await container.paymentRecords.updateAuditLog(auditId, {
-        statusCode: result.httpStatus,
-        responsePayload: {
-          processedAt: new Date().toISOString(),
-          httpStatus: result.httpStatus,
-          outcome: result.callback.status,
-          callbackOk: result.callback.ok,
-          errorMessage: result.callback.errorMessage ?? null,
-          providerReference: result.callback.providerReference ?? null,
-          externalReference: result.callback.externalReference ?? null,
-          receiptNumber: result.callback.receiptNumber ?? null,
-          acknowledgement: result.body,
-        },
-        errorCode: result.callback.status === 'failed' ? 'PAYMENT_CALLBACK_FAILED' : null,
-        errorMessage: result.callback.errorMessage ?? null,
-      });
-      await broadcastRealtime('payment_callback_processed', {
-        type: result.callback.status,
-        provider,
-        callbackToken: payload.callbackToken,
-        orderId: attempt?.orderId,
-      });
-      helpers.logger.info(`Callback processed: ${result.callback.status}`, {
-        auditId,
-        correlationId,
-      });
-    } catch (err) {
-      await container.paymentRecords.updateAuditLog(auditId, {
-        errorCode: 'CALLBACK_PROCESSING_FAILED',
-        errorMessage: err instanceof Error ? err.message : 'Payment callback processing failed',
-      });
-      throw err;
-    }
+  if (!payload.callbackToken) {
+    await container.paymentRecords.updateAuditLog(auditId, { errorCode: 'NO_TOKEN', errorMessage: 'The callback had no address secret, so it cannot be tied to a payment.' });
     return;
   }
-
-  let parsed: any;
-  try {
-    parsed = JSON.parse(rawPayload);
-  } catch {
-    helpers.logger.error('Invalid JSON in callback payload');
-    await container.paymentRecords.updateAuditLog(auditId, {
-      errorCode: 'INVALID_JSON',
-      errorMessage: 'Callback payload is not valid JSON',
-    });
-    return;
-  }
-
-  let transactionReference: string | null = null;
-  let orderId: string | null = null;
-
-  if (provider === 'mpesa_daraja') {
-    const cb = (parsed?.Body?.stkCallback as any) ?? {};
-    transactionReference = ((cb.CheckoutRequestID ?? cb.MerchantRequestID) as string) ?? null;
-  } else if (provider === 'pesapal_v3') {
-    transactionReference = ((parsed.OrderTrackingId ?? parsed.MerchantReference) as string) ?? null;
-  } else if (provider === 'jenga_hq') {
-    transactionReference = ((parsed.transactionReference ?? parsed.reference) as string) ?? null;
-  } else if (provider === 'kcb_buni') {
-    transactionReference =
-      ((parsed.CheckoutRequestID ?? parsed.MerchantReference) as string) ?? null;
-  }
-
-  if (!transactionReference) {
-    helpers.logger.warn('Could not extract transaction reference');
-    await container.paymentRecords.updateAuditLog(auditId, {
-      errorCode: 'MISSING_REFERENCE',
-      errorMessage: 'No transaction reference found in callback',
-    });
-    return;
-  }
-
-  const tx = await container.paymentRecords.findTransaction({ transactionReference });
-  if (!tx) {
-    helpers.logger.warn('Transaction not found for reference', { transactionReference });
-    await container.paymentRecords.updateAuditLog(auditId, {
-      errorCode: 'TX_NOT_FOUND',
-      errorMessage: `No transaction record for reference ${transactionReference}`,
-    });
-    return;
-  }
-
-  orderId = tx.orderId;
-
-  await container.paymentRecords.updateTransaction(tx.id, {
-    callbackPayload: parsed,
-    callbackReceivedAt: new Date(),
-    callbackAuditId: auditId,
+  const reply = await container.paymentEngine.ingestAttemptCallback({
+    token: payload.callbackToken,
+    rawText: rawPayload,
+    headers,
+    sourceIp: null,
+    https: true,
+    method: 'POST',
   });
+  await container.paymentRecords.updateAuditLog(auditId, { statusCode: reply.httpStatus, responsePayload: { verifiedPath: true, acknowledgement: reply.body } });
+};
 
-  await container.paymentRecords.updateAuditLog(auditId, {
-    callbackReceivedAt: new Date(),
-  });
+/** Worker task: ask the platform whether a payment is real; ask again later if it has not decided. */
+export const providerVerifyAttempt = async (payload: { attemptId: string }, helpers: { logger: any }) => {
+  const result = await getContainer().paymentEngine.verification.verifyAttempt(payload.attemptId);
+  helpers.logger.info(`Payment ${payload.attemptId}: ${result.outcome}${result.reason ? ` (${result.reason})` : ''}`);
+};
 
-  let outcome: 'successful' | 'failed' | 'pending' = 'pending';
-  let paymentReference: string | null = null;
-  let errorMessage: string | null = null;
+/** Worker task: confirm money that arrived straight into a paybill or till. */
+export const providerVerifyTransaction = async (payload: { transactionId: string }, helpers: { logger: any }) => {
+  const result = await getContainer().paymentEngine.c2b.verify(payload.transactionId);
+  helpers.logger.info(`Transaction ${payload.transactionId}: ${result.state}${result.reason ? ` (${result.reason})` : ''}`);
+};
 
-  if (provider === 'mpesa_daraja') {
-    const cb = (parsed?.Body?.stkCallback as any) ?? {};
-    const resultCode = Number(cb.ResultCode);
-    if (resultCode === 0) {
-      outcome = 'successful';
-      const meta = (cb?.CallbackMetadata?.Item as any[]) ?? [];
-      for (const item of meta) {
-        if (item.Name === 'MpesaReceiptNumber') paymentReference = String(item.Value);
-      }
-    } else {
-      outcome = 'failed';
-      errorMessage = (cb.ResultDesc as string) ?? 'M-Pesa payment failed';
-    }
-  } else if (provider === 'pesapal_v3') {
-    const status = String(parsed.Status ?? '').toUpperCase();
-    if (status === 'COMPLETED' || status === 'SUCCESS') {
-      outcome = 'successful';
-      paymentReference = parsed.OrderTrackingId as string;
-    } else if (status === 'FAILED' || status === 'CANCELLED') {
-      outcome = 'failed';
-      errorMessage = (parsed.FailureReason as string) ?? 'Pesapal payment failed';
-    }
+/** Worker task: send an operation to the platform (or send it again). */
+export const providerSendOperation = async (payload: { operationId: string }) => {
+  await getContainer().paymentEngine.daraja.send(payload.operationId);
+};
+
+/** Worker cron task: pick up whatever a lost job or a restart left half done. */
+export const providerSweep = async (_payload: unknown, helpers: { logger: any }) => {
+  const r = await getContainer().paymentEngine.sweep();
+  if (r.resent || r.claimed) helpers.logger.info('Payment engine sweep', r);
+};
+
+/** Worker cron task: compare what Safaricom says it received with what we know. */
+export const providerPullSweep = async (_payload: unknown, helpers: { logger: any }) => {
+  const engine = getContainer().paymentEngine;
+  for (const providerId of await engine.c2b.providersWithPull()) {
+    const r = await engine.c2b.pullSweep(providerId);
+    if (r.missing || r.found) helpers.logger.info('Pull sweep', { providerId, ...r });
   }
-
-  if (outcome === 'successful' && paymentReference) {
-    await container.paymentRecords.updateTransaction(tx.id, {
-      status: 'successful',
-      transactionReference: paymentReference,
-      externalReference: paymentReference,
-      ipnStatus: 'delivered',
-      reconciliationStatus: 'pending',
-    });
-
-    await container.orders.update(orderId!, {
-      paymentStatus: 'paid',
-      status: 'processing',
-      transactionReference: paymentReference,
-      mpesaReceiptNumber:
-        provider === 'mpesa_daraja' || provider === 'kcb_buni' ? paymentReference : null,
-    });
-
-    await InventoryReservationService.fulfilOrder(orderId!);
-
-    const updatedTx = await container.paymentRecords.getTransactionById(tx.id);
-    const updatedOrder = await container.orders.getById(orderId!);
-    if (updatedTx && updatedOrder) {
-      await ReconciliationEngine.reconcileSingleTransaction(
-        updatedTx as any,
-        updatedOrder as any,
-        'async_callback',
-      );
-    }
-
-    await container.paymentRecords.updateTransaction(tx.id, {
-      reconciliationStatus: 'reconciled',
-      callbackReceivedAt: new Date(),
-    });
-
-    void broadcastRealtime('payment_callback_processed', {
-      type: 'success',
-      orderId,
-      provider,
-      transactionReference: paymentReference,
-    });
-  } else if (outcome === 'failed') {
-    await container.paymentRecords.updateTransaction(tx.id, {
-      status: 'failed',
-      errorMessage,
-      ipnStatus: 'delivered',
-      reconciliationStatus: 'pending',
-    });
-
-    await container.orders.update(orderId!, {
-      paymentStatus: 'failed',
-      status: 'failed',
-    });
-
-    await InventoryReservationService.releaseOrder(
-      orderId!,
-      errorMessage ?? 'payment_failed',
-      provider,
-    );
-
-    void broadcastRealtime('payment_callback_processed', {
-      type: 'failed',
-      orderId,
-      provider,
-      error: errorMessage,
-    });
-  }
-
-  helpers.logger.info(`Callback processed: ${outcome}`, { orderId, auditId });
 };
 
 /** Worker task: process a generic webhook (non-payment). */
@@ -397,4 +236,9 @@ export const tasks = {
   'finance-ensure-partitions': financeEnsurePartitions,
   'finance-integrity-check': financeIntegrityCheck,
   'reseal-provider-credentials': resealProviderCredentials,
+  'provider-verify-attempt': providerVerifyAttempt,
+  'provider-verify-transaction': providerVerifyTransaction,
+  'provider-send-operation': providerSendOperation,
+  'provider-sweep': providerSweep,
+  'provider-pull-sweep': providerPullSweep,
 };
