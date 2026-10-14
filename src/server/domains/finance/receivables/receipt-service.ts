@@ -175,6 +175,10 @@ export class ReceiptService {
       if (!row) throw new FinanceError('METHOD_NOT_FOUND', 'Choose how the customer paid.');
       const { method, bank } = row;
       if (bank.blocked) throw new FinanceError('BANK_BLOCKED', `${bank.code} is blocked, so this method cannot take money.`);
+      if (method.branchId && input.branchId && input.branchId !== method.branchId) {
+        throw new FinanceError('METHOD_BRANCH', `${method.name} belongs to another branch than the one this receipt is for.`);
+      }
+      const branchId = input.branchId ?? method.branchId ?? null;
 
       let cents: number;
       try {
@@ -236,7 +240,7 @@ export class ReceiptService {
         'customer_payment',
         {
           companyId: ctx.companyId,
-          branchId: input.branchId ?? undefined,
+          branchId: branchId ?? undefined,
           date: businessDate(),
           document: { kind: 'customer_payment', id },
           actor: ctx.actor,
@@ -259,7 +263,7 @@ export class ReceiptService {
         payerName: input.payerName?.trim() || null,
         counterparty,
         narration: input.narration?.trim() || null,
-        branchId: input.branchId ?? null,
+        branchId,
         source: input.source ?? 'manual',
         sourceRef: input.sourceRef ?? null,
         orderId: input.orderId ?? null,
@@ -365,7 +369,7 @@ export class ReceiptService {
           rate: r.rate,
           rateSource: r.currency === settings.baseCurrency ? 'base' : 'manual',
           lines: [
-            { accountId: bank.glAccountId, debit: r.amount, credit: '0', description: `${method.name} ${r.externalReference ?? ''}`.trim(), sourceLedger: 'bank', sourceEntryId: bank.id },
+            { accountId: method.glAccountId, debit: r.amount, credit: '0', description: `${method.name} ${r.externalReference ?? ''}`.trim(), sourceLedger: 'bank', sourceEntryId: bank.id },
             { accountId: receivables.accountId, debit: '0', credit: r.amount, description: `Receipt ${r.number}`, sourceLedger: 'customer', sourceEntryId: customer.id },
           ],
           chainKey: this.chain(r.branchId),
@@ -399,6 +403,7 @@ export class ReceiptService {
         documentType: 'customer_receipt',
         documentNo: r.number,
         documentId: id,
+        glAccountId: method.glAccountId,
         description: `${customer.name} — ${method.name}`,
         amount: fromCents(cents),
         currency: r.currency,
@@ -571,13 +576,14 @@ export class ReceiptService {
       createdBy: ctx.actor.id,
     });
     // Take the money back out of whichever account(s) it now sits in.
-    const sits = await tx.execute<{ bank_account_id: string; total: string; currency: string }>(sql`
-      SELECT bank_account_id, SUM(amount) AS total, MAX(currency) AS currency FROM bank_ledger_entries
-      WHERE document_id = ${r.id}::uuid GROUP BY bank_account_id HAVING SUM(amount) <> 0`);
+    const sits = await tx.execute<{ bank_account_id: string; gl_account_id: string; total: string; currency: string }>(sql`
+      SELECT bank_account_id, gl_account_id, SUM(amount) AS total, MAX(currency) AS currency FROM bank_ledger_entries
+      WHERE document_id = ${r.id}::uuid GROUP BY bank_account_id, gl_account_id HAVING SUM(amount) <> 0`);
     for (const s of sits) {
       await tx.insert(bankLedgerEntries).values({
         companyId: ctx.companyId,
         bankAccountId: s.bank_account_id,
+        glAccountId: s.gl_account_id,
         postingDate: opts.postingDate,
         documentType: 'customer_receipt_reversal',
         documentNo: r.number,
@@ -672,21 +678,36 @@ export class ReceiptService {
     return r;
   }
 
-  async depositCheque(ctx: FinanceContext, id: string, input: { bankAccountId: string; date?: string }) {
+  /** Payment methods a cheque can be deposited through (a bank account and the G/L account it posts to). */
+  async chequeDepositMethods(companyId: string) {
+    const rows = await this.db
+      .select({ method: paymentMethods, bank: bankAccounts })
+      .from(paymentMethods)
+      .innerJoin(bankAccounts, eq(bankAccounts.id, paymentMethods.balancingBankAccountId))
+      .where(and(eq(paymentMethods.companyId, companyId), eq(paymentMethods.enabled, true), eq(bankAccounts.kind, 'bank'), eq(bankAccounts.blocked, false)));
+    return rows.map((r) => ({ id: r.method.id, name: r.method.name, bankCode: r.bank.code, bankName: r.bank.name, currency: r.bank.currency, branchId: r.method.branchId }));
+  }
+
+  async depositCheque(ctx: FinanceContext, id: string, input: { depositMethodId: string; date?: string }) {
     await this.db.transaction(async (tx) => {
       const r = await this.requireCheque(tx, ctx, id, ['received']);
-      const [bank] = await tx.select().from(bankAccounts).where(and(eq(bankAccounts.companyId, ctx.companyId), eq(bankAccounts.id, input.bankAccountId)));
-      if (!bank || bank.blocked) throw new FinanceError('BANK_NOT_FOUND', 'Choose the bank account the cheque is deposited into.');
+      const [row] = await tx
+        .select({ method: paymentMethods, bank: bankAccounts })
+        .from(paymentMethods)
+        .innerJoin(bankAccounts, eq(bankAccounts.id, paymentMethods.balancingBankAccountId))
+        .where(and(eq(paymentMethods.companyId, ctx.companyId), eq(paymentMethods.id, input.depositMethodId)));
+      const bank = row?.bank;
+      if (!row || !bank || bank.blocked || !row.method.enabled) throw new FinanceError('BANK_NOT_FOUND', 'Choose the payment method of the bank account the cheque is deposited into.');
       if (bank.kind !== 'bank') throw new FinanceError('BANK_KIND', 'A cheque is deposited into a bank account.');
       if (bank.currency !== r.currency) throw new FinanceError('CURRENCY_MISMATCH', `${bank.code} holds ${bank.currency}, the cheque is in ${r.currency}.`);
       const date = input.date ?? businessDate();
       await tx
         .update(customerReceipts)
-        .set({ chequeStatus: 'deposited', counterparty: { ...r.counterparty, depositBankAccountId: bank.id, depositedOn: date }, updatedAt: new Date() })
+        .set({ chequeStatus: 'deposited', counterparty: { ...r.counterparty, depositBankAccountId: bank.id, depositMethodId: row.method.id, depositedOn: date }, updatedAt: new Date() })
         .where(eq(customerReceipts.id, id));
-      await this.event(tx, ctx, id, 'cheque_deposited', 'received', 'deposited', { data: { bank: bank.code, date } });
+      await this.event(tx, ctx, id, 'cheque_deposited', 'received', 'deposited', { data: { bank: bank.code, method: row.method.name, date } });
       await this.decisions.record(
-        { companyId: ctx.companyId, subject: { type: 'customer_receipt', id }, action: 'finance.cheque_deposited', actor: ctx.actor, from: 'received', to: 'deposited', inputs: { origin: ctx.origin, bank: bank.code, date } },
+        { companyId: ctx.companyId, subject: { type: 'customer_receipt', id }, action: 'finance.cheque_deposited', actor: ctx.actor, from: 'received', to: 'deposited', inputs: { origin: ctx.origin, bank: bank.code, method: row.method.name, date } },
         tx,
       );
     });
@@ -699,11 +720,20 @@ export class ReceiptService {
       const date = input.date ?? businessDate();
       const bankId = r.counterparty.depositBankAccountId;
       if (!bankId) throw new FinanceError('CHEQUE_STATE', 'Record the deposit before clearing.');
-      const [[dest], [transit]] = await Promise.all([
+      // A cheque deposited before methods carried the G/L account only knows the bank account: use one of its methods.
+      let depositMethodId = r.counterparty.depositMethodId;
+      if (!depositMethodId) {
+        const [any] = await tx.select({ id: paymentMethods.id }).from(paymentMethods).where(eq(paymentMethods.balancingBankAccountId, bankId)).orderBy(paymentMethods.sortOrder).limit(1);
+        depositMethodId = any?.id;
+      }
+      if (!depositMethodId) throw new FinanceError('CHEQUE_STATE', 'No payment method posts to the bank account this cheque was deposited into. Add one first.');
+      const [[dest], [transit], [destMethod], [transitMethod]] = await Promise.all([
         tx.select().from(bankAccounts).where(eq(bankAccounts.id, bankId)),
         tx.select().from(bankAccounts).where(eq(bankAccounts.id, r.bankAccountId)),
+        tx.select().from(paymentMethods).where(eq(paymentMethods.id, depositMethodId)),
+        tx.select().from(paymentMethods).where(eq(paymentMethods.id, r.paymentMethodId)),
       ]);
-      if (!dest || !transit) throw new FinanceError('BANK_NOT_FOUND', 'The bank account for this cheque no longer exists.');
+      if (!dest || !transit || !destMethod || !transitMethod) throw new FinanceError('BANK_NOT_FOUND', 'The bank account for this cheque no longer exists.');
       await this.assertDate(tx, ctx.companyId, date, perms);
       const { settings, live } = await this.glLive(tx, ctx.companyId, date);
       let registerId: string | null = null;
@@ -720,8 +750,8 @@ export class ReceiptService {
             rate: r.rate,
             rateSource: r.currency === settings.baseCurrency ? 'base' : 'manual',
             lines: [
-              { accountId: dest.glAccountId, debit: r.amount, credit: '0', sourceLedger: 'bank', sourceEntryId: dest.id },
-              { accountId: transit.glAccountId, debit: '0', credit: r.amount, sourceLedger: 'bank', sourceEntryId: transit.id },
+              { accountId: destMethod.glAccountId, debit: r.amount, credit: '0', sourceLedger: 'bank', sourceEntryId: dest.id },
+              { accountId: transitMethod.glAccountId, debit: '0', credit: r.amount, sourceLedger: 'bank', sourceEntryId: transit.id },
             ],
             chainKey: this.chain(r.branchId),
             branchId: r.branchId,
@@ -735,8 +765,8 @@ export class ReceiptService {
         registerId = posted.registerId;
       }
       await tx.insert(bankLedgerEntries).values([
-        { companyId: ctx.companyId, bankAccountId: transit.id, postingDate: date, documentType: 'cheque_clearing', documentNo: r.number, documentId: id, description: 'Cheque cleared', amount: fromCents(-toCents(r.amount)), currency: r.currency, registerId, createdBy: ctx.actor.id },
-        { companyId: ctx.companyId, bankAccountId: dest.id, postingDate: date, documentType: 'cheque_clearing', documentNo: r.number, documentId: id, description: 'Cheque cleared', amount: r.amount, currency: r.currency, registerId, createdBy: ctx.actor.id },
+        { companyId: ctx.companyId, bankAccountId: transit.id, glAccountId: transitMethod.glAccountId, postingDate: date, documentType: 'cheque_clearing', documentNo: r.number, documentId: id, description: 'Cheque cleared', amount: fromCents(-toCents(r.amount)), currency: r.currency, registerId, createdBy: ctx.actor.id },
+        { companyId: ctx.companyId, bankAccountId: dest.id, glAccountId: destMethod.glAccountId, postingDate: date, documentType: 'cheque_clearing', documentNo: r.number, documentId: id, description: 'Cheque cleared', amount: r.amount, currency: r.currency, registerId, createdBy: ctx.actor.id },
       ]);
       await tx.update(customerReceipts).set({ chequeStatus: 'cleared', updatedAt: new Date() }).where(eq(customerReceipts.id, id));
       await this.event(tx, ctx, id, 'cheque_cleared', 'deposited', 'cleared', { data: { date, gl: live, registerId } });

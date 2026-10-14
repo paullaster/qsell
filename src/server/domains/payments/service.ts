@@ -1,7 +1,10 @@
-import { v7 as uuidv7 } from 'uuid';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { companySettings, paymentProviderConfigs, type BranchRow } from '@/server/db/drizzle/schema';
-import { eq } from 'drizzle-orm';
+import { companySettings, paymentAttempts, paymentProviderConfigs, providerTransactions, type BranchRow } from '@/server/db/drizzle/schema';
+import { and, eq, ne } from 'drizzle-orm';
+import { newSecret } from './engine/redact';
+import type { PaymentEngine } from './engine/payment-engine';
+import type { AttemptSettler } from './engine/verification-service';
+import type { InitiatePaymentResult } from './port';
 import { PaymentRegistry } from './registry';
 import { PaymentAttemptRepository, PaymentConfigRepository } from './repository';
 import { decryptCredentials, encryptCredentials, needsResealing } from './crypto';
@@ -22,8 +25,9 @@ function headersToRecord(headers: Headers): Record<string, string> {
   return out;
 }
 
-export class PaymentService {
+export class PaymentService implements AttemptSettler {
   private readonly orderRepo: OrderRepository;
+  private engine: PaymentEngine | null = null;
 
   constructor(
     private readonly db: DrizzleDb,
@@ -32,6 +36,11 @@ export class PaymentService {
     private readonly attempts = new PaymentAttemptRepository(db),
   ) {
     this.orderRepo = new OrderRepository(db);
+  }
+
+  /** The engine is built after the service (it needs it to settle payments), so it is attached afterwards. */
+  useEngine(engine: PaymentEngine) {
+    this.engine = engine;
   }
 
   async resolvePublicBaseUrl(branch: BranchRow): Promise<string> {
@@ -112,9 +121,34 @@ export class PaymentService {
     return this.registry.resolve(code).capabilities;
   }
 
-  async listEnabledProviders(branchId: string) {
-    const rows = await this.configs.listByBranch(branchId);
-    return rows.filter((r) => r.isEnabled);
+  /**
+   * The provider (and the payment method) a checkout for this branch and service goes through: a
+   * method of the branch, or of every branch, whose provider is switched on. A branch that has no
+   * method for the service yet still gets the provider that was configured for it the older way.
+   */
+  async resolveCheckout(branch: BranchRow, providerCode: PaymentProviderCode) {
+    const candidates = await this.configs.checkoutCandidates(branch.companyId, branch.id);
+    const hit = candidates.find((c) => c.providerCode === providerCode);
+    if (hit) {
+      const provider = await this.configs.getById(hit.providerId);
+      if (provider) return { provider, methodId: hit.methodId as string | null };
+    }
+    const legacy = await this.configs.getByBranchAndProvider(branch.id, providerCode);
+    return legacy && legacy.isEnabled ? { provider: legacy, methodId: null as string | null } : null;
+  }
+
+  /** One provider per service that this branch can offer at checkout. */
+  async listEnabledProviders(branch: BranchRow) {
+    const out = new Map<string, Awaited<ReturnType<PaymentConfigRepository['getById']>> & object>();
+    for (const c of await this.configs.checkoutCandidates(branch.companyId, branch.id)) {
+      if (out.has(c.providerCode)) continue;
+      const provider = await this.configs.getById(c.providerId);
+      if (provider) out.set(c.providerCode, provider);
+    }
+    for (const row of await this.configs.listByBranch(branch.id)) {
+      if (row.isEnabled && !out.has(row.providerCode)) out.set(row.providerCode, row);
+    }
+    return [...out.values()];
   }
 
   async initiatePayment(params: {
@@ -129,10 +163,11 @@ export class PaymentService {
     customerPhone: string;
     description?: string;
   }) {
-    const config = await this.configs.getByBranchAndProvider(params.branch.id, params.providerCode);
-    if (!config || !config.isEnabled) {
+    const resolved = await this.resolveCheckout(params.branch, params.providerCode);
+    if (!resolved || !resolved.provider.isEnabled) {
       throw new Error(`Payment provider ${params.providerCode} is not enabled for this branch`);
     }
+    const config = resolved.provider;
     const credentials = decryptCredentials(config.credentialsEncrypted);
     if (!credentials) {
       throw new Error(
@@ -141,7 +176,8 @@ export class PaymentService {
     }
 
     const publicBaseUrl = await this.resolvePublicBaseUrl(params.branch);
-    const callbackToken = uuidv7();
+    // An unguessable secret, not a time-ordered id: whoever knows the address can announce a payment for it.
+    const callbackToken = newSecret();
     const callbackUrl = this.buildCallbackUrl(publicBaseUrl, params.providerCode, callbackToken);
 
     const attempt = await this.attempts.create({
@@ -164,23 +200,29 @@ export class PaymentService {
     });
 
     const adapter = this.registry.resolve(params.providerCode);
-    const result = await adapter.initiate(
-      {
-        attemptId: attempt.id,
-        orderId: params.orderId,
-        orderNumber: params.orderNumber,
-        amount: params.amount,
-        currency: params.currency,
-        customerName: params.customerName,
-        customerEmail: params.customerEmail,
-        customerPhone: params.customerPhone,
-        callbackUrl,
-        description: params.description,
-      },
-      credentials,
-      (config.settings as Record<string, unknown>) || {},
-      config.apiBaseUrl,
-    );
+    let result: InitiatePaymentResult;
+    if (params.providerCode === 'mpesa_daraja' && this.engine) {
+      // Written down before it is sent, logged when it is, and checked with Safaricom afterwards.
+      result = await this.startDarajaStk(config.id, resolved.methodId, attempt.id, callbackUrl, params);
+    } else {
+      result = await adapter.initiate(
+        {
+          attemptId: attempt.id,
+          orderId: params.orderId,
+          orderNumber: params.orderNumber,
+          amount: params.amount,
+          currency: params.currency,
+          customerName: params.customerName,
+          customerEmail: params.customerEmail,
+          customerPhone: params.customerPhone,
+          callbackUrl,
+          description: params.description,
+        },
+        credentials,
+        (config.settings as Record<string, unknown>) || {},
+        config.apiBaseUrl,
+      );
+    }
 
     const status =
       result.status === 'failed'
@@ -198,10 +240,18 @@ export class PaymentService {
       errorMessage: result.errorMessage ?? null,
     });
 
+    if (status !== 'failed' && this.engine) {
+      // Whether or not a callback arrives, the payment is checked with the platform.
+      const { engineSettings } = await import('./engine/settings');
+      await this.engine.jobs.verifyAttempt(attempt.id, engineSettings(config.settings).verification.pollSeconds[0] ?? 15).catch((e) => console.error('[payments] could not schedule the check', e));
+    }
+
     await this.orderRepo.update(params.orderId, {
       paymentStatus: status === 'failed' ? 'failed' : 'pending_verification',
       ...(status === 'failed' ? { status: 'failed' as const } : {}),
       paymentMethod: params.providerCode as PaymentProvider,
+      // The finance method it goes through decides which bank account and G/L account it posts to.
+      ...(resolved.methodId ? { paymentMethodId: resolved.methodId } : {}),
     });
 
     if (status === 'failed') {
@@ -215,152 +265,79 @@ export class PaymentService {
     return { attempt: updated, result };
   }
 
-  async handleProviderCallback(params: {
-    providerCode: PaymentProviderCode;
-    callbackToken: string;
-    receiptEventId?: string;
-    request: Request;
-  }): Promise<{ httpStatus: number; body: Record<string, unknown>; callback: CallbackResult }> {
-    const attempt = await this.attempts.getByCallbackToken(params.callbackToken);
-    let body: unknown = null;
-    const text = await params.request.text();
-    try {
-      body = text ? JSON.parse(text) : null;
-    } catch {
-      body = { raw: text };
+  private async startDarajaStk(
+    providerId: string,
+    methodId: string | null,
+    attemptId: string,
+    callbackUrl: string,
+    params: { orderNumber: string; amount: number; customerPhone: string; description?: string },
+  ): Promise<InitiatePaymentResult> {
+    const { op } = await this.engine!.daraja.start({
+      providerId,
+      methodId,
+      operation: 'stk_push',
+      input: { amount: params.amount, phone: params.customerPhone, callbackUrl, accountReference: params.orderNumber, description: params.description ?? `Order ${params.orderNumber}` },
+      idempotencyKey: `stk:${attemptId}`,
+      subject: { type: 'payment_attempt', id: attemptId },
+      origin: { surface: 'storefront', action: 'checkout' },
+    }).catch((error: unknown) => ({ op: null, error }));
+    if (!op || op.status !== 'accepted') {
+      return { status: 'failed', errorMessage: op?.failureReason ?? 'M-Pesa Express could not be started.', rawResponse: (op?.response ?? {}) as Record<string, unknown> };
     }
-
-    // Dump the payload as sent. processing_status is the provider's own status
-    // (M-Pesa: stkCallback.ResultCode). outcome is derived from that status.
-    const verdict = classifyCallbackPayload(params.providerCode, body);
-    const dumpStatus = verdict.rawStatus ?? (attempt ? 'received' : 'unmatched_token');
-    const dumpOutcome = verdict.rawStatus ? verdict.outcome : 'unclassified';
-    const receiptEventId =
-      params.receiptEventId ??
-      (
-        await this.attempts.recordCallbackEvent({
-          paymentAttemptId: attempt?.id ?? null,
-          callbackToken: params.callbackToken,
-          providerCode: params.providerCode,
-          httpMethod: params.request.method,
-          headers: headersToRecord(params.request.headers),
-          rawBody: body,
-          processingStatus: dumpStatus,
-          outcome: dumpOutcome,
-          processingError: attempt ? null : 'No payment attempt for callback token',
-        })
-      ).id;
-
-    if (!attempt) {
-      return {
-        httpStatus: 404,
-        body: { ResultCode: 1, ResultDesc: 'Unknown callback token' },
-        callback: { ok: false, status: 'failed', errorMessage: 'Unknown callback token' },
-      };
-    }
-
-    if (attempt.providerCode !== params.providerCode) {
-      await this.attempts.updateCallbackEvent(receiptEventId, {
-        processingStatus: verdict.rawStatus ?? 'error',
-        outcome: verdict.rawStatus ? verdict.outcome : 'failed',
-        processingError: 'Provider mismatch',
-      });
-      return {
-        httpStatus: 400,
-        body: { ResultCode: 1, ResultDesc: 'Provider mismatch' },
-        callback: { ok: false, status: 'failed', errorMessage: 'Provider mismatch' },
-      };
-    }
-
-    const config = await this.configs.getById(attempt.providerConfigId);
-    const credentials = decryptCredentials(config?.credentialsEncrypted) || {};
-    const adapter = this.registry.resolve(params.providerCode);
-    let callback: CallbackResult;
-    try {
-      callback = await adapter.handleCallback(
-        {
-          callbackToken: params.callbackToken,
-          headers: headersToRecord(params.request.headers),
-          body,
-          rawBodyText: text,
-        },
-        credentials,
-        (config?.settings as Record<string, unknown>) || {},
-      );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Callback classification failed';
-      await this.attempts.updateCallbackEvent(receiptEventId, {
-        processingStatus: verdict.rawStatus ?? 'error',
-        outcome: verdict.rawStatus ? verdict.outcome : 'unclassified',
-        processingError: message,
-      });
-      throw err;
-    }
-
-    // The rulebook decides success vs failure from the provider status.
-    // The adapter still supplies the receipt and references.
-    const outcome = verdict.rawStatus ? verdict.outcome : callback.status;
-    await this.attempts.updateCallbackEvent(receiptEventId, {
-      processingStatus: verdict.rawStatus ?? callback.status,
-      outcome,
-      processingError: callback.errorMessage ?? null,
-    });
-
-    const nextStatus =
-      outcome === 'successful' ? 'successful' : outcome === 'failed' ? 'failed' : 'pending';
-
-    const paymentReference =
-      outcome === 'successful'
-        ? callback.receiptNumber?.trim() || extractPaymentReference(params.providerCode, body) || ''
-        : '';
-    if (outcome === 'successful' && !paymentReference) {
-      await this.attempts.updateCallbackEvent(receiptEventId, {
-        processingStatus: verdict.rawStatus ?? callback.status,
-        outcome,
-        processingError: 'Successful payment callback had no transaction reference.',
-      });
-    }
-
-    await this.attempts.update(attempt.id, {
-      status: outcome === 'successful' && !paymentReference ? 'pending' : nextStatus,
-      providerReference: callback.providerReference || attempt.providerReference,
-      externalReference: callback.externalReference || attempt.externalReference,
-      responsePayload: callback.raw || {},
-      errorMessage:
-        outcome === 'successful' && !paymentReference
-          ? 'Successful payment callback had no transaction reference.'
-          : (callback.errorMessage ?? null),
-      paidAt: outcome === 'successful' && paymentReference ? new Date() : null,
-    });
-
-    if (outcome === 'successful' && paymentReference) {
-      const receiptProviders =
-        params.providerCode === 'mpesa_daraja' || params.providerCode === 'kcb_buni';
-      await this.orderRepo.update(attempt.orderId, {
-        paymentStatus: 'paid',
-        status: 'processing',
-        mpesaReceiptNumber: receiptProviders ? paymentReference : null,
-        transactionReference: paymentReference,
-      });
-      await InventoryReservationService.fulfilOrder(attempt.orderId);
-      await getContainer().customers.applyOrderPayment(attempt.orderId);
-      await getContainer().transactionReconcile.reconcileSuccessfulPaymentAttempt(attempt.id);
-    } else if (outcome === 'failed') {
-      await this.orderRepo.update(attempt.orderId, {
-        paymentStatus: 'failed',
-        status: 'failed',
-      });
-      await InventoryReservationService.releaseOrder(
-        attempt.orderId,
-        'payment_callback_failed',
-        `payment:${params.providerCode}`,
-      );
-    }
-
+    const r = op.response as Record<string, unknown>;
     return {
-      httpStatus: 200,
-      body: { ResultCode: 0, ResultDesc: 'Accepted' },
-      callback,
+      status: 'pending',
+      providerReference: String(r.CheckoutRequestID ?? op.conversationId ?? ''),
+      externalReference: String(r.MerchantRequestID ?? ''),
+      customerMessage: String(r.CustomerMessage ?? 'STK push sent'),
+      rawResponse: r,
     };
+  }
+
+  /** Has a verified transaction already been counted for this attempt? */
+  async isSettled(attemptId: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ id: providerTransactions.id })
+      .from(providerTransactions)
+      .where(and(eq(providerTransactions.consumedType, 'payment_attempt'), eq(providerTransactions.consumedId, attemptId)))
+      .limit(1);
+    return !!row;
+  }
+
+  /**
+   * The platform itself confirmed this payment (and it agrees with what we asked for): only now does the
+   * order become paid. Safe to run again: every step it takes is idempotent.
+   */
+  async succeed(attemptId: string, input: { reference: string | null; verifiedBy: string; transactionId: string }): Promise<{ settled: boolean }> {
+    const [attempt] = await this.db.select().from(paymentAttempts).where(eq(paymentAttempts.id, attemptId));
+    if (!attempt) return { settled: false };
+    await this.db
+      .update(paymentAttempts)
+      .set({ status: 'successful', paidAt: attempt.paidAt ?? new Date(), errorMessage: null, updatedAt: new Date() })
+      .where(and(eq(paymentAttempts.id, attemptId), ne(paymentAttempts.status, 'cancelled')));
+    // A checkout id is not a receipt. The platform confirmed the payment, so the order is paid; the ledger credit
+    // needs the platform's own transaction number and waits for it (the reconcile screen lists it) if none came.
+    const real = input.reference && !input.reference.startsWith('ws_CO_') ? input.reference : null;
+    const receiptProviders = attempt.providerCode === 'mpesa_daraja' || attempt.providerCode === 'kcb_buni';
+    await this.orderRepo.update(attempt.orderId, {
+      paymentStatus: 'paid',
+      status: 'processing',
+      mpesaReceiptNumber: receiptProviders ? real : null,
+      transactionReference: real,
+    });
+    await InventoryReservationService.fulfilOrder(attempt.orderId);
+    await getContainer().customers.applyOrderPayment(attempt.orderId);
+    if (real) await getContainer().transactionReconcile.reconcileSuccessfulPaymentAttempt(attemptId);
+    return { settled: true };
+  }
+
+  /** The platform itself says it did not go through. */
+  async fail(attemptId: string, input: { reason: string; code: string | null }): Promise<{ settled: boolean }> {
+    const [attempt] = await this.db.select().from(paymentAttempts).where(eq(paymentAttempts.id, attemptId));
+    if (!attempt || attempt.status === 'successful') return { settled: false };
+    await this.db.update(paymentAttempts).set({ status: 'failed', errorMessage: input.reason.slice(0, 500), updatedAt: new Date() }).where(eq(paymentAttempts.id, attemptId));
+    await this.orderRepo.update(attempt.orderId, { paymentStatus: 'failed', status: 'failed' });
+    await InventoryReservationService.releaseOrder(attempt.orderId, 'payment_callback_failed', `payment:${attempt.providerCode}`);
+    return { settled: true };
   }
 }

@@ -666,3 +666,60 @@ All nine recommendations accepted (2026-10-12): Finance top-level module; "Walle
 **Screens.** `/admin/finance/bank-statements` (per account: book balance, lines to deal with, our entries not on a statement, last reconciled) and `/admin/finance/bank-statements/[accountId]` (import, lines with actions, our open entries, reconcile, history).
 
 **Not built (deliberately).** CAMT.053 and Excel (.xlsx) import (save as CSV); configurable matching rules (the two rules are fixed, window three days); matching by phone number or fuzzy narration; interest or other money-in recorded straight from a line (create a receipt, or set aside); fee lines that bundle several charges; reconciling cash drawers by count; bank-API statement feeds (F-6/F-7); closing a refund *from* the statement automatically (it is marked seen; the refund is already paid by hand with evidence).
+
+## 26. Payment providers and payment methods, restructured (2026-10-13)
+
+This replaces the provider/method/bank-account split described in §7.0 and built in §20, which put providers per branch and the G/L account and branch on the bank account.
+
+**Two levels.**
+* **Payment provider** (`payment_provider_configs`, now **company-wide**): one connection to a payment service (M-Pesa Daraja, Pesapal, Equity Jenga, KCB Buni) with the credentials and environment every payment method under it shares. The same service can be connected more than once (for example two different shortcodes). A built-in **Manual** provider (`is_system`) exists for every company for cash, cheques and manual bank deposits: no credentials, always on, cannot be edited or deleted.
+* **Payment method** (`payment_methods`): the finance rule. Goes through **exactly one provider (required)** and carries everything specific to a way of being paid: the **branch** (empty = every branch), the **bank account** (the real account, which statements are reconciled against), the **G/L account** it posts to, the paybill/till/account number, and the rules (reference, evidence, payer details, limits, refund destination).
+* **Bank account** is now only the real-world account: no G/L account, no branch. Every `bank_ledger_entries` row records the `gl_account_id` it posted to (from the method). The bank reconciliation proof compares the account's ledger with the G/L accounts its methods post to; a charge recorded from a statement line asks which of those G/L accounts it came out of when there is more than one.
+
+**One screen.** Settings → Payments (`payment-setup-actions.ts`, `PaymentSetupClient`): providers (create, connection, shared credentials sealed in the database, test, switch on only after a good test, delete when unused) with their payment methods underneath (create, edit, switch off, delete). The Finance → Payment providers and Payment methods screens and the placeholder provider rows the old screen created for every branch are gone; `/admin/finance/payment-*` and `/admin/gateways` lead to the one screen.
+
+**Where it is used.**
+* Receipts: the G/L account and the branch come from the method (a method of one branch refuses another branch's receipt); a method's G/L account cannot change once receipts were posted through it.
+* Cheques: deposited through a *method* (bank account + G/L account); clearing moves transit → that method's G/L account. Cheques deposited before this change fall back to a method of the bank account they were deposited into.
+* Refunds: paid out *through a method* (`paid_from_method_id`); the books credit its G/L account.
+* Sales posting: the order's own method (`orders.payment_method_id`), else the method of the order's branch and provider, else any method with the old code, so old orders still post.
+* **Checkout (Stage B):** the storefront offers a branch the services it has a method for (the branch's methods first, then methods for every branch, by sort order) whose provider is switched on; the payment goes through that provider's credentials and the order is pinned to the method, so it posts to the method's bank account and G/L account. A branch that only has a provider configured the older way is still offered it until a method exists. Callbacks resolve credentials from the payment attempt's provider, as before.
+
+**Migration `0048`.** Per-branch provider rows become company-wide providers named by branch ("M-Pesa (Daraja) — Nairobi"); empty switched-off placeholders are removed; each existing method goes through the provider of its old code, with a copy per further branch; the rest go through Manual; G/L accounts and ledger entries are filled from the bank account's old G/L account. Nothing configured is lost.
+
+**Not changed.** Provider capabilities are still what each adapter declares (STK push only for Daraja until F-6); Paystack and Stripe are not adapters yet (the structure takes them as new services).
+
+## 27. F-6: Daraja in full, and a verified-before-counted payment engine (2026-10-13)
+
+**The rule.** A callback is a claim, never proof. A payment is counted (order marked paid, receipt posted, ledger credited) only after the platform itself, asked by us with the identifiers we sent, says it succeeded for the amount, reference and payer we expect. This holds for every provider that has a status endpoint; a provider without one fails closed (the payment is recorded, never counted automatically, and a person with `payments:confirm_unverified` may confirm or close it, with a reason, kept with their name).
+
+**Code.** `src/server/domains/payments/engine/` is provider-neutral: `event-service` (raw inbound events, immutable), `operation-service` (every request we make: idempotent, forward-only states), `transaction-store` (money that arrived straight into a paybill/till, consumed once), `verification-service`, `payment-engine`, `jobs` (Graphile queue `payment-engine`; tasks `provider-verify-attempt`, `provider-verify-transaction`, `provider-send-operation`, `provider-sweep` every minute, `provider-pull-sweep` every 10 minutes), `activity-service`. `src/server/domains/payments/daraja/` is Safaricom-specific: `catalog` (one list of every operation, driving forms, validation and settings), `operations` (builders), `client` (one cached token, one refresh on rejection), `c2b`, `disbursements`, `verify`, `parsers`, `security`, `config`.
+
+**Tables (migration `0049`).** `provider_operations`, `provider_events` (payer kept only as a fingerprint), `provider_transactions` (unique per provider and platform reference; consumption immutable); `integration_audit_log` gains provider, operation and source address. Triggers forbid deletes, edits of raw fields, changes to finished operations and re-consumption. Every request and response is logged redacted (phones, keys, secrets and URLs masked); every failure keeps a code and a reason.
+
+**Callback security.** Per-provider secret in the address (`/api/hooks/pay/{providerId}/{kind}/{secret}`, sealed in the credentials; per-attempt tokens for STK are random, not guessable ids); optional source-address allow-list (empty by default: Safaricom publishes no authoritative list); https required in production; body size cap; the address of Safaricom's callback is never trusted for the amount, reference or payer, which are checked against what we recorded. Confirmation mode: *standard* (ask about the request) or *strict* (also ask for the transaction by its receipt). Re-check schedule, window and the cut-off to "in doubt" are settings.
+
+**Operations (all in the catalog).** Collect: STK Push (started by checkout), STK Query, C2B register URLs, C2B simulate (sandbox only), Dynamic QR, B2B Express Checkout. Look up: Transaction Status, Account Balance, Pull register/query. Pay out (off by default, need the API operator and certificate): Reversal (customer payments only), B2C (v3; KES 10 to 250,000), Business PayBill, Business Buy Goods, Tax remittance (to KRA, PRN as the account). Bill Manager: opt-in, change details, single invoice, cancel, reconciliation (acknowledge). Each can be switched off and given a most-per-request.
+
+**Money out.** Never run directly. `payment_operations:request_payout` asks (limits, daily cap, amount rules and initiator checked first, in words); the approval trigger `provider.disbursement` must have a workflow or the request is refused; only after approval (by someone else) is the operation queued and sent, once. Only B2C is repeated after a network failure (Safaricom de-duplicates on the originator id); every other payout that does not get a clean answer goes to *in doubt* for a person. A success result without a transaction number is held, not counted.
+
+**Direct payments (C2B).** Validation policy (accept all / known reference / reject all), confirmation recorded then verified by Transaction Status, or by Pull (last 48 hours), then placed on a customer automatically by customer number (setting) or by a person from Payment activity. A pull sweep recovers payments whose callback never arrived.
+
+**Screens.** Settings → Payments: the M-Pesa panel on a Daraja provider (confirmation, callers, direct payments, operations, daily payout cap, run/request an operation, recent requests). Payments → Payment activity (`payment_activity:read`/`resolve`): needs attention, requests, callbacks refused or unmatched, money received.
+
+**Replaced.** The unauthenticated `pesapal/ipn` route (defaulted to COMPLETED) now goes through the same verified path; the legacy Pesapal and Daraja services were removed.
+
+**Not built / known limits (disclosed).**
+* Jenga and KCB Buni have no verifiable status endpoint here: they fail closed.
+* The Safaricom sandbox and real credentials were never used; everything is tested against stand-ins that follow the published formats.
+* An STK payment that settles without a receipt waits for one before the ledger credit.
+* B2B Express Checkout and Bill Manager notices are kept as records only (the other business's word); nothing is credited from them. Bill Manager payments are not acknowledged back automatically (the reconciliation call exists but nothing triggers it), and the invoices page lists requests, not per-invoice state.
+* B2C Account Top Up, Business to Pochi, Ratiba and IMSI/Swap are not built. Refund-by-reversal is not wired to refunds.
+* The token cache and the Safaricom allow-list default are per process / empty.
+
+### 27.1 Later additions (2026-10-13)
+* **Payouts are checked.** A payout's success callback no longer finishes it: the engine asks Safaricom for its own record of that transaction (Transaction Status) and the payout counts as paid only if the status is Completed and the amount agrees; otherwise it is held *in doubt* with the reason.
+* **Automatic refund payout (B2C).** A refund whose method is mobile money, goes through an M-Pesa provider and is set to *automatic* can be sent from the refund screen ("Pay through M-Pesa", permission `refunds:pay_automatic`) once approved. The refund's own approval is the approval for the money (the sender cannot be the approver). The B2C operation is limited like any payout; manual recording is blocked while it is in flight. When Safaricom's record confirms it, the refund is recorded as paid by the system with the M-Pesa receipt as reference. If recording fails after the money left, an event says so loudly for a person to record it. Whole shillings only (KES 10 to 250,000).
+* **Bill Manager screen.** `/admin/payments/bills`: send up to 1,000 invoices (one per line) as a bulk request, cancel invoices, and follow requests. Sign-up stays under Settings → Payments → Run an operation.
+* Operation forms are validated against the catalog before anything is written down.
+* **Still unproven.** Safaricom's sandbox has not been used: reading the stored sandbox credentials from a script was blocked by the permission check, so the live exercise has to be run from Settings → Payments (test connection, QR, STK) or after explicit permission.

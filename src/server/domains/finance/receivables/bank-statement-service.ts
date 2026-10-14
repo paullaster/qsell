@@ -10,6 +10,7 @@ import {
   bankStatementMatches,
   customerReceipts,
   financeSettings,
+  glAccounts,
   paymentMethods,
   receiptEvents,
   refundEvents,
@@ -433,7 +434,25 @@ export class BankStatementService {
   }
 
   /** A bank or mobile-money charge on the statement: record it against the fee account and close the line. */
-  async recordChargeFromLine(ctx: FinanceContext, lineId: number, permissions: PostingPermissions = NO_SPECIAL_PERMISSIONS) {
+  /** The G/L accounts the payment methods of this account post to: a charge comes out of one of them. */
+  async chargeGlChoices(companyId: string, bankAccountId: string) {
+    const rows = await this.db
+      .select({ glId: paymentMethods.glAccountId, glNo: glAccounts.no, glName: glAccounts.name, method: paymentMethods.name })
+      .from(paymentMethods)
+      .innerJoin(glAccounts, eq(glAccounts.id, paymentMethods.glAccountId))
+      .where(and(eq(paymentMethods.companyId, companyId), eq(paymentMethods.balancingBankAccountId, bankAccountId)))
+      .orderBy(glAccounts.no);
+    const byGl = new Map<string, { glId: string; label: string; methods: string[] }>();
+    for (const r of rows) {
+      const g = byGl.get(r.glId) ?? { glId: r.glId, label: `${r.glNo} ${r.glName}`, methods: [] };
+      g.methods.push(r.method);
+      byGl.set(r.glId, g);
+    }
+    return [...byGl.values()];
+  }
+
+  async recordChargeFromLine(ctx: FinanceContext, lineId: number, opts: { glAccountId?: string; permissions?: PostingPermissions } = {}) {
+    const permissions = opts.permissions ?? NO_SPECIAL_PERMISSIONS;
     return this.db.transaction(async (tx) => {
       const line = await this.lockLine(tx, ctx.companyId, lineId);
       if (line.reconciliationId) throw new FinanceError('LINE_RECONCILED', 'This line is part of a posted reconciliation.');
@@ -442,6 +461,10 @@ export class BankStatementService {
       if (cents <= 0) throw new FinanceError('NOT_A_CHARGE', 'Only money taken out of the account can be recorded as a charge.');
       const account = await this.account(tx, ctx.companyId, line.bankAccountId);
       if (!account.feeGlAccountId) throw new FinanceError('NO_FEE_ACCOUNT', `${account.code} has no fee account. Choose where its charges post (Finance → Bank accounts).`);
+      const choices = await this.chargeGlChoices(ctx.companyId, account.id);
+      if (choices.length === 0) throw new FinanceError('NO_METHOD', `No payment method pays into ${account.code}, so there is no G/L account to take the charge from. Add one under Settings → Payments.`);
+      const bankGl = opts.glAccountId ? choices.find((c) => c.glId === opts.glAccountId) : choices.length === 1 ? choices[0] : undefined;
+      if (!bankGl) throw new FinanceError('GL_CHOICE_NEEDED', opts.glAccountId ? 'That G/L account is not used by any payment method of this bank account.' : `Several G/L accounts are used for ${account.code}: choose the one this charge came out of.`);
       const date = line.lineDate;
       const issues = await this.engine.dateIssues(tx, ctx.companyId, date, permissions);
       if (issues.length > 0) throw new FinanceError(issues[0]!.code, issues.map((i) => i.message).join(' '));
@@ -463,7 +486,7 @@ export class BankStatementService {
           rateSource: 'base',
           lines: [
             { accountId: account.feeGlAccountId, debit: fromCents(cents), credit: '0', description: line.description.slice(0, 200) },
-            { accountId: account.glAccountId, debit: '0', credit: fromCents(cents), description: `Charge ${number}`, sourceLedger: 'bank', sourceEntryId: account.id },
+            { accountId: bankGl.glId, debit: '0', credit: fromCents(cents), description: `Charge ${number}`, sourceLedger: 'bank', sourceEntryId: account.id },
           ],
           chainKey: 'general',
           origin: ctx.origin,
@@ -472,7 +495,7 @@ export class BankStatementService {
         };
         registerId = (await this.engine.post(req, permissions, tx)).registerId;
       }
-      const [entry] = await tx.insert(bankLedgerEntries).values({ companyId: ctx.companyId, bankAccountId: account.id, postingDate: date, documentType: 'bank_charge', documentNo: number, documentId: id, description: line.description.slice(0, 300), amount: fromCents(-cents), currency: account.currency, registerId, createdBy: ctx.actor.id }).returning({ id: bankLedgerEntries.id });
+      const [entry] = await tx.insert(bankLedgerEntries).values({ companyId: ctx.companyId, bankAccountId: account.id, glAccountId: bankGl.glId, postingDate: date, documentType: 'bank_charge', documentNo: number, documentId: id, description: line.description.slice(0, 300), amount: fromCents(-cents), currency: account.currency, registerId, createdBy: ctx.actor.id }).returning({ id: bankLedgerEntries.id });
       await this.applyMatchIn(tx, ctx, lineId, [entry!.id], 'recorded_charge');
       return { number, gl: live };
     });

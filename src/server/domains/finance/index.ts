@@ -18,6 +18,9 @@ import { PaymentMethodService } from './receivables/payment-method-service';
 import { WalletService } from './receivables/wallet-service';
 import { ReceiptService } from './receivables/receipt-service';
 import { RefundService } from './receivables/refund-service';
+import { PaymentProviderService } from './payment-provider-service';
+import type { PaymentConfigRepository } from '@/server/domains/payments/repository';
+import type { PaymentService } from '@/server/domains/payments/service';
 import { BankStatementService } from './receivables/bank-statement-service';
 import { BankReconciliationService } from './receivables/bank-reconciliation-service';
 
@@ -50,12 +53,14 @@ export interface FinanceServices {
   bankStatements: BankStatementService;
   /** Closing a bank account against its statement. */
   bankReconciliation: BankReconciliationService;
+  /** Connections to payment services (company-wide); payment methods go through one each. */
+  paymentProviders: PaymentProviderService;
 }
 
 export function createFinanceServices(
   db: DrizzleDb,
   decisions: DecisionLog,
-  deps: { numbering: NumberSeriesService; reasons: ReasonCodes },
+  deps: { numbering: NumberSeriesService; reasons: ReasonCodes; paymentConfigs: PaymentConfigRepository; payments: PaymentService },
 ): FinanceServices {
   const fiscal = new FiscalService(db, decisions);
   const engine = new PostingEngine(db, decisions);
@@ -85,5 +90,6 @@ export function createFinanceServices(
     receipts,
     bankStatements: new BankStatementService(db, decisions, engine, receipts, deps.numbering, deps.reasons),
     bankReconciliation: new BankReconciliationService(db, decisions, deps.numbering, deps.reasons),
+    paymentProviders: new PaymentProviderService(db, decisions, deps.paymentConfigs, deps.payments),
   };
 }

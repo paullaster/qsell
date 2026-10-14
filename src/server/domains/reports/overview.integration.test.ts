@@ -146,6 +146,7 @@ describe.skipIf(!url)('business overview (database)', () => {
       await db
         .insert(schema.paymentProviderConfigs)
         .values({
+          companyId,
           branchId,
           providerCode: 'mpesa_daraja',
           displayName: 'M-Pesa Express',
@@ -156,6 +157,7 @@ describe.skipIf(!url)('business overview (database)', () => {
         .returning()
     )[0]!.id;
     await db.insert(schema.paymentProviderConfigs).values({
+      companyId,
       branchId,
       providerCode: 'jenga_hq',
       displayName: 'Jenga',

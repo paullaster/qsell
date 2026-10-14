@@ -1,212 +1,62 @@
-import {
-  probeConnection,
-  type CallbackInput,
-  type CallbackResult,
-  type InitiatePaymentInput,
-  type InitiatePaymentResult,
-  type ConnectionTestResult,
-  type PaymentPort,
-} from '../port';
+import { probeConnection, type CallbackInput, type CallbackResult, type ConnectionTestResult, type InitiatePaymentInput, type InitiatePaymentResult, type PaymentPort } from '../port';
 import type { MpesaDarajaCredentials } from '../types';
 import { extractPaymentReference } from '../payment-reference';
+import { DarajaClient, standaloneContext } from '../daraja/client';
+import { parseStkCallback } from '../daraja/parsers';
+import { statusAgrees, readStatusAnswer, verifyStk } from '../daraja/verify';
+import type { InboundClaim, PlatformContext, VerificationOutcome, VerifyAttemptInput } from '../engine/types';
 
-function formatPhoneKe(phone: string): string {
-  let clean = phone.replace(/[^0-9]/g, '');
-  if (clean.startsWith('0')) clean = `254${clean.slice(1)}`;
-  else if (clean.startsWith('254')) {
-    /* ok */
-  } else if (clean.length === 9) clean = `254${clean}`;
-  return clean;
-}
-
-type CachedDarajaToken = { token: string; expiresAt: number };
-
-/** In-process cache. Daraja access tokens last about an hour. */
-const darajaTokenCache = new Map<string, CachedDarajaToken>();
-const TOKEN_EXPIRY_BUFFER_MS = 60_000;
-
-function darajaTokenCacheKey(apiBaseUrl: string, consumerKey: string): string {
-  return `${apiBaseUrl.replace(/\/$/, '')}|${consumerKey}`;
-}
-
+/**
+ * M-Pesa (Daraja) as a place customers pay. Starting a payment goes through the operations engine
+ * (it is written down, logged and checked); this adapter reads callbacks and, above all, asks Safaricom
+ * whether a payment is real before anything may count it.
+ */
 export class MpesaDarajaAdapter implements PaymentPort {
   readonly code = 'mpesa_daraja' as const;
-  readonly capabilities = ['collect'] as const;
+  readonly capabilities = ['collect', 'status_query', 'register_urls', 'balance', 'statement'] as const;
 
-  async testConnection(
-    credentials: Record<string, unknown>,
-    _settings: Record<string, unknown>,
-    apiBaseUrl: string,
-  ): Promise<ConnectionTestResult> {
+  async testConnection(credentials: Record<string, unknown>, _settings: Record<string, unknown>, apiBaseUrl: string): Promise<ConnectionTestResult> {
     const creds = credentials as unknown as MpesaDarajaCredentials;
     return probeConnection('M-Pesa (Daraja)', async () => {
       if (!creds.consumerKey || !creds.consumerSecret) throw new Error('The consumer key and secret are not saved yet.');
       // Always ask Safaricom afresh: a cached token would say nothing about these credentials.
-      darajaTokenCache.delete(darajaTokenCacheKey(apiBaseUrl, creds.consumerKey.trim()));
-      await this.getAccessToken(apiBaseUrl, creds);
+      const client = new DarajaClient(standaloneContext(credentials, apiBaseUrl));
+      client.forgetToken();
+      const got = await client.token(true);
+      if ('error' in got) throw new Error(got.error.message);
     });
   }
 
-
-  private async getAccessToken(
-    apiBaseUrl: string,
-    creds: MpesaDarajaCredentials,
-  ): Promise<string> {
-    const consumerKey = creds.consumerKey.trim();
-    const consumerSecret = creds.consumerSecret.trim();
-    const cacheKey = darajaTokenCacheKey(apiBaseUrl, consumerKey);
-    const cached = darajaTokenCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
-      return cached.token;
-    }
-
-    const auth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
-    const res = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/oauth/v1/generate?grant_type=client_credentials`, {
-      method: 'GET',
-      headers: {
-        Authorization: `Basic ${auth}`,
-        Accept: 'application/json',
-      },
-    });
-    if (!res.ok) {
-      const text = (await res.text()).trim();
-      darajaTokenCache.delete(cacheKey);
-      const requestId = res.headers.get('x-request-id');
-      const blockedByGateway = !text && (res.headers.get('x-cdn') || '').toLowerCase() === 'imperva';
-      const detail = text
-        ? text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 240)
-        : blockedByGateway
-          ? `Safaricom's sandbox gateway blocked the token request before issuing one${requestId ? ` (request ${requestId})` : ''}. In the Daraja portal, copy this app's sandbox consumer key and secret again, confirm the app is active, and save them under Settings → Payments. The base URL must be https://sandbox.safaricom.co.ke.`
-          : `Daraja OAuth failed (${res.status}) with an empty body${requestId ? ` (request ${requestId})` : ''}.`;
-      throw new Error(text ? `Daraja OAuth failed (${res.status}): ${detail}` : detail);
-    }
-    const data = (await res.json()) as { access_token?: string; expires_in?: string | number };
-    if (!data.access_token) throw new Error('Daraja OAuth response missing access_token');
-
-    const expiresInSec = Number(data.expires_in);
-    const lifetimeMs =
-      Number.isFinite(expiresInSec) && expiresInSec > 0 ? expiresInSec * 1000 : 3_600_000;
-    darajaTokenCache.set(cacheKey, {
-      token: data.access_token,
-      expiresAt: Date.now() + Math.max(30_000, lifetimeMs - TOKEN_EXPIRY_BUFFER_MS),
-    });
-    return data.access_token;
+  async initiate(_input: InitiatePaymentInput): Promise<InitiatePaymentResult> {
+    // The engine starts M-Pesa Express (PaymentService → DarajaOperations) so the request is recorded before it is sent.
+    return { status: 'failed', errorMessage: 'M-Pesa Express is started through the payment engine.' };
   }
 
-  async initiate(
-    input: InitiatePaymentInput,
-    credentials: Record<string, unknown>,
-    _settings: Record<string, unknown>,
-    apiBaseUrl: string,
-  ): Promise<InitiatePaymentResult> {
-    const creds = credentials as MpesaDarajaCredentials;
-    const shortcode = creds.shortcode?.trim();
-    const passkey = creds.passkey?.trim();
-    if (!creds.consumerKey?.trim() || !creds.consumerSecret?.trim() || !shortcode || !passkey) {
-      return {
-        status: 'failed',
-        errorMessage: 'M-Pesa Daraja credentials are incomplete. Configure them in admin.',
-      };
-    }
-
-    try {
-      const token = await this.getAccessToken(apiBaseUrl, creds);
-      const timestamp = new Date()
-        .toISOString()
-        .replace(/[^0-9]/g, '')
-        .slice(0, 14);
-      const password = Buffer.from(`${shortcode}${passkey}${timestamp}`).toString('base64');
-      const phone = formatPhoneKe(input.customerPhone);
-      const amount = Math.round(input.amount);
-
-      const body = {
-        BusinessShortCode: shortcode,
-        Password: password,
-        Timestamp: timestamp,
-        TransactionType: creds.transactionType || 'CustomerPayBillOnline',
-        Amount: amount,
-        PartyA: phone,
-        PartyB: shortcode,
-        PhoneNumber: phone,
-        CallBackURL: input.callbackUrl,
-        AccountReference: input.orderNumber.slice(0, 12),
-        TransactionDesc: (input.description || `Order ${input.orderNumber}`).slice(0, 13),
-      };
-
-      const res = await fetch(`${apiBaseUrl}/mpesa/stkpush/v1/processrequest`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-      const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-      if (!res.ok || String(raw.ResponseCode ?? '') !== '0') {
-        return {
-          status: 'failed',
-          errorMessage:
-            String(raw.errorMessage || raw.ResponseDescription || raw.errorMessage || '') ||
-            `Daraja STK failed (${res.status})`,
-          rawResponse: raw,
-        };
-      }
-
-      return {
-        status: 'pending',
-        providerReference: String(raw.CheckoutRequestID || ''),
-        externalReference: String(raw.MerchantRequestID || ''),
-        customerMessage: String(raw.CustomerMessage || 'STK push sent'),
-        rawResponse: raw,
-      };
-    } catch (err) {
-      return {
-        status: 'failed',
-        errorMessage: err instanceof Error ? err.message : 'Daraja initiate failed',
-      };
-    }
+  parseCallback(body: unknown): InboundClaim | null {
+    return parseStkCallback(body);
   }
 
+  async verifyAttempt(input: VerifyAttemptInput, ctx: PlatformContext): Promise<VerificationOutcome> {
+    const stk = await verifyStk(input, ctx);
+    if (stk.status !== 'confirmed' || input.mode !== 'strict') return stk;
+    // Strict: Safaricom's own record of the transaction (by its receipt) must also agree.
+    const receipt = stk.platformReference;
+    if (!receipt) return { status: 'error', by: 'transaction_status', reason: 'The callback never gave a receipt number, so the strict check is not possible. Confirm by hand, or use the standard check.', retryable: false };
+    const ev = input.evidence.find((e) => e.by === 'transaction_status');
+    if (!ev) return { status: 'pending', by: 'transaction_status', reason: 'Waiting for Safaricom\'s transaction status for this receipt.', evidence: { ...stk.evidence, needs: 'transaction_status', receipt } };
+    const answer = readStatusAnswer((ev.result ?? {}) as Record<string, unknown>);
+    if (!answer) return { status: 'error', by: 'transaction_status', reason: 'The transaction status answer could not be read.', retryable: false };
+    const agreed = statusAgrees(answer, { receipt, amountCents: input.amountCents, shortcode: (ctx.credentials as unknown as MpesaDarajaCredentials).shortcode ?? null });
+    if (!agreed.ok) return { status: 'mismatch', by: 'transaction_status', code: agreed.code, reason: agreed.reason, evidence: { ...stk.evidence, transactionStatus: ev.result as Record<string, unknown> } };
+    return { ...stk, by: 'stk_query+transaction_status', platformReference: receipt, evidence: { ...stk.evidence, transactionStatus: ev.result as Record<string, unknown> } };
+  }
+
+  /** Kept for the manual classification screen: what the body says, without any confirmation. */
   async handleCallback(input: CallbackInput): Promise<CallbackResult> {
-    const body = input.body as {
-      Body?: {
-        stkCallback?: {
-          MerchantRequestID?: string;
-          CheckoutRequestID?: string;
-          ResultCode?: number;
-          ResultDesc?: string;
-          CallbackMetadata?: {
-            Item?: Array<{ Name: string; Value?: string | number }>;
-          };
-        };
-      };
-    };
-    const cb = body?.Body?.stkCallback;
-    if (!cb) {
-      return { ok: false, status: 'failed', errorMessage: 'Invalid Daraja callback payload' };
-    }
-
-    const resultCode = Number(cb.ResultCode);
-    const receipt = extractPaymentReference('mpesa_daraja', body);
-
-    if (resultCode === 0) {
-      return {
-        ok: true,
-        status: 'successful',
-        providerReference: cb.CheckoutRequestID,
-        externalReference: cb.MerchantRequestID,
-        receiptNumber: receipt ?? undefined,
-        raw: body as Record<string, unknown>,
-      };
-    }
-
-    return {
-      ok: true,
-      status: 'failed',
-      providerReference: cb.CheckoutRequestID,
-      externalReference: cb.MerchantRequestID,
-      errorMessage: cb.ResultDesc || `ResultCode ${resultCode}`,
-      raw: body as Record<string, unknown>,
-    };
+    const claim = parseStkCallback(input.body);
+    if (!claim) return { ok: false, status: 'failed', errorMessage: 'Invalid Daraja callback payload' };
+    const base = { providerReference: claim.requestIds.checkoutRequestId, externalReference: claim.requestIds.merchantRequestId, raw: input.body as Record<string, unknown> };
+    if (claim.claimsSuccess) return { ok: true, status: 'successful', receiptNumber: extractPaymentReference('mpesa_daraja', input.body) ?? undefined, ...base };
+    return { ok: true, status: 'failed', errorMessage: claim.failureReason ?? `ResultCode ${claim.failureCode}`, ...base };
   }
 }

@@ -65,10 +65,9 @@ describe.skipIf(!url)('refunds (database)', () => {
     const res = await db.select().from(schema.creditNoteResolutions).where(eq(schema.creditNoteResolutions.creditNoteId, cnId));
     return Math.round(Number(a!.excess) * 100) - res.reduce((n, r) => n + Math.round(Number(r.amount) * 100), 0);
   };
-  const bankFor = async (code: string) => (await fin.bankAccounts.list(companyId)).find((b) => b.account.code === code)!.account.id;
   const payOut = async (id: string, by = ctx, bank?: string) => {
     await fin.refunds.attach(by, id, { mediaAssetId: 'media_x', fileName: 'slip.jpg' }).catch(() => undefined);
-    return fin.refunds.recordPayout(by, id, { paidFromBankAccountId: bank ?? (await bankFor('CASH')), reference: `PAY-${seq}` });
+    return fin.refunds.recordPayout(by, id, { paidFromMethodId: bank ?? methodId.CASH!, reference: `PAY-${seq}` });
   };
 
   async function workflow(trigger: string, approverUserId: string) {
@@ -161,20 +160,24 @@ describe.skipIf(!url)('refunds (database)', () => {
       expect(await cnOpen(o.cn.id)).toBe(0); // set aside: it cannot be put in the wallet or spent too
       expect((await fin.creditNoteAccounting.worklist(companyId)).some((x) => x.a.creditNoteId === o.cn.id)).toBe(false);
       expect(await fin.customerLedger.drift(companyId)).toEqual([]);
-      expect(await codeOf(fin.refunds.recordPayout(ctx, r.id, { paidFromBankAccountId: await bankFor('CASH'), reference: 'R1' }))).toBe('EVIDENCE_REQUIRED');
+      expect(await codeOf(fin.refunds.recordPayout(ctx, r.id, { paidFromMethodId: methodId.CASH!, reference: 'R1' }))).toBe('EVIDENCE_REQUIRED');
       await fin.refunds.attach(ctx, r.id, { mediaAssetId: 'media_x', fileName: 'signed-receipt.jpg' });
-      expect(await codeOf(fin.refunds.recordPayout(ctx, r.id, { paidFromBankAccountId: await bankFor('CASH'), reference: ' ' }))).toBe('REFERENCE_REQUIRED');
-      expect(await codeOf(fin.refunds.recordPayout(ctx, r.id, { paidFromBankAccountId: await bankFor('CHQ-TRANSIT'), reference: 'R1' }))).toBe('BANK_INVALID');
-      expect(await codeOf(fin.refunds.recordPayout(ctx, r.id, { paidFromBankAccountId: await bankFor('CASH'), reference: 'R1', payoutDate: '2999-01-01' }))).toBe('DATE_INVALID');
-      const out = await fin.refunds.recordPayout(ctx, r.id, { paidFromBankAccountId: await bankFor('CASH'), reference: 'R1' });
+      expect(await codeOf(fin.refunds.recordPayout(ctx, r.id, { paidFromMethodId: methodId.CASH!, reference: ' ' }))).toBe('REFERENCE_REQUIRED');
+      expect(await codeOf(fin.refunds.recordPayout(ctx, r.id, { paidFromMethodId: methodId.CHEQUE!, reference: 'R1' }))).toBe('BANK_INVALID');
+      expect(await codeOf(fin.refunds.recordPayout(ctx, r.id, { paidFromMethodId: methodId.CASH!, reference: 'R1', payoutDate: '2999-01-01' }))).toBe('DATE_INVALID');
+      const out = await fin.refunds.recordPayout(ctx, r.id, { paidFromMethodId: methodId.CASH!, reference: 'R1' });
       expect(out).toMatchObject({ order: 'refunded', gl: false });
       expect(await status(r.id)).toBe('paid');
       const bank = await db.select().from(schema.bankLedgerEntries).where(eq(schema.bankLedgerEntries.documentId, r.id));
       expect(bank.map((b) => b.amount)).toEqual(['-580.0000']);
+      // paid out through a payment method: its G/L account is what the books (and the bank ledger) record
+      const [cashMethod] = await db.select().from(schema.paymentMethods).where(eq(schema.paymentMethods.id, methodId.CASH!));
+      expect(bank[0]!.glAccountId).toBe(cashMethod!.glAccountId);
+      expect((await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, r.id)))[0]!.paidFromMethodId).toBe(methodId.CASH);
       const legacy = await db.select().from(schema.transactionLedgerEntries).where(eq(schema.transactionLedgerEntries.idempotencyKey, `refund:${r.id}`));
       expect(legacy[0]).toMatchObject({ documentType: 'refund', direction: 'debit', amount: '580.00', transactionReference: 'R1' });
       expect(await codeOf(fin.refunds.cancel(ctx, r.id, { code: 'DATA_ENTRY_ERROR' }))).toBe('ALREADY_PAID');
-      expect(await codeOf(fin.refunds.recordPayout(ctx, r.id, { paidFromBankAccountId: await bankFor('CASH'), reference: 'R1' }))).toBe('NOT_APPROVED');
+      expect(await codeOf(fin.refunds.recordPayout(ctx, r.id, { paidFromMethodId: methodId.CASH!, reference: 'R1' }))).toBe('NOT_APPROVED');
       await expect(db.update(schema.refundRequests).set({ amount: '1.00' }).where(eq(schema.refundRequests.id, r.id))).rejects.toThrow();
       await expect(db.delete(schema.refundEvents).where(eq(schema.refundEvents.refundId, r.id))).rejects.toThrow();
       const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, o.orderId));
@@ -232,6 +235,38 @@ describe.skipIf(!url)('refunds (database)', () => {
       await payOut(r.id);
       expect(await status(r.id)).toBe('paid');
       expect(await fin.customerLedger.drift(companyId)).toEqual([]);
+    });
+  });
+
+  describe('paying through M-Pesa automatically', () => {
+    it('sends only what is approved, never twice, and records the payment from the confirmed result with the receipt as reference', async () => {
+      const o = await owed();
+      const { id: providerId } = await fin.paymentProviders.create(ctx, { providerCode: 'mpesa_daraja', displayName: `RF auto ${run}` });
+      const [before] = await db.select().from(schema.paymentMethods).where(eq(schema.paymentMethods.id, methodId.MPESA!));
+      await db.update(schema.paymentMethods).set({ providerId, refundDestination: 'automatic' }).where(eq(schema.paymentMethods.id, methodId.MPESA!));
+      try {
+        const r = await request(o.customer.id, 'credit_note_excess', o.cn.id, '300', { paymentMethodId: methodId.MPESA, payoutDetails: { phone: o.customer.phone! } });
+        // not approved yet: nothing to send
+        expect(await codeOf(fin.refunds.prepareAutomatic(reqCtx, r.id))).toBe('NOT_APPROVED');
+        await fin.refunds.submit(reqCtx, r.id);
+        const plan = await fin.refunds.prepareAutomatic(reqCtx, r.id);
+        expect(plan).toMatchObject({ providerId, methodId: methodId.MPESA, amount: '300.00', phone: o.customer.phone });
+        // someone has already sent it: no second send, and no payment by hand on top of it
+        const [op] = await db.insert(schema.providerOperations).values({ companyId, providerId, methodId: methodId.MPESA, operation: 'b2c', status: 'accepted', idempotencyKey: `refund:${r.id}:payout:1`, subjectType: 'refund', subjectId: r.id, amount: '300', input: {} }).returning();
+        expect(await codeOf(fin.refunds.prepareAutomatic(reqCtx, r.id))).toBe('PAYOUT_IN_PROGRESS');
+        expect(await codeOf(payOut(r.id))).toBe('PAYOUT_IN_PROGRESS');
+        // it was not paid (held for a check): the refund stays approved and says why
+        await fin.refunds.onAutomaticPayoutFinished({ ...op!, status: 'in_doubt', failureCode: 'STATUS_AMOUNT_MISMATCH', failureReason: 'differs' });
+        expect(await status(r.id)).toBe('approved');
+        // confirmed: recorded as paid, by the system, with the M-Pesa receipt as the reference and no evidence file needed
+        await fin.refunds.onAutomaticPayoutFinished({ ...op!, status: 'succeeded', platformReference: 'RFAUTO0001' });
+        const [paid] = await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, r.id));
+        expect(paid).toMatchObject({ status: 'paid', payoutReference: 'RFAUTO0001' });
+        const [bank] = await db.select().from(schema.bankLedgerEntries).where(eq(schema.bankLedgerEntries.documentId, r.id));
+        expect(Number(bank!.amount)).toBe(-300);
+      } finally {
+        await db.update(schema.paymentMethods).set({ providerId: before!.providerId, refundDestination: before!.refundDestination }).where(eq(schema.paymentMethods.id, methodId.MPESA!));
+      }
     });
   });
 

@@ -1,4 +1,4 @@
-import { and, eq, desc } from 'drizzle-orm';
+import { and, asc, eq, desc, ne, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   paymentProviderConfigs,
@@ -18,11 +18,24 @@ import type {
 export class PaymentConfigRepository {
   constructor(private readonly db: DrizzleDb) {}
 
+  /** Every provider of the company, the built-in Manual one included. */
+  async listByCompany(companyId: string): Promise<PaymentProviderConfigRow[]> {
+    return this.db
+      .select()
+      .from(paymentProviderConfigs)
+      .where(eq(paymentProviderConfigs.companyId, companyId))
+      .orderBy(asc(paymentProviderConfigs.isSystem), asc(paymentProviderConfigs.displayName));
+  }
+
+  /**
+   * The older way: providers that were configured for one branch (kept so a branch that has no payment
+   * method for a service yet still offers it at checkout).
+   */
   async listByBranch(branchId: string): Promise<PaymentProviderConfigRow[]> {
     return this.db
       .select()
       .from(paymentProviderConfigs)
-      .where(eq(paymentProviderConfigs.branchId, branchId))
+      .where(and(eq(paymentProviderConfigs.branchId, branchId), ne(paymentProviderConfigs.providerCode, 'manual')))
       .orderBy(paymentProviderConfigs.providerCode);
   }
 
@@ -33,12 +46,7 @@ export class PaymentConfigRepository {
     const rows = await this.db
       .select()
       .from(paymentProviderConfigs)
-      .where(
-        and(
-          eq(paymentProviderConfigs.branchId, branchId),
-          eq(paymentProviderConfigs.providerCode, providerCode),
-        ),
-      )
+      .where(and(eq(paymentProviderConfigs.branchId, branchId), eq(paymentProviderConfigs.providerCode, providerCode)))
       .limit(1);
     return rows[0] ?? null;
   }
@@ -52,6 +60,22 @@ export class PaymentConfigRepository {
     return rows[0] ?? null;
   }
 
+  /**
+   * What the storefront may offer a branch: payment methods of that branch (or of every branch) that
+   * go through a service which is switched on. First the branch's own methods, then by sort order.
+   */
+  async checkoutCandidates(companyId: string, branchId: string | null) {
+    const res = await this.db.execute<{ method_id: string; provider_id: string; provider_code: string }>(sql`
+      SELECT m.id AS method_id, p.id AS provider_id, p.provider_code
+      FROM payment_methods m
+      JOIN payment_provider_configs p ON p.id = m.provider_id
+      WHERE m.company_id = ${companyId}::uuid AND m.enabled = true AND m.usable_for ? 'customer_receipt'
+        AND p.provider_code <> 'manual' AND p.is_enabled = true
+        AND (m.branch_id IS NULL OR m.branch_id = ${branchId}::uuid)
+      ORDER BY (m.branch_id IS NULL) ASC, m.sort_order ASC, m.code ASC`);
+    return [...res].map((r) => ({ methodId: r.method_id, providerId: r.provider_id, providerCode: r.provider_code as PaymentProviderCode }));
+  }
+
   /** Remembers the last "Test connection" so the screen can show when it last worked. */
   async recordTest(id: string, ok: boolean, message: string): Promise<void> {
     await this.db
@@ -60,53 +84,52 @@ export class PaymentConfigRepository {
       .where(eq(paymentProviderConfigs.id, id));
   }
 
-  async upsert(input: {
-    branchId: string;
+  async create(input: {
+    companyId: string;
     providerCode: PaymentProviderCode;
     displayName: string;
-    isEnabled: boolean;
     environment: 'staging' | 'production';
     apiBaseUrl: string;
-    credentialsEncrypted?: EncryptedCredentialsBlob | null;
     settings?: Record<string, unknown>;
-    replaceCredentials?: boolean;
   }): Promise<PaymentProviderConfigRow> {
-    const existing = await this.getByBranchAndProvider(input.branchId, input.providerCode);
-    const now = new Date();
-
-    if (existing) {
-      const [updated] = await this.db
-        .update(paymentProviderConfigs)
-        .set({
-          displayName: input.displayName,
-          isEnabled: input.isEnabled,
-          environment: input.environment,
-          apiBaseUrl: input.apiBaseUrl.replace(/\/$/, ''),
-          settings: input.settings ?? existing.settings ?? {},
-          credentialsEncrypted: input.replaceCredentials
-            ? (input.credentialsEncrypted ?? null)
-            : existing.credentialsEncrypted,
-          updatedAt: now,
-        })
-        .where(eq(paymentProviderConfigs.id, existing.id))
-        .returning();
-      return updated!;
-    }
-
-    const [created] = await this.db
+    const [row] = await this.db
       .insert(paymentProviderConfigs)
       .values({
-        branchId: input.branchId,
+        companyId: input.companyId,
+        branchId: null,
         providerCode: input.providerCode,
         displayName: input.displayName,
-        isEnabled: input.isEnabled,
+        isEnabled: false,
         environment: input.environment,
         apiBaseUrl: input.apiBaseUrl.replace(/\/$/, ''),
-        credentialsEncrypted: input.credentialsEncrypted ?? null,
         settings: input.settings ?? {},
       })
       .returning();
-    return created!;
+    return row!;
+  }
+
+  async update(
+    id: string,
+    patch: Partial<{
+      displayName: string;
+      isEnabled: boolean;
+      environment: 'staging' | 'production';
+      apiBaseUrl: string;
+      credentialsEncrypted: EncryptedCredentialsBlob | null;
+      settings: Record<string, unknown>;
+    }>,
+  ): Promise<PaymentProviderConfigRow> {
+    const [row] = await this.db
+      .update(paymentProviderConfigs)
+      .set({ ...patch, ...(patch.apiBaseUrl ? { apiBaseUrl: patch.apiBaseUrl.replace(/\/$/, '') } : {}), updatedAt: new Date() })
+      .where(eq(paymentProviderConfigs.id, id))
+      .returning();
+    if (!row) throw new Error('That provider does not exist.');
+    return row;
+  }
+
+  async remove(id: string): Promise<void> {
+    await this.db.delete(paymentProviderConfigs).where(eq(paymentProviderConfigs.id, id));
   }
 }
 

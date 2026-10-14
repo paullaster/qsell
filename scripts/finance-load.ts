@@ -27,6 +27,8 @@ async function main() {
     // This script only posts through the engine; it never numbers a receipt.
     numbering: undefined as unknown as NumberSeriesService,
     reasons: new ReasonCodes(db),
+    paymentConfigs: undefined as never,
+    payments: undefined as never,
   });
   const [company] = await db
     .insert(companySettings)

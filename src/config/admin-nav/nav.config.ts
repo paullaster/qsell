@@ -533,35 +533,6 @@ export const ADMIN_NAV: AdminNavItem[] = [
         ],
       },
       {
-        id: 'payment-setup',
-        title: 'Payment Setup',
-        name: 'payment-setup',
-        href: '/admin/finance/payment-methods',
-        description: 'How customers pay (methods) and the services that collect it (providers)',
-        icon: 'CreditCard',
-        subLinks: [
-          {
-            id: 'payment-methods',
-            title: 'Payment methods',
-            name: 'payment-methods',
-            href: '/admin/finance/payment-methods',
-            description: 'Rules for each way of paying: where it lands and what must be recorded',
-            icon: 'CreditCard',
-            permission: 'payment_methods:read',
-          },
-          {
-            id: 'payment-providers',
-            title: 'Payment providers',
-            name: 'payment-providers',
-            href: '/admin/finance/payment-providers',
-            description:
-              'M-Pesa, Pesapal, Jenga and KCB Buni connections: credentials, test and switch on',
-            icon: 'Wallet',
-            permission: 'payment_providers:read',
-          },
-        ],
-      },
-      {
         id: 'currencies',
         title: 'Currencies & FX',
         name: 'currencies',
@@ -606,6 +577,24 @@ export const ADMIN_NAV: AdminNavItem[] = [
         description: 'Gateways and settlement reconciliation',
         icon: 'Wallet',
         subLinks: [
+          {
+            id: 'payment-activity',
+            title: 'Payment activity',
+            name: 'payment-activity',
+            href: '/admin/payments/activity',
+            description: 'What the payment platforms sent and what we asked them, and what needs a person',
+            icon: 'Activity',
+            permission: 'payment_activity:read',
+          },
+          {
+            id: 'payment-bills',
+            title: 'Bill Manager invoices',
+            name: 'payment-bills',
+            href: '/admin/payments/bills',
+            description: 'Send and cancel M-Pesa Bill Manager invoices from a paybill',
+            icon: 'Receipt',
+            permission: 'payment_activity:read',
+          },
           {
             id: 'reconciliation',
             title: 'Reconciliation',
@@ -696,9 +685,9 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Payments',
         name: 'settings-payments',
         href: '/admin/settings/payments',
-        description: 'Configure M-Pesa, Pesapal, Jenga HQ, and KCB Buni per branch',
+        description: 'Payment providers (M-Pesa, Pesapal, Equity, KCB) and the payment methods under them',
         icon: 'Wallet',
-        permission: 'payments:manage_gateways',
+        permission: 'payment_providers:read',
       },
       {
         id: 'settings-number-series',

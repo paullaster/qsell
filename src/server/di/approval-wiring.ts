@@ -18,6 +18,11 @@ import type { StockOp } from '@/server/domains/inventory/service';
  * reopened. Modules are imported when an approval is acted on, not here, so the container can be
  * built without loading every domain.
  */
+const payouts = async () => {
+  const { getContainer } = await import('@/server/di/container');
+  return getContainer().paymentEngine.disbursements;
+};
+
 export function registerApprovalHandlers(engine: ApprovalEngine, gate: ParkedActions): void {
   engine.registerDocument('sales_order', orderApprovalHandler(drizzleDb));
   engine.registerDocument('sales_quote', quoteApprovalHandler(drizzleDb));
@@ -25,6 +30,13 @@ export function registerApprovalHandlers(engine: ApprovalEngine, gate: ParkedAct
   engine.registerDocument('discount_rule', discountRuleApprovalHandler(drizzleDb));
   engine.registerDocument('rebate_settlement', rebateSettlementApprovalHandler(drizzleDb));
   engine.registerDocument('refund', refundApprovalHandler(drizzleDb));
+  engine.registerDocument('provider_operation', {
+    onReleased: async (id, tx) => (await payouts()).handler().onReleased(id, tx),
+    onRejected: async (id, tx, info) => (await payouts()).handler().onRejected(id, tx, info),
+    onReopened: async (id, tx) => (await payouts()).handler().onReopened(id, tx),
+    onCanceled: async (id, tx) => (await payouts()).handler().onCanceled!(id, tx),
+    describe: async (id) => (await payouts()).handler().describe!(id),
+  });
 
   gate.attach('price_list_change', priceChangeExecutors());
 

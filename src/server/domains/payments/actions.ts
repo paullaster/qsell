@@ -48,7 +48,7 @@ export async function createBranchAction(input: {
 }): Promise<BranchRow> {
   await requirePermission('branches:manage');
   const { company } = await ensureBranchContext();
-  const { branches, paymentConfigs } = getContainer();
+  const { branches } = getContainer();
   const created = await branches.create({
     companyId: company.id,
     code: input.code.trim().toUpperCase(),
@@ -59,20 +59,6 @@ export async function createBranchAction(input: {
     isDefault: false,
     isActive: true,
   });
-
-  for (const code of Object.keys(PAYMENT_PROVIDER_META) as PaymentProviderCode[]) {
-    const meta = PAYMENT_PROVIDER_META[code];
-    await paymentConfigs.upsert({
-      branchId: created.id,
-      providerCode: code,
-      displayName: meta.label,
-      isEnabled: false,
-      environment: 'staging',
-      apiBaseUrl: meta.defaultStagingBaseUrl,
-      credentialsEncrypted: null,
-      replaceCredentials: true,
-    });
-  }
 
   revalidatePath('/admin/settings');
   revalidatePath('/admin/settings/payments');
@@ -101,145 +87,6 @@ export async function updateBranchAction(
   return updated;
 }
 
-export type PaymentConfigAdminView = {
-  id: string;
-  branchId: string;
-  providerCode: PaymentProviderCode;
-  displayName: string;
-  isEnabled: boolean;
-  environment: PaymentProviderEnvironment;
-  apiBaseUrl: string;
-  settings: Record<string, unknown>;
-  hasCredentials: boolean;
-  maskedCredentials: Record<string, string> | null;
-  meta: (typeof PAYMENT_PROVIDER_META)[PaymentProviderCode];
-};
-
-function toAdminView(row: PaymentProviderConfigRow): PaymentConfigAdminView {
-  const code = row.providerCode as PaymentProviderCode;
-  const decrypted = decryptCredentials(row.credentialsEncrypted);
-  return {
-    id: row.id,
-    branchId: row.branchId,
-    providerCode: code,
-    displayName: row.displayName,
-    isEnabled: row.isEnabled,
-    environment: row.environment as PaymentProviderEnvironment,
-    apiBaseUrl: row.apiBaseUrl,
-    settings: (row.settings as Record<string, unknown>) || {},
-    hasCredentials: Boolean(row.credentialsEncrypted),
-    maskedCredentials: maskCredentials(decrypted),
-    meta: PAYMENT_PROVIDER_META[code],
-  };
-}
-
-export async function listPaymentConfigsAction(
-  branchId?: string,
-): Promise<PaymentConfigAdminView[]> {
-  await requirePermission('payments:manage_gateways');
-  const { branch } = await ensureBranchContext();
-  const { paymentConfigs } = getContainer();
-  const targetBranchId = branchId || branch.id;
-  let rows = await paymentConfigs.listByBranch(targetBranchId);
-
-  // Ensure all known providers exist as rows
-  for (const code of Object.keys(PAYMENT_PROVIDER_META) as PaymentProviderCode[]) {
-    if (!rows.find((r) => r.providerCode === code)) {
-      const meta = PAYMENT_PROVIDER_META[code];
-      await paymentConfigs.upsert({
-        branchId: targetBranchId,
-        providerCode: code,
-        displayName: meta.label,
-        isEnabled: false,
-        environment: 'staging',
-        apiBaseUrl: meta.defaultStagingBaseUrl,
-        replaceCredentials: false,
-      });
-    }
-  }
-  rows = await paymentConfigs.listByBranch(targetBranchId);
-  return rows.map(toAdminView);
-}
-
-export async function getPaymentConfigAction(
-  branchId: string,
-  providerCode: PaymentProviderCode,
-): Promise<PaymentConfigAdminView> {
-  await requirePermission('payments:manage_gateways');
-  await ensureBranchContext();
-  const { paymentConfigs } = getContainer();
-  let row = await paymentConfigs.getByBranchAndProvider(branchId, providerCode);
-  if (!row) {
-    const meta = PAYMENT_PROVIDER_META[providerCode];
-    row = await paymentConfigs.upsert({
-      branchId,
-      providerCode,
-      displayName: meta.label,
-      isEnabled: false,
-      environment: 'staging',
-      apiBaseUrl: meta.defaultStagingBaseUrl,
-      replaceCredentials: false,
-    });
-  }
-  return toAdminView(row);
-}
-
-export async function savePaymentConfigAction(input: {
-  branchId: string;
-  providerCode: PaymentProviderCode;
-  displayName?: string;
-  isEnabled: boolean;
-  environment: PaymentProviderEnvironment;
-  apiBaseUrl: string;
-  settings?: Record<string, unknown>;
-  /** When provided, replaces encrypted credentials. Omit to keep existing. */
-  credentials?: Record<string, string> | null;
-}): Promise<PaymentConfigAdminView> {
-  await requirePermission('payments:manage_gateways');
-  await ensureBranchContext();
-  const { paymentConfigs } = getContainer();
-  const meta = PAYMENT_PROVIDER_META[input.providerCode];
-
-  let credentialsEncrypted = undefined as ReturnType<typeof encryptCredentials> | null | undefined;
-  let replaceCredentials = false;
-  if (input.credentials) {
-    const cleaned: Record<string, string> = {};
-    for (const [k, v] of Object.entries(input.credentials)) {
-      if (typeof v === 'string' && v.trim() && !v.includes('•')) {
-        cleaned[k] = v.trim();
-      }
-    }
-    if (Object.keys(cleaned).length > 0) {
-      // Merge with existing so partial updates work
-      const existing = await paymentConfigs.getByBranchAndProvider(
-        input.branchId,
-        input.providerCode,
-      );
-      const prev = decryptCredentials(existing?.credentialsEncrypted) || {};
-      credentialsEncrypted = encryptCredentials({ ...prev, ...cleaned });
-      replaceCredentials = true;
-    }
-  }
-
-  const defaultUrl =
-    input.environment === 'production' ? meta.defaultProductionBaseUrl : meta.defaultStagingBaseUrl;
-
-  const row = await paymentConfigs.upsert({
-    branchId: input.branchId,
-    providerCode: input.providerCode,
-    displayName: input.displayName || meta.label,
-    isEnabled: input.isEnabled,
-    environment: input.environment,
-    apiBaseUrl: (input.apiBaseUrl || defaultUrl).replace(/\/$/, ''),
-    settings: input.settings,
-    credentialsEncrypted: credentialsEncrypted ?? null,
-    replaceCredentials,
-  });
-
-  revalidatePath('/admin/settings/payments');
-  return toAdminView(row);
-}
-
 export async function updateCompanyPublicBaseUrlAction(url: string): Promise<void> {
   await requirePermission('settings:manage');
   const { companySettings } = getContainer();
@@ -260,7 +107,7 @@ export async function listEnabledCheckoutProvidersAction(): Promise<
 > {
   const { branch } = await ensureBranchContext();
   const { payments } = getContainer();
-  const enabled = await payments.listEnabledProviders(branch.id);
+  const enabled = await payments.listEnabledProviders(branch);
   return enabled.map((c) => {
     const code = c.providerCode as PaymentProviderCode;
     const meta = PAYMENT_PROVIDER_META[code];

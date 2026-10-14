@@ -12,6 +12,7 @@ describe.skipIf(!url)('bank statements (database)', () => {
   let fin: import('./index').FinanceServices;
   let companyId: string;
   let glBank: string;
+  let manualProvider: string;
   let glFee: string;
   let ctx: import('./errors').FinanceContext;
   const run = randomUUID().slice(0, 6).toUpperCase();
@@ -44,8 +45,8 @@ describe.skipIf(!url)('bank statements (database)', () => {
   /** A bank account of its own, with a method paying into it, so tests do not share state. */
   async function fresh(label: string) {
     seq += 1;
-    const account = await fin.bankAccounts.create(ctx, { code: `ST${run}${seq}`, name: `Statement test ${label}`, kind: 'bank', currency: 'KES', glAccountId: glBank, feeGlAccountId: glFee });
-    const method = await fin.paymentMethods.create(ctx, { code: `STM${run}${seq}`, name: `Transfer ${seq}`, kind: 'bank_transfer', balancingBankAccountId: account.id, usableFor: ['customer_receipt'], refundDestination: 'none' });
+    const account = await fin.bankAccounts.create(ctx, { code: `ST${run}${seq}`, name: `Statement test ${label}`, kind: 'bank', currency: 'KES', feeGlAccountId: glFee });
+    const method = await fin.paymentMethods.create(ctx, { code: `STM${run}${seq}`, name: `Transfer ${seq}`, kind: 'bank_transfer', balancingBankAccountId: account.id, providerId: manualProvider, glAccountId: glBank, usableFor: ['customer_receipt'], refundDestination: 'none' });
     return { account, method };
   }
   async function customer(name = 'Stmt customer') {
@@ -80,7 +81,8 @@ describe.skipIf(!url)('bank statements (database)', () => {
     await fin.setup.applyTemplate(ctx, 'kenya', { fiscalYearStart: '2026-01-01' });
     await fin.paymentMethods.seedStandard(ctx);
     const accts = await fin.setup.listAccounts(companyId);
-    glBank = (await fin.bankAccounts.list(companyId)).find((b) => b.account.kind === 'bank')!.account.glAccountId;
+    glBank = accts.find((a) => a.no === '1120')!.id;
+    manualProvider = (await fin.paymentMethods.providerChoices(companyId)).find((p) => p.isSystem)!.id;
     glFee = accts.find((a) => a.category === 'expense' && a.type === 'posting')!.id;
   });
 
@@ -335,7 +337,7 @@ describe.skipIf(!url)('bank statements (database)', () => {
         id: refundId, companyId, number: `RFD-ST-${run}`, customerId: c.id, sourceKind: 'credit_note_excess', sourceId: randomUUID(), currency: 'KES', amount: '580', reasonCode: 'CUSTOMER_REQUEST',
         paymentMethodId: f.method.id, payoutDetails: {}, requestedBy: 'tester', status: 'paid', payoutReference: 'RFDPAY777', paidAt: new Date(),
       });
-      const [entry] = await db.insert(schema.bankLedgerEntries).values({ companyId, bankAccountId: f.account.id, postingDate: day(2), documentType: 'refund', documentNo: `RFD-ST-${run}`, documentId: refundId, description: 'Refund', amount: '-580', currency: 'KES' }).returning();
+      const [entry] = await db.insert(schema.bankLedgerEntries).values({ companyId, bankAccountId: f.account.id, postingDate: day(2), glAccountId: glBank, documentType: 'refund', documentNo: `RFD-ST-${run}`, documentId: refundId, description: 'Refund', amount: '-580', currency: 'KES' }).returning();
       const imp = await importCsv(f.account.id, [[dmy(day(1)), 'Paid out RFDPAY777 to customer', 'RFDPAY777', '', '580.00', '']]);
       expect(imp.autoMatched).toBe(1);
       const seen = async () => (await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, refundId)))[0]!.bankMatchedAt;
