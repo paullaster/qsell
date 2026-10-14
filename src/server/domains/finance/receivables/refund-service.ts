@@ -598,6 +598,12 @@ export class RefundService {
     return c?.n ?? null;
   }
 
+  /** The customer's name and phone, to start a refund from. */
+  async customerBrief(companyId: string, id: string) {
+    const rows = await this.db.select({ name: customers.name, phone: customers.phone }).from(customers).where(and(eq(customers.companyId, companyId), eq(customers.id, id)));
+    return rows.at(0) ?? null;
+  }
+
   async list(companyId: string, f: { status?: RefundStatus; q?: string; customerId?: string; before?: string; limit?: number } = {}) {
     const limit = Math.min(f.limit ?? 50, 200);
     const q = f.q?.trim();

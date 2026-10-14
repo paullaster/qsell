@@ -1,36 +1,41 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { use, useState } from 'react';
 import { listRefundsAction, type refundReportAction } from '@/server/domains/finance/refund-actions';
-import { Chip, Message, PageHeader, buttonClass, cardClass, fieldClass, money, primaryClass, type Notice, attempt } from './ui';
+import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { REFUND_STATUS, statusInfo } from '@/lib/finance-statuses';
+import { listArgs } from '@/lib/finance-list-filters';
+import type { Choice } from '@/lib/payment-options';
+import { Chip, LoadFailed, Message, PageHeader, buttonClass, cardClass, fieldClass, money, primaryClass, type Notice, attempt } from './ui';
 
 type Page = Extract<Awaited<ReturnType<typeof listRefundsAction>>, { ok: true }>['data'];
 type Report = Extract<Awaited<ReturnType<typeof refundReportAction>>, { ok: true }>['data'];
 
-export const REFUND_STATUS: Record<string, { label: string; tone: 'green' | 'amber' | 'red' | 'sky' | 'gray' }> = {
-  draft: { label: 'Draft', tone: 'gray' },
-  pending_approval: { label: 'Waiting for approval', tone: 'amber' },
-  approved: { label: 'Approved, not paid', tone: 'sky' },
-  paid: { label: 'Paid', tone: 'green' },
-  rejected: { label: 'Rejected', tone: 'red' },
-  cancelled: { label: 'Cancelled', tone: 'gray' },
-};
 const words = (s: string) => s.replace(/_/g, ' ');
 
-export function RefundsClient({ initial, report, from, to }: { initial: Page; report: Report | null; from: string; to: string }) {
+export function RefundsClient({ initialPromise, reportPromise }: { initialPromise: ReturnType<typeof listRefundsAction>; reportPromise: ReturnType<typeof refundReportAction> }) {
+  const list = use(initialPromise);
+  const report = use(reportPromise);
+  return list.ok ? <RefundsView initial={list.data} report={report.ok ? report.data : null} /> : <LoadFailed error={list.error} />;
+}
+
+function RefundsView({ initial, report }: { initial: Page; report: Report | null }) {
   const [rows, setRows] = useState(initial.rows);
   const [next, setNext] = useState(initial.nextBefore);
-  const [status, setStatus] = useState('');
+  const [status, setStatus] = useState<Choice | null>(null);
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
 
   const load = async (more: boolean) => {
     setBusy(true);
-    const res = await attempt(listRefundsAction({ status: (status || undefined) as never, q: q || undefined, before: more ? (next ?? undefined) : undefined }));
+    const res = await attempt(listRefundsAction(listArgs((status?.id ?? null) as never, q, more ? next : null)));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) {
+      setNotice({ kind: 'error', text: res.error });
+      return;
+    }
     setNotice(null);
     setRows(more ? [...rows, ...res.data.rows] : res.data.rows);
     setNext(res.data.nextBefore);
@@ -45,12 +50,12 @@ export function RefundsClient({ initial, report, from, to }: { initial: Page; re
       />
       <Message notice={notice} />
 
-      {report ? (
-        <section className={`${cardClass} space-y-4`} aria-label={`Refund report, ${from} to ${to}`}>
-          <h2 className="text-sm font-bold text-fg-strong">Last 30 days ({from} to {to})</h2>
+      {report !== null ? (
+        <section className={`${cardClass} space-y-4`} aria-label={`Refund report, ${report.from} to ${report.to}`}>
+          <h2 className="text-sm font-bold text-fg-strong">Last 30 days ({report.from} to {report.to})</h2>
           <dl className="grid grid-cols-2 gap-3 text-sm md:grid-cols-3">
             {report.byStatus.map((s) => (
-              <div key={s.status}><dt className="text-xs text-fg-muted">{REFUND_STATUS[s.status]?.label ?? s.status}</dt><dd className="font-bold text-fg-strong">{s.count} · {money(s.total)}</dd></div>
+              <div key={s.status}><dt className="text-xs text-fg-muted">{statusInfo(REFUND_STATUS, s.status).label}</dt><dd className="font-bold text-fg-strong">{s.count} · {money(s.total)}</dd></div>
             ))}
             {report.byStatus.length === 0 ? <p className="col-span-full text-fg-muted">No refunds asked for in this period.</p> : null}
           </dl>
@@ -75,12 +80,7 @@ export function RefundsClient({ initial, report, from, to }: { initial: Page; re
       ) : null}
 
       <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); void load(false); }} role="search">
-        <label className="text-xs font-semibold text-fg-muted">Status
-          <select value={status} onChange={(e) => setStatus(e.target.value)} className={`${fieldClass} mt-1 block`}>
-            <option value="">All</option>
-            {Object.entries(REFUND_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-          </select>
-        </label>
+        <div className="min-w-48"><ChoicePicker label="Status" source="refund-statuses" choice={status} onChoice={setStatus} placeholder="All" /></div>
         <label className="min-w-40 flex-1 text-xs font-semibold text-fg-muted">Search
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Number, customer or reference" className={`${fieldClass} mt-1 block w-full`} autoComplete="off" />
         </label>
@@ -96,7 +96,7 @@ export function RefundsClient({ initial, report, from, to }: { initial: Page; re
               <Link href={`/admin/finance/refunds/${r.id}`} className={`${cardClass} block min-h-10 hover:bg-hover`}>
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <p className="text-sm font-bold text-fg-strong">{r.number} <span className="font-normal text-fg-muted">· {r.customer}</span></p>
-                  <span className="flex items-center gap-2"><Chip tone={REFUND_STATUS[r.status]?.tone ?? 'gray'}>{REFUND_STATUS[r.status]?.label ?? r.status}</Chip></span>
+                  <span className="flex items-center gap-2"><Chip tone={statusInfo(REFUND_STATUS, r.status).tone}>{statusInfo(REFUND_STATUS, r.status).label}</Chip></span>
                 </div>
                 <p className="mt-1 text-xs text-fg-muted">{r.currency} {money(r.amount)} · {r.method} · {words(r.reason)} · {new Date(r.createdAt).toLocaleDateString()}{r.detailsChanged ? ' · paid to different details' : ''}</p>
               </Link>
@@ -104,7 +104,7 @@ export function RefundsClient({ initial, report, from, to }: { initial: Page; re
           ))}
         </ul>
       )}
-      {next ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void load(true)}>Show more</button> : null}
+      {next !== null ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void load(true)}>Show more</button> : null}
     </div>
   );
 }

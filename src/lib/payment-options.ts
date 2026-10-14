@@ -5,6 +5,8 @@
 export interface Choice {
   id: string;
   label: string;
+  /** What the server said about this option when it was offered. */
+  meta?: Record<string, string>;
 }
 
 export const PROVIDER_ENVIRONMENTS: readonly Choice[] = [

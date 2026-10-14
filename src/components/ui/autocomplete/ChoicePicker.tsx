@@ -16,7 +16,7 @@ export function ChoicePicker({ choice, onChoice, ...props }: ChoicePickerProps) 
       {...props}
       value={choice?.id ?? null}
       valueLabel={choice?.label ?? null}
-      onChange={(option) => onChoice(option ? { id: option.id, label: option.label } : null)}
+      onChange={(option) => onChoice(option ? { id: option.id, label: option.label, ...(option.meta === undefined ? {} : { meta: option.meta }) } : null)}
     />
   );
 }
