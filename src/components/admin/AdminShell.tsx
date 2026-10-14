@@ -7,7 +7,6 @@ import { Menu, RefreshCw, Store, LogOut, User, ChevronDown, Settings } from 'luc
 import { AdminSidebar } from './AdminSidebar';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { useRealtimeEvents } from '@/lib/realtime';
-import { ensureAdminSessionAction } from '@/server/domains/auth/actions';
 import { getCompanySettingsAction } from '@/server/domains/company/actions';
 import { getAdminPageMeta, type AdminNavAccess } from '@/config/admin-nav';
 import { AdminNavAccessProvider } from '@/components/admin/nav/AdminNavAccessProvider';
@@ -27,7 +26,6 @@ export function AdminShell({
   const router = useRouter();
   const uiConfig = useCompanyUiConfig();
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-  const [sessionReady, setSessionReady] = useState(false);
   const [company, setCompany] = useState<Pick<
     CompanySettingsRow,
     'tradingName' | 'tagline' | 'logoUrl' | 'accentColor'
@@ -40,15 +38,9 @@ export function AdminShell({
     [pathname, moduleLabels],
   );
 
+  // The company's name and logo load alongside the page; nothing waits for them.
   useEffect(() => {
     let cancelled = false;
-    void ensureAdminSessionAction()
-      .then(() => {
-        if (!cancelled) setSessionReady(true);
-      })
-      .catch(() => {
-        if (!cancelled) setSessionReady(true);
-      });
     void getCompanySettingsAction()
       .then((row) => {
         if (!cancelled) {
@@ -88,14 +80,6 @@ export function AdminShell({
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
-
-  if (!sessionReady) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-canvas text-sm text-fg-muted">
-        Preparing admin session…
-      </div>
-    );
-  }
 
   return (
     <AdminNavAccessProvider access={access}>
