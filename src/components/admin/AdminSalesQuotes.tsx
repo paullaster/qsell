@@ -18,6 +18,7 @@ import {
   Settings2,
   ShoppingCart,
   Files,
+  LayoutList,
   X,
 } from 'lucide-react';
 import type { CatalogueProduct } from '@/lib/catalogue-entry';
@@ -48,6 +49,7 @@ import {
 } from '@/server/domains/quotes/actions';
 import type { QuoteInput } from '@/server/domains/quotes/service';
 import { AdminSalesQuoteTemplates } from './AdminSalesQuoteTemplates';
+import { AdminSectionTemplates } from './AdminSectionTemplates';
 import { QuoteLinePriceNote } from './pricing/QuoteLinePriceNote';
 import { useQuotePricePreview } from './pricing/useQuotePricePreview';
 import { useQuoteGuardPreview } from './pricing/useQuoteGuardPreview';
@@ -58,6 +60,10 @@ import { CataloguePicker } from './quote-layout/CataloguePicker';
 import { QuickAdd } from './quote-layout/QuickAdd';
 import { BulkAddDialog } from './quote-layout/BulkAddDialog';
 import { QuantityInput } from './quote-layout/QuantityInput';
+import { TemplateSwapDialog } from './quote-layout/TemplateSwapDialog';
+import { planTemplateSwap, templateContent, type SwapPlan } from '@/lib/quote-template-swap';
+import { addSectionFromTemplate, planSectionSwap } from '@/lib/quote-section-swap';
+import type { SectionTemplate } from '@/server/domains/quotes/section-template-service';
 import { buildCatalogueIndex } from '@/lib/catalogue-entry';
 import { addCatalogueEntry, lastIndexOfProduct, type CatalogueEntry } from '@/lib/quote-layout';
 import type { QuoteSearchHit } from '@/server/domains/quotes/service';
@@ -75,6 +81,7 @@ interface EditorData {
     nextQuoteNumber: number;
   };
   templates: SalesQuoteTemplate[];
+  sectionTemplates: SectionTemplate[];
 }
 
 const STATUSES = [
@@ -144,6 +151,8 @@ function quoteToInput(quote: SalesQuote): QuoteInput {
       title: section.title,
       description: section.description,
       showLines: section.showLines,
+      fromTemplate: section.fromTemplate,
+      sectionTemplateId: section.sectionTemplateId,
     })),
     validUntil: quote.validUntil?.toISOString().slice(0, 10) ?? null,
     customerReference: quote.customerReference,
@@ -163,6 +172,8 @@ function quoteToInput(quote: SalesQuote): QuoteInput {
         // The price already agreed stays as it is until someone asks to reprice it.
         priceMode: 'kept' as const,
         discountPercent: Number(line.discountPercent),
+        fromTemplate: line.fromTemplate,
+        fromSectionTemplate: line.fromSectionTemplate,
       })),
   };
 }
@@ -182,9 +193,7 @@ function quoteInputFromTemplate(
         country: customer.country ?? 'Kenya',
       }
     : {};
-  const sectionIdMap = new Map(
-    template.sections.map((section) => [section.id, crypto.randomUUID()]),
-  );
+  const content = templateContent(template, (id) => products.find((row) => row.id === id)?.price);
   return {
     ...newQuoteInput(),
     customerId: customer?.id ?? null,
@@ -205,23 +214,7 @@ function quoteInputFromTemplate(
     internalNotes: template.internalNotes,
     discountPercent: Number(template.quoteDiscountPercent),
     shippingFee: Number(template.shippingFee),
-    sections: template.sections.map((section) => ({
-      id: sectionIdMap.get(section.id)!,
-      title: section.title,
-      description: section.description,
-      showLines: section.showLines,
-    })),
-    lines: template.lines.map((line) => {
-      const product = products.find((row) => row.id === line.productId);
-      return {
-        productId: line.productId ?? '',
-        sectionId: line.sectionId ? (sectionIdMap.get(line.sectionId) ?? null) : null,
-        quantity: Number(line.quantity),
-        unitPrice: line.priceMode === 'fixed' ? Number(line.unitPrice ?? 0) : product?.price,
-        priceMode: line.priceMode === 'fixed' ? ('manual' as const) : ('catalog' as const),
-        discountPercent: Number(line.discountPercent),
-      };
-    }),
+    ...content,
   };
 }
 
@@ -245,7 +238,7 @@ export function AdminSalesQuotes({
   const capabilities = use(capabilitiesPromise);
   const router = useRouter();
   const [search, setSearch] = useState('');
-  const [activeTab, setActiveTab] = useState<'quotes' | 'templates'>('quotes');
+  const [activeTab, setActiveTab] = useState<'quotes' | 'templates' | 'sections'>('quotes');
   const [statusFilter, setStatusFilter] = useState<(typeof STATUSES)[number]>('all');
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<SalesQuote | null>(null);
@@ -447,6 +440,15 @@ export function AdminSalesQuotes({
           className={`inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold ${activeTab === 'templates' ? 'border-indigo-600 text-indigo-700 dark:text-indigo-300' : 'border-transparent text-fg-muted hover:text-fg-strong'}`}
         >
           <Files className="h-4 w-4" /> Templates
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'sections'}
+          onClick={() => setActiveTab('sections')}
+          className={`inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold ${activeTab === 'sections' ? 'border-indigo-600 text-indigo-700 dark:text-indigo-300' : 'border-transparent text-fg-muted hover:text-fg-strong'}`}
+        >
+          <LayoutList className="h-4 w-4" aria-hidden /> Section templates
         </button>
       </div>
 
@@ -688,6 +690,17 @@ export function AdminSalesQuotes({
             </table>
           </div>
         </section>
+      ) : activeTab === 'sections' ? (
+        <AdminSectionTemplates
+          templates={editorData.sectionTemplates}
+          products={editorData.products}
+          canCreate={capabilities.canCreate}
+          canUpdate={capabilities.canUpdate}
+          canDelete={capabilities.canDelete}
+          onRefresh={refresh}
+          onMessage={setNotice}
+          onError={setError}
+        />
       ) : (
         <AdminSalesQuoteTemplates
           templates={editorData.templates}
@@ -709,7 +722,8 @@ export function AdminSalesQuotes({
           products={editorData.products}
           kits={editorData.kits}
           customers={editorData.customers}
-          templates={editorData.templates.filter((template) => template.status === 'active')}
+          templates={editorData.templates}
+          sectionTemplates={editorData.sectionTemplates}
           initial={editing ? quoteToInput(editing) : newQuoteInput()}
           quoteNumber={editing?.quoteNumber}
           minimumMargin={marginFloor}
@@ -849,6 +863,7 @@ function QuoteEditor({
   kits,
   customers,
   templates,
+  sectionTemplates,
   initial,
   quoteNumber,
   minimumMargin,
@@ -859,6 +874,7 @@ function QuoteEditor({
   kits: EditorKit[];
   customers: CustomerRow[];
   templates: SalesQuoteTemplate[];
+  sectionTemplates: SectionTemplate[];
   initial: QuoteInput;
   quoteNumber?: string;
   minimumMargin: number;
@@ -973,13 +989,49 @@ function QuoteEditor({
     );
   const { traces, problems } = useQuotePricePreview(input, setInput);
   const guards = useQuoteGuardPreview(input);
-  const selectTemplate = (templateId: string) => {
-    const template = templates.find((candidate) => candidate.id === templateId);
-    if (!template) {
-      setInput(newQuoteInput());
+  const [swap, setSwap] = useState<{
+    plan: SwapPlan;
+    from: { name: string } | null;
+    to: { name: string } | null;
+    /** Set when only one section is switched to another section template. */
+    section?: { title: string };
+  } | null>(null);
+  const priceOf = (id: string) => productById.get(id)?.price;
+  const addSectionTemplate = (templateId: string) => {
+    const template = sectionTemplates.find((candidate) => candidate.id === templateId);
+    if (template) setInput((current) => addSectionFromTemplate(current, template, priceOf));
+  };
+  const switchSectionTemplate = (sectionId: string, templateId: string) => {
+    const section = (input.sections ?? []).find((row) => row.id === sectionId);
+    if (!section || (section.sectionTemplateId ?? '') === templateId) return;
+    const from = sectionTemplates.find((t) => t.id === section.sectionTemplateId) ?? null;
+    const to = sectionTemplates.find((t) => t.id === templateId) ?? null;
+    const plan = planSectionSwap(input, sectionId, from, to, priceOf);
+    if (plan.kind !== 'none') {
+      setSwap({ plan, from, to, section: { title: section.title } });
       return;
     }
-    setInput(quoteInputFromTemplate(template, products, customers));
+    setInput(plan.apply(false));
+  };
+  /** Templates a quote can be switched to; the one it already has stays listed even if archived. */
+  const templateOptions = templates.filter(
+    (template) => template.status === 'active' || template.id === input.templateId,
+  );
+  const selectTemplate = (templateId: string) => {
+    if (templateId === (input.templateId ?? '')) return;
+    const from = templates.find((candidate) => candidate.id === input.templateId) ?? null;
+    const to = templates.find((candidate) => candidate.id === templateId) ?? null;
+    const plan = planTemplateSwap(input, from, to, (id) => productById.get(id)?.price);
+    if (plan.kind !== 'none') {
+      setSwap({ plan, from, to });
+      return;
+    }
+    // Nothing on the form to replace. A form with no customer yet also takes the template's.
+    if (!input.customerName && !input.customerId) {
+      setInput(to ? quoteInputFromTemplate(to, products, customers) : newQuoteInput());
+      return;
+    }
+    setInput(plan.apply(false));
   };
 
   const chooseCustomer = (id: string) => {
@@ -1035,23 +1087,39 @@ function QuoteEditor({
             {error}
           </p>
         )}
-        {!quoteNumber && templates.length > 0 && (
+        {(templateOptions.length > 0 || input.templateId) && (
           <label className="block text-sm font-medium text-fg">
-            Start from a template
+            {quoteNumber ? 'Template' : 'Start from a template'}
             <select
               value={input.templateId ?? ''}
               onChange={(event) => selectTemplate(event.target.value)}
               className="mt-1 block w-full rounded-lg border border-line bg-surface px-3 py-2 text-fg-strong"
             >
-              <option value="">Blank quote</option>
-              {templates.map((template) => (
+              <option value="">{quoteNumber ? 'No template' : 'Blank quote'}</option>
+              {templateOptions.map((template) => (
                 <option key={template.id} value={template.id}>
                   {template.name}
                   {template.isDefault ? ' · Default' : ''}
+                  {template.status === 'archived' ? ' · Archived' : ''}
                 </option>
               ))}
             </select>
           </label>
+        )}
+        {swap && (
+          <TemplateSwapDialog
+            plan={swap.plan}
+            fromName={swap.from?.name ?? null}
+            toName={swap.to?.name ?? null}
+            scope={swap.section ? 'section' : 'quote'}
+            sectionName={swap.section?.title}
+            nameOf={(id) => productById.get(id)?.name ?? 'Unknown item'}
+            onClose={() => setSwap(null)}
+            onConfirm={(keepAdditions) => {
+              setInput(swap.plan.apply(keepAdditions));
+              setSwap(null);
+            }}
+          />
         )}
         <section className="grid gap-3 sm:grid-cols-2">
           <label className="text-sm font-medium text-fg">
@@ -1162,6 +1230,9 @@ function QuoteEditor({
           </header>
           <QuoteLayoutBoard
             noun="quote"
+            sectionTemplates={sectionTemplates}
+            onAddSectionFromTemplate={addSectionTemplate}
+            onSectionTemplateChange={switchSectionTemplate}
             sections={input.sections ?? []}
             lines={input.lines}
             onChange={(next) => setInput((current) => ({ ...current, ...next }))}

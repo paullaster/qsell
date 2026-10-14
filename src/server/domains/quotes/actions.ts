@@ -9,6 +9,7 @@ import { listProductsAction } from '@/server/domains/catalog/actions';
 import { listTradeCustomersAction } from '@/server/domains/customers/master-actions';
 import type { KitAllocation } from '@/server/domains/pricing/domain/kits';
 import { SalesQuoteService, type QuoteInput, type QuoteTemplateInput } from './service';
+import { SectionTemplateService, type SectionTemplateInput } from './section-template-service';
 
 const service = () => new SalesQuoteService();
 
@@ -78,12 +79,13 @@ async function editorKits(): Promise<EditorKit[]> {
 
 export async function getSalesQuoteEditorDataAction() {
   await requirePermission('quotes:read');
-  const [products, customers, settings, templates, kits] = await Promise.all([
+  const [products, customers, settings, templates, kits, sectionTemplates] = await Promise.all([
     listProductsAction(),
     listTradeCustomersAction(),
     service().getSettings(),
     service().listTemplates(),
     editorKits(),
+    new SectionTemplateService().list(),
   ]);
   // Only what the editors use: descriptions, specifications and media would make a long catalogue
   // slow to open, and nothing on the screen shows them.
@@ -103,7 +105,7 @@ export async function getSalesQuoteEditorDataAction() {
     reservedQuantity: p.reservedQuantity,
     imageUrl: p.imageUrl,
   }));
-  return { products: slim, customers, settings, templates, kits };
+  return { products: slim, customers, settings, templates, kits, sectionTemplates };
 }
 
 export async function listSalesQuoteTemplatesAction() {
@@ -116,6 +118,32 @@ export async function saveSalesQuoteTemplateAction(id: string | null, input: Quo
   const template = await service().saveTemplate(userId, id, input);
   revalidatePath('/admin/quotes');
   return template;
+}
+
+export async function saveSectionTemplateAction(id: string | null, input: SectionTemplateInput) {
+  return run(async () => {
+    const userId = await requirePermission(id ? 'quotes:update' : 'quotes:create');
+    const template = await new SectionTemplateService().save(userId, id, input);
+    revalidatePath('/admin/quotes');
+    return template;
+  });
+}
+
+export async function duplicateSectionTemplateAction(id: string) {
+  return run(async () => {
+    const userId = await requirePermission('quotes:create');
+    const template = await new SectionTemplateService().duplicate(userId, id);
+    revalidatePath('/admin/quotes');
+    return template;
+  });
+}
+
+export async function archiveSectionTemplateAction(id: string) {
+  return run(async () => {
+    const userId = await requirePermission('quotes:delete');
+    await new SectionTemplateService().archive(userId, id);
+    revalidatePath('/admin/quotes');
+  });
 }
 
 /** Quotes of any status to choose from when making a template. */

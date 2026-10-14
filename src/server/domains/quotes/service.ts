@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike, or, sql } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import { withAfterCommit } from '@/server/kernel/after-commit';
@@ -14,6 +14,8 @@ import {
   salesQuoteTemplateSections,
   salesQuoteTemplates,
   salesQuoteSections,
+  salesSectionTemplateEvents,
+  salesSectionTemplates,
   type SalesQuoteTemplateRow,
   type SalesQuoteRow,
 } from '@/server/db/drizzle/schema';
@@ -103,12 +105,25 @@ export interface QuoteInput {
   /** Coupon codes the customer gave; each can unlock a discount rule. */
   couponCodes?: string[];
   shippingFee: number;
-  sections: { id: string; title: string; description?: string | null; showLines?: boolean }[];
+  sections: {
+    id: string;
+    title: string;
+    description?: string | null;
+    showLines?: boolean;
+    /** Came from the quote's template; switching template replaces it. */
+    fromTemplate?: boolean;
+    /** The section template this section was made from, if any. */
+    sectionTemplateId?: string | null;
+  }[];
   lines: {
     sectionId?: string | null;
     productId: string;
     quantity: number;
     unitPrice?: number;
+    /** Came from the quote's template; switching template replaces it. */
+    fromTemplate?: boolean;
+    /** Came from the section template of the section it sits in. */
+    fromSectionTemplate?: boolean;
     /**
      * How the unit price is decided. `catalog`: priced from the price lists now. `manual`: the
      * typed `unitPrice`. `kept`: the price already saved on this quote, with its explanation.
@@ -633,6 +648,8 @@ export class SalesQuoteService {
       title: section.title,
       description: section.description,
       showLines: section.showLines,
+      fromTemplate: section.fromTemplate,
+      sectionTemplateId: section.sectionTemplateId,
     }));
     const revised = await this.create(userId, {
       customerId: previous.customerId,
@@ -666,6 +683,8 @@ export class SalesQuoteService {
           quantity: num(line.quantity),
           unitPrice: num(line.unitPrice),
           discountPercent: num(line.discountPercent),
+          fromTemplate: line.fromTemplate,
+          fromSectionTemplate: line.fromSectionTemplate,
         })),
     });
     await drizzleDb
@@ -732,6 +751,38 @@ export class SalesQuoteService {
     }
     if (input.lines.some((line) => line.sectionId && !sectionIds.has(line.sectionId))) {
       throw new Error('A quote line references a section that no longer exists.');
+    }
+    // The section templates the sections were made from: they must exist, and an archived one can
+    // stay on a section that already had it but cannot be put on another.
+    const sectionTemplateIds = [
+      ...new Set(
+        sections.flatMap((section) =>
+          section.sectionTemplateId ? [section.sectionTemplateId] : [],
+        ),
+      ),
+    ];
+    const sectionTemplates = new Map(
+      (sectionTemplateIds.length
+        ? await drizzleDb
+            .select()
+            .from(salesSectionTemplates)
+            .where(
+              and(
+                eq(salesSectionTemplates.companyId, companyId),
+                inArray(salesSectionTemplates.id, sectionTemplateIds),
+              ),
+            )
+        : []
+      ).map((row) => [row.id, row]),
+    );
+    for (const templateId of sectionTemplateIds) {
+      const template = sectionTemplates.get(templateId);
+      if (!template) throw new Error('A selected section template is no longer available.');
+      if (
+        template.status === 'archived' &&
+        !existing?.sections.some((section) => section.sectionTemplateId === templateId)
+      )
+        throw new Error('Archived section templates cannot be used for new sections.');
     }
     const { branch } = await getContainer().organizations.ensureDefaultOrgAndBranch(
       companyId,
@@ -935,6 +986,10 @@ export class SalesQuoteService {
       return {
         productId: product.id,
         sectionId: line.sectionId || null,
+        fromTemplate: line.fromTemplate === true,
+        fromSectionTemplate:
+          line.fromSectionTemplate === true &&
+          Boolean(sections.find((section) => section.id === line.sectionId)?.sectionTemplateId),
         lineNumber: (index + 1) * 10000,
         sku: product.sku,
         description: product.name,
@@ -1176,6 +1231,11 @@ export class SalesQuoteService {
             title: section.title.trim(),
             description: section.description?.trim() || null,
             showLines: section.showLines === true,
+            fromTemplate: section.fromTemplate === true,
+            sectionTemplateId: section.sectionTemplateId || null,
+            sectionTemplateName: section.sectionTemplateId
+              ? (sectionTemplates.get(section.sectionTemplateId)?.name ?? null)
+              : null,
           })),
         );
       }
@@ -1224,7 +1284,70 @@ export class SalesQuoteService {
           approvalByWorkflow: byWorkflow,
         },
       });
-      if (!existing && sourceTemplate) {
+      const changedTemplate =
+        existing != null && (existing.templateId ?? null) !== (sourceTemplate?.id ?? null);
+      if (changedTemplate) {
+        await tx.insert(salesQuoteEvents).values({
+          quoteId: quote.id,
+          eventType: 'template_changed',
+          actorId: userId,
+          details: {
+            fromTemplateId: existing.templateId,
+            fromTemplateName: existing.templateName,
+            toTemplateId: sourceTemplate?.id ?? null,
+            toTemplateName: sourceTemplate?.name ?? null,
+          },
+        });
+      }
+      // Section templates: a use is counted for each section made from one that the quote did not
+      // already have, and a change is recorded. Sections are matched by template, not by id, since
+      // the editor gives sections new ids each time a quote is opened.
+      const before = new Map<string, number>();
+      for (const section of existing?.sections ?? []) {
+        if (section.sectionTemplateId)
+          before.set(section.sectionTemplateId, (before.get(section.sectionTemplateId) ?? 0) + 1);
+      }
+      const after = new Map<string, number>();
+      for (const section of sections) {
+        if (section.sectionTemplateId)
+          after.set(section.sectionTemplateId, (after.get(section.sectionTemplateId) ?? 0) + 1);
+      }
+      const added = [...after].flatMap(([templateId, n]) =>
+        Array<string>(Math.max(0, n - (before.get(templateId) ?? 0))).fill(templateId),
+      );
+      const removed = [...before].flatMap(([templateId, n]) =>
+        Array<string>(Math.max(0, n - (after.get(templateId) ?? 0))).fill(templateId),
+      );
+      if (existing && (added.length > 0 || removed.length > 0)) {
+        const nameOf = (templateId: string) =>
+          sectionTemplates.get(templateId)?.name ??
+          existing.sections.find((section) => section.sectionTemplateId === templateId)
+            ?.sectionTemplateName ??
+          null;
+        await tx.insert(salesQuoteEvents).values({
+          quoteId: quote.id,
+          eventType: 'section_templates_changed',
+          actorId: userId,
+          details: {
+            added: added.map((templateId) => ({ id: templateId, name: nameOf(templateId) })),
+            removed: removed.map((templateId) => ({ id: templateId, name: nameOf(templateId) })),
+          },
+        });
+      }
+      for (const templateId of added) {
+        await tx
+          .update(salesSectionTemplates)
+          .set({ usageCount: sql`${salesSectionTemplates.usageCount} + 1` })
+          .where(eq(salesSectionTemplates.id, templateId));
+        await tx.insert(salesSectionTemplateEvents).values({
+          templateId,
+          eventType: 'used',
+          actorId: userId,
+          details: { quoteId: quote.id, quoteNumber: quote.quoteNumber },
+        });
+      }
+      // A template is used when a quote is made from it, or switched to it.
+      if (sourceTemplate && (!existing || changedTemplate)) {
         await tx
           .update(salesQuoteTemplates)
           .set({ usageCount: sql`${salesQuoteTemplates.usageCount} + 1`, updatedAt: now })
