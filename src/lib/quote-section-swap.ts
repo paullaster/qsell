@@ -66,8 +66,80 @@ export function addSectionFromTemplate(
   const { section, lines } = sectionTemplateContent(template, newId(), priceOf);
   return {
     ...current,
-    sections: [...(current.sections ?? []), section],
+    sections: [...current.sections, section],
     lines: [...current.lines, ...lines],
+  };
+}
+
+/** Items of the old template that the person has since changed, matched by product. */
+function changedSince(oldTemplate: SectionSwapTemplate, replaced: Line[]): Line[] {
+  const unmatched = [...oldTemplate.lines];
+  const edited: Line[] = [];
+  for (const line of replaced) {
+    const at = unmatched.findIndex((tl) => (tl.productId ?? '') === line.productId);
+    if (at < 0) continue;
+    const [tl] = unmatched.splice(at, 1);
+    const priceChanged =
+      tl.priceMode === 'fixed' && Number(tl.unitPrice ?? 0) !== (line.unitPrice ?? 0);
+    if (
+      line.quantity !== Number(tl.quantity) ||
+      line.discountPercent !== Number(tl.discountPercent) ||
+      priceChanged
+    ) {
+      edited.push(line);
+    }
+  }
+  return edited;
+}
+
+/** What a switch asks about (see `SwapPlan.kind`). */
+function kindOf(facts: {
+  fromTemplate: boolean;
+  hasReplaced: boolean;
+  toTemplate: boolean;
+  hasAdditions: boolean;
+}): SwapPlan['kind'] {
+  if (!facts.fromTemplate) return facts.hasReplaced && facts.toTemplate ? 'manual' : 'none';
+  if (facts.hasAdditions) return 'additions';
+  return facts.hasReplaced ? 'replace' : 'none';
+}
+
+type Header = Pick<Section, 'title' | 'description' | 'showLines'>;
+
+/**
+ * Title, description and print choice after a switch: the new template's where the person left
+ * them as the old template had them. A section made by hand has no old template to compare with,
+ * so the new template's replace them. Removing the template leaves them alone.
+ */
+function mergedHeader(
+  section: Section,
+  fromTemplate: boolean,
+  oldTemplate: SectionSwapTemplate | null,
+  next: Header | null,
+): Header {
+  if (next === null) {
+    return {
+      title: section.title,
+      description: section.description,
+      showLines: section.showLines,
+    };
+  }
+  const was =
+    oldTemplate === null
+      ? null
+      : {
+          title: oldTemplate.sectionTitle,
+          description: oldTemplate.sectionDescription ?? '',
+          showLines: oldTemplate.showLines,
+        };
+  const untouched = (now: unknown, before: unknown): boolean =>
+    !fromTemplate || (was !== null && (now ?? '') === (before ?? ''));
+  return {
+    title: untouched(section.title, was?.title) ? next.title : section.title,
+    description: untouched(section.description, was?.description)
+      ? next.description
+      : section.description,
+    showLines: untouched(section.showLines, was?.showLines) ? next.showLines : section.showLines,
   };
 }
 
@@ -78,76 +150,39 @@ export function planSectionSwap(
   nextTemplate: SectionSwapTemplate | null,
   priceOf: (productId: string) => number | undefined,
 ): SwapPlan {
-  const section = (current.sections ?? []).find((row) => row.id === sectionId);
+  const section = current.sections.find((row) => row.id === sectionId);
   const inSection = current.lines.filter((line) => line.sectionId === sectionId);
-  const fromTemplate = section?.sectionTemplateId != null;
+  const fromTemplate =
+    section?.sectionTemplateId !== undefined && section.sectionTemplateId !== null;
   const mine = (line: Line) => !fromTemplate || line.fromSectionTemplate === true;
   const replaced = inSection.filter(mine);
   const additions = fromTemplate ? inSection.filter((line) => !mine(line)) : [];
-
-  // Items of the old template that the person has since changed.
-  const edited: Line[] = [];
-  if (oldTemplate) {
-    const unmatched = [...oldTemplate.lines];
-    for (const line of replaced) {
-      const at = unmatched.findIndex((tl) => (tl.productId ?? '') === line.productId);
-      const [tl] = at >= 0 ? unmatched.splice(at, 1) : [];
-      if (!tl) continue;
-      const priceChanged =
-        tl.priceMode === 'fixed' && Number(tl.unitPrice ?? 0) !== (line.unitPrice ?? 0);
-      if (
-        line.quantity !== Number(tl.quantity) ||
-        line.discountPercent !== Number(tl.discountPercent) ||
-        priceChanged
-      )
-        edited.push(line);
-    }
-  }
-
-  const kind: SwapPlan['kind'] = !fromTemplate
-    ? replaced.length > 0 && nextTemplate
-      ? 'manual'
-      : 'none'
-    : additions.length > 0
-      ? 'additions'
-      : replaced.length > 0
-        ? 'replace'
-        : 'none';
+  const edited = oldTemplate === null ? [] : changedSince(oldTemplate, replaced);
+  const kind = kindOf({
+    fromTemplate,
+    hasReplaced: replaced.length > 0,
+    toTemplate: nextTemplate !== null,
+    hasAdditions: additions.length > 0,
+  });
 
   const apply = (keepAdditions: boolean): QuoteInput => {
-    if (!section) return current;
-    const next = nextTemplate ? sectionTemplateContent(nextTemplate, sectionId, priceOf) : null;
-    // Title, description and print choice follow the new template where they were not edited; a
-    // section made by hand has none to compare with, so the template's replace them.
-    const take = <K extends 'title' | 'description' | 'showLines'>(
-      key: K,
-      was: Section[K] | undefined,
-    ): Section[K] | undefined => {
-      if (!next) return section[key];
-      const untouched = !fromTemplate || (section[key] ?? '') === (was ?? '');
-      return untouched ? next.section[key] : section[key];
-    };
-    const sectionWas = oldTemplate && {
-      title: oldTemplate.sectionTitle,
-      description: oldTemplate.sectionDescription ?? '',
-      showLines: oldTemplate.showLines,
-    };
+    if (section === undefined) return current;
+    const next =
+      nextTemplate === null ? null : sectionTemplateContent(nextTemplate, sectionId, priceOf);
     const merged: Section = {
       ...section,
-      title: take('title', sectionWas?.title) ?? section.title,
-      description: take('description', sectionWas?.description),
-      showLines: take('showLines', sectionWas?.showLines),
-      sectionTemplateId: nextTemplate?.id ?? null,
+      ...mergedHeader(section, fromTemplate, oldTemplate, next === null ? null : next.section),
+      sectionTemplateId: nextTemplate === null ? null : nextTemplate.id,
       // Made from a section template, the section is no longer part of the quote's own template.
-      fromTemplate: next ? false : section.fromTemplate,
+      fromTemplate: next === null ? section.fromTemplate : false,
     };
     const kept = fromTemplate && keepAdditions ? additions : [];
     return {
       ...current,
-      sections: (current.sections ?? []).map((row) => (row.id === sectionId ? merged : row)),
+      sections: current.sections.map((row) => (row.id === sectionId ? merged : row)),
       lines: [
         ...current.lines.filter((line) => line.sectionId !== sectionId),
-        ...(next?.lines ?? []),
+        ...(next === null ? [] : next.lines),
         ...kept,
       ],
     };

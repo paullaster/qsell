@@ -61,8 +61,14 @@ import { QuickAdd } from './quote-layout/QuickAdd';
 import { BulkAddDialog } from './quote-layout/BulkAddDialog';
 import { QuantityInput } from './quote-layout/QuantityInput';
 import { TemplateSwapDialog } from './quote-layout/TemplateSwapDialog';
-import { planTemplateSwap, templateContent, type SwapPlan } from '@/lib/quote-template-swap';
-import { addSectionFromTemplate, planSectionSwap } from '@/lib/quote-section-swap';
+import { LookupAutocomplete } from '@/components/ui/autocomplete/LookupAutocomplete';
+import type { SwapSummary } from '@/server/domains/quotes/template-swap-service';
+import {
+  addSectionFromTemplateAction,
+  getDefaultQuoteDraftAction,
+  planQuoteTemplateSwapAction,
+  planSectionTemplateSwapAction,
+} from '@/server/domains/quotes/swap-actions';
 import type { SectionTemplate } from '@/server/domains/quotes/section-template-service';
 import { buildCatalogueIndex } from '@/lib/catalogue-entry';
 import { addCatalogueEntry, lastIndexOfProduct, type CatalogueEntry } from '@/lib/quote-layout';
@@ -143,6 +149,7 @@ function quoteToInput(quote: SalesQuote): QuoteInput {
     paymentMethod: quote.paymentMethod as QuoteInput['paymentMethod'],
     paymentTerms: quote.paymentTerms,
     templateId: quote.templateId,
+    templateName: quote.templateName,
     showBillingAddress: quote.showBillingAddress,
     paymentDetails: quote.paymentDetails,
     termsAndConditions: quote.termsAndConditions,
@@ -153,6 +160,7 @@ function quoteToInput(quote: SalesQuote): QuoteInput {
       showLines: section.showLines,
       fromTemplate: section.fromTemplate,
       sectionTemplateId: section.sectionTemplateId,
+      sectionTemplateName: section.sectionTemplateName,
     })),
     validUntil: quote.validUntil?.toISOString().slice(0, 10) ?? null,
     customerReference: quote.customerReference,
@@ -175,46 +183,6 @@ function quoteToInput(quote: SalesQuote): QuoteInput {
         fromTemplate: line.fromTemplate,
         fromSectionTemplate: line.fromSectionTemplate,
       })),
-  };
-}
-
-function quoteInputFromTemplate(
-  template: SalesQuoteTemplate,
-  products: CatalogueProduct[],
-  customers: CustomerRow[],
-): QuoteInput {
-  const customer = customers.find((row) => row.id === template.customerId);
-  const address: Record<string, string> = customer
-    ? {
-        street: customer.street ?? '',
-        city: customer.city ?? '',
-        countyOrState: customer.countyOrState ?? '',
-        postalCode: customer.postalCode ?? '',
-        country: customer.country ?? 'Kenya',
-      }
-    : {};
-  const content = templateContent(template, (id) => products.find((row) => row.id === id)?.price);
-  return {
-    ...newQuoteInput(),
-    customerId: customer?.id ?? null,
-    customerName: customer?.name ?? '',
-    customerEmail: customer?.email ?? '',
-    customerPhone: customer?.phone ?? '',
-    billingAddress: template.billingAddress.street ? template.billingAddress : address,
-    deliveryAddress: template.deliveryAddress.street ? template.deliveryAddress : address,
-    currency: template.currency,
-    paymentMethod: template.paymentMethod as QuoteInput['paymentMethod'],
-    paymentTerms: template.paymentTerms,
-    paymentDetails: template.paymentDetails,
-    termsAndConditions: template.termsAndConditions,
-    showBillingAddress: template.showBillingAddress,
-    templateId: template.id,
-    validUntil: new Date(Date.now() + template.validityDays * 86400000).toISOString().slice(0, 10),
-    publicNotes: template.publicNotes,
-    internalNotes: template.internalNotes,
-    discountPercent: Number(template.quoteDiscountPercent),
-    shippingFee: Number(template.shippingFee),
-    ...content,
   };
 }
 
@@ -722,8 +690,6 @@ export function AdminSalesQuotes({
           products={editorData.products}
           kits={editorData.kits}
           customers={editorData.customers}
-          templates={editorData.templates}
-          sectionTemplates={editorData.sectionTemplates}
           initial={editing ? quoteToInput(editing) : newQuoteInput()}
           quoteNumber={editing?.quoteNumber}
           minimumMargin={marginFloor}
@@ -862,8 +828,6 @@ function QuoteEditor({
   products,
   kits,
   customers,
-  templates,
-  sectionTemplates,
   initial,
   quoteNumber,
   minimumMargin,
@@ -873,19 +837,29 @@ function QuoteEditor({
   products: CatalogueProduct[];
   kits: EditorKit[];
   customers: CustomerRow[];
-  templates: SalesQuoteTemplate[];
-  sectionTemplates: SectionTemplate[];
   initial: QuoteInput;
   quoteNumber?: string;
   minimumMargin: number;
   onClose: () => void;
   onSave: (input: QuoteInput) => Promise<void>;
 }) {
-  const [input, setInput] = useState<QuoteInput>(() => {
-    if (initial.customerName || initial.lines.length || initial.templateId) return initial;
-    const defaultTemplate = templates.find((template) => template.isDefault);
-    return defaultTemplate ? quoteInputFromTemplate(defaultTemplate, products, customers) : initial;
-  });
+  const [input, setInput] = useState<QuoteInput>(initial);
+  // A new, blank quote starts from the company's default template, if it has one. The server
+  // decides and builds it; this only asks once, and only if nothing has been typed meanwhile.
+  useEffect(() => {
+    if (initial.customerName || initial.lines.length > 0 || initial.templateId) return;
+    let live = true;
+    void getDefaultQuoteDraftAction().then((result) => {
+      if (!live || !result.ok || result.data === null) return;
+      const draft = result.data;
+      setInput((current) => (current.customerName || current.lines.length > 0 ? current : draft));
+    });
+    return () => {
+      live = false;
+    };
+    // Only on opening: the initial values are the ones the editor was opened with.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [catalogSectionId, setCatalogSectionId] = useState<string | null>(null);
@@ -990,48 +964,54 @@ function QuoteEditor({
   const { traces, problems } = useQuotePricePreview(input, setInput);
   const guards = useQuoteGuardPreview(input);
   const [swap, setSwap] = useState<{
-    plan: SwapPlan;
-    from: { name: string } | null;
-    to: { name: string } | null;
+    summary: SwapSummary;
     /** Set when only one section is switched to another section template. */
     section?: { title: string };
   } | null>(null);
-  const priceOf = (id: string) => productById.get(id)?.price;
-  const addSectionTemplate = (templateId: string) => {
-    const template = sectionTemplates.find((candidate) => candidate.id === templateId);
-    if (template) setInput((current) => addSectionFromTemplate(current, template, priceOf));
+  const [switching, setSwitching] = useState(false);
+
+  /** Asks the server what a switch would do; the answer is shown, or applied if nothing is asked. */
+  const planSwitch = async (
+    plan: () => Promise<{ ok: true; data: SwapSummary } | { ok: false; error: string }>,
+    section?: { title: string },
+  ) => {
+    try {
+      setSwitching(true);
+      setError(null);
+      const result = await plan();
+      if (!result.ok) throw new Error(result.error);
+      if (result.data.kind === 'none') setInput(result.data.drop);
+      else setSwap({ summary: result.data, section });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not switch the template.');
+    } finally {
+      setSwitching(false);
+    }
+  };
+  const chooseTemplate = (templateId: string | null) => {
+    if (templateId === (input.templateId ?? null)) return;
+    void planSwitch(() => planQuoteTemplateSwapAction(input, templateId));
+  };
+  const addSectionTemplate = async (templateId: string) => {
+    try {
+      setSwitching(true);
+      setError(null);
+      const result = await addSectionFromTemplateAction(input, templateId);
+      if (!result.ok) throw new Error(result.error);
+      setInput(result.data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not add the section.');
+    } finally {
+      setSwitching(false);
+    }
   };
   const switchSectionTemplate = (sectionId: string, templateId: string) => {
     const section = (input.sections ?? []).find((row) => row.id === sectionId);
     if (!section || (section.sectionTemplateId ?? '') === templateId) return;
-    const from = sectionTemplates.find((t) => t.id === section.sectionTemplateId) ?? null;
-    const to = sectionTemplates.find((t) => t.id === templateId) ?? null;
-    const plan = planSectionSwap(input, sectionId, from, to, priceOf);
-    if (plan.kind !== 'none') {
-      setSwap({ plan, from, to, section: { title: section.title } });
-      return;
-    }
-    setInput(plan.apply(false));
-  };
-  /** Templates a quote can be switched to; the one it already has stays listed even if archived. */
-  const templateOptions = templates.filter(
-    (template) => template.status === 'active' || template.id === input.templateId,
-  );
-  const selectTemplate = (templateId: string) => {
-    if (templateId === (input.templateId ?? '')) return;
-    const from = templates.find((candidate) => candidate.id === input.templateId) ?? null;
-    const to = templates.find((candidate) => candidate.id === templateId) ?? null;
-    const plan = planTemplateSwap(input, from, to, (id) => productById.get(id)?.price);
-    if (plan.kind !== 'none') {
-      setSwap({ plan, from, to });
-      return;
-    }
-    // Nothing on the form to replace. A form with no customer yet also takes the template's.
-    if (!input.customerName && !input.customerId) {
-      setInput(to ? quoteInputFromTemplate(to, products, customers) : newQuoteInput());
-      return;
-    }
-    setInput(plan.apply(false));
+    void planSwitch(
+      () => planSectionTemplateSwapAction(input, sectionId, templateId === '' ? null : templateId),
+      { title: section.title },
+    );
   };
 
   const chooseCustomer = (id: string) => {
@@ -1087,36 +1067,27 @@ function QuoteEditor({
             {error}
           </p>
         )}
-        {(templateOptions.length > 0 || input.templateId) && (
-          <label className="block text-sm font-medium text-fg">
-            {quoteNumber ? 'Template' : 'Start from a template'}
-            <select
-              value={input.templateId ?? ''}
-              onChange={(event) => selectTemplate(event.target.value)}
-              className="mt-1 block w-full rounded-lg border border-line bg-surface px-3 py-2 text-fg-strong"
-            >
-              <option value="">{quoteNumber ? 'No template' : 'Blank quote'}</option>
-              {templateOptions.map((template) => (
-                <option key={template.id} value={template.id}>
-                  {template.name}
-                  {template.isDefault ? ' · Default' : ''}
-                  {template.status === 'archived' ? ' · Archived' : ''}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
+        <LookupAutocomplete
+          source="quote-templates"
+          label={quoteNumber ? 'Template' : 'Start from a template'}
+          value={input.templateId ?? null}
+          valueLabel={input.templateName ?? null}
+          placeholder={quoteNumber ? 'No template' : 'Blank quote'}
+          disabled={switching}
+          onChange={(option) => chooseTemplate(option?.id ?? null)}
+          createHref="/admin/quotes/templates/new"
+          createLabel="Create a template"
+          listHref="/admin/quotes/templates"
+          listLabel="View all templates"
+        />
         {swap && (
           <TemplateSwapDialog
-            plan={swap.plan}
-            fromName={swap.from?.name ?? null}
-            toName={swap.to?.name ?? null}
+            summary={swap.summary}
             scope={swap.section ? 'section' : 'quote'}
             sectionName={swap.section?.title}
-            nameOf={(id) => productById.get(id)?.name ?? 'Unknown item'}
             onClose={() => setSwap(null)}
             onConfirm={(keepAdditions) => {
-              setInput(swap.plan.apply(keepAdditions));
+              setInput(keepAdditions ? swap.summary.keep : swap.summary.drop);
               setSwap(null);
             }}
           />
@@ -1230,8 +1201,11 @@ function QuoteEditor({
           </header>
           <QuoteLayoutBoard
             noun="quote"
-            sectionTemplates={sectionTemplates}
-            onAddSectionFromTemplate={addSectionTemplate}
+            sectionTemplateLinks={{
+              createHref: '/admin/quotes/section-templates/new',
+              listHref: '/admin/quotes/section-templates',
+            }}
+            onAddSectionFromTemplate={(id) => void addSectionTemplate(id)}
             onSectionTemplateChange={switchSectionTemplate}
             sections={input.sections ?? []}
             lines={input.lines}

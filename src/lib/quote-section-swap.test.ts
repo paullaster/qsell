@@ -42,7 +42,9 @@ const quote = (over: Partial<QuoteInput> = {}): QuoteInput => ({
   ...over,
 });
 const products = (q: QuoteInput, sectionId?: string) =>
-  q.lines.filter((l) => !sectionId || l.sectionId === sectionId).map((l) => l.productId);
+  q.lines
+    .filter((l) => sectionId === undefined || l.sectionId === sectionId)
+    .map((l) => l.productId);
 
 describe('adding a section from a section template', () => {
   it('adds a section with its items, marked as coming from the template', () => {
@@ -61,9 +63,9 @@ describe('adding a section from a section template', () => {
       }),
     ]);
     expect(products(q, 's1')).toEqual(['sheet', 'nail']);
-    expect(q.lines.filter((l) => l.sectionId === 's1').every((l) => l.fromSectionTemplate)).toBe(
-      true,
-    );
+    expect(
+      q.lines.filter((l) => l.sectionId === 's1').every((l) => l.fromSectionTemplate === true),
+    ).toBe(true);
     expect(q.lines[0]).toMatchObject({ productId: 'x' });
   });
 });
@@ -81,9 +83,9 @@ describe('switching the template of a section', () => {
 
   it('keeps a title the person changed', () => {
     const q = built();
-    q.sections[0]!.title = 'My roof';
+    q.sections[0].title = 'My roof';
     const next = planSectionSwap(q, 's1', A, B, price).apply(false);
-    expect(next.sections[0]!.title).toBe('My roof');
+    expect(next.sections[0].title).toBe('My roof');
   });
 
   it('asks about items added by hand inside the section, and leaves other sections alone', () => {
@@ -100,7 +102,7 @@ describe('switching the template of a section', () => {
 
   it('lists items changed since the template', () => {
     const q = built();
-    q.lines[0]!.quantity = 99;
+    q.lines[0].quantity = 99;
     const plan = planSectionSwap(q, 's1', A, B, price);
     expect(plan.edited.map((l) => l.productId)).toEqual(['sheet']);
   });

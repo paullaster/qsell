@@ -2,8 +2,7 @@
 
 import { useId, useMemo, useRef, useState } from 'react';
 import { Copy, Plus, X } from 'lucide-react';
-import type { CatalogueProduct } from '@/lib/catalogue-entry';
-import { buildCatalogueIndex } from '@/lib/catalogue-entry';
+import { buildCatalogueIndex, type CatalogueProduct } from '@/lib/catalogue-entry';
 import { addCatalogueEntry, lastIndexOfProduct, type CatalogueEntry } from '@/lib/quote-layout';
 import type {
   SectionTemplate,
@@ -32,6 +31,14 @@ const amount = (n: number) =>
 
 const field =
   'mt-1 block min-h-10 w-full rounded-lg border border-line bg-surface px-3 py-2 text-fg-strong focus-visible:outline-2 focus-visible:outline-indigo-500';
+
+/** The template's category and description in one line, or a placeholder. */
+function describe(template: SectionTemplate): string {
+  const parts = [template.category, template.description].filter(
+    (part): part is string => part !== null && part !== '',
+  );
+  return parts.length === 0 ? 'No description' : parts.join(' · ');
+}
 
 const emptyInput = (): SectionTemplateInput => ({
   name: '',
@@ -69,6 +76,8 @@ export function AdminSectionTemplates({
   onRefresh,
   onMessage,
   onError,
+  startWithEditor = false,
+  onEditorClose,
 }: {
   templates: SectionTemplate[];
   products: CatalogueProduct[];
@@ -78,9 +87,13 @@ export function AdminSectionTemplates({
   onRefresh: () => void;
   onMessage: (message: string) => void;
   onError: (message: string) => void;
+  /** Opens the editor for a new section template at once, as the "create" route does. */
+  startWithEditor?: boolean;
+  /** Called when the editor closes, saved or not, so a route can return to where it came from. */
+  onEditorClose?: (saved: boolean) => void;
 }) {
   const [editing, setEditing] = useState<SectionTemplate | null>(null);
-  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(startWithEditor);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const run = async (id: string, action: () => Promise<unknown>, message: string) => {
@@ -185,10 +198,7 @@ export function AdminSectionTemplates({
                     <tr key={template.id} className="hover:bg-hover/50">
                       <td className="px-4 py-3">
                         <p className="font-semibold text-fg-strong">{template.name}</p>
-                        <p className="mt-0.5 text-xs text-fg-muted">
-                          {[template.category, template.description].filter(Boolean).join(' · ') ||
-                            'No description'}
-                        </p>
+                        <p className="mt-0.5 text-xs text-fg-muted">{describe(template)}</p>
                       </td>
                       <td className="px-4 py-3 text-fg-muted">{template.sectionTitle}</td>
                       <td className="px-4 py-3 text-right tabular-nums">{template.lines.length}</td>
@@ -233,12 +243,16 @@ export function AdminSectionTemplates({
         <SectionTemplateEditor
           initial={editing ? inputOf(editing) : emptyInput()}
           products={products}
-          onClose={() => setEditorOpen(false)}
+          onClose={() => {
+            setEditorOpen(false);
+            onEditorClose?.(false);
+          }}
           onSave={async (input) => {
             unwrapQuoteAction(await saveSectionTemplateAction(editing?.id ?? null, input));
             setEditorOpen(false);
             onMessage(`${input.name} section template saved.`);
             onRefresh();
+            onEditorClose?.(true);
           }}
         />
       )}
@@ -367,17 +381,17 @@ function SectionTemplateEditor({
       }
       return { ...current, lines };
     });
-    lastAdded.current = { productId: entries[entries.length - 1]!.productId };
+    lastAdded.current = { productId: entries[entries.length - 1].productId };
   };
   const showLastAdded = () => {
     const last = lastAdded.current;
     lastAdded.current = null;
     if (!last) return;
-    const index = lastIndexOfProduct(input.lines as BoardItem[], last.productId, null);
+    const index = lastIndexOfProduct(input.lines, last.productId, null);
     if (index >= 0) setFocusLine((current) => ({ index, nonce: (current?.nonce ?? 0) + 1 }));
   };
 
-  const submit = async (event: React.FormEvent) => {
+  const submit = async (event: React.SyntheticEvent) => {
     event.preventDefault();
     try {
       setBusy(true);
@@ -385,7 +399,8 @@ function SectionTemplateEditor({
       await onSave({
         ...input,
         // The title defaults to the name, so a template never makes an untitled section.
-        sectionTitle: input.sectionTitle.trim() || input.name.trim(),
+        sectionTitle:
+          input.sectionTitle.trim() === '' ? input.name.trim() : input.sectionTitle.trim(),
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save this section template.');
@@ -411,7 +426,7 @@ function SectionTemplateEditor({
         <header className="mb-5 flex items-start justify-between gap-3">
           <div>
             <h2 id={`${uid}-title`} className="text-lg font-bold text-fg-strong">
-              {initial.name ? `Edit ${initial.name}` : 'New section template'}
+              {initial.name === '' ? 'New section template' : `Edit ${initial.name}`}
             </h2>
             <p className="mt-1 text-xs text-fg-muted">
               Catalog-price items follow the current prices when the section is added to a quote.
@@ -429,7 +444,7 @@ function SectionTemplateEditor({
         </header>
 
         <form onSubmit={(event) => void submit(event)} className="space-y-5">
-          {error && (
+          {error !== null && (
             <p
               className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800"
               role="alert"
@@ -504,7 +519,7 @@ function SectionTemplateEditor({
               noun="template"
               flat
               sections={[]}
-              lines={input.lines as BoardItem[]}
+              lines={input.lines}
               onChange={(next) => update('lines', next.lines)}
               focusLine={focusLine}
               onBulkAdd={() => {
@@ -549,7 +564,7 @@ function SectionTemplateEditor({
                     <td className="p-3">
                       <div className="font-medium text-fg-strong">{name}</div>
                       <div className="text-xs text-fg-muted">
-                        {product?.sku} · {amount(Number(product?.price ?? 0))}
+                        {product?.sku} · {amount(product?.price ?? 0)}
                       </div>
                     </td>
                     <td className="p-3">

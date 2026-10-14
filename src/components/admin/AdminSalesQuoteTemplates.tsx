@@ -106,6 +106,8 @@ export function AdminSalesQuoteTemplates({
   onError,
   fromQuote = null,
   onFromQuoteHandled,
+  startWithEditor = false,
+  onEditorClose,
 }: {
   templates: SalesQuoteTemplate[];
   products: CatalogueProduct[];
@@ -119,9 +121,13 @@ export function AdminSalesQuoteTemplates({
   /** A quote someone chose to make a template from, on a quote screen: the editor opens on it. */
   fromQuote?: QuoteSearchHit | null;
   onFromQuoteHandled?: () => void;
+  /** Opens the editor for a new template at once, as the "create" route does. */
+  startWithEditor?: boolean;
+  /** Called when the editor closes, saved or not, so a route can return to where it came from. */
+  onEditorClose?: (saved: boolean) => void;
 }) {
   const [editing, setEditing] = useState<SalesQuoteTemplate | null>(null);
-  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(startWithEditor);
   const [base, setBase] = useState<TemplateBase | null>(null);
 
   useEffect(() => {
@@ -334,6 +340,7 @@ export function AdminSalesQuoteTemplates({
           onClose={() => {
             setEditorOpen(false);
             setBase(null);
+            onEditorClose?.(false);
           }}
           onSave={async (input) => {
             await saveSalesQuoteTemplateAction(editing?.id ?? null, input);
@@ -341,6 +348,7 @@ export function AdminSalesQuoteTemplates({
             setBase(null);
             onMessage(`${input.name} template saved.`);
             onRefresh();
+            onEditorClose?.(true);
           }}
         />
       )}

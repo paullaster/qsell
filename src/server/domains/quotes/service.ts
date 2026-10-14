@@ -94,6 +94,8 @@ export interface QuoteInput {
   paymentMethod: PaymentProvider;
   paymentTerms?: string | null;
   templateId?: string | null;
+  /** The template's name, for display only; the server reads the real one from `templateId`. */
+  templateName?: string | null;
   showBillingAddress?: boolean;
   paymentDetails?: string | null;
   termsAndConditions?: string | null;
@@ -114,6 +116,8 @@ export interface QuoteInput {
     fromTemplate?: boolean;
     /** The section template this section was made from, if any. */
     sectionTemplateId?: string | null;
+    /** The section template's name, for display only. */
+    sectionTemplateName?: string | null;
   }[];
   lines: {
     sectionId?: string | null;
