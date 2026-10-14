@@ -58,6 +58,8 @@ import { CataloguePicker } from './quote-layout/CataloguePicker';
 import { QuickAdd } from './quote-layout/QuickAdd';
 import { BulkAddDialog } from './quote-layout/BulkAddDialog';
 import { QuantityInput } from './quote-layout/QuantityInput';
+import { TemplateSwapDialog } from './quote-layout/TemplateSwapDialog';
+import { planTemplateSwap, templateContent, type SwapPlan } from '@/lib/quote-template-swap';
 import { buildCatalogueIndex } from '@/lib/catalogue-entry';
 import { addCatalogueEntry, lastIndexOfProduct, type CatalogueEntry } from '@/lib/quote-layout';
 import type { QuoteSearchHit } from '@/server/domains/quotes/service';
@@ -144,6 +146,7 @@ function quoteToInput(quote: SalesQuote): QuoteInput {
       title: section.title,
       description: section.description,
       showLines: section.showLines,
+      fromTemplate: section.fromTemplate,
     })),
     validUntil: quote.validUntil?.toISOString().slice(0, 10) ?? null,
     customerReference: quote.customerReference,
@@ -163,6 +166,7 @@ function quoteToInput(quote: SalesQuote): QuoteInput {
         // The price already agreed stays as it is until someone asks to reprice it.
         priceMode: 'kept' as const,
         discountPercent: Number(line.discountPercent),
+        fromTemplate: line.fromTemplate,
       })),
   };
 }
@@ -182,9 +186,7 @@ function quoteInputFromTemplate(
         country: customer.country ?? 'Kenya',
       }
     : {};
-  const sectionIdMap = new Map(
-    template.sections.map((section) => [section.id, crypto.randomUUID()]),
-  );
+  const content = templateContent(template, (id) => products.find((row) => row.id === id)?.price);
   return {
     ...newQuoteInput(),
     customerId: customer?.id ?? null,
@@ -205,23 +207,7 @@ function quoteInputFromTemplate(
     internalNotes: template.internalNotes,
     discountPercent: Number(template.quoteDiscountPercent),
     shippingFee: Number(template.shippingFee),
-    sections: template.sections.map((section) => ({
-      id: sectionIdMap.get(section.id)!,
-      title: section.title,
-      description: section.description,
-      showLines: section.showLines,
-    })),
-    lines: template.lines.map((line) => {
-      const product = products.find((row) => row.id === line.productId);
-      return {
-        productId: line.productId ?? '',
-        sectionId: line.sectionId ? (sectionIdMap.get(line.sectionId) ?? null) : null,
-        quantity: Number(line.quantity),
-        unitPrice: line.priceMode === 'fixed' ? Number(line.unitPrice ?? 0) : product?.price,
-        priceMode: line.priceMode === 'fixed' ? ('manual' as const) : ('catalog' as const),
-        discountPercent: Number(line.discountPercent),
-      };
-    }),
+    ...content,
   };
 }
 
@@ -709,7 +695,7 @@ export function AdminSalesQuotes({
           products={editorData.products}
           kits={editorData.kits}
           customers={editorData.customers}
-          templates={editorData.templates.filter((template) => template.status === 'active')}
+          templates={editorData.templates}
           initial={editing ? quoteToInput(editing) : newQuoteInput()}
           quoteNumber={editing?.quoteNumber}
           minimumMargin={marginFloor}
@@ -973,13 +959,30 @@ function QuoteEditor({
     );
   const { traces, problems } = useQuotePricePreview(input, setInput);
   const guards = useQuoteGuardPreview(input);
+  const [swap, setSwap] = useState<{
+    plan: SwapPlan;
+    from: SalesQuoteTemplate | null;
+    to: SalesQuoteTemplate | null;
+  } | null>(null);
+  /** Templates a quote can be switched to; the one it already has stays listed even if archived. */
+  const templateOptions = templates.filter(
+    (template) => template.status === 'active' || template.id === input.templateId,
+  );
   const selectTemplate = (templateId: string) => {
-    const template = templates.find((candidate) => candidate.id === templateId);
-    if (!template) {
-      setInput(newQuoteInput());
+    if (templateId === (input.templateId ?? '')) return;
+    const from = templates.find((candidate) => candidate.id === input.templateId) ?? null;
+    const to = templates.find((candidate) => candidate.id === templateId) ?? null;
+    const plan = planTemplateSwap(input, from, to, (id) => productById.get(id)?.price);
+    if (plan.kind !== 'none') {
+      setSwap({ plan, from, to });
       return;
     }
-    setInput(quoteInputFromTemplate(template, products, customers));
+    // Nothing on the form to replace. A form with no customer yet also takes the template's.
+    if (!input.customerName && !input.customerId) {
+      setInput(to ? quoteInputFromTemplate(to, products, customers) : newQuoteInput());
+      return;
+    }
+    setInput(plan.apply(false));
   };
 
   const chooseCustomer = (id: string) => {
@@ -1035,23 +1038,37 @@ function QuoteEditor({
             {error}
           </p>
         )}
-        {!quoteNumber && templates.length > 0 && (
+        {(templateOptions.length > 0 || input.templateId) && (
           <label className="block text-sm font-medium text-fg">
-            Start from a template
+            {quoteNumber ? 'Template' : 'Start from a template'}
             <select
               value={input.templateId ?? ''}
               onChange={(event) => selectTemplate(event.target.value)}
               className="mt-1 block w-full rounded-lg border border-line bg-surface px-3 py-2 text-fg-strong"
             >
-              <option value="">Blank quote</option>
-              {templates.map((template) => (
+              <option value="">{quoteNumber ? 'No template' : 'Blank quote'}</option>
+              {templateOptions.map((template) => (
                 <option key={template.id} value={template.id}>
                   {template.name}
                   {template.isDefault ? ' · Default' : ''}
+                  {template.status === 'archived' ? ' · Archived' : ''}
                 </option>
               ))}
             </select>
           </label>
+        )}
+        {swap && (
+          <TemplateSwapDialog
+            plan={swap.plan}
+            fromName={swap.from?.name ?? null}
+            toName={swap.to?.name ?? null}
+            nameOf={(id) => productById.get(id)?.name ?? 'Unknown item'}
+            onClose={() => setSwap(null)}
+            onConfirm={(keepAdditions) => {
+              setInput(swap.plan.apply(keepAdditions));
+              setSwap(null);
+            }}
+          />
         )}
         <section className="grid gap-3 sm:grid-cols-2">
           <label className="text-sm font-medium text-fg">

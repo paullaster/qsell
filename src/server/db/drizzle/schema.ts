@@ -2413,6 +2413,8 @@ export const salesQuoteSections = pgTable(
     description: text('description'),
     /** Print the section's items under its title; otherwise only the title and its total. */
     showLines: boolean('show_lines').notNull().default(false),
+    /** Came from the quote's template, so switching template replaces it; false when added by hand. */
+    fromTemplate: boolean('from_template').notNull().default(false),
   },
   (t) => [uniqueIndex('sales_quote_sections_number_uidx').on(t.quoteId, t.sectionNumber)],
 );
@@ -2447,6 +2449,8 @@ export const salesQuoteLines = pgTable(
     ruleDiscountPercent: numeric('rule_discount_percent', { precision: 9, scale: 6 })
       .notNull()
       .default('0'),
+    /** Came from the quote's template, so switching template replaces it; false when added by hand. */
+    fromTemplate: boolean('from_template').notNull().default(false),
   },
   (t) => [uniqueIndex('sales_quote_lines_number_uidx').on(t.quoteId, t.lineNumber)],
 );

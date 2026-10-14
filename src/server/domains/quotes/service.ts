@@ -103,12 +103,21 @@ export interface QuoteInput {
   /** Coupon codes the customer gave; each can unlock a discount rule. */
   couponCodes?: string[];
   shippingFee: number;
-  sections: { id: string; title: string; description?: string | null; showLines?: boolean }[];
+  sections: {
+    id: string;
+    title: string;
+    description?: string | null;
+    showLines?: boolean;
+    /** Came from the quote's template; switching template replaces it. */
+    fromTemplate?: boolean;
+  }[];
   lines: {
     sectionId?: string | null;
     productId: string;
     quantity: number;
     unitPrice?: number;
+    /** Came from the quote's template; switching template replaces it. */
+    fromTemplate?: boolean;
     /**
      * How the unit price is decided. `catalog`: priced from the price lists now. `manual`: the
      * typed `unitPrice`. `kept`: the price already saved on this quote, with its explanation.
@@ -633,6 +642,7 @@ export class SalesQuoteService {
       title: section.title,
       description: section.description,
       showLines: section.showLines,
+      fromTemplate: section.fromTemplate,
     }));
     const revised = await this.create(userId, {
       customerId: previous.customerId,
@@ -666,6 +676,7 @@ export class SalesQuoteService {
           quantity: num(line.quantity),
           unitPrice: num(line.unitPrice),
           discountPercent: num(line.discountPercent),
+          fromTemplate: line.fromTemplate,
         })),
     });
     await drizzleDb
@@ -935,6 +946,7 @@ export class SalesQuoteService {
       return {
         productId: product.id,
         sectionId: line.sectionId || null,
+        fromTemplate: line.fromTemplate === true,
         lineNumber: (index + 1) * 10000,
         sku: product.sku,
         description: product.name,
@@ -1176,6 +1188,7 @@ export class SalesQuoteService {
             title: section.title.trim(),
             description: section.description?.trim() || null,
             showLines: section.showLines === true,
+            fromTemplate: section.fromTemplate === true,
           })),
         );
       }
@@ -1224,7 +1237,23 @@ export class SalesQuoteService {
           approvalByWorkflow: byWorkflow,
         },
       });
-      if (!existing && sourceTemplate) {
+      const changedTemplate =
+        existing != null && (existing.templateId ?? null) !== (sourceTemplate?.id ?? null);
+      if (changedTemplate) {
+        await tx.insert(salesQuoteEvents).values({
+          quoteId: quote.id,
+          eventType: 'template_changed',
+          actorId: userId,
+          details: {
+            fromTemplateId: existing.templateId,
+            fromTemplateName: existing.templateName,
+            toTemplateId: sourceTemplate?.id ?? null,
+            toTemplateName: sourceTemplate?.name ?? null,
+          },
+        });
+      }
+      // A template is used when a quote is made from it, or switched to it.
+      if (sourceTemplate && (!existing || changedTemplate)) {
         await tx
           .update(salesQuoteTemplates)
           .set({ usageCount: sql`${salesQuoteTemplates.usageCount} + 1`, updatedAt: now })
