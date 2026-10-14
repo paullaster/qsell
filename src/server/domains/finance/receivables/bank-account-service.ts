@@ -42,6 +42,7 @@ export class BankAccountService {
         glNos: sql<string[]>`COALESCE((SELECT array_agg(DISTINCT g.no ORDER BY g.no) FROM bank_ledger_entries l JOIN gl_accounts g ON g.id = l.gl_account_id WHERE l.bank_account_id = "bank_accounts"."id"), ARRAY[]::text[])`,
         balance: sql<string>`COALESCE((SELECT SUM(l.amount) FROM bank_ledger_entries l WHERE l.bank_account_id = "bank_accounts"."id"), 0)`,
         methods: sql<number>`(SELECT COUNT(*)::int FROM payment_methods m WHERE m.balancing_bank_account_id = "bank_accounts"."id")`,
+        feeGlLabel: sql<string | null>`(SELECT g.no || ' ' || g.name FROM gl_accounts g WHERE g.id = "bank_accounts"."fee_gl_account_id")`,
       })
       .from(bankAccounts)
       .where(eq(bankAccounts.companyId, companyId))

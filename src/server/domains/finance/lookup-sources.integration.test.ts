@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { eq } from 'drizzle-orm';
 import type { drizzleDb as Db } from '@/server/db/drizzle/client';
 import type * as Schema from '@/server/db/drizzle/schema';
 import type * as Sources from '@/server/domains/lookups/sources';
@@ -118,6 +119,22 @@ describe.skipIf(url === '')('finance lookup sources (database)', () => {
     expect(reasons.map((o) => o.label)).toEqual([`${tag} Wrong item`]);
     expect(reasons[0]?.meta?.requiresComment).toBe('1');
     expect((await search('receipt-reasons', { query: tag })).options).toHaveLength(1);
+  });
+
+  it('offers expense accounts, and per bank account its receipt methods and the accounts its charges can come out of', async () => {
+    const [bankRow] = await db.select().from(schema.bankAccounts).where(eq(schema.bankAccounts.code, `${tag}A`));
+    const expense = (await db.insert(schema.glAccounts).values({ companyId, no: `${tag}9`, name: `${tag} Charges`, type: 'posting', category: 'expense', normalBalance: 'debit' }).returning())[0];
+    expect((await search('expense-gl-accounts', { query: tag })).options.map((o) => o.id)).toEqual([expense.id]);
+    const methods = (await search('statement-receipt-methods', { query: tag, filters: { account: bankRow.id } })).options.map((o) => o.label);
+    expect(methods).toEqual([`${tag} RC`, `${tag} RF`]);
+    expect((await search('statement-charge-accounts', { filters: { account: bankRow.id } })).options.map((o) => o.label)).toEqual([`${tag}1 ${tag} GL`]);
+    await expect(search('statement-receipt-methods')).rejects.toThrow();
+    await expect(search('statement-charge-accounts', { filters: { account: 'nope' } })).rejects.toThrow();
+    expect((await search('statement-customers', { query: tag })).options).toHaveLength(1);
+    expect((await search('statement-reasons', { query: tag })).options.map((o) => o.label)).toEqual([`${tag} Wrong item`]);
+    expect((await search('bank-account-kinds')).options).toHaveLength(4);
+    expect((await search('statement-date-formats')).options.map((o) => o.id).sort()).toEqual(['auto', 'mdy']);
+    expect((await search('statement-allocation-modes')).options).toHaveLength(2);
   });
 
   it('offers the wallet, return and credit note lists', async () => {

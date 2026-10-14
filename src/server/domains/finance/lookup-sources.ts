@@ -1,5 +1,5 @@
 import { eq, sql } from 'drizzle-orm';
-import { bankAccounts, customers, paymentMethods, reasonCodes } from '@/server/db/drizzle/schema';
+import { bankAccounts, customers, glAccounts, paymentMethods, reasonCodes } from '@/server/db/drizzle/schema';
 import { CHEQUE_STATUS, RECEIPT_STATUS, REFUND_STATUS, statusChoices } from '@/lib/finance-statuses';
 import { METHOD_KINDS, labelOf } from '@/lib/payment-options';
 import { AUTO_APPLY_MODES, CREDIT_NOTE_MODES, OVERPAYMENT_MODES } from '@/lib/wallet-policy';
@@ -8,6 +8,8 @@ import { CREDIT_NOTE_REASONS } from '@/server/domains/credit-notes/reasons';
 import { reasonLabel } from '@/lib/credit-note-form';
 import type { PermissionKey } from '@/server/domains/access-control/permissions';
 import { getContainer } from '@/server/di/container';
+import { BANK_KINDS } from '@/lib/bank-account-form';
+import { DATE_FORMATS } from '@/lib/statement-import-form';
 import { acceptFilters, LookupFilterError, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
 
 const ALLOCATION_CHOICES = [
@@ -23,7 +25,7 @@ const joinText = (parts: unknown[]): string | null => {
 };
 
 /** Customers a person may take money from or pay back: name, number, phone or email. */
-const customerSource = (key: string, permission: 'receipts:create' | 'refunds:create') =>
+const customerSource = (key: string, permission: PermissionKey) =>
   tableSource({
     key,
     permission,
@@ -194,9 +196,67 @@ const fixedStatuses = (key: string, permission: 'receipts:read' | 'refunds:read'
     },
   });
 
+/** Open posting accounts under Expenses: where bank and mobile-money charges post. */
+const expenseAccounts = tableSource({
+  key: 'expense-gl-accounts',
+  permission: 'gl_accounts:read',
+  table: glAccounts,
+  id: glAccounts.id,
+  label: glAccounts.no,
+  searchColumns: [glAccounts.no, glAccounts.name],
+  select: { name: glAccounts.name },
+  scope: ({ companyId, filters }) => {
+    acceptFilters(filters, {});
+    return [eq(glAccounts.companyId, companyId), eq(glAccounts.type, 'posting'), eq(glAccounts.blocked, false), eq(glAccounts.category, 'expense')];
+  },
+  toOption: (row) => ({ id: text(row.id), label: `${text(row.label)} ${text(row.name)}`, description: null, badge: null }),
+});
+
+const accountFilter = (filters: Record<string, string>): string => {
+  const { account = '', ...rest } = filters;
+  if (Object.keys(rest).length > 0 || !UUID.test(account)) throw new LookupFilterError('Choose the account first.');
+  return account;
+};
+
+/** Payment methods that pay into one bank account, for turning a statement line into a receipt. */
+const statementReceiptMethods = tableSource({
+  key: 'statement-receipt-methods',
+  permission: 'bank_statements:create_receipt',
+  table: paymentMethods,
+  id: paymentMethods.id,
+  label: paymentMethods.name,
+  searchColumns: [paymentMethods.name, paymentMethods.code],
+  select: {},
+  scope: ({ companyId, filters }) => [
+    eq(paymentMethods.companyId, companyId),
+    eq(paymentMethods.enabled, true),
+    eq(paymentMethods.balancingBankAccountId, accountFilter(filters)),
+    sql`${paymentMethods.usableFor} @> '["customer_receipt"]'::jsonb`,
+  ],
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: null, badge: null }),
+});
+
+/** The G/L accounts the methods of one bank account post to, which a charge may come out of. */
+const statementChargeAccounts = staticSource({
+  key: 'statement-charge-accounts',
+  permission: 'bank_statements:record_charge',
+  async items({ companyId, filters }) {
+    const rows = await getContainer().finance.bankStatements.chargeGlChoices(companyId, accountFilter(filters));
+    return rows.map((g) => ({ id: g.glId, label: g.label, description: g.methods.join(', ') }));
+  },
+});
+
 export const FINANCE_LOOKUP_SOURCES: readonly LookupSource[] = [
   customerSource('receipt-customers', 'receipts:create'),
   customerSource('refund-customers', 'refunds:create'),
+  customerSource('statement-customers', 'bank_statements:create_receipt'),
+  expenseAccounts,
+  statementReceiptMethods,
+  statementChargeAccounts,
+  reasons('statement-reasons', 'bank_statements:read'),
+  fixedChoices('bank-account-kinds', 'bank_accounts:read', BANK_KINDS),
+  fixedChoices('statement-allocation-modes', 'bank_statements:create_receipt', ALLOCATION_CHOICES),
+  fixedChoices('statement-date-formats', 'bank_statements:import', DATE_FORMATS),
   methodSource('receipt-methods', 'receipts:create', 'customer_receipt', false),
   methodSource('refund-methods', 'refunds:create', 'customer_refund', true),
   reasons('receipt-reasons', 'receipts:read'),

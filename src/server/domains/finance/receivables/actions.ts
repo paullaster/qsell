@@ -20,10 +20,7 @@ const RECEIPTS = `${ROOT}/receipts`;
 
 export async function listBankAccountsAction() {
   return run('bank_accounts:read', { surface: 'finance/bank-accounts', action: 'list' }, async (ctx) => {
-    const [rows, glAccounts] = await Promise.all([
-      fin().bankAccounts.list(ctx.companyId),
-      fin().setup.listAccounts(ctx.companyId),
-    ]);
+    const rows = await fin().bankAccounts.list(ctx.companyId);
     const settings = await fin().setup.getSettings(ctx.companyId);
     return {
       baseCurrency: settings?.baseCurrency ?? null,
@@ -35,15 +32,13 @@ export async function listBankAccountsAction() {
         currency: r.account.currency,
         glNos: r.glNos,
         feeGlAccountId: r.account.feeGlAccountId,
+        feeGlLabel: r.feeGlLabel,
         providerConfigId: r.account.providerConfigId,
         details: r.account.details,
         blocked: r.account.blocked,
         balance: r.balance,
         methods: r.methods,
       })),
-      glChoices: glAccounts
-        .filter((a) => a.type === 'posting' && !a.blocked)
-        .map((a) => ({ id: a.id, no: a.no, name: a.name, category: a.category })),
       can: {
         create: await canPermission('bank_accounts:create'),
         edit: await canPermission('bank_accounts:edit'),

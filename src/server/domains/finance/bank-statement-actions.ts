@@ -1,7 +1,10 @@
 'use server';
 
 import { getContainer } from '@/server/di/container';
-import { canPermission } from '@/server/domains/access-control/guard';
+import { canPermission, requirePermission } from '@/server/domains/access-control/guard';
+import { AccessDeniedError } from '@/server/domains/access-control/engine';
+import type { LookupResult } from '@/lib/lookup';
+import { pageHeaders } from '@/lib/statement-import-form';
 import { postingPermissions, run } from './action-runner';
 import type { CsvMapping } from './domain/bank-statement';
 import { FinanceError } from './errors';
@@ -9,7 +12,6 @@ import type { StatementLineStatus } from '@/server/db/drizzle/schema';
 
 const fin = () => getContainer().finance;
 const ROOT = '/admin/finance/bank-statements';
-const reasonList = async (companyId: string) => (await getContainer().reasonCodes.list(companyId)).filter((r) => r.isActive).map((r) => ({ code: r.code, description: r.description, requiresComment: r.requiresComment }));
 
 export async function bankStatementsOverviewAction() {
   return run('bank_statements:read', { surface: 'finance/bank-statements', action: 'overview' }, async (ctx) => {
@@ -32,9 +34,8 @@ export async function runAutoMatchAction(bankAccountId: string) {
 export async function statementWorkbenchAction(bankAccountId: string, filter: { status?: StatementLineStatus | 'open'; before?: number } = {}) {
   return run('bank_statements:read', { surface: 'finance/bank-statements/account', action: 'view' }, async (ctx) => {
     const w = await fin().bankStatements.workbench(ctx.companyId, bankAccountId, filter);
-    const [methods, reasons, recs, preview, chargeGls] = await Promise.all([
+    const [methods, recs, preview, chargeGls] = await Promise.all([
       fin().bankStatements.receiptMethods(ctx.companyId, bankAccountId),
-      reasonList(ctx.companyId),
       fin().bankReconciliation.list(ctx.companyId, bankAccountId),
       fin().bankReconciliation.preview(ctx.companyId, bankAccountId, new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' })),
       fin().bankStatements.chargeGlChoices(ctx.companyId, bankAccountId),
@@ -56,9 +57,9 @@ export async function statementWorkbenchAction(bankAccountId: string, filter: { 
       imports: w.imports.map((i) => ({ id: i.id, fileName: i.fileName, lines: i.lineCount, from: i.dateFrom, to: i.dateTo, in: i.totalIn, out: i.totalOut, at: i.createdAt.toISOString() })),
       bookBalance: w.bookBalance,
       hasFormat: !!w.format,
-      methods,
-      chargeGls: chargeGls.map((g) => ({ id: g.glId, label: g.label })),
-      reasons,
+      // How many there are, to know which buttons to offer; the lists themselves are searched on demand.
+      methodCount: methods.length,
+      chargeGlCount: chargeGls.length,
       reconciliations: recs.map((r) => ({ id: r.id, number: r.number, date: r.statementDate, balance: r.statementBalance, lines: r.lineCount, status: r.status, at: r.postedAt.toISOString() })),
       preview,
       can: {
@@ -123,4 +124,22 @@ export async function reverseBankReconciliationAction(bankAccountId: string, id:
 
 export async function searchCustomersForStatementAction(q: string) {
   return run('bank_statements:create_receipt', { surface: 'finance/bank-statements/account', action: 'search_customers' }, async (ctx) => fin().receipts.searchCustomers(ctx.companyId, q));
+}
+
+/**
+ * Searches the column names of the file being imported. The names are in the browser (it just
+ * chose the file), so they are sent along, capped and cleaned, and the search runs here like any
+ * other list's.
+ */
+export async function searchStatementColumnsAction(input: { headers: string[]; query: string; cursor: string | null; limit: number }): Promise<LookupResult> {
+  try {
+    await requirePermission('bank_statements:import');
+  } catch (error: unknown) {
+    if (error instanceof AccessDeniedError) return { ok: false, error: 'You do not have permission to see this list.' };
+    return { ok: false, error: 'Could not load the list. Try again.' };
+  }
+  const headers = Array.isArray(input.headers) ? input.headers.filter((h): h is string => typeof h === 'string') : [];
+  const query = typeof input.query === 'string' ? input.query : '';
+  const cursor = typeof input.cursor === 'string' ? input.cursor : null;
+  return { ok: true, data: pageHeaders(headers, query, cursor, Number.isFinite(input.limit) ? input.limit : 20) };
 }
