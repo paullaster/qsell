@@ -1,5 +1,4 @@
-import type { QuoteInput } from '@/server/domains/quotes/service';
-import type { SalesQuoteTemplate } from '@/server/domains/quotes/service';
+import type { QuoteInput, SalesQuoteTemplate } from '@/server/domains/quotes/service';
 
 /**
  * Switching the template of a quote that is being edited. Everything here is pure: it works on the
@@ -41,20 +40,24 @@ type Section = QuoteInput['sections'][number];
 export function templateContent(
   template: SwapTemplate,
   priceOf: (productId: string) => number | undefined,
-  newId: () => string = () => crypto.randomUUID(),
+  newId: () => string,
 ): { sections: Section[]; lines: Line[] } {
-  const ids = new Map(template.sections.map((section) => [section.id, newId()]));
-  return {
-    sections: template.sections.map((section) => ({
-      id: ids.get(section.id)!,
+  const sections = template.sections.map((section) => ({
+    templateSectionId: section.id,
+    section: {
+      id: newId(),
       title: section.title,
       description: section.description,
       showLines: section.showLines,
       fromTemplate: true,
-    })),
+    },
+  }));
+  const ids = new Map(sections.map((row) => [row.templateSectionId, row.section.id]));
+  return {
+    sections: sections.map((row) => row.section),
     lines: template.lines.map((line) => ({
       productId: line.productId ?? '',
-      sectionId: line.sectionId ? (ids.get(line.sectionId) ?? null) : null,
+      sectionId: line.sectionId === null ? null : (ids.get(line.sectionId) ?? null),
       quantity: Number(line.quantity),
       unitPrice:
         line.priceMode === 'fixed' ? Number(line.unitPrice ?? 0) : priceOf(line.productId ?? ''),
@@ -113,15 +116,86 @@ export interface SwapPlan {
   apply: (keepAdditions: boolean) => QuoteInput;
 }
 
+/** Which of the quote's template items were changed since, matched by product and section name. */
+function changedSince(
+  oldTemplate: SwapTemplate,
+  sectionRows: Section[],
+  replacedLines: Line[],
+): Line[] {
+  const sectionTitle = new Map(sectionRows.map((row) => [row.id, title(row.title)]));
+  const templateTitle = new Map(oldTemplate.sections.map((row) => [row.id, title(row.title)]));
+  const unmatched = [...oldTemplate.lines];
+  const edited: Line[] = [];
+  for (const line of replacedLines) {
+    const place =
+      line.sectionId === undefined || line.sectionId === null
+        ? null
+        : (sectionTitle.get(line.sectionId) ?? null);
+    const at = unmatched.findIndex(
+      (tl) =>
+        (tl.productId ?? '') === line.productId &&
+        (tl.sectionId === null ? null : (templateTitle.get(tl.sectionId) ?? null)) === place,
+    );
+    if (at < 0) continue;
+    const [tl] = unmatched.splice(at, 1);
+    const priceChanged =
+      tl.priceMode === 'fixed' && Number(tl.unitPrice ?? 0) !== (line.unitPrice ?? 0);
+    if (
+      line.quantity !== Number(tl.quantity) ||
+      line.discountPercent !== Number(tl.discountPercent) ||
+      priceChanged
+    ) {
+      edited.push(line);
+    }
+  }
+  return edited;
+}
+
+/** What a switch asks about (see `SwapPlan.kind`). */
+function kindOf(facts: {
+  fromTemplate: boolean;
+  hasContent: boolean;
+  toTemplate: boolean;
+  hasAdditions: boolean;
+  hasReplaced: boolean;
+}): SwapPlan['kind'] {
+  if (!facts.fromTemplate) return facts.hasContent && facts.toTemplate ? 'manual' : 'none';
+  if (facts.hasAdditions) return 'additions';
+  return facts.hasReplaced ? 'replace' : 'none';
+}
+
+/**
+ * Header defaults after a switch: the new template's value replaces the old template's only where
+ * the person left it alone. A quote with no template has none to have left alone, so the new
+ * template's values replace all.
+ */
+function mergedHeader(
+  current: QuoteInput,
+  oldTemplate: SwapTemplate | null,
+  nextTemplate: SwapTemplate,
+): Partial<Header> {
+  const header = headerOf(nextTemplate);
+  const was = oldTemplate === null ? null : headerOf(oldTemplate);
+  const now = quoteHeader(current);
+  const fromTemplate = current.templateId !== undefined && current.templateId !== null;
+  const merged: Partial<Header> = {};
+  for (const key of Object.keys(header) as (keyof Header)[]) {
+    if (!fromTemplate || (was !== null && now[key] === was[key])) {
+      Object.assign(merged, { [key]: header[key] });
+    }
+  }
+  return merged;
+}
+
 export function planTemplateSwap(
   current: QuoteInput,
   oldTemplate: SwapTemplate | null,
   nextTemplate: SwapTemplate | null,
   priceOf: (productId: string) => number | undefined,
-  newId: () => string = () => crypto.randomUUID(),
+  newId: () => string,
 ): SwapPlan {
-  const fromTemplate = current.templateId != null;
-  const sectionRows = current.sections ?? [];
+  const fromTemplate = current.templateId !== undefined && current.templateId !== null;
+  const sectionRows = current.sections;
   const mine = (row: { fromTemplate?: boolean }) => !fromTemplate || row.fromTemplate === true;
   const replacedLines = current.lines.filter(mine);
   const replacedSections = sectionRows.filter(mine);
@@ -133,46 +207,22 @@ export function planTemplateSwap(
     : { lines: [], sections: [] };
 
   // Lines of the old template that the person has since changed.
-  const edited: Line[] = [];
-  if (oldTemplate) {
-    const sectionTitle = new Map(sectionRows.map((s) => [s.id, title(s.title)]));
-    const templateTitle = new Map(oldTemplate.sections.map((s) => [s.id, title(s.title)]));
-    const unmatched = [...oldTemplate.lines];
-    for (const line of replacedLines) {
-      const place = line.sectionId ? sectionTitle.get(line.sectionId) : null;
-      const at = unmatched.findIndex(
-        (tl) =>
-          (tl.productId ?? '') === line.productId &&
-          (tl.sectionId ? (templateTitle.get(tl.sectionId) ?? null) : null) === (place ?? null),
-      );
-      const [tl] = at >= 0 ? unmatched.splice(at, 1) : [];
-      if (!tl) continue;
-      const priceChanged =
-        tl.priceMode === 'fixed' && Number(tl.unitPrice ?? 0) !== (line.unitPrice ?? 0);
-      if (
-        line.quantity !== Number(tl.quantity) ||
-        line.discountPercent !== Number(tl.discountPercent) ||
-        priceChanged
-      )
-        edited.push(line);
-    }
-  }
+  const edited = oldTemplate === null ? [] : changedSince(oldTemplate, sectionRows, replacedLines);
 
   const hasContent = current.lines.length > 0 || sectionRows.length > 0;
-  const kind: SwapPlan['kind'] = !fromTemplate
-    ? hasContent && nextTemplate
-      ? 'manual'
-      : 'none'
-    : additions.lines.length > 0 || additions.sections.length > 0
-      ? 'additions'
-      : replacedLines.length > 0 || replacedSections.length > 0
-        ? 'replace'
-        : 'none';
+  const kind = kindOf({
+    fromTemplate,
+    hasContent,
+    toTemplate: nextTemplate !== null,
+    hasAdditions: additions.lines.length > 0 || additions.sections.length > 0,
+    hasReplaced: replacedLines.length > 0 || replacedSections.length > 0,
+  });
 
   const apply = (keepAdditions: boolean): QuoteInput => {
-    const next = nextTemplate
-      ? templateContent(nextTemplate, priceOf, newId)
-      : { sections: [], lines: [] };
+    const next =
+      nextTemplate === null
+        ? { sections: [], lines: [] }
+        : templateContent(nextTemplate, priceOf, newId);
     // A manual quote has nothing to keep: the template replaces all of it.
     const keep = fromTemplate && keepAdditions ? additions : { lines: [], sections: [] };
     // Kept items that sat in a section of the old template move to the new template's section of
@@ -180,27 +230,18 @@ export function planTemplateSwap(
     const newSections = new Map(next.sections.map((s) => [title(s.title), s.id]));
     const oldSectionTitle = new Map(sectionRows.map((s) => [s.id, title(s.title)]));
     const keptIds = new Set(keep.sections.map((s) => s.id));
-    const rehome = (sectionId: string | null | undefined) => {
-      if (!sectionId || keptIds.has(sectionId)) return sectionId ?? null;
+    const rehome = (sectionId: string | null | undefined): string | null => {
+      if (sectionId === undefined || sectionId === null || sectionId === '') return null;
+      if (keptIds.has(sectionId)) return sectionId;
       return newSections.get(oldSectionTitle.get(sectionId) ?? '') ?? null;
     };
     // Header defaults: a template's value replaces the old template's only where it was left alone.
     // A manual quote has no old template to have left alone, so the new template's values replace all.
-    const header = nextTemplate ? headerOf(nextTemplate) : null;
-    const was = oldTemplate ? headerOf(oldTemplate) : null;
-    const now = quoteHeader(current);
-    const merged: Partial<Header> = {};
-    if (header) {
-      for (const key of Object.keys(header) as (keyof Header)[]) {
-        if (!fromTemplate || (was && now[key] === was[key])) {
-          (merged as Record<string, unknown>)[key] = header[key];
-        }
-      }
-    }
+    const merged = nextTemplate === null ? {} : mergedHeader(current, oldTemplate, nextTemplate);
     return {
       ...current,
       ...merged,
-      templateId: nextTemplate?.id ?? null,
+      templateId: nextTemplate === null ? null : nextTemplate.id,
       sections: [...next.sections, ...keep.sections],
       lines: [
         ...next.lines,

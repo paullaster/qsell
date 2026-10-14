@@ -1,10 +1,12 @@
-import { and, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray, lt, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import { withAfterCommit } from '@/server/kernel/after-commit';
 import { getContainer } from '@/server/di/container';
 import { drizzleDb } from '@/server/db/drizzle/client';
 import {
+  currencies,
+  customers,
   salesQuoteEvents,
   salesQuoteLines,
   salesQuotes,
@@ -28,6 +30,11 @@ import type { GuardTrace, PriceTrace } from '@/server/domains/pricing/domain/typ
 import type { GuardLine } from '@/server/domains/pricing/guard-service';
 import type { PricedItem, RuleApplication } from '@/server/domains/pricing/discount-service';
 import { kitCost, kitTax } from '@/server/domains/pricing/kit-service';
+import { PAYMENT_METHOD_LABELS } from '@/lib/payment-method-labels';
+import { encodeCursor, escapeLike } from '@/server/domains/lookups/request';
+import { CLOSED_QUOTE_STATUSES, isQuoteExpired } from './expiry';
+import type { QuoteListRequest } from './quote-list';
+import type { TemplateListRequest } from './template-list';
 import { mergeLinesForOrder } from './order-lines';
 import { quotePdfItems } from './pdf-items';
 import { templateDraftFromQuote, type TemplateDraft } from './template-from-quote';
@@ -94,6 +101,8 @@ export interface QuoteInput {
   paymentMethod: PaymentProvider;
   paymentTerms?: string | null;
   templateId?: string | null;
+  /** The template's name, for display only; the server reads the real one from `templateId`. */
+  templateName?: string | null;
   showBillingAddress?: boolean;
   paymentDetails?: string | null;
   termsAndConditions?: string | null;
@@ -114,6 +123,8 @@ export interface QuoteInput {
     fromTemplate?: boolean;
     /** The section template this section was made from, if any. */
     sectionTemplateId?: string | null;
+    /** The section template's name, for display only. */
+    sectionTemplateName?: string | null;
   }[];
   lines: {
     sectionId?: string | null;
@@ -150,13 +161,28 @@ export interface QuoteSearchHit {
   expired: boolean;
 }
 
+/** A quote as the list shows it, with whether it is past its valid-until date while still open. */
+export interface QuoteListRow extends SalesQuoteRow {
+  expired: boolean;
+}
+
+export interface QuoteListPage {
+  rows: QuoteListRow[];
+  /** Ask for the next page with this; null when there are no more. */
+  nextCursor: string | null;
+}
+
 export interface SalesQuote extends SalesQuoteRow {
+  /** Past its valid-until date while still open. */
+  expired: boolean;
   lines: (typeof salesQuoteLines.$inferSelect)[];
   sections: (typeof salesQuoteSections.$inferSelect)[];
   events: (typeof salesQuoteEvents.$inferSelect)[];
 }
 
 export interface QuoteTemplateInput {
+  /** The default customer's name, for display only; the server reads it from `customerId`. */
+  customerName?: string | null;
   name: string;
   category?: string | null;
   description?: string | null;
@@ -187,7 +213,29 @@ export interface QuoteTemplateInput {
   }[];
 }
 
+/** A template as the management list shows it. */
+export interface TemplateListRow {
+  id: string;
+  name: string;
+  category: string | null;
+  description: string | null;
+  tags: string[];
+  status: string;
+  isDefault: boolean;
+  usageCount: number;
+  /** The customer the template is for, if it names one. */
+  customerName: string | null;
+  lineCount: number;
+}
+
+export interface TemplateListPage {
+  rows: TemplateListRow[];
+  nextCursor: string | null;
+}
+
 export interface SalesQuoteTemplate extends SalesQuoteTemplateRow {
+  /** The name of the customer the template is for, if it names one. */
+  customerName: string | null;
   lines: (typeof salesQuoteTemplateLines.$inferSelect)[];
   sections: (typeof salesQuoteTemplateSections.$inferSelect)[];
   events: (typeof salesQuoteTemplateEvents.$inferSelect)[];
@@ -261,6 +309,57 @@ export class SalesQuoteService {
     return Promise.all(rows.map((row) => this.getTemplate(row.id) as Promise<SalesQuoteTemplate>));
   }
 
+  /**
+   * One page of the templates list for the management screen: a summary of each, not its items
+   * (an editor fetches one template in full when it is opened). Newest change first, paged by cursor.
+   */
+  async listTemplatesPage(request: TemplateListRequest): Promise<TemplateListPage> {
+    const companyId = await this.companyId();
+    const pattern = `%${escapeLike(request.query)}%`;
+    const conditions: (SQL | undefined)[] = [
+      eq(salesQuoteTemplates.companyId, companyId),
+      request.status === 'all' ? undefined : eq(salesQuoteTemplates.status, request.status),
+      request.query === ''
+        ? undefined
+        : or(
+            ilike(salesQuoteTemplates.name, pattern),
+            ilike(salesQuoteTemplates.category, pattern),
+            ilike(salesQuoteTemplates.description, pattern),
+          ),
+      request.after === null
+        ? undefined
+        : sql`(${salesQuoteTemplates.updatedAt}, ${salesQuoteTemplates.id}) < (${request.after.k}::timestamptz, ${request.after.id}::uuid)`,
+    ];
+    const rows = await drizzleDb
+      .select({
+        id: salesQuoteTemplates.id,
+        name: salesQuoteTemplates.name,
+        category: salesQuoteTemplates.category,
+        description: salesQuoteTemplates.description,
+        tags: salesQuoteTemplates.tags,
+        status: salesQuoteTemplates.status,
+        isDefault: salesQuoteTemplates.isDefault,
+        usageCount: salesQuoteTemplates.usageCount,
+        customerName: customers.name,
+        lineCount: sql<number>`(select count(*)::int from ${salesQuoteTemplateLines} where ${salesQuoteTemplateLines.templateId} = ${sql.raw('"sales_quote_templates"."id"')})`,
+        changedAt: sql<string>`${salesQuoteTemplates.updatedAt}::text`,
+      })
+      .from(salesQuoteTemplates)
+      .leftJoin(customers, eq(customers.id, salesQuoteTemplates.customerId))
+      .where(and(...conditions))
+      .orderBy(desc(salesQuoteTemplates.updatedAt), desc(salesQuoteTemplates.id))
+      .limit(request.limit + 1);
+    const page = rows.slice(0, request.limit);
+    const last = page.at(-1);
+    return {
+      rows: page.map(({ changedAt: _changedAt, ...row }) => row),
+      nextCursor:
+        rows.length > request.limit && last !== undefined
+          ? encodeCursor({ k: last.changedAt, id: last.id })
+          : null,
+    };
+  }
+
   async getTemplate(id: string): Promise<SalesQuoteTemplate | null> {
     const companyId = await this.companyId();
     const [template] = await drizzleDb
@@ -286,8 +385,18 @@ export class SalesQuoteService {
         .where(eq(salesQuoteTemplateEvents.templateId, id))
         .orderBy(desc(salesQuoteTemplateEvents.createdAt)),
     ]);
+    const customerName =
+      template.customerId === null
+        ? null
+        : ((
+            await drizzleDb
+              .select({ name: customers.name })
+              .from(customers)
+              .where(eq(customers.id, template.customerId))
+          ).at(0)?.name ?? null);
     return {
       ...template,
+      customerName,
       lines,
       sections,
       events,
@@ -518,15 +627,54 @@ export class SalesQuoteService {
     await broadcastRealtime('quote_event', { templateId: id, type: 'template_default_changed' });
   }
 
-  async list() {
+  /**
+   * One page of the quotes list, newest change first. Filtering (status, expired, search text)
+   * and paging happen here in the database; the page after this one is asked for with the cursor,
+   * which stays cheap however many quotes there are.
+   */
+  async listPage(request: QuoteListRequest): Promise<QuoteListPage> {
     const companyId = await this.companyId();
+    const closed = [...CLOSED_QUOTE_STATUSES];
+    const pattern = `%${escapeLike(request.query)}%`;
+    const conditions: (SQL | undefined)[] = [
+      eq(salesQuotes.companyId, companyId),
+      request.status === 'all'
+        ? undefined
+        : request.status === 'expired'
+          ? and(lt(salesQuotes.validUntil, sql`now()`), notInArray(salesQuotes.status, closed))
+          : eq(salesQuotes.status, request.status),
+      request.query === ''
+        ? undefined
+        : or(
+            ilike(salesQuotes.quoteNumber, pattern),
+            ilike(salesQuotes.customerName, pattern),
+            ilike(salesQuotes.customerEmail, pattern),
+            ilike(salesQuotes.customerReference, pattern),
+          ),
+      request.after === null
+        ? undefined
+        : // The change time travels as text so no precision is lost between pages.
+          sql`(${salesQuotes.updatedAt}, ${salesQuotes.id}) < (${request.after.k}::timestamptz, ${request.after.id}::uuid)`,
+    ];
     const rows = await drizzleDb
-      .select()
+      .select({ row: salesQuotes, changedAt: sql<string>`${salesQuotes.updatedAt}::text` })
       .from(salesQuotes)
-      .where(eq(salesQuotes.companyId, companyId))
-      .orderBy(desc(salesQuotes.updatedAt))
-      .limit(500);
-    return rows;
+      .where(and(...conditions))
+      .orderBy(desc(salesQuotes.updatedAt), desc(salesQuotes.id))
+      .limit(request.limit + 1);
+    const page = rows.slice(0, request.limit);
+    const last = page.at(-1);
+    const now = new Date();
+    return {
+      rows: page.map(({ row }) => ({
+        ...row,
+        expired: isQuoteExpired(row, now),
+      })),
+      nextCursor:
+        rows.length > request.limit && last !== undefined
+          ? encodeCursor({ k: last.changedAt, id: last.row.id })
+          : null,
+    };
   }
 
   /**
@@ -622,6 +770,7 @@ export class SalesQuoteService {
     ]);
     return {
       ...quote,
+      expired: isQuoteExpired(quote, new Date()),
       lines,
       sections,
       events,
@@ -727,6 +876,7 @@ export class SalesQuoteService {
     const customerName = input.customerName.trim();
     if (!customerName) throw new Error('Choose a customer or enter a customer name.');
     if (!input.lines.length) throw new Error('Add at least one item to the quote.');
+    await this.assertCurrencyAndPayment(companyId, input);
     if (input.lines.some((line) => !Number.isFinite(line.quantity) || line.quantity <= 0)) {
       throw new Error('Each quote line needs a quantity greater than zero.');
     }
@@ -1862,6 +2012,39 @@ export class SalesQuoteService {
     await drizzleDb
       .insert(salesQuoteTemplateEvents)
       .values({ templateId, eventType, actorId, details });
+  }
+
+  /**
+   * What the browser says about the currency and how the quote is paid is checked here: the
+   * currency must be enabled, the method must be one we know, and paying on account is only for
+   * a customer of this company with a credit account.
+   */
+  private async assertCurrencyAndPayment(
+    companyId: string,
+    input: Pick<QuoteInput, 'currency' | 'paymentMethod' | 'customerId'>,
+  ) {
+    const code = String(input.currency).trim().toUpperCase();
+    const [currency] = await drizzleDb
+      .select({ isEnabled: currencies.isEnabled })
+      .from(currencies)
+      .where(eq(currencies.code, code));
+    if (currency?.isEnabled !== true) throw new Error('Choose an enabled currency.');
+    if (!Object.hasOwn(PAYMENT_METHOD_LABELS, input.paymentMethod)) {
+      throw new Error('Choose a valid payment method.');
+    }
+    if (input.paymentMethod === 'on_account') {
+      const customerId = input.customerId ?? null;
+      const [customer] =
+        customerId === null
+          ? []
+          : await drizzleDb
+              .select({ accountType: customers.accountType })
+              .from(customers)
+              .where(and(eq(customers.id, customerId), eq(customers.companyId, companyId)));
+      if (customer?.accountType !== 'credit') {
+        throw new Error('Paying on account needs a customer with a credit account.');
+      }
+    }
   }
 
   private assertPercent(value: number, label: string) {

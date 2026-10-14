@@ -54,7 +54,7 @@ jobs:
           DATABASE_URL: postgresql://qsell:ci-only-password@localhost:5432/qsell
       - name: Typecheck
         run: pnpm typecheck
-      - name: Run tests
+      - name: Run unit, integration and API tests
         # Integration tests run against the migrated database above (built from the
         # migration SQL, so the hand-added append-only triggers are exercised).
         # Lint is not gated yet: it crashes under ESLint 10 and has pre-existing violations.
@@ -73,9 +73,61 @@ jobs:
           NEXTAUTH_URL: http://localhost:3069
           DATABASE_URL: postgresql://qsell:ci-only-password@localhost:5432/qsell
 
+  e2e:
+    name: End-to-end tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: qsell_e2e
+          POSTGRES_USER: qsell
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U qsell -d qsell_e2e"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.6.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install Chrome and the tools the run uses
+        # Chrome drives the tests; psmisc provides fuser, which stops the test server afterwards.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y psmisc
+          pnpm exec playwright install --with-deps chrome
+      - name: Run end-to-end tests (desktop and phone width)
+        # The run migrates, seeds and logs in on its own database and port; see e2e/README.md.
+        run: pnpm test:e2e
+        env:
+          E2E_DATABASE_URL: postgresql://qsell:ci-only-password@localhost:5432/qsell_e2e
+          AUTH_SECRET: ci-only-auth-secret-not-for-deployment
+          JWT_SECRET: ci-only-jwt-secret-not-for-deployment
+          DATA_ENCRYPTION_KEY: ci-only-data-encryption-key-not-for-deployment
+          CI: 'true'
+      - name: Keep the report when a test fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: test-results
+          retention-days: 7
+
   publish:
     name: Build and publish release images
-    needs: validate
+    needs: [validate, e2e]
     if: github.event_name == 'push' && github.ref == 'refs/heads/release'
     runs-on: ubuntu-latest
     steps:

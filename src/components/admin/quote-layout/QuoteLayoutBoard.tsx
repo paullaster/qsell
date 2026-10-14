@@ -11,6 +11,7 @@ import {
   Search,
   X,
 } from 'lucide-react';
+import { LookupAutocomplete } from '@/components/ui/autocomplete/LookupAutocomplete';
 import {
   canNudgeLine,
   dropLine,
@@ -30,13 +31,14 @@ export interface BoardSection {
   showLines?: boolean;
   /** The section template this section was made from, on a quote. */
   sectionTemplateId?: string | null;
+  /** That template's name, for display. */
+  sectionTemplateName?: string | null;
 }
 
-/** A section template a quote's sections can be made from. */
-export interface SectionTemplateOption {
-  id: string;
-  name: string;
-  status: string;
+/** Where a quote's section templates are created and browsed in full, as intercepted routes. */
+export interface SectionTemplateLinks {
+  createHref?: string;
+  listHref?: string;
 }
 
 type Dragging = { kind: 'line'; index: number } | { kind: 'section'; id: string } | null;
@@ -82,7 +84,7 @@ export function QuoteLayoutBoard<L extends Placed, S extends BoardSection>({
   lineSearchText,
   onBulkAdd,
   noun,
-  sectionTemplates,
+  sectionTemplateLinks,
   onAddSectionFromTemplate,
   onSectionTemplateChange,
   flat = false,
@@ -112,10 +114,11 @@ export function QuoteLayoutBoard<L extends Placed, S extends BoardSection>({
   lineSearchText?: (line: L) => string;
   noun: 'quote' | 'template';
   /**
-   * Section templates, on a quote. With them, "Add section" offers a new empty section or one made
-   * from a template, and each section can switch its template.
+   * Section templates, on a quote. With these callbacks, "Add section" offers a new empty section
+   * or one made from a template, and each section can switch its template. The templates are
+   * searched on the server as the person types; none are loaded here.
    */
-  sectionTemplates?: SectionTemplateOption[];
+  sectionTemplateLinks?: SectionTemplateLinks;
   onAddSectionFromTemplate?: (templateId: string) => void;
   /** An empty id removes the section's template. */
   onSectionTemplateChange?: (sectionId: string, templateId: string) => void;
@@ -124,8 +127,6 @@ export function QuoteLayoutBoard<L extends Placed, S extends BoardSection>({
 }) {
   const dragging = useRef<Dragging>(null);
   const [addOpen, setAddOpen] = useState(false);
-  const [pickTemplate, setPickTemplate] = useState('');
-  const activeSectionTemplates = (sectionTemplates ?? []).filter((t) => t.status === 'active');
   const addEmptySection = () =>
     onChange({
       sections: [
@@ -549,37 +550,22 @@ export function QuoteLayoutBoard<L extends Placed, S extends BoardSection>({
           >
             New empty section
           </button>
-          <label className="text-sm font-medium text-fg">
-            Or from a section template
-            <select
-              value={pickTemplate}
-              onChange={(e) => setPickTemplate(e.target.value)}
-              className="mt-1 block min-h-10 w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong focus-visible:outline-2 focus-visible:outline-indigo-500"
-            >
-              <option value="">
-                {activeSectionTemplates.length === 0
-                  ? 'No section templates yet'
-                  : 'Choose a section template…'}
-              </option>
-              {activeSectionTemplates.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            type="button"
-            disabled={!pickTemplate}
-            onClick={() => {
-              onAddSectionFromTemplate(pickTemplate);
-              setPickTemplate('');
+          <LookupAutocomplete
+            source="section-templates"
+            label="Or from a section template"
+            value={null}
+            placeholder="Search section templates…"
+            clearable={false}
+            createHref={sectionTemplateLinks?.createHref}
+            listHref={sectionTemplateLinks?.listHref}
+            createLabel="Create a section template"
+            listLabel="View all section templates"
+            onChange={(option) => {
+              if (option === null) return;
+              onAddSectionFromTemplate(option.id);
               setAddOpen(false);
             }}
-            className="min-h-10 cursor-pointer rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-indigo-300 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            Add section from template
-          </button>
+          />
         </div>
       )}
 
@@ -730,23 +716,21 @@ export function QuoteLayoutBoard<L extends Placed, S extends BoardSection>({
                   Section total {total}
                 </span>
               )}
-              {sectionTemplates && onSectionTemplateChange && (
-                <select
-                  value={section.sectionTemplateId ?? ''}
-                  onChange={(e) => onSectionTemplateChange(section.id, e.target.value)}
-                  aria-label={`Template of section ${section.title}`}
-                  className="min-h-10 max-w-full min-w-0 rounded-lg border border-line bg-surface px-2 py-2 text-sm text-fg-strong focus-visible:outline-2 focus-visible:outline-indigo-500 sm:max-w-56"
-                >
-                  <option value="">No section template</option>
-                  {sectionTemplates
-                    .filter((t) => t.status === 'active' || t.id === section.sectionTemplateId)
-                    .map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}
-                        {t.status === 'archived' ? ' · Archived' : ''}
-                      </option>
-                    ))}
-                </select>
+              {onSectionTemplateChange && (
+                <LookupAutocomplete
+                  source="section-templates"
+                  label={`Template of section ${section.title}`}
+                  hideLabel
+                  value={section.sectionTemplateId ?? null}
+                  valueLabel={section.sectionTemplateName ?? null}
+                  placeholder="No section template"
+                  createHref={sectionTemplateLinks?.createHref}
+                  listHref={sectionTemplateLinks?.listHref}
+                  createLabel="Create a section template"
+                  listLabel="View all section templates"
+                  onChange={(option) => onSectionTemplateChange(section.id, option?.id ?? '')}
+                  className="w-full min-w-48 sm:w-56"
+                />
               )}
               <button
                 type="button"

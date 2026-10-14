@@ -2,39 +2,27 @@
 
 import { revalidatePath } from 'next/cache';
 import { canPermission, requirePermission } from '@/server/domains/access-control/guard';
-import { AccessDeniedError } from '@/server/domains/access-control/engine';
-import type { QuoteActionResult } from './action-result';
+import { parseQuoteListRequest } from './quote-list';
+import { parseTemplateListRequest } from './template-list';
+import { runQuoteAction } from './run';
 import type { CatalogueProduct } from '@/lib/catalogue-entry';
 import { listProductsAction } from '@/server/domains/catalog/actions';
 import { listTradeCustomersAction } from '@/server/domains/customers/master-actions';
 import type { KitAllocation } from '@/server/domains/pricing/domain/kits';
 import { SalesQuoteService, type QuoteInput, type QuoteTemplateInput } from './service';
-import { SectionTemplateService, type SectionTemplateInput } from './section-template-service';
+import { SectionTemplateService } from './section-template-service';
 
 const service = () => new SalesQuoteService();
+const run = runQuoteAction;
 
-/**
- * Failures come back as data (see QuoteActionResult). The service states why in a plain `Error`;
- * anything else (a database or library error) is logged and kept off the screen.
- */
-async function run<T>(fn: () => Promise<T>): Promise<QuoteActionResult<T>> {
-  try {
-    return { ok: true, data: await fn() };
-  } catch (error: unknown) {
-    if (error instanceof AccessDeniedError) {
-      return { ok: false, error: 'You do not have permission to do that.' };
-    }
-    if (error instanceof Error && error.constructor === Error) {
-      return { ok: false, error: error.message };
-    }
-    console.error('[quotes]', error);
-    return { ok: false, error: 'Something went wrong. Please try again.' };
-  }
-}
-
-export async function listSalesQuotesAction() {
-  await requirePermission('quotes:read');
-  return service().list();
+/** One page of the quotes list (see `SalesQuoteService.listPage`); the request is untrusted. */
+export async function listSalesQuotesPageAction(raw: unknown) {
+  return run(async () => {
+    await requirePermission('quotes:read');
+    const parsed = parseQuoteListRequest(raw);
+    if (!parsed.ok) throw new Error(parsed.error);
+    return service().listPage(parsed.value);
+  });
 }
 
 export async function getSalesQuoteAction(id: string) {
@@ -77,15 +65,18 @@ async function editorKits(): Promise<EditorKit[]> {
   }));
 }
 
+/**
+ * What the quote editor and the template screens need up front: the catalogue to add items from,
+ * the kits (so a kit's cost and tax show as the server will work them out) and the settings. The
+ * lists people choose from (customers, templates, currencies) are not here: they are searched on
+ * the server as the person types.
+ */
 export async function getSalesQuoteEditorDataAction() {
   await requirePermission('quotes:read');
-  const [products, customers, settings, templates, kits, sectionTemplates] = await Promise.all([
+  const [products, settings, kits] = await Promise.all([
     listProductsAction(),
-    listTradeCustomersAction(),
     service().getSettings(),
-    service().listTemplates(),
     editorKits(),
-    new SectionTemplateService().list(),
   ]);
   // Only what the editors use: descriptions, specifications and media would make a long catalogue
   // slow to open, and nothing on the screen shows them.
@@ -105,12 +96,49 @@ export async function getSalesQuoteEditorDataAction() {
     reservedQuantity: p.reservedQuantity,
     imageUrl: p.imageUrl,
   }));
-  return { products: slim, customers, settings, templates, kits, sectionTemplates };
+  return { products: slim, settings, kits };
 }
 
-export async function listSalesQuoteTemplatesAction() {
-  await requirePermission('quotes:read');
-  return service().listTemplates();
+/** One page of the quote templates list; the request is untrusted. */
+export async function listSalesQuoteTemplatesPageAction(raw: unknown) {
+  return run(async () => {
+    await requirePermission('quotes:read');
+    const parsed = parseTemplateListRequest(raw);
+    if (!parsed.ok) throw new Error(parsed.error);
+    return service().listTemplatesPage(parsed.value);
+  });
+}
+
+/** One quote template in full, for its editor. */
+export async function getSalesQuoteTemplateAction(id: string) {
+  return run(async () => {
+    await requirePermission('quotes:read');
+    if (typeof id !== 'string') throw new Error('Invalid template.');
+    const template = await service().getTemplate(id);
+    if (template === null) throw new Error('That template is no longer available.');
+    return template;
+  });
+}
+
+/** One page of the section templates list; the request is untrusted. */
+export async function listSectionTemplatesPageAction(raw: unknown) {
+  return run(async () => {
+    await requirePermission('quotes:read');
+    const parsed = parseTemplateListRequest(raw);
+    if (!parsed.ok) throw new Error(parsed.error);
+    return new SectionTemplateService().listPage(parsed.value);
+  });
+}
+
+/** One section template in full, for its editor. */
+export async function getSectionTemplateAction(id: string) {
+  return run(async () => {
+    await requirePermission('quotes:read');
+    if (typeof id !== 'string') throw new Error('Invalid template.');
+    const template = await new SectionTemplateService().get(id);
+    if (template === null) throw new Error('That section template is no longer available.');
+    return template;
+  });
 }
 
 export async function saveSalesQuoteTemplateAction(id: string | null, input: QuoteTemplateInput) {
@@ -120,7 +148,7 @@ export async function saveSalesQuoteTemplateAction(id: string | null, input: Quo
   return template;
 }
 
-export async function saveSectionTemplateAction(id: string | null, input: SectionTemplateInput) {
+export async function saveSectionTemplateAction(id: string | null, input: unknown) {
   return run(async () => {
     const userId = await requirePermission(id ? 'quotes:update' : 'quotes:create');
     const template = await new SectionTemplateService().save(userId, id, input);

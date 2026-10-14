@@ -1,22 +1,35 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Copy, FileStack, Plus, Search, Star, X } from 'lucide-react';
-import type { CatalogueProduct } from '@/lib/catalogue-entry';
+import { Copy, Plus, Star, X } from 'lucide-react';
+import { buildCatalogueIndex, type CatalogueProduct } from '@/lib/catalogue-entry';
 import { QuoteLayoutBoard } from './quote-layout/QuoteLayoutBoard';
 import { CataloguePicker } from './quote-layout/CataloguePicker';
 import { QuickAdd } from './quote-layout/QuickAdd';
 import { BulkAddDialog } from './quote-layout/BulkAddDialog';
 import { QuantityInput } from './quote-layout/QuantityInput';
-import { buildCatalogueIndex } from '@/lib/catalogue-entry';
 import { addCatalogueEntry, lastIndexOfProduct, type CatalogueEntry } from '@/lib/quote-layout';
-import type { CustomerRow } from '@/server/db/drizzle/schema';
-import type { QuoteTemplateInput, SalesQuoteTemplate } from '@/server/domains/quotes/service';
-import type { QuoteSearchHit } from '@/server/domains/quotes/service';
+import type {
+  QuoteSearchHit,
+  QuoteTemplateInput,
+  SalesQuoteTemplate,
+  TemplateListRow,
+} from '@/server/domains/quotes/service';
+import { usePagedList, type PageResult } from '@/components/ui/usePagedList';
+import { LookupAutocomplete } from '@/components/ui/autocomplete/LookupAutocomplete';
+import { SegmentedChoice } from '@/components/ui/SegmentedChoice';
+import type { LookupOption } from '@/lib/lookup';
+import { methodLabel } from '@/lib/payment-method-labels';
+import { chooseTemplateCustomerAction } from '@/server/domains/quotes/form-actions';
+import type { TemplateStatusFilter } from '@/lib/template-statuses';
+import { unwrapQuoteAction } from '@/server/domains/quotes/action-result';
+import { ListFilters, ListFooter } from './quote-templates/ListControls';
 import type { TemplateDraft } from '@/server/domains/quotes/template-from-quote';
 import {
   archiveSalesQuoteTemplateAction,
   duplicateSalesQuoteTemplateAction,
+  getSalesQuoteTemplateAction,
+  listSalesQuoteTemplatesPageAction,
   saveSalesQuoteTemplateAction,
   setDefaultSalesQuoteTemplateAction,
   templateDraftFromQuoteAction,
@@ -24,6 +37,12 @@ import {
 import { QuoteSearchPicker } from './QuoteSearchPicker';
 
 type TemplateLine = QuoteTemplateInput['lines'][number];
+
+/** How an item in a template is priced. */
+const PRICE_SOURCES = [
+  { value: 'catalog', label: 'Catalog' },
+  { value: 'fixed', label: 'Fixed' },
+] as const;
 
 const amount = (n: number, currency: string) =>
   `${currency} ${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -62,6 +81,7 @@ function templateInput(template: SalesQuoteTemplate): QuoteTemplateInput {
     category: template.category,
     description: template.description,
     customerId: template.customerId,
+    customerName: template.customerName,
     currency: template.currency,
     paymentMethod: template.paymentMethod as QuoteTemplateInput['paymentMethod'],
     paymentTerms: template.paymentTerms,
@@ -78,13 +98,13 @@ function templateInput(template: SalesQuoteTemplate): QuoteTemplateInput {
     isDefault: template.isDefault,
     showBillingAddress: template.showBillingAddress,
     sections: template.sections.map((section) => ({
-      id: sectionIdMap.get(section.id)!,
+      id: sectionIdMap.get(section.id) ?? section.id,
       title: section.title,
       description: section.description,
       showLines: section.showLines,
     })),
     lines: template.lines.map((line) => ({
-      sectionId: line.sectionId ? (sectionIdMap.get(line.sectionId) ?? null) : null,
+      sectionId: line.sectionId === null ? null : (sectionIdMap.get(line.sectionId) ?? null),
       productId: line.productId ?? '',
       quantity: Number(line.quantity),
       priceMode: line.priceMode as 'catalog' | 'fixed',
@@ -95,34 +115,47 @@ function templateInput(template: SalesQuoteTemplate): QuoteTemplateInput {
 }
 
 export function AdminSalesQuoteTemplates({
-  templates,
   products,
-  customers,
   canCreate,
   canUpdate,
   canDelete,
-  onRefresh,
   onMessage,
   onError,
   fromQuote = null,
   onFromQuoteHandled,
+  startWithEditor = false,
+  onEditorClose,
+  initialPage,
 }: {
-  templates: SalesQuoteTemplate[];
   products: CatalogueProduct[];
-  customers: CustomerRow[];
   canCreate: boolean;
   canUpdate: boolean;
   canDelete: boolean;
-  onRefresh: () => void;
   onMessage: (message: string) => void;
   onError: (message: string) => void;
   /** A quote someone chose to make a template from, on a quote screen: the editor opens on it. */
   fromQuote?: QuoteSearchHit | null;
   onFromQuoteHandled?: () => void;
+  /** Opens the editor for a new template at once, as the "create" route does. */
+  startWithEditor?: boolean;
+  /** Called when the editor closes, saved or not, so a route can return to where it came from. */
+  onEditorClose?: (saved: boolean) => void;
+  /** The first page, when the server sent it with the screen. */
+  initialPage?: PageResult<TemplateListRow>;
 }) {
+  const [filters, setFilters] = useState<{ query: string; status: TemplateStatusFilter }>({
+    query: '',
+    status: 'all',
+  });
+  const list = usePagedList<TemplateListRow, typeof filters>({
+    load: (current, cursor) => listSalesQuoteTemplatesPageAction({ ...current, cursor }),
+    filters,
+    initialPage,
+  });
   const [editing, setEditing] = useState<SalesQuoteTemplate | null>(null);
-  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(startWithEditor);
   const [base, setBase] = useState<TemplateBase | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!fromQuote) return;
@@ -148,7 +181,6 @@ export function AdminSalesQuoteTemplates({
     // Only a different quote starts it again.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fromQuote?.id]);
-  const [busyId, setBusyId] = useState<string | null>(null);
 
   const runTemplateAction = async (id: string, action: () => Promise<unknown>, message: string) => {
     try {
@@ -156,13 +188,30 @@ export function AdminSalesQuoteTemplates({
       onError('');
       await action();
       onMessage(message);
-      onRefresh();
+      list.reload();
     } catch (error) {
       onError(error instanceof Error ? error.message : 'Template action failed.');
     } finally {
       setBusyId(null);
     }
   };
+
+  /** Opens a template's editor: the list holds summaries, so the full template is fetched now. */
+  const openEditor = async (row: TemplateListRow) => {
+    try {
+      setBusyId(row.id);
+      onError('');
+      setEditing(unwrapQuoteAction(await getSalesQuoteTemplateAction(row.id)));
+      setEditorOpen(true);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Could not open that template.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const filtered = filters.query !== '' || filters.status !== 'all';
+  const emptyText = emptyListText(list.phase === 'loading', filtered);
 
   return (
     <>
@@ -183,14 +232,18 @@ export function AdminSalesQuoteTemplates({
                 setBase(null);
                 setEditorOpen(true);
               }}
-              className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
+              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-indigo-300"
             >
-              <Plus className="h-4 w-4" /> New template
+              <Plus className="h-4 w-4" aria-hidden /> New template
             </button>
           )}
         </header>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[800px] text-left text-sm">
+        <ListFilters noun="templates" onChange={setFilters} />
+        <div className={`overflow-x-auto ${list.phase === 'loading' ? 'opacity-60' : ''}`}>
+          <table
+            className="w-full min-w-[800px] text-left text-sm"
+            aria-busy={list.phase === 'loading'}
+          >
             <thead className="bg-surface text-xs text-fg-muted">
               <tr>
                 <th className="px-4 py-3">Template</th>
@@ -202,30 +255,24 @@ export function AdminSalesQuoteTemplates({
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
-              {templates.length === 0 ? (
+              {list.rows.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="p-12 text-center text-fg-muted">
-                    No templates yet. Create one from your common quote bundles and terms.
+                    {emptyText}
                   </td>
                 </tr>
               ) : (
-                templates.map((template) => (
+                list.rows.map((template) => (
                   <tr key={template.id} className="hover:bg-hover/50">
                     <td className="px-4 py-3">
                       <button
                         type="button"
-                        onClick={() => {
-                          setEditing(template);
-                          setEditorOpen(true);
-                        }}
+                        onClick={() => void openEditor(template)}
                         className="font-semibold text-indigo-700 hover:underline dark:text-indigo-300"
                       >
                         {template.name}
                       </button>
-                      <p className="mt-0.5 text-xs text-fg-muted">
-                        {[template.category, template.description].filter(Boolean).join(' · ') ||
-                          'No description'}
-                      </p>
+                      <p className="mt-0.5 text-xs text-fg-muted">{describeTemplate(template)}</p>
                       {template.tags.length > 0 && (
                         <p className="mt-1 text-[11px] text-fg-subtle">
                           {template.tags.join(' · ')}
@@ -233,21 +280,18 @@ export function AdminSalesQuoteTemplates({
                       )}
                     </td>
                     <td className="px-4 py-3 text-fg-muted">
-                      {customers.find((customer) => customer.id === template.customerId)?.name ??
-                        'Any customer'}
+                      {template.customerName ?? 'Any customer'}
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums">{template.lines.length}</td>
+                    <td className="px-4 py-3 text-right tabular-nums">{template.lineCount}</td>
                     <td className="px-4 py-3 text-right tabular-nums">{template.usageCount}</td>
                     <td className="px-4 py-3">
                       <span
                         className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${template.status === 'active' ? 'bg-emerald-100 text-emerald-800' : 'bg-surface-sunken text-fg-muted'}`}
                       >
-                        {template.isDefault && <Star className="h-3 w-3 fill-current" />}
-                        {template.status === 'active'
-                          ? template.isDefault
-                            ? 'Default'
-                            : 'Active'
-                          : 'Archived'}
+                        {template.isDefault && (
+                          <Star className="h-3 w-3 fill-current" aria-hidden />
+                        )}
+                        {templateStateLabel(template)}
                       </span>
                     </td>
                     <td className="px-4 py-3">
@@ -263,10 +307,11 @@ export function AdminSalesQuoteTemplates({
                                 `${template.name} is now the default.`,
                               )
                             }
-                            className="rounded-md p-2 text-amber-700 hover:bg-amber-50"
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-md text-amber-700 hover:bg-amber-50"
                             title="Set as default"
+                            aria-label={`Make ${template.name} the default`}
                           >
-                            <Star className="h-4 w-4" />
+                            <Star className="h-4 w-4" aria-hidden />
                           </button>
                         )}
                         {canCreate && (
@@ -280,20 +325,19 @@ export function AdminSalesQuoteTemplates({
                                 `${template.name} duplicated.`,
                               )
                             }
-                            className="rounded-md p-2 text-fg-muted hover:bg-hover hover:text-fg-strong"
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-md text-fg-muted hover:bg-hover hover:text-fg-strong"
                             title="Duplicate template"
+                            aria-label={`Duplicate ${template.name}`}
                           >
-                            <Copy className="h-4 w-4" />
+                            <Copy className="h-4 w-4" aria-hidden />
                           </button>
                         )}
                         {template.status === 'active' && canUpdate && (
                           <button
                             type="button"
-                            onClick={() => {
-                              setEditing(template);
-                              setEditorOpen(true);
-                            }}
-                            className="rounded-md px-2 py-1.5 text-xs text-fg-muted hover:bg-hover"
+                            disabled={busyId === template.id}
+                            onClick={() => void openEditor(template)}
+                            className="min-h-10 rounded-md px-2 text-xs text-fg-muted hover:bg-hover"
                           >
                             Edit
                           </button>
@@ -309,7 +353,7 @@ export function AdminSalesQuoteTemplates({
                                 `${template.name} archived.`,
                               )
                             }
-                            className="rounded-md px-2 py-1.5 text-xs text-red-700 hover:bg-red-50"
+                            className="min-h-10 rounded-md px-2 text-xs text-red-700 hover:bg-red-50"
                           >
                             Archive
                           </button>
@@ -322,6 +366,15 @@ export function AdminSalesQuoteTemplates({
             </tbody>
           </table>
         </div>
+        <ListFooter
+          shown={list.rows.length}
+          noun="templates"
+          hasMore={list.cursor !== null}
+          loadingMore={list.phase === 'more'}
+          error={list.error}
+          onLoadMore={list.loadMore}
+          onRetry={list.retry}
+        />
       </section>
 
       {editorOpen && (
@@ -330,22 +383,44 @@ export function AdminSalesQuoteTemplates({
           base={editing ? null : base}
           canBase={!editing}
           products={products}
-          customers={customers}
           onClose={() => {
             setEditorOpen(false);
             setBase(null);
+            onEditorClose?.(false);
           }}
           onSave={async (input) => {
             await saveSalesQuoteTemplateAction(editing?.id ?? null, input);
             setEditorOpen(false);
             setBase(null);
             onMessage(`${input.name} template saved.`);
-            onRefresh();
+            list.reload();
+            onEditorClose?.(true);
           }}
         />
       )}
     </>
   );
+}
+
+/** What the empty table says: loading, nothing matched the filters, or nothing exists yet. */
+function emptyListText(loading: boolean, filtered: boolean): string {
+  if (loading) return 'Loading…';
+  if (filtered) return 'No templates match those filters.';
+  return 'No templates yet. Create one from your common quote bundles and terms.';
+}
+
+/** A template's category and description in one line, or a placeholder. */
+function describeTemplate(template: TemplateListRow): string {
+  const parts = [template.category, template.description].filter(
+    (part): part is string => part !== null && part !== '',
+  );
+  return parts.length === 0 ? 'No description' : parts.join(' · ');
+}
+
+/** The state shown on a row: Default, Active or Archived. */
+function templateStateLabel(template: TemplateListRow): string {
+  if (template.status !== 'active') return 'Archived';
+  return template.isDefault ? 'Default' : 'Active';
 }
 
 /** The quote a template is being based on, and what making a template from it found. */
@@ -360,7 +435,6 @@ function TemplateEditor({
   base: initialBase,
   canBase,
   products,
-  customers,
   onClose,
   onSave,
 }: {
@@ -369,12 +443,12 @@ function TemplateEditor({
   /** Only a new template can be based on a quote. */
   canBase: boolean;
   products: CatalogueProduct[];
-  customers: CustomerRow[];
   onClose: () => void;
   onSave: (input: QuoteTemplateInput) => Promise<void>;
 }) {
   const [input, setInput] = useState(initial);
   const [tagsText, setTagsText] = useState(initial.tags.join(', '));
+  const [customerLabel, setCustomerLabel] = useState<string | null>(initial.customerName ?? null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [catalogSectionId, setCatalogSectionId] = useState<string | null>(null);
@@ -398,7 +472,7 @@ function TemplateEditor({
     setInput((current) => ({
       ...next.draft.input,
       name:
-        current.name.trim() && current.name !== base?.draft.input.name
+        current.name.trim() !== '' && current.name !== base?.draft.input.name
           ? current.name
           : next.draft.input.name,
     }));
@@ -443,7 +517,7 @@ function TemplateEditor({
       }
       return { ...current, lines };
     });
-    const last = entries[entries.length - 1]!;
+    const last = entries[entries.length - 1];
     lastAdded.current = { productId: last.productId, sectionId: last.sectionId };
   };
   /** After the catalogue closes, takes the person to the last item they added. */
@@ -470,28 +544,19 @@ function TemplateEditor({
       'lines',
       input.lines.map((line, i) => (i === index ? { ...line, ...patch } : line)),
     );
-  const chooseCustomer = (customerId: string) => {
-    const customer = customers.find((row) => row.id === customerId);
-    if (!customer) {
-      update('customerId', null);
-      return;
+  /** The server fills the template's defaults from the customer chosen (or clears them). */
+  const chooseCustomer = async (option: LookupOption | null) => {
+    try {
+      setError(null);
+      const result = await chooseTemplateCustomerAction(input, option === null ? null : option.id);
+      if (!result.ok) throw new Error(result.error);
+      setInput(result.data);
+      setCustomerLabel(option === null ? null : option.label);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not choose that customer.');
     }
-    const address = {
-      street: customer.street ?? '',
-      city: customer.city ?? '',
-      countyOrState: customer.countyOrState ?? '',
-      postalCode: customer.postalCode ?? '',
-      country: customer.country ?? 'Kenya',
-    };
-    setInput((current) => ({
-      ...current,
-      customerId,
-      billingAddress: address,
-      deliveryAddress: address,
-      paymentMethod: customer.accountType === 'credit' ? 'on_account' : current.paymentMethod,
-    }));
   };
-  const submit = async (event: React.FormEvent) => {
+  const submit = async (event: React.SyntheticEvent) => {
     event.preventDefault();
     try {
       setBusy(true);
@@ -526,7 +591,7 @@ function TemplateEditor({
         <header className="mb-5 flex items-center justify-between">
           <div>
             <h2 className="text-lg font-bold text-fg-strong">
-              {initial.name ? `Edit ${initial.name}` : 'New quote template'}
+              {initial.name === '' ? 'New quote template' : `Edit ${initial.name}`}
             </h2>
             <p className="mt-1 text-xs text-fg-muted">
               Catalog-price lines refresh from current prices and costs each time you use the
@@ -544,7 +609,7 @@ function TemplateEditor({
           </button>
         </header>
         <form onSubmit={(event) => void submit(event)} className="space-y-5">
-          {error && (
+          {error !== null && (
             <p
               className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800"
               role="alert"
@@ -593,7 +658,7 @@ function TemplateEditor({
                       Reading the quote…
                     </p>
                   )}
-                  {baseError && (
+                  {baseError !== null && (
                     <p role="alert" className="text-sm text-red-700">
                       {baseError}
                     </p>
@@ -656,8 +721,8 @@ function TemplateEditor({
                         <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
                           <p className="font-semibold">Left out of the template:</p>
                           <ul className="list-disc pl-5">
-                            {base.draft.skipped.map((x, i) => (
-                              <li key={i}>
+                            {base.draft.skipped.map((x) => (
+                              <li key={`${x.name}:${x.reason}`}>
                                 {x.name}: {x.reason}
                               </li>
                             ))}
@@ -689,50 +754,37 @@ function TemplateEditor({
                 className="mt-1 block w-full rounded-lg border border-line bg-surface px-3 py-2 text-fg-strong"
               />
             </label>
-            <label className="text-sm font-medium text-fg">
-              Default customer
-              <select
-                value={input.customerId ?? ''}
-                onChange={(event) => chooseCustomer(event.target.value)}
-                className="mt-1 block w-full rounded-lg border border-line bg-surface px-3 py-2 text-fg-strong"
-              >
-                <option value="">Any customer</option>
-                {customers.map((customer) => (
-                  <option key={customer.id} value={customer.id}>
-                    {customer.number} · {customer.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="text-sm font-medium text-fg">
-              Currency
-              <select
-                value={input.currency}
-                onChange={(event) => update('currency', event.target.value)}
-                className="mt-1 block w-full rounded-lg border border-line bg-surface px-3 py-2 text-fg-strong"
-              >
-                <option>KES</option>
-                <option>USD</option>
-              </select>
-            </label>
-            <label className="text-sm font-medium text-fg">
-              Payment method
-              <select
-                value={input.paymentMethod}
-                onChange={(event) =>
-                  update('paymentMethod', event.target.value as QuoteTemplateInput['paymentMethod'])
+            <LookupAutocomplete
+              source="trade-customers"
+              label="Default customer"
+              value={input.customerId ?? null}
+              valueLabel={customerLabel}
+              placeholder="Any customer"
+              onChange={(option) => void chooseCustomer(option)}
+            />
+            <LookupAutocomplete
+              source="currencies"
+              label="Currency"
+              value={input.currency}
+              valueLabel={input.currency}
+              clearable={false}
+              onChange={(option) => {
+                if (option !== null) update('currency', option.id);
+              }}
+            />
+            <LookupAutocomplete
+              source="payment-methods"
+              filters={{ customer: input.customerId ?? '' }}
+              label="Payment method"
+              value={input.paymentMethod}
+              valueLabel={methodLabel(input.paymentMethod)}
+              clearable={false}
+              onChange={(option) => {
+                if (option !== null) {
+                  update('paymentMethod', option.id as QuoteTemplateInput['paymentMethod']);
                 }
-                className="mt-1 block w-full rounded-lg border border-line bg-surface px-3 py-2 text-fg-strong"
-              >
-                <option value="mpesa_daraja">M-Pesa</option>
-                <option value="pesapal_v3">Pesapal</option>
-                <option value="jenga_hq">Jenga</option>
-                <option value="kcb_buni">KCB Buni</option>
-                {input.customerId &&
-                  customers.find((customer) => customer.id === input.customerId)?.accountType ===
-                    'credit' && <option value="on_account">On account</option>}
-              </select>
-            </label>
+              }}
+            />
             <label className="text-sm font-medium text-fg">
               Validity (days)
               <input
@@ -848,15 +900,13 @@ function TemplateEditor({
               renderCells={(line, index) => {
                 const product = productById.get(line.productId);
                 const sell =
-                  line.priceMode === 'fixed'
-                    ? Number(line.unitPrice ?? 0)
-                    : Number(product?.price ?? 0);
+                  line.priceMode === 'fixed' ? (line.unitPrice ?? 0) : (product?.price ?? 0);
                 const revenue =
                   sell *
                   line.quantity *
                   (1 - line.discountPercent / 100) *
                   (1 - input.quoteDiscountPercent / 100);
-                const cost = Number(product?.costPrice ?? 0) * line.quantity;
+                const cost = (product?.costPrice ?? 0) * line.quantity;
                 const taxRate = product?.taxRate ?? 0;
                 const net =
                   product?.isTaxInclusive !== false && taxRate > 0
@@ -870,7 +920,7 @@ function TemplateEditor({
                       <div className="font-medium text-fg-strong">{name}</div>
                       <div className="text-xs text-fg-muted">
                         {product?.sku} · current cost{' '}
-                        {amount(Number(product?.costPrice ?? 0), input.currency)}
+                        {amount(product?.costPrice ?? 0, input.currency)}
                       </div>
                     </td>
                     <td className="p-3">
@@ -881,23 +931,19 @@ function TemplateEditor({
                       />
                     </td>
                     <td className="p-3">
-                      <select
+                      <SegmentedChoice
+                        label={`Price source of ${name}`}
+                        hideLabel
                         value={line.priceMode}
-                        onChange={(event) =>
+                        options={PRICE_SOURCES}
+                        onChange={(mode) =>
                           patchLine(index, {
-                            priceMode: event.target.value as 'catalog' | 'fixed',
+                            priceMode: mode,
                             unitPrice:
-                              event.target.value === 'catalog'
-                                ? null
-                                : (line.unitPrice ?? product?.price ?? 0),
+                              mode === 'catalog' ? null : (line.unitPrice ?? product?.price ?? 0),
                           })
                         }
-                        className="rounded-md border border-line bg-surface px-2 py-1 text-fg-strong"
-                        aria-label={`Price source of ${name}`}
-                      >
-                        <option value="catalog">Catalog</option>
-                        <option value="fixed">Fixed</option>
-                      </select>
+                      />
                     </td>
                     <td className="p-3">
                       <input
@@ -1019,7 +1065,7 @@ function TemplateEditor({
                         placeholder={
                           field === 'countyOrState'
                             ? 'County / State'
-                            : field[0]!.toUpperCase() + field.slice(1)
+                            : field[0].toUpperCase() + field.slice(1)
                         }
                         value={input[kind]?.[field] ?? ''}
                         onChange={(event) =>
