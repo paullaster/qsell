@@ -1112,10 +1112,11 @@ describe.skipIf(!url)('rebates, loyalty, gift cards and tenders (database)', () 
     it('two cashiers using the same card on two orders cannot overspend it', async () => {
       const cust = await customer();
       const prod = await product({ price: '100' });
-      const [a, b] = await Promise.all([
-        order(cust.email!, [[prod, 1]]),
-        order(cust.email!, [[prod, 1]]),
-      ]);
+      // The orders are made one after the other: the race under test is the two tenders below.
+      const a = await order(cust.email!, [[prod, 1]]);
+      const b = await order(cust.email!, [[prod, 1]]);
+      expect(a.order, 'first order was not created').toBeDefined();
+      expect(b.order, 'second order was not created').toBeDefined();
       const [card] = await c.giftCards.issue(companyId, { value: 100 }, actor, reason);
       const results = await Promise.allSettled([
         c.tenders.apply(companyId, a.order!.id, { giftCards: [{ code: card!.code }] }, staff),

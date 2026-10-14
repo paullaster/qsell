@@ -9,6 +9,8 @@ const serverActionAllowedOrigins = (
   .filter(Boolean);
 
 const nextConfig: NextConfig = {
+  // The end-to-end run builds into its own folder so it never disturbs a running dev server.
+  ...(process.env.NEXT_DIST_DIR === undefined ? {} : { distDir: process.env.NEXT_DIST_DIR }),
   experimental: {
     // Leave room for multipart metadata around the 2 MB logo-file limit.
     serverActions: {

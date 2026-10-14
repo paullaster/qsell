@@ -5,7 +5,10 @@ export default defineConfig({
   resolve: { alias: { '@': path.resolve(__dirname, 'src') } },
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    // Component tests are `.test.tsx` and ask for a browser-like environment with a comment at
+    // the top of the file (`// @vitest-environment jsdom`); everything else runs in Node.
+    include: ['src/**/*.test.{ts,tsx}'],
+    setupFiles: ['./vitest.setup.ts'],
     // Integration tests need a real Postgres built from the migrations:
     //   TEST_DATABASE_URL=postgres://... pnpm test
     // They are skipped (not failed) when it is not set.

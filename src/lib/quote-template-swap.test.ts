@@ -79,8 +79,8 @@ describe('switching a quote built from a template', () => {
     expect(products(next)).toEqual(['flour', 'oil']);
     expect(next.templateId).toBe('B');
     expect(next.sections).toHaveLength(1);
-    expect(next.lines.every((l) => l.fromTemplate)).toBe(true);
-    expect(next.lines[1]!.sectionId).toBe(next.sections[0]!.id);
+    expect(next.lines.every((l) => l.fromTemplate === true)).toBe(true);
+    expect(next.lines[1].sectionId).toBe(next.sections[0].id);
   });
 
   it('keeps the customer, addresses and reference', () => {
@@ -113,7 +113,7 @@ describe('switching a quote built from a template', () => {
         { productId: 'salt', quantity: 3, discountPercent: 0 },
         { productId: 'tea', quantity: 1, discountPercent: 0, sectionId: 's2' },
       ],
-      sections: [...quote().sections!, { id: 's2', title: 'Extras' }],
+      sections: [...quote().sections, { id: 's2', title: 'Extras' }],
     });
     const plan = planTemplateSwap(q, A, B, price, newId);
     expect(plan.kind).toBe('additions');
@@ -122,8 +122,8 @@ describe('switching a quote built from a template', () => {
     const kept = plan.apply(true);
     expect(products(kept)).toEqual(['flour', 'oil', 'salt', 'tea']);
     expect(kept.sections.map((s) => s.title)).toEqual(['Staples', 'Extras']);
-    expect(kept.lines[3]!.sectionId).toBe('s2');
-    expect(kept.lines[2]!.fromTemplate).toBeUndefined();
+    expect(kept.lines[3].sectionId).toBe('s2');
+    expect(kept.lines[2].fromTemplate).toBeUndefined();
     expect(products(plan.apply(false))).toEqual(['flour', 'oil']);
   });
 
@@ -135,15 +135,16 @@ describe('switching a quote built from a template', () => {
       ],
     });
     const next = planTemplateSwap(q, A, B, price, newId).apply(true);
-    const salt = next.lines.find((l) => l.productId === 'salt')!;
-    expect(salt.sectionId).toBe(next.sections.find((s) => s.title === 'Staples')!.id);
+    const salt = next.lines.find((l) => l.productId === 'salt');
+    const staples = next.sections.find((s) => s.title === 'Staples');
+    expect(salt?.sectionId).toBe(staples?.id);
   });
 
   it('lists template items the person changed, which are replaced all the same', () => {
     const q = quote({
       lines: [
         { productId: 'rice', quantity: 8, discountPercent: 0, fromTemplate: true },
-        quote().lines[1]!,
+        quote().lines[1],
       ],
     });
     const plan = planTemplateSwap(q, A, B, price, newId);

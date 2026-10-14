@@ -125,6 +125,11 @@ describe.skipIf(!url)('approvals in modules (database)', () => {
     c = mod.getContainer();
     companyId = (await c.companySettings.ensureSeeded()).id;
     await c.reasonCodes.ensureSystemReasons(companyId);
+    // A quote is saved in an enabled currency.
+    await db
+      .insert(schema.currencies)
+      .values({ code: 'KES', name: 'Kenyan Shilling', symbol: 'KSh', isBaseCurrency: true })
+      .onConflictDoNothing();
     // Rules left over from earlier runs of this file would also match today's documents.
     await db
       .update(schema.approvalWorkflows)
@@ -478,7 +483,7 @@ describe.skipIf(!url)('approvals in modules (database)', () => {
     customerName: 'Quote Buyer',
     customerEmail: 'quote-buyer@wiring.test',
     currency: 'KES',
-    paymentMethod: 'on_account' as never,
+    paymentMethod: 'mpesa_daraja' as never,
     discountPercent: 0,
     shippingFee: 0,
     sections: [],

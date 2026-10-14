@@ -2,16 +2,22 @@
 
 import { useId, useMemo, useRef, useState } from 'react';
 import { Copy, Plus, X } from 'lucide-react';
-import type { CatalogueProduct } from '@/lib/catalogue-entry';
-import { buildCatalogueIndex } from '@/lib/catalogue-entry';
+import { buildCatalogueIndex, type CatalogueProduct } from '@/lib/catalogue-entry';
 import { addCatalogueEntry, lastIndexOfProduct, type CatalogueEntry } from '@/lib/quote-layout';
 import type {
   SectionTemplate,
   SectionTemplateInput,
+  SectionTemplateListRow,
 } from '@/server/domains/quotes/section-template-service';
+import { usePagedList, type PageResult } from '@/components/ui/usePagedList';
+import { SegmentedChoice } from '@/components/ui/SegmentedChoice';
+import type { TemplateStatusFilter } from '@/lib/template-statuses';
+import { ListFilters, ListFooter } from './quote-templates/ListControls';
 import {
   archiveSectionTemplateAction,
   duplicateSectionTemplateAction,
+  getSectionTemplateAction,
+  listSectionTemplatesPageAction,
   saveSectionTemplateAction,
 } from '@/server/domains/quotes/actions';
 import { unwrapQuoteAction } from '@/server/domains/quotes/action-result';
@@ -26,12 +32,26 @@ type Item = SectionTemplateInput['lines'][number];
 /** The board lays out items by place; a section template has just the one list. */
 type BoardItem = Item & { sectionId?: null };
 
+/** How an item in a section template is priced. */
+const PRICE_SOURCES = [
+  { value: 'catalog', label: 'Catalog' },
+  { value: 'fixed', label: 'Fixed' },
+] as const;
+
 const CURRENCY = 'KES';
 const amount = (n: number) =>
   `${CURRENCY} ${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const field =
   'mt-1 block min-h-10 w-full rounded-lg border border-line bg-surface px-3 py-2 text-fg-strong focus-visible:outline-2 focus-visible:outline-indigo-500';
+
+/** The template's category and description in one line, or a placeholder. */
+function describe(template: { category: string | null; description: string | null }): string {
+  const parts = [template.category, template.description].filter(
+    (part): part is string => part !== null && part !== '',
+  );
+  return parts.length === 0 ? 'No description' : parts.join(' · ');
+}
 
 const emptyInput = (): SectionTemplateInput => ({
   name: '',
@@ -61,26 +81,40 @@ const inputOf = (template: SectionTemplate): SectionTemplateInput => ({
 
 /** Reusable sections: a titled group of items a quote can add as a section in one step. */
 export function AdminSectionTemplates({
-  templates,
   products,
   canCreate,
   canUpdate,
   canDelete,
-  onRefresh,
   onMessage,
   onError,
+  startWithEditor = false,
+  onEditorClose,
+  initialPage,
 }: {
-  templates: SectionTemplate[];
   products: CatalogueProduct[];
   canCreate: boolean;
   canUpdate: boolean;
   canDelete: boolean;
-  onRefresh: () => void;
   onMessage: (message: string) => void;
   onError: (message: string) => void;
+  /** Opens the editor for a new section template at once, as the "create" route does. */
+  startWithEditor?: boolean;
+  /** Called when the editor closes, saved or not, so a route can return to where it came from. */
+  onEditorClose?: (saved: boolean) => void;
+  /** The first page, when the server sent it with the screen. */
+  initialPage?: PageResult<SectionTemplateListRow>;
 }) {
+  const [filters, setFilters] = useState<{ query: string; status: TemplateStatusFilter }>({
+    query: '',
+    status: 'all',
+  });
+  const list = usePagedList<SectionTemplateListRow, typeof filters>({
+    load: (current, cursor) => listSectionTemplatesPageAction({ ...current, cursor }),
+    filters,
+    initialPage,
+  });
   const [editing, setEditing] = useState<SectionTemplate | null>(null);
-  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(startWithEditor);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const run = async (id: string, action: () => Promise<unknown>, message: string) => {
@@ -89,7 +123,7 @@ export function AdminSectionTemplates({
       onError('');
       await action();
       onMessage(message);
-      onRefresh();
+      list.reload();
     } catch (error) {
       onError(error instanceof Error ? error.message : 'Section template action failed.');
     } finally {
@@ -97,10 +131,47 @@ export function AdminSectionTemplates({
     }
   };
 
-  const open = (template: SectionTemplate | null) => {
-    setEditing(template);
-    setEditorOpen(true);
+  /** Opens a template's editor: the list holds summaries, so the full template is fetched now. */
+  const openEditor = async (row: SectionTemplateListRow) => {
+    try {
+      setBusyId(row.id);
+      onError('');
+      setEditing(unwrapQuoteAction(await getSectionTemplateAction(row.id)));
+      setEditorOpen(true);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Could not open that template.');
+    } finally {
+      setBusyId(null);
+    }
   };
+
+  const rowActions = (template: SectionTemplateListRow) => (
+    <Actions
+      template={template}
+      busy={busyId === template.id}
+      {...{ canCreate, canUpdate, canDelete }}
+      onEdit={() => void openEditor(template)}
+      onDuplicate={() =>
+        void run(
+          template.id,
+          () => duplicateSectionTemplateAction(template.id).then(unwrapQuoteAction),
+          `${template.name} duplicated.`,
+        )
+      }
+      onArchive={() =>
+        void run(
+          template.id,
+          () => archiveSectionTemplateAction(template.id).then(unwrapQuoteAction),
+          `${template.name} archived.`,
+        )
+      }
+    />
+  );
+
+  const filtered = filters.query !== '' || filters.status !== 'all';
+  const empty = filtered
+    ? 'No section templates match those filters.'
+    : 'No section templates yet. Create one from a group of items you quote together.';
 
   return (
     <>
@@ -116,55 +187,39 @@ export function AdminSectionTemplates({
           {canCreate && (
             <button
               type="button"
-              onClick={() => open(null)}
+              onClick={() => {
+                setEditing(null);
+                setEditorOpen(true);
+              }}
               className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-indigo-300"
             >
               <Plus className="h-4 w-4" aria-hidden /> New section template
             </button>
           )}
         </header>
+        <ListFilters noun="section templates" onChange={setFilters} />
 
-        {templates.length === 0 ? (
+        {list.rows.length === 0 ? (
           <p className="p-12 text-center text-fg-muted">
-            No section templates yet. Create one from a group of items you quote together.
+            {list.phase === 'loading' ? 'Loading…' : empty}
           </p>
         ) : (
-          <>
+          <div className={list.phase === 'loading' ? 'opacity-60' : ''}>
             {/* Phones: cards. md and up: a table. */}
             <ul className="divide-y divide-line md:hidden">
-              {templates.map((template) => (
+              {list.rows.map((template) => (
                 <li key={template.id} className="space-y-2 p-4">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="font-semibold text-fg-strong">{template.name}</p>
                       <p className="text-xs text-fg-muted">
-                        Section “{template.sectionTitle}” · {template.lines.length}{' '}
-                        {template.lines.length === 1 ? 'item' : 'items'} · used{' '}
-                        {template.usageCount}
+                        Section “{template.sectionTitle}” · {template.lineCount}{' '}
+                        {template.lineCount === 1 ? 'item' : 'items'} · used {template.usageCount}
                       </p>
                     </div>
                     <StatusBadge status={template.status} />
                   </div>
-                  <Actions
-                    template={template}
-                    busy={busyId === template.id}
-                    {...{ canCreate, canUpdate, canDelete }}
-                    onEdit={() => open(template)}
-                    onDuplicate={() =>
-                      void run(
-                        template.id,
-                        () => duplicateSectionTemplateAction(template.id).then(unwrapQuoteAction),
-                        `${template.name} duplicated.`,
-                      )
-                    }
-                    onArchive={() =>
-                      void run(
-                        template.id,
-                        () => archiveSectionTemplateAction(template.id).then(unwrapQuoteAction),
-                        `${template.name} archived.`,
-                      )
-                    }
-                  />
+                  {rowActions(template)}
                 </li>
               ))}
             </ul>
@@ -181,64 +236,51 @@ export function AdminSectionTemplates({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line">
-                  {templates.map((template) => (
+                  {list.rows.map((template) => (
                     <tr key={template.id} className="hover:bg-hover/50">
                       <td className="px-4 py-3">
                         <p className="font-semibold text-fg-strong">{template.name}</p>
-                        <p className="mt-0.5 text-xs text-fg-muted">
-                          {[template.category, template.description].filter(Boolean).join(' · ') ||
-                            'No description'}
-                        </p>
+                        <p className="mt-0.5 text-xs text-fg-muted">{describe(template)}</p>
                       </td>
                       <td className="px-4 py-3 text-fg-muted">{template.sectionTitle}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">{template.lines.length}</td>
+                      <td className="px-4 py-3 text-right tabular-nums">{template.lineCount}</td>
                       <td className="px-4 py-3 text-right tabular-nums">{template.usageCount}</td>
                       <td className="px-4 py-3">
                         <StatusBadge status={template.status} />
                       </td>
-                      <td className="px-4 py-3">
-                        <Actions
-                          template={template}
-                          busy={busyId === template.id}
-                          {...{ canCreate, canUpdate, canDelete }}
-                          onEdit={() => open(template)}
-                          onDuplicate={() =>
-                            void run(
-                              template.id,
-                              () =>
-                                duplicateSectionTemplateAction(template.id).then(unwrapQuoteAction),
-                              `${template.name} duplicated.`,
-                            )
-                          }
-                          onArchive={() =>
-                            void run(
-                              template.id,
-                              () =>
-                                archiveSectionTemplateAction(template.id).then(unwrapQuoteAction),
-                              `${template.name} archived.`,
-                            )
-                          }
-                        />
-                      </td>
+                      <td className="px-4 py-3">{rowActions(template)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          </>
+          </div>
         )}
+        <ListFooter
+          shown={list.rows.length}
+          noun="section templates"
+          hasMore={list.cursor !== null}
+          loadingMore={list.phase === 'more'}
+          error={list.error}
+          onLoadMore={list.loadMore}
+          onRetry={list.retry}
+        />
       </section>
 
       {editorOpen && (
         <SectionTemplateEditor
           initial={editing ? inputOf(editing) : emptyInput()}
           products={products}
-          onClose={() => setEditorOpen(false)}
+          onClose={() => {
+            setEditorOpen(false);
+            onEditorClose?.(false);
+          }}
           onSave={async (input) => {
             unwrapQuoteAction(await saveSectionTemplateAction(editing?.id ?? null, input));
             setEditorOpen(false);
             onMessage(`${input.name} section template saved.`);
-            onRefresh();
+            list.reload();
+            onEditorClose?.(true);
           }}
         />
       )}
@@ -269,7 +311,7 @@ function Actions({
   onDuplicate,
   onArchive,
 }: {
-  template: SectionTemplate;
+  template: SectionTemplateListRow;
   busy: boolean;
   canCreate: boolean;
   canUpdate: boolean;
@@ -282,7 +324,12 @@ function Actions({
   return (
     <div className="flex flex-wrap justify-end gap-1">
       {active && canUpdate && (
-        <button type="button" onClick={onEdit} className={`${actionButton} text-fg`}>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onEdit}
+          className={`${actionButton} text-fg`}
+        >
           Edit
         </button>
       )}
@@ -367,17 +414,17 @@ function SectionTemplateEditor({
       }
       return { ...current, lines };
     });
-    lastAdded.current = { productId: entries[entries.length - 1]!.productId };
+    lastAdded.current = { productId: entries[entries.length - 1].productId };
   };
   const showLastAdded = () => {
     const last = lastAdded.current;
     lastAdded.current = null;
     if (!last) return;
-    const index = lastIndexOfProduct(input.lines as BoardItem[], last.productId, null);
+    const index = lastIndexOfProduct(input.lines, last.productId, null);
     if (index >= 0) setFocusLine((current) => ({ index, nonce: (current?.nonce ?? 0) + 1 }));
   };
 
-  const submit = async (event: React.FormEvent) => {
+  const submit = async (event: React.SyntheticEvent) => {
     event.preventDefault();
     try {
       setBusy(true);
@@ -385,7 +432,8 @@ function SectionTemplateEditor({
       await onSave({
         ...input,
         // The title defaults to the name, so a template never makes an untitled section.
-        sectionTitle: input.sectionTitle.trim() || input.name.trim(),
+        sectionTitle:
+          input.sectionTitle.trim() === '' ? input.name.trim() : input.sectionTitle.trim(),
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save this section template.');
@@ -411,7 +459,7 @@ function SectionTemplateEditor({
         <header className="mb-5 flex items-start justify-between gap-3">
           <div>
             <h2 id={`${uid}-title`} className="text-lg font-bold text-fg-strong">
-              {initial.name ? `Edit ${initial.name}` : 'New section template'}
+              {initial.name === '' ? 'New section template' : `Edit ${initial.name}`}
             </h2>
             <p className="mt-1 text-xs text-fg-muted">
               Catalog-price items follow the current prices when the section is added to a quote.
@@ -429,7 +477,7 @@ function SectionTemplateEditor({
         </header>
 
         <form onSubmit={(event) => void submit(event)} className="space-y-5">
-          {error && (
+          {error !== null && (
             <p
               className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800"
               role="alert"
@@ -504,7 +552,7 @@ function SectionTemplateEditor({
               noun="template"
               flat
               sections={[]}
-              lines={input.lines as BoardItem[]}
+              lines={input.lines}
               onChange={(next) => update('lines', next.lines)}
               focusLine={focusLine}
               onBulkAdd={() => {
@@ -549,7 +597,7 @@ function SectionTemplateEditor({
                     <td className="p-3">
                       <div className="font-medium text-fg-strong">{name}</div>
                       <div className="text-xs text-fg-muted">
-                        {product?.sku} · {amount(Number(product?.price ?? 0))}
+                        {product?.sku} · {amount(product?.price ?? 0)}
                       </div>
                     </td>
                     <td className="p-3">
@@ -560,23 +608,19 @@ function SectionTemplateEditor({
                       />
                     </td>
                     <td className="p-3">
-                      <select
+                      <SegmentedChoice
+                        label={`Price source of ${name}`}
+                        hideLabel
                         value={line.priceMode}
-                        onChange={(event) =>
+                        options={PRICE_SOURCES}
+                        onChange={(mode) =>
                           patchLine(index, {
-                            priceMode: event.target.value as 'catalog' | 'fixed',
+                            priceMode: mode,
                             unitPrice:
-                              event.target.value === 'catalog'
-                                ? null
-                                : (line.unitPrice ?? product?.price ?? 0),
+                              mode === 'catalog' ? null : (line.unitPrice ?? product?.price ?? 0),
                           })
                         }
-                        className="min-h-9 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong"
-                        aria-label={`Price source of ${name}`}
-                      >
-                        <option value="catalog">Catalog</option>
-                        <option value="fixed">Fixed</option>
-                      </select>
+                      />
                     </td>
                     <td className="p-3">
                       <input

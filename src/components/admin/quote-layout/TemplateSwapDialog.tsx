@@ -2,8 +2,14 @@
 
 import { useEffect, useId, useRef, useState } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
-import type { SwapPlan } from '@/lib/quote-template-swap';
+import type { SwapSummary } from '@/server/domains/quotes/template-swap-service';
 import { useModalKeys } from './useModalKeys';
+
+/** What the quote ends up on: the template's name, or none. */
+function targetOf(toName: string | null, section: boolean): string {
+  if (toName !== null && toName !== '') return `“${toName}”`;
+  return section ? 'no section template' : 'no template';
+}
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -12,25 +18,18 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
  * until the person confirms, and nothing is saved until they save the quote.
  */
 export function TemplateSwapDialog({
-  plan,
-  fromName,
-  toName,
+  summary,
   scope = 'quote',
   sectionName,
-  nameOf,
   onConfirm,
   onClose,
 }: {
-  plan: SwapPlan;
-  /** The template the quote was built from, if any. */
-  fromName: string | null;
-  /** The template being switched to; null when the template is being removed. */
-  toName: string | null;
+  /** What the server worked out: what would be replaced and what was added by hand. */
+  summary: SwapSummary;
   /** `section`: only one section of the quote is switched to another section template. */
   scope?: 'quote' | 'section';
   /** The section being switched, when `scope` is `section`. */
   sectionName?: string;
-  nameOf: (productId: string) => string;
   onConfirm: (keepAdditions: boolean) => void;
   onClose: () => void;
 }) {
@@ -40,13 +39,13 @@ export function TemplateSwapDialog({
   const [keep, setKeep] = useState(true);
   const titleId = `${uid}-title`;
   const section = scope === 'section';
-  const target = toName ? `“${toName}”` : section ? 'no section template' : 'no template';
-  // Items inside an added section are listed under it, not twice.
-  const keptSectionIds = new Set(plan.additions.sections.map((row) => row.id));
-  const looseAdditions = plan.additions.lines.filter(
-    (line) => !line.sectionId || !keptSectionIds.has(line.sectionId),
-  );
-  const additions = looseAdditions.length + plan.additions.sections.length;
+  const { toName, fromName, kind, additions, edited } = summary;
+  const target = targetOf(toName, section);
+  const named = toName !== null && toName !== '';
+  const headline = section
+    ? `Switch section${sectionName !== undefined && sectionName !== '' ? ` “${sectionName}”` : ''} to ${target}?`
+    : `Switch to ${target}?`;
+  const addedCount = additions.items.length + additions.sections.length;
 
   useEffect(() => {
     confirmRef.current?.focus();
@@ -69,9 +68,7 @@ export function TemplateSwapDialog({
         <header className="flex items-start justify-between gap-3 border-b border-line p-3 sm:p-4">
           <h2 id={titleId} className="flex items-center gap-2 font-semibold text-fg-strong">
             <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" aria-hidden />
-            {section
-              ? `Switch section${sectionName ? ` “${sectionName}”` : ''} to ${target}?`
-              : `Switch to ${target}?`}
+            {headline}
           </h2>
           <button
             type="button"
@@ -84,16 +81,16 @@ export function TemplateSwapDialog({
         </header>
 
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3 text-sm text-fg sm:p-4">
-          {plan.kind === 'manual' ? (
+          {kind === 'manual' ? (
             <p>
               {section
                 ? 'This section was not made from a section template.'
                 : 'This quote was not built from a template.'}{' '}
               Switching replaces its{' '}
               <strong>
-                {plural(plan.replacedLines, 'item')}
-                {plan.replacedSections > 0
-                  ? ` and ${plural(plan.replacedSections, 'section')}`
+                {plural(summary.replacedLines, 'item')}
+                {summary.replacedSections > 0
+                  ? ` and ${plural(summary.replacedSections, 'section')}`
                   : ''}
               </strong>{' '}
               with what is in {target}
@@ -103,49 +100,46 @@ export function TemplateSwapDialog({
             </p>
           ) : (
             <p>
-              {fromName
+              {fromName !== null && fromName !== ''
                 ? `The items${section ? '' : ' and sections'} that came from “${fromName}”`
                 : 'The template items'}{' '}
-              (<strong>{plural(plan.replacedLines, 'item')}</strong>
-              {plan.replacedSections > 0 ? `, ${plural(plan.replacedSections, 'section')}` : ''})
-              are replaced with {toName ? `what is in ${target}` : 'nothing'}.{' '}
+              (<strong>{plural(summary.replacedLines, 'item')}</strong>
+              {summary.replacedSections > 0
+                ? `, ${plural(summary.replacedSections, 'section')}`
+                : ''}
+              ) are replaced with {named ? `what is in ${target}` : 'nothing'}.{' '}
               {section
                 ? 'The section’s title and description change only where you had not edited them. The rest of the quote stays as it is.'
                 : 'Payment terms, notes, discount and shipping change only where you had not edited them. The customer and addresses stay as they are.'}
             </p>
           )}
 
-          {plan.edited.length > 0 && (
+          {edited.length > 0 && (
             <div>
               <p className="font-medium text-fg-strong">
-                {plural(plan.edited.length, 'item')} you changed will be replaced too:
+                {plural(edited.length, 'item')} you changed will be replaced too:
               </p>
               <ul className="mt-1 list-inside list-disc text-fg-muted">
-                {plan.edited.map((line, index) => (
-                  <li key={`${line.productId}-${index}`}>{nameOf(line.productId)}</li>
+                {edited.map((item) => (
+                  <li key={item.key}>{item.name}</li>
                 ))}
               </ul>
             </div>
           )}
 
-          {plan.kind === 'additions' && (
+          {kind === 'additions' && (
             <fieldset className="space-y-2 rounded-lg border border-line p-3">
               <legend className="px-1 font-medium text-fg-strong">
-                You added {plural(additions, 'thing')} that {additions === 1 ? 'is' : 'are'} not in
-                the {section ? 'section ' : ''}template
+                You added {plural(addedCount, 'thing')} that {addedCount === 1 ? 'is' : 'are'} not
+                in the {section ? 'section ' : ''}template
               </legend>
               <ul className="list-inside list-disc text-fg-muted">
-                {looseAdditions.map((line, index) => (
-                  <li key={`${line.productId}-${index}`}>{nameOf(line.productId)}</li>
+                {additions.items.map((item) => (
+                  <li key={item.key}>{item.name}</li>
                 ))}
-                {plan.additions.sections.map((row) => (
-                  <li key={row.id}>
-                    Section: {row.title} (
-                    {plural(
-                      plan.additions.lines.filter((line) => line.sectionId === row.id).length,
-                      'item',
-                    )}
-                    )
+                {additions.sections.map((row) => (
+                  <li key={row.key}>
+                    Section: {row.title} ({plural(row.items, 'item')})
                   </li>
                 ))}
               </ul>
@@ -188,7 +182,7 @@ export function TemplateSwapDialog({
           <button
             ref={confirmRef}
             type="button"
-            onClick={() => onConfirm(plan.kind === 'additions' ? keep : false)}
+            onClick={() => onConfirm(kind === 'additions' ? keep : false)}
             className="min-h-10 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
           >
             Switch template
