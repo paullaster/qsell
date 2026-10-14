@@ -28,6 +28,15 @@ export interface BoardSection {
   title: string;
   description?: string | null;
   showLines?: boolean;
+  /** The section template this section was made from, on a quote. */
+  sectionTemplateId?: string | null;
+}
+
+/** A section template a quote's sections can be made from. */
+export interface SectionTemplateOption {
+  id: string;
+  name: string;
+  status: string;
 }
 
 type Dragging = { kind: 'line'; index: number } | { kind: 'section'; id: string } | null;
@@ -73,6 +82,10 @@ export function QuoteLayoutBoard<L extends Placed, S extends BoardSection>({
   lineSearchText,
   onBulkAdd,
   noun,
+  sectionTemplates,
+  onAddSectionFromTemplate,
+  onSectionTemplateChange,
+  flat = false,
 }: {
   sections: S[];
   lines: L[];
@@ -98,8 +111,34 @@ export function QuoteLayoutBoard<L extends Placed, S extends BoardSection>({
   /** What "find in this list" looks at for a line. Defaults to its name. */
   lineSearchText?: (line: L) => string;
   noun: 'quote' | 'template';
+  /**
+   * Section templates, on a quote. With them, "Add section" offers a new empty section or one made
+   * from a template, and each section can switch its template.
+   */
+  sectionTemplates?: SectionTemplateOption[];
+  onAddSectionFromTemplate?: (templateId: string) => void;
+  /** An empty id removes the section's template. */
+  onSectionTemplateChange?: (sectionId: string, templateId: string) => void;
+  /** One plain list of items with no sections, as in a section template. */
+  flat?: boolean;
 }) {
   const dragging = useRef<Dragging>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [pickTemplate, setPickTemplate] = useState('');
+  const activeSectionTemplates = (sectionTemplates ?? []).filter((t) => t.status === 'active');
+  const addEmptySection = () =>
+    onChange({
+      sections: [
+        ...sections,
+        {
+          id: crypto.randomUUID(),
+          title: `Section ${sections.length + 1}`,
+          description: '',
+          showLines: false,
+        } as S,
+      ],
+      lines,
+    });
   const [hint, setHint] = useState<Hint>(null);
   const [said, setSaid] = useState('');
   const [flash, setFlash] = useState<number | null>(null);
@@ -453,8 +492,9 @@ export function QuoteLayoutBoard<L extends Placed, S extends BoardSection>({
     <div className="space-y-3">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-prose text-xs text-fg-muted">
-          Drag an item by its grip, or use the arrows, to put it where you want it: in this list, in
-          a section, or in another section. Sections can be moved the same way.
+          {flat
+            ? 'Drag an item by its grip, or use the arrows, to put it where you want it in the list.'
+            : 'Drag an item by its grip, or use the arrows, to put it where you want it: in this list, in a section, or in another section. Sections can be moved the same way.'}
         </p>
         <div className="flex flex-wrap gap-2">
           <button
@@ -464,26 +504,19 @@ export function QuoteLayoutBoard<L extends Placed, S extends BoardSection>({
           >
             <Plus className="h-4 w-4" aria-hidden /> Add {noun === 'quote' ? 'quote item' : 'item'}
           </button>
-          <button
-            type="button"
-            onClick={() =>
-              onChange({
-                sections: [
-                  ...sections,
-                  {
-                    id: crypto.randomUUID(),
-                    title: `Section ${sections.length + 1}`,
-                    description: '',
-                    showLines: false,
-                  } as S,
-                ],
-                lines,
-              })
-            }
-            className="inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-hover focus-visible:outline-2 focus-visible:outline-indigo-500"
-          >
-            <Plus className="h-4 w-4" aria-hidden /> Add section
-          </button>
+          {!flat && (
+            <button
+              type="button"
+              onClick={() =>
+                onAddSectionFromTemplate ? setAddOpen((open) => !open) : addEmptySection()
+              }
+              aria-expanded={onAddSectionFromTemplate ? addOpen : undefined}
+              aria-controls={onAddSectionFromTemplate ? `${noun}-add-section` : undefined}
+              className="inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-hover focus-visible:outline-2 focus-visible:outline-indigo-500"
+            >
+              <Plus className="h-4 w-4" aria-hidden /> Add section
+            </button>
+          )}
           {onBulkAdd && (
             <button
               type="button"
@@ -495,6 +528,60 @@ export function QuoteLayoutBoard<L extends Placed, S extends BoardSection>({
           )}
         </div>
       </header>
+
+      {addOpen && onAddSectionFromTemplate && (
+        <div
+          id={`${noun}-add-section`}
+          role="group"
+          aria-label="Add a section"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setAddOpen(false);
+          }}
+          className="grid gap-3 rounded-xl border border-line bg-surface-raised p-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-end"
+        >
+          <button
+            type="button"
+            onClick={() => {
+              addEmptySection();
+              setAddOpen(false);
+            }}
+            className="min-h-10 cursor-pointer rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-hover focus-visible:outline-2 focus-visible:outline-indigo-500"
+          >
+            New empty section
+          </button>
+          <label className="text-sm font-medium text-fg">
+            Or from a section template
+            <select
+              value={pickTemplate}
+              onChange={(e) => setPickTemplate(e.target.value)}
+              className="mt-1 block min-h-10 w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong focus-visible:outline-2 focus-visible:outline-indigo-500"
+            >
+              <option value="">
+                {activeSectionTemplates.length === 0
+                  ? 'No section templates yet'
+                  : 'Choose a section template…'}
+              </option>
+              {activeSectionTemplates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            disabled={!pickTemplate}
+            onClick={() => {
+              onAddSectionFromTemplate(pickTemplate);
+              setPickTemplate('');
+              setAddOpen(false);
+            }}
+            className="min-h-10 cursor-pointer rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-indigo-300 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Add section from template
+          </button>
+        </div>
+      )}
 
       {lines.length >= FIND_AT && (
         <div className="flex flex-wrap items-center gap-2">
@@ -548,9 +635,10 @@ export function QuoteLayoutBoard<L extends Placed, S extends BoardSection>({
             {toggle(null, 'the individual items')}
             <div className="min-w-0 flex-1">
               <h4 className="font-semibold text-fg-strong">
-                Individual items <span className="font-normal text-fg-muted">· {count(null)}</span>
+                {flat ? 'Items' : 'Individual items'}{' '}
+                <span className="font-normal text-fg-muted">· {count(null)}</span>
               </h4>
-              {!isCollapsed(null) && (
+              {!flat && !isCollapsed(null) && (
                 <p className="text-xs text-fg-muted">
                   These print one by one, ahead of the sections. Drop an item here to take it out of
                   a section.
@@ -641,6 +729,24 @@ export function QuoteLayoutBoard<L extends Placed, S extends BoardSection>({
                 <span className="shrink-0 rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-800">
                   Section total {total}
                 </span>
+              )}
+              {sectionTemplates && onSectionTemplateChange && (
+                <select
+                  value={section.sectionTemplateId ?? ''}
+                  onChange={(e) => onSectionTemplateChange(section.id, e.target.value)}
+                  aria-label={`Template of section ${section.title}`}
+                  className="min-h-10 max-w-full min-w-0 rounded-lg border border-line bg-surface px-2 py-2 text-sm text-fg-strong focus-visible:outline-2 focus-visible:outline-indigo-500 sm:max-w-56"
+                >
+                  <option value="">No section template</option>
+                  {sectionTemplates
+                    .filter((t) => t.status === 'active' || t.id === section.sectionTemplateId)
+                    .map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                        {t.status === 'archived' ? ' · Archived' : ''}
+                      </option>
+                    ))}
+                </select>
               )}
               <button
                 type="button"

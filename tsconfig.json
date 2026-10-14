@@ -20,7 +20,7 @@
     "paths": {
       "@/*": ["./src/*"]
     },
-    "baseUrl": "."
+    "types": ["node"]
   },
   "include": [
     "next-env.d.ts",
