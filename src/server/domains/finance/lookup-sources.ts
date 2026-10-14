@@ -2,6 +2,11 @@ import { eq, sql } from 'drizzle-orm';
 import { bankAccounts, customers, paymentMethods, reasonCodes } from '@/server/db/drizzle/schema';
 import { CHEQUE_STATUS, RECEIPT_STATUS, REFUND_STATUS, statusChoices } from '@/lib/finance-statuses';
 import { METHOD_KINDS, labelOf } from '@/lib/payment-options';
+import { AUTO_APPLY_MODES, CREDIT_NOTE_MODES, OVERPAYMENT_MODES } from '@/lib/wallet-policy';
+import { CONDITIONS, DISPOSITIONS } from '@/lib/return-form';
+import { CREDIT_NOTE_REASONS } from '@/server/domains/credit-notes/reasons';
+import { reasonLabel } from '@/lib/credit-note-form';
+import type { PermissionKey } from '@/server/domains/access-control/permissions';
 import { getContainer } from '@/server/di/container';
 import { acceptFilters, LookupFilterError, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
 
@@ -93,7 +98,7 @@ const methodSource = (key: string, permission: 'receipts:create' | 'refunds:crea
   });
 
 /** Reasons a refund or a reversal can be given. */
-const reasons = (key: string, permission: 'receipts:read' | 'refunds:read') =>
+const reasons = (key: string, permission: PermissionKey) =>
   tableSource({
     key,
     permission,
@@ -169,7 +174,7 @@ const refundPayoutMethods = tableSource({
   toOption: (row) => ({ id: text(row.id), label: `${text(row.label)} — ${text(row.bank)}`, description: null, badge: null }),
 });
 
-const fixedChoices = (key: string, permission: 'receipts:read', list: readonly { id: string; label: string }[]) =>
+const fixedChoices = (key: string, permission: PermissionKey, list: readonly { id: string; label: string }[]) =>
   staticSource({
     key,
     permission,
@@ -199,6 +204,14 @@ export const FINANCE_LOOKUP_SOURCES: readonly LookupSource[] = [
   chequeDepositMethods,
   refundPayoutMethods,
   fixedChoices('allocation-modes', 'receipts:read', ALLOCATION_CHOICES),
+  reasons('wallet-reasons', 'wallet:read'),
+  reasons('return-close-reasons', 'return_receipts:read'),
+  fixedChoices('wallet-overpayment-modes', 'wallet:read', OVERPAYMENT_MODES),
+  fixedChoices('wallet-auto-apply-modes', 'wallet:read', AUTO_APPLY_MODES),
+  fixedChoices('wallet-credit-note-modes', 'wallet:read', CREDIT_NOTE_MODES),
+  fixedChoices('return-conditions', 'return_receipts:read', CONDITIONS),
+  fixedChoices('return-dispositions', 'return_receipts:read', DISPOSITIONS),
+  fixedChoices('credit-note-reasons', 'credit_notes:create', CREDIT_NOTE_REASONS.map((id) => ({ id, label: reasonLabel(id) }))),
   refundSources,
   fixedStatuses('receipt-statuses', 'receipts:read', RECEIPT_STATUS),
   fixedStatuses('cheque-statuses', 'receipts:read', CHEQUE_STATUS),

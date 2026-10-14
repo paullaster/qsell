@@ -55,7 +55,6 @@ export async function returnDetailAction(id: string) {
   return run('return_receipts:read', { surface: 'returns/detail', action: 'view' }, async (a) => {
     const d = await getContainer().returns.detail(a.companyId, id);
     if (!d) throw new ReturnError('NOT_FOUND', 'That return does not exist.');
-    const reasons = (await getContainer().reasonCodes.list(a.companyId)).filter((r) => r.isActive);
     const names = new Map(d.lines.map((l) => [l.id, l.description]));
     return {
       id: d.r.id,
@@ -70,7 +69,6 @@ export async function returnDetailAction(id: string) {
       closeText: d.r.closeReasonText,
       lines: d.lines.map((l) => ({ id: l.id, productId: l.productId, description: l.description, expected: l.expectedQty, received: l.receivedQty, unitCost: l.unitCost })),
       confirmations: d.confirmations.map((c) => ({ id: String(c.id), line: names.get(c.lineId) ?? '', quantity: c.quantity, condition: c.condition, disposition: c.disposition, stockAdded: c.stockAdded, note: c.note, by: c.confirmedBy, at: c.createdAt.toISOString() })),
-      reasons: reasons.map((r) => ({ code: r.code, description: r.description, requiresComment: r.requiresComment })),
       can: { confirm: await canPermission('restock:confirm'), reject: await canPermission('restock:reject') },
     };
   });

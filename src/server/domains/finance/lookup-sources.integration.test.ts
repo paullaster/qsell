@@ -120,6 +120,18 @@ describe.skipIf(url === '')('finance lookup sources (database)', () => {
     expect((await search('receipt-reasons', { query: tag })).options).toHaveLength(1);
   });
 
+  it('offers the wallet, return and credit note lists', async () => {
+    expect((await search('wallet-overpayment-modes')).options.map((o) => o.id).sort()).toEqual(['ask', 'hold', 'wallet']);
+    expect((await search('wallet-auto-apply-modes')).options.map((o) => o.id).sort()).toEqual(['never', 'oldest_first']);
+    expect((await search('wallet-credit-note-modes')).options.map((o) => o.id).sort()).toEqual(['ask', 'wallet']);
+    expect((await search('return-conditions', { query: 'damag' })).options.map((o) => o.id)).toEqual(['damaged']);
+    expect((await search('return-dispositions')).options).toHaveLength(4);
+    expect((await search('credit-note-reasons', { query: 'good' })).options.map((o) => o.id).sort()).toEqual(['damaged_goods', 'goodwill', 'returned_goods']);
+    expect((await search('wallet-reasons', { query: tag })).options.map((o) => o.label)).toEqual([`${tag} Wrong item`]);
+    expect((await search('return-close-reasons', { query: tag })).options).toHaveLength(1);
+    await expect(search('wallet-overpayment-modes', { filters: { x: 'y' } })).rejects.toThrow();
+  });
+
   it('offers the fixed lists and asks for the customer before listing what is owed', async () => {
     expect((await search('receipt-statuses')).options.map((o) => o.id).sort()).toEqual(['cancelled', 'draft', 'posted', 'reversed']);
     expect((await search('refund-statuses', { query: 'paid' })).options.map((o) => o.id)).toContain('paid');

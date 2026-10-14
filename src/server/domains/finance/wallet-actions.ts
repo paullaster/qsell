@@ -11,9 +11,8 @@ const CUSTOMER = (id: string) => `/admin/finance/receivables/customer/${id}`;
 
 export async function customerWalletAction(customerId: string) {
   return run('wallet:read', { surface: 'finance/customer-ledger', action: 'wallet_view' }, async (ctx) => {
-    const [data, open, reasons] = await Promise.all([fin().wallets.forCustomer(ctx.companyId, customerId), fin().customerLedger.openItems(ctx.companyId, customerId), getContainer().reasonCodes.list(ctx.companyId)]);
+    const [data, open] = await Promise.all([fin().wallets.forCustomer(ctx.companyId, customerId), fin().customerLedger.openItems(ctx.companyId, customerId)]);
     return {
-      reasons: reasons.filter((r) => r.isActive).map((r) => ({ code: r.code, description: r.description, requiresComment: r.requiresComment })),
       label: data.policy.label,
       walletEnabled: data.policy.walletEnabled,
       autoApply: data.policy.autoApply,
@@ -84,6 +83,7 @@ export async function creditPolicyAction() {
   return run('wallet:read', { surface: 'finance/wallet-policy', action: 'view' }, async (ctx) => {
     const { rows, groups } = await fin().creditPolicy.list(ctx.companyId);
     return {
+      today: new Date().toISOString().slice(0, 10),
       groups,
       rows: rows.map((r) => ({
         groupCode: r.groupCode,
