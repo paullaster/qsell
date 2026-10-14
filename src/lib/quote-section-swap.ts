@@ -61,7 +61,7 @@ export function addSectionFromTemplate(
   current: QuoteInput,
   template: SectionSwapTemplate,
   priceOf: (productId: string) => number | undefined,
-  newId: () => string = () => crypto.randomUUID(),
+  newId: () => string,
 ): QuoteInput {
   const { section, lines } = sectionTemplateContent(template, newId(), priceOf);
   return {

@@ -3,6 +3,7 @@ import { TemplatesRoute } from '@/components/admin/quote-templates/TemplatesRout
 import {
   getSalesQuoteCapabilitiesAction,
   getSalesQuoteEditorDataAction,
+  listSectionTemplatesPageAction,
 } from '@/server/domains/quotes/actions';
 
 /** All section templates, on their own page (a direct visit or refresh). */
@@ -15,6 +16,7 @@ export default function Page() {
         variant="page"
         dataPromise={getSalesQuoteEditorDataAction()}
         capabilitiesPromise={getSalesQuoteCapabilitiesAction()}
+        sectionPage={listSectionTemplatesPageAction({})}
       />
     </Suspense>
   );

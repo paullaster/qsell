@@ -8,6 +8,7 @@ import {
 } from '@/server/db/drizzle/schema';
 import { methodLabel, QUOTE_PAYMENT_METHODS } from '@/lib/payment-method-labels';
 import { QUOTE_STATUS_FILTERS, statusFilterLabel } from '@/lib/quote-statuses';
+import { TEMPLATE_STATUS_FILTERS, templateStatusLabel } from '@/lib/template-statuses';
 import {
   acceptFilters,
   LookupFilterError,
@@ -164,6 +165,20 @@ const quoteStatuses = staticSource({
   },
 });
 
+/** The states to filter the template lists by. */
+const templateStatuses = staticSource({
+  key: 'template-statuses',
+  permission: 'quotes:read',
+  items: ({ filters }) => {
+    acceptFilters(filters, {});
+    return TEMPLATE_STATUS_FILTERS.map((status) => ({
+      id: status,
+      label: templateStatusLabel(status),
+      description: null,
+    }));
+  },
+});
+
 const SOURCES: ReadonlyMap<string, LookupSource> = new Map(
   [
     quoteTemplates,
@@ -172,6 +187,7 @@ const SOURCES: ReadonlyMap<string, LookupSource> = new Map(
     enabledCurrencies,
     paymentMethods,
     quoteStatuses,
+    templateStatuses,
   ].map((source) => [source.key, source]),
 );
 

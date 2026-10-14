@@ -147,7 +147,7 @@ describe('a quote-level template switch leaves section-template sections as addi
       lines: [],
     } as SwapTemplate;
     const q = addSectionFromTemplate({ ...quote(), templateId: 'QA' }, A, price, () => 's1');
-    const plan = planTemplateSwap(q, qt, null, price);
+    const plan = planTemplateSwap(q, qt, null, price, () => 'fresh');
     expect(plan.kind).toBe('additions');
     expect(plan.additions.sections.map((s) => s.id)).toEqual(['s1']);
     const next = plan.apply(true);

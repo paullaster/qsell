@@ -3,6 +3,7 @@ import { TemplatesRoute } from '@/components/admin/quote-templates/TemplatesRout
 import {
   getSalesQuoteCapabilitiesAction,
   getSalesQuoteEditorDataAction,
+  listSectionTemplatesPageAction,
 } from '@/server/domains/quotes/actions';
 
 /** The same form, intercepted: shown over the page the person was on. */
@@ -15,6 +16,7 @@ export default function Page() {
         variant="modal"
         dataPromise={getSalesQuoteEditorDataAction()}
         capabilitiesPromise={getSalesQuoteCapabilitiesAction()}
+        sectionPage={listSectionTemplatesPageAction({})}
       />
     </Suspense>
   );

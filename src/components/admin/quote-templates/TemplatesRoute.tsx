@@ -8,6 +8,9 @@ import type { getSalesQuoteEditorDataAction } from '@/server/domains/quotes/acti
 import { AdminSalesQuoteTemplates } from '../AdminSalesQuoteTemplates';
 import { AdminSectionTemplates } from '../AdminSectionTemplates';
 import { useModalKeys } from '../quote-layout/useModalKeys';
+import type { PageResult } from '@/components/ui/usePagedList';
+import type { TemplateListRow } from '@/server/domains/quotes/service';
+import type { SectionTemplateListRow } from '@/server/domains/quotes/section-template-service';
 
 type EditorData = Awaited<ReturnType<typeof getSalesQuoteEditorDataAction>>;
 
@@ -29,6 +32,8 @@ export function TemplatesRoute({
   variant,
   dataPromise,
   capabilitiesPromise,
+  quotePage,
+  sectionPage,
 }: {
   kind: 'quote' | 'section';
   /** True on the create route: the editor opens at once on a new template. */
@@ -36,8 +41,14 @@ export function TemplatesRoute({
   variant: 'page' | 'modal';
   dataPromise: Promise<EditorData>;
   capabilitiesPromise: Promise<Capabilities>;
+  /** The first page of the list, started by the server page (for `kind` quote). */
+  quotePage?: Promise<PageResult<TemplateListRow>>;
+  /** The first page of the list, started by the server page (for `kind` section). */
+  sectionPage?: Promise<PageResult<SectionTemplateListRow>>;
 }) {
   const data = use(dataPromise);
+  const firstQuotePage = quotePage === undefined ? undefined : use(quotePage);
+  const firstSectionPage = sectionPage === undefined ? undefined : use(sectionPage);
   const capabilities = use(capabilitiesPromise);
   const router = useRouter();
   const [notice, setNotice] = useState<string | null>(null);
@@ -57,7 +68,6 @@ export function TemplatesRoute({
     canCreate: capabilities.canCreate,
     canUpdate: capabilities.canUpdate,
     canDelete: capabilities.canDelete,
-    onRefresh: () => router.refresh(),
     onMessage: setNotice,
     onError: (message: string) => setError(message === '' ? null : message),
     startWithEditor: creating,
@@ -83,13 +93,9 @@ export function TemplatesRoute({
         </p>
       )}
       {kind === 'quote' ? (
-        <AdminSalesQuoteTemplates
-          {...shared}
-          templates={data.templates}
-          customers={data.customers}
-        />
+        <AdminSalesQuoteTemplates {...shared} initialPage={firstQuotePage} />
       ) : (
-        <AdminSectionTemplates {...shared} templates={data.sectionTemplates} />
+        <AdminSectionTemplates {...shared} initialPage={firstSectionPage} />
       )}
     </div>
   );

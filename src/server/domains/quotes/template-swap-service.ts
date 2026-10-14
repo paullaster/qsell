@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { getContainer } from '@/server/di/container';
 import { CatalogService } from '@/server/domains/catalog/service';
 import { planSectionSwap, addSectionFromTemplate } from '@/lib/quote-section-swap';
@@ -162,7 +163,7 @@ export class TemplateSwapService {
       ...(from?.lines.map((line) => line.productId ?? '') ?? []),
       ...(to?.lines.map((line) => line.productId ?? '') ?? []),
     ]);
-    const plan = planTemplateSwap(input, from, to, priceOf);
+    const plan = planTemplateSwap(input, from, to, priceOf, randomUUID);
     const summary = this.summarise(plan, nameOf, from?.name ?? null, to?.name ?? null, (next) =>
       this.named(next, to?.name ?? null),
     );
@@ -184,7 +185,7 @@ export class TemplateSwapService {
     const to = await this.quoteTemplate(templateId, null);
     const form = base === undefined ? undefined : parseQuoteForm(base);
     const { priceOf } = await this.priceLookup(to.lines.map((line) => line.productId ?? ''));
-    const content = templateContent(to, priceOf);
+    const content = templateContent(to, priceOf, randomUUID);
     const customerId = form?.customerId ?? to.customerId;
     const customer =
       customerId == null
@@ -247,7 +248,7 @@ export class TemplateSwapService {
     const input = parseQuoteForm(raw);
     const template = await this.usableSectionTemplate(templateId, input, null);
     const { priceOf } = await this.priceLookup(template.lines.map((line) => line.productId ?? ''));
-    const next = addSectionFromTemplate(input, template, priceOf);
+    const next = addSectionFromTemplate(input, template, priceOf, randomUUID);
     return {
       ...next,
       sections: next.sections.map((section) =>

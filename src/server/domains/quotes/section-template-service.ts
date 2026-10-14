@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, ilike, inArray, or, sql, type SQL } from 'drizzle-orm';
 import { getContainer } from '@/server/di/container';
 import { drizzleDb } from '@/server/db/drizzle/client';
 import {
@@ -10,9 +10,28 @@ import {
   type SalesSectionTemplateRow,
 } from '@/server/db/drizzle/schema';
 import { CatalogService } from '@/server/domains/catalog/service';
+import { encodeCursor, escapeLike } from '@/server/domains/lookups/request';
 import { parseSectionTemplateInput, type SectionTemplateInput } from './section-template-input';
+import type { TemplateListRequest } from './template-list';
 
 export type { SectionTemplateInput };
+
+/** A section template as the management list shows it. */
+export interface SectionTemplateListRow {
+  id: string;
+  name: string;
+  category: string | null;
+  description: string | null;
+  status: string;
+  sectionTitle: string;
+  usageCount: number;
+  lineCount: number;
+}
+
+export interface SectionTemplateListPage {
+  rows: SectionTemplateListRow[];
+  nextCursor: string | null;
+}
 
 export interface SectionTemplate extends SalesSectionTemplateRow {
   lines: SalesSectionTemplateLineRow[];
@@ -52,6 +71,54 @@ export class SectionTemplateService {
       lines: lines.filter((line) => line.templateId === row.id),
       events: [],
     }));
+  }
+
+  /** One page of the section templates list: a summary of each, newest change first. */
+  async listPage(request: TemplateListRequest): Promise<SectionTemplateListPage> {
+    const companyId = await this.companyId();
+    const pattern = `%${escapeLike(request.query)}%`;
+    const conditions: (SQL | undefined)[] = [
+      eq(salesSectionTemplates.companyId, companyId),
+      request.status === 'all' ? undefined : eq(salesSectionTemplates.status, request.status),
+      request.query === ''
+        ? undefined
+        : or(
+            ilike(salesSectionTemplates.name, pattern),
+            ilike(salesSectionTemplates.category, pattern),
+            ilike(salesSectionTemplates.description, pattern),
+            ilike(salesSectionTemplates.sectionTitle, pattern),
+          ),
+      request.after === null
+        ? undefined
+        : sql`(${salesSectionTemplates.updatedAt}, ${salesSectionTemplates.id}) < (${request.after.k}::timestamptz, ${request.after.id}::uuid)`,
+    ];
+    const rows = await drizzleDb
+      .select({
+        id: salesSectionTemplates.id,
+        name: salesSectionTemplates.name,
+        category: salesSectionTemplates.category,
+        description: salesSectionTemplates.description,
+        status: salesSectionTemplates.status,
+        sectionTitle: salesSectionTemplates.sectionTitle,
+        usageCount: salesSectionTemplates.usageCount,
+        // Qualified by hand: in a one-table query the column would print without its table name
+        // and the subquery would compare against its own `id`.
+        lineCount: sql<number>`(select count(*)::int from ${salesSectionTemplateLines} where ${salesSectionTemplateLines.templateId} = ${sql.raw('"sales_section_templates"."id"')})`,
+        changedAt: sql<string>`${salesSectionTemplates.updatedAt}::text`,
+      })
+      .from(salesSectionTemplates)
+      .where(and(...conditions))
+      .orderBy(desc(salesSectionTemplates.updatedAt), desc(salesSectionTemplates.id))
+      .limit(request.limit + 1);
+    const page = rows.slice(0, request.limit);
+    const last = page.at(-1);
+    return {
+      rows: page.map(({ changedAt: _changedAt, ...row }) => row),
+      nextCursor:
+        rows.length > request.limit && last !== undefined
+          ? encodeCursor({ k: last.changedAt, id: last.id })
+          : null,
+    };
   }
 
   async get(id: string): Promise<SectionTemplate | null> {

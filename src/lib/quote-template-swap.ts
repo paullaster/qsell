@@ -40,7 +40,7 @@ type Section = QuoteInput['sections'][number];
 export function templateContent(
   template: SwapTemplate,
   priceOf: (productId: string) => number | undefined,
-  newId: () => string = () => crypto.randomUUID(),
+  newId: () => string,
 ): { sections: Section[]; lines: Line[] } {
   const sections = template.sections.map((section) => ({
     templateSectionId: section.id,
@@ -192,7 +192,7 @@ export function planTemplateSwap(
   oldTemplate: SwapTemplate | null,
   nextTemplate: SwapTemplate | null,
   priceOf: (productId: string) => number | undefined,
-  newId: () => string = () => crypto.randomUUID(),
+  newId: () => string,
 ): SwapPlan {
   const fromTemplate = current.templateId !== undefined && current.templateId !== null;
   const sectionRows = current.sections;
