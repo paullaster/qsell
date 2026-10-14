@@ -76,6 +76,7 @@ jobs:
   e2e:
     name: End-to-end tests
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     services:
       postgres:
         image: postgres:18-alpine
@@ -101,14 +102,21 @@ jobs:
           cache: pnpm
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
-      - name: Install Chrome for the browser tests
-        run: pnpm exec playwright install --with-deps chrome
+      - name: Install Chrome and the tools the run uses
+        # Chrome drives the tests; psmisc provides fuser, which stops the test server afterwards.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y psmisc
+          pnpm exec playwright install --with-deps chrome
       - name: Run end-to-end tests (desktop and phone width)
         # The run migrates, seeds and logs in on its own database and port; see e2e/README.md.
         run: pnpm test:e2e
         env:
           E2E_DATABASE_URL: postgresql://qsell:ci-only-password@localhost:5432/qsell_e2e
           AUTH_SECRET: ci-only-auth-secret-not-for-deployment
+          JWT_SECRET: ci-only-jwt-secret-not-for-deployment
+          DATA_ENCRYPTION_KEY: ci-only-data-encryption-key-not-for-deployment
+          CI: 'true'
       - name: Keep the report when a test fails
         if: failure()
         uses: actions/upload-artifact@v4
