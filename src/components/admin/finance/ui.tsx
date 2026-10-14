@@ -1,6 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
+import { businessDate } from '@/server/kernel/numbering/business-date';
 
 export const fieldClass =
   'min-h-10 w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong focus:border-indigo-500 focus:outline-none disabled:opacity-60';
@@ -98,7 +99,8 @@ export function Field({ id, label, hint, children }: { id: string; label: string
   );
 }
 
-export const today = () => new Date().toISOString().slice(0, 10);
+/** Today's date in the business's own timezone: the same day the server files documents under. */
+export const today = () => businessDate();
 
 /**
  * Runs a server action and turns a lost connection into a message instead of a frozen screen.

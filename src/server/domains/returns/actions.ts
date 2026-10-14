@@ -8,6 +8,7 @@ import type { PermissionKey } from '@/server/domains/access-control/permissions'
 import { getContainer } from '@/server/di/container';
 import { ReasonError } from '@/server/kernel/reason-codes/service';
 import { ReturnError, type ConfirmItem, type ReturnActor } from './return-receipt-service';
+import { injectedDelay } from '@/server/domains/finance/action-runner';
 import { suggestedDisposition } from '@/server/domains/finance/domain/credit-note-accounting';
 
 export type ReturnResult<T> = { ok: true; data: T } | { ok: false; error: string; code?: string; forbidden?: true };
@@ -16,6 +17,7 @@ const ROOT = '/admin/finance/receivables/returns';
 
 async function run<T>(permission: PermissionKey, origin: { surface: string; action: string }, fn: (a: ReturnActor) => Promise<T>, paths: string[] = []): Promise<ReturnResult<T>> {
   try {
+    await injectedDelay();
     const userId = await requirePermission(permission);
     const company = await getContainer().companySettings.ensureSeeded();
     await getContainer().reasonCodes.ensureSystemReasons(company.id);

@@ -1,17 +1,12 @@
-import { Suspense } from 'react';
 import { listReceiptsAction } from '@/server/domains/finance/receivables/actions';
 import { ReceiptsClient } from '@/components/admin/finance/ReceiptsClient';
-import { FinanceGate } from '@/components/admin/finance/gate';
-import { PageSkeleton } from '@/components/admin/finance/ui';
+import { FinancePage } from '@/components/admin/finance/gate';
 
-export default function AdminReceiptsPage() {
+export default function Page() {
+  const initial = listReceiptsAction({});
   return (
-    <FinanceGate>
-      {() => (
-        <Suspense fallback={<PageSkeleton label="receipts" />}>
-          <ReceiptsClient initialPromise={listReceiptsAction({})} />
-        </Suspense>
-      )}
-    </FinanceGate>
+    <FinancePage label="receipts">
+      <ReceiptsClient initialPromise={initial} />
+    </FinancePage>
   );
 }

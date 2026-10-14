@@ -1,18 +1,12 @@
-import { Suspense } from 'react';
 import { listBankAccountsAction } from '@/server/domains/finance/receivables/actions';
 import { BankAccountsClient } from '@/components/admin/finance/BankAccountsClient';
-import { FinanceGate } from '@/components/admin/finance/gate';
-import { PageSkeleton } from '@/components/admin/finance/ui';
+import { FinancePage } from '@/components/admin/finance/gate';
 
 export default function Page() {
-
+  const view = listBankAccountsAction();
   return (
-    <FinanceGate>
-      {() => (
-        <Suspense fallback={<PageSkeleton label="bank accounts" />}>
-          <BankAccountsClient viewPromise={listBankAccountsAction()} />
-        </Suspense>
-      )}
-    </FinanceGate>
+    <FinancePage label="bank accounts">
+      <BankAccountsClient viewPromise={view} />
+    </FinancePage>
   );
 }

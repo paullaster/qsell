@@ -1,18 +1,12 @@
-import { Suspense } from 'react';
 import { refundDetailAction } from '@/server/domains/finance/refund-actions';
 import { RefundDetailClient } from '@/components/admin/finance/RefundDetailClient';
-import { FinanceGate } from '@/components/admin/finance/gate';
-import { PageSkeleton } from '@/components/admin/finance/ui';
+import { FinancePage } from '@/components/admin/finance/gate';
 
-export default async function AdminRefundPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+export default function Page({ params }: { params: Promise<{ id: string }> }) {
+  const view = params.then(({ id }) => refundDetailAction(id));
   return (
-    <FinanceGate>
-      {() => (
-        <Suspense fallback={<PageSkeleton label="the refund" />}>
-          <RefundDetailClient viewPromise={refundDetailAction(id)} />
-        </Suspense>
-      )}
-    </FinanceGate>
+    <FinancePage label="the refund">
+      <RefundDetailClient viewPromise={view} />
+    </FinancePage>
   );
 }

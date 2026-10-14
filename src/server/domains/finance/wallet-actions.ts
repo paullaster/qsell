@@ -1,5 +1,6 @@
 'use server';
 
+import { businessDate } from '@/server/kernel/numbering/business-date';
 import { canPermission } from '@/server/domains/access-control/guard';
 import { getContainer } from '@/server/di/container';
 import { postingPermissions, run } from './action-runner';
@@ -83,7 +84,7 @@ export async function creditPolicyAction() {
   return run('wallet:read', { surface: 'finance/wallet-policy', action: 'view' }, async (ctx) => {
     const { rows, groups } = await fin().creditPolicy.list(ctx.companyId);
     return {
-      today: new Date().toISOString().slice(0, 10),
+      today: businessDate(),
       groups,
       rows: rows.map((r) => ({
         groupCode: r.groupCode,

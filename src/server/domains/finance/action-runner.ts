@@ -18,6 +18,18 @@ export type FinanceResult<T> =
  * origin (which screen, from where) set on the server, and failures returned as data because
  * server-action errors are masked in production.
  */
+/**
+ * Test-only fault injection: when the end-to-end server is started with E2E_FAULTS=1, a request
+ * carrying an `e2e-delay=<ms>` cookie makes every finance action wait that long. It lets a browser
+ * test prove a screen shows at once and loads in parallel instead of waiting on its data. Without
+ * the variable (every real environment) it does nothing.
+ */
+export async function injectedDelay(): Promise<void> {
+  if (process.env.E2E_FAULTS !== '1') return;
+  const match = /(?:^|;\s*)e2e-delay=(\d{1,5})(?:;|$)/.exec((await headers()).get('cookie') ?? '');
+  if (match?.[1] !== undefined) await new Promise((resolve) => setTimeout(resolve, Number(match[1])));
+}
+
 export async function run<T>(
   permission: PermissionKey,
   origin: { surface: string; action: string },
@@ -25,6 +37,7 @@ export async function run<T>(
   paths: string[] = [],
 ): Promise<FinanceResult<T>> {
   try {
+    await injectedDelay();
     const userId = await requirePermission(permission);
     const company = await getContainer().companySettings.ensureSeeded();
     await getContainer().reasonCodes.ensureSystemReasons(company.id);

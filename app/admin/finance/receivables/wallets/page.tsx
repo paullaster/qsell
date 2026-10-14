@@ -1,18 +1,12 @@
-import { Suspense } from 'react';
 import { walletReportAction } from '@/server/domains/finance/wallet-actions';
 import { WalletsClient } from '@/components/admin/finance/WalletsClient';
-import { FinanceGate } from '@/components/admin/finance/gate';
-import { PageSkeleton } from '@/components/admin/finance/ui';
+import { FinancePage } from '@/components/admin/finance/gate';
 
 export default function Page() {
-
+  const view = walletReportAction();
   return (
-    <FinanceGate>
-      {() => (
-        <Suspense fallback={<PageSkeleton label="the wallet report" />}>
-          <WalletsClient viewPromise={walletReportAction()} />
-        </Suspense>
-      )}
-    </FinanceGate>
+    <FinancePage label="the wallet report">
+      <WalletsClient viewPromise={view} />
+    </FinancePage>
   );
 }

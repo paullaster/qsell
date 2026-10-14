@@ -5,9 +5,10 @@ import { PageSkeleton } from '@/components/admin/finance/ui';
 
 /** Returns are about stock as much as money, so this page does not wait for the books to be set up. */
 export default function AdminReturnsPage() {
+  const initial = listReturnsAction('open');
   return (
     <Suspense fallback={<PageSkeleton label="returns" />}>
-      <ReturnsClient initialPromise={listReturnsAction('open')} />
+      <ReturnsClient initialPromise={initial} />
     </Suspense>
   );
 }

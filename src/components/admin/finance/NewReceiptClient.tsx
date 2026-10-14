@@ -13,13 +13,13 @@ type Wallet = { enabled: boolean; label: string; canDeposit: boolean } | null;
 
 interface Props {
   optionsPromise: ReturnType<typeof receiptFormOptionsAction>;
-  presetPromise: ReturnType<typeof receiptPresetCustomerAction> | null;
+  presetPromise: Promise<Awaited<ReturnType<typeof receiptPresetCustomerAction>> | null>;
   walletPromise: ReturnType<typeof walletFormOptionsAction>;
 }
 
 export function NewReceiptClient({ optionsPromise, presetPromise, walletPromise }: Props) {
   const options = use(optionsPromise);
-  const preset = presetPromise === null ? null : use(presetPromise);
+  const preset = use(presetPromise);
   const wallet = use(walletPromise);
   if (!options.ok) return <LoadFailed error={options.error} />;
   return <NewReceiptView baseCurrency={options.data.baseCurrency} presetCustomer={preset?.ok === true ? preset.data : null} wallet={wallet.ok ? wallet.data : null} />;

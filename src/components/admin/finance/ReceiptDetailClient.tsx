@@ -46,8 +46,9 @@ function ReasonPicker({ id, value, onChange }: { id: string; value: ReasonState;
 
 type Panel = null | 'cancel' | 'reverse' | 'bounce' | 'apply' | 'deposit' | { unapply: string };
 
-export function ReceiptDetailClient({ viewPromise, postingFailed }: { viewPromise: ReturnType<typeof receiptDetailAction>; postingFailed?: string }) {
+export function ReceiptDetailClient({ viewPromise, postingFailedPromise }: { viewPromise: ReturnType<typeof receiptDetailAction>; postingFailedPromise: Promise<string | undefined> }) {
   const res = use(viewPromise);
+  const postingFailed = use(postingFailedPromise);
   return res.ok ? <ReceiptDetailView view={res.data} postingFailed={postingFailed} /> : <LoadFailed error={res.error} />;
 }
 

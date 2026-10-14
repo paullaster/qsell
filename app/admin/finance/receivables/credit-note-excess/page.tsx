@@ -1,18 +1,12 @@
-import { Suspense } from 'react';
 import { creditNoteExcessWorklistAction } from '@/server/domains/finance/credit-note-actions';
 import { CreditNoteExcessClient } from '@/components/admin/finance/CreditNoteExcessClient';
-import { FinanceGate } from '@/components/admin/finance/gate';
-import { PageSkeleton } from '@/components/admin/finance/ui';
+import { FinancePage } from '@/components/admin/finance/gate';
 
 export default function Page() {
-
+  const view = creditNoteExcessWorklistAction();
   return (
-    <FinanceGate>
-      {() => (
-        <Suspense fallback={<PageSkeleton label="credit note excess" />}>
-          <CreditNoteExcessClient viewPromise={creditNoteExcessWorklistAction()} />
-        </Suspense>
-      )}
-    </FinanceGate>
+    <FinancePage label="credit note excess">
+      <CreditNoteExcessClient viewPromise={view} />
+    </FinancePage>
   );
 }

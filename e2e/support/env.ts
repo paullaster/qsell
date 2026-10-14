@@ -30,5 +30,7 @@ export function e2eEnvironment(): Record<string, string> {
     CLOUDINARY_API_KEY: '',
     CLOUDINARY_API_SECRET: '',
     NEXT_TELEMETRY_DISABLED: '1',
+    // Lets a test slow the finance actions with a cookie (see `injectedDelay`); off everywhere else.
+    E2E_FAULTS: '1',
   };
 }

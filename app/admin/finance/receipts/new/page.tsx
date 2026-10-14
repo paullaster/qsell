@@ -1,24 +1,16 @@
-import { Suspense } from 'react';
 import { receiptFormOptionsAction, receiptPresetCustomerAction } from '@/server/domains/finance/receivables/actions';
 import { walletFormOptionsAction } from '@/server/domains/finance/wallet-actions';
 import { NewReceiptClient } from '@/components/admin/finance/NewReceiptClient';
-import { FinanceGate } from '@/components/admin/finance/gate';
-import { PageSkeleton } from '@/components/admin/finance/ui';
+import { FinancePage } from '@/components/admin/finance/gate';
 
-export default async function AdminNewReceiptPage({ searchParams }: { searchParams: Promise<{ customer?: string }> }) {
-  // Arriving from a customer's statement (?customer=<their number>): that customer is already chosen.
-  const { customer } = await searchParams;
+export default function Page({ searchParams }: { searchParams: Promise<{ customer?: string }> }) {
+  // Everything starts now, side by side; arriving from a customer's statement (?customer=<number>) has that customer already chosen.
+  const options = receiptFormOptionsAction();
+  const wallet = walletFormOptionsAction();
+  const preset = searchParams.then(({ customer }) => (customer === undefined || customer === '' ? null : receiptPresetCustomerAction(customer)));
   return (
-    <FinanceGate>
-      {() => (
-        <Suspense fallback={<PageSkeleton label="the receipt form" />}>
-          <NewReceiptClient
-            optionsPromise={receiptFormOptionsAction()}
-            presetPromise={customer === undefined || customer === '' ? null : receiptPresetCustomerAction(customer)}
-            walletPromise={walletFormOptionsAction()}
-          />
-        </Suspense>
-      )}
-    </FinanceGate>
+    <FinancePage label="the receipt form">
+      <NewReceiptClient optionsPromise={options} presetPromise={preset} walletPromise={wallet} />
+    </FinancePage>
   );
 }
