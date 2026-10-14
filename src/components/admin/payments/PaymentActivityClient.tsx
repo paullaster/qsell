@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { use, useId, useState } from 'react';
 import {
   confirmPaymentAction,
   failPaymentAction,
@@ -13,22 +13,29 @@ import {
   searchCustomersForPlacementAction,
   setAsidePaymentAction,
 } from '@/server/domains/payments/activity-actions';
-import { Chip, Field, Message, PageHeader, buttonClass, cardClass, dangerClass, fieldClass, money, primaryClass, type Notice, attempt } from '../finance/ui';
+import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import type { Choice } from '@/lib/payment-options';
+import { countTone, rowDetail, rowState, rowTitle, type ActivityRow, when, words } from '@/lib/payment-activity-format';
+import { Chip, Field, LoadFailed, Message, PageHeader, buttonClass, cardClass, dangerClass, fieldClass, money, primaryClass, type Notice, attempt } from '../finance/ui';
 
 type Data = Extract<Awaited<ReturnType<typeof paymentActivityAction>>, { ok: true }>['data'];
 type Tab = 'attention' | 'operations' | 'events' | 'money';
 const TONE: Record<string, 'green' | 'amber' | 'red' | 'sky' | 'gray'> = { succeeded: 'green', consumed: 'green', verified: 'green', accepted: 'sky', awaiting_verification: 'sky', submitted: 'sky', queued: 'amber', claimed: 'amber', review: 'amber', unverified: 'amber', timed_out: 'amber', failed: 'red', in_doubt: 'red', mismatch: 'red', rejected: 'red', unmatched: 'red', ignored: 'gray', received: 'gray' };
-const words = (s: string) => s.replace(/_/g, ' ');
-const when = (s: string | null) => (s ? new Date(s).toLocaleString() : '');
 
-type Row = Record<string, string | number | boolean | null>;
+type Row = ActivityRow;
 
-export function PaymentActivityClient({ initial }: { initial: Data }) {
+export function PaymentActivityClient({ initialPromise }: { initialPromise: ReturnType<typeof paymentActivityAction> }) {
+  const res = use(initialPromise);
+  return res.ok ? <ActivityView initial={res.data} /> : <LoadFailed error={res.error} />;
+}
+
+function ActivityView({ initial }: { initial: Data }) {
   const uid = useId();
   const [data, setData] = useState(initial);
   const [tab, setTab] = useState<Tab>('attention');
   const [rows, setRows] = useState<Row[]>([]);
-  const [filter, setFilter] = useState('');
+  const [filterChoice, setFilterChoice] = useState<Choice | null>(null);
+  const filter = filterChoice?.id ?? '';
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
   const [panel, setPanel] = useState<{ kind: 'confirm' | 'fail' | 'place' | 'aside'; id: string } | null>(null);
@@ -44,10 +51,18 @@ export function PaymentActivityClient({ initial }: { initial: Data }) {
   const show = async (t: Tab, state = filter) => {
     setTab(t);
     setBusy(true);
-    const r = t === 'operations' ? await attempt(paymentOperationsAction()) : t === 'events' ? await attempt(paymentEventsAction(state || undefined)) : t === 'money' ? await attempt(paymentTransactionsAction(state || undefined)) : null;
+    const only = state === '' ? undefined : state;
+    const loaders: Record<Tab, (() => Promise<{ ok: true; data: Row[] } | { ok: false; error: string }>) | null> = {
+      attention: null,
+      operations: () => attempt(paymentOperationsAction()),
+      events: () => attempt(paymentEventsAction(only)),
+      money: () => attempt(paymentTransactionsAction(only)),
+    };
+    const loader = loaders[t];
+    const r = loader === null ? null : await loader();
     setBusy(false);
-    if (r && !r.ok) return setNotice({ kind: 'error', text: r.error });
-    if (r?.ok) setRows(r.data as unknown as Row[]);
+    if (r !== null && !r.ok) { setNotice({ kind: 'error', text: r.error }); return; }
+    if (r?.ok === true) setRows(r.data);
     if (t === 'attention') await reload();
   };
   const done = async (text: string, call: () => Promise<{ ok: true } | { ok: false; error: string }>) => {
@@ -55,7 +70,7 @@ export function PaymentActivityClient({ initial }: { initial: Data }) {
     setNotice(null);
     const r = await attempt(call());
     setBusy(false);
-    if (!r.ok) return setNotice({ kind: 'error', text: r.error });
+    if (!r.ok) { setNotice({ kind: 'error', text: r.error }); return; }
     setNotice({ kind: 'ok', text });
     setPanel(null);
     setRef('');
@@ -64,7 +79,7 @@ export function PaymentActivityClient({ initial }: { initial: Data }) {
   };
   const search = async () => {
     const r = await attempt(searchCustomersForPlacementAction(q));
-    if (r.ok) setFound(r.data as typeof found);
+    if (r.ok) setFound(r.data);
   };
   const c = data.counts;
 
@@ -74,11 +89,11 @@ export function PaymentActivityClient({ initial }: { initial: Data }) {
       <Message notice={notice} />
       <dl className="grid grid-cols-2 gap-3 md:grid-cols-5" aria-label="Summary">
         {([['Waiting to be placed', c.tx_review, 'amber'], ['Received, not yet confirmed', c.tx_claimed, 'amber'], ['Callbacks needing a look', c.events_bad, 'red'], ['Requests failed or in doubt', c.ops_failed, 'red'], ['Counted', c.tx_consumed, 'green']] as const).map(([label, n, tone]) => (
-          <div key={label} className={cardClass}><dt className="text-xs text-fg-muted">{label}</dt><dd className={`text-2xl font-bold tabular-nums ${n > 0 && tone === 'red' ? 'text-red-700' : n > 0 && tone === 'amber' ? 'text-amber-700' : 'text-fg-strong'}`}>{n}</dd></div>
+          <div key={label} className={cardClass}><dt className="text-xs text-fg-muted">{label}</dt><dd className={`text-2xl font-bold tabular-nums ${countTone(n, tone)}`}>{n}</dd></div>
         ))}
       </dl>
       <div role="group" aria-label="Show" className="flex flex-wrap gap-2">
-        {([['attention', 'Needs attention'], ['operations', 'Requests to platforms'], ['events', 'Callbacks received'], ['money', 'Money received']] as [Tab, string][]).map(([t, l]) => <button key={t} type="button" className={buttonClass} aria-pressed={tab === t} onClick={() => { setFilter(''); void show(t, ''); }}>{l}</button>)}
+        {([['attention', 'Needs attention'], ['operations', 'Requests to platforms'], ['events', 'Callbacks received'], ['money', 'Money received']] as [Tab, string][]).map(([t, l]) => <button key={t} type="button" className={buttonClass} aria-pressed={tab === t} onClick={() => { setFilterChoice(null); void show(t, ''); }}>{l}</button>)}
       </div>
 
       {tab === 'attention' ? (
@@ -91,7 +106,7 @@ export function PaymentActivityClient({ initial }: { initial: Data }) {
                 {data.doubtful.map((a) => (
                   <li key={a.id} className={`${cardClass} space-y-2`}>
                     <p className="text-sm font-semibold text-fg-strong">Order {a.orderNumber} · {a.currency} {money(a.amount)} · {a.provider} <span className="font-normal text-fg-muted">· started {when(a.createdAt)}</span></p>
-                    {a.error ? <p className="text-xs text-red-700">{a.error}</p> : null}
+                    {a.error !== null && a.error !== '' ? <p className="text-xs text-red-700">{a.error}</p> : null}
                     <div className="flex flex-wrap gap-2">
                       <button type="button" className={buttonClass} disabled={busy} onClick={() => void done('Checking with the platform now.', () => recheckPaymentAction(a.id))}>Check again now</button>
                       {data.can.confirm ? <button type="button" className={buttonClass} aria-expanded={panel?.id === a.id && panel.kind === 'confirm'} onClick={() => setPanel({ kind: 'confirm', id: a.id })}>Confirm by hand…</button> : null}
@@ -157,7 +172,7 @@ export function PaymentActivityClient({ initial }: { initial: Data }) {
           <section aria-label="Callbacks that were refused or contradicted" className="space-y-2">
             <h2 className="text-sm font-bold text-fg-strong">Callbacks refused, contradicted or unmatched ({data.events.length})</h2>
             <ul className="space-y-1 text-sm">
-              {data.events.map((e) => <li key={e.id} className={`${cardClass} flex flex-wrap justify-between gap-2`}><span><b>{words(e.kind)}</b> · {when(e.at)}{e.ip ? ` · from ${e.ip}` : ''}{e.reference ? ` · ${e.reference}` : ''}</span><span className="flex items-center gap-2"><Chip tone={TONE[e.state] ?? 'gray'}>{words(e.state)}</Chip><span className="max-w-md text-xs text-red-700">{e.failureReason}</span></span></li>)}
+              {data.events.map((e) => <li key={e.id} className={`${cardClass} flex flex-wrap justify-between gap-2`}><span><b>{words(e.kind)}</b> · {when(e.at)}{rowDetail({ ip: e.ip, reference: e.reference }, String)}</span><span className="flex items-center gap-2"><Chip tone={TONE[e.state] ?? 'gray'}>{words(e.state)}</Chip><span className="max-w-md text-xs text-red-700">{e.failureReason}</span></span></li>)}
               {data.events.length === 0 ? <li className="text-fg-muted">None.</li> : null}
             </ul>
           </section>
@@ -165,7 +180,7 @@ export function PaymentActivityClient({ initial }: { initial: Data }) {
           <section aria-label="Requests that failed" className="space-y-2">
             <h2 className="text-sm font-bold text-fg-strong">Requests that failed or are in doubt ({data.operations.length})</h2>
             <ul className="space-y-1 text-sm">
-              {data.operations.map((o) => <li key={o.id} className={`${cardClass} flex flex-wrap justify-between gap-2`}><span><b>{words(o.operation)}</b> · {when(o.at)}{o.amount ? ` · ${money(o.amount)}` : ''}</span><span className="flex items-center gap-2"><Chip tone={TONE[o.status] ?? 'gray'}>{words(o.status)}</Chip><span className="max-w-md text-xs text-red-700">{o.failureReason}</span></span></li>)}
+              {data.operations.map((o) => <li key={o.id} className={`${cardClass} flex flex-wrap justify-between gap-2`}><span><b>{words(o.operation)}</b> · {when(o.at)}{rowDetail({ amount: o.amount }, money)}</span><span className="flex items-center gap-2"><Chip tone={TONE[o.status] ?? 'gray'}>{words(o.status)}</Chip><span className="max-w-md text-xs text-red-700">{o.failureReason}</span></span></li>)}
               {data.operations.length === 0 ? <li className="text-fg-muted">None.</li> : null}
             </ul>
           </section>
@@ -173,26 +188,25 @@ export function PaymentActivityClient({ initial }: { initial: Data }) {
       ) : (
         <section aria-label={tab} className="space-y-2">
           {tab !== 'operations' ? (
-            <label className="block text-xs font-semibold text-fg-muted">Show only
-              <select value={filter} onChange={(e) => { setFilter(e.target.value); void show(tab, e.target.value); }} className={`${fieldClass} mt-1 block w-auto`}>
-                <option value="">Everything</option>
-                {(tab === 'events' ? ['received', 'awaiting_verification', 'verified', 'consumed', 'unverified', 'mismatch', 'unmatched', 'rejected', 'ignored'] : ['claimed', 'verified', 'review', 'consumed', 'rejected']).map((s) => <option key={s} value={s}>{words(s)}</option>)}
-              </select>
-            </label>
+            <div className="max-w-xs">
+              <ChoicePicker key={tab} label="Show only" source={tab === 'events' ? 'payment-event-states' : 'payment-transaction-states'} choice={filterChoice} onChoice={(c) => { setFilterChoice(c); void show(tab, c?.id ?? ''); }} placeholder="Everything" />
+            </div>
           ) : null}
-          {busy ? <p className="text-sm text-fg-muted">Loading…</p> : rows.length === 0 ? <p className="text-sm text-fg-muted">Nothing to show.</p> : (
+          {busy ? <p className="text-sm text-fg-muted">Loading…</p> : null}
+          {!busy && rows.length === 0 ? <p className="text-sm text-fg-muted">Nothing to show.</p> : null}
+          {!busy && rows.length > 0 ? (
             <ul className="space-y-1 text-sm">
               {rows.map((r) => (
                 <li key={String(r.id)} className={`${cardClass} flex flex-wrap items-start justify-between gap-2`}>
                   <span className="min-w-0">
-                    <b>{words(String(r.operation ?? r.kind ?? ''))}</b> · {when(String(r.at ?? ''))}
-                    {r.provider ? ` · ${r.provider}` : ''}{r.method ? ` · ${r.method}` : ''}{r.reference ? ` · ${r.reference}` : ''}{r.platformReference ? ` · ${r.platformReference}` : ''}{r.amount ? ` · ${money(String(r.amount))}` : ''}{r.shortcode ? ` · to ${r.shortcode}` : ''}{r.accountReference ? ` · account “${r.accountReference}”` : ''}{r.verifiedBy ? ` · confirmed by ${words(String(r.verifiedBy))}` : ''}{r.ip ? ` · from ${r.ip}` : ''}{r.duplicate ? ' · a repeat of an earlier one' : ''}{r.attempts ? ` · ${r.attempts} attempt(s)` : ''}
+                    <b>{rowTitle(r)}</b> · {when(typeof r.at === 'string' ? r.at : null)}
+                    {rowDetail(r, money)}
                   </span>
-                  <span className="flex flex-wrap items-center gap-2"><Chip tone={TONE[String(r.status ?? r.state)] ?? 'gray'}>{words(String(r.status ?? r.state))}</Chip>{(r.failureReason ?? null) ? <span className="max-w-md text-xs text-red-700">{String(r.failureReason)}</span> : null}</span>
+                  <span className="flex flex-wrap items-center gap-2"><Chip tone={TONE[rowState(r)] ?? 'gray'}>{words(rowState(r))}</Chip>{typeof r.failureReason === 'string' && r.failureReason !== '' ? <span className="max-w-md text-xs text-red-700">{r.failureReason}</span> : null}</span>
                 </li>
               ))}
             </ul>
-          )}
+          ) : null}
         </section>
       )}
     </div>

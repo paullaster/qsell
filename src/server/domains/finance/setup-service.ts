@@ -39,8 +39,8 @@ export class FinanceSetupService {
   ) {}
 
   async getSettings(companyId: string) {
-    const [row] = await this.db.select().from(financeSettings).where(eq(financeSettings.companyId, companyId));
-    return row ?? null;
+    const rows = await this.db.select().from(financeSettings).where(eq(financeSettings.companyId, companyId));
+    return rows.at(0) ?? null;
   }
 
   async updateSettings(

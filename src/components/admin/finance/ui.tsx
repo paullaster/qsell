@@ -30,9 +30,9 @@ export function PageHeader({ title, intro, actions }: { title: string; intro?: R
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0">
         <h2 className="text-xl font-bold text-fg-strong">{title}</h2>
-        {intro ? <p className="mt-1 max-w-2xl text-sm text-fg-muted">{intro}</p> : null}
+        {intro !== undefined ? <p className="mt-1 max-w-2xl text-sm text-fg-muted">{intro}</p> : null}
       </div>
-      {actions ? <div className="flex flex-wrap gap-2">{actions}</div> : null}
+      {actions !== undefined ? <div className="flex flex-wrap gap-2">{actions}</div> : null}
     </div>
   );
 }
@@ -51,6 +51,18 @@ export function Message({ notice }: { notice: Notice }) {
           {notice.text}
         </p>
       ) : null}
+    </div>
+  );
+}
+
+/** What shows while a screen's data is on its way, so the page is never blank. */
+export function PageSkeleton({ label }: { label: string }) {
+  return (
+    <div role="status" aria-live="polite" aria-busy="true" className="space-y-3">
+      <span className="sr-only">Loading {label}…</span>
+      <div className="h-7 w-48 animate-pulse rounded bg-surface-sunken" />
+      <div className="h-24 animate-pulse rounded-xl bg-surface-sunken" />
+      <div className="h-24 animate-pulse rounded-xl bg-surface-sunken" />
     </div>
   );
 }
@@ -81,7 +93,7 @@ export function Field({ id, label, hint, children }: { id: string; label: string
         {label}
       </label>
       {children}
-      {hint ? <p className="mt-1 text-[11px] text-fg-muted">{hint}</p> : null}
+      {hint !== undefined && hint !== '' ? <p className="mt-1 text-[11px] text-fg-muted">{hint}</p> : null}
     </div>
   );
 }

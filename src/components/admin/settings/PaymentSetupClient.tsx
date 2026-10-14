@@ -1,11 +1,13 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { use, useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { updateCompanyPublicBaseUrlAction } from '@/server/domains/payments/actions';
 import { linkOrdersToMethodsAction, seedPaymentSetupAction } from '@/server/domains/finance/receivables/actions';
 import { createProviderAction, type paymentSetupAction } from '@/server/domains/finance/payment-setup-actions';
-import { Field, Message, PageHeader, buttonClass, cardClass, fieldClass, primaryClass, type Notice, attempt } from '../finance/ui';
+import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { PAYMENT_SERVICES, type Choice } from '@/lib/payment-options';
+import { Field, LoadFailed, Message, PageHeader, buttonClass, cardClass, fieldClass, primaryClass, type Notice, attempt } from '../finance/ui';
 import { PaymentProviderCard } from './PaymentProviderCard';
 
 type Setup = Extract<Awaited<ReturnType<typeof paymentSetupAction>>, { ok: true }>['data'];
@@ -15,19 +17,24 @@ type Setup = Extract<Awaited<ReturnType<typeof paymentSetupAction>>, { ok: true 
  * service with the credentials every payment method under it shares; each method is one way of
  * being paid (a paybill, a till, cash...) with its branch, bank account and G/L account.
  */
-export function PaymentSetupClient({ setup }: { setup: Setup }) {
+export function PaymentSetupClient({ setupPromise }: { setupPromise: ReturnType<typeof paymentSetupAction> }) {
+  const res = use(setupPromise);
+  return res.ok ? <PaymentSetupView setup={res.data} /> : <LoadFailed error={res.error} />;
+}
+
+function PaymentSetupView({ setup }: { setup: Setup }) {
   const uid = useId();
   const router = useRouter();
-  const [open, setOpen] = useState<string | null>(setup.providers.find((p) => !p.isSystem)?.id ?? setup.providers[0]?.id ?? null);
+  const [open, setOpen] = useState<string | null>(setup.providers.find((p) => !p.isSystem)?.id ?? setup.providers.at(0)?.id ?? null);
   const [notice, setNotice] = useState<Notice>(null);
   const [baseUrl, setBaseUrl] = useState(setup.publicBaseUrl ?? '');
   const [adding, setAdding] = useState(false);
-  const [service, setService] = useState(setup.services[0]?.code ?? 'mpesa_daraja');
+  const [service, setService] = useState<Choice | null>(PAYMENT_SERVICES[0] ?? null);
   const [newName, setNewName] = useState('');
   const [busy, setBusy] = useState(false);
 
   const changed = (text?: string) => {
-    if (text) setNotice({ kind: 'ok', text });
+    if (text !== undefined && text !== '') setNotice({ kind: 'ok', text });
     router.refresh();
   };
 
@@ -42,12 +49,12 @@ export function PaymentSetupClient({ setup }: { setup: Setup }) {
     }
     setBusy(false);
   };
-  const add = async (e: React.FormEvent) => {
+  const add = async (e: React.SyntheticEvent) => {
     e.preventDefault();
     setBusy(true);
-    const res = await attempt(createProviderAction({ providerCode: service, displayName: newName.trim() || undefined }));
+    const res = await attempt(createProviderAction({ providerCode: (service?.id ?? 'mpesa_daraja') as never, displayName: newName.trim() === '' ? undefined : newName.trim() }));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     setAdding(false);
     setNewName('');
     setOpen(res.data.id);
@@ -66,9 +73,7 @@ export function PaymentSetupClient({ setup }: { setup: Setup }) {
       {adding ? (
         <form onSubmit={(e) => void add(e)} className={`${cardClass} space-y-3`} aria-label="Add a provider">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field id={`${uid}-s`} label="Payment service">
-              <select id={`${uid}-s`} value={service} onChange={(e) => setService(e.target.value as typeof service)} className={fieldClass}>{setup.services.map((s) => <option key={s.code} value={s.code}>{s.label}</option>)}</select>
-            </Field>
+            <ChoicePicker label="Payment service" source="payment-services" choice={service} onChoice={setService} clearable={false} required />
             <Field id={`${uid}-nn`} label="Name (optional)" hint="Shown in lists. Defaults to the service name."><input id={`${uid}-nn`} value={newName} onChange={(e) => setNewName(e.target.value)} className={fieldClass} maxLength={80} autoComplete="off" /></Field>
           </div>
           <div className="flex gap-2"><button type="submit" className={primaryClass} disabled={busy}>Add provider</button><button type="button" className={buttonClass} onClick={() => setAdding(false)}>Cancel</button></div>
