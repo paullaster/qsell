@@ -55,12 +55,12 @@ export class PaymentVerificationService {
     const all = await this.events.forAttempt(attemptId);
     const usable = all.filter((e) => e.state !== 'rejected');
     // A callback we could not read as a claim is still the latest word from the platform.
-    if (usable.length > 0 && !usable.some((e) => e.claim)) return { event: usable[0]!, claim: null };
+    if (usable.length > 0 && !usable.some((e) => e.claim)) return { event: usable[0], claim: null };
     for (const event of usable) {
       if (event.claim) {
         const c = event.claim as unknown as InboundClaim;
         // Stored as JSON, so the date comes back as text.
-        return { event, claim: { ...c, occurredAt: c.occurredAt ? new Date(c.occurredAt as unknown as string) : null } };
+        return { event, claim: { ...c, occurredAt: c.occurredAt ? new Date(c.occurredAt) : null } };
       }
     }
     return { event: null, claim: null };
@@ -81,7 +81,7 @@ export class PaymentVerificationService {
     if (FINAL_ATTEMPT.has(attempt.status) && (attempt.status !== 'successful' || (await this.settler.isSettled(attempt.id)))) return { outcome: 'already_final' };
     const ctx = await this.contexts.forProvider(attempt.providerConfigId);
     const settings = engineSettings(ctx.settings);
-    const adapter = this.registry.resolve(attempt.providerCode as PaymentProviderCode);
+    const adapter = this.registry.resolve(attempt.providerCode);
     const { event, claim } = await this.latestClaim(attempt.id);
 
     if (!adapter.verifyAttempt) {
@@ -109,7 +109,7 @@ export class PaymentVerificationService {
     } catch (error) {
       outcome = { status: 'error', by: 'verification', reason: error instanceof Error ? error.message.slice(0, 300) : 'The check failed.', retryable: true };
     }
-    return this.act(attempt, ctx.provider.id, event, claim, outcome, settings);
+    return await this.act(attempt, ctx.provider.id, event, claim, outcome, settings);
   }
 
   private minutesSince(d: Date) {
@@ -143,7 +143,7 @@ export class PaymentVerificationService {
         }
         await this.txs.addEvidence(row.id, outcome.evidence, outcome.by);
         await this.txs.setState(row.id, 'verified', { verifiedBy: outcome.by });
-        await stateOf('verified', { platformReference: reference, amount: (outcome.amountCents ?? 0) / 100 + '' });
+        await stateOf('verified', { platformReference: reference, amount: `${(outcome.amountCents ?? 0) / 100  }` });
         const done = await this.settler.succeed(attempt.id, { reference, verifiedBy: outcome.by, transactionId: row.id });
         if (done.settled) await this.txs.consume(row.id, 'payment_attempt', attempt.id);
         await stateOf('consumed', { platformReference: reference });
@@ -163,14 +163,14 @@ export class PaymentVerificationService {
           const evidence = outcome.evidence as { receipt?: string };
           if (evidence.receipt) await this.checks.checkTransaction({ providerId, attemptId: attempt.id, receipt: evidence.receipt, shortcode: null });
         }
-        return this.again(attempt, event, settings, outcome.reason, 'pending');
+        return await this.again(attempt, event, settings, outcome.reason, 'pending');
       }
       case 'error': {
         if (!outcome.retryable) {
           await stateOf('unverified', { failureCode: 'CANNOT_VERIFY', failureReason: outcome.reason });
           return { outcome: 'error', reason: outcome.reason };
         }
-        return this.again(attempt, event, settings, outcome.reason, 'error');
+        return await this.again(attempt, event, settings, outcome.reason, 'error');
       }
       case 'unavailable':
         await stateOf('unverified', { failureCode: 'NO_VERIFICATION', failureReason: outcome.reason });

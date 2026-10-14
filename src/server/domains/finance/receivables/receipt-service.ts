@@ -133,7 +133,7 @@ export class ReceiptService {
 
   private async assertDate(tx: Tx, companyId: string, date: string, perms: PostingPermissions) {
     const issues = await this.engine.dateIssues(tx, companyId, date, perms);
-    if (issues.length > 0) throw new FinanceError(issues[0]!.code, issues.map((i) => i.message).join(' '), issues);
+    if (issues.length > 0) throw new FinanceError(issues[0].code, issues.map((i) => i.message).join(' '), issues);
   }
 
   private async evidenceCount(tx: Tx | DrizzleDb, receiptId: string): Promise<number> {
@@ -152,7 +152,7 @@ export class ReceiptService {
 
   async create(ctx: FinanceContext, input: ReceiptInput): Promise<{ id: string; number: string }> {
     const id = randomUUID();
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       if (input.idempotencyKey) {
         const [dup] = await tx
           .select({ id: customerReceipts.id, number: customerReceipts.number })
@@ -195,7 +195,7 @@ export class ReceiptService {
         { amountCents: cents, externalReference: reference, counterparty, evidenceCount: 0 },
         false,
       );
-      if (issues.length > 0) throw new FinanceError(issues[0]!.code, issues.map((i) => i.message).join(' '), issues);
+      if (issues.length > 0) throw new FinanceError(issues[0].code, issues.map((i) => i.message).join(' '), issues);
 
       const currency = (input.currency ?? bank.currency).toUpperCase();
       if (currency !== bank.currency) {
@@ -319,7 +319,7 @@ export class ReceiptService {
     opts: { allocate?: AllocateMode; permissions?: PostingPermissions } = {},
   ): Promise<{ number: string; appliedCents: number; registerId: string | null; glPosted: boolean }> {
     const perms = opts.permissions ?? NO_SPECIAL_PERMISSIONS;
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const r = await this.lock(tx, ctx, id);
       if (r.status !== 'draft') throw new FinanceError('NOT_DRAFT', `Receipt ${r.number} is already ${r.status}.`);
 
@@ -342,7 +342,7 @@ export class ReceiptService {
         },
         true,
       );
-      if (issues.length > 0) throw new FinanceError(issues[0]!.code, issues.map((i) => i.message).join(' '), issues);
+      if (issues.length > 0) throw new FinanceError(issues[0].code, issues.map((i) => i.message).join(' '), issues);
       await this.assertDate(tx, ctx.companyId, r.postingDate, perms);
 
       const [customer] = await tx.select().from(customers).where(eq(customers.id, r.customerId));
@@ -494,7 +494,7 @@ export class ReceiptService {
   // ── apply / unapply ──────────────────────────────────────────────────────
 
   async apply(ctx: FinanceContext, id: string, applications: PlannedApplication[] | 'oldest_first') {
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const r = await this.lock(tx, ctx, id);
       if (r.status !== 'posted' || !r.ledgerEntryId) throw new FinanceError('NOT_POSTED', 'Only a posted receipt can be applied.');
       if (r.chequeStatus === 'bounced') throw new FinanceError('CHEQUE_BOUNCED', 'This cheque bounced.');
@@ -512,7 +512,7 @@ export class ReceiptService {
 
   async unapply(ctx: FinanceContext, receiptId: string, applicationId: string, reason: { code: string; text?: string | null }) {
     const rs = await this.reasons.require(ctx.companyId, reason, 'receipt');
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const r = await this.lock(tx, ctx, receiptId);
       if (!r.ledgerEntryId) throw new FinanceError('NOT_POSTED', 'That receipt has not been posted.');
       const [belongs] = await tx
@@ -828,7 +828,7 @@ export class ReceiptService {
   }
 
   async attachments(companyId: string, id: string) {
-    return this.db
+    return await this.db
       .select()
       .from(financeAttachments)
       .where(and(eq(financeAttachments.companyId, companyId), eq(financeAttachments.subjectType, 'customer_receipt'), eq(financeAttachments.subjectId, id)))
@@ -872,14 +872,14 @@ export class ReceiptService {
       .limit(limit + 1);
     const more = rows.length > limit;
     const page = more ? rows.slice(0, limit) : rows;
-    return { rows: page, nextBefore: more ? page[page.length - 1]!.receipt.createdAt.toISOString() : null };
+    return { rows: page, nextBefore: more ? page[page.length - 1].receipt.createdAt.toISOString() : null };
   }
 
   /** For the "who paid?" picker: a handful of matches, not a list of every customer. */
   async searchCustomers(companyId: string, q: string, limit = 15) {
     const term = q.trim();
     if (term.length < 2) return [];
-    return this.db
+    return await this.db
       .select({
         id: customers.id,
         number: customers.number,

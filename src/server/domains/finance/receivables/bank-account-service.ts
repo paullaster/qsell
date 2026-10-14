@@ -84,7 +84,7 @@ export class BankAccountService {
 
   async create(ctx: FinanceContext, input: BankAccountInput): Promise<BankAccountRow> {
     this.validate(input);
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       if (input.feeGlAccountId) await this.checkGl(tx, ctx.companyId, input.feeGlAccountId, 'fee');
       const [dup] = await tx
         .select({ id: bankAccounts.id })
@@ -109,20 +109,20 @@ export class BankAccountService {
       await this.decisions.record(
         {
           companyId: ctx.companyId,
-          subject: { type: 'bank_account', id: row!.id },
+          subject: { type: 'bank_account', id: row.id },
           action: 'finance.bank_account_created',
           actor: ctx.actor,
           inputs: { origin: ctx.origin },
-          outcome: { code: row!.code, kind: row!.kind, currency: row!.currency },
+          outcome: { code: row.code, kind: row.kind, currency: row.currency },
         },
         tx,
       );
-      return row!;
+      return row;
     });
   }
 
   async update(ctx: FinanceContext, id: string, input: Partial<BankAccountInput>): Promise<BankAccountRow> {
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const [current] = await tx
         .select()
         .from(bankAccounts)
@@ -140,7 +140,7 @@ export class BankAccountService {
       if (used && input.kind && input.kind !== current.kind) {
         throw new FinanceError('ACCOUNT_IN_USE', 'Money has moved through this account, so its kind cannot change.');
       }
-      const next = { ...current, ...stripUndefined(input) } as BankAccountRow;
+      const next = { ...current, ...stripUndefined(input) };
       this.validate({ ...next, details: next.details });
       if (input.feeGlAccountId) await this.checkGl(tx, ctx.companyId, input.feeGlAccountId, 'fee');
       if (input.code && input.code !== current.code) {
@@ -170,7 +170,7 @@ export class BankAccountService {
         },
         tx,
       );
-      return row!;
+      return row;
     });
   }
 

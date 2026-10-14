@@ -8,7 +8,7 @@ import {
   type ConnectionTestResult,
   type PaymentPort,
 } from '../port';
-import type { JengaHqCredentials } from '../types';
+import { asJengaCredentials, type JengaHqCredentials } from '../types';
 import { extractPaymentReference } from '../payment-reference';
 
 /**
@@ -24,7 +24,7 @@ export class JengaHqAdapter implements PaymentPort {
     _settings: Record<string, unknown>,
     apiBaseUrl: string,
   ): Promise<ConnectionTestResult> {
-    const creds = credentials as unknown as JengaHqCredentials;
+    const creds = asJengaCredentials(credentials);
     return probeConnection('Jenga', async () => {
       if (!creds.merchantCode || !creds.consumerSecret || !creds.apiKey) throw new Error('The merchant code, consumer secret and API key are not all saved yet.');
       await this.authenticate(apiBaseUrl, creds);
@@ -66,7 +66,7 @@ export class JengaHqAdapter implements PaymentPort {
     settings: Record<string, unknown>,
     apiBaseUrl: string,
   ): Promise<InitiatePaymentResult> {
-    const creds = credentials as JengaHqCredentials;
+    const creds = asJengaCredentials(credentials);
     if (!creds.merchantCode || !creds.consumerSecret || !creds.apiKey || !creds.privateKeyPem) {
       return {
         status: 'failed',

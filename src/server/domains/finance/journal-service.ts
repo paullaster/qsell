@@ -5,7 +5,7 @@ import { financeSettings, glAccounts, journalBatches, journalLines } from '@/ser
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { formatAmount, parseAmount } from './domain/amount';
 import type { PostingRequest } from './domain/types';
-import { PostingEngine, PostingError, type PostingPermissions, type PostingPreview } from './engine';
+import { type PostingEngine, PostingError, type PostingPermissions, type PostingPreview } from './engine';
 import { FinanceError, type FinanceContext } from './errors';
 
 export interface LineInput {
@@ -62,7 +62,7 @@ export class JournalService {
       .insert(journalBatches)
       .values({ companyId: ctx.companyId, code: code.trim(), name: name.trim(), createdBy: ctx.actor.id ?? 'system' })
       .returning();
-    return row!;
+    return row;
   }
 
   async getBatch(companyId: string, batchId: string) {
@@ -148,7 +148,7 @@ export class JournalService {
       .insert(journalLines)
       .values({ batchId, lineNo: next ?? 1, createdBy: ctx.actor.id ?? 'system', ...values })
       .returning({ id: journalLines.id });
-    return row!.id;
+    return row.id;
   }
 
   async deleteLine(ctx: FinanceContext, batchId: string, lineId: string) {
@@ -172,7 +172,7 @@ export class JournalService {
   }
 
   private requestFor(ctx: FinanceContext, batchId: string, lines: (typeof journalLines.$inferSelect)[]): PostingRequest {
-    const first = lines[0]!;
+    const first = lines[0];
     const fingerprint = createHash('sha256')
       .update(lines.map((l) => l.id).sort().join(','))
       .digest('hex')

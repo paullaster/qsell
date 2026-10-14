@@ -115,7 +115,7 @@ export class FinanceMaintenanceService {
     const balanceDrift =
       periods.length === 0
         ? 0
-        : [...(await this.reports.balanceDrift(companyId, periods[0]!.startsOn, periods[periods.length - 1]!.endsOn))].length;
+        : [...(await this.reports.balanceDrift(companyId, periods[0].startsOn, periods[periods.length - 1].endsOn))].length;
     const [customerDrift, chainProblems, stuck] = await Promise.all([
       this.customerLedger.drift(companyId),
       this.verifyChainTails(companyId),

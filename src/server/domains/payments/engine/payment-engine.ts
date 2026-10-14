@@ -83,7 +83,7 @@ export class PaymentEngine {
     const settings = engineSettings(ctx.settings);
     const refusal = this.events.guard(settings, { sourceIp: input.sourceIp, size: Buffer.byteLength(input.rawText), https: input.https, requireHttps: ctx.provider.environment === 'production' });
     const body = this.parseBody(input, input.query);
-    const providerCode = attempt.providerCode as PaymentProviderCode;
+    const providerCode = attempt.providerCode;
     const adapter = this.registry.resolve(providerCode);
     const claim = refusal ? null : (adapter.parseCallback?.(body) ?? null);
     const rawText = input.rawText || (input.query ? JSON.stringify(input.query) : '');
@@ -216,10 +216,10 @@ export class PaymentEngine {
       await this.finished(op.id);
       return;
     }
-    const answer = readStatusAnswer(check.result as Record<string, unknown>);
+    const answer = readStatusAnswer(check.result);
     const verdict = answer ? statusAgrees(answer, { receipt: op.platformReference, amountCents: Math.round(Number(op.amount ?? 0) * 100), shortcode: null }) : { ok: false as const, code: 'STATUS_UNREADABLE', reason: "Safaricom's answer could not be read." };
-    const done = async () => this.finished(op.id);
-    if (verdict.ok) await this.ops.update(op.id, { status: 'succeeded', failureCode: null, failureReason: null, result: { ...(op.result as Record<string, unknown>), verifiedBy: 'transaction_status', checkOperationId: check.id } });
+    const done = async () => await this.finished(op.id);
+    if (verdict.ok) await this.ops.update(op.id, { status: 'succeeded', failureCode: null, failureReason: null, result: { ...(op.result), verifiedBy: 'transaction_status', checkOperationId: check.id } });
     else await this.ops.update(op.id, { status: 'in_doubt', failureCode: verdict.code, failureReason: `${verdict.reason} The payout is not counted until a person has checked it.`, nextAttemptAt: null });
     await done();
   }

@@ -133,7 +133,7 @@ export async function listFiscalAction() {
         name: p.name,
         startsOn: p.startsOn,
         endsOn: p.endsOn,
-        status: p.status as PeriodStatus,
+        status: p.status,
       })),
     }));
   });
@@ -191,27 +191,25 @@ export async function postingSetupAction() {
           sales_discount: g.salesDiscountAccountId,
           cogs: g.cogsAccountId,
           inventory_adjustment: g.inventoryAdjustmentAccountId,
-        } as Record<GeneralPurpose, string | null>,
+        },
       })),
-      customer: ov.customer.map((c) => ({
-        id: c.id,
-        code: c.code,
-        name: c.name,
-        accounts: {
-          receivables: c.receivablesAccountId,
-          customer_deposits: c.customerDepositsAccountId,
-          refunds_payable: c.refundsPayableAccountId,
-          payment_discount: c.paymentDiscountAccountId,
-          write_off: c.writeOffAccountId,
-          rounding: c.roundingAccountId,
-          fx_gain: c.fxGainAccountId,
-          fx_loss: c.fxLossAccountId,
-          service_charge: c.serviceChargeAccountId,
-          rebate_expense: c.rebateExpenseAccountId,
-          gift_card_liability: c.giftCardLiabilityAccountId,
-          loyalty_provision: c.loyaltyProvisionAccountId,
-        } as Record<string, string | null>,
-      })),
+      customer: ov.customer.map((c) => {
+        const accounts: Record<string, string | null> = {
+            receivables: c.receivablesAccountId,
+            customer_deposits: c.customerDepositsAccountId,
+            refunds_payable: c.refundsPayableAccountId,
+            payment_discount: c.paymentDiscountAccountId,
+            write_off: c.writeOffAccountId,
+            rounding: c.roundingAccountId,
+            fx_gain: c.fxGainAccountId,
+            fx_loss: c.fxLossAccountId,
+            service_charge: c.serviceChargeAccountId,
+            rebate_expense: c.rebateExpenseAccountId,
+            gift_card_liability: c.giftCardLiabilityAccountId,
+            loyalty_provision: c.loyaltyProvisionAccountId,
+        };
+        return { id: c.id, code: c.code, name: c.name, accounts };
+      }),
       accounts: accounts
         .filter((a) => a.type === 'posting')
         .map((a) => ({ id: a.id, no: a.no, name: a.name })),

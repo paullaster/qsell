@@ -130,7 +130,7 @@ export class DarajaOperations {
     });
     if (!created) return { op, created: false };
     await this.send(op.id);
-    return { op: (await this.ops.get(op.id))!, created: true };
+    return { op: (await this.ops.get(op.id)), created: true };
   }
 
   private initiator(ctx: PlatformContext) {
@@ -168,12 +168,12 @@ export class DarajaOperations {
         await this.ops.update(op.id, { status: 'accepted', response: res.json ?? {}, nextAttemptAt: new Date(Date.now() + ASYNC_WAIT_SECONDS * 1000) });
         return;
       }
-      const fresh = (await this.ops.get(op.id))!;
+      const fresh = (await this.ops.get(op.id));
       // Sending a customer prompt twice would ask them to pay twice, and we cannot tell whether an unanswered one arrived.
       // Only B2C is de-duplicated by Safaricom (on the originator id). Any other payout sent twice could pay twice.
-      const unsafeToRepeat = op.operation === 'stk_push' || (info?.moneyOut === true && op.operation !== 'b2c');
+      const unsafeToRepeat = op.operation === 'stk_push' || ((info?.moneyOut) && op.operation !== 'b2c');
       if (failure.retryable && !unsafeToRepeat && fresh.attempts < RESEND_SECONDS.length + 1) {
-        const wait = RESEND_SECONDS[Math.min(fresh.attempts - 1, RESEND_SECONDS.length - 1)]!;
+        const wait = RESEND_SECONDS[Math.min(fresh.attempts - 1, RESEND_SECONDS.length - 1)];
         await this.ops.update(op.id, { status: 'queued', failureCode: failure.code, failureReason: failure.message, response: res.json ?? {}, nextAttemptAt: new Date(Date.now() + wait * 1000) });
         await this.jobs.sendOperation(op.id, wait);
         return;
@@ -207,7 +207,7 @@ export class DarajaOperations {
     if (op.operation === 'pull_register') {
       const code = String(body.ResponseStatus ?? body.ResponseCode ?? '');
       if (code === '1000' || code === '1001') {
-        const settings = { ...(ctx.settings ?? {}), pull: { ...((ctx.settings?.pull as Record<string, unknown>) ?? {}), registered: true, nominatedNumber: String((op.input as Record<string, unknown>).nominatedNumber ?? '') } };
+        const settings = { ...(ctx.settings ?? {}), pull: { ...((ctx.settings?.pull as Record<string, unknown>) ?? {}), registered: true, nominatedNumber: String((op.input).nominatedNumber ?? '') } };
         await this.db.update(paymentProviderConfigs).set({ settings, updatedAt: new Date() }).where(eq(paymentProviderConfigs.id, op.providerId));
       } else {
         await this.ops.update(op.id, { status: 'failed', failureCode: code || 'REGISTER_FAILED', failureReason: String(body.ResponseDescription ?? 'Registration was refused.'), response: body });
@@ -223,7 +223,7 @@ export class DarajaOperations {
 
   /** Builds the request for one operation from its stored input. Secrets are made here and never stored. */
   private async build(op: ProviderOperationRow, ctx: PlatformContext, settings: ReturnType<typeof darajaSettings>, method: PaymentMethodRow | null): Promise<{ path: string; body: unknown; method?: 'GET' | 'POST' }> {
-    const input = op.input as Record<string, unknown>;
+    const input = op.input;
     const creds = ctx.credentials;
     const now = ctx.now();
     const shortcode = String(input.shortcode ?? method?.channelNumber ?? creds.shortcode ?? '').trim();
@@ -403,11 +403,11 @@ export class DarajaOperations {
     }
     const ok = result.resultCode === '0';
     const params = result.params;
-    const moneyOut = DARAJA_OPERATIONS[op.operation as DarajaOperationCode]?.moneyOut === true;
+    const moneyOut = DARAJA_OPERATIONS[op.operation as DarajaOperationCode]?.moneyOut;
     // An answer is only trusted as "money moved" when it names the transaction. Without that it is held for a person.
     if (ok && moneyOut && !looksLikeReceipt(receiptFromParams(params) ?? result.transactionId ?? '')) {
       await this.ops.update(op.id, { status: 'in_doubt', conversationId: op.conversationId ?? result.conversationId, result: { resultCode: result.resultCode, resultDesc: result.resultDesc, params }, failureCode: 'NO_RECEIPT', failureReason: 'Safaricom said the payout succeeded but gave no transaction number. Check it on the M-Pesa statement before doing anything else.', nextAttemptAt: null });
-      return { matched: true, op: (await this.ops.get(op.id))!, reason: 'Held: no transaction number.' };
+      return { matched: true, op: (await this.ops.get(op.id)), reason: 'Held: no transaction number.' };
     }
     // A payout's "success" is only the callback's word until Safaricom's own record of the transaction agrees (settled by the engine).
     const awaitingCheck = ok && moneyOut;
@@ -420,7 +420,7 @@ export class DarajaOperations {
       failureCode: ok ? null : result.resultCode || 'RESULT_FAILED',
       failureReason: ok ? null : (result.resultDesc ?? 'The platform reported a failure.'),
     });
-    return { matched: true, op: (await this.ops.get(op.id))! };
+    return { matched: true, op: (await this.ops.get(op.id)) };
   }
 
   /** The platform said it timed the request out in its queue. The operation is not dead: it must be checked, never assumed. */
@@ -432,7 +432,7 @@ export class DarajaOperations {
     if (!op) return { matched: false };
     if (['succeeded', 'failed', 'cancelled', 'rejected'].includes(op.status)) return { matched: true, op };
     await this.ops.update(op.id, { status: 'timed_out', failureCode: 'QUEUE_TIMEOUT', failureReason: 'The platform timed this request out before processing it. It has to be checked, not assumed.', nextAttemptAt: new Date(Date.now() + 120 * 1000) });
-    return { matched: true, op: (await this.ops.get(op.id))! };
+    return { matched: true, op: (await this.ops.get(op.id)) };
   }
 
   paramsOf(result: Record<string, unknown>): Record<string, string> {

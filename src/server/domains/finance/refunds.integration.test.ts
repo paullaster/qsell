@@ -33,14 +33,14 @@ describe.skipIf(!url)('refunds (database)', () => {
       await p;
       return 'OK';
     } catch (e) {
-      if (e && typeof e === 'object' && 'code' in e) return String((e as { code: unknown }).code);
+      if (e && typeof e === 'object' && 'code' in e) return String((e).code);
       return `OTHER:${(e as Error).message}`;
     }
   };
   const policy = (o: Partial<import('./receivables/credit-policy-service').PolicyInput> = {}) =>
     fin.creditPolicy.save(ctx, { groupCode: null, walletEnabled: false, allowDeposits: true, overpaymentDefault: 'ask', autoApply: 'never', creditNoteExcess: 'ask', refundsEnabled: true, walletCashOut: false, maxBalance: null, label: 'Wallet', ...o });
   const user = async (label: string) =>
-    (await db.insert(schema.users).values({ email: `${label}-${randomUUID()}@refund.test`, passwordHash: 'x', name: label, role: 'manager' }).returning())[0]!.id;
+    (await db.insert(schema.users).values({ email: `${label}-${randomUUID()}@refund.test`, passwordHash: 'x', name: label, role: 'manager' }).returning())[0].id;
 
   /** A cash customer's order, fully paid at the sale, with a credit note for `qty` units: 580 each, owed back. */
   async function owed(qty = 1, o: { total?: number } = {}) {
@@ -49,25 +49,25 @@ describe.skipIf(!url)('refunds (database)', () => {
     const id = `rf_${run}_${seq}`;
     const total = o.total ?? 580 * qty;
     await db.execute(sql`INSERT INTO orders (id, order_number, user_id, branch_id, customer_name, customer_email, customer_phone, shipping_address, subtotal, tax, shipping_fee, total_amount, payment_method, trade_customer_id, payment_status)
-      VALUES (${id}, ${`RFO-${run}-${seq}`}, 'u', ${branchId}::uuid, 'n', 'e@x.io', '1', '{"street":"s","city":"c","countyOrState":"x","country":"k"}'::jsonb, ${500 * qty}, ${80 * qty}, 0, ${total}, 'mpesa_daraja', ${cust!.id}::uuid, 'paid')`);
+      VALUES (${id}, ${`RFO-${run}-${seq}`}, 'u', ${branchId}::uuid, 'n', 'e@x.io', '1', '{"street":"s","city":"c","countyOrState":"x","country":"k"}'::jsonb, ${500 * qty}, ${80 * qty}, 0, ${total}, 'mpesa_daraja', ${cust.id}::uuid, 'paid')`);
     await db.insert(schema.orderItems).values({ orderId: id, productId, productName: 'Widget', sku: 'W', quantity: qty, unitPrice: '580.00', totalPrice: total.toFixed(2), imageUrl: '', unitCost: '300.0000' });
-    await master.postInvoice({ customer: cust!, orderId: id, orderNumber: `RFO-${run}-${seq}`, amount: total, currency: 'KES' });
+    await master.postInvoice({ customer: cust, orderId: id, orderNumber: `RFO-${run}-${seq}`, amount: total, currency: 'KES' });
     await db.insert(schema.inventoryMovements).values({ id: `mv_${randomUUID()}`, productId, productName: 'Widget', changeAmount: 0, previousStock: 10, newStock: 10, changeType: 'order_fulfillment', referenceId: id });
     await db.insert(schema.invoiceDocuments).values({ orderId: id, orderNumber: `RFO-${run}-${seq}`, invoiceNumber: `TI-${run}-${seq}`, documentType: 'tax_invoice', customerEmail: 'e@x.io', customerName: 'n', currency: 'KES', subtotal: String(500 * qty), tax: String(80 * qty), shippingFee: '0', totalAmount: String(total), pdfStorageKey: 'x.pdf', emailStatus: 'not_sent', meta: {} });
     const cn = await c.creditNotes.issueForOrder({ orderId: id, lines: [{ productId, quantity: qty }], reason: { code: 'returned_goods' }, issuedBy: 'tester' });
-    return { orderId: id, customer: cust!, cn, cents: 58000 * qty };
+    return { orderId: id, customer: cust, cn, cents: 58000 * qty };
   }
   const request = (customerId: string, kind: 'credit_note_excess' | 'wallet' | 'receipt_unapplied', sourceId: string, amount: string, o: Partial<import('./receivables/refund-service').RefundInput> = {}) =>
-    fin.refunds.create(ctx, { customerId, sourceKind: kind, sourceId, amount, paymentMethodId: methodId.CASH!, payoutDetails: { recipientName: 'Customer' }, reasonCode: 'CUSTOMER_REQUEST', mayChangeDestination: false, ...o });
-  const status = async (id: string) => (await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, id)))[0]!.status;
+    fin.refunds.create(ctx, { customerId, sourceKind: kind, sourceId, amount, paymentMethodId: methodId.CASH, payoutDetails: { recipientName: 'Customer' }, reasonCode: 'CUSTOMER_REQUEST', mayChangeDestination: false, ...o });
+  const status = async (id: string) => (await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, id)))[0].status;
   const cnOpen = async (cnId: string) => {
     const [a] = await db.select().from(schema.creditNoteAccounting).where(eq(schema.creditNoteAccounting.creditNoteId, cnId));
     const res = await db.select().from(schema.creditNoteResolutions).where(eq(schema.creditNoteResolutions.creditNoteId, cnId));
-    return Math.round(Number(a!.excess) * 100) - res.reduce((n, r) => n + Math.round(Number(r.amount) * 100), 0);
+    return Math.round(Number(a.excess) * 100) - res.reduce((n, r) => n + Math.round(Number(r.amount) * 100), 0);
   };
   const payOut = async (id: string, by = ctx, bank?: string) => {
     await fin.refunds.attach(by, id, { mediaAssetId: 'media_x', fileName: 'slip.jpg' }).catch(() => undefined);
-    return fin.refunds.recordPayout(by, id, { paidFromMethodId: bank ?? methodId.CASH!, reference: `PAY-${seq}` });
+    return await fin.refunds.recordPayout(by, id, { paidFromMethodId: bank ?? methodId.CASH, reference: `PAY-${seq}` });
   };
 
   async function workflow(trigger: string, approverUserId: string) {
@@ -91,9 +91,9 @@ describe.skipIf(!url)('refunds (database)', () => {
     const { CustomerMasterService } = await import('@/server/domains/customers/master-service');
     master = new CustomerMasterService(db, {} as never, new (await import('@/server/domains/transactions/ledger-service')).TransactionLedgerService(db));
     const [company] = await db.insert(schema.companySettings).values({ legalName: 'RF', tradingName: 'RF', email: 'a@b.c', phone: '1', streetAddress: 's', city: 'c', countyOrState: 'x', postalCode: '1', kraPin: 'P' }).returning();
-    companyId = company!.id;
+    companyId = company.id;
     const [branch] = await db.insert(schema.branches).values({ companyId, code: `RF${run.toUpperCase()}`, name: 'RF branch', isDefault: true }).returning();
-    branchId = branch!.id;
+    branchId = branch.id;
     await c.reasonCodes.ensureSystemReasons(companyId);
     [boss, requester] = await Promise.all([user('boss'), user('requester')]);
     await c.approvalConfig.saveProfile(companyId, { userId: boss, limits: [] }, { type: 'user', id: 'tester' }, { code: 'POLICY_CHANGE' });
@@ -118,7 +118,7 @@ describe.skipIf(!url)('refunds (database)', () => {
       expect(await codeOf(request(o.customer.id, 'credit_note_excess', o.cn.id, '580.01'))).toBe('OVER_OBLIGATION');
       await request(o.customer.id, 'credit_note_excess', o.cn.id, '300');
       expect(await codeOf(request(o.customer.id, 'credit_note_excess', o.cn.id, '300', { paymentMethodId: methodId.BANK_TRANSFER, payoutDetails: { bankName: 'KCB', accountNumber: '1', accountName: 'A' } }))).toBe('OVER_OBLIGATION');
-      expect((await fin.refunds.obligations(companyId, o.customer.id))[0]!.availableCents).toBe(28000);
+      expect((await fin.refunds.obligations(companyId, o.customer.id))[0].availableCents).toBe(28000);
     });
 
     it('checks the details for the way of paying, and flags a payout to someone else\'s phone', async () => {
@@ -146,7 +146,7 @@ describe.skipIf(!url)('refunds (database)', () => {
       expect(await codeOf(request(o.customer.id, 'credit_note_excess', o.cn.id, '100'))).toBe('REFUNDS_OFF');
       await policy({ walletEnabled: true, walletCashOut: false });
       const [w] = await db.insert(schema.customerWallets).values({ companyId, customerId: o.customer.id, currency: 'KES', balance: '400.00' }).returning();
-      expect(await codeOf(request(o.customer.id, 'wallet', w!.id, '100'))).toBe('CASH_OUT_OFF');
+      expect(await codeOf(request(o.customer.id, 'wallet', w.id, '100'))).toBe('CASH_OUT_OFF');
       await policy();
     });
   });
@@ -160,28 +160,28 @@ describe.skipIf(!url)('refunds (database)', () => {
       expect(await cnOpen(o.cn.id)).toBe(0); // set aside: it cannot be put in the wallet or spent too
       expect((await fin.creditNoteAccounting.worklist(companyId)).some((x) => x.a.creditNoteId === o.cn.id)).toBe(false);
       expect(await fin.customerLedger.drift(companyId)).toEqual([]);
-      expect(await codeOf(fin.refunds.recordPayout(ctx, r.id, { paidFromMethodId: methodId.CASH!, reference: 'R1' }))).toBe('EVIDENCE_REQUIRED');
+      expect(await codeOf(fin.refunds.recordPayout(ctx, r.id, { paidFromMethodId: methodId.CASH, reference: 'R1' }))).toBe('EVIDENCE_REQUIRED');
       await fin.refunds.attach(ctx, r.id, { mediaAssetId: 'media_x', fileName: 'signed-receipt.jpg' });
-      expect(await codeOf(fin.refunds.recordPayout(ctx, r.id, { paidFromMethodId: methodId.CASH!, reference: ' ' }))).toBe('REFERENCE_REQUIRED');
-      expect(await codeOf(fin.refunds.recordPayout(ctx, r.id, { paidFromMethodId: methodId.CHEQUE!, reference: 'R1' }))).toBe('BANK_INVALID');
-      expect(await codeOf(fin.refunds.recordPayout(ctx, r.id, { paidFromMethodId: methodId.CASH!, reference: 'R1', payoutDate: '2999-01-01' }))).toBe('DATE_INVALID');
-      const out = await fin.refunds.recordPayout(ctx, r.id, { paidFromMethodId: methodId.CASH!, reference: 'R1' });
+      expect(await codeOf(fin.refunds.recordPayout(ctx, r.id, { paidFromMethodId: methodId.CASH, reference: ' ' }))).toBe('REFERENCE_REQUIRED');
+      expect(await codeOf(fin.refunds.recordPayout(ctx, r.id, { paidFromMethodId: methodId.CHEQUE, reference: 'R1' }))).toBe('BANK_INVALID');
+      expect(await codeOf(fin.refunds.recordPayout(ctx, r.id, { paidFromMethodId: methodId.CASH, reference: 'R1', payoutDate: '2999-01-01' }))).toBe('DATE_INVALID');
+      const out = await fin.refunds.recordPayout(ctx, r.id, { paidFromMethodId: methodId.CASH, reference: 'R1' });
       expect(out).toMatchObject({ order: 'refunded', gl: false });
       expect(await status(r.id)).toBe('paid');
       const bank = await db.select().from(schema.bankLedgerEntries).where(eq(schema.bankLedgerEntries.documentId, r.id));
       expect(bank.map((b) => b.amount)).toEqual(['-580.0000']);
       // paid out through a payment method: its G/L account is what the books (and the bank ledger) record
-      const [cashMethod] = await db.select().from(schema.paymentMethods).where(eq(schema.paymentMethods.id, methodId.CASH!));
-      expect(bank[0]!.glAccountId).toBe(cashMethod!.glAccountId);
-      expect((await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, r.id)))[0]!.paidFromMethodId).toBe(methodId.CASH);
+      const [cashMethod] = await db.select().from(schema.paymentMethods).where(eq(schema.paymentMethods.id, methodId.CASH));
+      expect(bank[0].glAccountId).toBe(cashMethod.glAccountId);
+      expect((await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, r.id)))[0].paidFromMethodId).toBe(methodId.CASH);
       const legacy = await db.select().from(schema.transactionLedgerEntries).where(eq(schema.transactionLedgerEntries.idempotencyKey, `refund:${r.id}`));
       expect(legacy[0]).toMatchObject({ documentType: 'refund', direction: 'debit', amount: '580.00', transactionReference: 'R1' });
       expect(await codeOf(fin.refunds.cancel(ctx, r.id, { code: 'DATA_ENTRY_ERROR' }))).toBe('ALREADY_PAID');
-      expect(await codeOf(fin.refunds.recordPayout(ctx, r.id, { paidFromMethodId: methodId.CASH!, reference: 'R1' }))).toBe('NOT_APPROVED');
+      expect(await codeOf(fin.refunds.recordPayout(ctx, r.id, { paidFromMethodId: methodId.CASH, reference: 'R1' }))).toBe('NOT_APPROVED');
       await expect(db.update(schema.refundRequests).set({ amount: '1.00' }).where(eq(schema.refundRequests.id, r.id))).rejects.toThrow();
       await expect(db.delete(schema.refundEvents).where(eq(schema.refundEvents.refundId, r.id))).rejects.toThrow();
       const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, o.orderId));
-      expect(order!.paymentStatus).toBe('refunded');
+      expect(order.paymentStatus).toBe('refunded');
     });
 
     it('a partial refund leaves the order paid; only a full one makes it refunded', async () => {
@@ -189,11 +189,11 @@ describe.skipIf(!url)('refunds (database)', () => {
       const a = await request(o.customer.id, 'credit_note_excess', o.cn.id, '580');
       await fin.refunds.submit(ctx, a.id);
       expect(await payOut(a.id)).toMatchObject({ order: 'partially_refunded' });
-      expect((await db.select().from(schema.orders).where(eq(schema.orders.id, o.orderId)))[0]!.paymentStatus).toBe('paid');
+      expect((await db.select().from(schema.orders).where(eq(schema.orders.id, o.orderId)))[0].paymentStatus).toBe('paid');
       const b = await request(o.customer.id, 'credit_note_excess', o.cn.id, '580', { paymentMethodId: methodId.BANK_TRANSFER, payoutDetails: { bankName: 'KCB', accountNumber: '1', accountName: 'A' } });
       await fin.refunds.submit(ctx, b.id);
       expect(await payOut(b.id)).toMatchObject({ order: 'refunded' });
-      expect((await db.select().from(schema.orders).where(eq(schema.orders.id, o.orderId)))[0]!.paymentStatus).toBe('refunded');
+      expect((await db.select().from(schema.orders).where(eq(schema.orders.id, o.orderId)))[0].paymentStatus).toBe('refunded');
     });
 
     it('cancelling after approval gives the money back to where it came from, once', async () => {
@@ -214,19 +214,19 @@ describe.skipIf(!url)('refunds (database)', () => {
       const o = await owed();
       await fin.creditNoteAccounting.resolveToWallet(ctx, o.cn.id);
       const [w] = await db.select().from(schema.customerWallets).where(eq(schema.customerWallets.customerId, o.customer.id));
-      expect(w!.balance).toBe('580.00');
-      const r = await request(o.customer.id, 'wallet', w!.id, '400');
+      expect(w.balance).toBe('580.00');
+      const r = await request(o.customer.id, 'wallet', w.id, '400');
       await fin.refunds.submit(ctx, r.id);
-      expect((await db.select().from(schema.customerWallets).where(eq(schema.customerWallets.id, w!.id)))[0]!.balance).toBe('180.00');
-      expect(await codeOf(request(o.customer.id, 'wallet', w!.id, '200', { paymentMethodId: methodId.BANK_TRANSFER, payoutDetails: { bankName: 'KCB', accountNumber: '1', accountName: 'A' } }))).toBe('OVER_OBLIGATION');
+      expect((await db.select().from(schema.customerWallets).where(eq(schema.customerWallets.id, w.id)))[0].balance).toBe('180.00');
+      expect(await codeOf(request(o.customer.id, 'wallet', w.id, '200', { paymentMethodId: methodId.BANK_TRANSFER, payoutDetails: { bankName: 'KCB', accountNumber: '1', accountName: 'A' } }))).toBe('OVER_OBLIGATION');
       await fin.refunds.cancel(ctx, r.id, { code: 'CUSTOMER_REQUEST' });
-      expect((await db.select().from(schema.customerWallets).where(eq(schema.customerWallets.id, w!.id)))[0]!.balance).toBe('580.00');
+      expect((await db.select().from(schema.customerWallets).where(eq(schema.customerWallets.id, w.id)))[0].balance).toBe('580.00');
       await policy();
     });
 
     it('an overpaid receipt can be refunded', async () => {
       const o = await owed();
-      const cash = methodId.CASH!;
+      const cash = methodId.CASH;
       const rc = await fin.receipts.create(ctx, { customerId: o.customer.id, paymentMethodId: cash, amount: '250', paymentDate: today });
       await fin.receipts.post(ctx, rc.id, { allocate: 'none' });
       const r = await request(o.customer.id, 'receipt_unapplied', rc.id, '250');
@@ -242,8 +242,8 @@ describe.skipIf(!url)('refunds (database)', () => {
     it('sends only what is approved, never twice, and records the payment from the confirmed result with the receipt as reference', async () => {
       const o = await owed();
       const { id: providerId } = await fin.paymentProviders.create(ctx, { providerCode: 'mpesa_daraja', displayName: `RF auto ${run}` });
-      const [before] = await db.select().from(schema.paymentMethods).where(eq(schema.paymentMethods.id, methodId.MPESA!));
-      await db.update(schema.paymentMethods).set({ providerId, refundDestination: 'automatic' }).where(eq(schema.paymentMethods.id, methodId.MPESA!));
+      const [before] = await db.select().from(schema.paymentMethods).where(eq(schema.paymentMethods.id, methodId.MPESA));
+      await db.update(schema.paymentMethods).set({ providerId, refundDestination: 'automatic' }).where(eq(schema.paymentMethods.id, methodId.MPESA));
       try {
         const r = await request(o.customer.id, 'credit_note_excess', o.cn.id, '300', { paymentMethodId: methodId.MPESA, payoutDetails: { phone: o.customer.phone! } });
         // not approved yet: nothing to send
@@ -256,16 +256,16 @@ describe.skipIf(!url)('refunds (database)', () => {
         expect(await codeOf(fin.refunds.prepareAutomatic(reqCtx, r.id))).toBe('PAYOUT_IN_PROGRESS');
         expect(await codeOf(payOut(r.id))).toBe('PAYOUT_IN_PROGRESS');
         // it was not paid (held for a check): the refund stays approved and says why
-        await fin.refunds.onAutomaticPayoutFinished({ ...op!, status: 'in_doubt', failureCode: 'STATUS_AMOUNT_MISMATCH', failureReason: 'differs' });
+        await fin.refunds.onAutomaticPayoutFinished({ ...op, status: 'in_doubt', failureCode: 'STATUS_AMOUNT_MISMATCH', failureReason: 'differs' });
         expect(await status(r.id)).toBe('approved');
         // confirmed: recorded as paid, by the system, with the M-Pesa receipt as the reference and no evidence file needed
-        await fin.refunds.onAutomaticPayoutFinished({ ...op!, status: 'succeeded', platformReference: 'RFAUTO0001' });
+        await fin.refunds.onAutomaticPayoutFinished({ ...op, status: 'succeeded', platformReference: 'RFAUTO0001' });
         const [paid] = await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, r.id));
         expect(paid).toMatchObject({ status: 'paid', payoutReference: 'RFAUTO0001' });
         const [bank] = await db.select().from(schema.bankLedgerEntries).where(eq(schema.bankLedgerEntries.documentId, r.id));
-        expect(Number(bank!.amount)).toBe(-300);
+        expect(Number(bank.amount)).toBe(-300);
       } finally {
-        await db.update(schema.paymentMethods).set({ providerId: before!.providerId, refundDestination: before!.refundDestination }).where(eq(schema.paymentMethods.id, methodId.MPESA!));
+        await db.update(schema.paymentMethods).set({ providerId: before.providerId, refundDestination: before.refundDestination }).where(eq(schema.paymentMethods.id, methodId.MPESA));
       }
     });
   });
@@ -282,7 +282,7 @@ describe.skipIf(!url)('refunds (database)', () => {
       expect(await cnOpen(o.cn.id)).toBe(58000);
       await approve((await openEntry(r.id)).id, boss);
       expect(await status(r.id)).toBe('approved');
-      expect((await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, r.id)))[0]!.approvedBy).toBe(boss);
+      expect((await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, r.id)))[0].approvedBy).toBe(boss);
       expect(await cnOpen(o.cn.id)).toBe(0);
       expect(await codeOf(payOut(r.id, bossCtx))).toBe('SAME_PERSON');
       await payOut(r.id, reqCtx);
@@ -330,7 +330,7 @@ describe.skipIf(!url)('refunds (database)', () => {
       const r = await request(o.customer.id, 'credit_note_excess', o.cn.id, '580');
       await fin.refunds.submit(ctx, r.id);
       early = { id: r.id, cnId: o.cn.id };
-      await fin.salesPosting.goLive(ctx, { offsetAccountId: acct['3100']! });
+      await fin.salesPosting.goLive(ctx, { offsetAccountId: acct['3100'] });
     });
     const glOf = async (registerId: string) => {
       const no = new Map(Object.entries(acct).map(([n, id]) => [id, n]));
@@ -341,7 +341,7 @@ describe.skipIf(!url)('refunds (database)', () => {
       expect((await fin.refunds.payableReconciliation(companyId)).map((r) => r.diffCents)).toEqual([0]);
       await payOut(early.id);
       const [paid] = await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, early.id));
-      expect(await glOf(paid!.payoutRegisterId!)).toEqual([['1110', 0, 580], ['2220', 580, 0]]);
+      expect(await glOf(paid.payoutRegisterId!)).toEqual([['1110', 0, 580], ['2220', 580, 0]]);
       expect((await fin.refunds.payableReconciliation(companyId)).map((r) => r.diffCents)).toEqual([0]);
     });
 
@@ -351,7 +351,7 @@ describe.skipIf(!url)('refunds (database)', () => {
       const r = await request(o.customer.id, 'credit_note_excess', o.cn.id, '580');
       await fin.refunds.submit(ctx, r.id);
       const [a] = await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, r.id));
-      expect(await glOf(a!.reserveRegisterId!)).toEqual([['1210', 580, 0], ['2220', 0, 580]]);
+      expect(await glOf(a.reserveRegisterId!)).toEqual([['1210', 580, 0], ['2220', 0, 580]]);
       expect((await fin.refunds.payableReconciliation(companyId)).map((x) => x.diffCents)).toEqual([0]);
       expect((await fin.salesPosting.reconciliation(companyId)).rows.map((x) => x.diffCents)).toEqual([0]);
       await payOut(r.id);
@@ -373,10 +373,10 @@ describe.skipIf(!url)('refunds (database)', () => {
       const o = await owed();
       await fin.creditNoteAccounting.resolveToWallet(ctx, o.cn.id);
       const [w] = await db.select().from(schema.customerWallets).where(eq(schema.customerWallets.customerId, o.customer.id));
-      const r = await request(o.customer.id, 'wallet', w!.id, '580');
+      const r = await request(o.customer.id, 'wallet', w.id, '580');
       await fin.refunds.submit(ctx, r.id);
       const [a] = await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, r.id));
-      expect(await glOf(a!.reserveRegisterId!)).toEqual([['2210', 580, 0], ['2220', 0, 580]]);
+      expect(await glOf(a.reserveRegisterId!)).toEqual([['2210', 580, 0], ['2220', 0, 580]]);
       await payOut(r.id);
       expect((await fin.wallets.reconciliation(companyId)).map((x) => x.diffCents)).toEqual([0]);
       expect((await fin.refunds.payableReconciliation(companyId)).map((x) => x.diffCents)).toEqual([0]);

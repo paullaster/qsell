@@ -142,3 +142,9 @@ export function maskCredentials(
   }
   return out;
 }
+
+/** The credentials that are text, which is all any provider's credentials are; anything else is left out. */
+export function stringFields(raw: Readonly<Record<string, unknown>> | null): Record<string, string> {
+  if (raw === null) return {};
+  return Object.fromEntries(Object.entries(raw).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+}

@@ -61,7 +61,7 @@ export class ProviderOperationService {
       .select()
       .from(providerOperations)
       .where(and(eq(providerOperations.companyId, input.companyId), eq(providerOperations.idempotencyKey, input.idempotencyKey)));
-    return { op: existing!, created: false };
+    return { op: existing, created: false };
   }
 
   async get(id: string) {
@@ -86,7 +86,7 @@ export class ProviderOperationService {
   }
 
   async bySubject(subjectType: string, subjectId: string, operation?: string) {
-    return this.db
+    return await this.db
       .select()
       .from(providerOperations)
       .where(and(eq(providerOperations.subjectType, subjectType), eq(providerOperations.subjectId, subjectId), operation ? eq(providerOperations.operation, operation) : undefined))
@@ -131,7 +131,7 @@ export class ProviderOperationService {
 
   /** Operations whose turn has come (to be asked about again). */
   async due(limit = 100) {
-    return this.db
+    return await this.db
       .select()
       .from(providerOperations)
       .where(and(inArray(providerOperations.status, ACTIVE), lte(providerOperations.nextAttemptAt, new Date())))

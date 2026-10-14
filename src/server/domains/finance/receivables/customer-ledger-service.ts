@@ -194,7 +194,7 @@ export class CustomerLedgerService {
     const issues = checkApplications(creditAvail, invoiceOpen, planned);
     if (issues.length > 0) {
       throw new FinanceError(
-        issues[0]!.code,
+        issues[0].code,
         issues.map((i) => i.message).join(' '),
         issues.map((i) => ({ code: i.code, message: i.message })),
       );
@@ -287,7 +287,7 @@ export class CustomerLedgerService {
       if (c > 0) restoredToInvoices += c;
     }
     await this.shiftRemaining(tx, deltas);
-    await this.moveBalance(tx, original[0]!.customerId, restoredToInvoices);
+    await this.moveBalance(tx, original[0].customerId, restoredToInvoices);
     await this.decisions.record(
       {
         companyId: ctx.companyId,
@@ -379,7 +379,7 @@ export class CustomerLedgerService {
 
   /** Open invoices (positive) and unapplied credits (negative) for one customer. */
   async openItems(companyId: string, customerId: string) {
-    return this.db
+    return await this.db
       .select()
       .from(customerLedgerEntries)
       .where(
@@ -426,7 +426,7 @@ export class CustomerLedgerService {
 
   /** Detailed history of one ledger entry (what happened to it, in order). */
   async history(companyId: string, ledgerEntryId: string) {
-    return this.db
+    return await this.db
       .select()
       .from(customerDetailedEntries)
       .where(and(eq(customerDetailedEntries.companyId, companyId), eq(customerDetailedEntries.ledgerEntryId, ledgerEntryId)))

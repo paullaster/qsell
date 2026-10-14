@@ -1,6 +1,6 @@
 import type { CallbackOutcome, PaymentProviderCode } from './types';
 
-export type CallbackStatusVerdict = {
+export interface CallbackStatusVerdict {
   /**
    * The exact status value the provider sent in the callback payload, verbatim.
    * mpesa_daraja / kcb_buni: Body.stkCallback.ResultCode (e.g. "0", "1", "1032").
@@ -14,7 +14,7 @@ export type CallbackStatusVerdict = {
    * or the provider value is not a status we know how to interpret.
    */
   outcome: CallbackOutcome;
-};
+}
 
 /**
  * The single, explicit system definition of how a callback determines whether

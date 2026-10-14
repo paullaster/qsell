@@ -5,7 +5,7 @@ import { newSecret } from './engine/redact';
 import type { PaymentEngine } from './engine/payment-engine';
 import type { AttemptSettler } from './engine/verification-service';
 import type { InitiatePaymentResult } from './port';
-import { PaymentRegistry } from './registry';
+import { type PaymentRegistry } from './registry';
 import { PaymentAttemptRepository, PaymentConfigRepository } from './repository';
 import { decryptCredentials, encryptCredentials, needsResealing } from './crypto';
 import { PAYMENT_PROVIDER_META, type PaymentProviderCode } from './types';
@@ -164,7 +164,7 @@ export class PaymentService implements AttemptSettler {
     description?: string;
   }) {
     const resolved = await this.resolveCheckout(params.branch, params.providerCode);
-    if (!resolved || !resolved.provider.isEnabled) {
+    if (!resolved?.provider.isEnabled) {
       throw new Error(`Payment provider ${params.providerCode} is not enabled for this branch`);
     }
     const config = resolved.provider;
@@ -219,7 +219,7 @@ export class PaymentService implements AttemptSettler {
           description: params.description,
         },
         credentials,
-        (config.settings as Record<string, unknown>) || {},
+        (config.settings) || {},
         config.apiBaseUrl,
       );
     }
@@ -249,7 +249,7 @@ export class PaymentService implements AttemptSettler {
     await this.orderRepo.update(params.orderId, {
       paymentStatus: status === 'failed' ? 'failed' : 'pending_verification',
       ...(status === 'failed' ? { status: 'failed' as const } : {}),
-      paymentMethod: params.providerCode as PaymentProvider,
+      paymentMethod: params.providerCode,
       // The finance method it goes through decides which bank account and G/L account it posts to.
       ...(resolved.methodId ? { paymentMethodId: resolved.methodId } : {}),
     });
@@ -282,9 +282,9 @@ export class PaymentService implements AttemptSettler {
       origin: { surface: 'storefront', action: 'checkout' },
     }).catch((error: unknown) => ({ op: null, error }));
     if (!op || op.status !== 'accepted') {
-      return { status: 'failed', errorMessage: op?.failureReason ?? 'M-Pesa Express could not be started.', rawResponse: (op?.response ?? {}) as Record<string, unknown> };
+      return { status: 'failed', errorMessage: op?.failureReason ?? 'M-Pesa Express could not be started.', rawResponse: (op?.response ?? {}) };
     }
-    const r = op.response as Record<string, unknown>;
+    const r = op.response;
     return {
       status: 'pending',
       providerReference: String(r.CheckoutRequestID ?? op.conversationId ?? ''),
@@ -301,7 +301,7 @@ export class PaymentService implements AttemptSettler {
       .from(providerTransactions)
       .where(and(eq(providerTransactions.consumedType, 'payment_attempt'), eq(providerTransactions.consumedId, attemptId)))
       .limit(1);
-    return !!row;
+    return Boolean(row);
   }
 
   /**

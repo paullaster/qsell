@@ -58,7 +58,7 @@ export function JournalEditorClient({ view }: { view: BatchView }) {
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     const account = accountByText.get(form.account);
-    if (!account) return setNotice({ kind: 'error', text: 'Pick an account from the list.' });
+    if (!account) { setNotice({ kind: 'error', text: 'Pick an account from the list.' }); return; }
     setBusy(true);
     setPreview(null);
     const res = await attempt(saveJournalLineAction(
@@ -67,7 +67,7 @@ export function JournalEditorClient({ view }: { view: BatchView }) {
       editId,
     ));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     setNotice(null);
     reset();
     router.refresh();
@@ -91,7 +91,7 @@ export function JournalEditorClient({ view }: { view: BatchView }) {
     setPreview(null);
     const res = await attempt(deleteJournalLineAction(view.batch.id, id));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     router.refresh();
   };
 
@@ -100,7 +100,7 @@ export function JournalEditorClient({ view }: { view: BatchView }) {
     setNotice(null);
     const res = await attempt(previewBatchAction(view.batch.id));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     setPreview(res.data);
     const bad = res.data.filter((p) => !p.ok).length;
     setNotice(bad === 0 ? { kind: 'ok', text: 'Everything in this batch can be posted.' } : { kind: 'error', text: `${bad} document${bad === 1 ? '' : 's'} cannot be posted yet.` });
@@ -112,7 +112,7 @@ export function JournalEditorClient({ view }: { view: BatchView }) {
     setNotice(null);
     const res = await attempt(postBatchAction(view.batch.id));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     router.push('/admin/finance/registers');
   };
 

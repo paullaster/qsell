@@ -7,7 +7,7 @@ import {
   type ConnectionTestResult,
   type PaymentPort,
 } from '../port';
-import type { KcbBuniCredentials } from '../types';
+import { asKcbBuniCredentials, type KcbBuniCredentials } from '../types';
 import { extractPaymentReference } from '../payment-reference';
 
 function formatPhoneKe(phone: string): string {
@@ -26,8 +26,8 @@ export class KcbBuniAdapter implements PaymentPort {
     _settings: Record<string, unknown>,
     apiBaseUrl: string,
   ): Promise<ConnectionTestResult> {
-    const creds = credentials as unknown as KcbBuniCredentials;
-    return probeConnection('KCB Buni', async () => {
+    const creds = asKcbBuniCredentials(credentials);
+    return await probeConnection('KCB Buni', async () => {
       if (!creds.consumerKey || !creds.consumerSecret) throw new Error('The consumer key and secret are not saved yet.');
       await this.getAccessToken(apiBaseUrl, creds);
     });
@@ -58,7 +58,7 @@ export class KcbBuniAdapter implements PaymentPort {
     settings: Record<string, unknown>,
     apiBaseUrl: string,
   ): Promise<InitiatePaymentResult> {
-    const creds = credentials as KcbBuniCredentials;
+    const creds = asKcbBuniCredentials(credentials);
     if (!creds.consumerKey || !creds.consumerSecret || !creds.orgShortCode) {
       return {
         status: 'failed',

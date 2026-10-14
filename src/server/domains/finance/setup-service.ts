@@ -111,7 +111,7 @@ export class FinanceSetupService {
 
   async createAccount(ctx: FinanceContext, input: AccountInput) {
     this.check(input);
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const [dup] = await tx
         .select({ id: glAccounts.id })
         .from(glAccounts)
@@ -138,21 +138,21 @@ export class FinanceSetupService {
       await this.decisions.record(
         {
           companyId: ctx.companyId,
-          subject: { type: 'gl_account', id: row!.id },
+          subject: { type: 'gl_account', id: row.id },
           action: 'finance.account_created',
           actor: ctx.actor,
           inputs: { origin: ctx.origin },
-          outcome: { no: row!.no, name: row!.name, type: row!.type },
+          outcome: { no: row.no, name: row.name, type: row.type },
         },
         tx,
       );
-      return row!;
+      return row;
     });
   }
 
   async updateAccount(ctx: FinanceContext, id: string, input: AccountInput) {
     this.check(input);
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const [before] = await tx
         .select()
         .from(glAccounts)
@@ -204,11 +204,11 @@ export class FinanceSetupService {
           action: 'finance.account_changed',
           actor: ctx.actor,
           inputs: { origin: ctx.origin, before: { no: before.no, name: before.name, type: before.type } },
-          outcome: { no: row!.no, name: row!.name, type: row!.type },
+          outcome: { no: row.no, name: row.name, type: row.type },
         },
         tx,
       );
-      return row!;
+      return row;
     });
   }
 
@@ -278,10 +278,10 @@ export class FinanceSetupService {
     if (!template) throw new FinanceError('TEMPLATE_UNKNOWN', `There is no template "${code}".`);
     const problems = validateChart(template.accounts);
     if (problems.length > 0) {
-      throw new FinanceError('TEMPLATE_INVALID', problems[0]!.message, problems.map((p) => ({ message: p.message })));
+      throw new FinanceError('TEMPLATE_INVALID', problems[0].message, problems.map((p) => ({ message: p.message })));
     }
-    return this.db.transaction(async (tx) => {
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'finance-template:' + ctx.companyId}))`);
+    return await this.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`finance-template:${  ctx.companyId}`}))`);
       const [any] = await tx
         .select({ id: glAccounts.id })
         .from(glAccounts)

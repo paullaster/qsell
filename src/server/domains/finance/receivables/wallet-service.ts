@@ -101,7 +101,7 @@ export class WalletService {
       .update(customerWallets)
       .set({ balance: sql`${customerWallets.balance} + ${fromCents(p.cents)}::numeric`, updatedAt: new Date() })
       .where(eq(customerWallets.id, w.id));
-    return row!.id;
+    return row.id;
   }
 
   private async credit(
@@ -171,7 +171,7 @@ export class WalletService {
     if (issue) throw new FinanceError(issue.code, issue.message);
 
     const [s] = await tx.select().from(financeSettings).where(eq(financeSettings.companyId, ctx.companyId));
-    const live = Boolean(s?.salesGlGoLive) && p.postingDate >= s!.salesGlGoLive!;
+    const live = Boolean(s?.salesGlGoLive) && p.postingDate >= s.salesGlGoLive!;
     let registerId: string | null = null;
     if (live) {
       const [receivables, deposits] = await Promise.all([
@@ -189,7 +189,7 @@ export class WalletService {
         description: `${p.documentNo} to ${policy.label.toLowerCase()}`,
         currency: p.currency,
         rate: p.rate,
-        rateSource: p.currency === s!.baseCurrency ? 'base' : 'manual',
+        rateSource: p.currency === s.baseCurrency ? 'base' : 'manual',
         lines: [
           { accountId: receivables.accountId, debit: fromCents(p.cents), credit: '0', description: `${p.documentNo} moved to ${policy.label.toLowerCase()}`, sourceLedger: 'customer', sourceEntryId: p.customerId },
           { accountId: deposits.accountId, debit: '0', credit: fromCents(p.cents), description: `Customer deposits: ${p.documentNo}`, sourceLedger: 'wallet', sourceEntryId: p.customerId },
@@ -252,10 +252,10 @@ export class WalletService {
 
   /** Same, as its own action on a posted receipt. */
   async moveReceiptToWallet(ctx: FinanceContext, receiptId: string, opts: { cents?: number; permissions?: PostingPermissions } = {}) {
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const [r] = await tx.select().from(customerReceipts).where(and(eq(customerReceipts.companyId, ctx.companyId), eq(customerReceipts.id, receiptId))).for('update');
       if (!r) throw new FinanceError('NOT_FOUND', 'That receipt does not exist.');
-      return this.moveReceiptIn(tx, ctx, r, opts);
+      return await this.moveReceiptIn(tx, ctx, r, opts);
     });
   }
 

@@ -9,7 +9,7 @@ const fin = () => getContainer().finance;
 const PATH = '/admin/finance/sales-posting';
 
 export async function salesPostingOverviewAction() {
-  return run('sales_posting:read', { surface: 'finance/sales-posting', action: 'view' }, async (ctx) => {
+  return await run('sales_posting:read', { surface: 'finance/sales-posting', action: 'view' }, async (ctx) => {
     const [settings, checks, backlog, open, recon, accounts, openingFigures] = await Promise.all([
       fin().setup.getSettings(ctx.companyId),
       fin().salesPosting.readiness(ctx.companyId),
@@ -57,16 +57,16 @@ export async function salesPostingOverviewAction() {
 }
 
 export async function setOutputTaxAccountAction(accountId: string) {
-  return run('finance_settings:edit', { surface: 'finance/sales-posting', action: 'set_output_tax_account' }, async (ctx) =>
-    fin().salesPosting.setOutputTaxAccount(ctx, accountId), [PATH]);
+  return await run('finance_settings:edit', { surface: 'finance/sales-posting', action: 'set_output_tax_account' }, async (ctx) =>
+    await fin().salesPosting.setOutputTaxAccount(ctx, accountId), [PATH]);
 }
 
 export async function goLiveAction(offsetAccountId: string) {
-  return run('sales_gl_go_live:set', { surface: 'finance/sales-posting', action: 'go_live' }, async (ctx) =>
-    fin().salesPosting.goLive(ctx, { offsetAccountId }), [PATH, '/admin/finance/receipts']);
+  return await run('sales_gl_go_live:set', { surface: 'finance/sales-posting', action: 'go_live' }, async (ctx) =>
+    await fin().salesPosting.goLive(ctx, { offsetAccountId }), [PATH, '/admin/finance/receipts']);
 }
 
 export async function retrySalesPostingAction(id?: string) {
-  return run('sales_posting:retry', { surface: 'finance/sales-posting', action: id ? 'retry_one' : 'retry_all' }, async (ctx) =>
-    fin().salesPosting.retry(ctx, id), [PATH]);
+  return await run('sales_posting:retry', { surface: 'finance/sales-posting', action: id ? 'retry_one' : 'retry_all' }, async (ctx) =>
+    await fin().salesPosting.retry(ctx, id), [PATH]);
 }

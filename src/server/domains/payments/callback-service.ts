@@ -4,8 +4,8 @@ import {
   paymentCallbackEvents,
   type PaymentCallbackEventRow,
 } from '@/server/db/drizzle/schema';
-import { PaymentRegistry } from './registry';
-import { PaymentConfigRepository, PaymentAttemptRepository } from './repository';
+import { type PaymentRegistry } from './registry';
+import { type PaymentConfigRepository, type PaymentAttemptRepository } from './repository';
 import { decryptCredentials } from './crypto';
 import { classifyCallbackPayload } from './callback-status';
 import type { CallbackResult } from './port';
@@ -29,7 +29,7 @@ export class PaymentCallbackService {
 
   /** Dumps that still have no verdict — unclassified or errored mid-classification. */
   async listRequiringReview(limit = 50): Promise<PaymentCallbackEventRow[]> {
-    return this.db
+    return await this.db
       .select()
       .from(paymentCallbackEvents)
       .where(
@@ -55,7 +55,7 @@ export class PaymentCallbackService {
     if (!event) throw new Error('Callback event not found.');
 
     const verdict = classifyCallbackPayload(
-      event.providerCode as PaymentProviderCode,
+      event.providerCode,
       event.rawBody,
     );
     if (verdict.rawStatus) {
@@ -68,7 +68,7 @@ export class PaymentCallbackService {
         })
         .where(eq(paymentCallbackEvents.id, eventId))
         .returning();
-      return updated!;
+      return updated;
     }
 
     const attempt = event.paymentAttemptId
@@ -82,7 +82,7 @@ export class PaymentCallbackService {
 
     const config = await this.configs.getById(attempt.providerConfigId);
     const credentials = decryptCredentials(config?.credentialsEncrypted) || {};
-    const adapter = this.registry.resolve(event.providerCode as PaymentProviderCode);
+    const adapter = this.registry.resolve(event.providerCode);
 
     let result: CallbackResult;
     try {
@@ -94,7 +94,7 @@ export class PaymentCallbackService {
           rawBodyText: event.rawBody ? JSON.stringify(event.rawBody) : '',
         },
         credentials,
-        (config?.settings as Record<string, unknown>) || {},
+        (config?.settings!) || {},
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Classification failed';
@@ -107,7 +107,7 @@ export class PaymentCallbackService {
         })
         .where(eq(paymentCallbackEvents.id, eventId))
         .returning();
-      return failed!;
+      return failed;
     }
 
     const [updated] = await this.db
@@ -119,6 +119,6 @@ export class PaymentCallbackService {
       })
       .where(eq(paymentCallbackEvents.id, eventId))
       .returning();
-    return updated!;
+    return updated;
   }
 }

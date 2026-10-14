@@ -1,5 +1,5 @@
 import { probeConnection, type CallbackInput, type CallbackResult, type ConnectionTestResult, type InitiatePaymentInput, type InitiatePaymentResult, type PaymentPort } from '../port';
-import type { MpesaDarajaCredentials } from '../types';
+import { asDarajaCredentials, type MpesaDarajaCredentials } from '../types';
 import { extractPaymentReference } from '../payment-reference';
 import { DarajaClient, standaloneContext } from '../daraja/client';
 import { parseStkCallback } from '../daraja/parsers';
@@ -16,8 +16,8 @@ export class MpesaDarajaAdapter implements PaymentPort {
   readonly capabilities = ['collect', 'status_query', 'register_urls', 'balance', 'statement'] as const;
 
   async testConnection(credentials: Record<string, unknown>, _settings: Record<string, unknown>, apiBaseUrl: string): Promise<ConnectionTestResult> {
-    const creds = credentials as unknown as MpesaDarajaCredentials;
-    return probeConnection('M-Pesa (Daraja)', async () => {
+    const creds = asDarajaCredentials(credentials);
+    return await probeConnection('M-Pesa (Daraja)', async () => {
       if (!creds.consumerKey || !creds.consumerSecret) throw new Error('The consumer key and secret are not saved yet.');
       // Always ask Safaricom afresh: a cached token would say nothing about these credentials.
       const client = new DarajaClient(standaloneContext(credentials, apiBaseUrl));
@@ -46,9 +46,9 @@ export class MpesaDarajaAdapter implements PaymentPort {
     if (!ev) return { status: 'pending', by: 'transaction_status', reason: 'Waiting for Safaricom\'s transaction status for this receipt.', evidence: { ...stk.evidence, needs: 'transaction_status', receipt } };
     const answer = readStatusAnswer((ev.result ?? {}) as Record<string, unknown>);
     if (!answer) return { status: 'error', by: 'transaction_status', reason: 'The transaction status answer could not be read.', retryable: false };
-    const agreed = statusAgrees(answer, { receipt, amountCents: input.amountCents, shortcode: (ctx.credentials as unknown as MpesaDarajaCredentials).shortcode ?? null });
-    if (!agreed.ok) return { status: 'mismatch', by: 'transaction_status', code: agreed.code, reason: agreed.reason, evidence: { ...stk.evidence, transactionStatus: ev.result as Record<string, unknown> } };
-    return { ...stk, by: 'stk_query+transaction_status', platformReference: receipt, evidence: { ...stk.evidence, transactionStatus: ev.result as Record<string, unknown> } };
+    const agreed = statusAgrees(answer, { receipt, amountCents: input.amountCents, shortcode: asDarajaCredentials(ctx.credentials).shortcode ?? null });
+    if (!agreed.ok) return { status: 'mismatch', by: 'transaction_status', code: agreed.code, reason: agreed.reason, evidence: { ...stk.evidence, transactionStatus: ev.result } };
+    return { ...stk, by: 'stk_query+transaction_status', platformReference: receipt, evidence: { ...stk.evidence, transactionStatus: ev.result } };
   }
 
   /** Kept for the manual classification screen: what the body says, without any confirmation. */

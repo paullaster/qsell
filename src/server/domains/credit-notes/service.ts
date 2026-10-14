@@ -156,7 +156,7 @@ export class CreditNoteService {
         .insert(creditNoteLines)
         .values(
           lines.map((l) => ({
-            creditNoteId: cn!.id,
+            creditNoteId: cn.id,
             productId: l.productId,
             description: l.description,
             quantity: l.quantity,
@@ -165,8 +165,8 @@ export class CreditNoteService {
           })),
         )
         .returning();
-      await input.effects?.(tx, cn!, lineRows);
-      return cn!;
+      await input.effects?.(tx, cn, lineRows);
+      return cn;
     };
 
     // After commit: sign in the background. Whatever happens there, the credit note stands.
@@ -193,11 +193,11 @@ export class CreditNoteService {
       .where(eq(creditNotes.id, creditNoteId))
       .limit(1);
     if (!cn) throw new CreditNoteError('NOT_FOUND', 'Credit note not found.');
-    return this.signing.processCreditNote(cn.id);
+    return await this.signing.processCreditNote(cn.id);
   }
 
   async listForSource(kind: string, id: string): Promise<CreditNoteRow[]> {
-    return this.db
+    return await this.db
       .select()
       .from(creditNotes)
       .where(and(eq(creditNotes.sourceKind, kind), eq(creditNotes.sourceId, id)))
@@ -334,7 +334,7 @@ export class CreditNoteService {
     }
     const items = await this.db.select().from(orderItems).where(eq(orderItems.orderId, order.id));
 
-    return this.issue(
+    return await this.issue(
       {
         companyId: await this.companyIdFor(order.tradeCustomerId, order.branchId),
         branchId: order.branchId,
@@ -415,7 +415,7 @@ export class CreditNoteService {
         amount: preview.amount,
         facts: { reasonCode: request.reason.code, isFullReturn: preview.isFullReturn },
         action: 'order_credit_note',
-        payload: request as unknown as Record<string, unknown>,
+        payload: request,
         summary: `Issue a credit note of KES ${preview.amount.toLocaleString('en-KE')} against order ${preview.orderNumber} (${request.reason.code.replace(/_/g, ' ')}${request.restock ? ', returned to stock' : ''}).`,
       },
       () => this.issueForOrder(request),

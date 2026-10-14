@@ -27,7 +27,7 @@ export function redactDeep<T>(value: T): T {
     if (v && typeof v === 'object') {
       const rec = v as Record<string, unknown>;
       // The M-Pesa metadata shape: { Name: 'PhoneNumber', Value: 254... }
-      const named = typeof rec.Name === 'string' && PHONE_KEY.test(rec.Name) ? true : false;
+      const named = Boolean(typeof rec.Name === 'string' && PHONE_KEY.test(rec.Name));
       return Object.fromEntries(
         Object.entries(rec).map(([k, x]) => {
           if (SECRET_KEY.test(k)) return [k, '[REDACTED]'];

@@ -32,7 +32,7 @@ export function EntriesClient({ initial }: { initial: Page }) {
     setNotice(null);
     const res = await query();
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     setRows(res.data.rows);
     setNext(res.data.next);
   };
@@ -42,7 +42,7 @@ export function EntriesClient({ initial }: { initial: Page }) {
     setBusy(true);
     const res = await query(next);
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     setRows((r) => [...r, ...res.data.rows]);
     setNext(res.data.next);
   };

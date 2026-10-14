@@ -135,8 +135,8 @@ export function ageOpenItems(
   const edges = [...bounds].sort((a, b) => a - b);
   const buckets: AgeBucket[] = [{ label: 'Not yet due', fromDays: Number.NEGATIVE_INFINITY, toDays: 0, cents: 0, count: 0 }];
   for (let i = 0; i < edges.length; i++) {
-    const from = edges[i]! + 1;
-    const to = i + 1 < edges.length ? edges[i + 1]! : null;
+    const from = edges[i] + 1;
+    const to = i + 1 < edges.length ? edges[i + 1] : null;
     buckets.push({
       label: to === null ? `Over ${edges[i]} days` : `${from}–${to} days`,
       fromDays: from,
@@ -159,9 +159,9 @@ export function ageOpenItems(
     const daysPast = Math.floor((asOf.getTime() - due) / day);
     const bucket =
       daysPast <= 0
-        ? buckets[0]!
+        ? buckets[0]
         : buckets.slice(1).find((b) => daysPast >= b.fromDays && (b.toDays === null || daysPast <= b.toDays)) ??
-          buckets[buckets.length - 1]!;
+          buckets[buckets.length - 1];
     bucket.cents += it.remainingCents;
     bucket.count += 1;
   }

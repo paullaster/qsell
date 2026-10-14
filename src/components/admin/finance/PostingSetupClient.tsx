@@ -70,7 +70,7 @@ export function PostingSetupClient({ view }: { view: PostingSetupView }) {
     setBusy(true);
     const res = await attempt(saveCustomerGroupAction(custEdit.code, Object.fromEntries(CUSTOMER.map(([k]) => [k, custEdit.accounts[k] || null]))));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     setNotice({ kind: 'ok', text: `Customer group ${custEdit.code} saved.` });
     setCustEdit(null);
     router.refresh();
@@ -88,7 +88,7 @@ export function PostingSetupClient({ view }: { view: PostingSetupView }) {
       accounts: Object.fromEntries(GENERAL.map(([k]) => [k, accounts[k] || null])),
     }));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     setNotice({ kind: 'ok', text: `Saved. It applies from ${from}; earlier documents keep the setup they used.` });
     setEditing(null);
     router.refresh();
@@ -100,7 +100,7 @@ export function PostingSetupClient({ view }: { view: PostingSetupView }) {
     setBusy(true);
     const res = await attempt(addPostingGroupAction(group.kind, group.code, group.name));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     setNotice({ kind: 'ok', text: 'Group added. Give each business × product pair its accounts below.' });
     setGroup(null);
     router.refresh();

@@ -20,7 +20,7 @@ export class PaymentConfigRepository {
 
   /** Every provider of the company, the built-in Manual one included. */
   async listByCompany(companyId: string): Promise<PaymentProviderConfigRow[]> {
-    return this.db
+    return await this.db
       .select()
       .from(paymentProviderConfigs)
       .where(eq(paymentProviderConfigs.companyId, companyId))
@@ -32,7 +32,7 @@ export class PaymentConfigRepository {
    * method for a service yet still offers it at checkout).
    */
   async listByBranch(branchId: string): Promise<PaymentProviderConfigRow[]> {
-    return this.db
+    return await this.db
       .select()
       .from(paymentProviderConfigs)
       .where(and(eq(paymentProviderConfigs.branchId, branchId), ne(paymentProviderConfigs.providerCode, 'manual')))
@@ -105,7 +105,7 @@ export class PaymentConfigRepository {
         settings: input.settings ?? {},
       })
       .returning();
-    return row!;
+    return row;
   }
 
   async update(
@@ -158,7 +158,7 @@ export class PaymentAttemptRepository {
         requestPayload: input.requestPayload ?? {},
       })
       .returning();
-    return row!;
+    return row;
   }
 
   async getByCallbackToken(token: string): Promise<PaymentAttemptRow | null> {
@@ -180,7 +180,7 @@ export class PaymentAttemptRepository {
   }
 
   async listByOrder(orderId: string): Promise<PaymentAttemptRow[]> {
-    return this.db
+    return await this.db
       .select()
       .from(paymentAttempts)
       .where(eq(paymentAttempts.orderId, orderId))
@@ -233,7 +233,7 @@ export class PaymentAttemptRepository {
         processingError: input.processingError ?? null,
       })
       .returning();
-    return row!;
+    return row;
   }
 
   async updateCallbackEvent(
@@ -257,7 +257,7 @@ export class PaymentAttemptRepository {
   }
 
   async listCallbackEvents(limit = 100) {
-    return this.db
+    return await this.db
       .select()
       .from(paymentCallbackEvents)
       .orderBy(desc(paymentCallbackEvents.createdAt))

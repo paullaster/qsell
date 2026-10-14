@@ -87,7 +87,7 @@ export class PaymentProviderService {
       }
       let creds: Record<string, string> = {};
       try {
-        creds = (decryptCredentials(row.credentialsEncrypted) ?? {}) as Record<string, string>;
+        creds = (decryptCredentials(row.credentialsEncrypted) ?? {});
       } catch {
         creds = {};
       }
@@ -100,7 +100,7 @@ export class PaymentProviderService {
         description: meta?.description ?? MANUAL_DESCRIPTION,
         isSystem: row.isSystem,
         isEnabled: row.isEnabled,
-        environment: row.environment as PaymentProviderEnvironment,
+        environment: row.environment,
         apiBaseUrl: row.apiBaseUrl,
         hasCredentials: Boolean(row.credentialsEncrypted),
         maskedCredentials: masked,
@@ -112,8 +112,8 @@ export class PaymentProviderService {
         daraja: dj
           ? {
               settings: dj,
-              operations: Object.values(DARAJA_OPERATIONS).map((o) => ({ code: o.code, label: o.label, description: o.description, group: o.group, async: o.async, moneyOut: o.moneyOut, needsInitiator: o.needsInitiator, needsMethod: o.needsMethod, internal: !!o.internal, sandboxOnly: !!o.sandboxOnly, fields: o.fields, enabled: dj.operations[o.code]?.enabled ?? false, maxAmount: dj.operations[o.code]?.maxAmount ?? null })),
-              hasInitiator: !!(creds.initiatorName && creds.initiatorPassword && creds.certificate),
+              operations: Object.values(DARAJA_OPERATIONS).map((o) => ({ code: o.code, label: o.label, description: o.description, group: o.group, async: o.async, moneyOut: o.moneyOut, needsInitiator: o.needsInitiator, needsMethod: o.needsMethod, internal: Boolean(o.internal), sandboxOnly: Boolean(o.sandboxOnly), fields: o.fields, enabled: dj.operations[o.code]?.enabled ?? false, maxAmount: dj.operations[o.code]?.maxAmount ?? null })),
+              hasInitiator: Boolean(creds.initiatorName && creds.initiatorPassword && creds.certificate),
             }
           : null,
         methods: methods
@@ -159,13 +159,13 @@ export class PaymentProviderService {
     const row = await this.load(ctx.companyId, id);
     this.notSystem(row);
     const { darajaSettings } = await import('@/server/domains/payments/daraja/config');
-    const merged = { ...((row.settings ?? {}) as Record<string, unknown>) };
-    for (const [k, v] of Object.entries(patch)) merged[k] = v && typeof v === 'object' && !Array.isArray(v) ? { ...((merged[k] as Record<string, unknown>) ?? {}), ...(v as Record<string, unknown>) } : v;
+    const merged = { ...((row.settings ?? {})) };
+    for (const [k, v] of Object.entries(patch)) merged[k] = v && typeof v === 'object' && !Array.isArray(v) ? { ...((merged[k]) ?? {}), ...(v as Record<string, unknown>) } : v;
     const clean = row.providerCode === 'mpesa_daraja' ? darajaSettings(merged) : (await import('@/server/domains/payments/engine/settings')).engineSettings(merged);
     for (const cidr of clean.security.allowedCidrs) {
       if (!/^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?$/.test(cidr)) throw new FinanceError('CIDR_INVALID', `"${cidr}" is not an address or range (use 1.2.3.4 or 1.2.3.0/24).`);
     }
-    await this.configs.update(id, { settings: { ...merged, ...clean } as Record<string, unknown> });
+    await this.configs.update(id, { settings: { ...merged, ...clean } });
     await this.decisions.record({ companyId: ctx.companyId, subject: { type: 'payment_provider', id }, action: 'finance.payment_provider_settings_changed', actor: ctx.actor, inputs: { origin: ctx.origin, changed: Object.keys(patch) } });
   }
 
@@ -202,7 +202,7 @@ export class PaymentProviderService {
     const row = await this.load(ctx.companyId, id);
     this.notSystem(row);
     const [m] = await this.db.select({ n: count() }).from(paymentMethods).where(eq(paymentMethods.providerId, id));
-    if ((m?.n ?? 0) > 0) throw new FinanceError('PROVIDER_IN_USE', `${m!.n} payment method${m!.n === 1 ? ' goes' : 's go'} through this provider. Move or delete ${m!.n === 1 ? 'it' : 'them'} first.`);
+    if ((m?.n ?? 0) > 0) throw new FinanceError('PROVIDER_IN_USE', `${m.n} payment method${m.n === 1 ? ' goes' : 's go'} through this provider. Move or delete ${m.n === 1 ? 'it' : 'them'} first.`);
     const [a] = await this.db.select({ n: count() }).from(paymentAttempts).where(eq(paymentAttempts.providerConfigId, id));
     if ((a?.n ?? 0) > 0) throw new FinanceError('PROVIDER_HAS_PAYMENTS', 'Customers have paid through this provider, so it is kept for the records. Switch it off instead.');
     await this.configs.remove(id);

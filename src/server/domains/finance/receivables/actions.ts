@@ -296,10 +296,10 @@ export async function createReceiptAction(input: ReceiptInput, post?: { allocate
         return { ...created, posted: true, postError: null as string | null };
       } catch (error) {
         if (error instanceof FinanceError || error instanceof PostingError) {
-          return { ...created, posted: false, postError: error.message as string | null };
+          return { ...created, posted: false, postError: error.message };
         }
         console.error('[finance] posting a new receipt failed', error);
-        return { ...created, posted: false, postError: 'Something went wrong while posting. The draft was saved.' as string | null };
+        return { ...created, posted: false, postError: 'Something went wrong while posting. The draft was saved.' };
       }
     },
     [RECEIPTS],

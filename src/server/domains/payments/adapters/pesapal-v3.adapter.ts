@@ -7,7 +7,7 @@ import {
   type ConnectionTestResult,
   type PaymentPort,
 } from '../port';
-import type { PesapalCredentials } from '../types';
+import { asPesapalCredentials, type PesapalCredentials } from '../types';
 import { extractPaymentReference } from '../payment-reference';
 import type { InboundClaim, PlatformContext, VerificationOutcome, VerifyAttemptInput } from '../engine/types';
 import { toCentsLoose } from '../daraja/security';
@@ -21,8 +21,8 @@ export class PesapalV3Adapter implements PaymentPort {
     _settings: Record<string, unknown>,
     apiBaseUrl: string,
   ): Promise<ConnectionTestResult> {
-    const creds = credentials as unknown as PesapalCredentials;
-    return probeConnection('Pesapal', async () => {
+    const creds = asPesapalCredentials(credentials);
+    return await probeConnection('Pesapal', async () => {
       if (!creds.consumerKey || !creds.consumerSecret) throw new Error('The consumer key and secret are not saved yet.');
       await this.getAccessToken(apiBaseUrl, creds);
     });
@@ -52,7 +52,7 @@ export class PesapalV3Adapter implements PaymentPort {
     settings: Record<string, unknown>,
     apiBaseUrl: string,
   ): Promise<InitiatePaymentResult> {
-    const creds = credentials as PesapalCredentials;
+    const creds = asPesapalCredentials(credentials);
     if (!creds.consumerKey || !creds.consumerSecret) {
       return {
         status: 'failed',
@@ -140,7 +140,7 @@ export class PesapalV3Adapter implements PaymentPort {
 
   /** Pesapal's own record of the order, asked for by its tracking id: status, amount, merchant reference. */
   async verifyAttempt(input: VerifyAttemptInput, ctx: PlatformContext): Promise<VerificationOutcome> {
-    const creds = ctx.credentials as unknown as PesapalCredentials;
+    const creds = asPesapalCredentials(ctx.credentials);
     const base = ctx.provider.apiBaseUrl.replace(/\/$/, '');
     const tracking = input.externalReference;
     if (!tracking) return { status: 'error', by: 'pesapal_status', reason: 'This payment has no Pesapal tracking id to ask about.', retryable: false };

@@ -60,9 +60,9 @@ export function toCentsLoose(value: unknown): number | null {
   if (!m) return null;
   const frac = m[3] ?? '';
   if (/[1-9]/.test(frac.slice(2))) return null;
-  const cents = Number(m[2]) * 100 + Number((frac + '00').slice(0, 2));
+  const cents = Number(m[2]) * 100 + Number((`${frac  }00`).slice(0, 2));
   return m[1] ? -cents : cents;
 }
 
 /** An M-Pesa receipt looks like NLJ7RT61SV: ten letters and digits. */
-export const looksLikeReceipt = (s: string | null | undefined) => !!s && /^[A-Z0-9]{10}$/.test(s);
+export const looksLikeReceipt = (s: string | null | undefined): boolean => typeof s === 'string' && /^[A-Z0-9]{10}$/.test(s);

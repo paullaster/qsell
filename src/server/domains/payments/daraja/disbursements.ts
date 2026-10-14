@@ -65,7 +65,7 @@ export class DarajaDisbursements {
       if (Number(row?.total ?? 0) + Number(amount) > Number(settings.dailyPayoutLimit)) throw new OperationRefused('DAILY_LIMIT', `That would take the last 24 hours of payouts past this provider's limit of ${settings.dailyPayoutLimit}.`);
     }
     const { getContainer } = await import('@/server/di/container');
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const { ProviderOperationService } = await import('../engine/operation-service');
       const { op, created } = await new ProviderOperationService(tx as unknown as DrizzleDb).create({
         companyId: input.companyId,
@@ -107,7 +107,7 @@ export class DarajaDisbursements {
       return { op, status: 'pending_approval' as const };
     }).then(async (r) => {
       if (r.status === 'queued') await this.jobs.sendOperation(r.op.id).catch(() => undefined);
-      return { ...r, op: (await this.ops.get(r.op.id))! };
+      return { ...r, op: (await this.ops.get(r.op.id)) };
     });
   }
 
@@ -139,7 +139,7 @@ export class DarajaDisbursements {
       describe: async (id) => {
         const op = await this.ops.get(id);
         if (!op) return null;
-        const i = op.input as Record<string, unknown>;
+        const i = op.input;
         const info = DARAJA_OPERATIONS[op.operation as DarajaOperationCode];
         const to = [i.phone, i.partyB, i.prn, i.transactionId].find((v) => typeof v === 'string');
         return { title: `${info?.label ?? op.operation}: KES ${Number(op.amount ?? 0).toLocaleString('en-KE', { minimumFractionDigits: 2 })}${to ? ` to ${String(to)}` : ''}`, lines: [typeof i.remarks === 'string' ? `Remarks: ${i.remarks}` : '', typeof i.accountReference === 'string' ? `Account: ${i.accountReference}` : ''].filter(Boolean) };

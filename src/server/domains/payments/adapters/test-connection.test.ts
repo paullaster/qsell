@@ -21,7 +21,7 @@ describe('Test connection', () => {
     expect(await a.testConnection(creds, {}, 'https://sandbox.safaricom.co.ke')).toEqual({ ok: true, message: 'Signed in to M-Pesa (Daraja) successfully.' });
     await a.testConnection(creds, {}, 'https://sandbox.safaricom.co.ke');
     expect(globalThis.fetch).toHaveBeenCalledTimes(2); // not served from the token cache
-    const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(String(url)).toBe('https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials');
     expect((init as RequestInit).headers).toMatchObject({ Authorization: `Basic ${Buffer.from('key:secret').toString('base64')}` });
   });

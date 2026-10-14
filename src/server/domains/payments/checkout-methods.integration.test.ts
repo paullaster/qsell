@@ -59,13 +59,13 @@ describe.skipIf(!url)('checkout through payment methods (database)', () => {
         return { ok: true, message: 'ok' };
       },
     };
-    service = new PaymentService(db, new PaymentRegistry([fake as never]));
+    service = new PaymentService(db, new PaymentRegistry([fake]));
     const [company] = await db.insert(schema.companySettings).values({ legalName: 'CK', tradingName: 'CK', email: 'a@b.c', phone: '1', streetAddress: 's', city: 'c', countyOrState: 'x', postalCode: '1', kraPin: 'P', publicBaseUrl: 'https://shop.example' }).returning();
-    companyId = company!.id;
+    companyId = company.id;
     await c.reasonCodes.ensureSystemReasons(companyId);
     ctx = { companyId, actor: { type: 'user', id: 'tester' }, origin: { surface: 'test', action: 'run' } };
     await fin.setup.applyTemplate(ctx, 'kenya', { fiscalYearStart: '2026-01-01' });
-    [branchA, branchB] = await Promise.all(['A', 'B'].map(async (n) => (await db.insert(schema.branches).values({ companyId, code: `CK${run}${n}`, name: `Branch ${n}`, isDefault: false }).returning())[0]!));
+    [branchA, branchB] = await Promise.all(['A', 'B'].map(async (n) => (await db.insert(schema.branches).values({ companyId, code: `CK${run}${n}`, name: `Branch ${n}`, isDefault: false }).returning())[0]));
     providerId = (await fin.paymentProviders.create(ctx, { providerCode: 'mpesa_daraja', displayName: 'M-Pesa Checkout' })).id;
     await fin.paymentProviders.setCredentials(ctx, providerId, { consumerKey: 'K', consumerSecret: 'S', passkey: 'P', shortcode: '174379' });
     await db.update(schema.paymentProviderConfigs).set({ isEnabled: true, lastTestOk: true }).where(eq(schema.paymentProviderConfigs.id, providerId));
@@ -85,18 +85,18 @@ describe.skipIf(!url)('checkout through payment methods (database)', () => {
     expect(out.attempt.providerConfigId).toBe(providerId);
     expect(seen.at(-1)!.creds).toMatchObject({ consumerKey: 'K', shortcode: '174379' });
     const [row] = await db.select().from(schema.orders).where(eq(schema.orders.id, o.id));
-    expect(row!.paymentMethodId).toBe(methodA);
-    expect(row!.paymentMethod).toBe('mpesa_daraja');
+    expect(row.paymentMethodId).toBe(methodA);
+    expect(row.paymentMethod).toBe('mpesa_daraja');
   });
 
   it('another branch goes through its own method of the same provider, to its own G/L account', async () => {
     const o = await order(branchB.id);
     await service.initiatePayment({ branch: branchB, providerCode: 'mpesa_daraja', orderId: o.id, orderNumber: o.number, amount: 116, currency: 'KES', customerName: 'n', customerEmail: 'e@x.io', customerPhone: '254700000001' });
     const [row] = await db.select().from(schema.orders).where(eq(schema.orders.id, o.id));
-    expect(row!.paymentMethodId).toBe(methodB);
-    const [m] = await db.select().from(schema.paymentMethods).where(eq(schema.paymentMethods.id, row!.paymentMethodId!));
-    const [gl] = await db.select().from(schema.glAccounts).where(eq(schema.glAccounts.id, m!.glAccountId));
-    expect(gl!.no).toBe('1130');
+    expect(row.paymentMethodId).toBe(methodB);
+    const [m] = await db.select().from(schema.paymentMethods).where(eq(schema.paymentMethods.id, row.paymentMethodId!));
+    const [gl] = await db.select().from(schema.glAccounts).where(eq(schema.glAccounts.id, m.glAccountId));
+    expect(gl.no).toBe('1130');
   });
 
   it('a provider that is switched off takes no payment, and says so', async () => {
@@ -119,7 +119,7 @@ describe.skipIf(!url)('checkout through payment methods (database)', () => {
       return created;
     }));
     const [a, b] = await Promise.all(rows.map(async (r) => (r instanceof Error ? null : (await db.select().from(schema.orders).where(eq(schema.orders.id, (r as { id: string }).id)))[0] ?? null)));
-    expect(rows.filter((r) => r instanceof Error).map((r) => (r as Error).message)).toEqual([]);
+    expect(rows.filter((r) => r instanceof Error).map((r) => (r).message)).toEqual([]);
     expect(a!.paymentMethodId).toBe(methodA);
     expect(b!.paymentMethodId).toBe(methodB);
   });

@@ -41,7 +41,7 @@ export class PaymentActivityService {
   }
 
   async events(companyId: string, f: { state?: string; before?: string; limit?: number } = {}) {
-    return this.db
+    return await this.db
       .select({ ev: providerEvents, provider: paymentProviderConfigs.displayName })
       .from(providerEvents)
       .innerJoin(paymentProviderConfigs, eq(paymentProviderConfigs.id, providerEvents.providerId))
@@ -51,7 +51,7 @@ export class PaymentActivityService {
   }
 
   async transactions(companyId: string, f: { state?: string; before?: string; limit?: number } = {}) {
-    return this.db
+    return await this.db
       .select({ tx: providerTransactions, provider: paymentProviderConfigs.displayName, method: paymentMethods.name })
       .from(providerTransactions)
       .innerJoin(paymentProviderConfigs, eq(paymentProviderConfigs.id, providerTransactions.providerId))
@@ -70,6 +70,6 @@ export class PaymentActivityService {
         (SELECT COUNT(*)::int FROM provider_transactions WHERE company_id = ${companyId}::uuid AND state = 'review') AS tx_review,
         (SELECT COUNT(*)::int FROM provider_transactions WHERE company_id = ${companyId}::uuid AND state = 'claimed') AS tx_claimed,
         (SELECT COUNT(*)::int FROM provider_transactions WHERE company_id = ${companyId}::uuid AND state = 'consumed') AS tx_consumed`);
-    return row!;
+    return row;
   }
 }

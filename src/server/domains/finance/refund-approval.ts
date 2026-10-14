@@ -10,10 +10,10 @@ export function refundApprovalHandler(db: DrizzleDb): DocumentHandler {
     return getContainer().finance.refunds;
   };
   return {
-    onReleased: async (id, tx) => (await service()).onApproved(tx, id),
-    onRejected: async (id, tx, info) => (await service()).onRejected(tx, id, info),
-    onReopened: async (id, tx) => (await service()).onReopened(tx, id),
-    onCanceled: async (id, tx) => (await service()).onCanceled(tx, id),
+    onReleased: async (id, tx) => await (await service()).onApproved(tx, id),
+    onRejected: async (id, tx, info) => await (await service()).onRejected(tx, id, info),
+    onReopened: async (id, tx) => await (await service()).onReopened(tx, id),
+    onCanceled: async (id, tx) => await (await service()).onCanceled(tx, id),
     describe: async (id) => {
       const [row] = await db
         .select({ r: refundRequests, customer: customers.name, method: paymentMethods.name })

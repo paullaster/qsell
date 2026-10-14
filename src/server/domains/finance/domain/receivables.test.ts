@@ -51,7 +51,7 @@ describe('planOldestFirst', () => {
   });
   it('is deterministic on ties', () => {
     const plan = planOldestFirst([inv('x', 100, '2026-02-01', 'INV-2'), inv('y', 100, '2026-02-01', 'INV-1')], 100);
-    expect(plan[0]!.entryId).toBe('y');
+    expect(plan[0].entryId).toBe('y');
   });
 });
 

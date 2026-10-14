@@ -70,7 +70,7 @@ export class ProviderEventService {
         duplicateOf: dup?.id ?? null,
       })
       .returning();
-    return { event: event!, parsed };
+    return { event, parsed };
   }
 
   async setState(
@@ -100,6 +100,6 @@ export class ProviderEventService {
   }
 
   async forAttempt(attemptId: string) {
-    return this.db.select().from(providerEvents).where(eq(providerEvents.attemptId, attemptId)).orderBy(desc(providerEvents.createdAt));
+    return await this.db.select().from(providerEvents).where(eq(providerEvents.attemptId, attemptId)).orderBy(desc(providerEvents.createdAt));
   }
 }

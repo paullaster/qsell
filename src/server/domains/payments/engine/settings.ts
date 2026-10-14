@@ -61,8 +61,8 @@ export function nextPollDelay(s: VerificationSettings, asked: number): number {
 export function delayForAge(s: VerificationSettings, ageSeconds: number): number {
   let elapsed = 0;
   for (let i = 0; i < s.pollSeconds.length; i++) {
-    elapsed += s.pollSeconds[i]!;
-    if (ageSeconds < elapsed) return s.pollSeconds[i]!;
+    elapsed += s.pollSeconds[i];
+    if (ageSeconds < elapsed) return s.pollSeconds[i];
   }
   return s.pollSeconds[s.pollSeconds.length - 1] ?? 60;
 }

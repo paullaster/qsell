@@ -218,9 +218,9 @@ export class SalesPostingService {
   private async postRow(tx: Tx, row: FinanceSalesPostingRow): Promise<string | null> {
     const s = await this.settings(tx, row.companyId);
     const live = s.salesGlGoLive !== null && row.eventDate >= s.salesGlGoLive;
-    if (row.kind === 'rebate_credit') return this.postRebate(tx, row, s);
-    if (row.kind === 'credit_payment') return this.postCreditPayment(tx, row, s);
-    if (row.kind === 'wallet_use') return this.postWalletUse(tx, row, s);
+    if (row.kind === 'rebate_credit') return await this.postRebate(tx, row, s);
+    if (row.kind === 'credit_payment') return await this.postCreditPayment(tx, row, s);
+    if (row.kind === 'wallet_use') return await this.postWalletUse(tx, row, s);
     const [order] = await tx.select().from(orders).where(eq(orders.id, row.subjectId));
     if (!order) throw new Error(`Order ${row.subjectId} no longer exists.`);
     if (order.currency.toUpperCase() !== s.baseCurrency) {
@@ -236,7 +236,7 @@ export class SalesPostingService {
       if (!live) return null;
       const accounts = await this.saleAccounts(row.companyId, s, group, row.eventDate, figures);
       const receivables = (await this.setup.resolveCustomer(row.companyId, group, 'receivables')).accountId;
-      return this.submit(tx, row, s, {
+      return await this.submit(tx, row, s, {
         documentType: 'sales_invoice',
         documentNo: label,
         description: `Credit invoice ${label}`,
@@ -250,7 +250,7 @@ export class SalesPostingService {
     const settled = await this.settle(tx, row, s, order, figures.totalCents, group, 'cash_sale', live);
     if (!live) return null;
     const accounts = await this.saleAccounts(row.companyId, s, group, row.eventDate, figures);
-    return this.submit(tx, row, s, {
+    return await this.submit(tx, row, s, {
       documentType: 'cash_sale',
       documentNo: label,
       description: `Cash sale ${label}`,
@@ -344,7 +344,7 @@ export class SalesPostingService {
   /** A credit customer's invoice paid through a gateway or tender: money in, debt out. */
   private async postCreditPayment(tx: Tx, row: FinanceSalesPostingRow, s: Awaited<ReturnType<SalesPostingService['settings']>>): Promise<string | null> {
     const [entry] = await tx.select().from(customerLedgerEntries).where(eq(customerLedgerEntries.id, row.subjectId));
-    if (!entry || !entry.orderId) throw new Error('The payment no longer exists.');
+    if (!entry?.orderId) throw new Error('The payment no longer exists.');
     const [order] = await tx.select().from(orders).where(eq(orders.id, entry.orderId));
     if (!order) throw new Error(`Order ${entry.orderId} no longer exists.`);
     if (order.currency.toUpperCase() !== s.baseCurrency) {
@@ -360,7 +360,7 @@ export class SalesPostingService {
       ...settled.map((x) => ({ accountId: x.accountId, debitCents: x.cents, creditCents: 0, description: x.description })),
       { accountId: receivables, debitCents: 0, creditCents: cents, description: `Payment ${entry.documentNo}`, sourceLedger: 'customer', sourceEntryId: entry.customerId },
     ];
-    return this.submit(tx, row, s, {
+    return await this.submit(tx, row, s, {
       documentType: 'customer_payment',
       documentNo: entry.documentNo,
       description: `Payment for ${order.orderNumber}`,
@@ -385,7 +385,7 @@ export class SalesPostingService {
       this.setup.resolveCustomer(row.companyId, group, 'receivables'),
     ]);
     const cents = -toCents(e.amount);
-    return this.submit(tx, row, s, {
+    return await this.submit(tx, row, s, {
       documentType: 'wallet_use',
       documentNo: `WAL-${e.id}`,
       description: `Wallet used (${group})`,
@@ -406,7 +406,7 @@ export class SalesPostingService {
     const group = await this.groupFor(tx, entry.customerId, s.defaultCustomerGroup);
     const expense = (await this.setup.resolveCustomer(row.companyId, group, 'rebate_expense')).accountId;
     const receivables = (await this.setup.resolveCustomer(row.companyId, group, 'receivables')).accountId;
-    return this.submit(tx, row, s, {
+    return await this.submit(tx, row, s, {
       documentType: 'rebate_credit',
       documentNo: entry.documentNo,
       description: entry.description ?? `Rebate ${entry.documentNo}`,
@@ -428,7 +428,7 @@ export class SalesPostingService {
   }
 
   async list(companyId: string, status: 'open' | 'posted' = 'open', limit = 100) {
-    return this.db
+    return await this.db
       .select()
       .from(financeSalesPostings)
       .where(
@@ -460,7 +460,7 @@ export class SalesPostingService {
       actor: ctx.actor,
       inputs: { origin: ctx.origin },
     });
-    return this.processDue(500);
+    return await this.processDue(500);
   }
 
   /** Is everything in place for sales to post? Each check names what to fix. */
@@ -552,7 +552,7 @@ export class SalesPostingService {
     if (blocking.length > 0) {
       throw new FinanceError('NOT_READY', `Not ready: ${blocking.map((b) => b.label).join('; ')}.`);
     }
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const [s] = await tx.select().from(financeSettings).where(eq(financeSettings.companyId, ctx.companyId)).for('update');
       if (!s) throw new FinanceError('FINANCE_NOT_SET_UP', 'Finance has not been set up yet.');
       if (s.salesGlGoLive) throw new FinanceError('ALREADY_LIVE', `Sales have posted to the general ledger since ${s.salesGlGoLive}.`);
@@ -742,7 +742,7 @@ export class SalesPostingService {
     }
     await this.db.transaction(async (tx) => {
       const res = await tx.execute(sql`
-        UPDATE customer_posting_groups SET ${sql.join(sets.map(([k, v]) => sql`${sql.raw(columns[k]!)} = ${v ?? null}::uuid`), sql`, `)}
+        UPDATE customer_posting_groups SET ${sql.join(sets.map(([k, v]) => sql`${sql.raw(columns[k])} = ${v ?? null}::uuid`), sql`, `)}
         WHERE company_id = ${ctx.companyId}::uuid AND code = ${code} RETURNING id`);
       if ([...res].length === 0) throw new FinanceError('NOT_FOUND', `Customer posting group ${code} does not exist.`);
       await this.decisions.record(

@@ -35,7 +35,7 @@ describe.skipIf(!url)('customer wallet (database)', () => {
   async function customer() {
     seq += 1;
     const [c] = await db.insert(schema.customers).values({ companyId, number: `W${run}${seq}`, name: `Wallet ${seq}`, accountType: 'credit', creditLimit: '10000000' }).returning();
-    return c!;
+    return c;
   }
   async function invoice(c: { id: string }, amount: number) {
     const id = await fin.customerLedger.addEntry(db, { companyId, customerId: c.id, documentType: 'invoice', documentNo: `WI-${run}-${++seq}`, amountCents: amount * 100, currency: 'KES', postingDate: '2026-09-01', dueDate: new Date('2026-09-30T00:00:00Z') });
@@ -50,11 +50,11 @@ describe.skipIf(!url)('customer wallet (database)', () => {
   }
   const wallet = async (c: { id: string }) => (await db.select().from(schema.customerWallets).where(eq(schema.customerWallets.customerId, c.id)))[0];
   const bal = async (c: { id: string }) => (await wallet(c))?.balance ?? '0.00';
-  const remaining = async (id: string) => (await db.select().from(schema.customerLedgerEntries).where(eq(schema.customerLedgerEntries.id, id)))[0]!.remainingAmount;
+  const remaining = async (id: string) => (await db.select().from(schema.customerLedgerEntries).where(eq(schema.customerLedgerEntries.id, id)))[0].remainingAmount;
   const entries = async (c: { id: string }) => (await db.select().from(schema.walletEntries).where(eq(schema.walletEntries.customerId, c.id)).orderBy(schema.walletEntries.id)).map((e) => [e.entryType, e.amount] as const);
   const glNet = async (no: string) => {
     const [r] = await db.execute<{ n: string }>(sql`SELECT COALESCE(SUM(base_credit - base_debit),0)::text n FROM gl_account_balances WHERE company_id=${companyId}::uuid AND account_id=${acct[no]}::uuid`);
-    return Number(r!.n);
+    return Number(r.n);
   };
 
   beforeAll(async () => {
@@ -69,7 +69,7 @@ describe.skipIf(!url)('customer wallet (database)', () => {
     const { CustomerMasterService } = await import('@/server/domains/customers/master-service');
     master = new CustomerMasterService(db, {} as never, new (await import('@/server/domains/transactions/ledger-service')).TransactionLedgerService(db));
     const [company] = await db.insert(schema.companySettings).values({ legalName: 'WL', tradingName: 'WL', email: 'a@b.c', phone: '1', streetAddress: 's', city: 'c', countyOrState: 'x', postalCode: '1', kraPin: 'P' }).returning();
-    companyId = company!.id;
+    companyId = company.id;
     await container.reasonCodes.ensureSystemReasons(companyId);
     ctx = { companyId, actor: { type: 'user', id: 'tester' }, origin };
     await fin.setup.applyTemplate(ctx, 'kenya', { fiscalYearStart: '2026-01-01' });
@@ -191,10 +191,10 @@ describe.skipIf(!url)('customer wallet (database)', () => {
     await db.execute(sql`INSERT INTO orders (id, order_number, user_id, customer_name, customer_email, customer_phone, shipping_address, subtotal, tax, shipping_fee, total_amount, payment_method, trade_customer_id) VALUES (${id}, ${`WO-${run}-${seq}`}, 'u', 'n', 'e@x.io', '1', '{"street":"s","city":"c","countyOrState":"x","country":"k"}'::jsonb, 1000, 0, 0, 1000, 'on_account', ${c.id}::uuid)`);
     await master.postInvoice({ customer: c, orderId: id, orderNumber: `WO-${run}-${seq}`, amount: 1000, currency: 'KES' });
     const [inv] = await db.select().from(schema.customerLedgerEntries).where(eq(schema.customerLedgerEntries.orderId, id));
-    expect(inv!.remainingAmount).toBe('700.00');
+    expect(inv.remainingAmount).toBe('700.00');
     expect(await bal(c)).toBe('0.00');
     const [cust] = await db.select().from(schema.customers).where(eq(schema.customers.id, c.id));
-    expect(cust!.balance).toBe('700.00');
+    expect(cust.balance).toBe('700.00');
     // a frozen wallet never stops a sale
     const c2 = await customer();
     await receipt(c2, '300', { deposit: true });
@@ -203,7 +203,7 @@ describe.skipIf(!url)('customer wallet (database)', () => {
     await db.execute(sql`INSERT INTO orders (id, order_number, user_id, customer_name, customer_email, customer_phone, shipping_address, subtotal, tax, shipping_fee, total_amount, payment_method, trade_customer_id) VALUES (${id2}, ${`WO-${run}-${seq}`}, 'u', 'n', 'e@x.io', '1', '{"street":"s","city":"c","countyOrState":"x","country":"k"}'::jsonb, 500, 0, 0, 500, 'on_account', ${c2.id}::uuid)`);
     await master.postInvoice({ customer: c2, orderId: id2, orderNumber: `WO-${run}-${seq}`, amount: 500, currency: 'KES' });
     const [inv2] = await db.select().from(schema.customerLedgerEntries).where(eq(schema.customerLedgerEntries.orderId, id2));
-    expect(inv2!.remainingAmount).toBe('500.00');
+    expect(inv2.remainingAmount).toBe('500.00');
     await policy();
   });
 
@@ -228,7 +228,7 @@ describe.skipIf(!url)('customer wallet (database)', () => {
     const inv = await invoice(c, 700);
     await fin.wallets.utilise(ctx, { customerId: c.id, currency: 'KES', applications: 'oldest_first' });
     expect(await codeOf(fin.receipts.reverse(ctx, r, { code: 'DATA_ENTRY_ERROR' }))).toBe('WALLET_USED');
-    const used = (await db.select().from(schema.walletEntries).where(and(eq(schema.walletEntries.customerId, c.id), eq(schema.walletEntries.entryType, 'utilisation'))))[0]!;
+    const used = (await db.select().from(schema.walletEntries).where(and(eq(schema.walletEntries.customerId, c.id), eq(schema.walletEntries.entryType, 'utilisation'))))[0];
     await fin.wallets.reverseUtilisation(ctx, used.id, { code: 'DATA_ENTRY_ERROR' });
     expect(await remaining(inv)).toBe('700.00');
     await fin.receipts.reverse(ctx, r, { code: 'DATA_ENTRY_ERROR' });
@@ -240,7 +240,7 @@ describe.skipIf(!url)('customer wallet (database)', () => {
   it('is append-only and never negative, enforced by the database', async () => {
     const c = await customer();
     await receipt(c, '100', { deposit: true });
-    const w = (await wallet(c))!;
+    const w = (await wallet(c));
     await expect(db.update(schema.walletEntries).set({ amount: '1.00' }).where(eq(schema.walletEntries.walletId, w.id))).rejects.toThrow();
     await expect(db.delete(schema.walletEntries).where(eq(schema.walletEntries.walletId, w.id))).rejects.toThrow();
     await expect(db.update(schema.customerWallets).set({ balance: '-1.00' }).where(eq(schema.customerWallets.id, w.id))).rejects.toThrow();
@@ -250,7 +250,7 @@ describe.skipIf(!url)('customer wallet (database)', () => {
   describe('in the books, once sales are live', () => {
     beforeAll(async () => {
       await policy();
-      await fin.salesPosting.goLive(ctx, { offsetAccountId: acct['3100']! });
+      await fin.salesPosting.goLive(ctx, { offsetAccountId: acct['3100'] });
     });
 
     it('go-live brought the existing wallets in as a liability', async () => {
@@ -263,10 +263,10 @@ describe.skipIf(!url)('customer wallet (database)', () => {
       const c = await customer();
       const r = await receipt(c, '900', { deposit: true });
       const [rec] = await fin.wallets.reconciliation(companyId);
-      expect(rec!.diffCents).toBe(0);
+      expect(rec.diffCents).toBe(0);
       const reg = await db.select().from(schema.ledgerRegisters).where(and(eq(schema.ledgerRegisters.companyId, companyId), eq(schema.ledgerRegisters.sourceId, r), eq(schema.ledgerRegisters.documentType, 'wallet_credit')));
       expect(reg).toHaveLength(1);
-      const lines = await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, reg[0]!.id));
+      const lines = await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, reg[0].id));
       const no = new Map(Object.entries(acct).map(([n, id]) => [id, n]));
       expect(lines.map((l) => [no.get(l.accountId), Number(l.debit), Number(l.credit)]).sort()).toEqual([['1210', 900, 0], ['2210', 0, 900]]);
 
@@ -275,13 +275,13 @@ describe.skipIf(!url)('customer wallet (database)', () => {
       await fin.salesPosting.processDue();
       const [post] = await db.select().from(schema.financeSalesPostings).where(and(eq(schema.financeSalesPostings.kind, 'wallet_use'), eq(schema.financeSalesPostings.subjectId, String(out.walletEntryId))));
       expect(post).toMatchObject({ status: 'posted' });
-      const useLines = await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, post!.registerId!));
+      const useLines = await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, post.registerId!));
       expect(useLines.map((l) => [no.get(l.accountId), Number(l.debit), Number(l.credit)]).sort()).toEqual([['1210', 0, 500], ['2210', 500, 0]]);
-      expect((await fin.wallets.reconciliation(companyId))[0]!.diffCents).toBe(0);
+      expect((await fin.wallets.reconciliation(companyId))[0].diffCents).toBe(0);
 
       await fin.wallets.reverseUtilisation(ctx, out.walletEntryId, { code: 'DATA_ENTRY_ERROR' });
       expect(await remaining(inv)).toBe('500.00');
-      expect((await fin.wallets.reconciliation(companyId))[0]!.diffCents).toBe(0);
+      expect((await fin.wallets.reconciliation(companyId))[0].diffCents).toBe(0);
     });
 
     it('a use that has not reached the books yet is simply cancelled if undone', async () => {
@@ -291,7 +291,7 @@ describe.skipIf(!url)('customer wallet (database)', () => {
       const out = await db.transaction((tx) => (fin.wallets as unknown as { utiliseIn: (tx: unknown, c: unknown, i: unknown) => Promise<{ walletEntryId: number }> }).utiliseIn(tx, ctx, { customerId: c.id, currency: 'KES', applications: 'oldest_first' }));
       await fin.wallets.reverseUtilisation(ctx, out.walletEntryId, { code: 'DATA_ENTRY_ERROR' });
       const [post] = await db.select().from(schema.financeSalesPostings).where(and(eq(schema.financeSalesPostings.kind, 'wallet_use'), eq(schema.financeSalesPostings.subjectId, String(out.walletEntryId))));
-      expect(post!.status).toBe('skipped');
+      expect(post.status).toBe('skipped');
     });
 
     it('a wallet-paid cash sale debits customer deposits, not a bank', async () => {
@@ -303,16 +303,16 @@ describe.skipIf(!url)('customer wallet (database)', () => {
       // a cash customer's order: paid in full by the wallet
       await db.update(schema.customers).set({ accountType: 'cash' }).where(eq(schema.customers.id, c.id));
       const [cust] = await db.select().from(schema.customers).where(eq(schema.customers.id, c.id));
-      await master.postInvoice({ customer: cust!, orderId: id, orderNumber: `WC-${run}-${seq}`, amount: 1000, currency: 'KES' });
+      await master.postInvoice({ customer: cust, orderId: id, orderNumber: `WC-${run}-${seq}`, amount: 1000, currency: 'KES' });
       await db.execute(sql`UPDATE orders SET payment_status='paid', transaction_reference='TENDER-X' WHERE id = ${id}`);
       await master.applyOrderPayment(id);
       await fin.salesPosting.processDue();
       const [row] = await db.select().from(schema.financeSalesPostings).where(and(eq(schema.financeSalesPostings.kind, 'cash_sale'), eq(schema.financeSalesPostings.subjectId, id)));
       expect(row).toMatchObject({ status: 'posted' });
-      const lines = await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, row!.registerId!));
+      const lines = await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, row.registerId!));
       const no = new Map(Object.entries(acct).map(([n, aid]) => [aid, n]));
       expect(lines.map((l) => [no.get(l.accountId), Number(l.debit), Number(l.credit)]).sort()).toEqual([['2210', 1000, 0], ['4100', 0, 1000]]);
-      expect((await fin.wallets.reconciliation(companyId))[0]!.diffCents).toBe(0);
+      expect((await fin.wallets.reconciliation(companyId))[0].diffCents).toBe(0);
     });
 
     it('nothing drifts and the books balance', async () => {

@@ -236,7 +236,7 @@ export class PostingEngine {
     perms: PostingPermissions = NO_SPECIAL_PERMISSIONS,
     tx?: Tx,
   ): Promise<PostedRegister> {
-    if (tx) return this.postIn(tx, req, perms);
+    if (tx) return await this.postIn(tx, req, perms);
     try {
       return await this.db.transaction((t) => this.postIn(t, req, perms));
     } catch (error) {
@@ -488,7 +488,7 @@ export class PostingEngine {
     }
     const run = <T,>(fn: (tx: Tx) => Promise<T>): Promise<T> =>
       input.tx ? fn(input.tx) : this.db.transaction(fn);
-    return run(async (tx) => {
+    return await run(async (tx) => {
       const [original] = await tx
         .select()
         .from(ledgerRegisters)

@@ -127,7 +127,7 @@ export class DarajaClient {
   /** An authenticated call. If Safaricom refuses the token, one fresh token is fetched and the call repeated once. */
   async request(label: string, method: 'GET' | 'POST', path: string, body: unknown, opts: { operationId?: string | null; timeoutMs?: number } = {}): Promise<HttpCallResult> {
     const send = async (token: string) =>
-      this.ctx.call({
+      await this.ctx.call({
         label,
         provider: 'mpesa_daraja',
         method,
@@ -143,7 +143,7 @@ export class DarajaClient {
     if (darajaFailure(res)?.tokenRejected) {
       const second = await this.token(true);
       if ('error' in second) return this.failedBeforeSending(second.error);
-      return send(second.token);
+      return await send(second.token);
     }
     return res;
   }

@@ -6,12 +6,12 @@
  * Body.stkCallback.CallbackMetadata.Item[{ Name: "MpesaReceiptNumber" }].
  */
 
-type MetadataItem = {
+interface MetadataItem {
   Name?: string;
   name?: string;
   Value?: string | number;
   value?: string | number;
-};
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;

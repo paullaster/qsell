@@ -31,7 +31,7 @@ describe.skipIf(!url)('credit notes: accounting and returns (database)', () => {
       await p;
       return 'OK';
     } catch (e) {
-      if (e && typeof e === 'object' && 'code' in e) return String((e as { code: unknown }).code);
+      if (e && typeof e === 'object' && 'code' in e) return String((e).code);
       return `OTHER:${(e as Error).message}`;
     }
   };
@@ -45,19 +45,19 @@ describe.skipIf(!url)('credit notes: accounting and returns (database)', () => {
     const id = `cn_${run}_${seq}`;
     const total = 580 * qty;
     await db.execute(sql`INSERT INTO orders (id, order_number, user_id, branch_id, customer_name, customer_email, customer_phone, shipping_address, subtotal, tax, shipping_fee, total_amount, payment_method, trade_customer_id)
-      VALUES (${id}, ${`CNO-${run}-${seq}`}, 'u', ${branchId}::uuid, 'n', 'e@x.io', '1', '{"street":"s","city":"c","countyOrState":"x","country":"k"}'::jsonb, ${500 * qty}, ${80 * qty}, 0, ${total}, ${type === 'credit' ? 'on_account' : 'mpesa_daraja'}, ${cust!.id}::uuid)`);
+      VALUES (${id}, ${`CNO-${run}-${seq}`}, 'u', ${branchId}::uuid, 'n', 'e@x.io', '1', '{"street":"s","city":"c","countyOrState":"x","country":"k"}'::jsonb, ${500 * qty}, ${80 * qty}, 0, ${total}, ${type === 'credit' ? 'on_account' : 'mpesa_daraja'}, ${cust.id}::uuid)`);
     await db.insert(schema.orderItems).values({ orderId: id, productId, productName: 'Widget', sku: 'W', quantity: qty, unitPrice: '580.00', totalPrice: total.toFixed(2), imageUrl: '', unitCost: '300.0000' });
-    await master.postInvoice({ customer: cust!, orderId: id, orderNumber: `CNO-${run}-${seq}`, amount: total, currency: 'KES' });
+    await master.postInvoice({ customer: cust, orderId: id, orderNumber: `CNO-${run}-${seq}`, amount: total, currency: 'KES' });
     // stock really left for this order (the rule that lets goods come back)
     await db.insert(schema.inventoryMovements).values({ id: `mv_${randomUUID()}`, productId, productName: 'Widget', changeAmount: 0, previousStock: 10, newStock: 10, changeType: 'order_fulfillment', referenceId: id });
     await db.insert(schema.invoiceDocuments).values({ orderId: id, orderNumber: `CNO-${run}-${seq}`, invoiceNumber: `TI-${run}-${seq}`, documentType: 'tax_invoice', customerEmail: 'e@x.io', customerName: 'n', currency: 'KES', subtotal: String(500 * qty), tax: String(80 * qty), shippingFee: '0', totalAmount: String(total), pdfStorageKey: 'x.pdf', emailStatus: 'not_sent', meta: {} });
-    return { id, customerId: cust!.id, number: `CNO-${run}-${seq}`, customer: cust! };
+    return { id, customerId: cust.id, number: `CNO-${run}-${seq}`, customer: cust };
   }
   const issue = (orderId: string, quantity: number, o: { restock?: boolean } = {}) =>
     c.creditNotes.issueForOrder({ orderId, lines: [{ productId, quantity }], reason: { code: 'returned_goods' }, issuedBy: 'tester', restock: o.restock });
-  const remainingOf = async (orderId: string) => (await db.select().from(schema.customerLedgerEntries).where(and(eq(schema.customerLedgerEntries.orderId, orderId), eq(schema.customerLedgerEntries.documentType, 'invoice'))))[0]!.remainingAmount;
-  const accounting = async (cnId: string) => (await db.select().from(schema.creditNoteAccounting).where(eq(schema.creditNoteAccounting.creditNoteId, cnId)))[0]!;
-  const stock = async () => (await db.select().from(schema.products).where(eq(schema.products.id, productId)))[0]!.stockQuantity;
+  const remainingOf = async (orderId: string) => (await db.select().from(schema.customerLedgerEntries).where(and(eq(schema.customerLedgerEntries.orderId, orderId), eq(schema.customerLedgerEntries.documentType, 'invoice'))))[0].remainingAmount;
+  const accounting = async (cnId: string) => (await db.select().from(schema.creditNoteAccounting).where(eq(schema.creditNoteAccounting.creditNoteId, cnId)))[0];
+  const stock = async () => (await db.select().from(schema.products).where(eq(schema.products.id, productId)))[0].stockQuantity;
   const wallet = async (customerId: string) => (await db.select().from(schema.customerWallets).where(eq(schema.customerWallets.customerId, customerId)))[0]?.balance ?? '0.00';
   const paid = async (cust: { id: string }, amount: string) => {
     const cash = (await fin.paymentMethods.list(companyId)).find((m) => m.method.code === 'CASH')!.method.id;
@@ -78,10 +78,10 @@ describe.skipIf(!url)('credit notes: accounting and returns (database)', () => {
     const { CustomerMasterService } = await import('@/server/domains/customers/master-service');
     master = new CustomerMasterService(db, {} as never, new (await import('@/server/domains/transactions/ledger-service')).TransactionLedgerService(db));
     const [company] = await db.insert(schema.companySettings).values({ legalName: 'CN', tradingName: 'CN', email: 'a@b.c', phone: '1', streetAddress: 's', city: 'c', countyOrState: 'x', postalCode: '1', kraPin: 'P' }).returning();
-    companyId = company!.id;
+    companyId = company.id;
     actor.companyId = companyId;
     const [branch] = await db.insert(schema.branches).values({ companyId, code: `CN${run.toUpperCase()}`, name: 'CN branch', isDefault: true }).returning();
-    branchId = branch!.id;
+    branchId = branch.id;
     await c.reasonCodes.ensureSystemReasons(companyId);
     ctx = { companyId, actor: { type: 'user', id: 'tester' }, origin };
     await fin.setup.applyTemplate(ctx, 'kenya', { fiscalYearStart: '2026-01-01' });
@@ -100,7 +100,7 @@ describe.skipIf(!url)('credit notes: accounting and returns (database)', () => {
     const a = await accounting(cn.id);
     expect(a).toMatchObject({ gross: '580.00', taxAmount: '80.00', applied: '580.00', excess: '0.00' });
     const [cust] = await db.select().from(schema.customers).where(eq(schema.customers.id, o.customerId));
-    expect(cust!.balance).toBe('580.00');
+    expect(cust.balance).toBe('580.00');
     expect(await fin.customerLedger.drift(companyId)).toEqual([]);
     expect((await fin.creditNoteAccounting.worklist(companyId)).filter((r) => r.a.creditNoteId === cn.id)).toEqual([]);
   });
@@ -130,7 +130,7 @@ describe.skipIf(!url)('credit notes: accounting and returns (database)', () => {
     expect(await wallet(o.customerId)).toBe('580.00');
     expect(await codeOf(fin.creditNoteAccounting.resolveToWallet(ctx, cn.id))).toBe('NOTHING_TO_RESOLVE');
     expect((await fin.creditNoteAccounting.worklist(companyId)).some((r) => r.a.creditNoteId === cn.id)).toBe(false);
-    const entry = (await db.select().from(schema.walletEntries).where(eq(schema.walletEntries.customerId, o.customerId)))[0]!;
+    const entry = (await db.select().from(schema.walletEntries).where(eq(schema.walletEntries.customerId, o.customerId)))[0];
     expect(entry).toMatchObject({ entryType: 'credit_note', amount: '580.00' });
     expect(await fin.customerLedger.drift(companyId)).toEqual([]);
   });
@@ -175,8 +175,8 @@ describe.skipIf(!url)('credit notes: accounting and returns (database)', () => {
       expect(await stock()).toBe(before);
       const [rr] = await db.select().from(schema.returnReceipts).where(eq(schema.returnReceipts.creditNoteId, cn.id));
       expect(rr).toMatchObject({ status: 'awaiting_goods' });
-      expect(rr!.number).toMatch(/^RRC-/);
-      const lines = await db.select().from(schema.returnReceiptLines).where(eq(schema.returnReceiptLines.receiptId, rr!.id));
+      expect(rr.number).toMatch(/^RRC-/);
+      const lines = await db.select().from(schema.returnReceiptLines).where(eq(schema.returnReceiptLines.receiptId, rr.id));
       expect(lines).toMatchObject([{ expectedQty: 2, receivedQty: 0, unitCost: '300.0000' }]);
     });
 
@@ -185,21 +185,21 @@ describe.skipIf(!url)('credit notes: accounting and returns (database)', () => {
       const o = await sold('credit');
       const cn = await issue(o.id, 2, { restock: true });
       const [rr] = await db.select().from(schema.returnReceipts).where(eq(schema.returnReceipts.creditNoteId, cn.id));
-      const [line] = await db.select().from(schema.returnReceiptLines).where(eq(schema.returnReceiptLines.receiptId, rr!.id));
+      const [line] = await db.select().from(schema.returnReceiptLines).where(eq(schema.returnReceiptLines.receiptId, rr.id));
       const svc = c.returns;
-      expect(await codeOf(svc.confirm(actor, rr!.id, [{ lineId: line!.id, quantity: 1, condition: 'damaged', disposition: 'return_to_stock' }]))).toBe('DISPOSITION_INVALID');
-      expect(await codeOf(svc.confirm(actor, rr!.id, [{ lineId: line!.id, quantity: 3, condition: 'good', disposition: 'return_to_stock' }]))).toBe('OVER_RECEIVED');
+      expect(await codeOf(svc.confirm(actor, rr.id, [{ lineId: line.id, quantity: 1, condition: 'damaged', disposition: 'return_to_stock' }]))).toBe('DISPOSITION_INVALID');
+      expect(await codeOf(svc.confirm(actor, rr.id, [{ lineId: line.id, quantity: 3, condition: 'good', disposition: 'return_to_stock' }]))).toBe('OVER_RECEIVED');
       expect(await stock()).toBe(before);
-      const first = await svc.confirm(actor, rr!.id, [{ lineId: line!.id, quantity: 1, condition: 'good', disposition: 'return_to_stock' }]);
+      const first = await svc.confirm(actor, rr.id, [{ lineId: line.id, quantity: 1, condition: 'good', disposition: 'return_to_stock' }]);
       expect(first).toEqual({ status: 'partially_confirmed', stockAdded: 1 });
       expect(await stock()).toBe(before + 1);
-      const second = await svc.confirm(actor, rr!.id, [{ lineId: line!.id, quantity: 1, condition: 'damaged', disposition: 'scrap' }]);
+      const second = await svc.confirm(actor, rr.id, [{ lineId: line.id, quantity: 1, condition: 'damaged', disposition: 'scrap' }]);
       expect(second).toEqual({ status: 'confirmed', stockAdded: 0 });
       expect(await stock()).toBe(before + 1); // the scrapped one never became stock
-      expect(await codeOf(svc.confirm(actor, rr!.id, [{ lineId: line!.id, quantity: 1, condition: 'good', disposition: 'return_to_stock' }]))).toBe('CLOSED');
-      const confirmations = await db.select().from(schema.returnReceiptConfirmations).where(eq(schema.returnReceiptConfirmations.receiptId, rr!.id));
+      expect(await codeOf(svc.confirm(actor, rr.id, [{ lineId: line.id, quantity: 1, condition: 'good', disposition: 'return_to_stock' }]))).toBe('CLOSED');
+      const confirmations = await db.select().from(schema.returnReceiptConfirmations).where(eq(schema.returnReceiptConfirmations.receiptId, rr.id));
       expect(confirmations.map((x) => [x.quantity, x.condition, x.disposition, x.stockAdded])).toEqual([[1, 'good', 'return_to_stock', true], [1, 'damaged', 'scrap', false]]);
-      await expect(db.update(schema.returnReceiptConfirmations).set({ quantity: 9 }).where(eq(schema.returnReceiptConfirmations.receiptId, rr!.id))).rejects.toThrow();
+      await expect(db.update(schema.returnReceiptConfirmations).set({ quantity: 9 }).where(eq(schema.returnReceiptConfirmations.receiptId, rr.id))).rejects.toThrow();
     });
 
     it('goods that are not coming are closed with a reason and add nothing', async () => {
@@ -207,9 +207,9 @@ describe.skipIf(!url)('credit notes: accounting and returns (database)', () => {
       const o = await sold('credit');
       const cn = await issue(o.id, 1, { restock: true });
       const [rr] = await db.select().from(schema.returnReceipts).where(eq(schema.returnReceipts.creditNoteId, cn.id));
-      expect(await codeOf(c.returns.close(actor, rr!.id, { code: 'NOPE' }))).toMatch(/OTHER|UNKNOWN/);
-      await c.returns.close(actor, rr!.id, { code: 'CUSTOMER_REQUEST' });
-      const [after] = await db.select().from(schema.returnReceipts).where(eq(schema.returnReceipts.id, rr!.id));
+      expect(await codeOf(c.returns.close(actor, rr.id, { code: 'NOPE' }))).toMatch(/OTHER|UNKNOWN/);
+      await c.returns.close(actor, rr.id, { code: 'CUSTOMER_REQUEST' });
+      const [after] = await db.select().from(schema.returnReceipts).where(eq(schema.returnReceipts.id, rr.id));
       expect(after).toMatchObject({ status: 'rejected', closeReasonCode: 'CUSTOMER_REQUEST' });
       expect(await stock()).toBe(before);
     });
@@ -219,9 +219,9 @@ describe.skipIf(!url)('credit notes: accounting and returns (database)', () => {
       const o = await sold('credit');
       const cn = await issue(o.id, 1, { restock: true });
       const [rr] = await db.select().from(schema.returnReceipts).where(eq(schema.returnReceipts.creditNoteId, cn.id));
-      const [line] = await db.select().from(schema.returnReceiptLines).where(eq(schema.returnReceiptLines.receiptId, rr!.id));
-      const item = [{ lineId: line!.id, quantity: 1, condition: 'good' as const, disposition: 'return_to_stock' as const }];
-      const out = await Promise.all([codeOf(c.returns.confirm(actor, rr!.id, item)), codeOf(c.returns.confirm(actor, rr!.id, item))]);
+      const [line] = await db.select().from(schema.returnReceiptLines).where(eq(schema.returnReceiptLines.receiptId, rr.id));
+      const item = [{ lineId: line.id, quantity: 1, condition: 'good' as const, disposition: 'return_to_stock' as const }];
+      const out = await Promise.all([codeOf(c.returns.confirm(actor, rr.id, item)), codeOf(c.returns.confirm(actor, rr.id, item))]);
       expect(out.sort()).toEqual(['CLOSED', 'OK']);
       expect(await stock()).toBe(before + 1);
     });
@@ -230,7 +230,7 @@ describe.skipIf(!url)('credit notes: accounting and returns (database)', () => {
   describe('in the books, once sales are live', () => {
     beforeAll(async () => {
       await policy({ walletEnabled: true });
-      await fin.salesPosting.goLive(ctx, { offsetAccountId: acct['3100']! });
+      await fin.salesPosting.goLive(ctx, { offsetAccountId: acct['3100'] });
     });
     const glOf = async (registerId: string) => {
       const no = new Map(Object.entries(acct).map(([n, id]) => [id, n]));
@@ -257,7 +257,7 @@ describe.skipIf(!url)('credit notes: accounting and returns (database)', () => {
       const cn = await issue(o.id, 1);
       await fin.creditNoteAccounting.resolveToWallet(ctx, cn.id);
       const [res] = await db.select().from(schema.creditNoteResolutions).where(eq(schema.creditNoteResolutions.creditNoteId, cn.id));
-      expect(await glOf(res!.registerId!)).toEqual([['1210', 580, 0], ['2210', 0, 580]]);
+      expect(await glOf(res.registerId!)).toEqual([['1210', 580, 0], ['2210', 0, 580]]);
       expect((await fin.salesPosting.reconciliation(companyId)).rows.map((r) => r.diffCents)).toEqual([0]);
       expect((await fin.wallets.reconciliation(companyId)).map((r) => r.diffCents)).toEqual([0]);
     });
@@ -273,8 +273,8 @@ describe.skipIf(!url)('credit notes: accounting and returns (database)', () => {
       expect((await db.select().from(schema.creditNotes).where(eq(schema.creditNotes.companyId, companyId))).length).toBe(before);
       expect(await remainingOf(o.id)).toBe('1160.00');
       expect(await stock()).toBe(stockBefore);
-      await db.update(schema.generalPostingSetup).set({ salesReturnsAccountId: acct['4200']! }).where(eq(schema.generalPostingSetup.id, grp!.id));
-      await db.update(schema.generalPostingSetup).set({ salesReturnsAccountId: acct['4200']! }).where(eq(schema.generalPostingSetup.companyId, companyId));
+      await db.update(schema.generalPostingSetup).set({ salesReturnsAccountId: acct['4200'] }).where(eq(schema.generalPostingSetup.id, grp.id));
+      await db.update(schema.generalPostingSetup).set({ salesReturnsAccountId: acct['4200'] }).where(eq(schema.generalPostingSetup.companyId, companyId));
     });
 
     it('nothing drifts and the books balance', async () => {

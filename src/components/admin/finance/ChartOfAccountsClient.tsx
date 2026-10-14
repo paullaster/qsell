@@ -44,7 +44,7 @@ const CATEGORIES = [
   ['expense', 'Expense'],
 ] as const;
 
-type Draft = {
+interface Draft {
   id: string | null;
   no: string;
   name: string;
@@ -58,7 +58,7 @@ type Draft = {
   totaling: string;
   indent: number;
   used: boolean;
-};
+}
 
 const blank: Draft = {
   id: null,
@@ -130,7 +130,7 @@ export function ChartOfAccountsClient({ accounts, can }: { accounts: AccountView
     };
     const res = draft.id ? await attempt(updateAccountAction(draft.id, input)) : await attempt(createAccountAction(input));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     setNotice({ kind: 'ok', text: draft.id ? 'Account saved.' : 'Account created.' });
     setDraft(null);
     router.refresh();

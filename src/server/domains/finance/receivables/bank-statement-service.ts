@@ -178,8 +178,8 @@ export class BankStatementService {
           skippedCount: parsed.skipped.length + (hashed.length - fresh.length),
           totalIn: fromCents(totalIn),
           totalOut: fromCents(totalOut),
-          dateFrom: fresh[0]!.date,
-          dateTo: fresh[fresh.length - 1]!.date,
+          dateFrom: fresh[0].date,
+          dateTo: fresh[fresh.length - 1].date,
           openingBalance: parsed.openingCents === null ? null : fromCents(parsed.openingCents),
           closingBalance: parsed.closingCents === null ? null : fromCents(parsed.closingCents),
           importedBy: ctx.actor.id ?? 'system',
@@ -190,7 +190,7 @@ export class BankStatementService {
         await tx.insert(bankStatementLines).values(
           fresh.slice(i, i + CHUNK).map((l) => ({
             companyId: ctx.companyId,
-            importId: imp!.id,
+            importId: imp.id,
             bankAccountId: account.id,
             lineNo: l.lineNo,
             lineDate: l.date,
@@ -212,7 +212,7 @@ export class BankStatementService {
       await this.decisions.record(
         {
           companyId: ctx.companyId,
-          subject: { type: 'bank_statement_import', id: imp!.id },
+          subject: { type: 'bank_statement_import', id: imp.id },
           action: 'finance.statement_imported',
           actor: ctx.actor,
           inputs: { origin: ctx.origin, file: input.fileName, account: account.code },
@@ -220,7 +220,7 @@ export class BankStatementService {
         },
         tx,
       );
-      return { importId: imp!.id, lines: fresh.length, duplicates: hashed.length - fresh.length, balanceBreaks: parsed.balanceBreaks.length };
+      return { importId: imp.id, lines: fresh.length, duplicates: hashed.length - fresh.length, balanceBreaks: parsed.balanceBreaks.length };
     });
     const matched = await this.autoMatch(ctx, account.id);
     return { ...result, ...matched };
@@ -254,7 +254,7 @@ export class BankStatementService {
       id: r.e.id,
       date: r.e.postingDate,
       amountCents: centsOf(r.e.amount),
-      refs: [r.e.documentNo, r.extRef, r.payoutRef].filter((x): x is string => !!x),
+      refs: [r.e.documentNo, r.extRef, r.payoutRef].filter((x): x is string => Boolean(x)),
       entry: r.e,
     }));
   }
@@ -272,7 +272,7 @@ export class BankStatementService {
       .limit(max);
     if (lines.length === 0) return { autoMatched: 0, proposed: 0 };
     const pad = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
-    const entries = await this.openEntries(this.db, ctx.companyId, bankAccountId, pad(lines[0]!.lineDate, -(WINDOW_DAYS + 30)), pad(lines[lines.length - 1]!.lineDate, WINDOW_DAYS + 30));
+    const entries = await this.openEntries(this.db, ctx.companyId, bankAccountId, pad(lines[0].lineDate, -(WINDOW_DAYS + 30)), pad(lines[lines.length - 1].lineDate, WINDOW_DAYS + 30));
     const suggestions = suggestMatches(
       lines.map((l) => ({ id: l.id, date: l.lineDate, amountCents: centsOf(l.amount), description: l.description, reference: l.reference })),
       entries.map((e) => ({ id: e.id, date: e.date, amountCents: e.amountCents, refs: e.refs })),
@@ -453,7 +453,7 @@ export class BankStatementService {
 
   async recordChargeFromLine(ctx: FinanceContext, lineId: number, opts: { glAccountId?: string; permissions?: PostingPermissions } = {}) {
     const permissions = opts.permissions ?? NO_SPECIAL_PERMISSIONS;
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const line = await this.lockLine(tx, ctx.companyId, lineId);
       if (line.reconciliationId) throw new FinanceError('LINE_RECONCILED', 'This line is part of a posted reconciliation.');
       if (line.status === 'matched' || line.status === 'ignored') throw new FinanceError('LINE_CLOSED', `This line is already ${line.status}.`);
@@ -467,7 +467,7 @@ export class BankStatementService {
       if (!bankGl) throw new FinanceError('GL_CHOICE_NEEDED', opts.glAccountId ? 'That G/L account is not used by any payment method of this bank account.' : `Several G/L accounts are used for ${account.code}: choose the one this charge came out of.`);
       const date = line.lineDate;
       const issues = await this.engine.dateIssues(tx, ctx.companyId, date, permissions);
-      if (issues.length > 0) throw new FinanceError(issues[0]!.code, issues.map((i) => i.message).join(' '));
+      if (issues.length > 0) throw new FinanceError(issues[0].code, issues.map((i) => i.message).join(' '));
       const { s, live } = await this.glLive(tx, ctx.companyId, date);
       const id = crypto.randomUUID();
       const { number } = await this.numbering.assign('bank_charge', { companyId: ctx.companyId, branchId: undefined, date: businessDate(), document: { kind: 'bank_charge', id }, actor: ctx.actor }, tx);
@@ -496,7 +496,7 @@ export class BankStatementService {
         registerId = (await this.engine.post(req, permissions, tx)).registerId;
       }
       const [entry] = await tx.insert(bankLedgerEntries).values({ companyId: ctx.companyId, bankAccountId: account.id, glAccountId: bankGl.glId, postingDate: date, documentType: 'bank_charge', documentNo: number, documentId: id, description: line.description.slice(0, 300), amount: fromCents(-cents), currency: account.currency, registerId, createdBy: ctx.actor.id }).returning({ id: bankLedgerEntries.id });
-      await this.applyMatchIn(tx, ctx, lineId, [entry!.id], 'recorded_charge');
+      await this.applyMatchIn(tx, ctx, lineId, [entry.id], 'recorded_charge');
       return { number, gl: live };
     });
   }
@@ -547,7 +547,7 @@ export class BankStatementService {
     return {
       account,
       lines: page,
-      nextAfter: more ? page[page.length - 1]!.id : null,
+      nextAfter: more ? page[page.length - 1].id : null,
       matched: new Map(page.map((l) => [l.id, matched.filter((m) => m.m.lineId === l.id).map((m) => ({ entryId: m.e.id, documentNo: m.e.documentNo, documentType: m.e.documentType, description: m.e.description, amount: m.e.amount, rule: m.m.rule }))])),
       proposed: new Map(proposed.map((e) => [e.id, e])),
       outstanding: outstanding.slice(0, 200).map((e) => e.entry),

@@ -171,5 +171,5 @@ export function parseAccountBalance(value: string): { account: string; currency:
     .split('&')
     .map((part) => part.split('|'))
     .filter((f) => f.length >= 3)
-    .map((f) => ({ account: f[0]!.trim(), currency: f[1]!.trim(), available: (f[2] ?? '').trim(), uncleared: (f[3] ?? '').trim(), reserved: (f[4] ?? '').trim() }));
+    .map((f) => ({ account: f[0].trim(), currency: f[1].trim(), available: (f[2] ?? '').trim(), uncleared: (f[3] ?? '').trim(), reserved: (f[4] ?? '').trim() }));
 }

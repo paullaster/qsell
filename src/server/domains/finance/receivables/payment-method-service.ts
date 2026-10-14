@@ -59,7 +59,7 @@ export class PaymentMethodService {
   ) {}
 
   async list(companyId: string) {
-    return this.db
+    return await this.db
       .select({
         method: paymentMethods,
         bankCode: bankAccounts.code,
@@ -140,7 +140,7 @@ export class PaymentMethodService {
   }
 
   async create(ctx: FinanceContext, input: PaymentMethodInput): Promise<PaymentMethodRow> {
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       await this.check(tx, ctx.companyId, input);
       const [dup] = await tx
         .select({ id: paymentMethods.id })
@@ -177,20 +177,20 @@ export class PaymentMethodService {
       await this.decisions.record(
         {
           companyId: ctx.companyId,
-          subject: { type: 'payment_method', id: row!.id },
+          subject: { type: 'payment_method', id: row.id },
           action: 'finance.payment_method_created',
           actor: ctx.actor,
           inputs: { origin: ctx.origin },
-          outcome: { code: row!.code, kind: row!.kind, bankAccountId: row!.balancingBankAccountId, providerId: row!.providerId, branchId: row!.branchId, glAccountId: row!.glAccountId },
+          outcome: { code: row.code, kind: row.kind, bankAccountId: row.balancingBankAccountId, providerId: row.providerId, branchId: row.branchId, glAccountId: row.glAccountId },
         },
         tx,
       );
-      return row!;
+      return row;
     });
   }
 
   async update(ctx: FinanceContext, id: string, patch: Partial<PaymentMethodInput>): Promise<PaymentMethodRow> {
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const [current] = await tx
         .select()
         .from(paymentMethods)
@@ -264,7 +264,7 @@ export class PaymentMethodService {
         },
         tx,
       );
-      return row!;
+      return row;
     });
   }
 
@@ -316,7 +316,7 @@ export class PaymentMethodService {
    * account for that provider when there is one.
    */
   async seedStandard(ctx: FinanceContext): Promise<{ bankAccounts: number; methods: number }> {
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const [settings] = await tx.select().from(financeSettings).where(eq(financeSettings.companyId, ctx.companyId)).limit(1);
       if (!settings?.chartTemplate) {
         throw new FinanceError('FINANCE_NOT_SET_UP', 'Apply a chart of accounts first (Finance → Chart of accounts).');
@@ -346,7 +346,7 @@ export class PaymentMethodService {
             createdBy: ctx.actor.id ?? 'system',
           })
           .returning({ id: bankAccounts.id });
-        existingBanks.set(b.code, row!.id);
+        existingBanks.set(b.code, row.id);
         banksCreated += 1;
       }
 
@@ -358,7 +358,7 @@ export class PaymentMethodService {
         .orderBy(asc(paymentProviderConfigs.createdAt));
       // A method that stands for an outside service goes through the first provider of that service, if there is one.
       const providerByCode = new Map<string, string>();
-      for (const p of providers) if (!providerByCode.has(p.code as string)) providerByCode.set(p.code as string, p.id);
+      for (const p of providers) if (!providerByCode.has(p.code)) providerByCode.set(p.code, p.id);
       const glByBank = new Map(template.bankAccounts.map((b) => [b.code, gl.get(b.glAccount)]));
 
       const existingMethods = new Set(
@@ -445,7 +445,7 @@ export class PaymentMethodService {
   /** The providers a method can go through (the built-in Manual one is always there). */
   async providerChoices(companyId: string) {
     await ensureManualProvider(this.db, companyId);
-    return this.db
+    return await this.db
       .select({
         id: paymentProviderConfigs.id,
         providerCode: paymentProviderConfigs.providerCode,
@@ -461,6 +461,6 @@ export class PaymentMethodService {
 
   async methodsByIds(ids: string[]) {
     if (ids.length === 0) return [];
-    return this.db.select().from(paymentMethods).where(inArray(paymentMethods.id, ids));
+    return await this.db.select().from(paymentMethods).where(inArray(paymentMethods.id, ids));
   }
 }

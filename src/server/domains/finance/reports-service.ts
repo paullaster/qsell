@@ -175,7 +175,7 @@ export class FinanceReportsService {
   }
 
   async registers(companyId: string, limit = 50) {
-    return this.db
+    return await this.db
       .select()
       .from(ledgerRegisters)
       .where(eq(ledgerRegisters.companyId, companyId))
@@ -249,7 +249,7 @@ export class FinanceReportsService {
 
   /** Per-account difference between the running balances and the ledger itself (empty = agree). */
   async balanceDrift(companyId: string, from: string, to: string) {
-    return this.db.execute<{ account_id: string; ledger: string; running: string }>(sql`
+    return await this.db.execute<{ account_id: string; ledger: string; running: string }>(sql`
       WITH ledger AS (
         SELECT account_id, SUM(base_debit - base_credit) AS net
         FROM gl_entries
