@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { eq } from 'drizzle-orm';
 
 /**
  * Seeds the end-to-end database: the admin, a few products, 47 quote templates (so the
@@ -140,6 +141,27 @@ async function main(): Promise<void> {
         customer(`Bulk customer ${String(i + 1).padStart(2, '0')}`, 'cash', i + 3),
       ),
     ]);
+
+  // Thirty-two quotes, so the list has more than a page (25) to show.
+  for (let i = 1; i <= 32; i += 1) {
+    const quote = await quotes.create(user.id, {
+      customerName: `List customer ${String(i).padStart(2, '0')}`,
+      customerEmail: `list${String(i)}@e2e.test`,
+      currency: 'KES',
+      paymentMethod: 'mpesa_daraja',
+      discountPercent: 0,
+      shippingFee: 0,
+      deliveryAddress: { street: '1', city: 'Nairobi', countyOrState: 'Nairobi', country: 'KE' },
+      sections: [],
+      lines: [{ productId: products['Salt 500g'] ?? '', quantity: 1, discountPercent: 0 }],
+    } as never);
+    if (i % 8 === 0) {
+      await db
+        .update(schema.salesQuotes)
+        .set({ status: 'cancelled' })
+        .where(eq(schema.salesQuotes.id, quote.id));
+    }
+  }
   console.warn('e2e seed: done');
 }
 
