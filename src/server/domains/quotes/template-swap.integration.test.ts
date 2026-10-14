@@ -139,4 +139,66 @@ describe.skipIf(!url)('switching a quote template (database)', () => {
     });
     expect(again.events.filter((e) => e.eventType === 'template_changed')).toHaveLength(1);
   });
+
+  it('saves sections made from section templates, counts their use and records a switch', async () => {
+    const { SectionTemplateService } = await import('./section-template-service');
+    const sts = new SectionTemplateService();
+    const [tiles, grout] = await Promise.all(['Tiles', 'Grout'].map(product));
+    const sectionTemplate = (name: string, productId: string) =>
+      sts.save(userId, null, {
+        name: `${name} ${randomUUID().slice(0, 8)}`,
+        sectionTitle: name,
+        showLines: true,
+        lines: [{ productId, quantity: 2, priceMode: 'catalog', discountPercent: 0 }],
+      });
+    const a = await sectionTemplate('Floor', tiles!);
+    const b = await sectionTemplate('Finish', grout!);
+    const base = {
+      customerName: 'Section Buyer',
+      currency: 'KES',
+      paymentMethod: 'mpesa_daraja' as never,
+      discountPercent: 0,
+      shippingFee: 0,
+      deliveryAddress: { street: '1', city: 'N', countyOrState: 'N', country: 'KE' },
+    };
+    const S1 = randomUUID();
+    const withTemplate = (templateId: string, productId: string) => ({
+      ...base,
+      sections: [{ id: S1, title: 'Floor', sectionTemplateId: templateId }],
+      lines: [{ ...line(productId, S1), fromSectionTemplate: true }],
+    });
+    const created = await svc.create(userId, withTemplate(a.id, tiles!));
+    expect(created.sections[0]).toMatchObject({
+      sectionTemplateId: a.id,
+      sectionTemplateName: a.name,
+      fromTemplate: false,
+    });
+    expect(created.lines[0]!.fromSectionTemplate).toBe(true);
+    // A flag on a line outside any section template is not kept.
+    const loose = await svc.create(userId, {
+      ...base,
+      sections: [],
+      lines: [{ ...line(tiles!), fromSectionTemplate: true }],
+    });
+    expect(loose.lines[0]!.fromSectionTemplate).toBe(false);
+    const count = async (id: string) => (await sts.get(id))!.usageCount;
+    expect(await count(a.id)).toBe(1); // only the first quote used it
+
+    // Saving the same quote again counts nothing; switching the section's template does.
+    await svc.update(userId, created.id, withTemplate(a.id, tiles!));
+    expect(await count(a.id)).toBe(1);
+    const switched = await svc.update(userId, created.id, withTemplate(b.id, grout!));
+    expect(switched.sections[0]!.sectionTemplateId).toBe(b.id);
+    expect(await count(b.id)).toBe(1);
+    const event = switched.events.find((e) => e.eventType === 'section_templates_changed');
+    expect(event?.details).toMatchObject({
+      added: [{ id: b.id }],
+      removed: [{ id: a.id }],
+    });
+
+    // An archived section template cannot start a new section, but stays on one that has it.
+    await sts.archive(userId, b.id);
+    await expect(svc.create(userId, withTemplate(b.id, grout!))).rejects.toThrow(/Archived/);
+    await svc.update(userId, created.id, withTemplate(b.id, grout!));
+  });
 });

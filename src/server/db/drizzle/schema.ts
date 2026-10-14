@@ -2318,6 +2318,71 @@ export const salesQuoteTemplateEvents = pgTable(
   (t) => [index('sales_quote_template_events_idx').on(t.templateId, t.createdAt)],
 );
 
+/**
+ * A reusable section: a titled group of items that can be added to any quote. Adding one copies it,
+ * so later edits here do not change quotes that already used it.
+ */
+export const salesSectionTemplates = pgTable(
+  'sales_section_templates',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    category: text('category'),
+    description: text('description'),
+    status: text('status').notNull().default('active'),
+    /** What the section on a quote is titled when it is made from this template. */
+    sectionTitle: text('section_title').notNull(),
+    sectionDescription: text('section_description'),
+    showLines: boolean('show_lines').notNull().default(false),
+    usageCount: integer('usage_count').notNull().default(0),
+    createdBy: text('created_by'),
+    updatedBy: text('updated_by'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('sales_section_templates_company_name_uidx').on(t.companyId, t.name),
+    index('sales_section_templates_company_status_idx').on(t.companyId, t.status),
+  ],
+);
+
+export const salesSectionTemplateLines = pgTable(
+  'sales_section_template_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    templateId: uuid('template_id')
+      .notNull()
+      .references(() => salesSectionTemplates.id, { onDelete: 'cascade' }),
+    productId: text('product_id').references(() => products.id, { onDelete: 'set null' }),
+    lineNumber: integer('line_number').notNull(),
+    sku: text('sku').notNull().default(''),
+    description: text('description').notNull(),
+    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull().default('1'),
+    priceMode: text('price_mode').notNull().default('catalog'),
+    unitPrice: numeric('unit_price', { precision: 14, scale: 4 }),
+    discountPercent: numeric('discount_percent', { precision: 7, scale: 3 }).notNull().default('0'),
+  },
+  (t) => [uniqueIndex('sales_section_template_lines_number_uidx').on(t.templateId, t.lineNumber)],
+);
+
+export const salesSectionTemplateEvents = pgTable(
+  'sales_section_template_events',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    templateId: uuid('template_id')
+      .notNull()
+      .references(() => salesSectionTemplates.id, { onDelete: 'cascade' }),
+    eventType: text('event_type').notNull(),
+    actorId: text('actor_id'),
+    details: jsonb('details').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('sales_section_template_events_idx').on(t.templateId, t.createdAt)],
+);
+
 /** Sales quotation header; line/cost/tax values are price snapshots. */
 export const salesQuotes = pgTable(
   'sales_quotes',
@@ -2415,6 +2480,11 @@ export const salesQuoteSections = pgTable(
     showLines: boolean('show_lines').notNull().default(false),
     /** Came from the quote's template, so switching template replaces it; false when added by hand. */
     fromTemplate: boolean('from_template').notNull().default(false),
+    /** The section template this section was made from; switching it replaces its template items. */
+    sectionTemplateId: uuid('section_template_id').references(() => salesSectionTemplates.id, {
+      onDelete: 'set null',
+    }),
+    sectionTemplateName: text('section_template_name'),
   },
   (t) => [uniqueIndex('sales_quote_sections_number_uidx').on(t.quoteId, t.sectionNumber)],
 );
@@ -2451,6 +2521,8 @@ export const salesQuoteLines = pgTable(
       .default('0'),
     /** Came from the quote's template, so switching template replaces it; false when added by hand. */
     fromTemplate: boolean('from_template').notNull().default(false),
+    /** Came from the section template of the section it sits in; false when added by hand. */
+    fromSectionTemplate: boolean('from_section_template').notNull().default(false),
   },
   (t) => [uniqueIndex('sales_quote_lines_number_uidx').on(t.quoteId, t.lineNumber)],
 );
@@ -2521,6 +2593,9 @@ export type SalesQuoteEventRow = typeof salesQuoteEvents.$inferSelect;
 export type SalesQuoteTemplateRow = typeof salesQuoteTemplates.$inferSelect;
 export type SalesQuoteTemplateLineRow = typeof salesQuoteTemplateLines.$inferSelect;
 export type SalesQuoteTemplateEventRow = typeof salesQuoteTemplateEvents.$inferSelect;
+export type SalesSectionTemplateRow = typeof salesSectionTemplates.$inferSelect;
+export type SalesSectionTemplateLineRow = typeof salesSectionTemplateLines.$inferSelect;
+export type SalesSectionTemplateEventRow = typeof salesSectionTemplateEvents.$inferSelect;
 export type DimensionRow = typeof dimensions.$inferSelect;
 export type DimensionInsert = typeof dimensions.$inferInsert;
 export type DimensionValueRow = typeof dimensionValues.$inferSelect;

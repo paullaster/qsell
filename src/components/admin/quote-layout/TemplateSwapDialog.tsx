@@ -15,6 +15,8 @@ export function TemplateSwapDialog({
   plan,
   fromName,
   toName,
+  scope = 'quote',
+  sectionName,
   nameOf,
   onConfirm,
   onClose,
@@ -24,6 +26,10 @@ export function TemplateSwapDialog({
   fromName: string | null;
   /** The template being switched to; null when the template is being removed. */
   toName: string | null;
+  /** `section`: only one section of the quote is switched to another section template. */
+  scope?: 'quote' | 'section';
+  /** The section being switched, when `scope` is `section`. */
+  sectionName?: string;
   nameOf: (productId: string) => string;
   onConfirm: (keepAdditions: boolean) => void;
   onClose: () => void;
@@ -33,7 +39,8 @@ export function TemplateSwapDialog({
   const confirmRef = useRef<HTMLButtonElement>(null);
   const [keep, setKeep] = useState(true);
   const titleId = `${uid}-title`;
-  const target = toName ? `“${toName}”` : 'no template';
+  const section = scope === 'section';
+  const target = toName ? `“${toName}”` : section ? 'no section template' : 'no template';
   // Items inside an added section are listed under it, not twice.
   const keptSectionIds = new Set(plan.additions.sections.map((row) => row.id));
   const looseAdditions = plan.additions.lines.filter(
@@ -62,7 +69,9 @@ export function TemplateSwapDialog({
         <header className="flex items-start justify-between gap-3 border-b border-line p-3 sm:p-4">
           <h2 id={titleId} className="flex items-center gap-2 font-semibold text-fg-strong">
             <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" aria-hidden />
-            Switch to {target}?
+            {section
+              ? `Switch section${sectionName ? ` “${sectionName}”` : ''} to ${target}?`
+              : `Switch to ${target}?`}
           </h2>
           <button
             type="button"
@@ -77,26 +86,32 @@ export function TemplateSwapDialog({
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3 text-sm text-fg sm:p-4">
           {plan.kind === 'manual' ? (
             <p>
-              This quote was not built from a template. Switching replaces its{' '}
+              {section
+                ? 'This section was not made from a section template.'
+                : 'This quote was not built from a template.'}{' '}
+              Switching replaces its{' '}
               <strong>
                 {plural(plan.replacedLines, 'item')}
                 {plan.replacedSections > 0
                   ? ` and ${plural(plan.replacedSections, 'section')}`
                   : ''}
               </strong>{' '}
-              with what is in {target}, and sets the quote’s payment terms, notes, discount and
-              shipping from it. The customer and addresses stay as they are.
+              with what is in {target}
+              {section
+                ? ', and takes the section’s title and description from it. The rest of the quote stays as it is.'
+                : ', and sets the quote’s payment terms, notes, discount and shipping from it. The customer and addresses stay as they are.'}
             </p>
           ) : (
             <p>
               {fromName
-                ? `The items and sections that came from “${fromName}”`
+                ? `The items${section ? '' : ' and sections'} that came from “${fromName}”`
                 : 'The template items'}{' '}
               (<strong>{plural(plan.replacedLines, 'item')}</strong>
               {plan.replacedSections > 0 ? `, ${plural(plan.replacedSections, 'section')}` : ''})
-              are replaced with {toName ? `what is in ${target}` : 'nothing'}. Payment terms, notes,
-              discount and shipping change only where you had not edited them. The customer and
-              addresses stay as they are.
+              are replaced with {toName ? `what is in ${target}` : 'nothing'}.{' '}
+              {section
+                ? 'The section’s title and description change only where you had not edited them. The rest of the quote stays as it is.'
+                : 'Payment terms, notes, discount and shipping change only where you had not edited them. The customer and addresses stay as they are.'}
             </p>
           )}
 
@@ -117,7 +132,7 @@ export function TemplateSwapDialog({
             <fieldset className="space-y-2 rounded-lg border border-line p-3">
               <legend className="px-1 font-medium text-fg-strong">
                 You added {plural(additions, 'thing')} that {additions === 1 ? 'is' : 'are'} not in
-                the template
+                the {section ? 'section ' : ''}template
               </legend>
               <ul className="list-inside list-disc text-fg-muted">
                 {looseAdditions.map((line, index) => (

@@ -358,6 +358,13 @@
       "when": 1791948799839,
       "tag": "0050_quote_from_template",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1791950188408,
+      "tag": "0051_section_templates",
+      "breakpoints": true
     }
   ]
 }
