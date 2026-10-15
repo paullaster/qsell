@@ -173,7 +173,7 @@ export class EtimsClient {
       const retryable = res.status >= 500 || res.status === 429;
       throw new EtimsApiError(message, res.status, retryable, parsed);
     }
-    if (!parsed || typeof parsed !== 'object') {
+    if (typeof parsed !== 'object' || parsed === null) {
       throw new EtimsApiError(
         'eTIMS gateway returned an unreadable response',
         res.status,

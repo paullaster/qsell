@@ -221,7 +221,7 @@ describe.skipIf(!has(url))('approvals in modules (database)', () => {
       companyId,
       nth((await c.approvals.forDocument(companyId, 'stock_adjustment', requestId)), 0).id,
     );
-    expect(required(detail!.what).title).toMatch(/Worth KES 1,500/);
+    expect(required(required(detail).what).title).toMatch(/Worth KES 1,500/);
 
     const entry = await openEntry('stock_adjustment', requestId);
     expect(await approve(entry.id, boss)).toMatchObject({ released: true });
@@ -481,8 +481,8 @@ describe.skipIf(!has(url))('approvals in modules (database)', () => {
         lines: [{ productId: p, quantity: 0 }].slice(0, 0).concat([]),
         reason: { code: 'returned_goods' },
       })
-      .catch((e: Error) => e);
-    expect(direct instanceof Error ? direct.message : direct.status).toMatch(
+      .catch((e: unknown) => e);
+    expect(direct instanceof Error ? direct.message : (direct as { status: string }).status).toMatch(
       /at least one line|issued|credit/i,
     );
   });
@@ -560,7 +560,7 @@ describe.skipIf(!has(url))('approvals in modules (database)', () => {
       companyId,
       nth((await c.approvals.forDocument(companyId, 'sales_quote', q.id)), 0).id,
     );
-    expect(required(detail!.what).title).toContain(q.quoteNumber);
+    expect(required(required(detail).what).title).toContain(q.quoteNumber);
 
     await approve((await openEntry('sales_quote', q.id)).id, boss);
     expect(await quoteRow(q.id)).toMatchObject({ status: 'approved', approvalStatus: 'approved' });

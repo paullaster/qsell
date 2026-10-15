@@ -100,9 +100,9 @@ export function ApprovalInboxClient({ items: initial }: { items: InboxItem[] }) 
         <EmptyState title="Nothing is waiting on you">
           New requests appear here as soon as someone submits something you are asked to approve.
         </EmptyState>
-      ) : shown.length === 0 ? (
-        <EmptyState title="No requests match your search" />
-      ) : (
+      ) : null}
+      {items.length > 0 && shown.length === 0 ? <EmptyState title="No requests match your search" /> : null}
+      {shown.length > 0 ? (
         <ul className="space-y-3">
           {shown.map((item) => (
             <li key={item.entryId}>
@@ -115,7 +115,7 @@ export function ApprovalInboxClient({ items: initial }: { items: InboxItem[] }) 
             </li>
           ))}
         </ul>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -200,9 +200,9 @@ function Review({
     };
   }, [item.requestId]);
 
-  const submit = async (e: React.FormEvent) => {
+  const submit = async (e: React.SyntheticEvent) => {
     e.preventDefault();
-    if (!mode) return;
+    if (mode === null) return;
     setBusy(true);
     setMessage(null);
     const res =
@@ -271,8 +271,8 @@ function Review({
                 <p className="mt-1 text-xs text-fg-muted">Not reached yet.</p>
               ) : (
                 <ul className="mt-1 space-y-1">
-                  {s.entries.map((e, i) => (
-                    <li key={i} className="flex flex-wrap items-center gap-2 text-sm text-fg">
+                  {s.entries.map((e) => (
+                    <li key={`${e.approverName}-${e.status}-${e.actedAt ?? ''}`} className="flex flex-wrap items-center gap-2 text-sm text-fg">
                       <span>
                         {e.approverName}
                         {has(e.onBehalfOfName) ? ` (for ${e.onBehalfOfName})` : ''}
@@ -295,8 +295,8 @@ function Review({
           History ({detail.timeline.length})
         </summary>
         <ol className="mt-2 space-y-1.5">
-          {detail.timeline.map((t, i) => (
-            <li key={i} className="text-sm text-fg">
+          {detail.timeline.map((t) => (
+            <li key={`${t.at}-${t.action}`} className="text-sm text-fg">
               <span className="font-medium">{actionLabel(t.action)}</span> · {t.actorName} ·{' '}
               <When iso={t.at} />
               {has(t.reason) ? <span className="block text-xs text-fg-muted">{t.reason}</span> : null}

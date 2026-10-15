@@ -89,7 +89,7 @@ export function RebateDetailClient({
     setMessage(null);
     const r = await rebateStatusAction(p.id, action, reason);
     setBusy(false);
-    if (!r.ok) return setMessage({ kind: 'error', text: r.error });
+    if (!r.ok) { setMessage({ kind: 'error', text: r.error }); return; }
     setMessage({
       kind: 'ok',
       text:
@@ -113,7 +113,7 @@ export function RebateDetailClient({
       reason,
     );
     setBusy(false);
-    if (!r.ok) return setMessage({ kind: 'error', text: r.error });
+    if (!r.ok) { setMessage({ kind: 'error', text: r.error }); return; }
     setMessage({
       kind: 'ok',
       text: r.data.pending

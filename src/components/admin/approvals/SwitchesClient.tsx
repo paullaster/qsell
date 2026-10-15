@@ -1,95 +1,92 @@
 'use client';
 
-import { useId, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { setSwitchAction,
-  type Lookups,
-  type SwitchView,
-} from '@/server/kernel/approvals/actions';
+import { use, useId, useState } from 'react';
+import { branchSwitchesPageAction, companySwitchesAction, setSwitchAction, type BranchSwitchView, type SwitchView } from '@/server/kernel/approvals/actions';
 import { MODULE_LABELS, TRIGGERS } from '@/server/kernel/approvals/domain/triggers';
+import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { usePagedList } from '@/components/ui/usePagedList';
+import { attempt, LoadFailed } from '@/components/ui/screen-kit';
+import { effectiveSwitch, labelIn, ON_OFF, parseScope, switchQuestion } from '@/lib/approval-forms';
+import type { Choice } from '@/lib/payment-options';
 import { ReasonField, type ReasonValue } from '../settings/numbering/ReasonField';
-import {
-  Chip,
-  Notice,
-  PageHeader,
-  buttonClass,
-  cardClass,
-  fieldClass,
-  labelClass,
-  primaryButtonClass,
-  type Message,
-} from './shared';
-
-import { emptyToNull, has } from '@/lib/values';
+import { Chip, Notice, PageHeader, buttonClass, cardClass, primaryButtonClass, type Message } from './shared';
 
 const modules = [...new Set(TRIGGERS.map((t) => t.module))];
+type FirstBranchPage = Extract<Awaited<ReturnType<typeof branchSwitchesPageAction>>, { ok: true }>;
 
-/** The explicit switch for this scope, if one was set (company-wide ones; branch ones are listed apart). */
-const explicit = (list: SwitchView[], module: string, trigger: string | null) =>
-  list.find((s) => s.module === module && s.trigger === trigger && s.branchId === null);
+interface Pending extends SwitchView {
+  branchLabel: string | null;
+}
 
-export function SwitchesClient({
-  switches,
-  lookups,
-}: {
-  switches: SwitchView[];
-  lookups: Lookups;
-}) {
+interface Props {
+  companyPromise: ReturnType<typeof companySwitchesAction>;
+  branchPromise: ReturnType<typeof branchSwitchesPageAction>;
+}
+
+export function SwitchesClient({ companyPromise, branchPromise }: Props) {
+  const company = use(companyPromise);
+  const branches = use(branchPromise);
+  if (!company.ok) return <LoadFailed error={company.error} />;
+  if (!branches.ok) return <LoadFailed error={branches.error} />;
+  return <Switches initial={company.data.company} firstBranches={branches} />;
+}
+
+function Switches({ initial, firstBranches }: { initial: SwitchView[]; firstBranches: FirstBranchPage }) {
   const uid = useId();
-  const router = useRouter();
-  const [pending, setPending] = useState<SwitchView | null>(null);
+  const [company, setCompany] = useState(initial);
+  const [pending, setPending] = useState<Pending | null>(null);
   const [reason, setReason] = useState<ReasonValue>({ code: '', text: '' });
   const [message, setMessage] = useState<Message>(null);
   const [busy, setBusy] = useState(false);
-  const [override, setOverride] = useState({
-    module: modules[0]!,
-    trigger: '',
-    branchId: lookups.branches[0]?.id ?? '',
-    enabled: false,
+  const [branch, setBranch] = useState<Choice | null>(null);
+  const [scope, setScope] = useState<Choice | null>(null);
+  const [state, setState] = useState<Choice>({ id: 'false', label: labelIn(ON_OFF, 'false') });
+
+  const list = usePagedList<BranchSwitchView, Record<string, never>>({
+    load: (_filters, cursor) => branchSwitchesPageAction({ cursor }),
+    filters: {},
+    initialPage: firstBranches,
   });
 
-  const effective = (module: string, trigger: string | null) => {
-    const t = has(trigger) ? explicit(switches, module, trigger) : undefined;
-    if (t) return { on: t.enabled, inherited: false };
-    const m = explicit(switches, module, null);
-    if (m) return { on: m.enabled, inherited: trigger !== null };
-    return { on: true, inherited: true };
-  };
-
   const apply = async () => {
-    if (!pending) return;
+    if (pending === null) return;
     setBusy(true);
     setMessage(null);
-    const res = await setSwitchAction(pending, reason);
+    const { branchLabel: _label, ...input } = pending;
+    const res = await attempt(setSwitchAction(input, reason));
     setBusy(false);
-    if (!res.ok) { setMessage({ kind: 'error', text: res.error }); return; }
+    if (!res.ok) {
+      setMessage({ kind: 'error', text: res.error });
+      return;
+    }
+    const fresh = await attempt(companySwitchesAction());
+    if (fresh.ok) setCompany(fresh.data.company);
+    list.reload();
     setPending(null);
     setReason({ code: '', text: '' });
-    setMessage({
-      kind: 'ok',
-      text: 'Saved. It applies to documents submitted from now on; requests already waiting are not affected.',
-    });
-    router.refresh();
+    setMessage({ kind: 'ok', text: 'Saved. It applies to documents submitted from now on; requests already waiting are not affected.' });
   };
 
-  const toggle = (module: string, trigger: string | null) =>
-    setPending({ module, trigger, branchId: null, enabled: !effective(module, trigger).on });
+  const toggle = (module: string, trigger: string | null) => setPending({ module, trigger, branchId: null, enabled: !effectiveSwitch(company, module, trigger).on, branchLabel: null });
+  const triggerLabelOf = (code: string | null) => (code === null ? null : (TRIGGERS.find((t) => t.code === code)?.label ?? code));
+  const areaLabel = (m: string) => MODULE_LABELS[m] ?? m;
 
-  const branchName = (id: string | null) =>
-    lookups.branches.find((b) => b.id === id)?.name ?? 'Unknown branch';
-  const branchSwitches = switches.filter((s) => s.branchId !== null);
+  const setException = (e: React.SyntheticEvent) => {
+    e.preventDefault();
+    const parsed = scope === null ? null : parseScope(scope.id);
+    if (branch === null || parsed === null) return;
+    setPending({ module: parsed.module, trigger: parsed.trigger, branchId: branch.id, enabled: state.id === 'true', branchLabel: branch.label });
+  };
 
   return (
     <div className="max-w-4xl space-y-5">
       <PageHeader title="Approval switches">
-        Turn approvals off for a whole area or for one situation. A situation follows its area
-        unless you set it separately. When approvals are off, documents go ahead without asking
-        anyone.
+        Turn approvals off for a whole area or for one situation. A situation follows its area unless you set it separately. When approvals are off, documents go ahead without asking anyone.
       </PageHeader>
 
       <Notice message={message} />
 
-      {pending ? (
+      {pending === null ? null : (
         <form
           className={`${cardClass} space-y-4 border-indigo-500`}
           aria-label="Confirm switch change"
@@ -99,62 +96,37 @@ export function SwitchesClient({
           }}
         >
           <p className="text-sm font-semibold text-fg-strong">
-            Turn approvals {pending.enabled ? 'on' : 'off'} for{' '}
-            {has(pending.trigger)
-              ? TRIGGERS.find((t) => t.code === pending.trigger)?.label
-              : `all of ${MODULE_LABELS[pending.module] ?? pending.module}`}
-            {has(pending.branchId) ? ` at ${branchName(pending.branchId)}` : ''}?
+            {switchQuestion({ enabled: pending.enabled, areaLabel: areaLabel(pending.module), triggerLabel: triggerLabelOf(pending.trigger), branchLabel: pending.branchLabel })}
           </p>
           <ReasonField value={reason} onChange={setReason} source="approval-config-reasons" />
           <div className="flex gap-2">
-            <button
-              type="submit"
-              className={primaryButtonClass}
-              disabled={busy || reason.code === ''}
-            >
+            <button type="submit" className={primaryButtonClass} disabled={busy || reason.code === ''}>
               {busy ? 'Saving…' : 'Confirm'}
             </button>
-            <button
-              type="button"
-              className={buttonClass}
-              disabled={busy}
-              onClick={() => setPending(null)}
-            >
+            <button type="button" className={buttonClass} disabled={busy} onClick={() => setPending(null)}>
               Cancel
             </button>
           </div>
         </form>
-      ) : null}
+      )}
 
       {modules.map((m) => {
-        const mod = effective(m, null);
+        const mod = effectiveSwitch(company, m, null);
         return (
           <section key={m} className={`${cardClass} space-y-3`} aria-labelledby={`${uid}-${m}`}>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h3 id={`${uid}-${m}`} className="text-sm font-bold text-fg-strong">
-                {MODULE_LABELS[m] ?? m}
+                {areaLabel(m)}
               </h3>
-              <SwitchButton
-                on={mod.on}
-                label={`${MODULE_LABELS[m] ?? m} approvals`}
-                onClick={() => toggle(m, null)}
-              />
+              <SwitchButton on={mod.on} label={`${areaLabel(m)} approvals`} onClick={() => toggle(m, null)} />
             </div>
             <ul className="divide-y divide-line">
               {TRIGGERS.filter((t) => t.module === m).map((t) => {
-                const e = effective(m, t.code);
+                const e = effectiveSwitch(company, m, t.code);
                 return (
-                  <li
-                    key={t.code}
-                    className="flex flex-wrap items-center justify-between gap-3 py-2"
-                  >
+                  <li key={t.code} className="flex flex-wrap items-center justify-between gap-3 py-2">
                     <span className="text-sm text-fg">
-                      {t.label}{' '}
-                      {e.inherited ? (
-                        <Chip tone="grey">follows {MODULE_LABELS[m] ?? m}</Chip>
-                      ) : (
-                        <Chip tone="sky">set separately</Chip>
-                      )}
+                      {t.label} {e.inherited ? <Chip tone="grey">follows {areaLabel(m)}</Chip> : <Chip tone="sky">set separately</Chip>}
                     </span>
                     <SwitchButton on={e.on} label={t.label} onClick={() => toggle(m, t.code)} />
                   </li>
@@ -169,98 +141,28 @@ export function SwitchesClient({
         <h3 id={`${uid}-branch`} className="text-sm font-bold text-fg-strong">
           Branch exceptions
         </h3>
-        <p className="text-sm text-fg-muted">
-          A switch for one branch wins over the company-wide one.
-        </p>
-        {branchSwitches.length === 0 ? (
-          <p className="text-sm text-fg-muted">No branch exceptions.</p>
-        ) : (
-          <ul className="space-y-1.5">
-            {branchSwitches.map((s, i) => (
-              <li key={i} className="text-sm text-fg">
-                {branchName(s.branchId)}:{' '}
-                {has(s.trigger)
-                  ? TRIGGERS.find((t) => t.code === s.trigger)?.label
-                  : (MODULE_LABELS[s.module] ?? s.module)}{' '}
-                <Chip tone={s.enabled ? 'green' : 'grey'}>{s.enabled ? 'On' : 'Off'}</Chip>
-              </li>
-            ))}
-          </ul>
+        <p className="text-sm text-fg-muted">A switch for one branch wins over the company-wide one.</p>
+        {list.phase === 'idle' && list.rows.length === 0 ? <p className="text-sm text-fg-muted">No branch exceptions.</p> : null}
+        <ul className="space-y-1.5" aria-label="Branch exceptions">
+          {list.rows.map((s) => (
+            <li key={`${s.branchId ?? ''}-${s.module}-${s.trigger ?? ''}`} className="text-sm text-fg">
+              {s.branchLabel}: {triggerLabelOf(s.trigger) ?? areaLabel(s.module)} <Chip tone={s.enabled ? 'green' : 'grey'}>{s.enabled ? 'On' : 'Off'}</Chip>
+            </li>
+          ))}
+        </ul>
+        {list.cursor === null ? null : (
+          <button type="button" className={buttonClass} onClick={list.loadMore} disabled={list.phase === 'more'}>
+            {list.phase === 'more' ? 'Loading…' : 'Show more exceptions'}
+          </button>
         )}
-        {lookups.branches.length > 0 ? (
-          <form
-            className="flex flex-wrap items-end gap-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              setPending({
-                module: override.module,
-                trigger: emptyToNull(override.trigger),
-                branchId: override.branchId,
-                enabled: override.enabled,
-              });
-            }}
-          >
-            <div>
-              <label htmlFor={`${uid}-bb`} className={labelClass}>
-                Branch
-              </label>
-              <select
-                id={`${uid}-bb`}
-                value={override.branchId}
-                onChange={(e) => setOverride({ ...override, branchId: e.target.value })}
-                className={fieldClass}
-              >
-                {lookups.branches.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label htmlFor={`${uid}-bt`} className={labelClass}>
-                Applies to
-              </label>
-              <select
-                id={`${uid}-bt`}
-                value={`${override.module}|${override.trigger}`}
-                onChange={(e) => {
-                  const [module, trigger] = e.target.value.split('|');
-                  setOverride({ ...override, module: module!, trigger: trigger ?? '' });
-                }}
-                className={fieldClass}
-              >
-                {modules.map((m) => (
-                  <optgroup key={m} label={MODULE_LABELS[m] ?? m}>
-                    <option value={`${m}|`}>All of {MODULE_LABELS[m] ?? m}</option>
-                    {TRIGGERS.filter((t) => t.module === m).map((t) => (
-                      <option key={t.code} value={`${m}|${t.code}`}>
-                        {t.label}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label htmlFor={`${uid}-be`} className={labelClass}>
-                Approvals
-              </label>
-              <select
-                id={`${uid}-be`}
-                value={String(override.enabled)}
-                onChange={(e) => setOverride({ ...override, enabled: e.target.value === 'true' })}
-                className={fieldClass}
-              >
-                <option value="false">Off</option>
-                <option value="true">On</option>
-              </select>
-            </div>
-            <button type="submit" className={buttonClass}>
-              Set exception…
-            </button>
-          </form>
-        ) : null}
+        <form className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[1fr_1fr_8rem_auto]" onSubmit={setException} aria-label="New branch exception">
+          <ChoicePicker label="Branch" source="approval-branches" choice={branch} onChoice={setBranch} placeholder="Choose a branch…" required />
+          <ChoicePicker label="Applies to" source="approval-switch-scopes" choice={scope} onChoice={setScope} placeholder="Choose an area or situation…" required />
+          <ChoicePicker label="Approvals" source="approval-on-off" choice={state} onChoice={(c) => setState(c ?? state)} clearable={false} />
+          <button type="submit" className={buttonClass} disabled={branch === null || scope === null}>
+            Set exception…
+          </button>
+        </form>
       </section>
     </div>
   );
@@ -274,13 +176,10 @@ function SwitchButton({ on, label, onClick }: { on: boolean; label: string; onCl
       aria-checked={on}
       aria-label={label}
       onClick={onClick}
-      className={`inline-flex min-h-10 min-w-24 cursor-pointer items-center justify-center rounded-full border px-4 text-xs font-bold focus-visible:outline-2 focus-visible:outline-indigo-500 ${
-        on
-          ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700'
-          : 'border-line-strong bg-surface-sunken text-fg-muted'
-      }`}
+      className={`inline-flex min-h-10 min-w-24 cursor-pointer items-center justify-center rounded-full border px-4 text-xs font-bold focus-visible:outline-2 focus-visible:outline-indigo-500 ${on ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700' : 'border-line-strong bg-surface-sunken text-fg-muted'}`}
     >
       {on ? 'On' : 'Off'}
     </button>
   );
 }
+

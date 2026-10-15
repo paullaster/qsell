@@ -166,7 +166,7 @@ export function AdminRolesClient({ setupPromise }: { setupPromise: Promise<Roles
   };
 
   const removeRole = (role: RolesSetup['roles'][number]) => {
-    // eslint-disable-next-line no-alert -- native confirm matches existing admin UI pattern
+     
     if (
       !window.confirm(
         `Delete role '${role.name}' (${role.key})? Users holding it lose its permissions.`,

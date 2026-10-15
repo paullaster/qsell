@@ -53,7 +53,7 @@ interface State {
   minRedeemPoints: string;
   maxRedeemPercent: string;
   expiryMonths: string;
-  tiers: Array<{ name: string; fromPoints: string; multiplier: string }>;
+  tiers: { name: string; fromPoints: string; multiplier: string }[];
 }
 
 const fromProgram = (p: LoyaltyProgramView | null): State => ({
@@ -127,7 +127,7 @@ export function LoyaltyClient({
     setMessage(null);
     const r = await saveLoyaltyAction({ name: s.name, status: s.status, config }, reason);
     setBusy(false);
-    if (!r.ok) return setMessage({ kind: 'error', text: r.error });
+    if (!r.ok) { setMessage({ kind: 'error', text: r.error }); return; }
     setMessage({
       kind: 'ok',
       text:
@@ -400,7 +400,7 @@ function CustomerPoints({ canManage, active }: { canManage: boolean; active: boo
       reason,
     );
     setBusy(false);
-    if (!r.ok) return setMessage({ kind: 'error', text: r.error });
+    if (!r.ok) { setMessage({ kind: 'error', text: r.error }); return; }
     setAccount(r.data);
     setPoints('');
     setNote('');

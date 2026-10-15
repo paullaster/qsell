@@ -63,7 +63,7 @@ const ORDER_REWARDS = [
   { value: 'amount', label: 'Amount off the order' },
 ];
 
-const KINDS: Array<{ value: DiscountKind; label: string }> = [
+const KINDS: { value: DiscountKind; label: string }[] = [
   { value: 'line', label: 'A line (each product on its own)' },
   { value: 'order', label: 'The whole order (what the lines come to)' },
   { value: 'mix', label: 'A product deal (buy and get, mix and match, bundle)' },
@@ -86,7 +86,7 @@ interface State {
   stacking: Stacking;
   rewardType: string;
   rewardValue: string;
-  tiers: Array<{ from: string; value: string }>;
+  tiers: { from: string; value: string }[];
   target: TargetState;
   deal: DealState;
   scopes: Scopes;

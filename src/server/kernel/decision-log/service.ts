@@ -2,6 +2,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { decisionLog, type DecisionLogRow } from '@/server/db/drizzle/schema';
 import { currentContext, type Actor } from '../context';
+import { trimToNull } from '@/lib/values';
 
 /** Anything with `.insert`, so a decision can be written in the caller's own transaction. */
 export type DecisionWriter = Pick<DrizzleDb, 'insert'>;
@@ -45,7 +46,7 @@ export class DecisionLog {
       actorType: actor.type,
       actorId: actor.id,
       reasonCode: entry.reason?.code ?? null,
-      reasonText: entry.reason?.text?.trim() || null,
+      reasonText: trimToNull(entry.reason?.text),
       policyId: entry.policy?.id ?? null,
       policyVersion: entry.policy?.version ?? null,
       fromState: entry.from ?? null,
@@ -68,7 +69,7 @@ export class DecisionLog {
 
   /** Everything done for one request, job or integration call, across subjects. */
   async byCorrelation(correlationId: string): Promise<DecisionLogRow[]> {
-    return this.db
+    return await this.db
       .select()
       .from(decisionLog)
       .where(eq(decisionLog.correlationId, correlationId))

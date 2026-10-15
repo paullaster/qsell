@@ -30,7 +30,6 @@ import {
 import { AdminDashboard } from './AdminDashboard';
 import { AdminProducts } from './AdminProducts';
 import { AdminCategories } from './AdminCategories';
-import { AdminTaxes } from './AdminTaxes';
 import { AdminCurrencies } from './AdminCurrencies';
 import { AdminInventory } from './AdminInventory';
 import { AdminOrders } from './AdminOrders';
@@ -198,12 +197,6 @@ export function AdminView({
             productsPromise={productsPromise}
             onRefresh={onRefreshAll}
           />
-        </Suspense>
-      )}
-
-      {activeTab === 'taxes' && (
-        <Suspense fallback={<SkeletonTable />}>
-          <AdminTaxes taxesPromise={taxesPromise} onRefreshAll={onRefreshAll} />
         </Suspense>
       )}
 

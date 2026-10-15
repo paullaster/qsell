@@ -22,7 +22,7 @@ import {
   type LineWithBranch,
 } from './repository';
 
-import { has } from '@/lib/values';
+import { has, required } from '@/lib/values';
 
 export type NumberSeriesErrorCode =
   | 'UNKNOWN_DOCUMENT_KIND'
@@ -294,7 +294,7 @@ export class NumberSeriesService {
     }
 
     let branch = has(req.branchId) ? await repo.branchRef(ex, req.branchId) : null;
-    if (has(req.branchId) && (!branch || branch.companyId !== req.companyId)) {
+    if (has(req.branchId) && branch?.companyId !== req.companyId) {
       throw new NumberSeriesError('BRANCH_REQUIRED', `Branch ${req.branchId} was not found.`);
     }
 
@@ -385,7 +385,7 @@ export class NumberSeriesService {
         `Series ${series.code} does not allow typed-in numbers.`,
       );
     }
-    const number = req.manualNo!.trim();
+    const number = required(req.manualNo, 'the typed number').trim();
     if (!MANUAL_PATTERN.test(number)) {
       throw new NumberSeriesError(
         'MANUAL_NUMBER_INVALID',
@@ -1347,7 +1347,7 @@ export class NumberSeriesService {
     }
     if (has(line.branchId)) {
       const branch = await repo.branchRef(ex, line.branchId);
-      if (!branch || branch.companyId !== series.companyId) {
+      if (branch?.companyId !== series.companyId) {
         throw new NumberSeriesError('INVALID_CONFIG', 'That branch was not found.', {
           issues: [{ field: 'branchId', message: 'Unknown branch.' }],
         });

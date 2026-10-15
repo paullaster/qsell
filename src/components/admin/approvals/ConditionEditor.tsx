@@ -3,390 +3,269 @@
 import { useId } from 'react';
 import type { TriggerField } from '@/server/kernel/approvals/domain/triggers';
 import type { Comparison, ConditionNode } from '@/server/kernel/approvals/domain/types';
-import { buttonClass, fieldClass } from './shared';
+import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import {
+  asRoot,
+  blankFor,
+  comparedField,
+  comparisonChoices,
+  CONDITION_MATCH,
+  emptyToNothing,
+  isGroup,
+  labelIn,
+  listText,
+  parseList,
+  removeAt,
+  replaceAt,
+  withComparedField,
+  withField,
+  withOp,
+
+  type ConditionGroup,
+} from '@/lib/approval-forms';
+import type { Choice } from '@/lib/payment-options';
 import { readText } from '@/lib/values';
+import { buttonClass, fieldClass } from './shared';
 
-interface Group { op: 'and' | 'or'; children: ConditionNode[] }
-
-const isGroup = (n: ConditionNode): n is Group => n.op === 'and' || n.op === 'or';
-
-const OPS: Record<TriggerField['type'], [Comparison['op'], string][]> = {
-  number: [
-    ['gt', 'is more than'],
-    ['gte', 'is at least'],
-    ['lt', 'is less than'],
-    ['lte', 'is at most'],
-    ['eq', 'is exactly'],
-    ['ne', 'is not'],
-    ['between', 'is between'],
-  ],
-  text: [
-    ['eq', 'is'],
-    ['ne', 'is not'],
-    ['in', 'is one of'],
-    ['not_in', 'is none of'],
-    ['contains', 'contains'],
-    ['exists', 'is filled in'],
-  ],
-  boolean: [
-    ['eq', 'is'],
-    ['ne', 'is not'],
-  ],
-};
-
-function blankFor(field: TriggerField): Comparison {
-  if (field.type === 'boolean') return { op: 'eq', field: field.path, value: true };
-  if (field.type === 'number') return { op: 'gt', field: field.path, value: 0 };
-  return { op: 'eq', field: field.path, value: '' };
+interface EditorProps {
+  value: ConditionNode | undefined;
+  onChange: (next: ConditionNode | undefined) => void;
+  /** The situation the conditions are about; its fields are what can be compared. */
+  trigger: string;
+  fields: TriggerField[];
+  label: string;
+  emptyText: string;
 }
-
-const list = (value: unknown) => (Array.isArray(value) ? value.join(', ') : '');
-const parseList = (text: string, numeric: boolean) =>
-  text
-    .split(',')
-    .map((t) => t.trim())
-    .filter((t) => t !== '')
-    .map((t) => (numeric && Number.isFinite(Number(t)) ? Number(t) : t));
 
 /**
  * Builds the "when does this apply?" tree: groups that match ALL or ANY of their rows, and rows
  * that compare one field of the document with a value (or with another field).
  * No conditions at all means "always".
  */
-export function ConditionEditor({
-  value,
-  onChange,
-  fields,
-  label,
-  emptyText,
-}: {
-  value: ConditionNode | undefined;
-  onChange: (next: ConditionNode | undefined) => void;
-  fields: TriggerField[];
-  label: string;
-  emptyText: string;
-}) {
-  const root: Group | null =
-    value === undefined ? null : isGroup(value) ? value : { op: 'and', children: [value] };
+export function ConditionEditor({ value, onChange, trigger, fields, label, emptyText }: EditorProps) {
+  const root = asRoot(value);
+  const first = fields[0];
   return (
     <div role="group" aria-label={label} className="space-y-3">
       {root === null ? (
         <div className="flex flex-wrap items-center gap-3">
           <p className="text-sm text-fg-muted">{emptyText}</p>
-          <button
-            type="button"
-            className={buttonClass}
-            onClick={() => onChange({ op: 'and', children: [blankFor(fields[0]!)] })}
-          >
-            Add a condition
-          </button>
+          {first === undefined ? null : (
+            <button type="button" className={buttonClass} onClick={() => onChange({ op: 'and', children: [blankFor(first)] })}>
+              Add a condition
+            </button>
+          )}
         </div>
       ) : (
-        <GroupEditor
-          group={root}
-          fields={fields}
-          depth={0}
-          onChange={(g) => onChange(g.children.length === 0 ? undefined : g)}
-          onRemove={() => onChange(undefined)}
-        />
+        <GroupEditor group={root} trigger={trigger} fields={fields} depth={0} onChange={(g) => onChange(emptyToNothing(g))} onRemove={() => onChange(undefined)} />
       )}
     </div>
   );
 }
 
-function GroupEditor({
-  group,
-  fields,
-  depth,
-  onChange,
-  onRemove,
-}: {
-  group: Group;
+interface GroupProps {
+  group: ConditionGroup;
+  trigger: string;
   fields: TriggerField[];
   depth: number;
-  onChange: (next: Group) => void;
+  onChange: (next: ConditionGroup) => void;
   onRemove: () => void;
-}) {
-  const uid = useId();
+}
+
+function GroupEditor({ group, trigger, fields, depth, onChange, onRemove }: GroupProps) {
   const set = (children: ConditionNode[]) => onChange({ ...group, children });
+  const first = fields[0];
   return (
-    <div
-      className={`space-y-2 rounded-lg border border-line p-3 ${depth > 0 ? 'bg-surface-sunken' : ''}`}
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <label htmlFor={`${uid}-op`} className="text-sm text-fg">
-          Applies when
-        </label>
-        <select
-          id={`${uid}-op`}
-          value={group.op}
-          onChange={(e) => onChange({ ...group, op: e.target.value as 'and' | 'or' })}
-          className={`${fieldClass} w-auto`}
-        >
-          <option value="and">all of these are true</option>
-          <option value="or">any of these is true</option>
-        </select>
+    <div className={`space-y-2 rounded-lg border border-line p-3 ${depth > 0 ? 'bg-surface-sunken' : ''}`}>
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="min-w-48">
+          <ChoicePicker
+            label="Applies when"
+            source="approval-condition-match"
+            choice={{ id: group.op, label: labelIn(CONDITION_MATCH, group.op) }}
+            onChoice={(c) => onChange({ ...group, op: c?.id === 'or' ? 'or' : 'and' })}
+            clearable={false}
+          />
+        </div>
         <button type="button" className={`${buttonClass} ml-auto`} onClick={onRemove}>
           {depth === 0 ? 'Remove all conditions' : 'Remove group'}
         </button>
       </div>
       <ul className="space-y-2">
         {group.children.map((child, i) => (
+          // Conditions have no identity of their own: a row is only its position, and everything in it comes from the value.
+          // eslint-disable-next-line react/no-array-index-key
           <li key={i}>
-            {isGroup(child) ? (
-              <GroupEditor
-                group={child}
-                fields={fields}
-                depth={depth + 1}
-                onChange={(g) => set(group.children.map((c, j) => (j === i ? g : c)))}
-                onRemove={() => set(group.children.filter((_, j) => j !== i))}
-              />
-            ) : child.op === 'not' ? (
-              <p className="text-sm text-fg-muted">
-                A “not” condition made elsewhere is kept as it is.{' '}
-                <button
-                  type="button"
-                  className="underline"
-                  onClick={() => set(group.children.filter((_, j) => j !== i))}
-                >
-                  Remove it
-                </button>
-              </p>
-            ) : (
-              <RowEditor
-                row={child}
-                fields={fields}
-                onChange={(r) => set(group.children.map((c, j) => (j === i ? r : c)))}
-                onRemove={() => set(group.children.filter((_, j) => j !== i))}
-              />
-            )}
+            <ChildEditor child={child} trigger={trigger} fields={fields} depth={depth} onChange={(next) => set(replaceAt(group.children, i, next))} onRemove={() => set(removeAt(group.children, i))} />
           </li>
         ))}
       </ul>
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          className={buttonClass}
-          onClick={() => set([...group.children, blankFor(fields[0]!)])}
-        >
-          Add a condition
-        </button>
-        {depth < 2 ? (
-          <button
-            type="button"
-            className={buttonClass}
-            onClick={() => set([...group.children, { op: 'or', children: [blankFor(fields[0]!)] }])}
-          >
-            Add a group
+      {first === undefined ? null : (
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className={buttonClass} onClick={() => set([...group.children, blankFor(first)])}>
+            Add a condition
           </button>
-        ) : null}
-      </div>
+          {depth < 2 ? (
+            <button type="button" className={buttonClass} onClick={() => set([...group.children, { op: 'or', children: [blankFor(first)] }])}>
+              Add a group
+            </button>
+          ) : null}
+        </div>
+      )}
     </div>
   );
 }
 
-function RowEditor({
-  row,
-  fields,
-  onChange,
-  onRemove,
-}: {
+interface ChildProps {
+  child: ConditionNode;
+  trigger: string;
+  fields: TriggerField[];
+  depth: number;
+  onChange: (next: ConditionNode) => void;
+  onRemove: () => void;
+}
+
+/** One entry of a group: another group, a comparison, or a "not" made elsewhere (kept as it is). */
+function ChildEditor({ child, trigger, fields, depth, onChange, onRemove }: ChildProps) {
+  if (isGroup(child)) {
+    return <GroupEditor group={child} trigger={trigger} fields={fields} depth={depth + 1} onChange={onChange} onRemove={onRemove} />;
+  }
+  if (child.op === 'not') {
+    return (
+      <p className="text-sm text-fg-muted">
+        A “not” condition made elsewhere is kept as it is.{' '}
+        <button type="button" className="underline" onClick={onRemove}>
+          Remove it
+        </button>
+      </p>
+    );
+  }
+  return <RowEditor row={child} trigger={trigger} fields={fields} onChange={onChange} onRemove={onRemove} />;
+}
+
+interface RowProps {
   row: Comparison;
+  trigger: string;
   fields: TriggerField[];
   onChange: (next: Comparison) => void;
   onRemove: () => void;
-}) {
-  const uid = useId();
-  const field = fields.find((f) => f.path === row.field) ?? fields[0]!;
-  const unknown = !fields.some((f) => f.path === row.field);
-  const ops = OPS[field.type];
-  const compareFields = fields.filter((f) => f.type === field.type && f.path !== field.path);
-  const against =
-    'value' in row &&
-    row.value !== null &&
-    typeof row.value === 'object' &&
-    !Array.isArray(row.value)
-      ? (row.value).field
-      : null;
+}
 
-  const changeField = (path: string) => {
-    const next = fields.find((f) => f.path === path)!;
-    // A new field may not support the old operator or value type, so start that row afresh.
-    onChange(
-      next.type === field.type && ops.some(([o]) => o === row.op)
-        ? { ...row, field: path }
-        : blankFor(next),
-    );
-  };
-  const changeOp = (op: Comparison['op']) => {
-    const f = row.field;
-    if (op === 'between') onChange({ op, field: f, value: [0, 0] });
-    else if (op === 'in' || op === 'not_in') onChange({ op, field: f, value: [] });
-    else if (op === 'exists') onChange({ op, field: f, value: true });
-    else if (op === 'contains') onChange({ op, field: f, value: '' });
-    else {
-      const keep =
-        'value' in row && !Array.isArray(row.value)
-          ? (row.value as never)
-          : field.type === 'number'
-            ? 0
-            : '';
-      onChange({ op, field: f, value: keep });
-    }
-  };
+function RowEditor({ row, trigger, fields, onChange, onRemove }: RowProps) {
+  const uid = useId();
+  const known = fields.find((f) => f.path === row.field);
+  const field = known ?? fields[0];
+  if (field === undefined) return null;
+  const compareFields = fields.filter((f) => f.type === field.type && f.path !== field.path);
+  const against = comparedField(row);
+  const op = comparisonChoices(field.type).find((c) => c.id === row.op);
+  const canCompareField = compareFields.length > 0 && ['eq', 'ne', 'gt', 'gte', 'lt', 'lte'].includes(row.op) && field.type !== 'boolean';
+
+  const fieldChoice: Choice = { id: row.field, label: known === undefined ? `${row.field} (not available)` : known.label };
+  const yesNo = (v: unknown): Choice => ({ id: v === true ? 'true' : 'false', label: v === true ? 'Yes' : 'No' });
 
   let valueInput: React.ReactNode;
-  if (field.type === 'boolean') {
+  if (field.type === 'boolean' || row.op === 'exists') {
     valueInput = (
-      <select
-        aria-label="Value"
-        value={String((row as { value: unknown }).value === true)}
-        onChange={(e) => onChange({ ...row, value: e.target.value === 'true' } as Comparison)}
-        className={`${fieldClass} w-auto`}
-      >
-        <option value="true">Yes</option>
-        <option value="false">No</option>
-      </select>
-    );
-  } else if (row.op === 'exists') {
-    valueInput = (
-      <select
-        aria-label="Value"
-        value={String(row.value)}
-        onChange={(e) => onChange({ ...row, value: e.target.value === 'true' })}
-        className={`${fieldClass} w-auto`}
-      >
-        <option value="true">Yes</option>
-        <option value="false">No</option>
-      </select>
+      <ChoicePicker
+        label="Value"
+        source="approval-yes-no"
+        choice={yesNo('value' in row ? row.value : false)}
+        onChoice={(c) => onChange({ ...row, value: c?.id === 'true' } as Comparison)}
+        clearable={false}
+        hideLabel
+      />
     );
   } else if (row.op === 'between') {
     valueInput = (
       <span className="flex items-center gap-2">
-        <input
-          type="number"
-          aria-label="From"
-          value={row.value[0]}
-          onChange={(e) => onChange({ ...row, value: [Number(e.target.value), row.value[1]] })}
-          className={`${fieldClass} w-28`}
-        />
+        <input type="number" aria-label="From" value={row.value[0]} onChange={(e) => onChange({ ...row, value: [Number(e.target.value), row.value[1]] })} className={`${fieldClass} w-28`} />
         <span className="text-sm text-fg-muted">and</span>
-        <input
-          type="number"
-          aria-label="To"
-          value={row.value[1]}
-          onChange={(e) => onChange({ ...row, value: [row.value[0], Number(e.target.value)] })}
-          className={`${fieldClass} w-28`}
-        />
+        <input type="number" aria-label="To" value={row.value[1]} onChange={(e) => onChange({ ...row, value: [row.value[0], Number(e.target.value)] })} className={`${fieldClass} w-28`} />
       </span>
     );
   } else if (row.op === 'in' || row.op === 'not_in') {
     valueInput = (
       <input
-        type="text"
         aria-label="Values, separated by commas"
+        value={listText(row.value)}
+        onChange={(e) => onChange({ ...row, value: parseList(e.target.value, field.type === 'number') })}
         placeholder="a, b, c"
-        defaultValue={list(row.value)}
-        onBlur={(e) =>
-          onChange({ ...row, value: parseList(e.target.value, field.type === 'number') })
-        }
         className={`${fieldClass} min-w-40 flex-1`}
       />
     );
   } else if (against !== null) {
+    const other = fields.find((f) => f.path === against);
     valueInput = (
-      <select
-        aria-label="Compare with field"
-        value={against}
-        onChange={(e) => onChange({ ...row, value: { field: e.target.value } } as Comparison)}
-        className={`${fieldClass} w-auto`}
-      >
-        {compareFields.map((f) => (
-          <option key={f.path} value={f.path}>
-            {f.label}
-          </option>
-        ))}
-      </select>
+      <ChoicePicker
+        label="Compare with field"
+        source="approval-trigger-fields"
+        filters={{ trigger, type: field.type, exclude: field.path }}
+        choice={{ id: against, label: other?.label ?? against }}
+        onChoice={(c) => onChange({ ...row, value: { field: c?.id ?? against } } as Comparison)}
+        clearable={false}
+        hideLabel
+      />
     );
   } else {
     valueInput = (
       <input
         type={field.type === 'number' ? 'number' : 'text'}
         aria-label="Value"
-        value={readText((row as { value: unknown }).value, '')}
-        onChange={(e) =>
-          onChange({
-            ...row,
-            value: field.type === 'number' ? Number(e.target.value) : e.target.value,
-          } as Comparison)
-        }
+        value={readText('value' in row ? row.value : '', '')}
+        onChange={(e) => onChange({ ...row, value: field.type === 'number' ? Number(e.target.value) : e.target.value } as Comparison)}
         className={`${fieldClass} min-w-32 flex-1`}
       />
     );
   }
 
-  const canCompareField =
-    compareFields.length > 0 &&
-    ['eq', 'ne', 'gt', 'gte', 'lt', 'lte'].includes(row.op) &&
-    field.type !== 'boolean';
-
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <select
-        aria-label="Field"
-        value={field.path}
-        onChange={(e) => changeField(e.target.value)}
-        className={`${fieldClass} w-auto max-w-full`}
-      >
-        {unknown ? <option value={row.field}>{row.field} (not available)</option> : null}
-        {fields.map((f) => (
-          <option key={f.path} value={f.path}>
-            {f.label}
-          </option>
-        ))}
-      </select>
-      <select
-        aria-label="Comparison"
-        value={row.op}
-        onChange={(e) => changeOp(e.target.value as Comparison['op'])}
-        className={`${fieldClass} w-auto`}
-      >
-        {ops.map(([o, text]) => (
-          <option key={o} value={o}>
-            {text}
-          </option>
-        ))}
-      </select>
+    <div className="flex flex-wrap items-end gap-2">
+      <div className="min-w-52">
+        <ChoicePicker
+          label="Field"
+          source="approval-trigger-fields"
+          filters={{ trigger }}
+          choice={fieldChoice}
+          onChoice={(c) => {
+            const next = fields.find((f) => f.path === c?.id);
+            if (next !== undefined) onChange(withField(row, field, next));
+          }}
+          clearable={false}
+          hideLabel
+        />
+      </div>
+      <div className="min-w-44">
+        <ChoicePicker
+          label="Comparison"
+          source="approval-comparisons"
+          filters={{ type: field.type }}
+          choice={op === undefined ? { id: row.op, label: row.op } : { id: op.id, label: op.label }}
+          onChoice={(c) => {
+            const picked = comparisonChoices(field.type).find((o) => o.id === c?.id);
+            if (picked !== undefined) onChange(withOp(row, picked.id, field.type));
+          }}
+          clearable={false}
+          hideLabel
+        />
+      </div>
       {valueInput}
       {canCompareField ? (
-        <label className="flex min-h-10 cursor-pointer items-center gap-1.5 text-xs text-fg">
+        <label className="flex min-h-10 cursor-pointer items-center gap-1.5 text-xs text-fg" htmlFor={`${uid}-f`}>
           <input
             type="checkbox"
             className="size-4"
             checked={against !== null}
-            onChange={(e) =>
-              onChange({
-                ...row,
-                value: e.target.checked
-                  ? { field: compareFields[0]!.path }
-                  : field.type === 'number'
-                    ? 0
-                    : '',
-              } as Comparison)
-            }
+            onChange={(e) => onChange(withComparedField(row, e.target.checked, field.type, compareFields[0]?.path))}
             id={`${uid}-f`}
           />
           another field
         </label>
       ) : null}
-      <button
-        type="button"
-        className={buttonClass}
-        onClick={onRemove}
-        aria-label={`Remove condition on ${field.label}`}
-      >
+      <button type="button" className={buttonClass} onClick={onRemove} aria-label={`Remove condition on ${field.label}`}>
         Remove
       </button>
     </div>
   );
 }
+

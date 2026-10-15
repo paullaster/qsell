@@ -317,7 +317,7 @@ export function AdminIntegrationAudit({
                 <th className="px-4 py-3 text-center">Status</th>
                 <th className="px-4 py-3 text-center">Duration</th>
                 <th className="px-4 py-3 text-center">Retries</th>
-                <th className="px-4 py-3"></th>
+                <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-line text-fg">

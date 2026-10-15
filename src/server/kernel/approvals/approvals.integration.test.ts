@@ -160,10 +160,10 @@ describe.skipIf(!has(url))('approvals (database)', () => {
     companyId = (await c.companySettings.ensureSeeded()).id;
     await c.reasonCodes.ensureSystemReasons(companyId);
     c.approvals.registerDocument('sales_order', {
-      snapshot: async (id) => live.get(id) ?? {},
-      onReleased: async (id) => void released.push(id),
-      onRejected: async (id) => void rejected.push(id),
-      onReopened: async (id) => void reopened.push(id),
+      snapshot: (id) => Promise.resolve(live.get(id) ?? {}),
+      onReleased: (id) => Promise.resolve(void released.push(id)),
+      onRejected: (id) => Promise.resolve(void rejected.push(id)),
+      onReopened: (id) => Promise.resolve(void reopened.push(id)),
     });
   });
 
@@ -494,7 +494,7 @@ describe.skipIf(!has(url))('approvals (database)', () => {
   });
 
   it('refuses to publish a workflow that could get stuck', async () => {
-    const p = await people();
+    await people();
     const emptyGroup = await c.approvalConfig.saveGroup(
       companyId,
       { code: `E-${randomUUID().slice(0, 6)}`, name: 'Empty', memberUserIds: [] },
@@ -530,7 +530,6 @@ describe.skipIf(!has(url))('approvals (database)', () => {
     expect(messages).toMatch(/no members/);
     expect(messages).toMatch(/does not exist/);
     expect(messages).toMatch(/share the order/);
-    p;
   });
 
   it('refuses an approval chain that loops back, and a change with no reason', async () => {

@@ -1,20 +1,6 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import { pick } from './support/quotes';
-
-async function open(page: Page, url: string, heading: string | RegExp): Promise<void> {
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    await page.goto(url);
-    try {
-      await expect(page.getByRole('heading', { name: heading, level: 2 }).first()).toBeVisible({ timeout: 30_000 });
-      return;
-    } catch (error) {
-      if (attempt === 3) throw error;
-    }
-  }
-}
-
-const noHorizontalScroll = async (page: Page) =>
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+import { open, noHorizontalScroll } from './support/page';
 
 test.describe('the chart of accounts', () => {
   test('is read a page at a time, searched on the server, and an account is added with pickers', async ({ page }, testInfo) => {

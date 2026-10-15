@@ -22,7 +22,7 @@ export function matching(query: string, columns: AnyPgColumn[]): SQL | undefined
 /** Rows after the cursor in (key, id) order; a bad or missing cursor starts from the top. */
 export function afterCursor(cursor: string | null | undefined, key: AnyPgColumn, id: AnyPgColumn): SQL | undefined {
   const after = typeof cursor === 'string' && cursor !== '' ? decodeCursor(cursor) : null;
-  return after === null ? undefined : sql`(${key}, ${id}) > (${after.k}, ${after.id}::uuid)`;
+  return after === null ? undefined : sql`(${key}, ${id}) > (${after.k}, ${after.id})`;
 }
 
 /** One page out of `limit + 1` rows read: the rows to show, and where the next page begins. */

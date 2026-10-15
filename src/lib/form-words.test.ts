@@ -10,5 +10,6 @@ describe('form words', () => {
     expect(submitWords(true, null, 'Create')).toBe('Saving…');
     expect(submitWords(false, null, 'Create')).toBe('Create');
     expect(submitWords(false, 'x', 'Create')).toBe('Save changes');
+    expect(submitWords(false, 'x', 'Add line', 'Save line')).toBe('Save line');
   });
 });

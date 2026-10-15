@@ -73,7 +73,7 @@ export function DiscountDetailClient({
     if (action === 'activate') {
       const r = await activateDiscountRuleAction(rule.id, reason);
       setBusy(false);
-      if (!r.ok) return setMessage({ kind: 'error', text: r.error });
+      if (!r.ok) { setMessage({ kind: 'error', text: r.error }); return; }
       setMessage({
         kind: 'ok',
         text: r.data.pending ? (r.data.message ?? 'Sent for approval.') : 'The rule is in force.',
@@ -84,7 +84,7 @@ export function DiscountDetailClient({
           ? await pauseDiscountRuleAction(rule.id, reason)
           : await retireDiscountRuleAction(rule.id, reason);
       setBusy(false);
-      if (!r.ok) return setMessage({ kind: 'error', text: r.error });
+      if (!r.ok) { setMessage({ kind: 'error', text: r.error }); return; }
       setMessage({
         kind: 'ok',
         text: action === 'pause' ? 'The rule is paused.' : 'The rule is retired.',
@@ -355,7 +355,7 @@ function Coupons({ detail, canManage }: { detail: DiscountDetail; canManage: boo
   };
 
   const toggle = async (id: string, status: 'active' | 'disabled') => {
-    if (!reason.code) return setMessage({ kind: 'error', text: 'Choose a reason first.' });
+    if (!reason.code) { setMessage({ kind: 'error', text: 'Choose a reason first.' }); return; }
     setBusy(true);
     const r = await setCouponStatusAction(id, status, reason);
     setBusy(false);

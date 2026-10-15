@@ -30,7 +30,7 @@ export function LimitsClient({
   canManage,
 }: {
   limits: Limit[];
-  roles: Array<{ key: string; name: string }>;
+  roles: { key: string; name: string }[];
   canManage: boolean;
 }) {
   const router = useRouter();

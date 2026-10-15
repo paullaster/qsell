@@ -59,7 +59,7 @@ function SeriesScreen({ initial }: { initial: SeriesDetailView }) {
       />
       <Message notice={notice} />
       <SeriesSettingsCard data={data} report={report} />
-      <SeriesLinesCard data={data} report={report} setNotice={setNotice} />
+      <SeriesLinesCard data={data} report={report} />
       <SeriesTryItCard seriesCode={series.code} />
       <SeriesRecentAndHistory data={data} />
     </div>

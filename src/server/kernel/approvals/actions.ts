@@ -1,10 +1,10 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { drizzleDb } from '@/server/db/drizzle/client';
 import { withAfterCommit } from '../after-commit';
-import { roles, users } from '@/server/db/drizzle/schema';
+import { approverGroups, roles, users } from '@/server/db/drizzle/schema';
 import { AccessDeniedError } from '@/server/domains/access-control/engine';
 import { requirePermission } from '@/server/domains/access-control/guard';
 import { getContainer } from '@/server/di/container';
@@ -12,7 +12,9 @@ import { ReasonError } from '../reason-codes/service';
 import { ApprovalConfigError } from './config-service';
 import { ApprovalError, type Simulation } from './engine';
 import type { DefinitionIssue } from './domain/definition';
-import { TRIGGERS, triggerByCode, type TriggerDefinition } from './domain/triggers';
+import { triggerByCode, type TriggerDefinition } from './domain/triggers';
+import type { PageInput } from '@/server/domains/settings/paging';
+import { injectedDelay } from '@/server/domains/finance/action-runner';
 import type { WorkflowDefinition } from './domain/types';
 import type { PermissionKey } from '@/server/domains/access-control/permissions';
 
@@ -47,6 +49,7 @@ async function run<T>(
   }) => Promise<T>,
 ): Promise<ApprovalResult<T>> {
   try {
+    await injectedDelay();
     const userId = await requireAny(permission);
     const company = await getContainer().companySettings.ensureSeeded();
     await getContainer().reasonCodes.ensureSystemReasons(company.id);
@@ -82,6 +85,29 @@ async function namesOf(ids: (string | null | undefined)[]): Promise<Map<string, 
     .where(inArray(users.id, unique));
   return new Map(rows.map((r) => [r.id, orElse(r.name, r.email)]));
 }
+
+/** The words for the people, groups, roles and branch a workflow names, keyed "user:id", "group:id", "role:key", "branch:id". */
+async function labelsFor(companyId: string, def: WorkflowDefinition, branchId: string | null): Promise<Record<string, string>> {
+  const rules = def.steps.map((st) => st.approver);
+  const userIds = rules.flatMap((r) => (r.type === 'user' && has(r.userId) ? [r.userId] : []));
+  const groupIds = rules.flatMap((r) => (r.type === 'group' && has(r.groupId) ? [r.groupId] : []));
+  const roleKeys = rules.flatMap((r) => (r.type === 'role' && has(r.roleKey) ? [r.roleKey] : []));
+  const out: Record<string, string> = {};
+  const [names, groupRows, roleRows, branchLabels] = await Promise.all([
+    namesOf(userIds),
+    groupIds.length === 0 ? Promise.resolve([]) : drizzleDb.select({ id: approverGroups.id, name: approverGroups.name }).from(approverGroups).where(and(eq(approverGroups.companyId, companyId), inArray(approverGroups.id, groupIds))),
+    roleKeys.length === 0 ? Promise.resolve([]) : drizzleDb.select({ key: roles.key, name: roles.name }).from(roles).where(inArray(roles.key, roleKeys)),
+    getContainer().numbering.branchLabels(branchId === null ? [] : [branchId]),
+  ]);
+  for (const [id, name] of names) out[`user:${id}`] = name;
+  for (const g of groupRows) out[`group:${g.id}`] = g.name;
+  for (const r of roleRows) out[`role:${r.key}`] = r.name;
+  for (const [id, label] of branchLabels) out[`branch:${id}`] = label;
+  return out;
+}
+
+/** The name for an id looked up earlier, or nothing when there is no id or no such person. */
+const nameOf = (names: Map<string, string>, id: string | null | undefined): string | null => (id === null || id === undefined ? null : (names.get(id) ?? null));
 
 const triggerLabel = (code: string) => triggerByCode(code)?.label ?? code;
 const revalidate = () => revalidatePath('/admin/approvals', 'layout');
@@ -387,52 +413,6 @@ export async function reopenRequestAction(
 
 // ── administrator actions ────────────────────────────────────────────────
 
-export interface Lookups {
-  users: { id: string; name: string; email: string }[];
-  groups: { id: string; code: string; name: string; memberIds: string[] }[];
-  branches: { id: string; code: string; name: string }[];
-  roles: { key: string; name: string }[];
-  triggers: TriggerDefinition[];
-}
-
-export async function getLookupsAction(): Promise<ApprovalResult<Lookups>> {
-  return run('approvals:manage', async ({ companyId }) => {
-    const { approvalConfig, branches } = getContainer();
-    const [people, groups, branchRows, roleRows] = await Promise.all([
-      drizzleDb
-        .select({
-          id: users.id,
-          name: users.name,
-          email: users.email,
-          role: users.role,
-          status: users.status,
-        })
-        .from(users),
-      approvalConfig.listGroups(companyId),
-      branches.listByCompany(companyId),
-      drizzleDb.select({ key: roles.key, name: roles.name, isActive: roles.isActive }).from(roles),
-    ]);
-    return {
-      users: people
-        .filter((u) => u.role !== 'customer' && u.status === 'active')
-        .map((u) => ({ id: u.id, name: orElse(u.name, u.email), email: u.email }))
-        .sort((a, b) => a.name.localeCompare(b.name)),
-      groups: groups.map((g) => ({
-        id: g.id,
-        code: g.code,
-        name: g.name,
-        memberIds: g.members.map((m) => m.userId),
-      })),
-      branches: branchRows.map((b) => ({ id: b.id, code: b.code, name: b.name })),
-      roles: roleRows
-        .filter((r) => r.isActive && r.key !== 'customer')
-        .map((r) => ({ key: r.key, name: r.name }))
-        .sort((x, y) => x.name.localeCompare(y.name)),
-      triggers: TRIGGERS,
-    };
-  });
-}
-
 export interface WorkflowSummary {
   id: string;
   code: string;
@@ -443,38 +423,39 @@ export interface WorkflowSummary {
   status: 'draft' | 'enabled' | 'disabled' | 'retired';
   priority: number;
   branchId: string | null;
+  branchLabel: string | null;
   version: number | null;
   stepCount: number;
   hasUnpublishedChanges: boolean;
 }
 
-export async function listWorkflowsAction(): Promise<ApprovalResult<WorkflowSummary[]>> {
+/** One page of workflows in code order, each with its branch and published version named. */
+export async function workflowsPageAction(input: PageInput): Promise<ApprovalResult<{ rows: WorkflowSummary[]; nextCursor: string | null }>> {
   return run('approvals:manage', async ({ companyId }) => {
-    const list = await getContainer().approvalConfig.listWorkflows(companyId);
-    return Promise.all(
-      list.map(async (w) => {
-        const { versions } = await getContainer().approvalConfig.getWorkflow(companyId, w.id);
-        const current = versions.find((v) => v.id === w.currentVersionId);
-        const draft = w.draft as unknown as WorkflowDefinition;
-        return {
-          id: w.id,
-          code: w.code,
-          name: w.name,
-          module: w.module,
-          triggerCode: w.trigger,
-          triggerLabel: triggerLabel(w.trigger),
-          status: w.status,
-          priority: w.priority,
-          branchId: w.branchId,
-          version: current?.version ?? null,
-          stepCount: draft?.steps?.length ?? 0,
-          hasUnpublishedChanges:
-            current === undefined
-              ? true
-              : JSON.stringify(current.definition) !== JSON.stringify(w.draft),
-        };
-      }),
-    );
+    const { approvalConfig, numbering } = getContainer();
+    const page = await approvalConfig.pageWorkflows(companyId, input);
+    const versions = await approvalConfig.versionsByIds(page.rows.flatMap((w) => (w.currentVersionId === null ? [] : [w.currentVersionId])));
+    const branchLabels = await numbering.branchLabels(page.rows.flatMap((w) => (w.branchId === null ? [] : [w.branchId])));
+    const rows = page.rows.map((w): WorkflowSummary => {
+      const current = versions.find((v) => v.id === w.currentVersionId);
+      const draft = w.draft as unknown as WorkflowDefinition | undefined;
+      return {
+        id: w.id,
+        code: w.code,
+        name: w.name,
+        module: w.module,
+        triggerCode: w.trigger,
+        triggerLabel: triggerLabel(w.trigger),
+        status: w.status,
+        priority: w.priority,
+        branchId: w.branchId,
+        branchLabel: w.branchId === null ? null : (branchLabels.get(w.branchId) ?? null),
+        version: current?.version ?? null,
+        stepCount: draft?.steps.length ?? 0,
+        hasUnpublishedChanges: current === undefined ? true : JSON.stringify(current.definition) !== JSON.stringify(w.draft),
+      };
+    });
+    return { rows, nextCursor: page.nextCursor };
   });
 }
 
@@ -487,6 +468,8 @@ export interface WorkflowDetail {
   status: WorkflowSummary['status'];
   priority: number;
   branchId: string | null;
+  /** The words for every person, group, role and branch the workflow names, so the screen never shows an id. */
+  labels: Record<string, string>;
   draft: WorkflowDefinition;
   versions: {
     version: number;
@@ -503,6 +486,7 @@ export async function getWorkflowAction(id: string): Promise<ApprovalResult<Work
       id,
     );
     const names = await namesOf(versions.map((v) => v.publishedBy));
+    const draft = ((w.draft as unknown as WorkflowDefinition | undefined)?.steps ? w.draft : { steps: [] }) as unknown as WorkflowDefinition;
     return {
       id: w.id,
       code: w.code,
@@ -512,13 +496,12 @@ export async function getWorkflowAction(id: string): Promise<ApprovalResult<Work
       status: w.status,
       priority: w.priority,
       branchId: w.branchId,
-      draft: ((w.draft as unknown as WorkflowDefinition)?.steps
-        ? w.draft
-        : { steps: [] }) as unknown as WorkflowDefinition,
+      labels: await labelsFor(companyId, draft, w.branchId),
+      draft,
       versions: versions.map((v) => ({
         version: v.version,
         publishedAt: v.publishedAt.toISOString(),
-        publishedByName: orElse(v.publishedBy && names.get(v.publishedBy), 'Unknown'),
+        publishedByName: orElse(v.publishedBy === null ? null : names.get(v.publishedBy), 'Unknown'),
         reason: v.reason,
       })),
     };
@@ -666,22 +649,65 @@ export interface ProfileView {
   limits: { documentKind: string; maxAmount: number | null; unlimited: boolean }[];
 }
 
-export async function listProfilesAction(): Promise<ApprovalResult<ProfileView[]>> {
-  return run('approvals:manage', async ({ companyId }) =>
-    (await getContainer().approvalConfig.listProfiles(companyId)).map((p) => ({
-      userId: p.userId,
-      approverUserId: p.approverUserId,
-      substituteUserId: p.substituteUserId,
-      substituteFrom: p.substituteFrom,
-      substituteTo: p.substituteTo,
-      isActive: p.isActive,
-      limits: p.limits.map((l) => ({
-        documentKind: l.documentKind,
-        maxAmount: l.maxAmount === null ? null : Number(l.maxAmount),
-        unlimited: l.unlimited,
-      })),
-    })),
-  );
+export interface PersonView {
+  id: string;
+  name: string;
+  email: string;
+  profile: ProfileView | null;
+}
+
+const toProfile = (p: Awaited<ReturnType<ReturnType<typeof getContainer>['approvalConfig']['profilesFor']>>[number]): ProfileView => ({
+  userId: p.userId,
+  approverUserId: p.approverUserId,
+  substituteUserId: p.substituteUserId,
+  substituteFrom: p.substituteFrom,
+  substituteTo: p.substituteTo,
+  isActive: p.isActive,
+  limits: p.limits.map((l) => ({ documentKind: l.documentKind, maxAmount: l.maxAmount === null ? null : Number(l.maxAmount), unlimited: l.unlimited })),
+});
+
+/** One page of staff with their approver settings, and the names of the people they report to or are covered by. */
+export async function peoplePageAction(input: PageInput): Promise<ApprovalResult<{ rows: (PersonView & { reportsToName: string | null; coveredByName: string | null })[]; nextCursor: string | null }>> {
+  return run('approvals:manage', async ({ companyId }) => {
+    const { approvalConfig } = getContainer();
+    const page = await approvalConfig.pageStaff(input);
+    const profiles = await approvalConfig.profilesFor(companyId, page.rows.map((r) => r.id));
+    const names = await namesOf(profiles.flatMap((p) => [p.approverUserId, p.substituteUserId]));
+    return {
+      rows: page.rows.map((u) => {
+        const found = profiles.find((p) => p.userId === u.id);
+        const profile = found === undefined ? null : toProfile(found);
+        return {
+          id: u.id,
+          name: orElse(u.name, u.email),
+          email: u.email,
+          profile,
+          reportsToName: nameOf(names, profile?.approverUserId),
+          coveredByName: nameOf(names, profile?.substituteUserId),
+        };
+      }),
+      nextCursor: page.nextCursor,
+    };
+  });
+}
+
+export interface ApproverGroupView {
+  id: string;
+  code: string;
+  name: string;
+  members: { id: string; name: string }[];
+}
+
+/** One page of approver groups, each with its members named in the order they are asked. */
+export async function groupsPageAction(input: PageInput): Promise<ApprovalResult<{ rows: ApproverGroupView[]; nextCursor: string | null }>> {
+  return run('approvals:manage', async ({ companyId }) => {
+    const page = await getContainer().approvalConfig.pageGroups(companyId, input);
+    const names = await namesOf(page.rows.flatMap((g) => g.members.map((m) => m.userId)));
+    return {
+      rows: page.rows.map((g) => ({ id: g.id, code: g.code, name: g.name, members: g.members.map((m) => ({ id: m.userId, name: names.get(m.userId) ?? 'Unknown' })) })),
+      nextCursor: page.nextCursor,
+    };
+  });
 }
 
 export async function saveProfileAction(
@@ -714,15 +740,31 @@ export interface SwitchView {
   enabled: boolean;
 }
 
-export async function listSwitchesAction(): Promise<ApprovalResult<SwitchView[]>> {
-  return run('approvals:manage', async ({ companyId }) =>
-    (await getContainer().approvalConfig.listSwitches(companyId)).map((s) => ({
-      module: s.module,
-      trigger: s.trigger,
-      branchId: s.branchId,
-      enabled: s.enabled,
-    })),
-  );
+export interface SwitchesView {
+  /** The company-wide switches that were set (few: one per area and situation). */
+  company: SwitchView[];
+}
+
+export async function companySwitchesAction(): Promise<ApprovalResult<SwitchesView>> {
+  return run('approvals:manage', async ({ companyId }) => ({
+    company: (await getContainer().approvalConfig.companySwitches(companyId)).map((s) => ({ module: s.module, trigger: s.trigger, branchId: s.branchId, enabled: s.enabled })),
+  }));
+}
+
+export interface BranchSwitchView extends SwitchView {
+  branchLabel: string;
+}
+
+/** One page of the exceptions set for a single branch. */
+export async function branchSwitchesPageAction(input: PageInput): Promise<ApprovalResult<{ rows: BranchSwitchView[]; nextCursor: string | null }>> {
+  return run('approvals:manage', async ({ companyId }) => {
+    const page = await getContainer().approvalConfig.pageBranchSwitches(companyId, input);
+    const labels = await getContainer().numbering.branchLabels(page.rows.flatMap((s) => (s.branchId === null ? [] : [s.branchId])));
+    return {
+      rows: page.rows.map((s) => ({ module: s.module, trigger: s.trigger, branchId: s.branchId, enabled: s.enabled, branchLabel: s.branchId === null ? 'Unknown branch' : (labels.get(s.branchId) ?? 'Unknown branch') })),
+      nextCursor: page.nextCursor,
+    };
+  });
 }
 
 export async function setSwitchAction(
@@ -737,29 +779,44 @@ export async function setSwitchAction(
   return r;
 }
 
-export async function listPendingAction(): Promise<ApprovalResult<PendingRequest[]>> {
+export interface PendingPage {
+  rows: PendingRequest[];
+  nextCursor: string | null;
+}
+
+/** One page of what is waiting, oldest first; `overdueOnly` keeps just the requests with an overdue entry. */
+export async function pendingPageAction(input: PageInput & { overdueOnly?: boolean }): Promise<ApprovalResult<PendingPage>> {
   return run('approvals:manage', async ({ companyId }) => {
-    const rows = await getContainer().approvals.pending(companyId);
+    const page = await getContainer().approvals.pendingPage(companyId, input);
+    const rows = page.rows;
     const names = await namesOf([
       ...rows.map((r) => r.requestedBy),
       ...rows.flatMap((r) => r.openEntries.flatMap((e) => [e.approverUserId, e.onBehalfOfUserId])),
     ]);
     const now = Date.now();
-    return rows.map((r) => ({
-      ...toMine(r, names),
-      requestedByName: names.get(r.requestedBy) ?? 'Unknown',
-      oldestWaitingSince: r.openEntries.map((e) => e.createdAt.toISOString()).sort()[0] ?? null,
-      overdue: r.openEntries.some((e) => e.dueAt !== null && e.dueAt.getTime() < now),
-      entries: r.openEntries.map((e) => ({
-        entryId: e.id,
-        approverName: names.get(e.approverUserId) ?? 'Unknown',
-        overdue: e.dueAt !== null && e.dueAt.getTime() < now,
-        // Overdue and already looked at by the sweep, yet still open: nobody above could take it.
-        stuck: e.escalatedAt !== null,
-        handedOver: e.replacesEntryId !== null,
+    return {
+      nextCursor: page.nextCursor,
+      rows: rows.map((r) => ({
+        ...toMine(r, names),
+        requestedByName: names.get(r.requestedBy) ?? 'Unknown',
+        oldestWaitingSince: r.openEntries.map((e) => e.createdAt.toISOString()).sort()[0] ?? null,
+        overdue: r.openEntries.some((e) => e.dueAt !== null && e.dueAt.getTime() < now),
+        entries: r.openEntries.map((e) => ({
+          entryId: e.id,
+          approverName: names.get(e.approverUserId) ?? 'Unknown',
+          overdue: e.dueAt !== null && e.dueAt.getTime() < now,
+          // Overdue and already looked at by the sweep, yet still open: nobody above could take it.
+          stuck: e.escalatedAt !== null,
+          handedOver: e.replacesEntryId !== null,
+        })),
       })),
-    }));
+    };
   });
+}
+
+/** How many requests wait, and how many of them are overdue, counted by the database. */
+export async function pendingCountsAction(): Promise<ApprovalResult<{ waiting: number; overdue: number }>> {
+  return run('approvals:manage', ({ companyId }) => getContainer().approvals.pendingCounts(companyId));
 }
 
 export async function adminCancelRequestAction(

@@ -18,9 +18,10 @@ import type { ReasonCodes, ReasonInput } from '../reason-codes/service';
 import { validateDefinition, type DefinitionIssue } from './domain/definition';
 import { MAX_ROLE_HOLDERS } from './engine';
 import { triggerByCode } from './domain/triggers';
-import type { WorkflowDefinition } from './domain/types';
+import type { StepDefinition, WorkflowDefinition } from './domain/types';
 
-import { has, trimToNull } from '@/lib/values';
+import { has, required, trimToNull } from '@/lib/values';
+import { afterCursor, matching, pageOf, PAGE_SIZE, searchText, type PageInput } from '@/server/domains/settings/paging';
 
 export class ApprovalConfigError extends Error {
   constructor(
@@ -109,6 +110,22 @@ export class ApprovalConfigService {
     });
   }
 
+  /** The company-wide switches: few, because they are per area and per situation. */
+  async companySwitches(companyId: string) {
+    return await this.db.select().from(approvalSwitches).where(and(eq(approvalSwitches.companyId, companyId), isNull(approvalSwitches.branchId)));
+  }
+
+  /** One page of the branch exceptions. */
+  async pageBranchSwitches(companyId: string, input: PageInput) {
+    const rows = await this.db
+      .select()
+      .from(approvalSwitches)
+      .where(and(eq(approvalSwitches.companyId, companyId), sql`${approvalSwitches.branchId} is not null`, afterCursor(input.cursor, approvalSwitches.id, approvalSwitches.id)))
+      .orderBy(asc(approvalSwitches.id))
+      .limit(PAGE_SIZE + 1);
+    return pageOf(rows, PAGE_SIZE, (r) => ({ k: r.id, id: r.id }));
+  }
+
   async listSwitches(companyId: string) {
     return await this.db.select().from(approvalSwitches).where(eq(approvalSwitches.companyId, companyId));
   }
@@ -163,12 +180,12 @@ export class ApprovalConfigService {
     await this.decisions.record({
       companyId,
       actor,
-      subject: { type: 'approval_workflow', id: row!.id },
+      subject: { type: 'approval_workflow', id: required(row, 'the saved workflow').id },
       action: 'approvals.workflow_created',
       to: 'draft',
       outcome: { code },
     });
-    return row!;
+    return required(row, 'the saved workflow');
   }
 
   async saveDraft(
@@ -255,6 +272,57 @@ export class ApprovalConfigService {
     return profiles.map((p) => ({ ...p, limits: limits.filter((l) => l.profileId === p.id) }));
   }
 
+  /** One page of the approver groups in code order, with their members in the order they are asked. */
+  async pageGroups(companyId: string, input: PageInput) {
+    const groups = await this.db
+      .select()
+      .from(approverGroups)
+      .where(and(eq(approverGroups.companyId, companyId), matching(searchText(input), [approverGroups.name, approverGroups.code]), afterCursor(input.cursor, approverGroups.code, approverGroups.id)))
+      .orderBy(asc(approverGroups.code), asc(approverGroups.id))
+      .limit(PAGE_SIZE + 1);
+    const page = pageOf(groups, PAGE_SIZE, (g) => ({ k: g.code, id: g.id }));
+    const members = page.rows.length !== 0
+      ? await this.db.select().from(approverGroupMembers).where(inArray(approverGroupMembers.groupId, page.rows.map((g) => g.id))).orderBy(asc(approverGroupMembers.sequence))
+      : [];
+    return { rows: page.rows.map((g) => ({ ...g, members: members.filter((m) => m.groupId === g.id) })), nextCursor: page.nextCursor };
+  }
+
+  /** The approver settings of these people (the ones on screen), with their limits. */
+  async profilesFor(companyId: string, userIds: string[]) {
+    if (userIds.length === 0) return [];
+    const profiles = await this.db.select().from(approverProfiles).where(and(eq(approverProfiles.companyId, companyId), inArray(approverProfiles.userId, userIds)));
+    const limits = profiles.length !== 0 ? await this.db.select().from(approverLimits).where(inArray(approverLimits.profileId, profiles.map((p) => p.id))) : [];
+    return profiles.map((p) => ({ ...p, limits: limits.filter((l) => l.profileId === p.id) }));
+  }
+
+  /** One page of staff (active, not customers) in name order, optionally narrowed by text. */
+  async pageStaff(input: PageInput) {
+    const rows = await this.db
+      .select({ id: users.id, name: users.name, email: users.email })
+      .from(users)
+      .where(and(sql`${users.role} <> 'customer'`, eq(users.status, 'active'), matching(searchText(input), [users.name, users.email]), afterCursor(input.cursor, users.name, users.id)))
+      .orderBy(asc(users.name), asc(users.id))
+      .limit(PAGE_SIZE + 1);
+    return pageOf(rows, PAGE_SIZE, (r) => ({ k: r.name, id: r.id }));
+  }
+
+  /** One page of workflows in code order, optionally narrowed by text. */
+  async pageWorkflows(companyId: string, input: PageInput) {
+    const rows = await this.db
+      .select()
+      .from(approvalWorkflows)
+      .where(and(eq(approvalWorkflows.companyId, companyId), matching(searchText(input), [approvalWorkflows.name, approvalWorkflows.code]), afterCursor(input.cursor, approvalWorkflows.code, approvalWorkflows.id)))
+      .orderBy(asc(approvalWorkflows.code), asc(approvalWorkflows.id))
+      .limit(PAGE_SIZE + 1);
+    return pageOf(rows, PAGE_SIZE, (r) => ({ k: r.code, id: r.id }));
+  }
+
+  /** The published versions with these ids, in one query. */
+  async versionsByIds(ids: string[]) {
+    if (ids.length === 0) return [];
+    return await this.db.select().from(approvalWorkflowVersions).where(inArray(approvalWorkflowVersions.id, ids));
+  }
+
   async listGroups(companyId: string) {
     const groups = await this.db
       .select()
@@ -285,11 +353,13 @@ export class ApprovalConfigService {
     const issues = validateDefinition(trigger, def);
     const t = triggerByCode(trigger);
     if (!t || !Array.isArray(def.steps)) return issues;
+    // A stored draft may be incomplete, so a step's approver is read as if it could be missing.
+    const steps: Partial<StepDefinition>[] = def.steps;
 
-    const userIds = def.steps.flatMap((s) =>
+    const userIds = steps.flatMap((s) =>
       s.approver?.type === 'user' ? [s.approver.userId] : [],
     );
-    const groupIds = def.steps.flatMap((s) =>
+    const groupIds = steps.flatMap((s) =>
       s.approver?.type === 'group' ? [s.approver.groupId] : [],
     );
     const found = userIds.length !== 0
@@ -315,7 +385,7 @@ export class ApprovalConfigService {
     // How many people hold each role the workflow names (undefined = no such role).
     const roleKeys = [
       ...new Set(
-        def.steps.flatMap((s) => (s.approver?.type === 'role' ? [s.approver.roleKey] : [])),
+        steps.flatMap((s) => (s.approver?.type === 'role' ? [s.approver.roleKey] : [])),
       ),
     ];
     const roleHolderCount = new Map<string, number>();
@@ -337,8 +407,8 @@ export class ApprovalConfigService {
       }
     }
 
-    def.steps.forEach((s, i) => {
-      const at = `steps[${i}]`;
+    steps.forEach((s, i) => {
+      const at = `steps[${String(i)}]`;
       const a = s.approver;
       if (a?.type === 'user') {
         const u = found.find((f) => f.id === a.userId);
@@ -356,7 +426,7 @@ export class ApprovalConfigService {
           if ((a.count ?? 0) > size)
             issues.push({
               path: at,
-              message: `${a.count} approvals are needed but the group only has ${size} member${size === 1 ? '' : 's'}.`,
+              message: `${String(a.count)} approvals are needed but the group only has ${size} member${size === 1 ? '' : 's'}.`,
             });
         }
       }
@@ -375,7 +445,7 @@ export class ApprovalConfigService {
     });
 
     // A chain must be able to end somewhere: someone must be allowed to approve any amount.
-    if (def.steps.some((s) => ['chain_by_limit', 'first_qualified'].includes(s.approver?.type))) {
+    if (steps.some((s) => ['chain_by_limit', 'first_qualified'].includes(s.approver?.type ?? ''))) {
       const [top] = await this.db
         .select({ n: sql<number>`count(*)::int` })
         .from(approverLimits)
@@ -436,7 +506,7 @@ export class ApprovalConfigService {
         .returning();
       await tx
         .update(approvalWorkflows)
-        .set({ currentVersionId: created!.id, status: 'enabled', updatedAt: new Date() })
+        .set({ currentVersionId: required(created, 'the new version').id, status: 'enabled', updatedAt: new Date() })
         .where(eq(approvalWorkflows.id, wf.id));
       await this.decisions.record(
         {
@@ -444,7 +514,7 @@ export class ApprovalConfigService {
           actor,
           subject: { type: 'approval_workflow', id: wf.id },
           action: 'approvals.workflow_published',
-          from: locked!.status,
+          from: required(locked, 'the workflow').status,
           to: 'enabled',
           reason: { code: why.code, text: why.text },
           policy: { id: wf.code, version: String(version) },
@@ -452,7 +522,7 @@ export class ApprovalConfigService {
         },
         tx,
       );
-      return { version, versionId: created!.id };
+      return { version, versionId: required(created, 'the new version').id };
     });
   }
 
@@ -586,11 +656,11 @@ export class ApprovalConfigService {
           set: values,
         })
         .returning();
-      await tx.delete(approverLimits).where(eq(approverLimits.profileId, profile!.id));
+      await tx.delete(approverLimits).where(eq(approverLimits.profileId, required(profile, 'the approver profile').id));
       if (input.limits.length !== 0) {
         await tx.insert(approverLimits).values(
           input.limits.map((l) => ({
-            profileId: profile!.id,
+            profileId: required(profile, 'the approver profile').id,
             documentKind: l.documentKind,
             unlimited: l.unlimited === true,
             maxAmount: l.unlimited === true ? null : String(l.maxAmount),
@@ -643,7 +713,7 @@ export class ApprovalConfigService {
           .insert(approverGroups)
           .values({ companyId, code, name: input.name.trim() })
           .returning({ id: approverGroups.id });
-        id = g!.id;
+        id = required(g, 'the saved group').id;
       }
       await tx.delete(approverGroupMembers).where(eq(approverGroupMembers.groupId, id));
       if (members.length !== 0) {

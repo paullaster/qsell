@@ -33,7 +33,7 @@ interface Draft {
   productLabel: string;
   allocation: KitAllocation;
   isActive: boolean;
-  components: Array<{ productId: string; label: string; quantity: string; weight: string }>;
+  components: { productId: string; label: string; quantity: string; weight: string }[];
   editing: boolean;
   price: number | null;
 }
@@ -47,7 +47,7 @@ export function KitsClient({ kits, canManage }: { kits: KitView[]; canManage: bo
   const [message, setMessage] = useState<Message>(null);
   const [busy, setBusy] = useState(false);
   const [split, setSplit] = useState<
-    Array<{ productId: string; name: string; quantity: number; amount: number; taxRate: number }>
+    { productId: string; name: string; quantity: number; amount: number; taxRate: number }[]
   >([]);
 
   const parts = draft
@@ -61,7 +61,7 @@ export function KitsClient({ kits, canManage }: { kits: KitView[]; canManage: bo
 
   // Shows how today's price would be split, as the kit is set up.
   useEffect(() => {
-    if (!draft || !draft.price || parts.length === 0 || parts.some((p) => p.quantity < 1)) {
+    if (!draft?.price || parts.length === 0 || parts.some((p) => p.quantity < 1)) {
       setSplit([]);
       return;
     }

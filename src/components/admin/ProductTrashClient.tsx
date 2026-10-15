@@ -102,7 +102,7 @@ export function ProductTrashClient({ canPurge }: { canPurge: boolean }) {
     else setPicked(set);
   };
   const toggleAllHere = (checked: boolean) => {
-    if (!checked) return clear();
+    if (!checked) { clear(); return; }
     if (everything) {
       const next = new Set(excluded);
       for (const r of rows) next.delete(r.id);

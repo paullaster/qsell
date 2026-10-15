@@ -5,10 +5,11 @@ import { addNumberSeriesLineAction, setNumberSeriesLineOpenAction, updateNumberS
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import { TEMPLATE_TOKENS, validateTemplate } from '@/server/kernel/numbering/domain/template';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
-import { attempt, buttonClass, cardClass, Chip, primaryClass, type Notice } from '@/components/ui/screen-kit';
-import { exampleNumber, lineFormFrom, lineValues, RESET_CHOICES, resetLabel, withToken, type LineFormState, type ResetPolicy } from '@/lib/number-series-forms';
+import { attempt, buttonClass, cardClass, Chip, primaryClass } from '@/components/ui/screen-kit';
+import { exampleNumber, lineFormFrom, lineValues, RESET_CHOICES, resetLabel, withToken, type LineFormState } from '@/lib/number-series-forms';
 import type { Choice } from '@/lib/payment-options';
 import { has } from '@/lib/values';
+import { submitWords } from '@/lib/form-words';
 import type { Report } from './NumberSeriesDetailClient';
 import { ReasonField, reasonReady, type ReasonValue } from './ReasonField';
 
@@ -16,7 +17,7 @@ const noReason: ReasonValue = { code: '', text: '' };
 const fieldClass =
   'min-h-10 w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong focus:border-indigo-500 focus:outline-none disabled:opacity-60';
 
-export function SeriesLinesCard({ data, report, setNotice }: { data: SeriesDetailView; report: Report; setNotice: (n: Notice) => void }) {
+export function SeriesLinesCard({ data, report }: { data: SeriesDetailView; report: Report }) {
   const [editing, setEditing] = useState<LineView | 'new' | null>(null);
   const [closing, setClosing] = useState<LineView | null>(null);
   const [reason, setReason] = useState(noReason);
@@ -55,7 +56,6 @@ export function SeriesLinesCard({ data, report, setNotice }: { data: SeriesDetai
             if (ok) setEditing(null);
           }}
           report={report}
-          setNotice={setNotice}
         />
       )}
 
@@ -134,10 +134,9 @@ interface EditorProps {
   line: LineView | null;
   onDone: (ok: boolean) => void;
   report: Report;
-  setNotice: (n: Notice) => void;
 }
 
-function LineEditor({ seriesId, mode, line, onDone, report, setNotice }: EditorProps) {
+function LineEditor({ seriesId, mode, line, onDone, report }: EditorProps) {
   const uid = useId();
   const today = businessDate();
   const frozen = line?.used === true;
@@ -152,7 +151,7 @@ function LineEditor({ seriesId, mode, line, onDone, report, setNotice }: EditorP
   const prefixProblem = validateTemplate(f.prefix);
   const suffixProblem = validateTemplate(f.suffix);
   const preview = useMemo(
-    () => exampleNumber({ prefix: f.prefix, suffix: f.suffix, digits: Number(f.digits) || 0 }, Number(f.startNo) || 0, f.startsOn, branchCode, today),
+    () => exampleNumber({ prefix: f.prefix, suffix: f.suffix, digits: Number(f.digits) }, Number(f.startNo), f.startsOn, branchCode, today),
     [f.prefix, f.suffix, f.digits, f.startNo, f.startsOn, branchCode, today],
   );
 
@@ -163,8 +162,7 @@ function LineEditor({ seriesId, mode, line, onDone, report, setNotice }: EditorP
     const chosenReset = RESET_CHOICES.find((c) => c.id === reset?.id)?.id ?? f.reset;
     const values = lineValues({ ...f, branchId: branch?.id ?? '', reset: chosenReset });
     const res = line === null ? await attempt(addNumberSeriesLineAction(seriesId, values)) : await attempt(updateNumberSeriesLineAction(line.id, values, reason));
-    const found = !res.ok && 'issues' in res ? res.issues : undefined;
-    if (Array.isArray(found)) setIssues(Object.fromEntries(found.map((i) => [i.field, i.message])));
+    if (!res.ok && 'issues' in res && Array.isArray(res.issues)) setIssues(Object.fromEntries((res.issues as { field: string; message: string }[]).map((i) => [i.field, i.message])));
     const ok = await report(res, line === null ? 'Line added.' : 'Line saved.');
     setBusy(false);
     onDone(ok);
@@ -237,7 +235,7 @@ function LineEditor({ seriesId, mode, line, onDone, report, setNotice }: EditorP
       {line === null ? null : <ReasonField value={reason} onChange={setReason} />}
       <div className="flex flex-wrap gap-2">
         <button type="submit" disabled={busy || (line !== null && !reasonReady(reason)) || has(templateProblem)} className={primaryClass}>
-          {busy ? 'Saving…' : line === null ? 'Add line' : 'Save line'}
+          {submitWords(busy, line === null ? null : line.id, 'Add line', 'Save line')}
         </button>
         <button type="button" className={buttonClass} onClick={() => onDone(true)}>
           Cancel

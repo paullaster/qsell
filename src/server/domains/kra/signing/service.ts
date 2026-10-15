@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   branches,
@@ -13,6 +13,8 @@ import {
   type KraSigningEventRow,
 } from '@/server/db/drizzle/schema';
 import { KraConfigError } from '../types';
+import { decodeCursor, encodeCursor, escapeLike } from '@/server/domains/lookups/request';
+import { PAGE_SIZE, searchText, type PageInput } from '@/server/domains/settings/paging';
 import { EtimsApiError } from '../etims/client';
 import { EtimsItemError, type EtimsItemService } from '../etims/item-service';
 import type { EtimsTransmissionService } from '../etims/transmission-service';
@@ -35,7 +37,7 @@ import {
   type SigningSourceKind,
 } from './types';
 
-import { has, trimToNull } from '@/lib/values';
+import { has, required, trimToNull } from '@/lib/values';
 
 /** What is sent to KRA for a document. Built only once the policy has said "sign". */
 export interface SignableInvoice {
@@ -95,19 +97,55 @@ export class DocumentSigningService {
   ) {}
 
   /** Events for one document in the order they happened. */
-  async trace(documentKey: string): Promise<KraSigningEventRow[]> {
+  async trace(documentKey: string, companyId?: string): Promise<KraSigningEventRow[]> {
     return await this.db
       .select()
       .from(kraSigningEvents)
-      .where(eq(kraSigningEvents.documentKey, documentKey))
+      .where(and(eq(kraSigningEvents.documentKey, documentKey), companyId === undefined ? undefined : eq(kraSigningEvents.companyId, companyId)))
       .orderBy(kraSigningEvents.createdAt);
+  }
+
+  /**
+   * One page of documents, each with its latest event, newest first. A document is the thing the
+   * log is about: its whole flow is read separately (`trace`) when someone opens it.
+   */
+  async pageDocuments(companyId: string, input: PageInput & { outcome?: SigningOutcome }): Promise<{ rows: KraSigningEventRow[]; nextCursor: string | null }> {
+    const text = searchText(input);
+    const pattern = `%${escapeLike(text)}%`;
+    const after = typeof input.cursor === 'string' && input.cursor !== '' ? decodeCursor(input.cursor) : null;
+    const found = await this.db.execute<{ id: string; stamp: string }>(sql`
+      select l.id, to_char(l.created_at at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as stamp
+      from (
+        select distinct on (document_key) id, created_at, document_key
+        from kra_signing_events
+        where company_id = ${companyId}
+        order by document_key, created_at desc, id desc
+      ) l
+      join kra_signing_events e on e.id = l.id
+      where ${input.outcome === undefined ? sql`true` : sql`e.outcome = ${input.outcome}`}
+        and ${text === '' ? sql`true` : sql`(e.document_ref ilike ${pattern} or e.document_key ilike ${pattern})`}
+        and ${after === null ? sql`true` : sql`(l.created_at, l.id) < (${after.k}::timestamptz, ${after.id}::uuid)`}
+      order by l.created_at desc, l.id desc
+      limit ${PAGE_SIZE + 1}
+    `);
+    const all = [...found];
+    const page = all.slice(0, PAGE_SIZE);
+    if (page.length === 0) return { rows: [], nextCursor: null };
+    const rows = await this.db.select().from(kraSigningEvents).where(inArray(kraSigningEvents.id, page.map((r) => r.id)));
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const ordered = page.flatMap((r) => {
+      const row = byId.get(r.id);
+      return row === undefined ? [] : [row];
+    });
+    const last = page.at(-1);
+    return { rows: ordered, nextCursor: all.length > PAGE_SIZE && last !== undefined ? encodeCursor({ k: last.stamp, id: last.id }) : null };
   }
 
   /** Most recent events across documents, for the signing log screen. */
   async recent(
     input: { limit?: number; outcome?: SigningOutcome } = {},
   ): Promise<KraSigningEventRow[]> {
-    const where = input.outcome ? eq(kraSigningEvents.outcome, input.outcome) : undefined;
+    const where = input.outcome === undefined ? undefined : eq(kraSigningEvents.outcome, input.outcome);
     return await this.db
       .select()
       .from(kraSigningEvents)
@@ -215,9 +253,7 @@ export class DocumentSigningService {
         module: 'sales_order',
         documentType: 'proforma',
         customerFlag: null,
-        buildInvoice: async () => {
-          throw new Error('A proforma is never sent to KRA.');
-        },
+        buildInvoice: () => Promise.reject(new Error('A proforma is never sent to KRA.')),
       });
     } catch (error: unknown) {
       return this.unexpected(error);
@@ -357,7 +393,7 @@ export class DocumentSigningService {
         currency?: string;
         lines?: FrozenInvoiceLine[];
       };
-      if (last.mode && last.scope && has(p.traderInvoiceNo) && p.lines) {
+      if (last.mode !== null && last.scope !== null && has(p.traderInvoiceNo) && p.lines !== undefined) {
         return {
           kind: 'signed',
           scope: last.scope,
@@ -529,7 +565,7 @@ export class DocumentSigningService {
         customerPin: invoice.customerPin,
         totalAmount: invoice.totalAmount,
         lines: invoice.lines.map((l) => ({
-          itemCode: itemCodes.get(l.productId)!,
+          itemCode: required(itemCodes.get(l.productId), `the KRA code of ${l.productId}`),
           qty: l.qty,
           unitPrice: l.unitPrice,
           amount: l.amount,
@@ -550,7 +586,7 @@ export class DocumentSigningService {
           currency: invoice.currency,
           lines: invoice.lines.map((l) => ({
             productId: l.productId,
-            itemCode: itemCodes.get(l.productId)!,
+            itemCode: required(itemCodes.get(l.productId), `the KRA code of ${l.productId}`),
             qty: l.qty,
             unitPrice: l.unitPrice,
             amount: l.amount,
@@ -608,14 +644,13 @@ export class DocumentSigningService {
   ): Promise<void> {
     const previous = await this.lastDecision(ctx.documentKey);
     const same =
-      previous &&
-      previous.outcome === decision.outcome &&
+      previous?.outcome === decision.outcome &&
       previous.reason === decision.reason &&
       stable(previous.payload.gates) === stable(decision.gates) &&
       stable(previous.payload.settings) === stable(decision.settings);
     // A repeat of an unchanged decision adds nothing. A retry after a failed transmission is
     // still allowed to re-record, so the new attempt is visible in the flow.
-    if (same === true && last?.eventType === 'decision') return;
+    if (same && last?.eventType === 'decision') return;
     await this.record(ctx, {
       eventType: 'decision',
       outcome: decision.outcome,
@@ -728,7 +763,7 @@ interface EventContext {
 /** JSON with sorted keys: Postgres jsonb does not keep key order, so plain stringify can't compare. */
 function stable(value: unknown): string {
   return JSON.stringify(value, (_key, v: unknown) =>
-    v && typeof v === 'object' && !Array.isArray(v)
+    typeof v === 'object' && v !== null && !Array.isArray(v)
       ? Object.fromEntries(
           Object.entries(v as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)),
         )

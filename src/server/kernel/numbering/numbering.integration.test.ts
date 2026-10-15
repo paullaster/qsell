@@ -234,17 +234,16 @@ describe.skipIf(!has(url))('number series (database)', () => {
     it('stops with a clear error when everything is used up, and never duplicates', async () => {
       await series('EX', {}, { endNo: 1 });
       await next('EX');
-      const err = await next('EX').catch((e) => e);
+      const err = await next('EX').catch((e: unknown) => e);
       expect(err).toBeInstanceOf(NumberSeriesError);
-      expect(err.code).toBe('SERIES_EXHAUSTED');
-      expect(err.detail.trace.length).toBeGreaterThan(0);
+      expect(err).toMatchObject({ code: 'SERIES_EXHAUSTED' });
+      expect((err as { detail?: { trace: unknown[] } }).detail?.trace.length).toBeGreaterThan(0);
     });
 
     it('explains why no line could be used', async () => {
       await series('NL');
-      const err = await next('NL', { date: '2025-06-01' }).catch((e) => e);
-      expect(err.code).toBe('NO_OPEN_LINE');
-      expect(err.message).toContain('starts on 2026-01-01');
+      const err = await next('NL', { date: '2025-06-01' }).catch((e: unknown) => e);
+      expect(err).toMatchObject({ code: 'NO_OPEN_LINE', message: expect.stringContaining('starts on 2026-01-01') as unknown });
     });
 
     it('warns once when the warning number is reached, and records it', async () => {
@@ -558,7 +557,7 @@ describe.skipIf(!has(url))('number series (database)', () => {
       const { NumberSeriesService } = await import('./service');
       const { ReasonCodes } = await import('../reason-codes/service');
       const withLegacy = new NumberSeriesService(db, decisions, new ReasonCodes(db), {
-        legacyStart: async (_company, kind) => (kind === 'customer' ? 500 : null),
+        legacyStart: (_company, kind) => Promise.resolve(kind === 'customer' ? 500 : null),
       });
       const n = await withLegacy.assign('customer', { companyId: required(other).id, date: '2026-05-01' });
       expect(n.number).toBe('C000000500');
@@ -590,7 +589,7 @@ describe.skipIf(!has(url))('number series (database)', () => {
         (err: unknown) => err,
       )) as { message?: string; cause?: { message?: string } } | null;
       expect(e).not.toBeNull();
-      expect(`${e?.message} ${e?.cause?.message}`).toMatch(/append-only/);
+      expect(`${e?.message ?? ''} ${e?.cause?.message ?? ''}`).toMatch(/append-only/);
     };
 
     it('refuses to change or delete issued numbers and decision log entries', async () => {

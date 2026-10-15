@@ -8,14 +8,12 @@ import {
   PAYMENT_PROVIDER_META,
   type PaymentProviderCode,
 } from '@/server/domains/payments/types';
-import type { BranchRow } from '@/server/db/drizzle/schema';
 import { extractPaymentReference } from '@/server/domains/payments/payment-reference';
 import { amountDue } from '@/server/domains/orders/amount-due';
 
-import { emptyToNull, has, orElse, trimToNull } from '@/lib/values';
+import { emptyToNull, has, orElse } from '@/lib/values';
 
 /** Which branches act independently decides what the KRA screens show, so they must refresh. */
-const KRA_SETTINGS_PATH = '/admin/settings/tax-compliance/kra-tims-etims';
 
 async function ensureBranchContext() {
   const { companySettings, organizations } = getContainer();
@@ -25,62 +23,6 @@ async function ensureBranchContext() {
     orElse(company.tradingName, company.legalName),
   );
   return { company, branch };
-}
-
-export async function listBranchesAction(): Promise<BranchRow[]> {
-  await requirePermission('branches:read');
-  const { company, branch } = await ensureBranchContext();
-  const { branches } = getContainer();
-  const list = await branches.listByCompany(company.id);
-  return list.length !== 0 ? list : [branch];
-}
-
-export async function createBranchAction(input: {
-  code: string;
-  name: string;
-  actsIndependently?: boolean;
-  kraPin?: string;
-  publicBaseUrl?: string;
-}): Promise<BranchRow> {
-  await requirePermission('branches:manage');
-  const { company } = await ensureBranchContext();
-  const { branches } = getContainer();
-  const created = await branches.create({
-    companyId: company.id,
-    code: input.code.trim().toUpperCase(),
-    name: input.name.trim(),
-    actsIndependently: Boolean(input.actsIndependently),
-    kraPin: trimToNull(input.kraPin),
-    publicBaseUrl: trimToNull(input.publicBaseUrl),
-    isDefault: false,
-    isActive: true,
-  });
-
-  revalidatePath('/admin/settings');
-  revalidatePath('/admin/settings/payments');
-  revalidatePath(KRA_SETTINGS_PATH, 'layout');
-  return created;
-}
-
-export async function updateBranchAction(
-  id: string,
-  patch: Partial<{
-    name: string;
-    code: string;
-    actsIndependently: boolean;
-    kraPin: string | null;
-    publicBaseUrl: string | null;
-    isDefault: boolean;
-    isActive: boolean;
-  }>,
-): Promise<BranchRow> {
-  await requirePermission('branches:manage');
-  const { branches } = getContainer();
-  const updated = await branches.update(id, patch);
-  revalidatePath('/admin/settings');
-  revalidatePath('/admin/settings/payments');
-  revalidatePath(KRA_SETTINGS_PATH, 'layout');
-  return updated;
 }
 
 export async function updateCompanyPublicBaseUrlAction(url: string): Promise<void> {

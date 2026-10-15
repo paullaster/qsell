@@ -39,7 +39,8 @@ export function OrderApprovalBanner({ order, onChanged }: { order: Order; onChan
           <strong>Waiting for approval.</strong> This order cannot be shipped or invoiced until it
           is approved. You can still cancel it.
         </p>
-      ) : status === 'rejected' ? (
+      ) : null}
+      {status === 'rejected' ? (
         <p>
           <strong>Approval was refused.</strong> The person who sent it can reopen it from{' '}
           <Link href="/admin/approvals/requests" className="underline">
@@ -47,12 +48,13 @@ export function OrderApprovalBanner({ order, onChanged }: { order: Order; onChan
           </Link>
           , or you can cancel the order.
         </p>
-      ) : (
+      ) : null}
+      {status === 'draft' ? (
         <p>
           <strong>Reopened.</strong> Send it for approval again once the reason it was refused has
           been dealt with, or cancel the order.
         </p>
-      )}
+      ) : null}
       {status === 'draft' ? (
         <button type="button" className={primaryButtonClass} disabled={busy} onClick={resend}>
           {busy ? 'Sending…' : 'Send for approval again'}

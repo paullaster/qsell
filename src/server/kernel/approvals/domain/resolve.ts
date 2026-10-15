@@ -1,6 +1,6 @@
 import type { StepDefinition } from './types';
 
-import { has } from '@/lib/values';
+import { has, required } from '@/lib/values';
 
 /** What the resolver needs to know about people; the service reads it from the database. */
 export interface ApproverDirectory {
@@ -124,7 +124,7 @@ export function nextOffers(input: ResolveInput): Offer {
         }
         return { done: true };
       }
-      return { done: false, offers: [{ userId: remaining[0]!, position: entries.length }] };
+      return { done: false, offers: [{ userId: required(remaining[0], 'the next approver in the group'), position: entries.length }] };
     }
 
     case 'owner_approver': {

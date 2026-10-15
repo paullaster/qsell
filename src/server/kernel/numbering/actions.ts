@@ -5,7 +5,7 @@ import { requirePermission } from '@/server/domains/access-control/guard';
 import { AccessDeniedError } from '@/server/domains/access-control/engine';
 import { getContainer } from '@/server/di/container';
 import { ReasonError } from '../reason-codes/service';
-import { DOCUMENT_KINDS, DOCUMENT_KIND_LIST, type DocumentKind } from './document-kinds';
+import { DOCUMENT_KINDS, DOCUMENT_KIND_LIST, isDocumentKind, type DocumentKind } from './document-kinds';
 import { NumberSeriesError, type LineInput, type NumberPreview, type SeriesInput } from './service';
 import type { Issue } from './domain/types';
 
@@ -51,6 +51,9 @@ async function run<T>(
 }
 
 const today = () => businessDate();
+
+/** The name of a kind of document; a kind this code no longer knows keeps its stored name. */
+const kindLabel = (kind: string): string => (isDocumentKind(kind) ? DOCUMENT_KINDS[kind].label : kind);
 
 // ── views ────────────────────────────────────────────────────────────────
 
@@ -157,7 +160,7 @@ export async function numberSeriesPageAction(
             .filter((b) => b.seriesId === s.id)
             .map((b) => ({
               kind: b.documentKind as DocumentKind,
-              label: DOCUMENT_KINDS[b.documentKind as DocumentKind]?.label ?? b.documentKind,
+              label: kindLabel(b.documentKind),
               branchCode: b.branchId === null ? null : (branchCode.get(b.branchId) ?? null),
             })),
         };
@@ -219,11 +222,11 @@ export async function getNumberSeriesAction(
       })),
       fiscalKinds: detail.bindings
         .map((b) => b.documentKind as DocumentKind)
-        .filter((k) => DOCUMENT_KINDS[k]?.fiscal)
+        .filter((k) => DOCUMENT_KINDS[k].fiscal)
         .map((k) => DOCUMENT_KINDS[k].label),
       boundTo: detail.bindings.map((b) => ({
         kind: b.documentKind as DocumentKind,
-        label: DOCUMENT_KINDS[b.documentKind as DocumentKind]?.label ?? b.documentKind,
+        label: kindLabel(b.documentKind),
         branchCode: has(b.branchId) ? (branchCode.get(b.branchId) ?? null) : null,
       })),
       recent: recent.map((r) => ({

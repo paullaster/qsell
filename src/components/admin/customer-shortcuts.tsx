@@ -4,13 +4,13 @@ import type { CustomerProfileRow } from '@/server/db/drizzle/schema';
 
 export const CUSTOMER_SHORTCUT_CREATED = 'qsell:customer-shortcut-created';
 
-export type CustomerShortcutField = {
+export interface CustomerShortcutField {
   fieldName: string;
   dimensionId: string;
   dimensionCode: string;
   kind: 'global' | 'shortcut';
   values: { code: string; name: string }[];
-};
+}
 
 export type CustomerShortcutDetail =
   | { kind: 'profile'; profile: CustomerProfileRow }

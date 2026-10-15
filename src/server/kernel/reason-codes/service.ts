@@ -2,6 +2,8 @@ import { and, eq } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { reasonCodes, type ReasonCodeRow } from '@/server/db/drizzle/schema';
 
+import { has, trimToNull } from '@/lib/values';
+
 export class ReasonError extends Error {
   constructor(
     readonly code:
@@ -62,7 +64,7 @@ export class ReasonCodes {
   }
 
   async list(companyId: string): Promise<ReasonCodeRow[]> {
-    return this.db
+    return await this.db
       .select()
       .from(reasonCodes)
       .where(eq(reasonCodes.companyId, companyId))
@@ -80,7 +82,7 @@ export class ReasonCodes {
     appliesTo: string,
   ): Promise<{ code: string; text: string | null }> {
     const code = input.code?.trim();
-    if (!code) throw new ReasonError('REASON_REQUIRED', 'A reason is required.');
+    if (!has(code)) throw new ReasonError('REASON_REQUIRED', 'A reason is required.');
     const [row] = await this.db
       .select()
       .from(reasonCodes)
@@ -95,8 +97,8 @@ export class ReasonCodes {
         `Reason "${code}" cannot be used for ${appliesTo}.`,
       );
     }
-    const text = input.text?.trim() || null;
-    if (row.requiresComment && !text) {
+    const text = trimToNull(input.text);
+    if (row.requiresComment && !has(text)) {
       throw new ReasonError('COMMENT_REQUIRED', `Reason "${code}" needs a comment explaining it.`);
     }
     return { code, text };

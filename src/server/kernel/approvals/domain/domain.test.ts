@@ -163,7 +163,7 @@ describe('approver resolution', () => {
   it('detects a looping chain instead of spinning', () => {
     const loop: ApproverDirectory = {
       ...dir(),
-      approverOf: (u) => (u === 'clerk' ? 'x' : u === 'x' ? 'y' : 'x'),
+      approverOf: (u) => (u === 'x' ? 'y' : 'x'),
       qualifies: () => false,
     };
     expect(() => run(s({ type: 'chain_by_limit' }), 1, [entry('x'), entry('y', 1)], loop)).toThrow(

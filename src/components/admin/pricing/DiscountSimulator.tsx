@@ -45,12 +45,12 @@ export function DiscountSimulator({
   tryRule?: { id: string; code: string } | null;
 }) {
   const uid = useId();
-  const [lines, setLines] = useState<Array<{ productId: string; label: string; quantity: string }>>(
+  const [lines, setLines] = useState<{ productId: string; label: string; quantity: string }[]>(
     [],
   );
   const [customer, setCustomer] = useState<{ id: string; name: string } | null>(null);
   const [q, setQ] = useState('');
-  const [found, setFound] = useState<Array<{ id: string; name: string; number: string }>>([]);
+  const [found, setFound] = useState<{ id: string; name: string; number: string }[]>([]);
   const [coupons, setCoupons] = useState('');
   const [payment, setPayment] = useState('');
   const [tryIt, setTryIt] = useState(true);
@@ -60,7 +60,7 @@ export function DiscountSimulator({
 
   const search = async (term: string) => {
     setQ(term);
-    if (term.trim().length < 2) return setFound([]);
+    if (term.trim().length < 2) { setFound([]); return; }
     const r = await searchCustomersAction(term);
     if (r.ok) setFound(r.data);
   };

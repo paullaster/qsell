@@ -98,7 +98,7 @@ export function GiftCardsClient({
       reason,
     );
     setBusy(false);
-    if (!r.ok) return setMessage({ kind: 'error', text: r.error });
+    if (!r.ok) { setMessage({ kind: 'error', text: r.error }); return; }
     setMade(r.data);
     setIssuing(false);
     setValue('');
@@ -122,7 +122,7 @@ export function GiftCardsClient({
     setBusy(true);
     const r = await blockGiftCardAction(c.id, c.status !== 'blocked', reason);
     setBusy(false);
-    if (!r.ok) return setMessage({ kind: 'error', text: r.error });
+    if (!r.ok) { setMessage({ kind: 'error', text: r.error }); return; }
     setReason({ code: '', text: '' });
     await view(c.code);
     await refresh();

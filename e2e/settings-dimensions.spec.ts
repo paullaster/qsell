@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { pick } from './support/quotes';
-import { noHorizontalScroll, noNativeSelect, open } from './support/page';
+import { clickUntilVisible, noHorizontalScroll, noNativeSelect, open } from './support/page';
 
 test.describe('dimensions', () => {
   test('a dimension is made with pickers, found by search, given a value, and removed after asking', async ({ page }, testInfo) => {
@@ -11,10 +11,14 @@ test.describe('dimensions', () => {
     const form = page.getByRole('form', { name: 'New dimension' });
     await form.getByLabel('Code').fill(code);
     await form.getByLabel('Name').fill(`E2E ${code}`);
-    // The option string comes from the server's list, one page at a time, behind a picker.
-    await form.getByRole('combobox', { name: 'Option string' }).click();
-    await expect(page.getByRole('option', { name: 'Warehouse' })).toBeVisible({ timeout: 30_000 });
-    await page.getByRole('option', { name: 'Warehouse' }).click();
+    // The option string comes from the server's list, one page at a time, behind a picker. Each option can belong to one
+    // dimension only, so a retry (after a failed first try left one behind) does without.
+    const optionName = testInfo.project.name === 'phone' ? 'Site' : 'Warehouse';
+    if (testInfo.retry === 0) {
+      await form.getByRole('combobox', { name: 'Option string' }).click();
+      await expect(page.getByRole('option', { name: optionName })).toBeVisible({ timeout: 30_000 });
+      await page.getByRole('option', { name: optionName }).click();
+    }
     // Ticking "default" makes it global and switches off shortcut.
     await form.getByLabel('Default').check();
     await expect(form.getByLabel('Global')).toBeChecked();
@@ -60,8 +64,8 @@ test.describe('dimensions', () => {
     await second.getByRole('button', { name: 'Delete value A2' }).click();
     await second.getByRole('button', { name: 'Keep it' }).focus();
     await page.keyboard.press('Enter');
-    await expect(second).toBeVisible();
-    await second.getByRole('button', { name: 'Delete value A2' }).click();
+    await expect(second.getByRole('button', { name: 'Delete value A2' })).toBeVisible();
+    await clickUntilVisible(second.getByRole('button', { name: 'Delete value A2' }), second.getByRole('button', { name: 'Confirm: Delete value A2' }));
     await second.getByRole('button', { name: 'Confirm: Delete value A2' }).click();
     await expect(page.getByText('A2 deleted.')).toBeVisible({ timeout: 30_000 });
     await expect(page.getByRole('listitem').filter({ hasText: 'Value A2' })).toHaveCount(0);
@@ -70,7 +74,7 @@ test.describe('dimensions', () => {
     await page.getByRole('link', { name: /All dimensions/ }).click();
     await page.getByLabel('Search dimensions').fill(code);
     const again = page.getByRole('listitem').filter({ hasText: `E2E ${code}` });
-    await again.getByRole('button', { name: `Delete dimension ${code}` }).click();
+    await clickUntilVisible(again.getByRole('button', { name: `Delete dimension ${code}` }), again.getByRole('button', { name: `Confirm: Delete dimension ${code}` }));
     await again.getByRole('button', { name: `Confirm: Delete dimension ${code}` }).click();
     await expect(page.getByText(`${code} deleted.`)).toBeVisible({ timeout: 30_000 });
     await noHorizontalScroll(page);

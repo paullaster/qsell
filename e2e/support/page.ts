@@ -1,11 +1,14 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 
 /** Opens an admin screen and waits for its heading, trying again if the development server was still compiling it. */
 export async function open(page: Page, url: string, heading: string | RegExp): Promise<void> {
   for (let attempt = 0; attempt < 4; attempt += 1) {
     await page.goto(url);
     try {
-      await expect(page.getByRole('heading', { name: heading, level: 2 }).first()).toBeVisible({ timeout: 30_000 });
+      const title = page.getByRole('heading', { name: heading, level: 2 }).first();
+      await expect(title).toBeVisible({ timeout: 30_000 });
+      // A streamed page is drawn before it is wired up; clicks and typing in that moment are lost.
+      await expect.poll(() => title.evaluate((el) => Object.keys(el).some((k) => k.startsWith('__reactProps'))), { timeout: 30_000 }).toBe(true);
       return;
     } catch (error) {
       if (attempt === 3) throw error;
@@ -22,3 +25,14 @@ export const noHorizontalScroll = async (page: Page): Promise<void> => {
 export const noNativeSelect = async (page: Page): Promise<void> => {
   await expect(page.locator('select')).toHaveCount(0);
 };
+
+/**
+ * Clicks until what the click opens appears. A page streamed from the server can be drawn before
+ * its buttons are wired up, and a click in that moment does nothing; trying again is what a person does.
+ */
+export async function clickUntilVisible(trigger: Locator, target: Locator): Promise<void> {
+  await expect(async () => {
+    await trigger.click();
+    await expect(target).toBeVisible({ timeout: 3000 });
+  }).toPass({ timeout: 60_000 });
+}

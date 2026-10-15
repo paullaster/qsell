@@ -29,7 +29,9 @@ import {
 import { triggerByCode } from './domain/triggers';
 import type { StepDefinition, WorkflowDefinition } from './domain/types';
 
-import { has, trimToNull } from '@/lib/values';
+import { has, required, trimToNull } from '@/lib/values';
+import { decodeCursor } from '@/server/domains/lookups/request';
+import { pageOf, PAGE_SIZE, type PageInput } from '@/server/domains/settings/paging';
 
 export type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
@@ -129,8 +131,27 @@ export type ActResult =
   | { outcome: 'superseded'; message: string };
 
 /** The same JSON text for the same facts, whatever order the keys were written in. */
+/** When an open entry becomes overdue: the step's due hours from `from`, or never. */
+function dueTime(step: StepDefinition, from: Date): Date | null {
+  const hours = step.dueAfterHours;
+  return hours === undefined || hours === 0 ? null : new Date(from.getTime() + hours * 3_600_000);
+}
+
+/** How specifically a switch names the situation: the exact one, the whole area, or another (which does not apply). */
+function switchRank(switchTrigger: string | null, trigger: string | null): number {
+  if (switchTrigger === trigger) return 2;
+  return switchTrigger === null ? 0 : -1;
+}
+
+/** How specifically a switch names the branch: all branches, this one, or another (which does not apply). */
+function branchRank(switchBranch: string | null, branchId: string | null): number {
+  if (switchBranch === null) return 0;
+  return switchBranch === branchId ? 1 : -10;
+}
+
 export function stableJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (value === undefined) return 'null';
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
   const o = value as Record<string, unknown>;
   return `{${Object.keys(o)
@@ -317,7 +338,7 @@ export class ApprovalEngine {
           amount: input.amount.toFixed(2),
           snapshot: facts,
           documentHash: hash,
-          currentStep: steps[0]!.sequence,
+          currentStep: required(steps[0], 'the first step').sequence,
           previousRequestId: previous?.id ?? null,
           attempt: (previous?.attempt ?? 0) + 1,
         })
@@ -325,7 +346,7 @@ export class ApprovalEngine {
       await this.decisions.record(
         {
           companyId,
-          subject: { type: 'approval_request', id: request!.id },
+          subject: { type: 'approval_request', id: required(request, 'the saved request').id },
           action: 'approvals.requested',
           to: 'pending',
           reason: {
@@ -336,10 +357,11 @@ export class ApprovalEngine {
         },
         tx,
       );
-      const state = await this.advance(tx, request!, def, directory);
+      const saved = required(request, 'the saved request');
+      const state = await this.advance(tx, saved, def, directory);
       if (state !== 'approved') allApproved = false;
       out.push({
-        requestId: request!.id,
+        requestId: saved.id,
         workflowCode: m.wf.code,
         status: state === 'approved' ? 'approved' : 'pending',
       });
@@ -461,7 +483,7 @@ export class ApprovalEngine {
   ): Promise<ActResult> {
     const { entry, request } = await this.lockEntry(tx, entryId);
     this.assertCanAct(entry, request, userId);
-    const comment = input.comment?.trim();
+    const comment = input.comment.trim();
     if (!has(comment))
       throw new ApprovalError('COMMENT_REQUIRED', 'Say why you are rejecting this request.');
     const reason = await this.reasons.require(
@@ -545,14 +567,14 @@ export class ApprovalEngine {
       .for('update');
     if (pending.length === 0)
       throw new ApprovalError('NOT_PENDING', 'Nothing in this submission is waiting for approval.');
-    const first = pending[0]!;
+    const first = required(pending[0], 'the first pending request');
     if (actor.isAdmin !== true && first.requestedBy !== actor.userId) {
       throw new ApprovalError(
         'NOT_ALLOWED',
         'Only the person who submitted it, or an administrator, can withdraw this request.',
       );
     }
-    if (!has(reason.text?.trim()))
+    if (!has(reason.text.trim()))
       throw new ApprovalError('COMMENT_REQUIRED', 'Say why the request is being withdrawn.');
     for (const r of pending) {
       await this.closeRequest(tx, r, 'canceled', reason.text.trim());
@@ -681,7 +703,7 @@ export class ApprovalEngine {
         'Only the person who submitted it, or an administrator, can reopen this request.',
       );
     }
-    if (!has(reason.text?.trim()))
+    if (!has(reason.text.trim()))
       throw new ApprovalError('COMMENT_REQUIRED', 'Say why the request is being reopened.');
     for (const r of rejected) {
       await tx
@@ -997,6 +1019,43 @@ export class ApprovalEngine {
     return await this.withOpenEntries(requests);
   }
 
+  /** One page of what is waiting, oldest first, with each request's open entries. */
+  async pendingPage(companyId: string, input: PageInput & { overdueOnly?: boolean }) {
+    const decoded = typeof input.cursor === 'string' && input.cursor !== '' ? decodeCursor(input.cursor) : null;
+    const overdue = input.overdueOnly === true
+      ? sql`exists (select 1 from approval_entries e where e.request_id = approval_requests.id and e.status = 'open' and e.due_at is not null and e.due_at < now())`
+      : undefined;
+    // The cursor keeps the time to the microsecond, as the database does; cut to milliseconds it would repeat rows.
+    const stamp = sql<string>`to_char(${approvalRequests.createdAt} at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+    const found = await this.db
+      .select({ request: approvalRequests, stamp })
+      .from(approvalRequests)
+      .where(
+        and(
+          eq(approvalRequests.companyId, companyId),
+          eq(approvalRequests.status, 'pending'),
+          overdue,
+          decoded === null ? undefined : sql`(${approvalRequests.createdAt}, ${approvalRequests.id}) > (${decoded.k}::timestamptz, ${decoded.id}::uuid)`,
+        ),
+      )
+      .orderBy(asc(approvalRequests.createdAt), asc(approvalRequests.id))
+      .limit(PAGE_SIZE + 1);
+    const page = pageOf(found, PAGE_SIZE, (r) => ({ k: r.stamp, id: r.request.id }));
+    return { rows: await this.withOpenEntries(page.rows.map((r) => r.request)), nextCursor: page.nextCursor };
+  }
+
+  /** How many requests are waiting, and how many of them have an overdue entry. */
+  async pendingCounts(companyId: string): Promise<{ waiting: number; overdue: number }> {
+    const [row] = await this.db
+      .select({
+        waiting: sql<number>`count(*)::int`,
+        overdue: sql<number>`count(*) filter (where exists (select 1 from approval_entries e where e.request_id = approval_requests.id and e.status = 'open' and e.due_at is not null and e.due_at < now()))::int`,
+      })
+      .from(approvalRequests)
+      .where(and(eq(approvalRequests.companyId, companyId), eq(approvalRequests.status, 'pending')));
+    return { waiting: row?.waiting ?? 0, overdue: row?.overdue ?? 0 };
+  }
+
   private async withOpenEntries(requests: RequestRow[]) {
     const open = requests.length !== 0
       ? await this.db
@@ -1146,7 +1205,7 @@ export class ApprovalEngine {
       position: entry.position,
       approverUserId: approver,
       onBehalfOfUserId: has(cover) ? target : null,
-      dueAt: step.dueAfterHours !== null && step.dueAfterHours !== undefined && step.dueAfterHours !== 0 ? new Date(now.getTime() + step.dueAfterHours * 3_600_000) : null,
+      dueAt: dueTime(step, now),
       replacesEntryId: entry.id,
     });
     await this.decisions.record(
@@ -1232,7 +1291,7 @@ export class ApprovalEngine {
       stepSequence: entry.stepSequence,
       position: entry.position,
       approverUserId: toUserId,
-      dueAt: step.dueAfterHours !== null && step.dueAfterHours !== undefined && step.dueAfterHours !== 0 ? new Date(now.getTime() + step.dueAfterHours * 3_600_000) : null,
+      dueAt: dueTime(step, now),
       replacesEntryId: entry.id,
     });
     await this.decisions.record(
@@ -1267,11 +1326,9 @@ export class ApprovalEngine {
       .from(approvalSwitches)
       .where(and(eq(approvalSwitches.companyId, companyId), eq(approvalSwitches.module, module)));
     // The most specific switch wins: trigger+branch, trigger, module+branch, module.
-    const rank = (r: (typeof rows)[number]) =>
-      (r.trigger === trigger ? 2 : r.trigger === null ? 0 : -1) * 2 +
-      (r.branchId === null ? 0 : r.branchId === branchId ? 1 : -10);
+    const rank = (r: (typeof rows)[number]) => switchRank(r.trigger, trigger) * 2 + branchRank(r.branchId, branchId);
     const applicable = rows.filter((r) => rank(r) >= 0).sort((a, b) => rank(b) - rank(a));
-    return applicable.length === 0 ? true : applicable[0]!.enabled;
+    return applicable[0]?.enabled ?? true;
   }
 
   private async lockEntry(tx: Tx, entryId: string) {
@@ -1292,7 +1349,7 @@ export class ApprovalEngine {
       .from(approvalEntries)
       .where(eq(approvalEntries.id, entryId))
       .limit(1);
-    return { entry: entry!, request: request! };
+    return { entry: required(entry, 'the approval entry'), request: required(request, 'the approval request') };
   }
 
   private assertCanAct(
@@ -1373,11 +1430,11 @@ export class ApprovalEngine {
       .from(approvalWorkflowVersions)
       .where(eq(approvalWorkflowVersions.id, request.workflowVersionId))
       .limit(1);
-    return v!.definition as unknown as WorkflowDefinition;
+    return required(v, 'the workflow version').definition as unknown as WorkflowDefinition;
   }
 
   private stepOf(def: WorkflowDefinition, sequence: number): StepDefinition {
-    return def.steps.find((s) => s.sequence === sequence)!;
+    return required(def.steps.find((s) => s.sequence === sequence), `step ${String(sequence)}`);
   }
 
   /** When every request in the submission is approved, the document is released, once. */
@@ -1466,9 +1523,7 @@ export class ApprovalEngine {
         if (!offer.done) {
           // Others already asked are still being waited on (an "n of" step part way through).
           if (offer.offers.length === 0) return 'waiting';
-          const dueAt = step.dueAfterHours !== null && step.dueAfterHours !== undefined && step.dueAfterHours !== 0
-            ? new Date(Date.now() + step.dueAfterHours * 3_600_000)
-            : null;
+          const dueAt = dueTime(step, new Date());
           const created = new Set<string>();
           for (const o of offer.offers) {
             const cover = directory.substituteFor(
@@ -1493,7 +1548,7 @@ export class ApprovalEngine {
               .update(approvalRequests)
               .set({ currentStep: step.sequence })
               .where(eq(approvalRequests.id, request.id));
-            request.currentStep = step.sequence;
+            Object.assign(request, { currentStep: step.sequence });
           }
           await this.decisions.record(
             {
@@ -1517,7 +1572,7 @@ export class ApprovalEngine {
       .update(approvalRequests)
       .set({ status: 'approved', closedAt: new Date(), currentStep: current })
       .where(eq(approvalRequests.id, request.id));
-    request.status = 'approved';
+    Object.assign(request, { status: 'approved' });
     await this.decisions.record(
       {
         companyId: request.companyId,

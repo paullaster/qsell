@@ -10,7 +10,7 @@ import {
   type EtimsSalesItem,
 } from './client';
 
-import { has } from '@/lib/values';
+import { has, required } from '@/lib/values';
 
 /** A transmission left `pending` longer than this is assumed dead and may be retried. */
 const STALE_PENDING_MS = 5 * 60_000;
@@ -226,7 +226,7 @@ export class EtimsTransmissionService {
       .where(eq(kraTransmissions.id, row.id))
       .returning();
     // The order's own status is not touched here: the signing service is its only writer.
-    return updated!;
+    return required(updated, 'the updated transmission');
   }
 }
 

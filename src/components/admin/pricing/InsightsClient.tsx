@@ -46,7 +46,7 @@ function Table({
   isEmpty,
 }: {
   caption: string;
-  head: Array<{ label: string; right?: boolean }>;
+  head: { label: string; right?: boolean }[];
   children: React.ReactNode;
   empty: string;
   isEmpty: boolean;
@@ -107,7 +107,7 @@ export function InsightsClient({
   branches,
 }: {
   initial: InsightsData;
-  branches: Array<{ id: string; name: string }>;
+  branches: { id: string; name: string }[];
 }) {
   const uid = useId();
   const [data, setData] = useState(initial);

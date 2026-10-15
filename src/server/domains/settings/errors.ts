@@ -8,3 +8,9 @@ export class SettingsError extends Error {
     this.name = 'SettingsError';
   }
 }
+
+/** True when the database refused a row because it duplicates one that must be unique. */
+export function isUniqueViolation(error: unknown): boolean {
+  const e = error as { code?: string; cause?: { code?: string } } | null;
+  return e?.code === '23505' || e?.cause?.code === '23505';
+}

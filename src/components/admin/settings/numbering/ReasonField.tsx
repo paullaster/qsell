@@ -18,6 +18,12 @@ export type ReasonSource = 'numbering-reasons' | 'approval-config-reasons' | 'ap
  * require. The list is read from the server when the field is opened, a page at a time, and searched
  * there. Used before any change that must be explainable later.
  */
+/** The reason to show: none when the code is empty, the one picked when it matches, else the bare code. */
+function shownChoice(code: string, picked: Choice | null): Choice | null {
+  if (code === '') return null;
+  return picked?.id === code ? picked : { id: code, label: code };
+}
+
 export function ReasonField({
   value,
   onChange,
@@ -34,7 +40,7 @@ export function ReasonField({
   const uid = useId();
   const [choice, setChoice] = useState<Choice | null>(value.code === '' ? null : { id: value.code, label: value.code });
   // A reason cleared from outside (a form reset) clears the field too.
-  const shown = value.code === '' ? null : choice?.id === value.code ? choice : { id: value.code, label: value.code };
+  const shown = shownChoice(value.code, choice);
   const commentRequired = shown?.meta?.requiresComment === '1';
 
   return (

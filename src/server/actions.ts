@@ -29,7 +29,6 @@ export {
   updateTaxCategoryAction,
   deleteTaxCategoryAction,
   setDefaultTaxCategoryAction,
-  clearTaxCategoriesAction,
 } from '@/server/domains/taxes/actions';
 
 export {
@@ -74,7 +73,6 @@ export {
   initiatePesapalPaymentAction,
   submitPesapalOrderAction,
   simulatePesapalPaymentAction,
-  listBranchesAction,
   listEnabledCheckoutProvidersAction,
   initiateBranchPaymentAction,
   getPaymentAttemptStatusAction,

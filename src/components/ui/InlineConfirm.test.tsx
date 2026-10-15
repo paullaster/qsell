@@ -27,6 +27,6 @@ describe('InlineConfirm', () => {
 
   it('cannot be started while busy', () => {
     render(<InlineConfirm label="Delete x" action="Delete" busy onConfirm={() => undefined} />);
-    expect((screen.getByRole('button', { name: 'Delete x' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Delete x' }).disabled).toBe(true);
   });
 });

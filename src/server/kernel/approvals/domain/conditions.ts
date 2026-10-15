@@ -1,5 +1,7 @@
 import type { Comparison, ConditionNode, ConditionTrace, Operand } from './types';
 
+import { compareValues } from '@/lib/values';
+
 /** Reads `a.b.c` from a document snapshot. Missing paths are `undefined`. */
 export function readField(snapshot: Record<string, unknown>, path: string): unknown {
   let current: unknown = snapshot;
@@ -26,11 +28,18 @@ function asNumber(value: unknown): number | null {
   return null;
 }
 
+/** Whether an ordering comparison holds, given how the two values compare (negative, zero or positive). */
+function orderHolds(op: 'gt' | 'gte' | 'lt' | 'lte', c: number): boolean {
+  if (op === 'gt') return c > 0;
+  if (op === 'gte') return c >= 0;
+  return op === 'lt' ? c < 0 : c <= 0;
+}
+
 function compare(a: unknown, b: unknown): number | null {
   const x = asNumber(a);
   const y = asNumber(b);
   if (x !== null && y !== null) return x - y;
-  if (typeof a === 'string' && typeof b === 'string') return a < b ? -1 : a > b ? 1 : 0;
+  if (typeof a === 'string' && typeof b === 'string') return compareValues(a, b);
   return null;
 }
 
@@ -88,7 +97,12 @@ export function evaluateCondition(
         typeof v === 'string' && v.toLowerCase().includes(node.value.toLowerCase()),
       );
     }
-    default: {
+    case 'eq':
+    case 'ne':
+    case 'gt':
+    case 'gte':
+    case 'lt':
+    case 'lte': {
       const cmp = node;
       const left = readField(snapshot, cmp.field);
       const right = resolve(snapshot, cmp.value);
@@ -99,7 +113,7 @@ export function evaluateCondition(
         result = !(c === 0 || (c === null && left === right && left !== undefined));
       else if (c !== null) {
         result =
-          cmp.op === 'gt' ? c > 0 : cmp.op === 'gte' ? c >= 0 : cmp.op === 'lt' ? c < 0 : c <= 0;
+          orderHolds(cmp.op, c);
       }
       return record(`${cmp.field} ${cmp.op}`, result, `${String(left)} vs ${String(right)}`);
     }

@@ -51,9 +51,13 @@ export async function pick(
   text: string,
   option: string | RegExp,
 ): Promise<void> {
-  await field.click();
-  await field.fill(text);
-  await page.getByRole('option', { name: option }).first().click();
+  // The list is read from the server when the field is typed into; if the first read is slow or lost (a route still
+  // compiling on the development server), typing again asks again, as a person would.
+  await expect(async () => {
+    await field.click();
+    await field.fill(text);
+    await page.getByRole('option', { name: option }).first().click({ timeout: 10_000 });
+  }).toPass({ timeout: 90_000 });
 }
 
 /** Fills the delivery address and saves the quote, then waits for the editor to close. */

@@ -43,7 +43,7 @@ interface State {
   description: string;
   period: RebatePeriod;
   tierMode: TierMode;
-  tiers: Array<{ from: string; percent: string }>;
+  tiers: { from: string; percent: string }[];
   scopes: Scopes;
   target: TargetState;
   validFrom: string;

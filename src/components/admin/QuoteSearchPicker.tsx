@@ -176,7 +176,7 @@ export function QuoteSearchPicker({
                 setActive((a) => Math.max(0, a - 1));
               } else if (e.key === 'Enter' && open && hits?.[active]) {
                 e.preventDefault();
-                choose(hits[active]!);
+                choose(hits[active]);
               } else if (e.key === 'Escape' && open) {
                 e.stopPropagation();
                 setOpen(false);

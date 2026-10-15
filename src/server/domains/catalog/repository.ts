@@ -1,5 +1,6 @@
 import { and, asc, count, eq, getTableColumns, inArray, isNull, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
+import { afterCursor, matching, pageOf, PAGE_SIZE, searchText, type PageInput } from '@/server/domains/settings/paging';
 import {
   categories,
   currencies,
@@ -231,6 +232,41 @@ export class CatalogRepository {
       .orderBy(asc(taxCategories.name));
 
     return rows.map((entry) => ({ ...entry.row, productCount: Number(entry.productCount) }));
+  }
+
+  /** One page of tax rules in name order, narrowed by text, tax type and whether prices include the tax. */
+  async pageTaxCategories(input: PageInput & { type?: string; inclusive?: boolean }) {
+    const found = await this.db
+      .select({
+        row: taxCategories,
+        productCount: sql<number>`(select count(*)::int from ${products} as p where p.tax_category_id = ${taxCategories}.id)`,
+      })
+      .from(taxCategories)
+      .where(
+        and(
+          matching(searchText(input), [taxCategories.name, taxCategories.code, taxCategories.countryName]),
+          input.type === undefined ? undefined : eq(taxCategories.type, input.type),
+          input.inclusive === undefined ? undefined : eq(taxCategories.isInclusive, input.inclusive),
+          afterCursor(input.cursor, taxCategories.name, taxCategories.id),
+        ),
+      )
+      .orderBy(asc(taxCategories.name), asc(taxCategories.id))
+      .limit(PAGE_SIZE + 1);
+    const page = pageOf(found, PAGE_SIZE, (r) => ({ k: r.row.name, id: r.row.id }));
+    return { rows: page.rows.map((r) => ({ ...r.row, productCount: Number(r.productCount) })), nextCursor: page.nextCursor };
+  }
+
+  /** The counts and the default rule behind the summary cards, worked out by the database. */
+  async taxSummary() {
+    const [row] = await this.db
+      .select({
+        total: sql<number>`count(*)::int`,
+        active: sql<number>`count(*) filter (where ${taxCategories.isActive})::int`,
+        countries: sql<number>`count(distinct nullif(trim(${taxCategories.countryCode}), ''))::int`,
+      })
+      .from(taxCategories);
+    const [def] = await this.db.select().from(taxCategories).where(eq(taxCategories.isDefault, true)).limit(1);
+    return { total: row?.total ?? 0, active: row?.active ?? 0, countries: row?.countries ?? 0, defaultRule: def ?? null };
   }
 
   async getTaxCategoryById(id: string): Promise<TaxCategoryRow | null> {

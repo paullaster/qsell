@@ -20,12 +20,15 @@ export function SkeletonCard() {
   );
 }
 
+/** Names for the placeholders of a loading list, so each has a key of its own. */
+const slots = (count: number): string[] => Array.from({ length: count }, (_, i) => `slot-${String(i)}`);
+
 export function SkeletonGrid({ count = 6 }: { count?: number }) {
   const { productGrid } = useCompanyUiConfig();
   return (
     <div className={productGridClassName(productGrid.desktopColumns)}>
-      {Array.from({ length: count }).map((_, i) => (
-        <SkeletonCard key={i} />
+      {slots(count).map((slot) => (
+        <SkeletonCard key={slot} />
       ))}
     </div>
   );
@@ -35,8 +38,8 @@ export function SkeletonDashboard() {
   return (
     <div className="animate-pulse space-y-6">
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="h-28 rounded-2xl border border-line bg-surface p-4" />
+        {slots(4).map((slot) => (
+          <div key={slot} className="h-28 rounded-2xl border border-line bg-surface p-4" />
         ))}
       </div>
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -54,8 +57,8 @@ export function SkeletonTable() {
     <div className="animate-pulse space-y-4 rounded-2xl border border-line bg-surface p-6">
       <div className="h-6 w-1/4 rounded bg-pulse" />
       <div className="space-y-3 pt-2">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="h-12 rounded-lg bg-pulse" />
+        {slots(5).map((slot) => (
+          <div key={slot} className="h-12 rounded-lg bg-pulse" />
         ))}
       </div>
     </div>

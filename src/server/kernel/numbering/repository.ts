@@ -24,10 +24,8 @@ export interface LineWithBranch {
   branchCode: string | null;
 }
 
-export function isUniqueViolation(error: unknown): boolean {
-  const e = error as { code?: string; cause?: { code?: string } };
-  return e?.code === '23505' || e?.cause?.code === '23505';
-}
+import { required } from '@/lib/values';
+export { isUniqueViolation } from '@/server/domains/settings/errors';
 
 /** All Drizzle access for number series. Contains no rules; the service decides. */
 export interface BranchRef {
@@ -134,7 +132,7 @@ export const seriesRepo = {
     values: typeof numberSeries.$inferInsert,
   ): Promise<NumberSeriesRow> {
     const [row] = await ex.insert(numberSeries).values(values).returning();
-    return row!;
+    return required(row, 'the saved record');
   },
 
   async updateSeries(
@@ -147,7 +145,7 @@ export const seriesRepo = {
       .set({ ...patch, updatedAt: new Date() })
       .where(eq(numberSeries.id, id))
       .returning();
-    return row!;
+    return required(row, 'the saved record');
   },
 
   async deleteSeries(ex: Executor, id: string): Promise<void> {
@@ -186,7 +184,7 @@ export const seriesRepo = {
     values: typeof numberSeriesLines.$inferInsert,
   ): Promise<NumberSeriesLineRow> {
     const [row] = await ex.insert(numberSeriesLines).values(values).returning();
-    return row!;
+    return required(row, 'the saved record');
   },
 
   async updateLine(
@@ -199,7 +197,7 @@ export const seriesRepo = {
       .set({ ...patch, updatedAt: new Date() })
       .where(eq(numberSeriesLines.id, id))
       .returning();
-    return row!;
+    return required(row, 'the saved record');
   },
 
   /** Has this line ever issued a number? Decides what may still be edited. */
@@ -252,7 +250,7 @@ export const seriesRepo = {
       )
       .for('update')
       .limit(1);
-    return row!;
+    return required(row, 'the saved record');
   },
 
   async readCounter(

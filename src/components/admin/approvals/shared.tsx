@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
 import { orElse } from '@/lib/values';
 
 export const fieldClass =
@@ -90,9 +90,12 @@ export function ago(iso: string, now = Date.now()): string {
 }
 
 export function When({ iso }: { iso: string }) {
-  // Rendered after mount so server and browser agree on the text.
-  const [text, setText] = useState('');
-  useEffect(() => setText(ago(iso)), [iso]);
+  // The server draws a blank and the browser fills it in once it has the clock, so both agree on what first appears.
+  const text = useSyncExternalStore(
+    () => () => undefined,
+    () => ago(iso),
+    () => '',
+  );
   return (
     <time dateTime={iso} title={new Date(iso).toLocaleString('en-KE')}>
       {orElse(text, ' ')}
@@ -104,7 +107,7 @@ export function EmptyState({ title, children }: { title: string; children?: Reac
   return (
     <div className="rounded-xl border border-dashed border-line-strong p-8 text-center">
       <p className="text-sm font-semibold text-fg-strong">{title}</p>
-      {children ? <p className="mx-auto mt-1 max-w-md text-sm text-fg-muted">{children}</p> : null}
+      {children === undefined ? null : <p className="mx-auto mt-1 max-w-md text-sm text-fg-muted">{children}</p>}
     </div>
   );
 }
@@ -122,9 +125,9 @@ export function PageHeader({
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
         <h2 className="text-xl font-bold text-fg-strong">{title}</h2>
-        {children ? <p className="mt-1 max-w-2xl text-sm text-fg-muted">{children}</p> : null}
+        {children === undefined ? null : <p className="mt-1 max-w-2xl text-sm text-fg-muted">{children}</p>}
       </div>
-      {actions ? <div className="flex flex-wrap gap-2">{actions}</div> : null}
+      {actions === undefined ? null : <div className="flex flex-wrap gap-2">{actions}</div>}
     </div>
   );
 }

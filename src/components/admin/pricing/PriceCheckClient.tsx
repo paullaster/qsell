@@ -274,9 +274,9 @@ function CustomerSelect({
 }) {
   const uid = useId();
   const [q, setQ] = useState('');
-  const [found, setFound] = useState<Array<{ id: string; number: string; name: string }>>([]);
+  const [found, setFound] = useState<{ id: string; number: string; name: string }[]>([]);
   useEffect(() => {
-    if (q.trim().length < 2) return setFound([]);
+    if (q.trim().length < 2) { setFound([]); return; }
     let live = true;
     const t = setTimeout(() => {
       void searchCustomersAction(q).then((r) => live && r.ok && setFound(r.data));

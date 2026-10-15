@@ -66,7 +66,7 @@ const ICONS: Record<AdminNavIconName, LucideIcon> = {
   UserCog,
   Fingerprint,
   LifeBuoy,
-  Activity: Activity,
+  Activity,
 };
 
 function NavIcon({ name }: { name?: AdminNavIconName }) {

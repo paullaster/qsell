@@ -22,7 +22,7 @@ import {
   type Message,
 } from '../approvals/shared';
 
-const ROWS: Array<{ key: keyof SpecificityWeights; label: string }> = [
+const ROWS: { key: keyof SpecificityWeights; label: string }[] = [
   { key: 'contract', label: 'A contract price' },
   ...SCOPE_DIMENSIONS.map((d) => ({
     key: d,

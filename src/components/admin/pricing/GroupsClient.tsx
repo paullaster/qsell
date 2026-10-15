@@ -231,10 +231,10 @@ function Members({
 }) {
   const uid = useId();
   const [members, setMembers] = useState<
-    Array<{ id: string; number: string; name: string; email: string | null }>
+    { id: string; number: string; name: string; email: string | null }[]
   >([]);
   const [q, setQ] = useState('');
-  const [found, setFound] = useState<Array<{ id: string; number: string; name: string }>>([]);
+  const [found, setFound] = useState<{ id: string; number: string; name: string }[]>([]);
   const [reason, setReason] = useState<ReasonValue>({ code: '', text: '' });
   const [message, setMessage] = useState<Message>(null);
   const [busy, setBusy] = useState(false);
@@ -247,7 +247,7 @@ function Members({
   useEffect(() => void load(), [load]);
 
   useEffect(() => {
-    if (q.trim().length < 2) return setFound([]);
+    if (q.trim().length < 2) { setFound([]); return; }
     let live = true;
     const t = setTimeout(() => {
       void searchCustomersAction(q).then((r) => live && r.ok && setFound(r.data));
@@ -259,7 +259,7 @@ function Members({
   }, [q]);
 
   const change = async (change: { add?: string[]; remove?: string[] }) => {
-    if (!reason.code) return setMessage({ kind: 'error', text: 'Choose a reason first.' });
+    if (!reason.code) { setMessage({ kind: 'error', text: 'Choose a reason first.' }); return; }
     setBusy(true);
     const r = await changeGroupMembersAction(group.id, change, reason);
     setBusy(false);
