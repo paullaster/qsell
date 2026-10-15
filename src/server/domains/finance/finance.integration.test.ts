@@ -1,8 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { and, eq, sql } from 'drizzle-orm';
 
-import { has } from '@/lib/has';
-import { required } from '@/lib/values';
+import { has, isRecord, readText, required } from '@/lib/values';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
 import type { FinanceSetupService } from './setup-service';
@@ -193,7 +192,7 @@ describe.skipIf(!has(url))('core finance (database)', () => {
           await db.execute(q);
           return 'OK';
         } catch (e) {
-          return String((e as { cause?: { message?: string }; message: string }).cause?.message ?? (e as Error).message);
+          return (e as { cause?: { message?: string }; message: string }).cause?.message ?? (e as Error).message;
         }
       };
       expect(await run(sql`UPDATE gl_entries SET debit = 99 WHERE register_id = ${p.registerId}::uuid`)).toMatch(/append-only/);
@@ -207,7 +206,7 @@ describe.skipIf(!has(url))('core finance (database)', () => {
         .execute(sql`INSERT INTO ledger_registers (company_id, chain_key, seq, idempotency_key, document_type, document_no, posting_date, document_date, period_id, currency, rate, rate_source, total_debit, total_credit, base_total_debit, base_total_credit, line_count, posted_by_type, origin, previous_hash, hash)
           VALUES (${companyId}::uuid, 'x', 1, 'direct', 'journal', 'D', '2026-10-01', '2026-10-01', gen_random_uuid(), 'KES', '1', 'base', 10, 9, 10, 9, 2, 'user', '{}', 'a', 'b')`)
         .then(() => 'OK')
-        .catch((e: { cause?: { message?: string } }) => e.cause?.message ?? 'ERR');
+        .catch((e: unknown) => (isRecord(e) && isRecord(e.cause) ? readText(e.cause.message) : 'ERR'));
       expect(r).toMatch(/balanced|check/i);
     });
 

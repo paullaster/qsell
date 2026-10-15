@@ -16,6 +16,8 @@ import { TRIGGERS, triggerByCode, type TriggerDefinition } from './domain/trigge
 import type { WorkflowDefinition } from './domain/types';
 import type { PermissionKey } from '@/server/domains/access-control/permissions';
 
+import { has, orElse, readText } from '@/lib/values';
+
 export type ApprovalResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: string; code?: string; issues?: DefinitionIssue[]; forbidden?: true };
@@ -70,15 +72,15 @@ async function run<T>(
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Names for a set of user ids, so screens never show raw ids. */
-async function namesOf(ids: Array<string | null | undefined>): Promise<Map<string, string>> {
+async function namesOf(ids: (string | null | undefined)[]): Promise<Map<string, string>> {
   // Actor ids are free text (a job or script may not be a user), so only look up real user ids.
-  const unique = [...new Set(ids.filter((i): i is string => !!i && UUID.test(i)))];
+  const unique = [...new Set(ids.filter((i): i is string => has(i) && UUID.test(i)))];
   if (unique.length === 0) return new Map();
   const rows = await drizzleDb
     .select({ id: users.id, name: users.name, email: users.email })
     .from(users)
     .where(inArray(users.id, unique));
-  return new Map(rows.map((r) => [r.id, r.name || r.email]));
+  return new Map(rows.map((r) => [r.id, orElse(r.name, r.email)]));
 }
 
 const triggerLabel = (code: string) => triggerByCode(code)?.label ?? code;
@@ -112,13 +114,13 @@ export interface Fact {
 export interface StepProgress {
   sequence: number;
   name: string;
-  entries: Array<{
+  entries: {
     approverName: string;
     onBehalfOfName: string | null;
     status: 'open' | 'approved' | 'rejected' | 'canceled';
     comment: string | null;
     actedAt: string | null;
-  }>;
+  }[];
 }
 
 export interface RequestDetail {
@@ -137,7 +139,7 @@ export interface RequestDetail {
   what: string | null;
   facts: Fact[];
   steps: StepProgress[];
-  timeline: Array<{ at: string; action: string; actorName: string; reason: string | null }>;
+  timeline: { at: string; action: string; actorName: string; reason: string | null }[];
 }
 
 export interface MyRequest {
@@ -179,11 +181,11 @@ function describeFact(
   else if (typeof value === 'boolean') text = value ? 'Yes' : 'No';
   else if (typeof value === 'number')
     text = value.toLocaleString('en-KE', { maximumFractionDigits: 2 });
-  else text = String(value);
+  else text = readText(value);
   return { label: field.label, value: text };
 }
 
-function flatten(obj: Record<string, unknown>, prefix = ''): Array<[string, unknown]> {
+function flatten(obj: Record<string, unknown>, prefix = ''): [string, unknown][] {
   return Object.entries(obj).flatMap(([k, v]) =>
     v !== null && typeof v === 'object' && !Array.isArray(v)
       ? flatten(v as Record<string, unknown>, `${prefix}${k}.`)
@@ -207,7 +209,7 @@ export async function listInboxAction(): Promise<ApprovalResult<InboxItem[]>> {
       amount: Number(r.amount),
       requestedByName: names.get(r.requestedBy) ?? 'Unknown',
       step: r.step,
-      onBehalfOfName: r.onBehalfOfUserId ? (names.get(r.onBehalfOfUserId) ?? null) : null,
+      onBehalfOfName: has(r.onBehalfOfUserId) ? (names.get(r.onBehalfOfUserId) ?? null) : null,
       dueAt: r.dueAt?.toISOString() ?? null,
       overdue: r.dueAt ? r.dueAt.getTime() < now : false,
       handedOver: r.replacesEntryId !== null,
@@ -228,7 +230,7 @@ export async function getRequestDetailAction(
     ]);
     const trigger = triggerByCode(d.request.trigger);
     const def = d.definition as unknown as WorkflowDefinition;
-    const facts = flatten(d.request.snapshot as Record<string, unknown>)
+    const facts = flatten(d.request.snapshot)
       // Who asked is already in the header; an empty branch says nothing.
       .filter(([path, v]) => path !== 'requestedBy' && !(path === 'branchId' && v === null))
       .map(([path, v]) => describeFact(trigger, path, v))
@@ -258,7 +260,7 @@ export async function getRequestDetailAction(
             .filter((e) => e.stepSequence === s.sequence)
             .map((e) => ({
               approverName: names.get(e.approverUserId) ?? 'Unknown',
-              onBehalfOfName: e.onBehalfOfUserId ? (names.get(e.onBehalfOfUserId) ?? null) : null,
+              onBehalfOfName: has(e.onBehalfOfUserId) ? (names.get(e.onBehalfOfUserId) ?? null) : null,
               status: e.status,
               comment: e.comment,
               actedAt: e.actedAt?.toISOString() ?? null,
@@ -268,7 +270,7 @@ export async function getRequestDetailAction(
         at: t.occurredAt.toISOString(),
         action: t.action,
         actorName:
-          t.actorType === 'user' && t.actorId ? (actorNames.get(t.actorId) ?? 'Someone') : 'System',
+          t.actorType === 'user' && has(t.actorId) ? (actorNames.get(t.actorId) ?? 'Someone') : 'System',
         reason: t.reasonText,
       })),
     };
@@ -315,34 +317,6 @@ export async function rejectEntryAction(
     ok: true,
     data: { message: 'Rejected. The requester has been told why and can reopen the document.' },
   };
-}
-
-export async function listApprovalReasonsAction(): Promise<
-  ApprovalResult<{ code: string; description: string; requiresComment: boolean }[]>
-> {
-  return run('approvals:act', async ({ companyId }) =>
-    (await getContainer().reasonCodes.list(companyId))
-      .filter((r) => r.isActive)
-      .map((r) => ({
-        code: r.code,
-        description: r.description,
-        requiresComment: r.requiresComment,
-      })),
-  );
-}
-
-export async function listConfigReasonsAction(): Promise<
-  ApprovalResult<{ code: string; description: string; requiresComment: boolean }[]>
-> {
-  return run('approvals:manage', async ({ companyId }) =>
-    (await getContainer().reasonCodes.list(companyId))
-      .filter((r) => r.isActive)
-      .map((r) => ({
-        code: r.code,
-        description: r.description,
-        requiresComment: r.requiresComment,
-      })),
-  );
 }
 
 function toMine(
@@ -441,7 +415,7 @@ export async function getLookupsAction(): Promise<ApprovalResult<Lookups>> {
     return {
       users: people
         .filter((u) => u.role !== 'customer' && u.status === 'active')
-        .map((u) => ({ id: u.id, name: u.name || u.email, email: u.email }))
+        .map((u) => ({ id: u.id, name: orElse(u.name, u.email), email: u.email }))
         .sort((a, b) => a.name.localeCompare(b.name)),
       groups: groups.map((g) => ({
         id: g.id,
@@ -544,7 +518,7 @@ export async function getWorkflowAction(id: string): Promise<ApprovalResult<Work
       versions: versions.map((v) => ({
         version: v.version,
         publishedAt: v.publishedAt.toISOString(),
-        publishedByName: (v.publishedBy && names.get(v.publishedBy)) || 'Unknown',
+        publishedByName: orElse(v.publishedBy && names.get(v.publishedBy), 'Unknown'),
         reason: v.reason,
       })),
     };
@@ -613,20 +587,20 @@ export async function setWorkflowStatusAction(
 
 export interface SimulationView {
   enabled: boolean;
-  workflows: Array<{
+  workflows: {
     code: string;
     name: string;
     version: number | null;
     matched: boolean;
     why: string[];
-    steps: Array<{
+    steps: {
       sequence: number;
       name: string;
       skipped: boolean;
       approvers: string[];
       problem: string | null;
-    }>;
-  }>;
+    }[];
+  }[];
 }
 
 export async function simulateAction(input: {
@@ -663,7 +637,7 @@ export async function simulateAction(input: {
         version: w.version,
         matched: w.matched,
         why: w.trace.map(
-          (t) => `${t.result ? '✓' : '✗'} ${t.node}${t.detail ? ` (${t.detail})` : ''}`,
+          (t) => `${t.result ? '✓' : '✗'} ${t.node}${has(t.detail) ? ` (${t.detail})` : ''}`,
         ),
         steps: w.steps.map((s) => ({
           sequence: s.sequence,
@@ -672,7 +646,7 @@ export async function simulateAction(input: {
           problem: s.problem,
           approvers: s.approvers.map((a) => {
             const who = names.get(a.userId) ?? 'Unknown';
-            return a.onBehalfOfUserId
+            return has(a.onBehalfOfUserId)
               ? `${who} (covering for ${names.get(a.onBehalfOfUserId) ?? 'Unknown'})`
               : who;
           }),

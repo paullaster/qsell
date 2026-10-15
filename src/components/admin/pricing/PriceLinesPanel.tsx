@@ -3,9 +3,7 @@
 import { Fragment, useCallback, useEffect, useId, useState } from 'react';
 import {
   importPriceLinesAction,
-  listPriceLinesAction,
-  listPricingReasonsAction,
-  priceHistoryAction,
+  listPriceLinesAction, priceHistoryAction,
   removePriceLinesAction,
   savePriceLinesAction,
   searchProductsAction,
@@ -411,7 +409,7 @@ export function PriceLinesPanel({
 
       {needsReason ? (
         <div className="space-y-3 rounded-lg border border-line p-3">
-          <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
           <label className="flex min-h-10 cursor-pointer items-center gap-2 text-xs text-fg">
             <input
               type="checkbox"

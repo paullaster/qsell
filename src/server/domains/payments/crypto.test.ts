@@ -17,12 +17,12 @@ const k2 = randomBytes(32).toString('base64');
 beforeEach(() => {
   for (const k of KEYS) {
     saved[k] = process.env[k];
-    delete process.env[k];
+    Reflect.deleteProperty(process.env, k);
   }
 });
 afterEach(() => {
   for (const k of KEYS) {
-    if (saved[k] === undefined) delete process.env[k];
+    if (saved[k] === undefined) Reflect.deleteProperty(process.env, k);
     else process.env[k] = saved[k];
   }
 });

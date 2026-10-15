@@ -22,6 +22,7 @@ import {
   primaryButtonClass,
   type Message,
 } from './shared';
+import { emptyToNull } from '@/lib/values';
 
 export function WorkflowListClient({
   workflows,
@@ -48,9 +49,9 @@ export function WorkflowListClient({
     e.preventDefault();
     setBusy(true);
     setMessage(null);
-    const res = await createWorkflowAction({ ...form, branchId: form.branchId || null });
+    const res = await createWorkflowAction({ ...form, branchId: emptyToNull(form.branchId) });
     setBusy(false);
-    if (!res.ok) return setMessage({ kind: 'error', text: res.error });
+    if (!res.ok) { setMessage({ kind: 'error', text: res.error }); return; }
     router.push(`/admin/settings/approvals/workflows/${res.data.id}`);
   };
 
@@ -192,7 +193,7 @@ export function WorkflowListClient({
                           <span className="font-mono">{w.code}</span> · {w.triggerLabel} ·{' '}
                           {branchName(w.branchId)} · {w.stepCount} step
                           {w.stepCount === 1 ? '' : 's'}
-                          {w.version ? ` · version ${w.version}` : ''}
+                          {w.version !== null && w.version !== undefined && w.version !== 0 ? ` · version ${w.version}` : ''}
                         </span>
                       </span>
                       <span className="flex flex-wrap gap-1.5">

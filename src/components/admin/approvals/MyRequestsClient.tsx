@@ -104,7 +104,7 @@ function RequestCard({
         ? await cancelRequestAction(r.submissionId, reason)
         : await reopenRequestAction(r.documentKind, r.documentId, reason);
     setBusy(false);
-    if (!res.ok) return setError({ kind: 'error', text: res.error });
+    if (!res.ok) { setError({ kind: 'error', text: res.error }); return; }
     setAction(null);
     onDone(
       action === 'withdraw'

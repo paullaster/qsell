@@ -8,6 +8,7 @@ import {
   type StepEntryRecord,
 } from './resolve';
 import type { StepDefinition } from './types';
+import { nth } from '@/lib/values';
 
 const doc = {
   amount: 120000,
@@ -73,7 +74,7 @@ describe('definition validation', () => {
   });
   it('rejects unknown triggers, fields, empty or duplicate steps', () => {
     expect(validateDefinition('nope', { steps: [step()] })).toHaveLength(1);
-    expect(validateDefinition('sales_order.submitted', { steps: [] })[0]!.path).toBe('steps');
+    expect(nth(validateDefinition('sales_order.submitted', { steps: [] }), 0).path).toBe('steps');
     expect(
       validateDefinition('sales_order.submitted', {
         conditions: { op: 'gt', field: 'bogus', value: 1 },

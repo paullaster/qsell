@@ -89,7 +89,7 @@ export function evaluateCondition(
       );
     }
     default: {
-      const cmp = node as Extract<ConditionNode, { op: 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' }>;
+      const cmp = node;
       const left = readField(snapshot, cmp.field);
       const right = resolve(snapshot, cmp.value);
       const c = compare(left, right);
@@ -115,7 +115,7 @@ export function fieldsUsed(node: ConditionNode | undefined, into = new Set<strin
     const leaf = node as Comparison;
     into.add(leaf.field);
     const value = (node as { value?: unknown }).value;
-    if (value !== null && typeof value === 'object' && 'field' in (value as object)) {
+    if (value !== null && typeof value === 'object' && 'field' in (value)) {
       into.add((value as { field: string }).field);
     }
   }

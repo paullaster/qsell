@@ -1,6 +1,6 @@
 import { engineSettings, type EngineSettings } from '../engine/settings';
 
-import { has } from '@/lib/has';
+import { asRecord, has } from '@/lib/values';
 
 export type C2bValidation = 'accept_all' | 'known_reference' | 'reject_all';
 
@@ -47,7 +47,7 @@ export const OPERATION_DEFAULTS: Record<string, boolean> = {
   bill_acknowledge: true,
 };
 
-const rec = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+const rec = asRecord;
 
 export function darajaSettings(raw: unknown): DarajaSettings {
   const base = engineSettings(raw);

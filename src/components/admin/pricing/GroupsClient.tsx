@@ -4,9 +4,7 @@ import { useCallback, useEffect, useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   changeGroupMembersAction,
-  customerGroupMembersAction,
-  listPricingReasonsAction,
-  saveCustomerGroupAction,
+  customerGroupMembersAction, saveCustomerGroupAction,
   searchCustomersAction,
   type CustomerGroupView,
 } from '@/server/domains/pricing/actions';
@@ -150,7 +148,7 @@ export function GroupsClient({
               In use
             </label>
           </div>
-          <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
           <div className="flex flex-wrap gap-2">
             <button type="submit" className={primaryButtonClass} disabled={busy || !reason.code}>
               {busy ? 'Saving…' : 'Save group'}
@@ -308,7 +306,7 @@ function Members({
               </ul>
             ) : null}
           </div>
-          <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
         </>
       ) : null}
       <Notice message={message} />

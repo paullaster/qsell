@@ -33,7 +33,7 @@ export async function listSigningEventsAction(
   await requirePermission('taxes:manage');
   const rows = await getContainer().kraSigning.recent(input);
   return rows.map((r) => {
-    const p = r.payload as Record<string, unknown>;
+    const p = r.payload;
     const decision = p.decision as
       { gates?: GateTrace[]; settings?: Record<string, unknown> } | undefined;
     return {

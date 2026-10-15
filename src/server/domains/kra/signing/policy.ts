@@ -19,6 +19,8 @@ import {
   type SigningRequest,
 } from './types';
 
+import { has } from '@/lib/values';
+
 /**
  * Decides whether a document is signed with KRA, and records why.
  *
@@ -87,7 +89,7 @@ export class KraSigningPolicy {
     let scope: KraConfigSource = 'company';
     let branchId: string | null = null;
     let scopeDetail = 'No branch on the document: company settings apply.';
-    if (req.branchId) {
+    if (has(req.branchId)) {
       const branch = await this.branches.getById(req.branchId);
       if (!branch || branch.companyId !== req.companyId) {
         gates.push(
@@ -113,7 +115,7 @@ export class KraSigningPolicy {
       gate: 'scope',
       result: 'pass',
       value: { scope, branchId },
-      source: req.branchId ? 'branch.acts_independently' : 'no_branch',
+      source: has(req.branchId) ? 'branch.acts_independently' : 'no_branch',
       detail: scopeDetail,
     });
     const common = { scope, branchId };

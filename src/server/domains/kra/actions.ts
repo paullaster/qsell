@@ -8,6 +8,8 @@ import type { KraConfigRecord } from './resolver';
 import { SIGNING_MODULES, type ModuleSigning } from './signing/types';
 import { KRA_MODES, type EtimsCredentials, type KraEnvironment, type KraMode } from './types';
 
+import { emptyToNull, firstFilled, has, orElse } from '@/lib/values';
+
 const SETTINGS_PATH = '/admin/settings/tax-compliance/kra-tims-etims';
 
 /** Config as shown in the admin UI — never includes the password. */
@@ -59,7 +61,7 @@ export interface KraConfigInput {
 function readCredentials(record: KraConfigRecord | null): Partial<EtimsCredentials> | null {
   if (!record) return null;
   try {
-    return decryptCredentials<Partial<EtimsCredentials>>(record.credentialsEncrypted);
+    return (decryptCredentials(record.credentialsEncrypted));
   } catch {
     return null;
   }
@@ -68,7 +70,7 @@ function readCredentials(record: KraConfigRecord | null): Partial<EtimsCredentia
 function toView(record: KraConfigRecord | null): KraConfigView | null {
   if (!record) return null;
   const creds = readCredentials(record);
-  const s = record.settings as Record<string, unknown>;
+  const s = record.settings;
   return {
     mode: record.mode as KraMode,
     isEnabled: record.isEnabled,
@@ -91,7 +93,7 @@ export async function getKraSettingsAction(): Promise<KraSettingsView> {
   const company = await companySettings.ensureSeeded();
   await organizations.ensureDefaultOrgAndBranch(
     company.id,
-    company.tradingName || company.legalName,
+    orElse(company.tradingName, company.legalName),
   );
 
   const [companyConfig, branchRows, branchConfigs] = await Promise.all([
@@ -123,10 +125,10 @@ function prepareWrite(input: KraConfigInput, existing: KraConfigRecord | null) {
   };
 
   const prior = readCredentials(existing);
-  const username = input.username.trim() || prior?.username || '';
-  const password = input.password || prior?.password || '';
-  const changesCredentials = Boolean(input.username.trim() || input.password);
-  if (changesCredentials && (!username || !password)) {
+  const username = (firstFilled(input.username.trim(), prior?.username) ?? '');
+  const password = (firstFilled(input.password, prior?.password) ?? '');
+  const changesCredentials = Boolean(has(input.username.trim()) || input.password);
+  if (changesCredentials && (!has(username) || !has(password))) {
     throw new Error('Both username and password are required when setting credentials.');
   }
   const credentialsEncrypted = changesCredentials
@@ -141,9 +143,9 @@ function prepareWrite(input: KraConfigInput, existing: KraConfigRecord | null) {
       } catch {
         throw new Error('Enter a valid eTIMS gateway URL (http:// or https://).');
       }
-      if (!credentialsEncrypted && !(prior?.username && prior.password))
+      if (!credentialsEncrypted && !(has(prior?.username) && has(prior.password)))
         throw new Error('eTIMS credentials are required before enabling.');
-    } else if (!settings.zfpLabServerUrl || !settings.cuSerial) {
+    } else if (!has(settings.zfpLabServerUrl) || !has(settings.cuSerial)) {
       throw new Error('ZFPLabServer URL and control unit serial are required before enabling.');
     }
   }
@@ -158,12 +160,12 @@ function prepareWrite(input: KraConfigInput, existing: KraConfigRecord | null) {
   return {
     mode: input.mode,
     isEnabled: input.isEnabled,
-    allowEtimsSigning: input.allowEtimsSigning === true,
-    allowTimsSigning: input.allowTimsSigning === true,
+    allowEtimsSigning: input.allowEtimsSigning,
+    allowTimsSigning: input.allowTimsSigning,
     moduleSigning,
     environment:
       input.environment === 'production' ? ('production' as const) : ('sandbox' as const),
-    apiBaseUrl: apiBaseUrl || null,
+    apiBaseUrl: emptyToNull(apiBaseUrl),
     settings,
     ...(credentialsEncrypted ? { credentialsEncrypted } : {}),
   };

@@ -7,7 +7,7 @@ import { postingPermissions, run } from './action-runner';
 import { fromCents, toCents } from './domain/receivables';
 import type { PolicyInput } from './receivables/credit-policy-service';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 const fin = () => getContainer().finance;
 const CUSTOMER = (id: string) => `/admin/finance/receivables/customer/${id}`;

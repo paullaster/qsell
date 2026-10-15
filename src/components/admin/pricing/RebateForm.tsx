@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useId, useMemo, useState } from 'react';
-import { listPricingReasonsAction, type PricingLookups } from '@/server/domains/pricing/actions';
+import { type PricingLookups } from '@/server/domains/pricing/actions';
 import type { DiscountLookups } from '@/server/domains/pricing/discount-actions';
 import {
   checkRebateAction,
@@ -375,7 +375,7 @@ export function RebateForm({
         </div>
       </fieldset>
 
-      <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+      <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
       <Notice message={message} />
       <div className="flex flex-wrap gap-2">
         <button

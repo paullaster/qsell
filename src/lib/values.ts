@@ -44,3 +44,33 @@ export function readText(...values: readonly unknown[]): string {
   }
   return '';
 }
+
+/** True for a plain object (not null, not a list). */
+export const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/** The object, or an empty one when the value is anything else (loose JSON read safely). */
+export const asRecord = (value: unknown): Record<string, unknown> => (isRecord(value) ? value : {});
+
+/** One item or many (as XML-turned-JSON delivers them) as a list; nothing as an empty list. */
+export function toList(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  return value === undefined || value === null || value === '' ? [] : [value];
+}
+
+/** The first of these differences that is not zero, so a sort can fall back from one key to the next. */
+export const firstNonZero = (...differences: readonly number[]): number => differences.find((d) => d !== 0) ?? 0;
+
+/** -1, 0 or 1 for how two texts (or numbers) order. */
+export function compareValues(a: string | number, b: string | number): -1 | 0 | 1 {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
+/** The text fields of an object that have something in them, trimmed. Anything else is dropped. */
+export function filledStrings(record: Record<string, unknown> | null | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(record ?? {})) {
+    if (typeof value === 'string' && value.trim() !== '') out[key] = value.trim();
+  }
+  return out;
+}

@@ -6,7 +6,7 @@ import { loggedCall } from './http-client';
 import { newSecret } from './redact';
 import type { PlatformContext } from './types';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 /**
  * Opens a provider for use: its credentials (never logged), its settings, and a way to call its
@@ -28,7 +28,7 @@ export class PlatformContexts {
       companyId: provider.companyId,
       provider,
       credentials,
-      settings: (provider.settings ?? {}),
+      settings: provider.settings,
       call: (input) => loggedCall(this.db, { ...input, companyId: provider.companyId, providerId: provider.id }, this.fetchImpl),
       publicBaseUrl: company?.url?.replace(/\/$/, '') ?? null,
       now: () => new Date(),

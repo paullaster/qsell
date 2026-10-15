@@ -1,6 +1,6 @@
 import { and, eq, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { paymentAttempts, paymentMethods } from '@/server/db/drizzle/schema';
+import { paymentAttempts, paymentMethods, type ProviderOperationRow } from '@/server/db/drizzle/schema';
 import type { C2bConsumer, DarajaC2b } from '../daraja/c2b';
 import type { PaymentService } from '../service';
 import type { DarajaOperations } from '../daraja/operations';
@@ -10,7 +10,6 @@ import { looksLikeReceipt } from '../daraja/security';
 import { DARAJA_OPERATIONS, type DarajaOperationCode } from '../daraja/catalog';
 import { readStatusAnswer, statusAgrees } from '../daraja/verify';
 import type { PaymentRegistry } from '../registry';
-import type { PaymentProviderCode } from '../types';
 import type { PlatformContexts } from './context';
 import type { ProviderEventService } from './event-service';
 import type { PaymentJobs } from './jobs';
@@ -19,10 +18,8 @@ import { engineSettings } from './settings';
 import type { ProviderTransactionStore } from './transaction-store';
 import type { PaymentVerificationService } from './verification-service';
 
-import { has } from '@/lib/has';
-import { orElse } from '@/lib/values';
+import { has, orElse } from '@/lib/values';
 import type { PaymentActivityService } from './activity-service';
-import type { ProviderOperationRow } from '@/server/db/drizzle/schema';
 
 export interface IngestInput {
   rawText: string;
@@ -46,6 +43,18 @@ export type HookKind = 'c2b-validate' | 'c2b-confirm' | 'result' | 'timeout' | '
  * could be trusted, what it said), answers quickly in the form the platform expects, and hands the rest to
  * the job queue. Nothing is believed here; believing is the verification service's job.
  */
+/** The name an inbound notice is recorded under. */
+function eventKindName(kind: string): string {
+  if (kind === 'c2b-validate') return 'c2b_validation';
+  return kind === 'c2b-confirm' ? 'c2b_confirmation' : kind;
+}
+
+/** The kind of C2B payment notice a kind of inbound call carries, if it carries one. */
+function c2bClaimKind(kind: string): 'c2b_validation' | 'c2b_confirmation' | null {
+  if (kind === 'c2b-validate') return 'c2b_validation';
+  return kind === 'c2b-confirm' ? 'c2b_confirmation' : null;
+}
+
 export class PaymentEngine {
   /** Read-only views for the people watching over payments. */
   activity!: PaymentActivityService;
@@ -76,14 +85,16 @@ export class PaymentEngine {
   }
 
   /** A callback addressed to one payment we started (its address carries that payment's own secret). */
+  /** Found by its secret address, or (for notifications sent to an address with no secret) by the platform's own id for it. */
+  private async attemptFor(token: string | undefined, trackingId: string | undefined) {
+    if (has(token)) return (await this.db.select().from(paymentAttempts).where(eq(paymentAttempts.callbackToken, token))).at(0);
+    if (has(trackingId)) return (await this.db.select().from(paymentAttempts).where(eq(paymentAttempts.externalReference, trackingId)).limit(1)).at(0);
+    return undefined;
+  }
+
   async ingestAttemptCallback(input: IngestInput & { token?: string; trackingId?: string; query?: Record<string, string> }): Promise<IngestReply> {
-    // Found by its secret address, or (for notifications sent to an address with no secret) by the platform's own id for it.
-    const [attempt] = has(input.token)
-      ? await this.db.select().from(paymentAttempts).where(eq(paymentAttempts.callbackToken, input.token))
-      : has(input.trackingId)
-        ? await this.db.select().from(paymentAttempts).where(eq(paymentAttempts.externalReference, input.trackingId)).limit(1)
-        : [];
-    if (!attempt) return { httpStatus: 404, body: { ResultCode: 1, ResultDesc: 'Unknown callback address' } };
+    const attempt = await this.attemptFor(input.token, input.trackingId);
+    if (attempt === undefined) return { httpStatus: 404, body: { ResultCode: 1, ResultDesc: 'Unknown callback address' } };
     const ctx = await this.contexts.forProvider(attempt.providerConfigId);
     const settings = engineSettings(ctx.settings);
     const refusal = this.events.guard(settings, { sourceIp: input.sourceIp, size: Buffer.byteLength(input.rawText), https: input.https, requireHttps: ctx.provider.environment === 'production' });
@@ -134,8 +145,9 @@ export class PaymentEngine {
       ? { code: 'BAD_SECRET', reason: 'The secret in the address is not this provider\'s.' }
       : this.events.guard(settings, { sourceIp: input.sourceIp, size: Buffer.byteLength(input.rawText), https: input.https, requireHttps: ctx.provider.environment === 'production' });
     const body = this.parseBody(input);
-    const kindName = input.kind === 'c2b-validate' ? 'c2b_validation' : input.kind === 'c2b-confirm' ? 'c2b_confirmation' : input.kind;
-    const claim = refusal ? null : input.kind === 'c2b-validate' || input.kind === 'c2b-confirm' ? parseC2b(input.kind === 'c2b-validate' ? 'c2b_validation' : 'c2b_confirmation', body) : null;
+    const kindName = eventKindName(input.kind);
+    const c2bKind = c2bClaimKind(input.kind);
+    const claim = refusal !== null || c2bKind === null ? null : parseC2b(c2bKind, body);
     const { event } = await this.events.record({
       companyId: ctx.companyId,
       providerId: ctx.provider.id,
@@ -160,7 +172,7 @@ export class PaymentEngine {
           await this.events.setState(event.id, 'unmatched', { failureCode: 'NO_OPERATION', failureReason: done.reason ?? 'No operation of ours matches this result.' });
         } else if (done.op) {
           await this.events.setState(event.id, 'verified', { operationId: done.op.id, failureCode: null, failureReason: null });
-          if (DARAJA_OPERATIONS[done.op.operation as DarajaOperationCode]?.moneyOut && done.op.status === 'accepted') await this.checkPayout(done.op.id);
+          if (DARAJA_OPERATIONS[done.op.operation as DarajaOperationCode].moneyOut && done.op.status === 'accepted') await this.checkPayout(done.op.id);
           else await this.finished(done.op.id);
           await this.followUp(done.op.subjectType, done.op.subjectId);
         }
@@ -175,7 +187,7 @@ export class PaymentEngine {
       case 'express': {
         const claim = parseB2bExpress(body);
         const op = has(claim?.originatorId) ? await this.ops.byOriginator(ctx.provider.id, claim.originatorId) : null;
-        if (!claim || !op || op.operation !== 'b2b_express') {
+        if (claim === null || op?.operation !== 'b2b_express') {
           await this.events.setState(event.id, 'unmatched', { failureCode: 'NO_OPERATION', failureReason: 'No B2B Express Checkout request of ours has this reference.' });
           return { httpStatus: 200, body: ACK };
         }
@@ -192,7 +204,8 @@ export class PaymentEngine {
         await this.events.setState(event.id, 'unverified', { operationId: op.id, failureCode: 'CALLBACK_ONLY', failureReason: 'Reported by the callback only. Nothing is credited from it.' });
         return { httpStatus: 200, body: ACK };
       }
-      default:
+      case 'bill':
+      case 'pull':
         // A Bill Manager payment notice or a Pull notice is kept for the record. The money itself is credited through the paybill's own confirmed payment, never from this notice.
         await this.events.setState(event.id, 'unverified', { failureCode: 'RECORD_ONLY', failureReason: `${input.kind} notifications are kept as a record; nothing is credited from them.` });
         return { httpStatus: 200, body: ACK };
@@ -202,7 +215,7 @@ export class PaymentEngine {
   /** A payout reported success on its callback: ask Safaricom for its own record of that transaction before counting it. */
   private async checkPayout(opId: string) {
     const op = await this.ops.get(opId);
-    if (!op || op.status !== 'accepted' || !has(op.platformReference)) return;
+    if (op?.status !== 'accepted' || !has(op.platformReference)) return;
     try {
       await this.daraja.start({ providerId: op.providerId, methodId: op.methodId, operation: 'transaction_status', input: { transactionId: op.platformReference }, idempotencyKey: `payout-check:${op.id}`, subject: { type: 'provider_operation', id: op.id } });
     } catch (error) {
@@ -213,7 +226,7 @@ export class PaymentEngine {
   /** The check of a payout finished: it counts as paid only if Safaricom's record agrees on the transaction, status and amount. */
   private async settlePayout(opId: string) {
     const op = await this.ops.get(opId);
-    if (!op || op.status !== 'accepted' || !has(op.platformReference)) return;
+    if (op?.status !== 'accepted' || !has(op.platformReference)) return;
     const [check] = await this.ops.bySubject('provider_operation', op.id, 'transaction_status');
     if (!check || ['created', 'queued', 'submitted', 'accepted', 'timed_out'].includes(check.status)) return;
     if (check.status !== 'succeeded') {
@@ -243,7 +256,7 @@ export class PaymentEngine {
 
   private async finished(opId: string) {
     const op = await this.ops.get(opId);
-    if (!op || !this.payoutConsumer || !DARAJA_OPERATIONS[op.operation as DarajaOperationCode]?.moneyOut) return;
+    if (!op || !this.payoutConsumer || !DARAJA_OPERATIONS[op.operation as DarajaOperationCode].moneyOut) return;
     if (!['succeeded', 'failed', 'in_doubt', 'rejected', 'cancelled'].includes(op.status)) return;
     await this.payoutConsumer.finished(op).catch(() => undefined);
   }
@@ -342,7 +355,7 @@ export class PaymentEngine {
   async setAsideTransaction(input: { transactionId: string; reason: string; userId: string }): Promise<{ ok: true } | { ok: false; error: string }> {
     if (input.reason.trim().length < 10) return { ok: false, error: 'Say why (at least a sentence): this is kept with your name.' };
     const tx = await this.txs.get(input.transactionId);
-    if (!tx || tx.state !== 'review') return { ok: false, error: 'Only a confirmed payment waiting to be placed can be set aside.' };
+    if (tx?.state !== 'review') return { ok: false, error: 'Only a confirmed payment waiting to be placed can be set aside.' };
     await this.txs.addEvidence(tx.id, { setAside: true, by: input.userId, reason: input.reason.trim() }, 'manual');
     await this.txs.setState(tx.id, 'rejected', { failureCode: 'SET_ASIDE', failureReason: `Set aside by a person: ${input.reason.trim()}` });
     return { ok: true };

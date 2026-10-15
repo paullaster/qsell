@@ -25,8 +25,7 @@ import {
 } from './domain/journal';
 import type { Issue, JournalLineInput, PostingRequest } from './domain/types';
 
-import { has } from '@/lib/has';
-import { emptyToNull } from '@/lib/values';
+import { emptyToNull, has, required } from '@/lib/values';
 
 export type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
@@ -206,7 +205,7 @@ export class PostingEngine {
       };
     }
     const lines = result.posting.lines.map((l) => {
-      const a = policy.accounts.get(l.accountId)!;
+      const a = required(policy.accounts.get(l.accountId), 'a posting account');
       return {
         line: l.index,
         accountId: l.accountId,
@@ -283,12 +282,12 @@ export class PostingEngine {
     if (!result.ok) {
       throw new PostingError(
         result.issues[0]?.code ?? 'INVALID',
-        result.issues.map((i) => (i.line !== null && i.line !== undefined && i.line !== 0 ? `Line ${i.line}: ${i.message}` : i.message)).join(' '),
+        result.issues.map((i) => (i.line === 0 ? i.message : `Line ${String(i.line)}: ${i.message}`)).join(' '),
         result.issues,
       );
     }
     const prepared: PreparedPosting = result.posting;
-    const periodId = period!.id;
+    const periodId = required(period, 'the posting period').id;
 
     // Take the next number on this chain in one statement. The row stays locked until commit,
     // so registers of one chain are serialised here and other chains proceed.

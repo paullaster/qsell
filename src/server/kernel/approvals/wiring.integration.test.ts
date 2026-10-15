@@ -2,6 +2,15 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, inArray, sql } from 'drizzle-orm';
 
+import { has, nth, required } from '@/lib/values';
+import type * as mod_server_di_container from '@/server/di/container';
+import type * as mod_server_db_drizzle_client from '@/server/db/drizzle/client';
+import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
+import type * as mod_server_kernel_after_commit from '@/server/kernel/after-commit';
+import type * as mod_server_domains_orders_write_service from '@/server/domains/orders/write-service';
+import type * as mod_server_domains_inventory_service from '@/server/domains/inventory/service';
+import type * as mod_server_domains_orders_approval from '@/server/domains/orders/approval';
+
 /**
  * Approvals wired into real modules: sales orders, credit notes and stock operations.
  *   TEST_DATABASE_URL=postgres://... pnpm test
@@ -9,17 +18,17 @@ import { eq, inArray, sql } from 'drizzle-orm';
  * trigger each other's rules.
  */
 const url = process.env.TEST_DATABASE_URL;
-if (url) process.env.DATABASE_URL = url;
+if (has(url)) process.env.DATABASE_URL = url;
 
-describe.skipIf(!url)('approvals in modules (database)', () => {
-  type Container = ReturnType<typeof import('@/server/di/container').getContainer>;
+describe.skipIf(!has(url))('approvals in modules (database)', () => {
+  type Container = ReturnType<typeof mod_server_di_container.getContainer>;
   let c: Container;
-  let db: typeof import('@/server/db/drizzle/client').drizzleDb;
-  let schema: typeof import('@/server/db/drizzle/schema');
-  let withAfterCommit: typeof import('@/server/kernel/after-commit').withAfterCommit;
-  let OrderWriteService: typeof import('@/server/domains/orders/write-service').OrderWriteService;
-  let InventoryDomainService: typeof import('@/server/domains/inventory/service').InventoryDomainService;
-  let resubmit: typeof import('@/server/domains/orders/approval').resubmitOrderForApproval;
+  let db: typeof mod_server_db_drizzle_client.drizzleDb;
+  let schema: typeof mod_server_db_drizzle_schema;
+  let withAfterCommit: typeof mod_server_kernel_after_commit.withAfterCommit;
+  let OrderWriteService: typeof mod_server_domains_orders_write_service.OrderWriteService;
+  let InventoryDomainService: typeof mod_server_domains_inventory_service.InventoryDomainService;
+  let resubmit: typeof mod_server_domains_orders_approval.resubmitOrderForApproval;
   let updateOrderStatus: typeof InventoryDomainService.updateOrderStatus;
   let companyId: string;
   let branchId: string;
@@ -29,7 +38,7 @@ describe.skipIf(!url)('approvals in modules (database)', () => {
   const reason = { code: 'POLICY_CHANGE' };
 
   const user = async (label: string) =>
-    (
+    nth((
       await db
         .insert(schema.users)
         .values({
@@ -39,7 +48,7 @@ describe.skipIf(!url)('approvals in modules (database)', () => {
           role: 'manager',
         })
         .returning()
-    )[0]!.id;
+    ), 0).id;
 
   const approver = async () => {
     const [requester, boss] = await Promise.all([user('requester'), user('boss')]);
@@ -84,12 +93,12 @@ describe.skipIf(!url)('approvals in modules (database)', () => {
     return id;
   };
   const stockOf = async (id: string) =>
-    (
+    nth((
       await db
         .select({ n: schema.products.stockQuantity })
         .from(schema.products)
         .where(eq(schema.products.id, id))
-    )[0]!.n;
+    ), 0).n;
 
   const approve = (entryId: string, by: string) =>
     withAfterCommit(db, (tx) => c.approvals.approve(entryId, by, null, tx));
@@ -109,9 +118,9 @@ describe.skipIf(!url)('approvals in modules (database)', () => {
       ),
     );
   const openEntry = async (kind: string, documentId: string) =>
-    (await c.approvals.forDocument(companyId, kind, documentId))
+    required((await c.approvals.forDocument(companyId, kind, documentId))
       .flatMap((r) => r.entries)
-      .find((e) => e.status === 'open')!;
+      .find((e) => e.status === 'open'));
 
   beforeAll(async () => {
     const mod = await import('@/server/di/container');
@@ -144,7 +153,7 @@ describe.skipIf(!url)('approvals in modules (database)', () => {
       );
     const { organizations } = c;
     const { branch } = await organizations.ensureDefaultOrgAndBranch(companyId, 'Wiring Test Co');
-    branchId = ((await c.branches.getDefault(companyId)) || branch).id;
+    branchId = (await c.branches.getDefault(companyId) ?? branch).id;
     itemTypeId = `it_wiring_${randomUUID().slice(0, 8)}`;
     await db
       .insert(schema.itemTypes)
@@ -198,31 +207,31 @@ describe.skipIf(!url)('approvals in modules (database)', () => {
     expect(large.parked).toBe(true);
     expect(await stockOf(p)).toBe(95);
     const requestId = (large as { requestId: string }).requestId;
-    const parked = (
+    const parked = nth((
       await db
         .select()
         .from(schema.approvalParkedActions)
         .where(eq(schema.approvalParkedActions.id, requestId))
-    )[0]!;
+    ), 0);
     expect(parked.status).toBe('parked');
     expect(parked.summary).toMatch(/Write off stock/);
 
     // The approver is told what they are approving.
     const detail = await c.approvals.requestDetail(
       companyId,
-      (await c.approvals.forDocument(companyId, 'stock_adjustment', requestId))[0]!.id,
+      nth((await c.approvals.forDocument(companyId, 'stock_adjustment', requestId)), 0).id,
     );
-    expect(detail!.what!.title).toMatch(/Worth KES 1,500/);
+    expect(required(detail!.what).title).toMatch(/Worth KES 1,500/);
 
     const entry = await openEntry('stock_adjustment', requestId);
     expect(await approve(entry.id, boss)).toMatchObject({ released: true });
     expect(await stockOf(p)).toBe(65);
-    const after = (
+    const after = nth((
       await db
         .select()
         .from(schema.approvalParkedActions)
         .where(eq(schema.approvalParkedActions.id, requestId))
-    )[0]!;
+    ), 0);
     expect(after.status).toBe('applied');
     expect(after.closedAt).not.toBeNull();
   });
@@ -249,12 +258,12 @@ describe.skipIf(!url)('approvals in modules (database)', () => {
     await reject((await openEntry('stock_adjustment', id)).id, boss);
     expect(await stockOf(p)).toBe(100);
     expect(
-      (
+      nth((
         await db
           .select()
           .from(schema.approvalParkedActions)
           .where(eq(schema.approvalParkedActions.id, id))
-      )[0]!.status,
+      ), 0).status,
     ).toBe('rejected');
 
     // Stock falls before the approver gets to it: approving would over-write-off, so it fails
@@ -308,7 +317,7 @@ describe.skipIf(!url)('approvals in modules (database)', () => {
       },
       items: [{ productId, quantity: 1 }],
       currency: 'KES',
-      paymentMethod: 'mpesa_daraja' as never,
+      paymentMethod: 'mpesa_daraja',
       ...over,
     });
 
@@ -321,21 +330,21 @@ describe.skipIf(!url)('approvals in modules (database)', () => {
     // A shop checkout is never held up, whatever its size.
     const shop = await order(p, { salesModule: 'ecommerce' });
     expect(shop.error).toBeUndefined();
-    expect(shop.order!.approvalStatus ?? 'none').toBe('none');
+    expect(required(shop.order).approvalStatus ?? 'none').toBe('none');
 
     // Staff-placed sales order: held.
     const res = await order(p, { salesModule: 'sales_order', requestedBy: requester });
     expect(res.success).toBe(true);
-    const o = res.order!;
+    const o = required(res.order);
     expect(o.approvalStatus).toBe('pending');
-    expect((await c.orders.getById(o.id))!.approvalStatus).toBe('pending');
+    expect(required((await c.orders.getById(o.id))).approvalStatus).toBe('pending');
     await expect(updateOrderStatus(o.id, 'processing')).rejects.toThrow(/waiting for approval/);
     // It can still be cancelled.
     const entry = await openEntry('sales_order', o.id);
     expect(entry.approverUserId).toBe(boss);
 
     expect(await approve(entry.id, boss)).toMatchObject({ released: true });
-    expect((await c.orders.getById(o.id))!.approvalStatus).toBe('approved');
+    expect(required((await c.orders.getById(o.id))).approvalStatus).toBe('approved');
     expect((await updateOrderStatus(o.id, 'processing')).status).toBe('processing');
   });
 
@@ -344,23 +353,23 @@ describe.skipIf(!url)('approvals in modules (database)', () => {
     const price = 10000 + Math.floor(Math.random() * 89999);
     const p = await product({ price });
     await workflow('sales_order.submitted', { op: 'eq', field: 'amount', value: price }, boss);
-    const o = (await order(p, { salesModule: 'sales_order', requestedBy: requester })).order!;
+    const o = required((await order(p, { salesModule: 'sales_order', requestedBy: requester })).order);
 
     await reject((await openEntry('sales_order', o.id)).id, boss);
-    expect((await c.orders.getById(o.id))!.approvalStatus).toBe('rejected');
+    expect(required((await c.orders.getById(o.id))).approvalStatus).toBe('rejected');
     await expect(updateOrderStatus(o.id, 'shipped')).rejects.toThrow(/refused/);
     await expect(resubmit(o.id, requester)).rejects.toThrow(/not waiting to be sent/);
 
     await reopen('sales_order', o.id, requester);
-    expect((await c.orders.getById(o.id))!.approvalStatus).toBe('draft');
+    expect(required((await c.orders.getById(o.id))).approvalStatus).toBe('draft');
     await expect(updateOrderStatus(o.id, 'shipped')).rejects.toThrow(/refused/);
 
     expect(await resubmit(o.id, requester)).toBe('pending');
     const history = await c.approvals.forDocument(companyId, 'sales_order', o.id);
     expect(history.map((r) => r.status)).toEqual(['reopened', 'pending']);
-    expect(history[1]!.attempt).toBe(2);
+    expect(nth(history, 1).attempt).toBe(2);
     await approve((await openEntry('sales_order', o.id)).id, boss);
-    expect((await c.orders.getById(o.id))!.approvalStatus).toBe('approved');
+    expect(required((await c.orders.getById(o.id))).approvalStatus).toBe('approved');
   });
 
   it('a failed order creation gives back the stock it had set aside', async () => {
@@ -382,7 +391,7 @@ describe.skipIf(!url)('approvals in modules (database)', () => {
       .select({ reserved: schema.products.reservedQuantity })
       .from(schema.products)
       .where(eq(schema.products.id, p));
-    expect(row!.reserved).toBe(0);
+    expect(required(row).reserved).toBe(0);
   });
 
   // ── credit notes ──
@@ -391,7 +400,7 @@ describe.skipIf(!url)('approvals in modules (database)', () => {
     const { requester, boss } = await approver();
     const price = 10000 + Math.floor(Math.random() * 89999);
     const p = await product({ price });
-    const placed = (await order(p, { salesModule: 'ecommerce' })).order!;
+    const placed = required((await order(p, { salesModule: 'ecommerce' })).order);
     await db.insert(schema.invoiceDocuments).values({
       orderId: placed.id,
       orderNumber: placed.orderNumber,
@@ -445,25 +454,25 @@ describe.skipIf(!url)('approvals in modules (database)', () => {
     expect(outcome.status).toBe('pending_approval');
     expect(await c.creditNotes.listForSource('order', placed.id)).toHaveLength(0);
 
-    const parkedId = (
+    const parkedId = required((
       await db
         .select()
         .from(schema.approvalParkedActions)
         .where(eq(schema.approvalParkedActions.documentKind, 'credit_note'))
-    ).find((r) => (r.payload as { orderId?: string }).orderId === placed.id)!.id;
+    ).find((r) => (r.payload as { orderId?: string }).orderId === placed.id)).id;
     await approve((await openEntry('credit_note', parkedId)).id, boss);
     const issued = await c.creditNotes.listForSource('order', placed.id);
     expect(issued).toHaveLength(1);
-    expect(issued[0]!.issuedBy).toBe(requester);
-    expect(issued[0]!.creditNoteNo).toBeTruthy();
-    const after = (
+    expect(nth(issued, 0).issuedBy).toBe(requester);
+    expect(nth(issued, 0).creditNoteNo).toBeTruthy();
+    const after = nth((
       await db
         .select()
         .from(schema.approvalParkedActions)
         .where(eq(schema.approvalParkedActions.id, parkedId))
-    )[0]!;
+    ), 0);
     expect(after).toMatchObject({ status: 'applied' });
-    expect((after.result as { creditNoteId: string }).creditNoteId).toBe(issued[0]!.id);
+    expect((after.result as { creditNoteId: string }).creditNoteId).toBe(nth(issued, 0).id);
 
     // A different reason is not caught by the workflow, so it is issued straight away.
     const direct = await c.creditNotes
@@ -497,14 +506,14 @@ describe.skipIf(!url)('approvals in modules (database)', () => {
       .set({ status: 'retired' })
       .where(eq(schema.approvalWorkflows.trigger, 'sales_quote.submitted'));
   const quoteRow = async (id: string) =>
-    (await db.select().from(schema.salesQuotes).where(eq(schema.salesQuotes.id, id)))[0]!;
+    nth((await db.select().from(schema.salesQuotes).where(eq(schema.salesQuotes.id, id))), 0);
 
   it('a quote with no workflow behaves as before: margin floor only', async () => {
     const { SalesQuoteService } = await import('@/server/domains/quotes/service');
     const quotes = new SalesQuoteService();
     const { requester } = await approver();
     const ok = await product({ price: 1000, cost: 100 });
-    const fine = await quotes.create(requester, quoteInput(ok) as never);
+    const fine = await quotes.create(requester, quoteInput(ok));
     expect(fine).toMatchObject({
       status: 'draft',
       approvalStatus: 'not_required',
@@ -513,13 +522,13 @@ describe.skipIf(!url)('approvals in modules (database)', () => {
 
     // Sold below cost: the old margin check still holds it, and the old approve still releases it.
     const loss = await product({ price: 100, cost: 900 });
-    const held = await quotes.create(requester, quoteInput(loss) as never);
+    const held = await quotes.create(requester, quoteInput(loss));
     expect(held).toMatchObject({
       status: 'pending_approval',
       approvalStatus: 'pending',
       approvalManagedBy: null,
     });
-    expect((await quotes.approve(requester, held.id))!.status).toBe('approved');
+    expect(required((await quotes.approve(requester, held.id))).status).toBe('approved');
   });
 
   it('a workflow owns a quote’s approval: held, no shortcut, released by the approver', async () => {
@@ -535,7 +544,7 @@ describe.skipIf(!url)('approvals in modules (database)', () => {
       boss,
     );
 
-    const q = await quotes.create(requester, quoteInput(p) as never);
+    const q = await quotes.create(requester, quoteInput(p));
     expect(q).toMatchObject({
       status: 'pending_approval',
       approvalStatus: 'pending',
@@ -549,13 +558,13 @@ describe.skipIf(!url)('approvals in modules (database)', () => {
 
     const detail = await c.approvals.requestDetail(
       companyId,
-      (await c.approvals.forDocument(companyId, 'sales_quote', q.id))[0]!.id,
+      nth((await c.approvals.forDocument(companyId, 'sales_quote', q.id)), 0).id,
     );
-    expect(detail!.what!.title).toContain(q.quoteNumber);
+    expect(required(detail!.what).title).toContain(q.quoteNumber);
 
     await approve((await openEntry('sales_quote', q.id)).id, boss);
     expect(await quoteRow(q.id)).toMatchObject({ status: 'approved', approvalStatus: 'approved' });
-    expect((await quotes.get(q.id))!.events.map((e) => e.eventType)).toContain('approved');
+    expect(required((await quotes.get(q.id))).events.map((e) => e.eventType)).toContain('approved');
   });
 
   it('editing a quote while it waits voids the old request and asks again', async () => {
@@ -570,12 +579,12 @@ describe.skipIf(!url)('approvals in modules (database)', () => {
       { op: 'between', field: 'amount', value: [price, price * 3] },
       boss,
     );
-    const q = await quotes.create(requester, quoteInput(p) as never);
+    const q = await quotes.create(requester, quoteInput(p));
 
     const edited = await quotes.update(
       requester,
       q.id,
-      quoteInput(p, { lines: [{ productId: p, quantity: 2, discountPercent: 0 }] }) as never,
+      quoteInput(p, { lines: [{ productId: p, quantity: 2, discountPercent: 0 }] }),
     );
     expect(edited.status).toBe('pending_approval');
     const requests = await c.approvals.forDocument(companyId, 'sales_quote', q.id);
@@ -595,7 +604,7 @@ describe.skipIf(!url)('approvals in modules (database)', () => {
       { op: 'between', field: 'amount', value: [price, price * 3] },
       boss,
     );
-    const q = await quotes.create(requester, quoteInput(p) as never);
+    const q = await quotes.create(requester, quoteInput(p));
 
     await reject((await openEntry('sales_quote', q.id)).id, boss);
     expect(await quoteRow(q.id)).toMatchObject({ status: 'draft', approvalStatus: 'rejected' });
@@ -629,14 +638,14 @@ describe.skipIf(!url)('approvals in modules (database)', () => {
       { op: 'between', field: 'amount', value: [price, price * 2] },
       boss,
     );
-    const q = await quotes.create(requester, quoteInput(p) as never);
+    const q = await quotes.create(requester, quoteInput(p));
     await reject((await openEntry('sales_quote', q.id)).id, boss);
 
     // Three of them is over the workflow's range, so it no longer applies.
     const fixed = await quotes.update(
       requester,
       q.id,
-      quoteInput(p, { lines: [{ productId: p, quantity: 3, discountPercent: 0 }] }) as never,
+      quoteInput(p, { lines: [{ productId: p, quantity: 3, discountPercent: 0 }] }),
     );
     expect(fixed).toMatchObject({
       status: 'draft',

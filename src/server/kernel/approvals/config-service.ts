@@ -20,6 +20,8 @@ import { MAX_ROLE_HOLDERS } from './engine';
 import { triggerByCode } from './domain/triggers';
 import type { WorkflowDefinition } from './domain/types';
 
+import { has, trimToNull } from '@/lib/values';
+
 export class ApprovalConfigError extends Error {
   constructor(
     readonly code:
@@ -52,7 +54,7 @@ export class ApprovalConfigService {
   ) {}
 
   private async why(companyId: string, reason: Reason) {
-    return this.reasons.require(companyId, reason, 'approval_configuration');
+    return await this.reasons.require(companyId, reason, 'approval_configuration');
   }
 
   // ── Switches ─────────────────────────────────────────────────────────────
@@ -64,7 +66,7 @@ export class ApprovalConfigService {
     reason: Reason,
   ) {
     const why = await this.why(companyId, reason);
-    if (input.trigger && !triggerByCode(input.trigger)) {
+    if (has(input.trigger) && !triggerByCode(input.trigger)) {
       throw new ApprovalConfigError('NOT_FOUND', `Unknown trigger "${input.trigger}".`);
     }
     await this.db.transaction(async (tx) => {
@@ -74,10 +76,10 @@ export class ApprovalConfigService {
           and(
             eq(approvalSwitches.companyId, companyId),
             eq(approvalSwitches.module, input.module),
-            input.trigger
+            has(input.trigger)
               ? eq(approvalSwitches.trigger, input.trigger)
               : isNull(approvalSwitches.trigger),
-            input.branchId
+            has(input.branchId)
               ? eq(approvalSwitches.branchId, input.branchId)
               : isNull(approvalSwitches.branchId),
           ),
@@ -108,7 +110,7 @@ export class ApprovalConfigService {
   }
 
   async listSwitches(companyId: string) {
-    return this.db.select().from(approvalSwitches).where(eq(approvalSwitches.companyId, companyId));
+    return await this.db.select().from(approvalSwitches).where(eq(approvalSwitches.companyId, companyId));
   }
 
   // ── Workflows ────────────────────────────────────────────────────────────
@@ -150,7 +152,7 @@ export class ApprovalConfigService {
         companyId,
         code,
         name: input.name.trim(),
-        description: input.description?.trim() || null,
+        description: trimToNull(input.description),
         module: trigger.module,
         trigger: trigger.code,
         branchId: input.branchId ?? null,
@@ -188,7 +190,7 @@ export class ApprovalConfigService {
       subject: { type: 'approval_workflow', id: wf.id },
       action: 'approvals.workflow_draft_saved',
     });
-    return this.check(companyId, wf.trigger, definition);
+    return await this.check(companyId, wf.trigger, definition);
   }
 
   async updateWorkflowMeta(
@@ -203,13 +205,13 @@ export class ApprovalConfigService {
     actor: Actor,
   ) {
     const wf = await this.workflow(companyId, workflowId);
-    if (!input.name.trim())
+    if (!has(input.name.trim()))
       throw new ApprovalConfigError('INVALID_DEFINITION', 'Name the workflow.');
     await this.db
       .update(approvalWorkflows)
       .set({
         name: input.name.trim(),
-        description: input.description?.trim() || null,
+        description: trimToNull(input.description),
         priority: Math.trunc(input.priority),
         branchId: input.branchId ?? null,
         updatedAt: new Date(),
@@ -239,7 +241,7 @@ export class ApprovalConfigService {
       .select()
       .from(approverProfiles)
       .where(eq(approverProfiles.companyId, companyId));
-    const limits = profiles.length
+    const limits = profiles.length !== 0
       ? await this.db
           .select()
           .from(approverLimits)
@@ -259,7 +261,7 @@ export class ApprovalConfigService {
       .from(approverGroups)
       .where(eq(approverGroups.companyId, companyId))
       .orderBy(asc(approverGroups.code));
-    const members = groups.length
+    const members = groups.length !== 0
       ? await this.db
           .select()
           .from(approverGroupMembers)
@@ -290,20 +292,20 @@ export class ApprovalConfigService {
     const groupIds = def.steps.flatMap((s) =>
       s.approver?.type === 'group' ? [s.approver.groupId] : [],
     );
-    const found = userIds.length
+    const found = userIds.length !== 0
       ? await this.db
           .select({ id: users.id, status: users.status })
           .from(users)
           .where(inArray(users.id, userIds))
       : [];
-    const groups = groupIds.length
+    const groups = groupIds.length !== 0
       ? await this.db
           .select({ groupId: approverGroupMembers.groupId, n: sql<number>`count(*)::int` })
           .from(approverGroupMembers)
           .where(inArray(approverGroupMembers.groupId, groupIds))
           .groupBy(approverGroupMembers.groupId)
       : [];
-    const groupExists = groupIds.length
+    const groupExists = groupIds.length !== 0
       ? await this.db
           .select({ id: approverGroups.id })
           .from(approverGroups)
@@ -317,7 +319,7 @@ export class ApprovalConfigService {
       ),
     ];
     const roleHolderCount = new Map<string, number>();
-    if (roleKeys.length) {
+    if (roleKeys.length !== 0) {
       const known = await this.db
         .select({ id: roles.id, key: roles.key })
         .from(roles)
@@ -411,7 +413,7 @@ export class ApprovalConfigService {
         issues,
       );
     }
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const [locked] = await tx
         .select()
         .from(approvalWorkflows)
@@ -463,7 +465,7 @@ export class ApprovalConfigService {
   ) {
     const why = await this.why(companyId, reason);
     const wf = await this.workflow(companyId, workflowId);
-    if (status === 'enabled' && !wf.currentVersionId) {
+    if (status === 'enabled' && !has(wf.currentVersionId)) {
       throw new ApprovalConfigError('NOT_EDITABLE', 'Publish the workflow before turning it on.');
     }
     await this.db
@@ -482,7 +484,7 @@ export class ApprovalConfigService {
   }
 
   async listWorkflows(companyId: string) {
-    return this.db
+    return await this.db
       .select()
       .from(approvalWorkflows)
       .where(eq(approvalWorkflows.companyId, companyId))
@@ -511,7 +513,7 @@ export class ApprovalConfigService {
       substituteFrom?: string | null;
       substituteTo?: string | null;
       isActive?: boolean;
-      limits: Array<{ documentKind: string; maxAmount?: number | null; unlimited?: boolean }>;
+      limits: { documentKind: string; maxAmount?: number | null; unlimited?: boolean }[];
     },
     actor: Actor,
     reason: Reason,
@@ -523,14 +525,14 @@ export class ApprovalConfigService {
     if (input.substituteUserId === input.userId) {
       throw new ApprovalConfigError('INVALID_PROFILE', 'Someone cannot be their own substitute.');
     }
-    if (input.substituteFrom && input.substituteTo && input.substituteFrom > input.substituteTo) {
+    if (has(input.substituteFrom) && has(input.substituteTo) && input.substituteFrom > input.substituteTo) {
       throw new ApprovalConfigError(
         'INVALID_PROFILE',
         'The substitute period ends before it starts.',
       );
     }
     const ids = [input.userId, input.approverUserId, input.substituteUserId].filter(
-      (x): x is string => !!x,
+      (x): x is string => Boolean(x),
     );
     const existing = await this.db
       .select({ id: users.id })
@@ -539,7 +541,7 @@ export class ApprovalConfigService {
     if (existing.length !== new Set(ids).size)
       throw new ApprovalConfigError('INVALID_PROFILE', 'One of the people chosen does not exist.');
     for (const l of input.limits) {
-      if (!l.unlimited && (l.maxAmount == null || !(l.maxAmount >= 0))) {
+      if (l.unlimited !== true && (l.maxAmount == null || !(l.maxAmount >= 0))) {
         throw new ApprovalConfigError(
           'INVALID_PROFILE',
           `Set a limit (or unlimited) for ${l.documentKind}.`,
@@ -548,10 +550,10 @@ export class ApprovalConfigService {
     }
 
     // The chain must not loop back to this person.
-    if (input.approverUserId) {
+    if (has(input.approverUserId)) {
       const seen = new Set<string>([input.userId]);
       let next: string | null = input.approverUserId;
-      while (next) {
+      while (has(next)) {
         if (seen.has(next))
           throw new ApprovalConfigError(
             'INVALID_PROFILE',
@@ -585,13 +587,13 @@ export class ApprovalConfigService {
         })
         .returning();
       await tx.delete(approverLimits).where(eq(approverLimits.profileId, profile!.id));
-      if (input.limits.length) {
+      if (input.limits.length !== 0) {
         await tx.insert(approverLimits).values(
           input.limits.map((l) => ({
             profileId: profile!.id,
             documentKind: l.documentKind,
             unlimited: l.unlimited === true,
-            maxAmount: l.unlimited ? null : String(l.maxAmount),
+            maxAmount: l.unlimited === true ? null : String(l.maxAmount),
           })),
         );
       }
@@ -618,7 +620,7 @@ export class ApprovalConfigService {
   ) {
     const why = await this.why(companyId, reason);
     const members = [...new Set(input.memberUserIds)];
-    if (members.length) {
+    if (members.length !== 0) {
       const ok = await this.db
         .select({ id: users.id })
         .from(users)
@@ -627,9 +629,9 @@ export class ApprovalConfigService {
         throw new ApprovalConfigError('INVALID_GROUP', 'One of the members does not exist.');
     }
     const code = input.code.trim().toUpperCase();
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       let id = input.id;
-      if (id) {
+      if (has(id)) {
         const updated = await tx
           .update(approverGroups)
           .set({ code, name: input.name.trim(), updatedAt: new Date() })
@@ -644,10 +646,10 @@ export class ApprovalConfigService {
         id = g!.id;
       }
       await tx.delete(approverGroupMembers).where(eq(approverGroupMembers.groupId, id));
-      if (members.length) {
+      if (members.length !== 0) {
         await tx
           .insert(approverGroupMembers)
-          .values(members.map((userId, i) => ({ groupId: id!, userId, sequence: i + 1 })));
+          .values(members.map((userId, i) => ({ groupId: id, userId, sequence: i + 1 })));
       }
       await this.decisions.record(
         {

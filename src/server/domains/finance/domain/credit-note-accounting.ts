@@ -1,5 +1,5 @@
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 /**
  * What a credit note does to the books, in whole cents: how much of it is tax, how much the
  * original invoice can still absorb, and how much is left over for someone to decide about.

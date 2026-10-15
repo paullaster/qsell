@@ -258,23 +258,6 @@ export async function priceHistoryAction(
 
 // ── Reasons and lookups ──────────────────────────────────────────────────────
 
-export async function listPricingReasonsAction(): Promise<
-  PricingResult<{ code: string; description: string; requiresComment: boolean }[]>
-> {
-  return run('pricing:read', async ({ companyId }) =>
-    (await getContainer().reasonCodes.list(companyId))
-      .filter(
-        (r) =>
-          r.isActive && (r.appliesTo.length === 0 || r.appliesTo.includes('pricing_configuration')),
-      )
-      .map((r) => ({
-        code: r.code,
-        description: r.description,
-        requiresComment: r.requiresComment,
-      })),
-  );
-}
-
 export interface PricingLookups {
   branches: Array<{ id: string; code: string; name: string }>;
   currencies: Array<{ code: string; name: string; isBase: boolean }>;

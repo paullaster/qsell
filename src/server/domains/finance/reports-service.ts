@@ -1,7 +1,6 @@
-import { and, asc, desc, eq, gte, lt, lte, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, lte, sql, type SQL } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
-  accountingPeriods,
   fiscalYears,
   glAccounts,
   glEntries,
@@ -11,7 +10,7 @@ import { formatAmount, parseAmount } from './domain/amount';
 import { compareAccountNo, totalBalance } from './domain/chart';
 import { GENESIS_HASH, registerHash } from './domain/hash';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 export interface TrialBalanceRow {
   accountId: string;
@@ -73,9 +72,9 @@ export class FinanceReportsService {
     const computed = accounts
       .map((a) => {
         const r = byAccount.get(a.id);
-        const opening = parseAmount(String(PROFIT_AND_LOSS.has(a.category ?? '') ? (r?.opening_year ?? '0') : (r?.opening_all ?? '0')));
-        const debit = parseAmount(String(r?.debit ?? '0'));
-        const credit = parseAmount(String(r?.credit ?? '0'));
+        const opening = parseAmount(PROFIT_AND_LOSS.has(a.category ?? '') ? (r?.opening_year ?? '0') : (r?.opening_all ?? '0'));
+        const debit = parseAmount(r?.debit ?? '0');
+        const credit = parseAmount(r?.credit ?? '0');
         return { a, opening, debit, credit, closing: opening + debit - credit };
       })
       .sort((x, y) => compareAccountNo(x.a.no, y.a.no));

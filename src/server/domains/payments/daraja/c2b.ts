@@ -15,8 +15,7 @@ import { parseC2b } from './parsers';
 import { looksLikeReceipt, toCentsLoose } from './security';
 import { readStatusAnswer, statusAgrees } from './verify';
 
-import { has } from '@/lib/has';
-import { readText } from '@/lib/values';
+import { firstFilled, has, isRecord, readText } from '@/lib/values';
 
 /** What counting a verified direct payment means (a customer's receipt, for instance). null: leave it for a person. */
 export interface C2bConsumer {
@@ -45,21 +44,21 @@ export function pullRecords(body: Record<string, unknown> | null): PullRecord[] 
     if (Array.isArray(v)) {
       lists.push(v);
       for (const x of v) if (Array.isArray(x)) visit(x, depth + 1);
-    } else if (v && typeof v === 'object') for (const x of Object.values(v as Record<string, unknown>)) visit(x, depth + 1);
+    } else if (isRecord(v)) for (const x of Object.values(v)) visit(x, depth + 1);
   };
   visit(body);
   const out = new Map<string, PullRecord>();
   for (const list of lists) {
     for (const item of list.flat()) {
-      if (!item || typeof item !== 'object') continue;
-      const r = item as Record<string, unknown>;
+      if (!isRecord(item)) continue;
+      const r = item;
       const id = r.transactionId ?? r.TransactionId ?? r.transactionID;
       if (typeof id !== 'string' || !has(id)) continue;
       out.set(id, {
         transactionId: id,
         trxDate: typeof r.trxDate === 'string' ? r.trxDate : null,
         msisdn: r.msisdn === undefined || r.msisdn === null ? null : readText(r.msisdn),
-        billReference: typeof r.billreference === 'string' ? r.billreference : typeof r.billReference === 'string' ? r.billReference : null,
+        billReference: firstFilled(typeof r.billreference === 'string' ? r.billreference : null, typeof r.billReference === 'string' ? r.billReference : null),
         amountCents: toCentsLoose(r.amount),
         type: typeof r.transactiontype === 'string' ? r.transactiontype : null,
       });

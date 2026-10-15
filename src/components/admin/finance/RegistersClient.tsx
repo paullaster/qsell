@@ -1,61 +1,65 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { use, useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  listReasonsAction,
-  registerDetailAction,
-  reverseRegisterAction,
-  verifyChainAction,
-  type RegisterView,
-} from '@/server/domains/finance/actions';
-import { Chip, Field, Message, PageHeader, buttonClass, cardClass, fieldClass, money, primaryClass, today, type Notice, attempt } from './ui';
-
-import { has } from '@/lib/has';
-import { readText } from '@/lib/values';
+import { registerDetailAction, type registersAction, reverseRegisterAction, verifyChainAction } from '@/server/domains/finance/actions';
+import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { originIp, originPermission, originSurface } from '@/lib/ledger-forms';
+import { needsComment } from '@/lib/receipt-detail';
+import { has } from '@/lib/values';
+import type { Choice } from '@/lib/payment-options';
+import { Chip, Field, LoadFailed, Message, PageHeader, buttonClass, cardClass, fieldClass, money, primaryClass, today, type Notice, attempt } from './ui';
 
 type Detail = Extract<Awaited<ReturnType<typeof registerDetailAction>>, { ok: true }>['data'];
 type Chain = Extract<Awaited<ReturnType<typeof verifyChainAction>>, { ok: true }>['data'];
+type Overview = Extract<Awaited<ReturnType<typeof registersAction>>, { ok: true }>['data'];
 
-export function RegistersClient({ registers, canReverse }: { registers: RegisterView[]; canReverse: boolean }) {
+export function RegistersClient({ viewPromise }: { viewPromise: ReturnType<typeof registersAction> }) {
+  const res = use(viewPromise);
+  return res.ok ? <RegistersView view={res.data} /> : <LoadFailed error={res.error} />;
+}
+
+function RegistersView({ view }: { view: Overview }) {
   const uid = useId();
   const router = useRouter();
   const [open, setOpen] = useState<string | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [reversing, setReversing] = useState<string | null>(null);
-  const [reasons, setReasons] = useState<{ code: string; description: string; requiresComment: boolean }[]>([]);
-  const [rev, setRev] = useState({ date: today(), code: '', text: '' });
+  const [date, setDate] = useState(today());
+  const [reason, setReason] = useState<Choice | null>(null);
+  const [comment, setComment] = useState('');
   const [chain, setChain] = useState<Chain | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
 
   const toggle = async (id: string) => {
-    if (open === id) { setOpen(null); return; }
+    if (open === id) {
+      setOpen(null);
+      return;
+    }
     setOpen(id);
     setDetail(null);
     const res = await attempt(registerDetailAction(id));
-    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
+    if (!res.ok) {
+      setNotice({ kind: 'error', text: res.error });
+      return;
+    }
     setDetail(res.data);
   };
 
-  const startReverse = async (id: string) => {
-    setReversing(id);
-    setNotice(null);
-    if (reasons.length === 0) {
-      const res = await attempt(listReasonsAction());
-      if (res.ok) { setReasons(res.data); setRev((r) => ({ ...r, code: res.data[0]?.code ?? '' })); }
-    }
-  };
-
-  const reverse = async (e: React.FormEvent) => {
+  const reverse = async (e: React.SyntheticEvent) => {
     e.preventDefault();
-    if (!has(reversing)) return;
+    if (reversing === null || reason === null) return;
     setBusy(true);
-    const res = await attempt(reverseRegisterAction(reversing, rev.date, { code: rev.code, text: rev.text }));
+    const res = await attempt(reverseRegisterAction(reversing, date, { code: reason.id, text: comment }));
     setBusy(false);
-    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
+    if (!res.ok) {
+      setNotice({ kind: 'error', text: res.error });
+      return;
+    }
     setNotice({ kind: 'ok', text: 'Reversed. The original stays in the books; the reversal is a new posting linked to it.' });
     setReversing(null);
+    setReason(null);
     router.refresh();
   };
 
@@ -63,7 +67,10 @@ export function RegistersClient({ registers, canReverse }: { registers: Register
     setBusy(true);
     const res = await attempt(verifyChainAction());
     setBusy(false);
-    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
+    if (!res.ok) {
+      setNotice({ kind: 'error', text: res.error });
+      return;
+    }
     setChain(res.data);
   };
 
@@ -72,48 +79,39 @@ export function RegistersClient({ registers, canReverse }: { registers: Register
       <PageHeader
         title="Postings (ledger registers)"
         intro="One row per posting. Each is chained to the one before it, so any later change to the books can be detected."
-        actions={<button type="button" className={buttonClass} onClick={verify} disabled={busy}>Verify the chain</button>}
+        actions={<button type="button" className={buttonClass} onClick={() => void verify()} disabled={busy}>Verify the chain</button>}
       />
       <Message notice={notice} />
-      {chain ? (
+      {chain === null ? null : (
         <div className={`${cardClass} space-y-1`} role="status">
           {chain.length === 0 ? <p className="text-sm text-fg-muted">Nothing to verify yet.</p> : null}
           {chain.map((c) => (
             <p key={c.chainKey} className={`text-sm ${c.ok ? 'text-emerald-700' : 'text-red-700'}`}>
-              {c.ok ? '✓' : '✗'} Chain “{c.chainKey}”: {c.ok ? `${c.checked} postings intact.` : c.problem}
+              {c.ok ? '✓' : '✗'} Chain “{c.chainKey}”: {c.ok ? `${String(c.checked)} postings intact.` : c.problem}
             </p>
           ))}
         </div>
-      ) : null}
+      )}
 
-      {has(reversing) ? (
-        <form onSubmit={reverse} className={`${cardClass} space-y-3`} aria-label="Reverse posting">
+      {reversing === null ? null : (
+        <form onSubmit={(e) => void reverse(e)} className={`${cardClass} space-y-3`} aria-label="Reverse posting">
           <p className="text-sm font-semibold text-fg-strong">Reverse this posting</p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Field id={`${uid}-rd`} label="Reversal date"><input id={`${uid}-rd`} type="date" value={rev.date} onChange={(e) => setRev({ ...rev, date: e.target.value })} className={fieldClass} required /></Field>
-            <Field id={`${uid}-rc`} label="Reason">
-              <select id={`${uid}-rc`} value={rev.code} onChange={(e) => setRev({ ...rev, code: e.target.value })} className={fieldClass} required>
-                {reasons.map((r) => <option key={r.code} value={r.code}>{r.description}</option>)}
-              </select>
-            </Field>
-            <Field id={`${uid}-rt`} label="Comment"><input id={`${uid}-rt`} value={rev.text} onChange={(e) => setRev({ ...rev, text: e.target.value })} className={fieldClass} /></Field>
+            <Field id={`${uid}-rd`} label="Reversal date"><input id={`${uid}-rd`} type="date" value={date} onChange={(e) => setDate(e.target.value)} className={fieldClass} required /></Field>
+            <ChoicePicker label="Reason" source="register-reasons" choice={reason} onChoice={setReason} clearable={false} required placeholder="Choose a reason…" />
+            <Field id={`${uid}-rt`} label={needsComment(reason?.meta) ? 'Explain (required)' : 'Comment'}><input id={`${uid}-rt`} value={comment} onChange={(e) => setComment(e.target.value)} className={fieldClass} required={needsComment(reason?.meta)} /></Field>
           </div>
           <div className="flex gap-2">
-            <button type="submit" disabled={busy || rev.code === ''} className={primaryClass}>Reverse</button>
+            <button type="submit" disabled={busy || reason === null} className={primaryClass}>Reverse</button>
             <button type="button" className={buttonClass} onClick={() => setReversing(null)}>Cancel</button>
           </div>
         </form>
-      ) : null}
+      )}
 
       <ul className="space-y-2">
-        {registers.map((r) => (
+        {view.registers.map((r) => (
           <li key={r.id} className="rounded-xl border border-line bg-surface-raised">
-            <button
-              type="button"
-              onClick={() => toggle(r.id)}
-              aria-expanded={open === r.id}
-              className="flex min-h-12 w-full cursor-pointer flex-wrap items-center justify-between gap-2 p-3 text-left hover:bg-hover"
-            >
+            <button type="button" onClick={() => void toggle(r.id)} aria-expanded={open === r.id} className="flex min-h-12 w-full cursor-pointer flex-wrap items-center justify-between gap-2 p-3 text-left hover:bg-hover">
               <span className="text-sm text-fg-strong">
                 <span className="font-mono text-xs text-fg-muted">{r.chainKey}-{r.seq}</span> · <span className="font-mono">{r.documentNo}</span>
                 <span className="ml-2 text-xs text-fg-muted">{r.postingDate}</span>
@@ -126,26 +124,27 @@ export function RegistersClient({ registers, canReverse }: { registers: Register
             </button>
             {open === r.id ? (
               <div className="space-y-3 border-t border-line p-3 text-sm">
-                {!detail ? <p className="text-fg-muted">Loading…</p> : (
+                {detail === null ? <p className="text-fg-muted">Loading…</p> : null}
+                {detail === null ? null : (
                   <>
                     <ul className="space-y-1 text-xs">
                       {detail.lines.map((l) => (
-                        <li key={l.lineNo} className="flex justify-between gap-3"><span><span className="font-mono">{l.accountNo}</span> {l.accountName}</span><span className="tabular-nums">{Number(l.debit) !== 0 ? `Dr ${money(l.debit)}` : `Cr ${money(l.credit)}`}</span></li>
+                        <li key={l.lineNo} className="flex justify-between gap-3"><span><span className="font-mono">{l.accountNo}</span> {l.accountName}</span><span className="tabular-nums">{Number(l.debit) === 0 ? `Cr ${money(l.credit)}` : `Dr ${money(l.debit)}`}</span></li>
                       ))}
                     </ul>
                     <dl className="grid grid-cols-1 gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
                       <div><dt className="inline text-fg-muted">Posted by </dt><dd className="inline text-fg">{r.postedBy ?? 'system'} at {new Date(r.postedAt).toLocaleString()}</dd></div>
-                      <div><dt className="inline text-fg-muted">From </dt><dd className="inline text-fg">{readText((detail.origin).surface, '—')} → {readText((detail.origin).action, '—')}</dd></div>
-                      <div><dt className="inline text-fg-muted">Permission </dt><dd className="inline text-fg">{readText((detail.origin).permissionUsed, '—')}</dd></div>
-                      <div><dt className="inline text-fg-muted">IP </dt><dd className="inline text-fg">{readText((detail.origin).ip, '—')}</dd></div>
-                      <div className="sm:col-span-2 break-all"><dt className="inline text-fg-muted">Hash </dt><dd className="inline font-mono text-[10px] text-fg">{detail.hash}</dd></div>
+                      <div><dt className="inline text-fg-muted">From </dt><dd className="inline text-fg">{originSurface(detail.origin)}</dd></div>
+                      <div><dt className="inline text-fg-muted">Permission </dt><dd className="inline text-fg">{originPermission(detail.origin)}</dd></div>
+                      <div><dt className="inline text-fg-muted">IP </dt><dd className="inline text-fg">{originIp(detail.origin)}</dd></div>
+                      <div className="break-all sm:col-span-2"><dt className="inline text-fg-muted">Hash </dt><dd className="inline font-mono text-[10px] text-fg">{detail.hash}</dd></div>
                     </dl>
                     {detail.trail.length > 0 ? (
                       <ol className="space-y-1 border-l border-line pl-3 text-xs">
-                        {detail.trail.map((t, i) => <li key={i}><span className="text-fg-muted">{new Date(t.at).toLocaleString()}</span> {t.action} {has(t.reason) ? `— ${t.reason}` : ''}</li>)}
+                        {detail.trail.map((t) => <li key={`${t.at}-${t.action}`}><span className="text-fg-muted">{new Date(t.at).toLocaleString()}</span> {t.action} {has(t.reason) ? `— ${t.reason}` : ''}</li>)}
                       </ol>
                     ) : null}
-                    {canReverse && !r.isReversal && !r.reversed ? <button type="button" className={buttonClass} onClick={() => startReverse(r.id)}>Reverse…</button> : null}
+                    {view.canReverse && !r.isReversal && !r.reversed ? <button type="button" className={buttonClass} onClick={() => { setNotice(null); setReversing(r.id); }}>Reverse…</button> : null}
                   </>
                 )}
               </div>
@@ -153,7 +152,7 @@ export function RegistersClient({ registers, canReverse }: { registers: Register
           </li>
         ))}
       </ul>
-      {registers.length === 0 ? <div className="rounded-xl border border-dashed border-line p-8 text-center text-sm text-fg-muted">Nothing has been posted yet.</div> : null}
+      {view.registers.length === 0 ? <div className="rounded-xl border border-dashed border-line p-8 text-center text-sm text-fg-muted">Nothing has been posted yet.</div> : null}
     </div>
   );
 }

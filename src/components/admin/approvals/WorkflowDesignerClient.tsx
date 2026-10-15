@@ -3,9 +3,7 @@
 import Link from 'next/link';
 import { useId, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  listConfigReasonsAction,
-  publishWorkflowAction,
+import { publishWorkflowAction,
   saveWorkflowDraftAction,
   setWorkflowStatusAction,
   simulateAction,
@@ -38,7 +36,9 @@ import {
   type Message,
 } from './shared';
 
-const RULES: Array<[ApproverRule['type'], string, string]> = [
+import { emptyToNull, has, orElse } from '@/lib/values';
+
+const RULES: [ApproverRule['type'], string, string][] = [
   ['user', 'A specific person', 'The same person approves every time.'],
   [
     'group',
@@ -113,7 +113,7 @@ export function WorkflowDesignerClient({
       name: meta.name,
       description: meta.description,
       priority: Number(meta.priority) || 100,
-      branchId: meta.branchId || null,
+      branchId: emptyToNull(meta.branchId),
     });
     if (!m.ok) {
       setMessage({ kind: 'error', text: m.error });
@@ -158,7 +158,7 @@ export function WorkflowDesignerClient({
     setBusy(false);
     if (!res.ok) {
       if (res.issues) setIssues(res.issues);
-      return setMessage({ kind: 'error', text: res.error });
+      setMessage({ kind: 'error', text: res.error }); return;
     }
     setReason({ code: '', text: '' });
     setMessage({
@@ -173,7 +173,7 @@ export function WorkflowDesignerClient({
     setMessage(null);
     const res = await setWorkflowStatusAction(workflow.id, status, reason);
     setBusy(false);
-    if (!res.ok) return setMessage({ kind: 'error', text: res.error });
+    if (!res.ok) { setMessage({ kind: 'error', text: res.error }); return; }
     setReason({ code: '', text: '' });
     setMessage({
       kind: 'ok',
@@ -195,7 +195,7 @@ export function WorkflowDesignerClient({
   return (
     <div className="max-w-4xl space-y-6">
       <PageHeader
-        title={meta.name || workflow.code}
+        title={orElse(meta.name, workflow.code)}
         actions={
           <Link href="/admin/settings/approvals/workflows" className={buttonClass}>
             All workflows
@@ -352,7 +352,7 @@ export function WorkflowDesignerClient({
             Saving keeps your work as a draft. Publishing makes it live for new documents as a new
             version; requests already waiting finish under the version they started with.
           </p>
-          <ReasonField value={reason} onChange={setReason} load={listConfigReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="approval-config-reasons" />
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
@@ -407,7 +407,7 @@ export function WorkflowDesignerClient({
         </section>
       ) : null}
 
-      <section className={`${cardClass}`} aria-labelledby={`${uid}-versions`}>
+      <section className={cardClass} aria-labelledby={`${uid}-versions`}>
         <h3 id={`${uid}-versions`} className="text-sm font-bold text-fg-strong">
           Version history
         </h3>
@@ -419,7 +419,7 @@ export function WorkflowDesignerClient({
               <li key={v.version} className="text-sm text-fg">
                 <span className="font-semibold">Version {v.version}</span> · {v.publishedByName} ·{' '}
                 <When iso={v.publishedAt} />
-                {v.reason ? <span className="block text-xs text-fg-muted">{v.reason}</span> : null}
+                {has(v.reason) ? <span className="block text-xs text-fg-muted">{v.reason}</span> : null}
               </li>
             ))}
           </ol>
@@ -477,7 +477,7 @@ function StepCard({
           ? { type, groupId: '', require: 'all' }
           : type === 'role'
             ? { type, roleKey: '' }
-            : ({ type } as ApproverRule);
+            : ({ type });
     onChange({ ...step, approver: next });
   };
 
@@ -553,7 +553,7 @@ function StepCard({
               </option>
             ))}
           </select>
-          {help ? <p className="mt-1 text-xs text-fg-muted">{help}</p> : null}
+          {has(help) ? <p className="mt-1 text-xs text-fg-muted">{help}</p> : null}
         </div>
 
         {rule.type === 'user' ? (
@@ -792,13 +792,13 @@ function TestPanel({
       trigger: workflow.triggerCode,
       amount,
       requestedBy: requester,
-      branchId: branchId || null,
+      branchId: emptyToNull(branchId),
       facts: facts(),
       draft: def,
       onlyDraft,
     });
     setBusy(false);
-    if (!res.ok) return setMessage({ kind: 'error', text: res.error });
+    if (!res.ok) { setMessage({ kind: 'error', text: res.error }); return; }
     setResult(res.data);
   };
 
@@ -915,7 +915,7 @@ function TestPanel({
             <div key={w.code} className="rounded-lg border border-line p-3">
               <p className="text-sm font-semibold text-fg-strong">
                 {w.name}
-                {w.version ? ` (version ${w.version})` : ''} ·{' '}
+                {w.version !== null && w.version !== undefined && w.version !== 0 ? ` (version ${w.version})` : ''} ·{' '}
                 {w.matched ? (
                   <span className="text-emerald-700">applies</span>
                 ) : (
@@ -941,12 +941,12 @@ function TestPanel({
                       </span>{' '}
                       {s.skipped ? (
                         <span className="text-fg-muted">skipped for this example</span>
-                      ) : s.problem ? (
+                      ) : has(s.problem) ? (
                         <span role="alert" className="text-red-700">
                           would fail: {s.problem}
                         </span>
                       ) : (
-                        <span>→ {s.approvers.join(' → ') || 'nobody'}</span>
+                        <span>→ {orElse(s.approvers.join(' → '), 'nobody')}</span>
                       )}
                     </li>
                   ))}

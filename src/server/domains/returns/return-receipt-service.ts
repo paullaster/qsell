@@ -20,8 +20,7 @@ import { businessDate } from '@/server/kernel/numbering/business-date';
 import type { NumberSeriesService } from '@/server/kernel/numbering/service';
 import type { ReasonCodes } from '@/server/kernel/reason-codes/service';
 
-import { has } from '@/lib/has';
-import { trimToNull } from '@/lib/values';
+import { has, trimToNull } from '@/lib/values';
 
 export class ReturnError extends Error {
   constructor(

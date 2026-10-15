@@ -22,7 +22,7 @@ export function formatPriceWithCurrency(
   currency: CurrencyConfig | string = 'KES',
   customCurrencies: CurrencyConfig[] = DEFAULT_CURRENCIES,
 ): string {
-  if (baseAmountKes === undefined || baseAmountKes === null || isNaN(baseAmountKes)) {
+  if (Number.isNaN(baseAmountKes)) {
     return '0';
   }
 

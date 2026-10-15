@@ -9,7 +9,7 @@ import { FinanceError } from './errors';
 import type { RefundInput } from './receivables/refund-service';
 import type { RefundSource, RefundStatus } from '@/server/db/drizzle/schema';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 const fin = () => getContainer().finance;
 const ROOT = '/admin/finance/refunds';

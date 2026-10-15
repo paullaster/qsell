@@ -2,7 +2,6 @@
 
 import { useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { listPricingReasonsAction } from '@/server/domains/pricing/actions';
 import {
   explainFloorAction,
   removeFloorRuleAction,
@@ -290,7 +289,7 @@ export function FloorsClient({ data, canManage }: { data: FloorsPageData; canMan
               In use
             </label>
           </div>
-          <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
           <div className="flex flex-wrap gap-2">
             <button
               type="submit"
@@ -312,7 +311,7 @@ export function FloorsClient({ data, canManage }: { data: FloorsPageData; canMan
             Remove the floor for <strong>{removing.scopeLabel}</strong>? Products it covered fall
             back to the next floor that applies, or to none.
           </p>
-          <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
           <div className="flex flex-wrap gap-2">
             <button
               type="button"

@@ -8,7 +8,7 @@ import {
   type DiscountLookups,
   type DiscountRuleDto,
 } from '@/server/domains/pricing/discount-actions';
-import { listPricingReasonsAction, type PricingLookups } from '@/server/domains/pricing/actions';
+import { type PricingLookups } from '@/server/domains/pricing/actions';
 import {
   summariseDiscount,
   type DiscountRuleInput,
@@ -801,7 +801,7 @@ export function DiscountForm({
         </p>
       </fieldset>
 
-      <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+      <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
       <Notice message={message} />
       <div className="flex flex-wrap gap-2">
         <button

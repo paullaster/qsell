@@ -1,7 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
-import { has } from '@/lib/has';
-import { readText } from '@/lib/values';
+import { has, readText } from '@/lib/values';
 
 /**
  * What may be written to a log. Secrets never are, phone numbers are masked, and the secret
@@ -27,10 +26,10 @@ export function phoneFingerprint(value: string): string {
 export function redactDeep<T>(value: T): T {
   const walk = (v: unknown, key?: string): unknown => {
     if (Array.isArray(v)) return v.map((x) => walk(x, key));
-    if (v && typeof v === 'object') {
+    if (typeof v === 'object' && v !== null) {
       const rec = v as Record<string, unknown>;
       // The M-Pesa metadata shape: { Name: 'PhoneNumber', Value: 254... }
-      const named = Boolean(typeof rec.Name === 'string' && PHONE_KEY.test(rec.Name));
+      const named = typeof rec.Name === 'string' && PHONE_KEY.test(rec.Name);
       return Object.fromEntries(
         Object.entries(rec).map(([k, x]) => {
           if (SECRET_KEY.test(k)) return [k, '[REDACTED]'];

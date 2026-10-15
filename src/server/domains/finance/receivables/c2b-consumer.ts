@@ -6,7 +6,7 @@ import { FinanceError, type FinanceContext } from '../errors';
 import { fromCents } from '../domain/receivables';
 import type { ReceiptService } from './receipt-service';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 /**
  * Puts a payment that Safaricom confirmed (made straight to a paybill or till) on a customer's account:

@@ -5,6 +5,8 @@ import { GitBranch, Plus } from 'lucide-react';
 import type { BranchRow } from '@/server/db/drizzle/schema';
 import { createBranchAction, updateBranchAction } from '@/server/domains/payments/actions';
 
+import { has } from '@/lib/values';
+
 const fieldClass =
   'min-h-10 w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong placeholder:text-fg-faint focus:border-indigo-500 focus:outline-none';
 
@@ -181,7 +183,7 @@ export function AdminBranchesClient({
           />
           Acts as independent unit (own KRA / paybill / bank)
         </label>
-        {error ? (
+        {has(error) ? (
           <p role="alert" className="text-xs text-red-700">
             {error}
           </p>
@@ -189,7 +191,7 @@ export function AdminBranchesClient({
         <button
           type="button"
           onClick={handleCreate}
-          disabled={pending || !code.trim() || !name.trim()}
+          disabled={pending || !has(code.trim()) || !has(name.trim())}
           className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
         >
           <Plus className="h-4 w-4" />

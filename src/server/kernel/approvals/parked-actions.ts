@@ -121,10 +121,10 @@ export class ParkedActions {
         const result = await executor.execute(tx, row);
         await close(tx, id, 'applied', result);
       },
-      onRejected: async (id, tx) => close(tx, id, 'rejected'),
+      onRejected: async (id, tx) => await close(tx, id, 'rejected'),
       // The action never happened, so there is nothing to reopen: the requester just starts again.
-      onReopened: async (id, tx) => close(tx, id, 'canceled'),
-      onCanceled: async (id, tx) => close(tx, id, 'canceled'),
+      onReopened: async (id, tx) => await close(tx, id, 'canceled'),
+      onCanceled: async (id, tx) => await close(tx, id, 'canceled'),
       describe: async (id) => {
         const [row] = await this.db
           .select({ summary: approvalParkedActions.summary })

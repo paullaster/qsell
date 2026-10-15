@@ -1,439 +1,241 @@
 'use client';
 
-import React, { use, useState, useTransition } from 'react';
 import Link from 'next/link';
-import { Edit2, Layers, Plus, Trash2, X } from 'lucide-react';
-import type { DimensionRow } from '@/server/db/drizzle/schema';
+import { use, useId, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   createDimensionAction,
   deleteDimensionAction,
+  dimensionsPageAction,
   updateDimensionAction,
+  type DimensionView,
 } from '@/server/domains/dimensions/actions';
+import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { InlineConfirm } from '@/components/ui/InlineConfirm';
+import { usePagedList } from '@/components/ui/usePagedList';
+import { buttonClass, cardClass, Chip, Field, fieldClass, LoadFailed, Message, PageHeader, primaryClass, attempt, type Notice } from '@/components/ui/screen-kit';
+import {
+  applyFlagChange,
+  dimensionPayload,
+  emptyDimensionForm,
+  formFromDimension,
+  needsDimensionNo,
+  toggledFlags,
+  type DimensionFlags,
+  type DimensionForm,
+} from '@/lib/dimension-forms';
+import { has } from '@/lib/values';
+import { savedWords, submitWords } from '@/lib/form-words';
+import type { Choice } from '@/lib/payment-options';
 
-const fieldClass =
-  'w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong placeholder:text-fg-faint focus:border-indigo-500 focus:outline-none';
+type FirstPage = Awaited<ReturnType<typeof dimensionsPageAction>>;
 
-type OptionItem = { value: string; label: string };
+export function AdminDimensionsClient({ firstPage, canManage }: { firstPage: ReturnType<typeof dimensionsPageAction>; canManage: Promise<boolean> }) {
+  const first = use(firstPage);
+  const may = use(canManage);
+  return first.ok ? <DimensionsView first={first} may={may} /> : <LoadFailed error={first.error} />;
+}
 
-type FormState = {
-  code: string;
-  name: string;
-  description: string;
-  parentId: string;
-  dimensionNo: string;
-  isGlobal: boolean;
-  isDefault: boolean;
-  isShortcut: boolean;
-  optionString: string;
-};
+const FLAGS: { key: keyof DimensionFlags; label: string }[] = [
+  { key: 'isDefault', label: 'Default' },
+  { key: 'isGlobal', label: 'Global' },
+  { key: 'isShortcut', label: 'Shortcut' },
+];
 
-const emptyForm = (): FormState => ({
-  code: '',
-  name: '',
-  description: '',
-  parentId: '',
-  dimensionNo: '',
-  isGlobal: false,
-  isDefault: false,
-  isShortcut: false,
-  optionString: '',
-});
-
-export function AdminDimensionsClient({
-  dimensionsPromise,
-  optionsPromise,
-}: {
-  dimensionsPromise: Promise<DimensionRow[]>;
-  optionsPromise: Promise<OptionItem[]>;
-}) {
-  const initial = use(dimensionsPromise);
-  const optionItems = use(optionsPromise);
-  const [rows, setRows] = useState(initial);
-  const [form, setForm] = useState<FormState>(emptyForm);
+function DimensionsView({ first, may }: { first: FirstPage; may: boolean }) {
+  const uid = useId();
+  const router = useRouter();
+  const [query, setQuery] = useState('');
+  const [form, setForm] = useState<DimensionForm>(emptyDimensionForm);
+  const [parent, setParent] = useState<Choice | null>(null);
+  const [option, setOption] = useState<Choice | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<Notice>(null);
 
-  const applyFlagDefaults = (next: {
-    isDefault?: boolean;
-    isGlobal?: boolean;
-    isShortcut?: boolean;
-  }) => {
-    let d = next.isDefault ?? form.isDefault;
-    let g = next.isGlobal ?? form.isGlobal;
-    let s = next.isShortcut ?? form.isShortcut;
-    if (d) {
-      g = true;
-      s = false;
-    }
-    if (g && s) s = false;
-    if (next.isShortcut && !d) {
-      s = true;
-      g = false;
-    }
-    if (next.isGlobal && !next.isDefault) {
-      g = true;
-      s = false;
-    }
-    setForm((prev) => ({ ...prev, isDefault: d, isGlobal: g, isShortcut: s }));
-  };
+  const list = usePagedList<DimensionView, { query: string }>({
+    load: (filters, cursor) => dimensionsPageAction({ query: filters.query, cursor }),
+    filters: { query: query.trim() },
+    initialPage: first,
+  });
 
-  const openCreate = () => {
+  const reset = () => {
     setEditingId(null);
-    setForm(emptyForm());
-    setError(null);
+    setForm(emptyDimensionForm());
+    setParent(null);
+    setOption(null);
   };
-
-  const openEdit = (row: DimensionRow) => {
+  const edit = (row: DimensionView) => {
+    setNotice(null);
     setEditingId(row.id);
-    setForm({
-      code: row.code,
-      name: row.name,
-      description: row.description ?? '',
-      parentId: row.parentId ?? '',
-      dimensionNo: row.dimensionNo != null ? String(row.dimensionNo) : '',
-      isGlobal: row.isGlobal,
-      isDefault: row.isDefault,
-      isShortcut: row.isShortcut,
-      optionString: row.optionString ?? '',
-    });
-    setError(null);
+    setForm(formFromDimension(row));
+    setParent(row.parentId === null ? null : { id: row.parentId, label: row.parentCode ?? row.parentId });
+    setOption(row.optionString === null ? null : { id: row.optionString, label: row.optionLabel ?? row.optionString });
+  };
+  const finish = (ok: boolean, text: string) => {
+    setBusy(false);
+    setNotice({ kind: ok ? 'ok' : 'error', text });
+    if (ok) {
+      list.reload();
+      router.refresh();
+    }
   };
 
-  const handleSave = () => {
-    startTransition(async () => {
-      try {
-        setError(null);
-        if ((form.isGlobal || form.isShortcut || form.isDefault) && !form.dimensionNo) {
-          setError('dimension_no is required for global and shortcut dimensions.');
-          return;
-        }
-        const payload = {
-          code: form.code,
-          name: form.name,
-          description: form.description || null,
-          parentId: form.parentId || null,
-          dimensionNo: form.dimensionNo ? Number(form.dimensionNo) : null,
-          isGlobal: form.isGlobal,
-          isDefault: form.isDefault,
-          isShortcut: form.isShortcut,
-          optionString: form.optionString || null,
-        };
-        if (editingId) {
-          const updated = await updateDimensionAction(editingId, payload);
-          setRows((prev) =>
-            prev
-              .map((r) => (r.id === updated.id ? updated : r))
-              .sort((a, b) => a.code.localeCompare(b.code)),
-          );
-        } else {
-          const created = await createDimensionAction(payload);
-          setRows((prev) => [...prev, created].sort((a, b) => a.code.localeCompare(b.code)));
-        }
-        openCreate();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to save dimension');
-      }
-    });
+  const save = async (e: React.SyntheticEvent) => {
+    e.preventDefault();
+    const checked = dimensionPayload({ ...form, parentId: parent?.id ?? '', optionString: option?.id ?? '' });
+    if (!checked.ok) {
+      setNotice({ kind: 'error', text: checked.error });
+      return;
+    }
+    setBusy(true);
+    const res = editingId === null ? await attempt(createDimensionAction(checked.payload)) : await attempt(updateDimensionAction(editingId, checked.payload));
+    if (res.ok) reset();
+    finish(res.ok, res.ok ? savedWords(editingId, 'Dimension') : res.error);
+  };
+  const toggle = async (row: DimensionView, flag: keyof DimensionFlags, value: boolean) => {
+    setBusy(true);
+    const res = await attempt(updateDimensionAction(row.id, toggledFlags(row, flag, value)));
+    finish(res.ok, res.ok ? `${row.code} updated.` : res.error);
+  };
+  const remove = async (row: DimensionView) => {
+    setBusy(true);
+    const res = await attempt(deleteDimensionAction(row.id));
+    if (res.ok && editingId === row.id) reset();
+    finish(res.ok, res.ok ? `${row.code} deleted.` : res.error);
   };
 
-  const handleDelete = (row: DimensionRow) => {
-    if (!window.confirm(`Delete dimension "${row.code}" and all its values?`)) return;
-    startTransition(async () => {
-      try {
-        setError(null);
-        await deleteDimensionAction(row.id);
-        setRows((prev) => prev.filter((r) => r.id !== row.id));
-        if (editingId === row.id) openCreate();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to delete dimension');
-      }
-    });
-  };
-
-  const toggleFlag = (
-    row: DimensionRow,
-    flag: 'isGlobal' | 'isDefault' | 'isShortcut',
-    value: boolean,
-  ) => {
-    startTransition(async () => {
-      try {
-        setError(null);
-        const patch: {
-          isGlobal?: boolean;
-          isDefault?: boolean;
-          isShortcut?: boolean;
-        } = {
-          isGlobal: row.isGlobal,
-          isDefault: row.isDefault,
-          isShortcut: row.isShortcut,
-        };
-        patch[flag] = value;
-        if (flag === 'isDefault' && value) {
-          patch.isGlobal = true;
-          patch.isShortcut = false;
-        }
-        if (flag === 'isGlobal' && value) patch.isShortcut = false;
-        if (flag === 'isShortcut' && value) {
-          patch.isGlobal = false;
-          patch.isDefault = false;
-        }
-        const updated = await updateDimensionAction(row.id, patch);
-        setRows((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to update dimension');
-      }
-    });
-  };
-
-  const parentChoices = rows.filter((r) => r.id !== editingId);
+  const setFlag = (change: Partial<DimensionFlags>) => setForm((prev) => ({ ...prev, ...applyFlagChange(prev, change) }));
+  const set = <K extends keyof DimensionForm>(key: K, value: DimensionForm[K]) => setForm((prev) => ({ ...prev, [key]: value }));
+  const filters = editingId === null ? undefined : { exclude: editingId };
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="flex items-center gap-2 text-xl font-bold text-fg-strong">
-          <Layers className="h-5 w-5 text-indigo-400" />
-          Dimensions
-        </h2>
-        <p className="mt-1 max-w-2xl text-sm text-fg-muted">
-          Define classification axes and values to identify any record. Option string{' '}
-          <span className="font-mono text-indigo-300">branch</span> syncs values into the branches
-          table. Default always becomes global; global and shortcut cannot both be on.
-        </p>
-      </div>
+    <div className="max-w-6xl space-y-5">
+      <PageHeader
+        title="Dimensions"
+        intro="Define classification axes and values to identify any record. The option string “branch” syncs values into the branches table. A default dimension is always global; global and shortcut cannot both be on."
+      />
+      <Message notice={notice} />
 
-      <div className="space-y-3 rounded-xl border border-line bg-surface-sunken/50 p-4">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-fg-strong">
-            {editingId ? 'Edit dimension' : 'New dimension'}
-          </h3>
-          {editingId ? (
-            <button
-              type="button"
-              onClick={openCreate}
-              className="inline-flex items-center gap-1 text-xs text-fg-muted hover:text-fg-strong"
-            >
-              <X className="h-3.5 w-3.5" /> Cancel
-            </button>
-          ) : null}
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <label className="mb-1 block text-[11px] font-semibold text-fg-muted">Code</label>
-            <input
-              value={form.code}
-              onChange={(e) => setForm((p) => ({ ...p, code: e.target.value }))}
-              placeholder="WAREHOUSE"
-              className={`${fieldClass} font-mono uppercase`}
-            />
+      {may ? (
+        <form onSubmit={(e) => void save(e)} className={`${cardClass} space-y-4`} aria-label={editingId === null ? 'New dimension' : 'Edit dimension'}>
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-sm font-bold text-fg-strong">{editingId === null ? 'New dimension' : 'Edit dimension'}</h3>
+            {editingId === null ? null : (
+              <button type="button" className={buttonClass} onClick={reset}>
+                Cancel
+              </button>
+            )}
           </div>
-          <div>
-            <label className="mb-1 block text-[11px] font-semibold text-fg-muted">Name</label>
-            <input
-              value={form.name}
-              onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
-              placeholder="Warehouse"
-              className={fieldClass}
-            />
-          </div>
-          <div className="sm:col-span-2">
-            <label className="mb-1 block text-[11px] font-semibold text-fg-muted">
-              Description
-            </label>
-            <input
-              value={form.description}
-              onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
-              className={fieldClass}
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-[11px] font-semibold text-fg-muted">Parent</label>
-            <select
-              value={form.parentId}
-              onChange={(e) => setForm((p) => ({ ...p, parentId: e.target.value }))}
-              className={fieldClass}
-            >
-              <option value="">None</option>
-              {parentChoices.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.code} — {r.name}
-                </option>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field id={`${uid}-code`} label="Code">
+              <input id={`${uid}-code`} value={form.code} onChange={(e) => set('code', e.target.value)} placeholder="WAREHOUSE" className={`${fieldClass} font-mono uppercase`} required />
+            </Field>
+            <Field id={`${uid}-name`} label="Name">
+              <input id={`${uid}-name`} value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="Warehouse" className={fieldClass} required />
+            </Field>
+            <div className="sm:col-span-2">
+              <Field id={`${uid}-desc`} label="Description">
+                <input id={`${uid}-desc`} value={form.description} onChange={(e) => set('description', e.target.value)} className={fieldClass} />
+              </Field>
+            </div>
+            <ChoicePicker label="Parent" source="dimensions" filters={filters} choice={parent} onChoice={setParent} placeholder="None" />
+            <Field id={`${uid}-no`} label={`Dimension number ${needsDimensionNo(form) ? '(required)' : '(optional)'}`}>
+              <input id={`${uid}-no`} type="number" min={1} step={1} inputMode="numeric" value={form.dimensionNo} onChange={(e) => set('dimensionNo', e.target.value)} className={fieldClass} placeholder="1" />
+            </Field>
+            <ChoicePicker label="Option string" source="dimension-option-strings" choice={option} onChoice={setOption} placeholder="None" />
+            <fieldset className="flex flex-wrap items-end gap-4 pb-1">
+              <legend className="sr-only">How it is offered</legend>
+              {FLAGS.map((f) => (
+                <label key={f.key} className="flex min-h-10 items-center gap-2 text-sm text-fg">
+                  <input
+                    type="checkbox"
+                    checked={form[f.key]}
+                    disabled={(f.key === 'isGlobal' && form.isDefault) || (f.key === 'isShortcut' && (form.isDefault || form.isGlobal))}
+                    onChange={(e) => setFlag({ [f.key]: e.target.checked })}
+                  />
+                  {f.label}
+                </label>
               ))}
-            </select>
+            </fieldset>
           </div>
-          <div>
-            <label className="mb-1 block text-[11px] font-semibold text-fg-muted">
-              Dimension no.{' '}
-              {form.isGlobal || form.isShortcut || form.isDefault ? '(required)' : '(optional)'}
-            </label>
-            <input
-              type="number"
-              min={1}
-              value={form.dimensionNo}
-              onChange={(e) => setForm((p) => ({ ...p, dimensionNo: e.target.value }))}
-              className={fieldClass}
-              placeholder="1"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-[11px] font-semibold text-fg-muted">
-              Option string
-            </label>
-            <select
-              value={form.optionString}
-              onChange={(e) => setForm((p) => ({ ...p, optionString: e.target.value }))}
-              className={fieldClass}
-            >
-              <option value="">None</option>
-              {optionItems.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex flex-wrap items-end gap-4 pb-1 text-sm text-fg">
-            <label className="inline-flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={form.isDefault}
-                onChange={(e) => applyFlagDefaults({ isDefault: e.target.checked })}
-              />
-              Default
-            </label>
-            <label className="inline-flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={form.isGlobal}
-                onChange={(e) => applyFlagDefaults({ isGlobal: e.target.checked })}
-                disabled={form.isDefault}
-              />
-              Global
-            </label>
-            <label className="inline-flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={form.isShortcut}
-                onChange={(e) => applyFlagDefaults({ isShortcut: e.target.checked })}
-                disabled={form.isDefault || form.isGlobal}
-              />
-              Shortcut
-            </label>
-          </div>
-        </div>
-        <button
-          type="button"
-          disabled={pending || !form.code || !form.name}
-          onClick={handleSave}
-          className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
-        >
-          <Plus className="h-4 w-4" />
-          {pending ? 'Saving…' : editingId ? 'Save changes' : 'Create dimension'}
-        </button>
-      </div>
-
-      {error ? (
-        <div className="rounded-lg border border-red-800 bg-red-50 px-3 py-2 text-xs text-red-800">
-          {error}
-        </div>
+          <button type="submit" disabled={busy} className={primaryClass}>
+            {submitWords(busy, editingId, 'Create dimension')}
+          </button>
+        </form>
       ) : null}
 
-      <div className="overflow-hidden rounded-xl border border-line">
-        <table className="w-full text-left text-xs">
-          <thead className="border-b border-line bg-surface text-[10px] tracking-wider text-fg-subtle uppercase">
-            <tr>
-              <th className="px-4 py-3">Code</th>
-              <th className="px-4 py-3">Name</th>
-              <th className="px-4 py-3">No.</th>
-              <th className="px-4 py-3">Option</th>
-              <th className="px-4 py-3">Flags</th>
-              <th className="px-4 py-3">Parent</th>
-              <th className="px-4 py-3 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-line">
-            {rows.length === 0 ? (
-              <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-fg-subtle">
-                  No dimensions yet.
-                </td>
-              </tr>
-            ) : (
-              rows.map((row) => {
-                const parent = rows.find((r) => r.id === row.parentId);
-                return (
-                  <tr key={row.id} className="bg-surface-sunken/40">
-                    <td className="px-4 py-3 font-mono text-indigo-300">{row.code}</td>
-                    <td className="px-4 py-3 text-fg-strong">{row.name}</td>
-                    <td className="px-4 py-3 font-mono text-fg">{row.dimensionNo ?? '—'}</td>
-                    <td className="px-4 py-3 text-fg-muted">{row.optionString || '—'}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-3 text-[11px] text-fg">
-                        <label className="inline-flex items-center gap-1">
-                          <input
-                            type="checkbox"
-                            checked={row.isDefault}
-                            disabled={pending}
-                            onChange={(e) => toggleFlag(row, 'isDefault', e.target.checked)}
-                          />
-                          Default
-                        </label>
-                        <label className="inline-flex items-center gap-1">
-                          <input
-                            type="checkbox"
-                            checked={row.isGlobal}
-                            disabled={pending || row.isDefault}
-                            onChange={(e) => toggleFlag(row, 'isGlobal', e.target.checked)}
-                          />
-                          Global
-                        </label>
-                        <label className="inline-flex items-center gap-1">
-                          <input
-                            type="checkbox"
-                            checked={row.isShortcut}
-                            disabled={pending || row.isDefault || row.isGlobal}
-                            onChange={(e) => toggleFlag(row, 'isShortcut', e.target.checked)}
-                          />
-                          Shortcut
-                        </label>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-fg-subtle">{parent?.code || '—'}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-3">
-                        <Link
-                          href={`/admin/settings/dimensions/${row.id}`}
-                          className="text-indigo-400 hover:underline"
-                        >
-                          Values
-                        </Link>
-                        <button
-                          type="button"
-                          disabled={pending}
-                          onClick={() => openEdit(row)}
-                          className="text-fg-muted hover:text-fg-strong"
-                          title="Edit"
-                        >
-                          <Edit2 className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          disabled={pending}
-                          onClick={() => handleDelete(row)}
-                          className="text-fg-muted hover:text-red-600"
-                          title="Delete"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+      <div className="max-w-sm">
+        <label htmlFor={`${uid}-search`} className="sr-only">
+          Search dimensions
+        </label>
+        <input id={`${uid}-search`} type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by code or name" className={fieldClass} autoComplete="off" />
       </div>
+      {list.phase === 'error' ? (
+        <p role="alert" className="text-sm text-red-700">
+          {list.error}{' '}
+          <button type="button" className={buttonClass} onClick={list.retry}>
+            Try again
+          </button>
+        </p>
+      ) : null}
+      {list.phase === 'loading' ? (
+        <p role="status" className="text-sm text-fg-muted">
+          Loading…
+        </p>
+      ) : null}
+
+      <ul className="space-y-2" aria-label="Dimensions">
+        {list.rows.map((row) => (
+          <li key={row.id} className="rounded-xl border border-line bg-surface-raised p-3 sm:p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-fg-strong">
+                  <span className="font-mono">{row.code}</span> · {row.name}
+                </p>
+                <p className="mt-1 flex flex-wrap gap-1.5 text-xs text-fg-muted">
+                  {row.dimensionNo === null ? null : <Chip tone="gray">No. {row.dimensionNo}</Chip>}
+                  {has(row.optionLabel) ? <Chip tone="sky">{row.optionLabel}</Chip> : null}
+                  {has(row.parentCode) ? <Chip tone="gray">Under {row.parentCode}</Chip> : null}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Link className={buttonClass} href={`/admin/settings/dimensions/${row.id}`} aria-label={`Values of ${row.code}`}>
+                  Values
+                </Link>
+                {may ? (
+                  <>
+                    <button type="button" className={buttonClass} onClick={() => edit(row)} disabled={busy} aria-label={`Edit ${row.code}`}>
+                      Edit
+                    </button>
+                    <InlineConfirm label={`Delete dimension ${row.code}`} action="Delete" confirm="Delete with its values" busy={busy} onConfirm={() => void remove(row)} />
+                  </>
+                ) : null}
+              </div>
+            </div>
+            <fieldset className="mt-3 flex flex-wrap gap-x-4 text-sm text-fg">
+              <legend className="sr-only">Flags of {row.code}</legend>
+              {FLAGS.map((f) => (
+                <label key={f.key} className="flex min-h-10 items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={row[f.key]}
+                    disabled={!may || busy || (f.key === 'isGlobal' && row.isDefault) || (f.key === 'isShortcut' && (row.isDefault || row.isGlobal))}
+                    onChange={(e) => void toggle(row, f.key, e.target.checked)}
+                  />
+                  {f.label}
+                </label>
+              ))}
+            </fieldset>
+          </li>
+        ))}
+      </ul>
+      {list.phase === 'idle' && list.rows.length === 0 ? <p className="text-sm text-fg-muted">{query.trim() === '' ? 'No dimensions yet.' : `No dimensions match “${query.trim()}”.`}</p> : null}
+      {list.cursor === null ? null : (
+        <button type="button" className={buttonClass} onClick={list.loadMore} disabled={list.phase === 'more'}>
+          {list.phase === 'more' ? 'Loading…' : 'Show more dimensions'}
+        </button>
+      )}
     </div>
   );
 }

@@ -4,12 +4,13 @@ import { useId } from 'react';
 import type { TriggerField } from '@/server/kernel/approvals/domain/triggers';
 import type { Comparison, ConditionNode } from '@/server/kernel/approvals/domain/types';
 import { buttonClass, fieldClass } from './shared';
+import { readText } from '@/lib/values';
 
-type Group = { op: 'and' | 'or'; children: ConditionNode[] };
+interface Group { op: 'and' | 'or'; children: ConditionNode[] }
 
 const isGroup = (n: ConditionNode): n is Group => n.op === 'and' || n.op === 'or';
 
-const OPS: Record<TriggerField['type'], Array<[Comparison['op'], string]>> = {
+const OPS: Record<TriggerField['type'], [Comparison['op'], string][]> = {
   number: [
     ['gt', 'is more than'],
     ['gte', 'is at least'],
@@ -205,7 +206,7 @@ function RowEditor({
     row.value !== null &&
     typeof row.value === 'object' &&
     !Array.isArray(row.value)
-      ? (row.value as { field: string }).field
+      ? (row.value).field
       : null;
 
   const changeField = (path: string) => {
@@ -230,7 +231,7 @@ function RowEditor({
           : field.type === 'number'
             ? 0
             : '';
-      onChange({ op, field: f, value: keep } as Comparison);
+      onChange({ op, field: f, value: keep });
     }
   };
 
@@ -312,7 +313,7 @@ function RowEditor({
       <input
         type={field.type === 'number' ? 'number' : 'text'}
         aria-label="Value"
-        value={String((row as { value: unknown }).value ?? '')}
+        value={readText((row as { value: unknown }).value, '')}
         onChange={(e) =>
           onChange({
             ...row,

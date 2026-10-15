@@ -1,9 +1,7 @@
 'use client';
 
 import { useId, useState } from 'react';
-import {
-  listPricingReasonsAction,
-  type PriceListFormInput,
+import { type PriceListFormInput,
   type PriceListView,
   type PricingLookups,
 } from '@/server/domains/pricing/actions';
@@ -247,7 +245,7 @@ export function PriceListForm({
         lookups={lookups}
         names={names}
       />
-      <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+      <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
       <Notice message={message} />
       <div className="flex flex-wrap gap-2">
         <button type="submit" className={primaryButtonClass} disabled={busy || !reason.code}>

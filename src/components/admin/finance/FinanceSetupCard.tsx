@@ -2,6 +2,7 @@
 
 import { useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { businessDate } from '@/server/kernel/numbering/business-date';
 import { applyTemplateAction } from '@/server/domains/finance/actions';
 import { Message, cardClass, fieldClass, primaryClass, type Notice, Field, attempt } from './ui';
 
@@ -18,11 +19,11 @@ export function FinanceSetupCard({ templates, canApply }: { templates: TemplateO
   const uid = useId();
   const router = useRouter();
   const [code, setCode] = useState(templates.find((t) => t.code === 'kenya')?.code ?? templates[0]?.code ?? '');
-  const [start, setStart] = useState(`${new Date().getUTCFullYear()}-01-01`);
+  const [start, setStart] = useState(`${businessDate().slice(0, 4)}-01-01`);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
 
-  const apply = async (e: React.FormEvent) => {
+  const apply = async (e: React.SyntheticEvent) => {
     e.preventDefault();
     setBusy(true);
     setNotice(null);
@@ -34,7 +35,7 @@ export function FinanceSetupCard({ templates, canApply }: { templates: TemplateO
   };
 
   return (
-    <form onSubmit={apply} className={`${cardClass} max-w-3xl space-y-4`} aria-label="Set up finance">
+    <form onSubmit={(e) => void apply(e)} className={`${cardClass} max-w-3xl space-y-4`} aria-label="Set up finance">
       <div>
         <h2 className="text-lg font-bold text-fg-strong">Set up your books</h2>
         <p className="mt-1 text-sm text-fg-muted">

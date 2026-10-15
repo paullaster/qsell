@@ -1,6 +1,5 @@
 
-import { has } from '@/lib/has';
-import { firstFilled, readText } from '@/lib/values';
+import { firstFilled, has, readText } from '@/lib/values';
 /**
  * Everything Daraja can do, described once. The forms on screen, the checks on what is typed, the
  * settings (which operations are on, how much each may move) and the permissions are all generated
@@ -98,7 +97,12 @@ export const DARAJA_OPERATIONS: Record<DarajaOperationCode, OperationInfo> = {
   bill_acknowledge: { code: 'bill_acknowledge', label: 'Bill Manager: acknowledge a payment', group: 'bills', description: 'Tells Bill Manager a payment was received, so the customer gets a receipt. Done by the system after a payment is confirmed.', async: false, moneyOut: false, needsInitiator: false, needsMethod: true, internal: true, fields: [] },
 };
 
-export const MONEY_OUT_OPERATIONS = (Object.values(DARAJA_OPERATIONS) as OperationInfo[]).filter((o) => o.moneyOut).map((o) => o.code);
+/** What is known about an operation named in stored data, which may be one this code no longer knows. */
+export function operationInfo(code: string): OperationInfo | undefined {
+  return Object.hasOwn(DARAJA_OPERATIONS, code) ? DARAJA_OPERATIONS[code as DarajaOperationCode] : undefined;
+}
+
+export const MONEY_OUT_OPERATIONS = Object.values(DARAJA_OPERATIONS).filter((o) => o.moneyOut).map((o) => o.code);
 
 /** Checks what was typed against the operation's own field list. Returns the cleaned input, or the first problem in words. */
 export function validateOperationInput(info: OperationInfo, raw: Record<string, unknown>): { ok: true; input: Record<string, unknown> } | { ok: false; error: string } {
@@ -110,8 +114,8 @@ export function validateOperationInput(info: OperationInfo, raw: Record<string, 
       if (f.required === true) return { ok: false, error: `${f.label} is required.` };
       continue;
     }
-    if (f.maxLength !== null && f.maxLength !== undefined && f.maxLength !== 0 && text.length > f.maxLength) return { ok: false, error: `${f.label} can be at most ${f.maxLength} characters.` };
-    if (f.minLength !== null && f.minLength !== undefined && f.minLength !== 0 && text.length < f.minLength) return { ok: false, error: `${f.label} needs at least ${f.minLength} characters.` };
+    if (f.maxLength !== undefined && f.maxLength !== 0 && text.length > f.maxLength) return { ok: false, error: `${f.label} can be at most ${f.maxLength} characters.` };
+    if (f.minLength !== undefined && f.minLength !== 0 && text.length < f.minLength) return { ok: false, error: `${f.label} needs at least ${f.minLength} characters.` };
     if (has(f.pattern) && !new RegExp(f.pattern).test(text)) return { ok: false, error: `${f.label} must be ${f.patternHint ?? 'in the right form'}.` };
     if (f.type === 'number') {
       const n = Number(text);

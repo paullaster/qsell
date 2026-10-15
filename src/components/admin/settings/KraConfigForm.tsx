@@ -193,7 +193,7 @@ export function KraConfigForm({
               id={id('pass')}
               type="password"
               autoComplete="new-password"
-              placeholder={saved?.hasPassword ? 'Saved — leave blank to keep' : ''}
+              placeholder={saved?.hasPassword === true ? 'Saved — leave blank to keep' : ''}
               value={form.password}
               onChange={(e) => set('password', e.target.value)}
               className={fieldClass}

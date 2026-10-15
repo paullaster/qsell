@@ -2,15 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { and, eq, sql } from 'drizzle-orm';
 
-import { has } from '@/lib/has';
-import { required } from '@/lib/values';
+import { has, isRecord, readText, required } from '@/lib/values';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
 import type { AppContainer } from '@/server/di/container';
 import type { FinanceServices } from './index';
 import type { CustomerMasterService } from '@/server/domains/customers/master-service';
-import type * as mod_errors from './errors';
-import type * as mod_server_domains_returns_return_receipt_service from '@/server/domains/returns/return-receipt-service';
 import type { FinanceContext } from './errors';
 import type { PolicyInput } from './receivables/credit-policy-service';
 
@@ -24,8 +21,6 @@ describe.skipIf(!has(url))('credit notes: accounting and returns (database)', ()
   let c: AppContainer;
   let fin: FinanceServices;
   let master: CustomerMasterService;
-  let FinanceError: typeof mod_errors.FinanceError;
-  let ReturnError: typeof mod_server_domains_returns_return_receipt_service.ReturnError;
   let companyId: string;
   let branchId: string;
   let productId: string;
@@ -43,7 +38,7 @@ describe.skipIf(!has(url))('credit notes: accounting and returns (database)', ()
       await p;
       return 'OK';
     } catch (e) {
-      if (e && typeof e === 'object' && 'code' in e) return String((e).code);
+      if (isRecord(e) && 'code' in e) return readText(e.code);
       return `OTHER:${(e as Error).message}`;
     }
   };
@@ -82,8 +77,6 @@ describe.skipIf(!has(url))('credit notes: accounting and returns (database)', ()
     process.env.DATA_ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString('base64');
     ({ drizzleDb: db } = await import('@/server/db/drizzle/client'));
     schema = await import('@/server/db/drizzle/schema');
-    ({ FinanceError } = await import('./errors'));
-    ({ ReturnError } = await import('@/server/domains/returns/return-receipt-service'));
     const { getContainer } = await import('@/server/di/container');
     c = getContainer();
     fin = c.finance;

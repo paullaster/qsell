@@ -1,8 +1,8 @@
 import { and, count, eq, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { branches, paymentAttempts, paymentMethods, paymentProviderConfigs } from '@/server/db/drizzle/schema';
-import { decryptCredentials, encryptCredentials, maskCredentials } from '@/server/domains/payments/crypto';
-import { darajaSettings } from '@/server/domains/payments/daraja/config';
+import { decryptCredentials, encryptCredentials, maskCredentials, stringFields } from '@/server/domains/payments/crypto';
+import { darajaSettings, type DarajaSettings } from '@/server/domains/payments/daraja/config';
 import { DARAJA_OPERATIONS } from '@/server/domains/payments/daraja/operations';
 import { ensureManualProvider } from '@/server/domains/payments/manual-provider';
 import type { PaymentConfigRepository } from '@/server/domains/payments/repository';
@@ -11,9 +11,7 @@ import { PAYMENT_PROVIDER_META, type PaymentProviderCode, type PaymentProviderEn
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { FinanceError, type FinanceContext } from './errors';
 
-import { has } from '@/lib/has';
-import { orElse } from '@/lib/values';
-import type { DarajaSettings } from '@/server/domains/payments/daraja/config';
+import { asRecord, has, isRecord, orElse } from '@/lib/values';
 import type { FieldSpec } from '@/server/domains/payments/daraja/catalog';
 
 export interface ProviderView {
@@ -51,6 +49,15 @@ const MANUAL_DESCRIPTION = 'For cash, cheques and bank deposits: no outside comp
  * credentials every payment method under it shares. They belong to the company. The branch, bank
  * account, G/L account and paybill or till number are chosen on each payment method.
  */
+/** The saved credentials as text fields; none when there are none, or they cannot be opened with the current key. */
+function openCredentials(blob: Parameters<typeof decryptCredentials>[0]): Record<string, string> {
+  try {
+    return stringFields(decryptCredentials(blob));
+  } catch {
+    return {};
+  }
+}
+
 export class PaymentProviderService {
   constructor(
     private readonly db: DrizzleDb,
@@ -61,7 +68,7 @@ export class PaymentProviderService {
 
   private async load(companyId: string, id: string) {
     const row = await this.configs.getById(id);
-    if (!row || row.companyId !== companyId) throw new FinanceError('NOT_FOUND', 'That provider does not exist.');
+    if (row?.companyId !== companyId) throw new FinanceError('NOT_FOUND', 'That provider does not exist.');
     return row;
   }
 
@@ -90,12 +97,7 @@ export class PaymentProviderService {
           masked = { _error: 'Saved credentials cannot be opened with the current key.' };
         }
       }
-      let creds: Record<string, string> = {};
-      try {
-        creds = (decryptCredentials(row.credentialsEncrypted) ?? {});
-      } catch {
-        creds = {};
-      }
+      const creds = openCredentials(row.credentialsEncrypted);
       const dj = row.providerCode === 'mpesa_daraja' ? darajaSettings(row.settings) : null;
       return {
         id: row.id,
@@ -130,7 +132,7 @@ export class PaymentProviderService {
 
   async create(ctx: FinanceContext, input: { providerCode: PaymentProviderCode; displayName?: string; environment?: PaymentProviderEnvironment; apiBaseUrl?: string }) {
     const meta = PAYMENT_PROVIDER_META[input.providerCode];
-    if (!meta) throw new FinanceError('SERVICE_UNKNOWN', 'Choose which service this provider connects to.');
+    if (!Object.hasOwn(PAYMENT_PROVIDER_META, input.providerCode)) throw new FinanceError('SERVICE_UNKNOWN', 'Choose which service this provider connects to.');
     const environment = input.environment ?? 'staging';
     const url = (orElse(input.apiBaseUrl?.trim(), environment === 'production' ? meta.defaultProductionBaseUrl : meta.defaultStagingBaseUrl)).replace(/\/$/, '');
     if (!/^https:\/\//i.test(url)) throw new FinanceError('URL_INVALID', 'The provider address must start with https://.');
@@ -164,8 +166,8 @@ export class PaymentProviderService {
     const row = await this.load(ctx.companyId, id);
     this.notSystem(row);
     const { darajaSettings } = await import('@/server/domains/payments/daraja/config');
-    const merged = { ...((row.settings ?? {})) };
-    for (const [k, v] of Object.entries(patch)) merged[k] = v && typeof v === 'object' && !Array.isArray(v) ? { ...((merged[k]) ?? {}), ...(v as Record<string, unknown>) } : v;
+    const merged: Record<string, unknown> = { ...row.settings };
+    for (const [k, v] of Object.entries(patch)) merged[k] = isRecord(v) ? { ...asRecord(merged[k]), ...v } : v;
     const clean = row.providerCode === 'mpesa_daraja' ? darajaSettings(merged) : (await import('@/server/domains/payments/engine/settings')).engineSettings(merged);
     for (const cidr of clean.security.allowedCidrs) {
       if (!/^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?$/.test(cidr)) throw new FinanceError('CIDR_INVALID', `"${cidr}" is not an address or range (use 1.2.3.4 or 1.2.3.0/24).`);

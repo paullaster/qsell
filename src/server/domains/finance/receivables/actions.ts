@@ -10,7 +10,7 @@ import type { PaymentMethodInput } from './payment-method-service';
 import type { AllocateMode, ReceiptInput, ReceiptListFilter } from './receipt-service';
 import { fromCents } from '../domain/receivables';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 const fin = () => getContainer().finance;
 const ROOT = '/admin/finance';

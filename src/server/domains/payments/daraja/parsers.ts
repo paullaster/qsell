@@ -2,8 +2,7 @@ import type { InboundClaim } from '../engine/types';
 import { maskPhone, phoneFingerprint } from '../engine/redact';
 import { toCentsLoose } from './security';
 
-import { has } from '@/lib/has';
-import { firstFilled, readText } from '@/lib/values';
+import { asRecord, firstFilled, has, readText, toList, trimToNull } from '@/lib/values';
 
 /** A payer number becomes a fingerprint and a masked form; one that Safaricom already masked has no fingerprint. */
 function payer(raw: string | null): { payerFingerprint: string | null; payerMasked: string | null } {
@@ -16,8 +15,17 @@ function payer(raw: string | null): { payerFingerprint: string | null; payerMask
  * Reading what Safaricom sends. Every function here is tolerant of what is missing and never
  * throws: the result says what the payload claims, and whether it could be read at all.
  */
-const rec = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
-const str = (v: unknown): string | null => (typeof v === 'string' && has(v.trim()) ? v.trim() : typeof v === 'number' && Number.isFinite(v) ? String(v) : null);
+const rec = asRecord;
+const str = (v: unknown): string | null => {
+  if (typeof v === 'string') return trimToNull(v);
+  return typeof v === 'number' && Number.isFinite(v) ? String(v) : null;
+};
+
+/** A value of a result parameter, kept as sent: objects written out, nothing as empty. */
+const valueText = (value: unknown): string => {
+  if (value === undefined || value === null) return '';
+  return typeof value === 'object' ? JSON.stringify(value) : readText(value);
+};
 
 function emptyClaim(kind: string): InboundClaim {
   return { kind, claimsSuccess: null, platformReference: null, conversationId: null, originatorId: null, requestIds: {}, amountCents: null, currency: 'KES', payerFingerprint: null, payerMasked: null, shortcode: null, accountReference: null, occurredAt: null, failureCode: null, failureReason: null, extra: {} };
@@ -35,12 +43,12 @@ export function parseDarajaTime(v: unknown): Date | null {
 export function resultParameters(result: Record<string, unknown>): Record<string, string> {
   const params = rec(result.ResultParameters);
   const list = params.ResultParameter;
-  const items = Array.isArray(list) ? list : list ? [list] : [];
+  const items = toList(list);
   const out: Record<string, string> = {};
   for (const item of items) {
     const r = rec(item);
     const k = str(r.Key);
-    if (has(k)) out[k] = r.Value === undefined || r.Value === null ? '' : typeof r.Value === 'object' ? JSON.stringify(r.Value) : readText(r.Value);
+    if (has(k)) out[k] = valueText(r.Value);
   }
   return out;
 }
@@ -48,7 +56,7 @@ export function resultParameters(result: Record<string, unknown>): Record<string
 export function referenceItems(result: Record<string, unknown>): Record<string, string> {
   const ref = rec(result.ReferenceData);
   const item = ref.ReferenceItem;
-  const items = Array.isArray(item) ? item : item ? [item] : [];
+  const items = toList(item);
   const out: Record<string, string> = {};
   for (const it of items) {
     const r = rec(it);
@@ -164,7 +172,7 @@ export function parseBillPayment(body: unknown): InboundClaim | null {
   Object.assign(claim, payer(str(b.msisdn)));
   claim.shortcode = str(b.shortCode);
   claim.accountReference = str(b.accountReference);
-  claim.occurredAt = b.dateCreated ? new Date(readText(b.dateCreated)) : null;
+  claim.occurredAt = has(readText(b.dateCreated)) ? new Date(readText(b.dateCreated)) : null;
   return claim;
 }
 

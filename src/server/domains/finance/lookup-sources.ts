@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { eq, sql, type SQL } from 'drizzle-orm';
 import { bankAccounts, customers, glAccounts, paymentMethods, reasonCodes } from '@/server/db/drizzle/schema';
 import { CHEQUE_STATUS, RECEIPT_STATUS, REFUND_STATUS, statusChoices } from '@/lib/finance-statuses';
 import { METHOD_KINDS, labelOf } from '@/lib/payment-options';
@@ -8,6 +8,7 @@ import { CREDIT_NOTE_REASONS } from '@/server/domains/credit-notes/reasons';
 import { reasonLabel } from '@/lib/credit-note-form';
 import type { PermissionKey } from '@/server/domains/access-control/permissions';
 import { getContainer } from '@/server/di/container';
+import { ACCOUNT_CATEGORIES, ACCOUNT_TYPES, CALENDAR_SHAPES, DIMENSION_RULES, NORMAL_BALANCES } from '@/lib/gl-options';
 import { BANK_KINDS } from '@/lib/bank-account-form';
 import { DATE_FORMATS } from '@/lib/statement-import-form';
 import { acceptFilters, LookupFilterError, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
@@ -246,7 +247,40 @@ const statementChargeAccounts = staticSource({
   },
 });
 
+/** Posting accounts of the chart, searched by number or name; what a ledger screen filters or posts by. */
+const glPostingAccounts = (key: string, permission: PermissionKey, extra: (companyId: string) => SQL[]) =>
+  tableSource({
+    key,
+    permission,
+    table: glAccounts,
+    id: glAccounts.id,
+    label: glAccounts.no,
+    searchColumns: [glAccounts.no, glAccounts.name],
+    select: { name: glAccounts.name, control: glAccounts.postingSource },
+    scope: ({ companyId, filters }) => {
+      acceptFilters(filters, {});
+      return [eq(glAccounts.companyId, companyId), eq(glAccounts.type, 'posting'), ...extra(companyId)];
+    },
+    toOption: (row) => ({
+      id: text(row.id),
+      label: `${text(row.label)} ${text(row.name)}`,
+      description: row.control === 'engine_only' ? 'Control account: posted by its sub-ledger only' : null,
+      badge: null,
+    }),
+  });
+
 export const FINANCE_LOOKUP_SOURCES: readonly LookupSource[] = [
+  fixedChoices('gl-account-types', 'gl_accounts:read', ACCOUNT_TYPES),
+  fixedChoices('gl-account-categories', 'gl_accounts:read', ACCOUNT_CATEGORIES),
+  fixedChoices('gl-normal-balances', 'gl_accounts:read', NORMAL_BALANCES),
+  fixedChoices('gl-dimension-rules', 'gl_accounts:read', DIMENSION_RULES),
+  fixedChoices('fiscal-calendar-shapes', 'fiscal_calendar:edit', CALENDAR_SHAPES),
+  glPostingAccounts('gl-accounts', 'gl_entries:read', () => []),
+  glPostingAccounts('journal-accounts', 'journals:edit_draft', () => [eq(glAccounts.blocked, false)]),
+  glPostingAccounts('setup-gl-accounts', 'posting_setup:edit', () => [eq(glAccounts.blocked, false)]),
+  glPostingAccounts('liability-gl-accounts', 'finance_settings:edit', () => [eq(glAccounts.blocked, false), eq(glAccounts.category, 'liabilities')]),
+  glPostingAccounts('equity-gl-accounts', 'sales_gl_go_live:set', () => [eq(glAccounts.blocked, false), eq(glAccounts.category, 'equity')]),
+  reasons('register-reasons', 'ledger_entries:reverse'),
   customerSource('receipt-customers', 'receipts:create'),
   customerSource('refund-customers', 'refunds:create'),
   customerSource('statement-customers', 'bank_statements:create_receipt'),

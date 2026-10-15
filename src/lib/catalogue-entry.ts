@@ -1,8 +1,7 @@
 import type { Product } from '@/types/index';
 import type { CatalogueEntry } from '@/lib/quote-layout';
 
-import { has } from '@/lib/has';
-import { orElse } from '@/lib/values';
+import { has, orElse } from '@/lib/values';
 
 /**
  * What the quote and template editors need to know about a product. The full record carries
@@ -117,13 +116,8 @@ export interface BulkProblem {
 const HEADER = new Set(['sku', 'code', 'stock code', 'stockcode', 'item', 'item code', 'product']);
 
 const cells = (line: string): string[] => {
-  const parts = line.includes('\t')
-    ? line.split('\t')
-    : line.includes(',')
-      ? line.split(',')
-      : line.includes(';')
-        ? line.split(';')
-        : line.trim().split(/\s+/);
+  const separator = ['\t', ',', ';'].find((s) => line.includes(s));
+  const parts = separator === undefined ? line.trim().split(/\s+/) : line.split(separator);
   return parts.map((c) =>
     c
       .trim()
@@ -151,8 +145,7 @@ export function parseBulkList(
   const lines = text.split(/\r?\n/);
   let seenData = false;
   let truncated = false;
-  for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i]!;
+  for (const [i, raw] of lines.entries()) {
     if (raw.trim() === '') continue;
     const [code = '', quantity = '', price = '', discount = ''] = cells(raw);
     if (!seenData) {

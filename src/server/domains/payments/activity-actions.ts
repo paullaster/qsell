@@ -4,10 +4,10 @@ import { canPermission } from '@/server/domains/access-control/guard';
 import { getContainer } from '@/server/di/container';
 import { run } from '@/server/domains/finance/action-runner';
 import { FinanceError } from '@/server/domains/finance/errors';
-import { DARAJA_OPERATIONS, validateOperationInput } from './daraja/catalog';
+import { operationInfo, validateOperationInput } from './daraja/catalog';
 import { OperationRefused, type DarajaOperationCode } from './daraja/operations';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 const engine = () => getContainer().paymentEngine;
 const PAGE = '/admin/payments/activity';
@@ -59,10 +59,9 @@ export async function recheckPaymentAction(attemptId: string) {
 }
 
 export async function confirmPaymentAction(attemptId: string, reference: string, reason: string) {
-  return await run('payments:confirm_unverified', { surface: 'payments/activity', action: 'confirm_payment' }, async (ctx, userId) => {
+  return await run('payments:confirm_unverified', { surface: 'payments/activity', action: 'confirm_payment' }, async (_ctx, userId) => {
     const r = await engine().confirmAttemptManually({ attemptId, reference, reason, userId });
     if (!r.ok) throw new FinanceError('CANNOT_CONFIRM', r.error);
-    ctx;
   }, [PAGE]);
 }
 
@@ -96,8 +95,8 @@ export async function setAsidePaymentAction(transactionId: string, reason: strin
 export async function runProviderOperationAction(input: { providerId: string; operation: DarajaOperationCode; methodId?: string; input: Record<string, unknown> }) {
   return await run('payment_operations:run', { surface: 'settings/payments', action: `operation_${input.operation}` }, async (ctx, userId) => {
     try {
-      const info = DARAJA_OPERATIONS[input.operation];
-      if (!info || info.internal === true) throw new OperationRefused('NOT_A_FORM', `${input.operation} is not something to run by hand.`);
+      const info = operationInfo(input.operation);
+      if (info === undefined || info.internal === true) throw new OperationRefused('NOT_A_FORM', `${input.operation} is not something to run by hand.`);
       const checked = validateOperationInput(info, input.input);
       if (!checked.ok) throw new OperationRefused('INVALID_INPUT', checked.error);
       const { op } = await engine().daraja.start({ providerId: input.providerId, methodId: input.methodId ?? null, operation: input.operation, input: checked.input, requestedBy: userId, origin: ctx.origin });

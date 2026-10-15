@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { listPricingReasonsAction, searchProductsAction } from '@/server/domains/pricing/actions';
+import { searchProductsAction } from '@/server/domains/pricing/actions';
 import {
   addProductGroupMembersAction,
   productGroupMembersAction,
@@ -137,7 +137,7 @@ export function ProductGroupsClient({
               In use
             </label>
           </div>
-          <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
           <div className="flex flex-wrap gap-2">
             <button type="submit" className={primaryButtonClass} disabled={busy || !reason.code}>
               {busy ? 'Saving…' : 'Save group'}
@@ -332,7 +332,7 @@ function Members({
               Add these products
             </button>
           </div>
-          <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
         </>
       ) : null}
       <Notice message={message} />

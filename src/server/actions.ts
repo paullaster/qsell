@@ -81,9 +81,8 @@ export {
 } from '@/server/domains/payments/actions';
 
 export {
-  listDimensionsAction,
-  listDimensionValuesAction,
-  listDimensionOptionStringsAction,
+  dimensionsPageAction,
+  dimensionValuesPageAction,
   listDimensionFieldContractAction,
   createDimensionAction,
   updateDimensionAction,

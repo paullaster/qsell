@@ -55,7 +55,7 @@ export class KraConfigRepository implements KraConfigReader {
   }
 
   async listBranchConfigs(): Promise<BranchKraConfigRow[]> {
-    return this.db.select().from(branchKraConfigs);
+    return await this.db.select().from(branchKraConfigs);
   }
 
   async upsertCompanyConfig(

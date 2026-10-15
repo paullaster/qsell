@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 
-import { has } from '@/lib/has';
-import { required } from '@/lib/values';
+import { has, isRecord, readText, required } from '@/lib/values';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
 import type { FinanceServices } from './index';
@@ -34,7 +33,7 @@ describe.skipIf(!has(url))('bank statements (database)', () => {
       await p;
       return 'OK';
     } catch (e) {
-      if (e && typeof e === 'object' && 'code' in e) return String((e).code);
+      if (isRecord(e) && 'code' in e) return readText(e.code);
       return `OTHER:${(e as Error).message}`;
     }
   };
@@ -157,7 +156,7 @@ describe.skipIf(!has(url))('bank statements (database)', () => {
   describe('matching', () => {
     it('a line quoting our receipt reference is matched on import; a same-amount line without it is only suggested', async () => {
       const f = await fresh('auto');
-      const r1 = await receipt(f, '1500', day(3), 'MPS1ABC2D3');
+      await receipt(f, '1500', day(3), 'MPS1ABC2D3');
       const r2 = await receipt(f, '700', day(2), 'MPS9ZZZ9ZZ');
       const imp = await importCsv(f.account.id, [
         [dmy(day(2)), 'Funds received MPS1ABC2D3 JANE', 'MPS1ABC2D3', '1500.00', '', '1500.00'],
@@ -167,7 +166,6 @@ describe.skipIf(!has(url))('bank statements (database)', () => {
       const [a, b] = await lines(f.account.id);
       expect(a).toMatchObject({ status: 'matched', matchRule: 'auto:reference' });
       expect(b).toMatchObject({ status: 'proposed', matchRule: 'amount_date', proposedEntryIds: [r2.entry.id] });
-      r1;
       // a human confirms the suggestion
       await fin.bankStatements.matchLine(ctx, b.id, [r2.entry.id]);
       expect((await lines(f.account.id))[1].status).toBe('matched');
@@ -285,9 +283,9 @@ describe.skipIf(!has(url))('bank statements (database)', () => {
       const [, mystery] = await lines(f.account.id);
       await fin.bankStatements.ignoreLine(ctx, mystery.id, { code: 'OTHER', text: 'bank error, reversed next week' });
       expect(await codeOf(fin.bankReconciliation.post(ctx, { ...base, openingBalance: undefined }))).toBe('OPENING_REQUIRED');
-      const wrong = await fin.bankReconciliation.post(ctx, { ...base, statementBalance: '1030.00' }).catch((e: Error & { code?: string }) => e);
-      expect((wrong as { code: string }).code).toBe('DIFFERENCE');
-      expect((wrong as Error).message).toMatch(/difference is -10\.00/);
+      const wrong = await fin.bankReconciliation.post(ctx, { ...base, statementBalance: '1030.00' }).catch((e: unknown) => e);
+      expect(isRecord(wrong) ? wrong.code : undefined).toBe('DIFFERENCE');
+      expect(wrong instanceof Error ? wrong.message : '').toMatch(/difference is -10\.00/);
       expect(await codeOf(fin.bankReconciliation.post(ctx, { ...base, statementDate: day(-1) }))).toBe('DATE_INVALID');
     });
 
@@ -344,7 +342,7 @@ describe.skipIf(!has(url))('bank statements (database)', () => {
         id: refundId, companyId, number: `RFD-ST-${run}`, customerId: c.id, sourceKind: 'credit_note_excess', sourceId: randomUUID(), currency: 'KES', amount: '580', reasonCode: 'CUSTOMER_REQUEST',
         paymentMethodId: f.method.id, payoutDetails: {}, requestedBy: 'tester', status: 'paid', payoutReference: 'RFDPAY777', paidAt: new Date(),
       });
-      const [entry] = await db.insert(schema.bankLedgerEntries).values({ companyId, bankAccountId: f.account.id, postingDate: day(2), glAccountId: glBank, documentType: 'refund', documentNo: `RFD-ST-${run}`, documentId: refundId, description: 'Refund', amount: '-580', currency: 'KES' }).returning();
+      await db.insert(schema.bankLedgerEntries).values({ companyId, bankAccountId: f.account.id, postingDate: day(2), glAccountId: glBank, documentType: 'refund', documentNo: `RFD-ST-${run}`, documentId: refundId, description: 'Refund', amount: '-580', currency: 'KES' }).returning();
       const imp = await importCsv(f.account.id, [[dmy(day(1)), 'Paid out RFDPAY777 to customer', 'RFDPAY777', '', '580.00', '']]);
       expect(imp.autoMatched).toBe(1);
       const seen = async () => (await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, refundId)))[0].bankMatchedAt;
@@ -354,7 +352,6 @@ describe.skipIf(!has(url))('bank statements (database)', () => {
       expect(await seen()).toBeNull();
       const ev = await db.select().from(schema.refundEvents).where(eq(schema.refundEvents.refundId, refundId));
       expect(ev.map((x) => x.event)).toEqual(['bank_matched', 'bank_unmatched']);
-      entry;
     });
   });
 
@@ -373,7 +370,6 @@ describe.skipIf(!has(url))('bank statements (database)', () => {
       expect(gl.reduce((n, x) => n + Number(x.credit), 0)).toBe(150);
       expect(gl.find((x) => x.accountId === glFee && Number(x.debit) === 150)).toBeTruthy();
       expect((await fin.salesPosting.reconciliation(companyId)).rows.map((r) => r.diffCents)).toEqual([0]);
-      sql;
     });
   });
 });

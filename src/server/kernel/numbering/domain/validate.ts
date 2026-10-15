@@ -2,6 +2,8 @@ import { validateTemplate } from './template';
 import { isIsoDate } from './period';
 import { MAX_DIGITS, type Issue, type LineConfig, type SeriesMode } from './types';
 
+import { has } from '@/lib/values';
+
 export interface SeriesRules {
   mode: SeriesMode;
   dateOrder: boolean;
@@ -21,7 +23,7 @@ export function validateLine(line: Omit<LineConfig, 'id' | 'lineNo'>, rules: Ser
   }
   for (const field of ['prefix', 'suffix'] as const) {
     const problem = validateTemplate(line[field]);
-    if (problem) add(field, problem);
+    if (has(problem)) add(field, problem);
   }
   if (!Number.isInteger(line.digits) || line.digits < 1 || line.digits > MAX_DIGITS) {
     add('digits', `Digits must be between 1 and ${MAX_DIGITS}.`);

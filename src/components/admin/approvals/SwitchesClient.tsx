@@ -2,9 +2,7 @@
 
 import { useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  listConfigReasonsAction,
-  setSwitchAction,
+import { setSwitchAction,
   type Lookups,
   type SwitchView,
 } from '@/server/kernel/approvals/actions';
@@ -21,6 +19,8 @@ import {
   primaryButtonClass,
   type Message,
 } from './shared';
+
+import { emptyToNull, has } from '@/lib/values';
 
 const modules = [...new Set(TRIGGERS.map((t) => t.module))];
 
@@ -49,7 +49,7 @@ export function SwitchesClient({
   });
 
   const effective = (module: string, trigger: string | null) => {
-    const t = trigger ? explicit(switches, module, trigger) : undefined;
+    const t = has(trigger) ? explicit(switches, module, trigger) : undefined;
     if (t) return { on: t.enabled, inherited: false };
     const m = explicit(switches, module, null);
     if (m) return { on: m.enabled, inherited: trigger !== null };
@@ -62,7 +62,7 @@ export function SwitchesClient({
     setMessage(null);
     const res = await setSwitchAction(pending, reason);
     setBusy(false);
-    if (!res.ok) return setMessage({ kind: 'error', text: res.error });
+    if (!res.ok) { setMessage({ kind: 'error', text: res.error }); return; }
     setPending(null);
     setReason({ code: '', text: '' });
     setMessage({
@@ -100,12 +100,12 @@ export function SwitchesClient({
         >
           <p className="text-sm font-semibold text-fg-strong">
             Turn approvals {pending.enabled ? 'on' : 'off'} for{' '}
-            {pending.trigger
+            {has(pending.trigger)
               ? TRIGGERS.find((t) => t.code === pending.trigger)?.label
               : `all of ${MODULE_LABELS[pending.module] ?? pending.module}`}
-            {pending.branchId ? ` at ${branchName(pending.branchId)}` : ''}?
+            {has(pending.branchId) ? ` at ${branchName(pending.branchId)}` : ''}?
           </p>
-          <ReasonField value={reason} onChange={setReason} load={listConfigReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="approval-config-reasons" />
           <div className="flex gap-2">
             <button
               type="submit"
@@ -179,7 +179,7 @@ export function SwitchesClient({
             {branchSwitches.map((s, i) => (
               <li key={i} className="text-sm text-fg">
                 {branchName(s.branchId)}:{' '}
-                {s.trigger
+                {has(s.trigger)
                   ? TRIGGERS.find((t) => t.code === s.trigger)?.label
                   : (MODULE_LABELS[s.module] ?? s.module)}{' '}
                 <Chip tone={s.enabled ? 'green' : 'grey'}>{s.enabled ? 'On' : 'Off'}</Chip>
@@ -194,7 +194,7 @@ export function SwitchesClient({
               e.preventDefault();
               setPending({
                 module: override.module,
-                trigger: override.trigger || null,
+                trigger: emptyToNull(override.trigger),
                 branchId: override.branchId,
                 enabled: override.enabled,
               });

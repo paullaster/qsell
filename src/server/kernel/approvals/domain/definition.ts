@@ -2,6 +2,8 @@ import { fieldsUsed } from './conditions';
 import { triggerByCode } from './triggers';
 import type { ConditionNode, WorkflowDefinition } from './types';
 
+import { has } from '@/lib/values';
+
 export interface DefinitionIssue {
   path: string;
   message: string;
@@ -51,15 +53,15 @@ export function validateDefinition(trigger: string, def: WorkflowDefinition): De
       issues.push({ path: at, message: `Two steps share the order ${step.sequence}.` });
     }
     seen.add(step.sequence);
-    if (!step.name?.trim()) issues.push({ path: at, message: 'Name the step.' });
+    if (!has(step.name?.trim())) issues.push({ path: at, message: 'Name the step.' });
     if (step.dueAfterHours !== undefined && !(step.dueAfterHours > 0)) {
       issues.push({ path: at, message: 'The due time must be above zero hours.' });
     }
     const a = step.approver;
     if (!a) issues.push({ path: at, message: 'Choose who approves this step.' });
-    else if (a.type === 'user' && !a.userId)
+    else if (a.type === 'user' && !has(a.userId))
       issues.push({ path: at, message: 'Choose the approving user.' });
-    else if (a.type === 'group' && !a.groupId)
+    else if (a.type === 'group' && !has(a.groupId))
       issues.push({ path: at, message: 'Choose the approver group.' });
     else if (
       a.type === 'group' &&
@@ -67,7 +69,7 @@ export function validateDefinition(trigger: string, def: WorkflowDefinition): De
       !(Number.isInteger(a.count) && a.count! >= 1)
     )
       issues.push({ path: at, message: 'Say how many members must approve (at least 1).' });
-    else if (a.type === 'role' && !a.roleKey)
+    else if (a.type === 'role' && !has(a.roleKey))
       issues.push({ path: at, message: 'Choose the role.' });
     else if (
       !['user', 'group', 'role', 'owner_approver', 'chain_by_limit', 'first_qualified'].includes(

@@ -1,4 +1,4 @@
-import { and, asc, eq, ilike, or, sql } from 'drizzle-orm';
+import { and, asc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   businessPostingGroups,
@@ -16,7 +16,7 @@ import { findTemplate } from './domain/templates';
 import { FinanceError, type FinanceContext } from './errors';
 import type { FiscalService } from './fiscal-service';
 
-import { has } from '@/lib/has';
+import { has, required } from '@/lib/values';
 
 export interface AccountInput {
   no: string;
@@ -86,6 +86,39 @@ export class FinanceSetupService {
     return rows.sort((a, b) => compareAccountNo(a.no, b.no));
   }
 
+  /**
+   * One page of the chart in account-number order (digits compare as numbers), optionally narrowed
+   * by text, for a screen that never holds the whole chart. `after` is the last row's sort key and id.
+   */
+  async accountsPage(companyId: string, opts: { query?: string; after?: { k: string; id: string } | null; limit?: number }) {
+    const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+    const key = sql<string>`(CASE WHEN ${glAccounts.no} ~ '^[0-9]+$' THEN lpad(${glAccounts.no}, 40, '0') ELSE ${glAccounts.no} END)`;
+    const q = opts.query?.trim() ?? '';
+    const pattern = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    const rows = await this.db
+      .select({ account: glAccounts, sortKey: key })
+      .from(glAccounts)
+      .where(
+        and(
+          eq(glAccounts.companyId, companyId),
+          q === '' ? undefined : or(ilike(glAccounts.no, pattern), ilike(glAccounts.name, pattern)),
+          opts.after ? sql`(${key}, ${glAccounts.id}) > (${opts.after.k}, ${opts.after.id}::uuid)` : undefined,
+        ),
+      )
+      .orderBy(asc(key), asc(glAccounts.id))
+      .limit(limit + 1);
+    const page = rows.slice(0, limit);
+    const last = page.at(-1);
+    return { rows: page.map((r) => r.account), next: rows.length > limit && last ? { k: last.sortKey, id: last.account.id } : null };
+  }
+
+  /** The number and name of the accounts with these ids, by id. */
+  async accountLabels(companyId: string, ids: string[]): Promise<Record<string, string>> {
+    if (ids.length === 0) return {};
+    const rows = await this.db.select({ id: glAccounts.id, no: glAccounts.no, name: glAccounts.name }).from(glAccounts).where(and(eq(glAccounts.companyId, companyId), inArray(glAccounts.id, ids)));
+    return Object.fromEntries(rows.map((r) => [r.id, `${r.no} ${r.name}`]));
+  }
+
   async getAccount(companyId: string, id: string) {
     const [row] = await this.db
       .select()
@@ -97,7 +130,7 @@ export class FinanceSetupService {
   private check(input: AccountInput) {
     if (input.no.trim() === '') throw new FinanceError('NO_REQUIRED', 'The account needs a number.');
     if (input.name.trim() === '') throw new FinanceError('NAME_REQUIRED', 'The account needs a name.');
-    if (input.type === 'posting' && !input.category) {
+    if (input.type === 'posting' && !has(input.category)) {
       throw new FinanceError('CATEGORY_REQUIRED', 'A posting account needs a category.');
     }
     if ((input.type === 'total' || input.type === 'end_total') && !has(input.totaling)) {
@@ -333,8 +366,8 @@ export class FinanceSetupService {
       await tx.insert(generalPostingSetup).values(
         template.generalSetup.map((r) => ({
           companyId: ctx.companyId,
-          businessGroupId: bizId.get(r.business)!,
-          productGroupId: prodId.get(r.product)!,
+          businessGroupId: required(bizId.get(r.business), `business group ${r.business}`),
+          productGroupId: required(prodId.get(r.product), `product group ${r.product}`),
           effectiveFrom: '2000-01-01',
           salesAccountId: acct(r.sales),
           salesReturnsAccountId: acct(r.salesReturns),

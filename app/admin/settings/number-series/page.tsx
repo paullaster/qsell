@@ -1,14 +1,14 @@
-import { listNumberSeriesAction } from '@/server/kernel/numbering/actions';
+import { numberSeriesPageAction } from '@/server/kernel/numbering/actions';
+import { canPermission } from '@/server/domains/access-control/guard';
 import { NumberSeriesListClient } from '@/components/admin/settings/numbering/NumberSeriesListClient';
+import { SettingsFrame } from '@/components/admin/settings/frame';
 
-export default async function AdminNumberSeriesPage() {
-  const result = await listNumberSeriesAction();
-  if (!result.ok) {
-    return (
-      <p role="alert" className="text-sm text-red-700">
-        {result.error}
-      </p>
-    );
-  }
-  return <NumberSeriesListClient series={result.data} />;
+export default function AdminNumberSeriesPage() {
+  const firstPage = numberSeriesPageAction({});
+  const canManage = canPermission('numbering:manage');
+  return (
+    <SettingsFrame label="number series">
+      <NumberSeriesListClient firstPage={firstPage} canManage={canManage} />
+    </SettingsFrame>
+  );
 }

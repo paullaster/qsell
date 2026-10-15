@@ -1,8 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { and, eq, sql } from 'drizzle-orm';
 
-import { has } from '@/lib/has';
-import { required } from '@/lib/values';
+import { has, isRecord, required } from '@/lib/values';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
 import type { FinanceServices } from './index';
@@ -106,7 +105,7 @@ describe.skipIf(!has(url))('sales posting (database)', () => {
     const broken = await fin.salesPosting.readiness(companyId);
     expect(broken.find((c) => c.key === 'tax')).toMatchObject({ ok: false });
     await fin.salesPosting.setOutputTaxAccount(ctx, acct['2310']);
-    expect(await fin.salesPosting.setOutputTaxAccount(ctx, acct['6200']).catch((e: Error) => e.message)).toMatch(/liability/);
+    expect(await fin.salesPosting.setOutputTaxAccount(ctx, acct['6200']).catch((e: unknown) => (e instanceof Error ? e.message : ''))).toMatch(/liability/);
   });
 
   it('go-live brings in what customers owe, once, and the books agree with the accounts', async () => {
@@ -114,10 +113,10 @@ describe.skipIf(!has(url))('sales posting (database)', () => {
     const owing = await customer('credit');
     await fin.customerLedger.addEntry(db, { companyId, customerId: owing.id, documentType: 'invoice', documentNo: `OLD-${run}`, amountCents: 250000, currency: 'KES', postingDate: '2026-09-01' });
     await db.update(schema.customers).set({ balance: '2500.00' }).where(eq(schema.customers.id, owing.id));
-    expect(await fin.salesPosting.goLive(ctx, { offsetAccountId: acct['6200'] }).catch((e: Error) => e.message)).toMatch(/not an equity/);
+    expect(await fin.salesPosting.goLive(ctx, { offsetAccountId: acct['6200'] }).catch((e: unknown) => (e instanceof Error ? e.message : ''))).toMatch(/not an equity/);
     const out = await fin.salesPosting.goLive(ctx, { offsetAccountId: acct['3100'] });
     expect(out.opening).toEqual([{ group: 'DOMESTIC', amount: '3500.00' }]); // 1000 from the first test + 2500
-    expect(await fin.salesPosting.goLive(ctx, { offsetAccountId: acct['3100'] }).catch((e: { code?: string }) => e.code)).toBe('ALREADY_LIVE');
+    expect(await fin.salesPosting.goLive(ctx, { offsetAccountId: acct['3100'] }).catch((e: unknown) => (isRecord(e) ? e.code : undefined))).toBe('ALREADY_LIVE');
     expect(await reconcile()).toEqual([0]);
   });
 
@@ -178,7 +177,7 @@ describe.skipIf(!has(url))('sales posting (database)', () => {
     const [waiting] = (await rows('invoice')).filter((r) => r.subjectId === o.id);
     expect(waiting).toMatchObject({ status: 'failed' });
     expect(waiting.lastError).toMatch(/service_charge/);
-    expect(await fin.salesPosting.backlog(companyId)).toMatchObject({ failed: expect.any(Number) });
+    expect(await fin.salesPosting.backlog(companyId)).toMatchObject({ failed: expect.any(Number) as unknown });
     await fin.salesPosting.saveCustomerGroupAccounts(ctx, 'DOMESTIC', { service_charge: acct['4400'] });
     const r2 = await fin.salesPosting.retry(ctx, waiting.id);
     expect(r2.posted).toBeGreaterThanOrEqual(1);

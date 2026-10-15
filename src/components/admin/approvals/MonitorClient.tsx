@@ -3,9 +3,7 @@
 import { useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  adminCancelRequestAction,
-  listConfigReasonsAction,
-  rerouteEntryAction,
+  adminCancelRequestAction, rerouteEntryAction,
   sweepOverdueNowAction,
   type Lookups,
   type PendingRequest,
@@ -27,6 +25,8 @@ import {
   type Message,
 } from './shared';
 
+import { has } from '@/lib/values';
+
 export function MonitorClient({
   requests,
   people,
@@ -46,7 +46,7 @@ export function MonitorClient({
     setMessage(null);
     const res = await sweepOverdueNowAction();
     setSweeping(false);
-    if (!res.ok) return setMessage({ kind: 'error', text: res.error });
+    if (!res.ok) { setMessage({ kind: 'error', text: res.error }); return; }
     const { escalated, stuck } = res.data;
     setMessage({
       kind: 'ok',
@@ -131,7 +131,7 @@ function Row({
     setError(null);
     const res = await adminCancelRequestAction(r.submissionId, reason);
     setBusy(false);
-    if (!res.ok) return setError({ kind: 'error', text: res.error });
+    if (!res.ok) { setError({ kind: 'error', text: res.error }); return; }
     onDone('The request was withdrawn.');
   };
 
@@ -145,7 +145,7 @@ function Row({
           </p>
           <p className="mt-2 text-sm text-fg">
             {money(r.amount)} · from {r.requestedByName}
-            {r.oldestWaitingSince ? (
+            {has(r.oldestWaitingSince) ? (
               <>
                 {' '}
                 · waiting <When iso={r.oldestWaitingSince} />
@@ -227,7 +227,7 @@ function EntryLine({
     setError(null);
     const res = await rerouteEntryAction(entry.entryId, to, reason);
     setBusy(false);
-    if (!res.ok) return setError({ kind: 'error', text: res.error });
+    if (!res.ok) { setError({ kind: 'error', text: res.error }); return; }
     setOpen(false);
     onDone(`Rerouted from ${entry.approverName}.`);
   };
@@ -273,7 +273,7 @@ function EntryLine({
               ))}
             </select>
           </div>
-          <ReasonField value={reason} onChange={setReason} load={listConfigReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="approval-config-reasons" />
           <Notice message={error} />
           <div className="flex gap-2">
             <button

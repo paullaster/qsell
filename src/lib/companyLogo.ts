@@ -1,5 +1,5 @@
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 /** Route logos through the runtime file handler, not Next's build-time public manifest. */
 export function resolveCompanyLogoUrl(logoUrl?: string | null): string | null {
   if (!has(logoUrl)) return null;

@@ -1,6 +1,6 @@
 import { fromCents } from './receivables';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 /** The "refund or wallet" rules in force for a customer, as plain data. */
 export interface CreditPolicy {

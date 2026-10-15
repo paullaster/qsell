@@ -1,16 +1,12 @@
 import { salesPostingOverviewAction } from '@/server/domains/finance/sales-actions';
 import { SalesPostingClient } from '@/components/admin/finance/SalesPostingClient';
-import { FinanceGate } from '@/components/admin/finance/gate';
-import { LoadFailed } from '@/components/admin/finance/ui';
+import { FinancePage } from '@/components/admin/finance/gate';
 
-export default async function AdminSalesPostingPage() {
+export default function Page() {
+  const view = salesPostingOverviewAction();
   return (
-    <FinanceGate>
-      {async () => {
-        const res = await salesPostingOverviewAction();
-        if (!res.ok) return <LoadFailed error={res.error} />;
-        return <SalesPostingClient view={res.data} />;
-      }}
-    </FinanceGate>
+    <FinancePage label="sales posting">
+      <SalesPostingClient viewPromise={view} />
+    </FinancePage>
   );
 }

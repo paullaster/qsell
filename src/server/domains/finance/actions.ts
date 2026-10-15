@@ -1,6 +1,7 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
+import { decodeCursor, encodeCursor } from '@/server/domains/lookups/request';
+
 import { canPermission } from '@/server/domains/access-control/guard';
 import type { PermissionKey } from '@/server/domains/access-control/permissions';
 import { getContainer } from '@/server/di/container';
@@ -13,7 +14,7 @@ import { FinanceError } from './errors';
 import type { AccountInput } from './setup-service';
 import type { LineInput } from './journal-service';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 const fin = () => getContainer().finance;
 const ROOT = '/admin/finance';
@@ -70,28 +71,33 @@ export async function updateFinanceSettingsAction(input: { postingFrom: string |
   );
 }
 
-export async function listAccountsAction(q?: string) {
-  return run('gl_accounts:read', { surface: 'finance/chart-of-accounts', action: 'list' }, async (ctx) => {
-    const rows = await fin().setup.listAccounts(ctx.companyId, q);
-    return rows.map((a) => ({
-      id: a.id,
-      no: a.no,
-      name: a.name,
-      type: a.type,
-      category: a.category,
-      normalBalance: a.normalBalance,
-      directPosting: a.directPosting,
-      postingSource: a.postingSource,
-      blocked: a.blocked,
-      currencyPolicy: a.currencyPolicy,
-      dimensionRule: a.dimensionRule,
-      totaling: a.totaling,
-      indent: a.indent,
-      used: a.usedAt !== null,
-    }));
+/** One page of the chart, in account-number order, optionally narrowed by text. */
+export async function listAccountsPageAction(input: { query?: string; cursor?: string | null }) {
+  return await run('gl_accounts:read', { surface: 'finance/chart-of-accounts', action: 'list' }, async (ctx) => {
+    const after = typeof input.cursor === 'string' && input.cursor !== '' ? decodeCursor(input.cursor) : null;
+    const page = await fin().setup.accountsPage(ctx.companyId, { query: typeof input.query === 'string' ? input.query.slice(0, 100) : '', after });
+    return {
+      rows: page.rows.map((a) => ({
+        id: a.id,
+        no: a.no,
+        name: a.name,
+        type: a.type,
+        category: a.category,
+        normalBalance: a.normalBalance,
+        directPosting: a.directPosting,
+        postingSource: a.postingSource,
+        blocked: a.blocked,
+        currencyPolicy: a.currencyPolicy,
+        dimensionRule: a.dimensionRule,
+        totaling: a.totaling,
+        indent: a.indent,
+        used: a.usedAt !== null,
+      })),
+      nextCursor: page.next === null ? null : encodeCursor(page.next),
+    };
   });
 }
-export type AccountView = Extract<Awaited<ReturnType<typeof listAccountsAction>>, { ok: true }>['data'][number];
+export type AccountView = Extract<Awaited<ReturnType<typeof listAccountsPageAction>>, { ok: true }>['data']['rows'][number];
 
 export async function createAccountAction(input: AccountInput) {
   return run('gl_accounts:create', { surface: 'finance/chart-of-accounts', action: 'create_account' }, async (ctx) => {
@@ -174,10 +180,12 @@ export async function setPeriodStatusAction(periodId: string, to: PeriodStatus, 
 
 export async function postingSetupAction() {
   return run('posting_setup:read', { surface: 'finance/posting-setup', action: 'view' }, async (ctx) => {
-    const [ov, accounts] = await Promise.all([
-      fin().postingSetup.overview(ctx.companyId),
-      fin().setup.listAccounts(ctx.companyId),
-    ]);
+    const ov = await fin().postingSetup.overview(ctx.companyId);
+    // Only the accounts the setup names are looked up; the rest are searched for when one is chosen.
+    const named = new Set<string>();
+    for (const g of ov.general) for (const id of [g.salesAccountId, g.salesReturnsAccountId, g.salesDiscountAccountId, g.cogsAccountId, g.inventoryAdjustmentAccountId]) if (id !== null) named.add(id);
+    for (const c of ov.customer) for (const id of [c.receivablesAccountId, c.customerDepositsAccountId, c.refundsPayableAccountId, c.paymentDiscountAccountId, c.writeOffAccountId, c.roundingAccountId, c.fxGainAccountId, c.fxLossAccountId, c.serviceChargeAccountId, c.rebateExpenseAccountId, c.giftCardLiabilityAccountId, c.loyaltyProvisionAccountId]) if (id !== null) named.add(id);
+    const accountLabels = await fin().setup.accountLabels(ctx.companyId, [...named]);
     return {
       business: ov.business.map((b) => ({ id: b.id, code: b.code, name: b.name })),
       product: ov.product.map((p) => ({ id: p.id, code: p.code, name: p.name })),
@@ -212,9 +220,7 @@ export async function postingSetupAction() {
         };
         return { id: c.id, code: c.code, name: c.name, accounts };
       }),
-      accounts: accounts
-        .filter((a) => a.type === 'posting')
-        .map((a) => ({ id: a.id, no: a.no, name: a.name })),
+      accountLabels,
       canEdit: await canPermission('posting_setup:edit'),
     };
   });
@@ -271,15 +277,11 @@ export async function getBatchAction(batchId: string) {
   return run('journals:read', { surface: 'finance/journals/batch', action: 'view' }, async (ctx) => {
     const data = await fin().journals.getBatch(ctx.companyId, batchId);
     if (!data) throw new FinanceError('NOT_FOUND', 'That batch does not exist.');
-    const [settings, accounts] = await Promise.all([
-      fin().setup.getSettings(ctx.companyId),
-      fin().setup.listAccounts(ctx.companyId),
-    ]);
+    const settings = await fin().setup.getSettings(ctx.companyId);
     return {
       batch: { id: data.batch.id, code: data.batch.code, name: data.batch.name },
       baseCurrency: settings?.baseCurrency ?? '',
       lines: data.lines,
-      accounts: accounts.filter((a) => a.type === 'posting' && !a.blocked).map((a) => ({ id: a.id, no: a.no, name: a.name, control: a.postingSource === 'engine_only' })),
       can: {
         edit: await canPermission('journals:edit_draft'),
         preview: await canPermission('journals:preview'),
@@ -331,12 +333,6 @@ export async function reverseRegisterAction(registerId: string, postingDate: str
   }, [`${ROOT}/entries`, `${ROOT}/registers`]);
 }
 
-export async function listReasonsAction() {
-  return run('ledger_entries:reverse', { surface: 'finance/registers', action: 'list_reasons' }, async (ctx) =>
-    (await getContainer().reasonCodes.list(ctx.companyId)).filter((r) => r.isActive).map((r) => ({ code: r.code, description: r.description, requiresComment: r.requiresComment })),
-  );
-}
-
 // ── ledgers and reports ──────────────────────────────────────────────────
 
 export async function trialBalanceAction(from: string, to: string) {
@@ -354,22 +350,17 @@ export async function glEntriesAction(filter: {
   cursor?: { date: string; id: number };
 }) {
   return run('gl_entries:read', { surface: 'finance/entries', action: 'list' }, async (ctx) => {
-    const accounts = await fin().setup.listAccounts(ctx.companyId);
-    const page = await fin().reports.entries(ctx.companyId, filter);
-    return {
-      ...page,
-      accounts: accounts.filter((a) => a.type === 'posting').map((a) => ({ id: a.id, no: a.no, name: a.name })),
-    };
+    return await fin().reports.entries(ctx.companyId, filter);
   });
 }
 
 export async function registersAction() {
   return run('ledger_registers:read', { surface: 'finance/registers', action: 'list' }, async (ctx) => {
     const rows = await fin().reports.registers(ctx.companyId, 100);
-    const reversed = await getContainer().db.execute<{ original_id: string }>(
-      (await import('drizzle-orm')).sql`select original_id from register_reversals`,
-    );
-    const done = new Set(reversed.map((r) => r.original_id));
+    const { inArray } = await import('drizzle-orm');
+    const { registerReversals } = await import('@/server/db/drizzle/schema');
+    const reversed = rows.length === 0 ? [] : await getContainer().db.select({ originalId: registerReversals.originalId }).from(registerReversals).where(inArray(registerReversals.originalId, rows.map((r) => r.id)));
+    const done = new Set(reversed.map((r) => r.originalId));
     return {
       registers: rows.map((r) => ({
         id: r.id,

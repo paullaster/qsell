@@ -6,6 +6,8 @@ import { resubmitOrderApprovalAction } from '@/server/domains/orders/actions';
 import type { Order } from '@/types/index';
 import { Chip, buttonClass, primaryButtonClass } from './shared';
 
+import { has } from '@/lib/values';
+
 /** Says where an order stands with approvals, and what can be done about it. */
 export function OrderApprovalBanner({ order, onChanged }: { order: Order; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
@@ -19,7 +21,7 @@ export function OrderApprovalBanner({ order, onChanged }: { order: Order; onChan
     setError(null);
     const res = await resubmitOrderApprovalAction(order.id);
     setBusy(false);
-    if (!res.ok) return setError(res.error);
+    if (!res.ok) { setError(res.error); return; }
     onChanged();
   };
 
@@ -61,7 +63,7 @@ export function OrderApprovalBanner({ order, onChanged }: { order: Order; onChan
           See who it is waiting on
         </Link>
       ) : null}
-      {error ? (
+      {has(error) ? (
         <p role="alert" className="text-red-700">
           {error}
         </p>

@@ -35,6 +35,8 @@ import {
   type SigningSourceKind,
 } from './types';
 
+import { has, trimToNull } from '@/lib/values';
+
 /** What is sent to KRA for a document. Built only once the policy has said "sign". */
 export interface SignableInvoice {
   /** The invoice number printed on the document; KRA's trader invoice number. */
@@ -94,7 +96,7 @@ export class DocumentSigningService {
 
   /** Events for one document in the order they happened. */
   async trace(documentKey: string): Promise<KraSigningEventRow[]> {
-    return this.db
+    return await this.db
       .select()
       .from(kraSigningEvents)
       .where(eq(kraSigningEvents.documentKey, documentKey))
@@ -106,7 +108,7 @@ export class DocumentSigningService {
     input: { limit?: number; outcome?: SigningOutcome } = {},
   ): Promise<KraSigningEventRow[]> {
     const where = input.outcome ? eq(kraSigningEvents.outcome, input.outcome) : undefined;
-    return this.db
+    return await this.db
       .select()
       .from(kraSigningEvents)
       .where(where)
@@ -146,7 +148,7 @@ export class DocumentSigningService {
         module: isSigningModule(order.salesModule) ? order.salesModule : 'ecommerce',
         documentType: input.documentType,
         // No trade customer means no profile: the default is to sign.
-        customerFlag: order.tradeCustomerId ? order.transmitInvoicesToKra : null,
+        customerFlag: has(order.tradeCustomerId) ? order.transmitInvoicesToKra : null,
         buildInvoice: async () => {
           const lines = await this.db
             .select()
@@ -355,7 +357,7 @@ export class DocumentSigningService {
         currency?: string;
         lines?: FrozenInvoiceLine[];
       };
-      if (last.mode && last.scope && p.traderInvoiceNo && p.lines) {
+      if (last.mode && last.scope && has(p.traderInvoiceNo) && p.lines) {
         return {
           kind: 'signed',
           scope: last.scope,
@@ -501,7 +503,7 @@ export class DocumentSigningService {
 
     // Signing is allowed: attempt it. From here a failure is recorded, never thrown.
     if (decision.mode !== 'etims') {
-      return this.recordFailure(doc, ctx, decision, 'TIMS_SIGNING_UNAVAILABLE', {
+      return await this.recordFailure(doc, ctx, decision, 'TIMS_SIGNING_UNAVAILABLE', {
         message: 'Signing with TIMS is not available yet; no invoice was sent to the control unit.',
       });
     }
@@ -561,7 +563,7 @@ export class DocumentSigningService {
       return { outcome: 'sign', reason: 'SIGN', decision, transmissionId: transmission.id };
     } catch (error: unknown) {
       const { reason, message, retryable } = classify(error);
-      return this.recordFailure(doc, ctx, decision, reason, { message, retryable });
+      return await this.recordFailure(doc, ctx, decision, reason, { message, retryable });
     }
   }
 
@@ -613,7 +615,7 @@ export class DocumentSigningService {
       stable(previous.payload.settings) === stable(decision.settings);
     // A repeat of an unchanged decision adds nothing. A retry after a failed transmission is
     // still allowed to re-record, so the new attempt is visible in the flow.
-    if (same && last?.eventType === 'decision') return;
+    if (same === true && last?.eventType === 'decision') return;
     await this.record(ctx, {
       eventType: 'decision',
       outcome: decision.outcome,
@@ -679,13 +681,13 @@ export class DocumentSigningService {
   }
 
   private async buyerPin(tradeCustomerId: string | null): Promise<string | null> {
-    if (!tradeCustomerId) return null;
+    if (!has(tradeCustomerId)) return null;
     const [row] = await this.db
       .select({ pin: customers.buyerKraPin })
       .from(customers)
       .where(eq(customers.id, tradeCustomerId))
       .limit(1);
-    return row?.pin?.trim() || null;
+    return trimToNull(row?.pin);
   }
 
   /** The company that owns the sale: through its customer, else through its branch. */
@@ -693,7 +695,7 @@ export class DocumentSigningService {
     tradeCustomerId: string | null,
     branchId: string | null,
   ): Promise<string> {
-    if (tradeCustomerId) {
+    if (has(tradeCustomerId)) {
       const [row] = await this.db
         .select({ companyId: customers.companyId })
         .from(customers)
@@ -701,7 +703,7 @@ export class DocumentSigningService {
         .limit(1);
       if (row) return row.companyId;
     }
-    if (branchId) {
+    if (has(branchId)) {
       const [row] = await this.db
         .select({ companyId: branches.companyId })
         .from(branches)

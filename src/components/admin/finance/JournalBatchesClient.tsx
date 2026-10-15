@@ -1,18 +1,18 @@
 'use client';
 
 import Link from 'next/link';
-import { useId, useState } from 'react';
+import { use, useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { createBatchAction } from '@/server/domains/finance/actions';
-import { Field, Message, PageHeader, buttonClass, cardClass, fieldClass, primaryClass, type Notice, attempt } from './ui';
+import { createBatchAction, type listBatchesAction } from '@/server/domains/finance/actions';
+import { Field, LoadFailed, Message, PageHeader, buttonClass, cardClass, fieldClass, primaryClass, type Notice, attempt } from './ui';
 
-export function JournalBatchesClient({
-  batches,
-  canCreate,
-}: {
-  batches: { id: string; code: string; name: string; lineCount: number }[];
-  canCreate: boolean;
-}) {
+export function JournalBatchesClient({ batchesPromise, canCreatePromise }: { batchesPromise: ReturnType<typeof listBatchesAction>; canCreatePromise: Promise<boolean> }) {
+  const res = use(batchesPromise);
+  const canCreate = use(canCreatePromise);
+  return res.ok ? <JournalBatchesView batches={res.data} canCreate={canCreate} /> : <LoadFailed error={res.error} />;
+}
+
+function JournalBatchesView({ batches, canCreate }: { batches: { id: string; code: string; name: string; lineCount: number }[]; canCreate: boolean }) {
   const uid = useId();
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -21,7 +21,7 @@ export function JournalBatchesClient({
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
 
-  const create = async (e: React.FormEvent) => {
+  const create = async (e: React.SyntheticEvent) => {
     e.preventDefault();
     setBusy(true);
     const res = await attempt(createBatchAction(code, name));
@@ -39,7 +39,7 @@ export function JournalBatchesClient({
       />
       <Message notice={notice} />
       {open ? (
-        <form onSubmit={create} className={`${cardClass} grid grid-cols-1 gap-4 sm:grid-cols-3`} aria-label="New journal batch">
+        <form onSubmit={(e) => void create(e)} className={`${cardClass} grid grid-cols-1 gap-4 sm:grid-cols-3`} aria-label="New journal batch">
           <Field id={`${uid}-c`} label="Code"><input id={`${uid}-c`} value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} className={`${fieldClass} font-mono`} maxLength={20} required autoFocus /></Field>
           <Field id={`${uid}-n`} label="Name"><input id={`${uid}-n`} value={name} onChange={(e) => setName(e.target.value)} className={fieldClass} required /></Field>
           <div className="flex items-end gap-2">
@@ -48,22 +48,21 @@ export function JournalBatchesClient({
           </div>
         </form>
       ) : null}
-      {batches.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-line p-8 text-center text-sm text-fg-muted">No batches yet.</div>
-      ) : (
+      {batches.length === 0 ? <div className="rounded-xl border border-dashed border-line p-8 text-center text-sm text-fg-muted">No batches yet.</div> : null}
+      {batches.length > 0 ? (
         <ul className="grid grid-cols-1 gap-3">
           {batches.map((b) => (
             <li key={b.id}>
               <Link href={`/admin/finance/journals/${b.id}`} className="block rounded-xl border border-line bg-surface-raised p-4 transition-colors hover:border-indigo-500/40 hover:bg-hover">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-sm font-bold text-fg-strong"><span className="font-mono">{b.code}</span> <span className="font-normal text-fg-muted">{b.name}</span></p>
-                  <span className="text-xs text-fg-muted">{b.lineCount} draft line{b.lineCount === 1 ? '' : 's'}</span>
+                  <span className="text-xs text-fg-muted">{b.lineCount} draft {b.lineCount === 1 ? 'line' : 'lines'}</span>
                 </div>
               </Link>
             </li>
           ))}
         </ul>
-      )}
+      ) : null}
     </div>
   );
 }

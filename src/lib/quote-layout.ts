@@ -1,3 +1,4 @@
+import { nth } from '@/lib/values';
 /**
  * How the lines of a quote (or quote template) are laid out: some are individual items, the rest
  * sit in named sections. Lines live in one list; a line belongs to a section when it names one,
@@ -25,6 +26,14 @@ export const slotOrder = (sections: { id: string }[]): Slot[] => [
 export const indexesIn = (lines: Placed[], slot: Slot): number[] =>
   lines.flatMap((l, i) => (slotOf(l) === slot ? [i] : []));
 
+/** Where a moved line goes in the list: before the member now at that position, or just after the last member, or the end when the place is empty. */
+function insertionPoint(members: number[], at: number, listLength: number): number {
+  const here = members[at];
+  if (here !== undefined) return here;
+  const last = members.at(-1);
+  return last === undefined ? listLength : last + 1;
+}
+
 /**
  * Puts the line at `from` into `slot`, at `position` among that place's other lines (0 is first;
  * past the end is last). Positions count the place as it will be once the line has been taken
@@ -41,16 +50,11 @@ export function moveLine<L extends Placed>(
   const cur = placeOf(lines, from);
   if (cur.slot === slot && Math.min(Math.max(0, position), cur.size - 1) === cur.position)
     return lines;
-  const item = { ...lines[from]!, sectionId: slot } as L;
+  const item = { ...nth(lines, from), sectionId: slot } as L;
   const rest = lines.filter((_, i) => i !== from);
   const members = indexesIn(rest, slot);
   const at = Math.min(Math.max(0, position), members.length);
-  const insertAt =
-    at < members.length
-      ? members[at]!
-      : members.length > 0
-        ? members[members.length - 1]! + 1
-        : rest.length;
+  const insertAt = insertionPoint(members, at, rest.length);
   return [...rest.slice(0, insertAt), item, ...rest.slice(insertAt)];
 }
 
@@ -63,7 +67,7 @@ export interface LinePlace {
 }
 
 export function placeOf(lines: Placed[], index: number): LinePlace {
-  const slot = slotOf(lines[index]!);
+  const slot = slotOf(nth(lines, index));
   const members = indexesIn(lines, slot);
   return { slot, position: members.indexOf(index), size: members.length };
 }
@@ -132,7 +136,7 @@ export function moveSection<S extends { id: string }>(
   const rest = sections.filter((_, i) => i !== from);
   const at = Math.min(Math.max(0, to), rest.length);
   if (at === from) return sections;
-  return [...rest.slice(0, at), sections[from]!, ...rest.slice(at)];
+  return [...rest.slice(0, at), nth(sections, from), ...rest.slice(at)];
 }
 
 export const nudgeSection = <S extends { id: string }>(
@@ -225,8 +229,7 @@ export function lastIndexOfProduct(
   productId: string,
   slot: Slot,
 ): number {
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i]!;
+  for (const [i, line] of [...lines.entries()].reverse()) {
     if (line.productId === productId && slotOf(line) === slot) return i;
   }
   return -1;

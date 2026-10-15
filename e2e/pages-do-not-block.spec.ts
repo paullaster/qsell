@@ -14,6 +14,9 @@ const screens: [string, string, RegExp, string | RegExp][] = [
   ['new refund', '/admin/finance/refunds/new', /Loading the refund form/, 'New refund'],
   ['bank accounts', '/admin/finance/bank-accounts', /Loading bank accounts/, 'Bank and cash accounts'],
   ['returns', '/admin/finance/receivables/returns', /Loading returns/, 'Returns'],
+  ['dimensions', '/admin/settings/dimensions', /Loading dimensions/, 'Dimensions'],
+  ['number series', '/admin/settings/number-series', /Loading number series/, 'Number series'],
+  ['document numbering', '/admin/settings/number-series/bindings', /Loading document numbering/, 'Document numbering'],
   ['payment settings', '/admin/settings/payments', /Loading payment settings/, 'Payments'],
 ];
 

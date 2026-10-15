@@ -29,6 +29,8 @@ import {
 import { triggerByCode } from './domain/triggers';
 import type { StepDefinition, WorkflowDefinition } from './domain/types';
 
+import { has, trimToNull } from '@/lib/values';
+
 export type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
 export type ApprovalErrorCode =
@@ -94,7 +96,7 @@ export type SubmitResult =
   | {
       required: true;
       submissionId: string;
-      requests: Array<{ requestId: string; workflowCode: string; status: string }>;
+      requests: { requestId: string; workflowCode: string; status: string }[];
       /** True when every step was skipped, so the document can go ahead immediately. */
       released: boolean;
     };
@@ -103,7 +105,7 @@ export interface SimulatedStep {
   sequence: number;
   name: string;
   skipped: boolean;
-  approvers: Array<{ userId: string; onBehalfOfUserId: string | null }>;
+  approvers: { userId: string; onBehalfOfUserId: string | null }[];
   /** Why nobody could be found, if so; a real submit would fail with this. */
   problem: string | null;
 }
@@ -111,14 +113,14 @@ export interface SimulatedStep {
 export interface Simulation {
   /** False when approvals are switched off for this module or trigger. */
   enabled: boolean;
-  workflows: Array<{
+  workflows: {
     code: string;
     name: string;
     version: number | null;
     matched: boolean;
-    trace: Array<{ node: string; result: boolean; detail?: string }>;
+    trace: { node: string; result: boolean; detail?: string }[];
     steps: SimulatedStep[];
-  }>;
+  }[];
 }
 
 export type ActResult =
@@ -241,18 +243,18 @@ export class ApprovalEngine {
           eq(approvalWorkflows.companyId, companyId),
           eq(approvalWorkflows.trigger, trigger.code),
           eq(approvalWorkflows.status, 'enabled'),
-          input.branchId
+          has(input.branchId)
             ? or(isNull(approvalWorkflows.branchId), eq(approvalWorkflows.branchId, input.branchId))
             : isNull(approvalWorkflows.branchId),
         ),
       )
       .orderBy(asc(approvalWorkflows.priority), asc(approvalWorkflows.code));
 
-    const matched: Array<{
+    const matched: {
       wf: (typeof candidates)[number]['wf'];
       version: (typeof candidates)[number]['version'];
       matchedOn: unknown[];
-    }> = [];
+    }[] = [];
     for (const c of candidates) {
       const def = c.version.definition as unknown as WorkflowDefinition;
       const trace: Parameters<typeof evaluateCondition>[2] = [];
@@ -388,7 +390,7 @@ export class ApprovalEngine {
     const step = this.stepOf(await this.definitionOf(tx, request), request.currentStep);
     await tx
       .update(approvalEntries)
-      .set({ status: 'approved', comment: comment?.trim() || null, actedAt: new Date() })
+      .set({ status: 'approved', comment: trimToNull(comment), actedAt: new Date() })
       .where(eq(approvalEntries.id, entry.id));
     // "Any one" steps (a group, or everyone holding a role): the first to act decides and the
     // others' entries are withdrawn. "N of" steps finish once enough have approved.
@@ -429,7 +431,7 @@ export class ApprovalEngine {
         subject: { type: 'approval_request', id: request.id },
         action: 'approvals.entry_approved',
         actor: { type: 'user', id: userId },
-        reason: { text: comment?.trim() || null },
+        reason: { text: trimToNull(comment) },
         inputs: {
           step: request.currentStep,
           entryId: entry.id,
@@ -460,7 +462,7 @@ export class ApprovalEngine {
     const { entry, request } = await this.lockEntry(tx, entryId);
     this.assertCanAct(entry, request, userId);
     const comment = input.comment?.trim();
-    if (!comment)
+    if (!has(comment))
       throw new ApprovalError('COMMENT_REQUIRED', 'Say why you are rejecting this request.');
     const reason = await this.reasons.require(
       request.companyId,
@@ -544,13 +546,13 @@ export class ApprovalEngine {
     if (pending.length === 0)
       throw new ApprovalError('NOT_PENDING', 'Nothing in this submission is waiting for approval.');
     const first = pending[0]!;
-    if (!actor.isAdmin && first.requestedBy !== actor.userId) {
+    if (actor.isAdmin !== true && first.requestedBy !== actor.userId) {
       throw new ApprovalError(
         'NOT_ALLOWED',
         'Only the person who submitted it, or an administrator, can withdraw this request.',
       );
     }
-    if (!reason.text?.trim())
+    if (!has(reason.text?.trim()))
       throw new ApprovalError('COMMENT_REQUIRED', 'Say why the request is being withdrawn.');
     for (const r of pending) {
       await this.closeRequest(tx, r, 'canceled', reason.text.trim());
@@ -673,13 +675,13 @@ export class ApprovalEngine {
       .for('update');
     if (rejected.length === 0)
       throw new ApprovalError('NOT_REJECTED', 'This document has no rejected request to reopen.');
-    if (!actor.isAdmin && !rejected.some((r) => r.requestedBy === actor.userId)) {
+    if (actor.isAdmin !== true && !rejected.some((r) => r.requestedBy === actor.userId)) {
       throw new ApprovalError(
         'NOT_ALLOWED',
         'Only the person who submitted it, or an administrator, can reopen this request.',
       );
     }
-    if (!reason.text?.trim())
+    if (!has(reason.text?.trim()))
       throw new ApprovalError('COMMENT_REQUIRED', 'Say why the request is being reopened.');
     for (const r of rejected) {
       await tx
@@ -706,7 +708,7 @@ export class ApprovalEngine {
 
   /** Open entries waiting on this person, oldest first. */
   async inbox(userId: string, limit = 50) {
-    return this.db
+    return await this.db
       .select({
         entryId: approvalEntries.id,
         requestId: approvalRequests.id,
@@ -741,7 +743,7 @@ export class ApprovalEngine {
         ),
       )
       .orderBy(asc(approvalRequests.createdAt));
-    const entries = requests.length
+    const entries = requests.length !== 0
       ? await this.db
           .select()
           .from(approvalEntries)
@@ -781,13 +783,13 @@ export class ApprovalEngine {
       input.branchId ?? null,
     );
 
-    const candidates: Array<{
+    const candidates: {
       code: string;
       name: string;
       version: number | null;
       def: WorkflowDefinition;
-    }> = [];
-    if (!input.onlyDraft) {
+    }[] = [];
+    if (input.onlyDraft !== true) {
       const rows = await this.db
         .select({ wf: approvalWorkflows, version: approvalWorkflowVersions })
         .from(approvalWorkflows)
@@ -800,7 +802,7 @@ export class ApprovalEngine {
             eq(approvalWorkflows.companyId, input.companyId),
             eq(approvalWorkflows.trigger, trigger.code),
             eq(approvalWorkflows.status, 'enabled'),
-            input.branchId
+            has(input.branchId)
               ? or(
                   isNull(approvalWorkflows.branchId),
                   eq(approvalWorkflows.branchId, input.branchId),
@@ -865,12 +867,12 @@ export class ApprovalEngine {
                 );
                 approvers.push({
                   userId: cover ?? o.userId,
-                  onBehalfOfUserId: cover ? o.userId : null,
+                  onBehalfOfUserId: has(cover) ? o.userId : null,
                 });
                 entries.push({
                   position: o.position,
                   approverUserId: cover ?? o.userId,
-                  onBehalfOfUserId: cover ? o.userId : null,
+                  onBehalfOfUserId: has(cover) ? o.userId : null,
                   status: 'approved',
                 });
               }
@@ -930,7 +932,7 @@ export class ApprovalEngine {
           eq(approvalWorkflows.companyId, input.companyId),
           eq(approvalWorkflows.trigger, trigger.code),
           eq(approvalWorkflows.status, 'enabled'),
-          input.branchId
+          has(input.branchId)
             ? or(isNull(approvalWorkflows.branchId), eq(approvalWorkflows.branchId, input.branchId))
             : isNull(approvalWorkflows.branchId),
         ),
@@ -981,7 +983,7 @@ export class ApprovalEngine {
       )
       .orderBy(sql`${approvalRequests.createdAt} desc`)
       .limit(limit);
-    return this.withOpenEntries(requests);
+    return await this.withOpenEntries(requests);
   }
 
   /** Everything waiting on someone, oldest first (the administrator's monitor). */
@@ -992,11 +994,11 @@ export class ApprovalEngine {
       .where(and(eq(approvalRequests.companyId, companyId), eq(approvalRequests.status, 'pending')))
       .orderBy(asc(approvalRequests.createdAt))
       .limit(limit);
-    return this.withOpenEntries(requests);
+    return await this.withOpenEntries(requests);
   }
 
   private async withOpenEntries(requests: RequestRow[]) {
-    const open = requests.length
+    const open = requests.length !== 0
       ? await this.db
           .select()
           .from(approvalEntries)
@@ -1088,7 +1090,7 @@ export class ApprovalEngine {
     let target: string | null = null;
     for (let hops = 0; hops < 100; hops++) {
       const next = directory.directory.approverOf(from);
-      if (!next) break;
+      if (!has(next)) break;
       from = next;
       if (visited.has(next)) continue;
       visited.add(next);
@@ -1106,7 +1108,7 @@ export class ApprovalEngine {
     }
 
     const subject = { type: 'approval_request', id: request.id };
-    if (!target) {
+    if (!has(target)) {
       await tx
         .update(approvalEntries)
         .set({ escalatedAt: now })
@@ -1143,8 +1145,8 @@ export class ApprovalEngine {
       stepSequence: entry.stepSequence,
       position: entry.position,
       approverUserId: approver,
-      onBehalfOfUserId: cover ? target : null,
-      dueAt: step.dueAfterHours ? new Date(now.getTime() + step.dueAfterHours * 3_600_000) : null,
+      onBehalfOfUserId: has(cover) ? target : null,
+      dueAt: step.dueAfterHours !== null && step.dueAfterHours !== undefined && step.dueAfterHours !== 0 ? new Date(now.getTime() + step.dueAfterHours * 3_600_000) : null,
       replacesEntryId: entry.id,
     });
     await this.decisions.record(
@@ -1230,7 +1232,7 @@ export class ApprovalEngine {
       stepSequence: entry.stepSequence,
       position: entry.position,
       approverUserId: toUserId,
-      dueAt: step.dueAfterHours ? new Date(now.getTime() + step.dueAfterHours * 3_600_000) : null,
+      dueAt: step.dueAfterHours !== null && step.dueAfterHours !== undefined && step.dueAfterHours !== 0 ? new Date(now.getTime() + step.dueAfterHours * 3_600_000) : null,
       replacesEntryId: entry.id,
     });
     await this.decisions.record(
@@ -1313,7 +1315,7 @@ export class ApprovalEngine {
     const h = this.handlers.get(request.documentKind);
     if (!h?.snapshot) return false;
     const now = await h.snapshot(request.documentId, tx);
-    const submitted = request.snapshot as Record<string, unknown>;
+    const submitted = request.snapshot;
     // Only the facts the module can still report are compared; the added request fields are kept.
     const keys = Object.keys(now);
     const projected = Object.fromEntries(keys.map((k) => [k, submitted[k]]));
@@ -1411,7 +1413,7 @@ export class ApprovalEngine {
     directory: LoadedDirectory,
   ): Promise<'waiting' | 'approved'> {
     const steps = sortedSteps(def);
-    const facts = request.snapshot as Record<string, unknown>;
+    const facts = request.snapshot;
     let current = request.currentStep;
 
     for (let guard = 0; guard < steps.length + 1; guard++) {
@@ -1464,7 +1466,7 @@ export class ApprovalEngine {
         if (!offer.done) {
           // Others already asked are still being waited on (an "n of" step part way through).
           if (offer.offers.length === 0) return 'waiting';
-          const dueAt = step.dueAfterHours
+          const dueAt = step.dueAfterHours !== null && step.dueAfterHours !== undefined && step.dueAfterHours !== 0
             ? new Date(Date.now() + step.dueAfterHours * 3_600_000)
             : null;
           const created = new Set<string>();
@@ -1482,7 +1484,7 @@ export class ApprovalEngine {
               stepSequence: step.sequence,
               position: o.position,
               approverUserId: approver,
-              onBehalfOfUserId: cover ? o.userId : null,
+              onBehalfOfUserId: has(cover) ? o.userId : null,
               dueAt,
             });
           }
@@ -1541,7 +1543,7 @@ export class ApprovalEngine {
       .select()
       .from(approverProfiles)
       .where(eq(approverProfiles.companyId, companyId));
-    const limits = profiles.length
+    const limits = profiles.length !== 0
       ? await tx
           .select()
           .from(approverLimits)
@@ -1565,7 +1567,7 @@ export class ApprovalEngine {
         if (s.approver.type === 'user') userIds.add(s.approver.userId);
       }
     }
-    const members = groupIds.size
+    const members = groupIds.size !== 0
       ? await tx
           .select()
           .from(approverGroupMembers)
@@ -1575,7 +1577,7 @@ export class ApprovalEngine {
     members.forEach((m) => userIds.add(m.userId));
     // Role holders: people with the role as an extra assignment, or as their main role.
     const roleHolders = new Map<string, string[]>();
-    if (roleKeys.size) {
+    if (roleKeys.size !== 0) {
       const extra = await tx
         .select({ key: roles.key, userId: userRoles.userId })
         .from(userRoles)
@@ -1592,7 +1594,7 @@ export class ApprovalEngine {
         userIds.add(h.userId);
       }
     }
-    const people = userIds.size
+    const people = userIds.size !== 0
       ? await tx
           .select({ id: users.id, status: users.status })
           .from(users)
@@ -1621,9 +1623,9 @@ export class ApprovalEngine {
       substituteFor: (id, requesterId, allowSelf) => {
         const p = byUser.get(id);
         const sub = p?.substituteUserId;
-        if (!p || !sub) return null;
-        if (p.substituteFrom && today < p.substituteFrom) return null;
-        if (p.substituteTo && today > p.substituteTo) return null;
+        if (!p || !has(sub)) return null;
+        if (has(p.substituteFrom) && today < p.substituteFrom) return null;
+        if (has(p.substituteTo) && today > p.substituteTo) return null;
         if (!profileActive(sub) || (!allowSelf && sub === requesterId)) return null;
         return sub;
       },

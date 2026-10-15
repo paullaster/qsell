@@ -12,6 +12,8 @@ import type { KraBranchLookup, KraConfigResolver } from '../resolver';
 import { KraConfigError, type ResolvedEtimsConfig } from '../types';
 import { EtimsApiError, EtimsClient, type EtimsItem, type EtimsItemWrite } from './client';
 
+import { has } from '@/lib/values';
+
 /** A `pending` row older than this is assumed abandoned and may be retried. */
 const STALE_PENDING_MS = 5 * 60_000;
 const ELIGIBLE_ITEM_TYPE_CODES = ['1', '2', '3'];
@@ -201,7 +203,7 @@ export class EtimsItemService {
 
   async listLocal(target: EtimsScopeTarget): Promise<EtimsItemRow[]> {
     const { scope } = await this.connect(target);
-    return this.localItems(target.companyId, scope);
+    return await this.localItems(target.companyId, scope);
   }
 
   /** Live list from the gateway for this scope, each entry tagged with our local row. */
@@ -209,9 +211,9 @@ export class EtimsItemService {
     const { client, scope } = await this.connect(target);
     const response = await client.listItems();
     const local = await this.localItems(target.companyId, scope);
-    const byCode = new Map(local.filter((r) => r.kraItemCode).map((r) => [r.kraItemCode!, r]));
+    const byCode = new Map(local.flatMap((r) => (has(r.kraItemCode) ? [[r.kraItemCode, r] as const] : [])));
     return (response.data ?? []).map((item) => {
-      const row = item.itemCode ? byCode.get(item.itemCode) : undefined;
+      const row = has(item.itemCode) ? byCode.get(item.itemCode) : undefined;
       return { ...item, localItemId: row?.id ?? null, localProductId: row?.productId ?? null };
     });
   }
@@ -396,7 +398,7 @@ export class EtimsItemService {
       // Adopt it instead of registering a duplicate at KRA.
       if (retryAfterAmbiguousFailure) {
         const existing = await this.findRemoteMatch(client, input.companyId, scope, fields);
-        if (existing?.itemCode) {
+        if (has(existing?.itemCode)) {
           return await this.markRegistered(row, existing.itemCode, initialStock);
         }
       }
@@ -405,7 +407,7 @@ export class EtimsItemService {
       const code =
         nonEmpty(response.data?.itemCode) ??
         nonEmpty((await this.findRemoteMatch(client, input.companyId, scope, fields))?.itemCode);
-      if (code) return await this.markRegistered(row, code, initialStock);
+      if (has(code)) return await this.markRegistered(row, code, initialStock);
 
       return await this.patch(row.id, {
         status: 'unconfirmed',
@@ -435,7 +437,7 @@ export class EtimsItemService {
     } catch (error: unknown) {
       throw await this.recordFailure(row, error, row.status);
     }
-    return this.patch(row.id, {
+    return await this.patch(row.id, {
       ...columnsFor(fields),
       stockQuantity: stock,
       status: 'registered',
@@ -455,7 +457,7 @@ export class EtimsItemService {
     } catch (error: unknown) {
       throw await this.recordFailure(row, error, row.status);
     }
-    return this.patch(row.id, {
+    return await this.patch(row.id, {
       stockQuantity: stock,
       errorCode: null,
       errorMessage: null,
@@ -475,7 +477,7 @@ export class EtimsItemService {
       );
     }
     // Rows with no code were never accepted (failed) — nothing to delete at KRA.
-    if (row.kraItemCode) {
+    if (has(row.kraItemCode)) {
       try {
         await client.deleteItem(row.kraItemCode);
       } catch (error: unknown) {
@@ -485,7 +487,7 @@ export class EtimsItemService {
         }
       }
     }
-    return this.patch(row.id, { status: 'deleted', errorCode: null, errorMessage: null });
+    return await this.patch(row.id, { status: 'deleted', errorCode: null, errorMessage: null });
   }
 
   /** For `unconfirmed` rows: look the item up at the gateway and adopt its code. */
@@ -493,15 +495,15 @@ export class EtimsItemService {
     const { client, scope } = await this.connect(input);
     const row = await this.findActive(input.companyId, scope, input.productId);
     if (!row) throw new EtimsItemError('NOT_REGISTERED', 'This product is not registered here.');
-    if (row.kraItemCode) return row;
+    if (has(row.kraItemCode)) return row;
     const match = await this.findRemoteMatch(client, input.companyId, scope, fieldsFromRow(row));
-    if (!match?.itemCode) {
+    if (!has(match?.itemCode)) {
       throw new EtimsItemError(
         'NOT_CONFIRMED',
         'KRA has no matching item for this registration yet.',
       );
     }
-    return this.markRegistered(row, match.itemCode, row.stockQuantity);
+    return await this.markRegistered(row, match.itemCode, row.stockQuantity);
   }
 
   // ── internals ───────────────────────────────────────────────────────────
@@ -512,7 +514,7 @@ export class EtimsItemService {
    * managed there. Mode must be eTIMS; anything unusable throws.
    */
   private async connect(target: EtimsScopeTarget): Promise<Connection> {
-    if (target.branchId) {
+    if (has(target.branchId)) {
       const branch = await this.branches.getById(target.branchId);
       if (!branch || branch.companyId !== target.companyId) {
         throw new KraConfigError('BRANCH_NOT_FOUND', `Branch ${target.branchId} not found.`);
@@ -568,7 +570,7 @@ export class EtimsItemService {
     if (!row || row.deletedAt) {
       throw new EtimsItemError('PRODUCT_NOT_FOUND', `Product ${productId} not found.`);
     }
-    if (!row.taxCode) {
+    if (!has(row.taxCode)) {
       throw new EtimsItemError(
         'TAX_CODE_MISSING',
         'The product has no tax category with an eTIMS code. Map one under Tax Classification.',
@@ -603,7 +605,7 @@ export class EtimsItemService {
     const pkgUnitCode = codes.pkgUnitCode.trim();
     const itemClassCode = codes.itemClassCode.trim();
     const orgCountryCode = (codes.orgCountryCode ?? 'KE').trim().toUpperCase();
-    if (!qtyUnitCode || !pkgUnitCode || !itemClassCode) {
+    if (!has(qtyUnitCode) || !has(pkgUnitCode) || !has(itemClassCode)) {
       throw new EtimsItemError(
         'INVALID_INPUT',
         'Quantity unit, package unit and item classification codes are required.',
@@ -668,7 +670,7 @@ export class EtimsItemService {
     const ambiguous =
       existing.status === 'pending' ||
       existing.errorCode === 'NETWORK' ||
-      /^HTTP_5/.test(existing.errorCode ?? '');
+      (existing.errorCode ?? '').startsWith("HTTP_5");
 
     const [reclaimed] = await this.db
       .update(etimsItems)
@@ -719,7 +721,7 @@ export class EtimsItemService {
   private async requireRegistered(target: EtimsItemTarget, scope: Scope): Promise<EtimsItemRow> {
     const row = await this.findActive(target.companyId, scope, target.productId);
     if (!row) throw new EtimsItemError('NOT_REGISTERED', 'This product is not registered here.');
-    if (!row.kraItemCode || row.status === 'pending' || row.status === 'unconfirmed') {
+    if (!has(row.kraItemCode) || row.status === 'pending' || row.status === 'unconfirmed') {
       throw new EtimsItemError('NOT_CONFIRMED', 'The KRA item code is not confirmed yet.');
     }
     if (row.status === 'failed') {
@@ -815,7 +817,7 @@ function toStock(value: number): number {
 }
 
 function nonEmpty(value: string | undefined): string | undefined {
-  return value && value.trim() ? value.trim() : undefined;
+  return has(value?.trim()) ? value.trim() : undefined;
 }
 
 function columnsFor(f: EtimsItemWrite) {

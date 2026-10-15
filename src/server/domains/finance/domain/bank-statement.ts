@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { has } from '@/lib/has';
-import { emptyToNull, orElse, trimToNull } from '@/lib/values';
+import { emptyToNull, firstNonZero, has, nth, orElse, required, trimToNull } from '@/lib/values';
 
 /** Reading bank statements and suggesting matches. No database; money is in whole cents. */
 
@@ -72,9 +71,9 @@ export function parseCsv(text: string, delimiter = detectDelimiter(text)): strin
   let row: string[] = [];
   let cell = '';
   let quoted = false;
-  const src = text.replace(/^﻿/, '');
+  const src = text.replace(/^\uFEFF/, '');
   for (let i = 0; i < src.length; i++) {
-    const c = src[i];
+    const c = src.charAt(i);
     if (quoted) {
       if (c === '"') {
         if (src[i + 1] === '"') {
@@ -115,25 +114,25 @@ export function parseDate(raw: string, format: 'auto' | 'dmy' | 'mdy' | 'ymd' = 
   const s = raw.trim();
   if (!has(s)) return null;
   let m = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[T\s].*)?$/.exec(s);
-  if (m) return iso(+m[1], +m[2], +m[3]);
+  if (m) return iso(Number(m[1]), Number(m[2]), Number(m[3]));
   m = /^(\d{1,2})[-/. ]([A-Za-z]{3})[A-Za-z]*[-/. ,]+(\d{2,4})(?:[T\s].*)?$/.exec(s);
   if (m) {
     const mo = MONTHS[m[2].toLowerCase()];
-    if (mo === null || mo === undefined || mo === 0) return null;
-    const y = +m[3];
-    return iso(y < 100 ? 2000 + y : y, mo, +m[1]);
+    if (mo === undefined || mo === 0) return null;
+    const y = Number(m[3]);
+    return iso(y < 100 ? 2000 + y : y, mo, Number(m[1]));
   }
   m = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})(?:[T\s].*)?$/.exec(s);
   if (m) {
-    const a = +m[1];
-    const b = +m[2];
-    const y0 = +m[3];
+    const a = Number(m[1]);
+    const b = Number(m[2]);
+    const y0 = Number(m[3]);
     const y = y0 < 100 ? 2000 + y0 : y0;
     if (format === 'mdy') return iso(y, a, b);
     return iso(y, b, a);
   }
   m = /^(\d{4})(\d{2})(\d{2})$/.exec(s);
-  if (m) return iso(+m[1], +m[2], +m[3]);
+  if (m) return iso(Number(m[1]), Number(m[2]), Number(m[3]));
   return null;
 }
 
@@ -198,15 +197,18 @@ function finish(lines: ParsedLine[], skipped: ParsedStatement['skipped'], errors
   const allBal = ordered.length > 0 && ordered.every((l) => l.balanceCents !== null);
   if (allBal) {
     for (let i = 1; i < ordered.length; i++) {
-      if (ordered[i - 1].balanceCents! + ordered[i].amountCents !== ordered[i].balanceCents!) breaks.push(ordered[i].lineNo);
+      const before = nth(ordered, i - 1);
+      const line = nth(ordered, i);
+      if (required(before.balanceCents) + line.amountCents !== required(line.balanceCents)) breaks.push(line.lineNo);
     }
   }
+  const first = ordered[0];
   return {
     lines: ordered,
     skipped,
     errors,
-    openingCents: allBal ? ordered[0].balanceCents! - ordered[0].amountCents : null,
-    closingCents: allBal ? ordered[ordered.length - 1].balanceCents! : null,
+    openingCents: allBal ? required(first?.balanceCents) - required(first?.amountCents) : null,
+    closingCents: allBal ? required(ordered.at(-1)?.balanceCents) : null,
     balanceBreaks: breaks,
     headers,
   };
@@ -393,7 +395,7 @@ export function suggestMatches(lines: LineForMatch[], entries: EntryForMatch[], 
   for (const e of entries) byAmount.set(e.amountCents, [...(byAmount.get(e.amountCents) ?? []), e]);
   const used = new Set<number>();
   const out: Suggestion[] = [];
-  const ordered = [...lines].sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id);
+  const ordered = [...lines].sort((a, b) => firstNonZero(a.date.localeCompare(b.date), a.id - b.id));
   for (const line of ordered) {
     const pool = (byAmount.get(line.amountCents) ?? []).filter((e) => !used.has(e.id));
     if (pool.length === 0) continue;
@@ -406,7 +408,7 @@ export function suggestMatches(lines: LineForMatch[], entries: EntryForMatch[], 
     }
     const near = (hits.length > 1 ? hits : pool)
       .filter((e) => daysBetween(e.date, line.date) <= windowDays)
-      .sort((a, b) => daysBetween(a.date, line.date) - daysBetween(b.date, line.date) || a.id - b.id)
+      .sort((a, b) => firstNonZero(daysBetween(a.date, line.date) - daysBetween(b.date, line.date), a.id - b.id))
       .slice(0, maxProposals);
     if (near.length > 0) out.push({ lineId: line.id, entryIds: near.map((e) => e.id), rule: hits.length > 1 ? 'reference' : 'amount_date', certainty: 'proposed' });
   }

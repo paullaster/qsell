@@ -4,6 +4,8 @@ import { useId, useMemo, useState } from 'react';
 import type { SigningEventView } from '@/server/domains/kra/signing/actions';
 import { SIGNING_MODULE_LABELS, isSigningModule } from '@/server/domains/kra/signing/types';
 
+import { has } from '@/lib/values';
+
 const REASON_TEXT: Record<string, string> = {
   SIGN: 'Signed with KRA',
   PROFORMA_NEVER_SIGNED: 'Proforma invoices are never signed',
@@ -84,7 +86,7 @@ export function SigningLogClient({ events }: { events: SigningEventView[] }) {
     return groupByDocument(events).filter(
       (f) =>
         (outcome === 'all' || f.latest.outcome === outcome) &&
-        (!q || f.ref.toLowerCase().includes(q) || f.key.toLowerCase().includes(q)),
+        (!has(q) || f.ref.toLowerCase().includes(q) || f.key.toLowerCase().includes(q)),
     );
   }, [events, query, outcome]);
 
@@ -173,15 +175,15 @@ export function SigningLogClient({ events }: { events: SigningEventView[] }) {
                         {e.scope ? ` · ${e.scope} settings` : ''}
                         {e.mode ? ` · ${e.mode === 'etims' ? 'eTIMS' : 'TIMS'}` : ''}
                       </p>
-                      {e.error ? (
+                      {has(e.error) ? (
                         <p role="alert" className="text-red-700">
                           {e.error}
                         </p>
                       ) : null}
-                      {e.scuReceiptNo ? (
+                      {has(e.scuReceiptNo) ? (
                         <p className="text-fg-muted">
                           KRA receipt <span className="font-mono">{e.scuReceiptNo}</span>
-                          {e.verificationUrl ? (
+                          {has(e.verificationUrl) ? (
                             <>
                               {' · '}
                               <a

@@ -1,8 +1,9 @@
 'use client';
 
 import Link from 'next/link';
+import { use } from 'react';
 import type { receivablesAgeingAction } from '@/server/domains/finance/receivables/actions';
-import { PageHeader, cardClass, money } from './ui';
+import { LoadFailed, PageHeader, cardClass, money } from './ui';
 
 type View = Extract<Awaited<ReturnType<typeof receivablesAgeingAction>>, { ok: true }>['data'];
 
@@ -10,7 +11,12 @@ const COLS: [keyof View['totals'], string][] = [
   ['current', 'Not yet due'], ['d1_30', '1–30 days'], ['d31_60', '31–60 days'], ['d61_90', '61–90 days'], ['d90_plus', 'Over 90 days'],
 ];
 
-export function AgeingClient({ view }: { view: View }) {
+export function AgeingClient({ viewPromise }: { viewPromise: ReturnType<typeof receivablesAgeingAction> }) {
+  const res = use(viewPromise);
+  return res.ok ? <AgeingView view={res.data} /> : <LoadFailed error={res.error} />;
+}
+
+function AgeingView({ view }: { view: View }) {
   return (
     <div className="max-w-6xl space-y-5">
       <PageHeader
@@ -24,9 +30,8 @@ export function AgeingClient({ view }: { view: View }) {
         ))}
       </section>
       <p className="text-xs text-fg-muted">Unapplied receipts held for customers: <strong className="tabular-nums">{money(view.totals.credits)}</strong>. {view.truncated ? 'Showing the customers who owe most.' : ''}</p>
-      {view.rows.length === 0 ? (
-        <p className="text-sm text-fg-muted">Nobody owes anything.</p>
-      ) : (
+      {view.rows.length === 0 ? <p className="text-sm text-fg-muted">Nobody owes anything.</p> : null}
+      {view.rows.length > 0 ? (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[44rem] text-left text-xs">
             <caption className="sr-only">Amounts owed by customer and age</caption>
@@ -54,7 +59,7 @@ export function AgeingClient({ view }: { view: View }) {
             </tbody>
           </table>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

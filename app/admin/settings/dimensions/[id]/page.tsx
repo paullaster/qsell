@@ -1,28 +1,16 @@
-import { notFound } from 'next/navigation';
-import {
-  getDimensionAction,
-  listDimensionValuesAction,
-} from '@/server/domains/dimensions/actions';
+import { dimensionValuesPageAction, getDimensionAction } from '@/server/domains/dimensions/actions';
+import { canPermission } from '@/server/domains/access-control/guard';
 import { AdminDimensionValuesClient } from '@/components/admin/settings/AdminDimensionValuesClient';
+import { SettingsFrame } from '@/components/admin/settings/frame';
 
-export default async function AdminDimensionValuesPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = await params;
-  const dimension = await getDimensionAction(id);
-  if (!dimension) notFound();
-
-  const parentValuesPromise = dimension.parentId
-    ? listDimensionValuesAction(dimension.parentId)
-    : Promise.resolve([]);
-
+export default function AdminDimensionValuesPage({ params }: { params: Promise<{ id: string }> }) {
+  // Nothing is awaited here: the dimension, its first page of values and the permission start at once.
+  const dimension = params.then(({ id }) => getDimensionAction(id));
+  const firstPage = params.then(({ id }) => dimensionValuesPageAction(id, {}));
+  const canManage = canPermission('dimensions:manage');
   return (
-    <AdminDimensionValuesClient
-      dimensionPromise={Promise.resolve(dimension)}
-      valuesPromise={listDimensionValuesAction(id)}
-      parentValuesPromise={parentValuesPromise}
-    />
+    <SettingsFrame label="dimension values">
+      <AdminDimensionValuesClient dimensionPromise={dimension} firstPage={firstPage} canManage={canManage} />
+    </SettingsFrame>
   );
 }

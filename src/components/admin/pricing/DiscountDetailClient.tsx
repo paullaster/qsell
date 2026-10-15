@@ -12,7 +12,6 @@ import {
   type DiscountDetail,
   type DiscountLookups,
 } from '@/server/domains/pricing/discount-actions';
-import { listPricingReasonsAction } from '@/server/domains/pricing/actions';
 import { ReasonField, type ReasonValue } from '../settings/numbering/ReasonField';
 import {
   Chip,
@@ -218,7 +217,7 @@ export function DiscountDetailClient({
                 ? 'Pause this rule? It stops reducing prices at once. You can change it and put it back in force.'
                 : 'Retire this rule? It stops reducing prices and cannot be put back in force. Its history stays.'}
           </p>
-          <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
@@ -477,7 +476,7 @@ function Coupons({ detail, canManage }: { detail: DiscountDetail; canManage: boo
               />
             </div>
           </div>
-          <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
           <button
             type="button"
             className={primaryButtonClass}

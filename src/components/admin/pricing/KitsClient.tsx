@@ -2,7 +2,6 @@
 
 import { useEffect, useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { listPricingReasonsAction } from '@/server/domains/pricing/actions';
 import {
   previewKitAction,
   removeKitAction,
@@ -323,7 +322,7 @@ export function KitsClient({ kits, canManage }: { kits: KitView[]; canManage: bo
             In use (when off, it sells as an ordinary product)
           </label>
 
-          <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
           <div className="flex flex-wrap gap-2">
             <button
               type="submit"
@@ -345,7 +344,7 @@ export function KitsClient({ kits, canManage }: { kits: KitView[]; canManage: bo
             Make <strong>{removing.productName}</strong> an ordinary product again? Orders already
             made keep their component lines.
           </p>
-          <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
           <div className="flex flex-wrap gap-2">
             <button
               type="button"

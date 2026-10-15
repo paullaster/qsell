@@ -16,6 +16,8 @@ import {
 } from '@/server/domains/kra/etims/actions';
 import type { EtimsTargetView, RemoteEtimsItem } from '@/server/domains/kra/etims/item-service';
 
+import { has } from '@/lib/values';
+
 const fieldClass =
   'min-h-10 w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong placeholder:text-fg-faint focus:border-indigo-500 focus:outline-none';
 const buttonClass =
@@ -60,7 +62,7 @@ export function EtimsItemsClient({ targets }: { targets: EtimsTargetView[] }) {
   }, []);
 
   useEffect(() => {
-    if (!target?.usable) {
+    if (target?.usable !== true) {
       setData(null);
       return;
     }
@@ -149,7 +151,7 @@ export function EtimsItemsClient({ targets }: { targets: EtimsTargetView[] }) {
       ) : null}
 
       <div aria-live="polite">
-        {error ? (
+        {has(error) ? (
           <p
             role="alert"
             className="rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-700"
@@ -157,7 +159,7 @@ export function EtimsItemsClient({ targets }: { targets: EtimsTargetView[] }) {
             {error}
           </p>
         ) : null}
-        {notice ? (
+        {has(notice) ? (
           <p role="status" className="text-sm text-emerald-700">
             {notice}
           </p>
@@ -349,7 +351,7 @@ function RegisterForm({
       </div>
       <button
         type="submit"
-        disabled={disabled || !productId}
+        disabled={disabled || !has(productId)}
         className="min-h-10 cursor-pointer rounded-lg bg-indigo-600 px-5 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
       >
         Register with KRA
@@ -411,7 +413,7 @@ function ItemCard({
         ))}
       </dl>
 
-      {item.errorMessage ? (
+      {has(item.errorMessage) ? (
         <p role="alert" className="text-xs text-red-700">
           {item.errorMessage}
         </p>
@@ -495,7 +497,7 @@ function RemoteTable({ items }: { items: RemoteEtimsItem[] }) {
               <td className="px-3 py-2 font-mono">{i.itemCode ?? '—'}</td>
               <td className="px-3 py-2">{i.name ?? '—'}</td>
               <td className="px-3 py-2">{i.stock ?? '—'}</td>
-              <td className="px-3 py-2">{i.localItemId ? 'Linked' : 'Not linked'}</td>
+              <td className="px-3 py-2">{has(i.localItemId) ? 'Linked' : 'Not linked'}</td>
             </tr>
           ))}
         </tbody>

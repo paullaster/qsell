@@ -7,19 +7,12 @@ import { getContainer } from '@/server/di/container';
 import {
   PAYMENT_PROVIDER_META,
   type PaymentProviderCode,
-  type PaymentProviderEnvironment,
 } from '@/server/domains/payments/types';
-import {
-  encryptCredentials,
-  decryptCredentials,
-  maskCredentials,
-} from '@/server/domains/payments/crypto';
-import type { BranchRow, PaymentProviderConfigRow } from '@/server/db/drizzle/schema';
+import type { BranchRow } from '@/server/db/drizzle/schema';
 import { extractPaymentReference } from '@/server/domains/payments/payment-reference';
 import { amountDue } from '@/server/domains/orders/amount-due';
 
-import { has } from '@/lib/has';
-import { emptyToNull, orElse, trimToNull } from '@/lib/values';
+import { emptyToNull, has, orElse, trimToNull } from '@/lib/values';
 
 /** Which branches act independently decides what the KRA screens show, so they must refresh. */
 const KRA_SETTINGS_PATH = '/admin/settings/tax-compliance/kra-tims-etims';
@@ -196,8 +189,7 @@ export async function initiateDarajaStkAction(orderId: string, _phone?: string) 
   };
 }
 
-/** @deprecated Prefer initiateBranchPaymentAction */
-export async function initiatePesapalPaymentAction(orderId: string) {
+async function startPesapal(orderId: string) {
   await requirePermission('orders:update');
   const res = await initiateBranchPaymentAction({
     orderId,
@@ -213,9 +205,14 @@ export async function initiatePesapalPaymentAction(orderId: string) {
   };
 }
 
+/** @deprecated Prefer initiateBranchPaymentAction */
+export async function initiatePesapalPaymentAction(orderId: string) {
+  return startPesapal(orderId);
+}
+
 export async function submitPesapalOrderAction(orderId: string) {
   await requirePermission('orders:update');
-  return initiatePesapalPaymentAction(orderId);
+  return startPesapal(orderId);
 }
 
 /** Removed: payments are live via provider callbacks. */

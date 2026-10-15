@@ -4,9 +4,7 @@ import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   approveEntryAction,
-  getRequestDetailAction,
-  listApprovalReasonsAction,
-  rejectEntryAction,
+  getRequestDetailAction, rejectEntryAction,
   type InboxItem,
   type RequestDetail,
 } from '@/server/kernel/approvals/actions';
@@ -29,6 +27,8 @@ import {
   primaryButtonClass,
   type Message,
 } from './shared';
+
+import { has, orElse } from '@/lib/values';
 
 export function ApprovalInboxClient({ items: initial }: { items: InboxItem[] }) {
   const uid = useId();
@@ -145,7 +145,7 @@ function InboxCard({
             <When iso={item.waitingSince} />
           </p>
           <div className="mt-2 flex flex-wrap gap-1.5">
-            {item.onBehalfOfName ? (
+            {has(item.onBehalfOfName) ? (
               <Chip tone="sky">Covering for {item.onBehalfOfName}</Chip>
             ) : null}
             {item.handedOver ? <Chip tone="amber">Handed over to you</Chip> : null}
@@ -208,13 +208,13 @@ function Review({
     const res =
       mode === 'approve'
         ? await approveEntryAction(item.entryId, comment)
-        : await rejectEntryAction(item.entryId, reason.code, comment || reason.text);
+        : await rejectEntryAction(item.entryId, reason.code, orElse(comment, reason.text));
     setBusy(false);
-    if (!res.ok) return setMessage({ kind: 'error', text: res.error });
+    if (!res.ok) { setMessage({ kind: 'error', text: res.error }); return; }
     onDone(item.entryId, res.data.message);
   };
 
-  if (loadError)
+  if (has(loadError))
     return (
       <p role="alert" className="text-sm text-red-700">
         {loadError}
@@ -233,7 +233,7 @@ function Review({
         <h4 id={`${uid}-why`} className="text-xs font-bold tracking-wide text-fg-muted uppercase">
           Why this needs approval
         </h4>
-        {detail.what ? (
+        {has(detail.what) ? (
           <p className="mt-1 rounded-lg border border-line bg-surface-sunken p-3 text-sm font-medium text-fg-strong">
             {detail.what}
           </p>
@@ -275,10 +275,10 @@ function Review({
                     <li key={i} className="flex flex-wrap items-center gap-2 text-sm text-fg">
                       <span>
                         {e.approverName}
-                        {e.onBehalfOfName ? ` (for ${e.onBehalfOfName})` : ''}
+                        {has(e.onBehalfOfName) ? ` (for ${e.onBehalfOfName})` : ''}
                       </span>
                       <StatusChip status={e.status} />
-                      {e.comment ? (
+                      {has(e.comment) ? (
                         <span className="text-xs text-fg-muted">“{e.comment}”</span>
                       ) : null}
                     </li>
@@ -299,7 +299,7 @@ function Review({
             <li key={i} className="text-sm text-fg">
               <span className="font-medium">{actionLabel(t.action)}</span> · {t.actorName} ·{' '}
               <When iso={t.at} />
-              {t.reason ? <span className="block text-xs text-fg-muted">{t.reason}</span> : null}
+              {has(t.reason) ? <span className="block text-xs text-fg-muted">{t.reason}</span> : null}
             </li>
           ))}
         </ol>
@@ -324,7 +324,7 @@ function Review({
             <ReasonField
               value={reason}
               onChange={setReason}
-              load={listApprovalReasonsAction}
+              source="approval-reasons"
               showComment={false}
             />
           ) : null}

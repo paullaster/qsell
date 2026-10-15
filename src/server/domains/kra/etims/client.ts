@@ -1,5 +1,7 @@
 import type { ResolvedEtimsConfig } from '../types';
 
+import { has } from '@/lib/values';
+
 const REQUEST_TIMEOUT_MS = 20_000;
 
 export class EtimsApiError extends Error {
@@ -159,7 +161,7 @@ export class EtimsClient {
     const text = await res.text();
     let parsed: unknown = null;
     try {
-      parsed = text ? JSON.parse(text) : null;
+      parsed = has(text) ? JSON.parse(text) : null;
     } catch {
       /* non-JSON body handled below */
     }

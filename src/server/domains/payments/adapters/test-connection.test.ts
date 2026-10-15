@@ -14,8 +14,8 @@ describe('Test connection', () => {
   });
 
   it('Daraja: ok when Safaricom issues a token, and it always asks afresh', async () => {
-    (globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementation(async () =>
-      new Response(JSON.stringify({ access_token: 'abc', expires_in: '3599' }), { status: 200 }),
+    vi.mocked(globalThis.fetch).mockImplementation(() =>
+      Promise.resolve(new Response(JSON.stringify({ access_token: 'abc', expires_in: '3599' }), { status: 200 })),
     );
     const a = new MpesaDarajaAdapter();
     expect(await a.testConnection(creds, {}, 'https://sandbox.safaricom.co.ke')).toEqual({ ok: true, message: 'Signed in to M-Pesa (Daraja) successfully.' });
@@ -27,7 +27,7 @@ describe('Test connection', () => {
   });
 
   it('Daraja: reports the failure in words and never echoes the secret', async () => {
-    (globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementation(async () => new Response('Invalid Credentials', { status: 400 }));
+    vi.mocked(globalThis.fetch).mockImplementation(() => Promise.resolve(new Response('Invalid Credentials', { status: 400 })));
     const r = await new MpesaDarajaAdapter().testConnection({ ...creds, consumerSecret: 'TOPSECRETVALUE' }, {}, 'https://sandbox.safaricom.co.ke');
     expect(r.ok).toBe(false);
     expect(r.message).toContain('400');

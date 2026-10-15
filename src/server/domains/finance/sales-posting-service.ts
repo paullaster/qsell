@@ -32,7 +32,7 @@ import type { PostingEngine, Tx } from './engine';
 import { FinanceError, type FinanceContext } from './errors';
 import type { PostingSetupService } from './posting-setup-service';
 
-import { has } from '@/lib/has';
+import { has, required } from '@/lib/values';
 
 type Writer = DrizzleDb | Tx;
 
@@ -559,7 +559,7 @@ export class SalesPostingService {
       if (!s) throw new FinanceError('FINANCE_NOT_SET_UP', 'Finance has not been set up yet.');
       if (has(s.salesGlGoLive)) throw new FinanceError('ALREADY_LIVE', `Sales have posted to the general ledger since ${s.salesGlGoLive}.`);
       const [offset] = await tx.select().from(glAccounts).where(and(eq(glAccounts.companyId, ctx.companyId), eq(glAccounts.id, input.offsetAccountId)));
-      if (!offset || offset.type !== 'posting' || offset.blocked) throw new FinanceError('OFFSET_INVALID', 'Choose a postable equity account for the opening balance.');
+      if (offset?.type !== 'posting' || offset.blocked) throw new FinanceError('OFFSET_INVALID', 'Choose a postable equity account for the opening balance.');
       if (offset.category !== 'equity') throw new FinanceError('OFFSET_INVALID', `${offset.no} ${offset.name} is not an equity account.`);
       const today = businessDate();
       const figures = (await this.openingFigures(ctx.companyId)).filter((f) => f.netCents !== 0);
@@ -688,7 +688,7 @@ export class SalesPostingService {
     const byAccount = new Map<string, { no: string; name: string; subLedger: number; groups: string[]; foreign: number; accountId: string }>();
     for (const g of groups) {
       if (!has(g.account_id)) continue;
-      const cur = byAccount.get(g.account_id) ?? { no: g.no!, name: g.name!, subLedger: 0, groups: [], foreign: 0, accountId: g.account_id };
+      const cur = byAccount.get(g.account_id) ?? { no: required(g.no, 'an account number'), name: required(g.name, 'an account name'), subLedger: 0, groups: [], foreign: 0, accountId: g.account_id };
       cur.subLedger += opening.get(g.code)?.netCents ?? 0;
       cur.foreign += opening.get(g.code)?.foreignEntries ?? 0;
       cur.groups.push(g.code);
@@ -707,7 +707,7 @@ export class SalesPostingService {
 
   async setOutputTaxAccount(ctx: FinanceContext, accountId: string) {
     const [a] = await this.db.select().from(glAccounts).where(and(eq(glAccounts.companyId, ctx.companyId), eq(glAccounts.id, accountId)));
-    if (!a || a.type !== 'posting' || a.blocked) throw new FinanceError('ACCOUNT_INVALID', 'Choose a postable account.');
+    if (a?.type !== 'posting' || a.blocked) throw new FinanceError('ACCOUNT_INVALID', 'Choose a postable account.');
     if (a.category !== 'liabilities') throw new FinanceError('ACCOUNT_INVALID', `${a.no} ${a.name} is not a liability account; tax owed on sales is a liability.`);
     await this.db.transaction(async (tx) => {
       await tx.update(financeSettings).set({ outputTaxAccountId: accountId, updatedAt: new Date() }).where(eq(financeSettings.companyId, ctx.companyId));

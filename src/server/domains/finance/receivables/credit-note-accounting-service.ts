@@ -13,7 +13,7 @@ import {
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import { creditNoteLines, planCredit, splitCredit } from '../domain/credit-note-accounting';
-import { fromCents, planOldestFirst, toCents, type PlannedApplication } from '../domain/receivables';
+import { fromCents, toCents, type PlannedApplication } from '../domain/receivables';
 import type { PostingRequest } from '../domain/types';
 import type { PostingEngine, Tx } from '../engine';
 import { FinanceError, type FinanceContext } from '../errors';
@@ -89,7 +89,8 @@ export class CreditNoteAccountingService {
 
     const split = splitCredit(p.grossCents, toCents(order.subtotal), toCents(order.tax));
     const [s] = await tx.select().from(financeSettings).where(eq(financeSettings.companyId, cn.companyId));
-    const live = Boolean(s?.salesGlGoLive) && date >= s.salesGlGoLive!;
+    const goLive = s?.salesGlGoLive ?? null;
+    const live = goLive !== null && date >= goLive;
     let registerId: string | null = null;
     if (live) {
       if (currency.toUpperCase() !== s.baseCurrency) {

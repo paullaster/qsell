@@ -2,7 +2,6 @@
 
 import { useEffect, useId, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { listPricingReasonsAction } from '@/server/domains/pricing/actions';
 import {
   adjustLoyaltyAction,
   checkLoyaltyAction,
@@ -346,7 +345,7 @@ export function LoyaltyClient({
 
         {canManage ? (
           <>
-            <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+            <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
             <button
               type="submit"
               className={primaryButtonClass}
@@ -458,7 +457,7 @@ function CustomerPoints({ canManage, active }: { canManage: boolean; active: boo
                   />
                 </div>
               </div>
-              <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+              <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
               <button
                 type="submit"
                 className={primaryButtonClass}

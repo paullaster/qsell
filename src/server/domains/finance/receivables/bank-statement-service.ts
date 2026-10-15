@@ -39,8 +39,7 @@ import { NO_SPECIAL_PERMISSIONS, type PostingEngine, type PostingPermissions, ty
 import { FinanceError, type FinanceContext } from '../errors';
 import type { ReceiptService } from './receipt-service';
 
-import { has } from '@/lib/has';
-import { orElse } from '@/lib/values';
+import { has, orElse } from '@/lib/values';
 
 export type StatementFormat = 'csv' | 'mt940';
 export const MAX_STATEMENT_BYTES = 10 * 1024 * 1024;
@@ -62,6 +61,11 @@ export interface ImportInput {
  * turned into a receipt or a bank charge, or set aside with a reason. Nothing here changes the
  * bank's words; every decision is kept with who made it and why.
  */
+/** The only item of a list, or nothing when there are none or several. */
+function onlyOne<T>(items: readonly T[]): T | undefined {
+  return items.length === 1 ? items[0] : undefined;
+}
+
 export class BankStatementService {
   constructor(
     private readonly db: DrizzleDb,
@@ -412,7 +416,7 @@ export class BankStatementService {
     if (line.status === 'matched' || line.status === 'ignored') throw new FinanceError('LINE_CLOSED', `This line is already ${line.status}.`);
     if (centsOf(line.amount) <= 0) throw new FinanceError('NOT_A_DEPOSIT', 'Only money received can become a customer receipt.');
     const [method] = await this.db.select().from(paymentMethods).where(and(eq(paymentMethods.companyId, ctx.companyId), eq(paymentMethods.id, input.paymentMethodId)));
-    if (!method || method.balancingBankAccountId !== line.bankAccountId) throw new FinanceError('METHOD_ACCOUNT', 'That payment method does not pay into this bank account.');
+    if (method?.balancingBankAccountId !== line.bankAccountId) throw new FinanceError('METHOD_ACCOUNT', 'That payment method does not pay into this bank account.');
     const account = await this.account(this.db, ctx.companyId, line.bankAccountId);
     const created = await this.receipts.create(ctx, {
       customerId: input.customerId,
@@ -466,8 +470,8 @@ export class BankStatementService {
       if (!has(account.feeGlAccountId)) throw new FinanceError('NO_FEE_ACCOUNT', `${account.code} has no fee account. Choose where its charges post (Finance → Bank accounts).`);
       const choices = await this.chargeGlChoices(ctx.companyId, account.id);
       if (choices.length === 0) throw new FinanceError('NO_METHOD', `No payment method pays into ${account.code}, so there is no G/L account to take the charge from. Add one under Settings → Payments.`);
-      const bankGl = has(opts.glAccountId) ? choices.find((c) => c.glId === opts.glAccountId) : choices.length === 1 ? choices[0] : undefined;
-      if (!bankGl) throw new FinanceError('GL_CHOICE_NEEDED', has(opts.glAccountId) ? 'That G/L account is not used by any payment method of this bank account.' : `Several G/L accounts are used for ${account.code}: choose the one this charge came out of.`);
+      const bankGl = has(opts.glAccountId) ? choices.find((c) => c.glId === opts.glAccountId) : onlyOne(choices);
+      if (bankGl === undefined) throw new FinanceError('GL_CHOICE_NEEDED', has(opts.glAccountId) ? 'That G/L account is not used by any payment method of this bank account.' : `Several G/L accounts are used for ${account.code}: choose the one this charge came out of.`);
       const date = line.lineDate;
       const issues = await this.engine.dateIssues(tx, ctx.companyId, date, permissions);
       if (issues.length > 0) throw new FinanceError(issues[0].code, issues.map((i) => i.message).join(' '));
@@ -526,12 +530,12 @@ export class BankStatementService {
   /** One account's working screen: lines to deal with (with suggestions), and our entries still open. */
   async workbench(companyId: string, bankAccountId: string, f: { status?: StatementLineStatus | 'open'; before?: number } = {}) {
     const account = await this.account(this.db, companyId, bankAccountId);
-    const statusFilter = f.status === 'open' || !f.status ? inArray(bankStatementLines.status, ['unmatched', 'proposed']) : eq(bankStatementLines.status, f.status);
+    const statusFilter = f.status === undefined || f.status === 'open' ? inArray(bankStatementLines.status, ['unmatched', 'proposed']) : eq(bankStatementLines.status, f.status);
     const limit = 100;
     const lines = await this.db
       .select()
       .from(bankStatementLines)
-      .where(and(eq(bankStatementLines.companyId, companyId), eq(bankStatementLines.bankAccountId, bankAccountId), statusFilter, f.before !== null && f.before !== undefined && f.before !== 0 ? gt(bankStatementLines.id, f.before) : undefined))
+      .where(and(eq(bankStatementLines.companyId, companyId), eq(bankStatementLines.bankAccountId, bankAccountId), statusFilter, f.before !== undefined && f.before !== 0 ? gt(bankStatementLines.id, f.before) : undefined))
       .orderBy(asc(bankStatementLines.id))
       .limit(limit + 1);
     const more = lines.length > limit;
@@ -566,7 +570,8 @@ export class BankStatementService {
   /** Candidate entries for a manual match: open entries of this account, newest first. */
   async candidateEntries(companyId: string, bankAccountId: string, near?: { amount?: string; date?: string }) {
     const all = await this.openEntries(this.db, companyId, bankAccountId);
-    const withAmt = has(near?.amount) ? all.filter((e) => e.amountCents === centsOf(near.amount!)) : all;
+    const wanted = near?.amount;
+    const withAmt = has(wanted) ? all.filter((e) => e.amountCents === centsOf(wanted)) : all;
     return (withAmt.length > 0 ? withAmt : all).slice(-100).reverse().map((e) => e.entry);
   }
 }

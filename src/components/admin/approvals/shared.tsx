@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { orElse } from '@/lib/values';
 
 export const fieldClass =
   'min-h-10 w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong focus:border-indigo-500 focus:outline-none disabled:opacity-60';
@@ -94,7 +95,7 @@ export function When({ iso }: { iso: string }) {
   useEffect(() => setText(ago(iso)), [iso]);
   return (
     <time dateTime={iso} title={new Date(iso).toLocaleString('en-KE')}>
-      {text || ' '}
+      {orElse(text, ' ')}
     </time>
   );
 }

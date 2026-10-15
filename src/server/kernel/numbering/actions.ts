@@ -9,6 +9,11 @@ import { DOCUMENT_KINDS, DOCUMENT_KIND_LIST, type DocumentKind } from './documen
 import { NumberSeriesError, type LineInput, type NumberPreview, type SeriesInput } from './service';
 import type { Issue } from './domain/types';
 
+import { emptyToNull, has } from '@/lib/values';
+import { injectedDelay } from '@/server/domains/finance/action-runner';
+import { businessDate } from './business-date';
+import type { PageInput } from '@/server/domains/settings/paging';
+
 const PAGE = '/admin/settings/number-series';
 
 export type NumberingResult<T> =
@@ -20,6 +25,7 @@ async function run<T>(
   fn: (ctx: { companyId: string; actor: { type: 'user'; id: string } }) => Promise<T>,
 ): Promise<NumberingResult<T>> {
   try {
+    await injectedDelay();
     const userId = await requirePermission('numbering:manage');
     const company = await getContainer().companySettings.ensureSeeded();
     await getContainer().reasonCodes.ensureSystemReasons(company.id);
@@ -44,7 +50,7 @@ async function run<T>(
   }
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => businessDate();
 
 // ── views ────────────────────────────────────────────────────────────────
 
@@ -65,6 +71,7 @@ export interface LineView {
   lineNo: number;
   branchId: string | null;
   branchCode: string | null;
+  branchLabel: string | null;
   startsOn: string;
   endsOn: string | null;
   prefix: string;
@@ -115,60 +122,48 @@ export interface SeriesDetailView {
     reasonText: string | null;
     detail: Record<string, unknown>;
   }[];
-  branches: { id: string; code: string; name: string }[];
 }
 
 export interface BindingsView {
   kinds: { kind: DocumentKind; label: string; fiscal: boolean }[];
-  series: {
-    id: string;
-    code: string;
-    description: string;
-    mode: 'gap_free' | 'allow_gaps';
-    isActive: boolean;
-  }[];
-  branches: { id: string; code: string; name: string }[];
-  bindings: { documentKind: string; branchId: string | null; seriesId: string }[];
+  /** Where each kind is bound: the series (with the words to show for it) and the branch, if for one branch only. */
+  bindings: { documentKind: string; branchId: string | null; branchLabel: string | null; seriesId: string; seriesLabel: string }[];
   /** What each kind would be numbered as, if used today with no branch. */
   examples: Record<string, string | null>;
 }
 
-export async function listNumberSeriesAction(): Promise<NumberingResult<SeriesSummary[]>> {
+/** One page of the series in code order, each with its next number and the documents it numbers. */
+export async function numberSeriesPageAction(
+  input: PageInput,
+): Promise<NumberingResult<{ rows: SeriesSummary[]; nextCursor: string | null }>> {
   return run(async ({ companyId }) => {
-    const { numbering, branches } = getContainer();
-    const [list, bindings, branchRows] = await Promise.all([
-      numbering.listSeries(companyId),
-      numbering.bindings(companyId),
-      branches.listByCompany(companyId),
-    ]);
-    const branchCode = new Map(branchRows.map((b) => [b.id, b.code]));
-    return Promise.all(
-      list.map(async (s): Promise<SeriesSummary> => {
-        const detail = await numbering.seriesDetail(companyId, s.id);
-        const preview = await numbering.preview(
-          companyId,
-          { seriesCode: s.code },
-          { date: today() },
-        );
+    const { numbering } = getContainer();
+    const page = await numbering.pageSeries(companyId, input);
+    const branchIds = [...new Set(page.bindings.flatMap((b) => (b.branchId === null ? [] : [b.branchId])))];
+    const branchCode = await numbering.branchCodes(branchIds);
+    const rows = await Promise.all(
+      page.rows.map(async (s): Promise<SeriesSummary> => {
+        const preview = await numbering.preview(companyId, { seriesCode: s.code }, { date: today() });
         return {
           id: s.id,
           code: s.code,
           description: s.description,
           mode: s.mode,
           isActive: s.isActive,
-          lineCount: detail.lines.length,
+          lineCount: page.lineCounts.get(s.id) ?? 0,
           nextExample: preview.number,
           nextProblem: preview.error?.message ?? null,
-          boundTo: bindings
+          boundTo: page.bindings
             .filter((b) => b.seriesId === s.id)
             .map((b) => ({
               kind: b.documentKind as DocumentKind,
               label: DOCUMENT_KINDS[b.documentKind as DocumentKind]?.label ?? b.documentKind,
-              branchCode: b.branchId ? (branchCode.get(b.branchId) ?? null) : null,
+              branchCode: b.branchId === null ? null : (branchCode.get(b.branchId) ?? null),
             })),
         };
       }),
     );
+    return { rows, nextCursor: page.nextCursor };
   });
 }
 
@@ -176,18 +171,19 @@ export async function getNumberSeriesAction(
   id: string,
 ): Promise<NumberingResult<SeriesDetailView>> {
   return run(async ({ companyId }) => {
-    const { numbering, branches, decisionLog } = getContainer();
-    const [detail, recent, history, branchRows] = await Promise.all([
+    const { numbering, decisionLog } = getContainer();
+    const [detail, recent, history] = await Promise.all([
       numbering.seriesDetail(companyId, id),
       numbering.recentAllocations(companyId, id, 30),
       decisionLog.timeline('number_series', id, 60),
-      branches.listByCompany(companyId),
     ]);
+    const bound = [...detail.lines.flatMap(({ line }) => (line.branchId === null ? [] : [line.branchId])), ...detail.bindings.flatMap((b) => (b.branchId === null ? [] : [b.branchId]))];
+    const branchLabel = await numbering.branchLabels([...new Set(bound)]);
     const latest = new Map<string, { lastNo: number | null; periodKey: string }>();
     for (const c of detail.counters)
       if (!latest.has(c.lineId)) latest.set(c.lineId, { lastNo: c.lastNo, periodKey: c.periodKey });
     const used = new Set(detail.counters.map((c) => c.lineId));
-    const branchCode = new Map(branchRows.map((b) => [b.id, b.code]));
+    const branchCode = await numbering.branchCodes([...new Set(bound)]);
     return {
       series: {
         id: detail.series.id,
@@ -205,6 +201,7 @@ export async function getNumberSeriesAction(
         lineNo: line.lineNo,
         branchId: line.branchId,
         branchCode: code,
+        branchLabel: line.branchId === null ? null : (branchLabel.get(line.branchId) ?? null),
         startsOn: line.startsOn,
         endsOn: line.endsOn,
         prefix: line.prefix,
@@ -218,7 +215,7 @@ export async function getNumberSeriesAction(
         isOpen: line.isOpen,
         used: used.has(line.id),
         lastNo: latest.get(line.id)?.lastNo ?? null,
-        lastPeriod: latest.get(line.id)?.periodKey || null,
+        lastPeriod: emptyToNull(latest.get(line.id)?.periodKey),
       })),
       fiscalKinds: detail.bindings
         .map((b) => b.documentKind as DocumentKind)
@@ -227,7 +224,7 @@ export async function getNumberSeriesAction(
       boundTo: detail.bindings.map((b) => ({
         kind: b.documentKind as DocumentKind,
         label: DOCUMENT_KINDS[b.documentKind as DocumentKind]?.label ?? b.documentKind,
-        branchCode: b.branchId ? (branchCode.get(b.branchId) ?? null) : null,
+        branchCode: has(b.branchId) ? (branchCode.get(b.branchId) ?? null) : null,
       })),
       recent: recent.map((r) => ({
         number: r.number,
@@ -248,63 +245,37 @@ export async function getNumberSeriesAction(
           detail: h.inputs,
         }))
         .reverse(),
-      branches: branchRows
-        .filter((b) => b.isActive)
-        .map((b) => ({ id: b.id, code: b.code, name: b.name })),
     };
   });
 }
 
 export async function getBindingsAction(): Promise<NumberingResult<BindingsView>> {
   return run(async ({ companyId }) => {
-    const { numbering, branches } = getContainer();
-    const [series, bindings, branchRows] = await Promise.all([
-      numbering.listSeries(companyId),
-      numbering.bindings(companyId),
-      branches.listByCompany(companyId),
+    const { numbering } = getContainer();
+    const bindings = await numbering.bindings(companyId);
+    const seriesIds = [...new Set(bindings.map((b) => b.seriesId))];
+    const branchIds = [...new Set(bindings.flatMap((b) => (b.branchId === null ? [] : [b.branchId])))];
+    const [seriesLabels, branchLabels, examples] = await Promise.all([
+      numbering.seriesLabels(companyId, seriesIds),
+      numbering.branchLabels(branchIds),
+      Promise.all(DOCUMENT_KIND_LIST.map(async (kind) => [kind, (await numbering.preview(companyId, { kind }, { date: today() })).number] as const)),
     ]);
-    const examples: Record<string, string | null> = {};
-    for (const kind of DOCUMENT_KIND_LIST) {
-      examples[kind] = (await numbering.preview(companyId, { kind }, { date: today() })).number;
-    }
     return {
       kinds: DOCUMENT_KIND_LIST.map((kind) => ({
         kind,
         label: DOCUMENT_KINDS[kind].label,
         fiscal: DOCUMENT_KINDS[kind].fiscal,
       })),
-      series: series.map((s) => ({
-        id: s.id,
-        code: s.code,
-        description: s.description,
-        mode: s.mode,
-        isActive: s.isActive,
-      })),
-      branches: branchRows
-        .filter((b) => b.isActive)
-        .map((b) => ({ id: b.id, code: b.code, name: b.name })),
       bindings: bindings.map((b) => ({
         documentKind: b.documentKind,
         branchId: b.branchId,
+        branchLabel: b.branchId === null ? null : (branchLabels.get(b.branchId) ?? null),
         seriesId: b.seriesId,
+        seriesLabel: seriesLabels.get(b.seriesId) ?? b.seriesId,
       })),
-      examples,
+      examples: Object.fromEntries(examples),
     };
   });
-}
-
-export async function listReasonCodesAction(): Promise<
-  NumberingResult<{ code: string; description: string; requiresComment: boolean }[]>
-> {
-  return run(async ({ companyId }) =>
-    (await getContainer().reasonCodes.list(companyId))
-      .filter((r) => r.isActive)
-      .map((r) => ({
-        code: r.code,
-        description: r.description,
-        requiresComment: r.requiresComment,
-      })),
-  );
 }
 
 export async function previewNumberAction(input: {
@@ -314,7 +285,7 @@ export async function previewNumberAction(input: {
   date: string;
 }): Promise<NumberingResult<NumberPreview>> {
   return run(async ({ companyId }) => {
-    const target = input.seriesCode ? { seriesCode: input.seriesCode } : { kind: input.kind ?? '' };
+    const target = has(input.seriesCode) ? { seriesCode: input.seriesCode } : { kind: input.kind ?? '' };
     return getContainer().numbering.preview(companyId, target, {
       branchId: input.branchId ?? null,
       date: input.date,
@@ -324,7 +295,7 @@ export async function previewNumberAction(input: {
 
 // ── changes ──────────────────────────────────────────────────────────────
 
-type Reason = { code?: string | null; text?: string | null };
+interface Reason { code?: string | null; text?: string | null }
 
 export async function createNumberSeriesAction(
   input: SeriesInput,

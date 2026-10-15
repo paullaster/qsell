@@ -74,7 +74,7 @@ export async function listEtimsItemsAction(
       svc.listRegistrable(target),
     ]);
     const ids = rows.map((r) => r.productId);
-    const names = ids.length
+    const names = ids.length !== 0
       ? await getContainer()
           .db.select({ id: products.id, name: products.name, sku: products.sku })
           .from(products)

@@ -2,9 +2,7 @@
 
 import { useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  listConfigReasonsAction,
-  saveGroupAction,
+import { saveGroupAction,
   saveProfileAction,
   type Lookups,
   type ProfileView,
@@ -24,6 +22,8 @@ import {
   primaryButtonClass,
   type Message,
 } from './shared';
+
+import { emptyToNull, has } from '@/lib/values';
 
 const KINDS = [...new Set(TRIGGERS.map((t) => t.documentKind))];
 type User = Lookups['users'][number];
@@ -98,10 +98,10 @@ function People({ lookups, profiles }: { lookups: Lookups; profiles: ProfileView
                   {p ? (
                     <div className="mt-2 space-y-1 text-sm text-fg">
                       <p>Reports to: {name(p.approverUserId) ?? 'nobody (top of the chain)'}</p>
-                      {p.substituteUserId ? (
+                      {has(p.substituteUserId) ? (
                         <p>
                           Covered by {name(p.substituteUserId)}
-                          {p.substituteFrom || p.substituteTo
+                          {has(p.substituteFrom) || has(p.substituteTo)
                             ? ` (${p.substituteFrom ?? '…'} to ${p.substituteTo ?? '…'})`
                             : ''}
                         </p>
@@ -187,7 +187,7 @@ function ProfileForm({
               : { mode: 'none', amount: '' },
           ];
         }),
-      ) as Record<string, { mode: LimitMode; amount: string }>,
+      ),
   );
   const [reason, setReason] = useState<ReasonValue>({ code: '', text: '' });
   const [message, setMessage] = useState<Message>(null);
@@ -201,10 +201,10 @@ function ProfileForm({
     const res = await saveProfileAction(
       {
         userId: user.id,
-        approverUserId: form.approverUserId || null,
-        substituteUserId: form.substituteUserId || null,
-        substituteFrom: form.substituteUserId ? form.substituteFrom || null : null,
-        substituteTo: form.substituteUserId ? form.substituteTo || null : null,
+        approverUserId: emptyToNull(form.approverUserId),
+        substituteUserId: emptyToNull(form.substituteUserId),
+        substituteFrom: has(form.substituteUserId) ? emptyToNull(form.substituteFrom) : null,
+        substituteTo: has(form.substituteUserId) ? emptyToNull(form.substituteTo) : null,
         isActive: form.isActive,
         limits: KINDS.filter((k) => limits[k]!.mode !== 'none').map((k) => ({
           documentKind: k,
@@ -215,7 +215,7 @@ function ProfileForm({
       reason,
     );
     setBusy(false);
-    if (!res.ok) return setMessage({ kind: 'error', text: res.error });
+    if (!res.ok) { setMessage({ kind: 'error', text: res.error }); return; }
     router.refresh();
     onSaved();
   };
@@ -274,7 +274,7 @@ function ProfileForm({
             ))}
           </select>
         </div>
-        {form.substituteUserId ? (
+        {has(form.substituteUserId) ? (
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label htmlFor={`${uid}-from`} className={labelClass}>
@@ -344,7 +344,7 @@ function ProfileForm({
         </p>
       </fieldset>
 
-      <ReasonField value={reason} onChange={setReason} load={listConfigReasonsAction} />
+      <ReasonField value={reason} onChange={setReason} source="approval-config-reasons" />
       <Notice message={message} />
       <button type="submit" className={primaryButtonClass} disabled={busy || reason.code === ''}>
         {busy ? 'Saving…' : 'Save'}
@@ -458,7 +458,7 @@ function GroupForm({
     setMessage(null);
     const res = await saveGroupAction({ id: group?.id, ...form, memberUserIds: members }, reason);
     setBusy(false);
-    if (!res.ok) return setMessage({ kind: 'error', text: res.error });
+    if (!res.ok) { setMessage({ kind: 'error', text: res.error }); return; }
     router.refresh();
     onSaved();
   };
@@ -567,7 +567,7 @@ function GroupForm({
           </button>
         </div>
       </div>
-      <ReasonField value={reason} onChange={setReason} load={listConfigReasonsAction} />
+      <ReasonField value={reason} onChange={setReason} source="approval-config-reasons" />
       <Notice message={message} />
       <button type="submit" className={primaryButtonClass} disabled={busy || reason.code === ''}>
         {busy ? 'Saving…' : 'Save group'}

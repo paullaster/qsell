@@ -8,14 +8,14 @@ export function shortcutDimensionFieldName(dimensionNo: number): string {
   return `shortcutDimension${dimensionNo}Code`;
 }
 
-export type DimensionFieldDescriptor = {
+export interface DimensionFieldDescriptor {
   fieldName: string;
   dimensionId: string;
   dimensionCode: string;
   dimensionNo: number;
   kind: 'global' | 'shortcut';
   optionString: string | null;
-};
+}
 
 /** Build the adaptive field contract from company setup. */
 export function listDimensionFieldDescriptors(
@@ -56,10 +56,10 @@ export function projectionToFieldMap(
   projection: DimensionCodesProjection,
 ): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const [n, code] of Object.entries(projection.global || {})) {
+  for (const [n, code] of Object.entries(projection.global)) {
     out[globalDimensionFieldName(Number(n))] = code;
   }
-  for (const [n, code] of Object.entries(projection.shortcut || {})) {
+  for (const [n, code] of Object.entries(projection.shortcut)) {
     out[shortcutDimensionFieldName(Number(n))] = code;
   }
   return out;
@@ -74,8 +74,6 @@ export function fieldMapToProjection(
   descriptors: DimensionFieldDescriptor[],
 ): DimensionCodesProjection {
   if (
-    fields &&
-    typeof fields === 'object' &&
     'global' in fields &&
     'shortcut' in fields &&
     typeof (fields as DimensionCodesProjection).global === 'object' &&
@@ -83,8 +81,8 @@ export function fieldMapToProjection(
   ) {
     const shaped = fields as DimensionCodesProjection;
     return {
-      global: { ...(shaped.global || {}) },
-      shortcut: { ...(shaped.shortcut || {}) },
+      global: { ...shaped.global },
+      shortcut: { ...shaped.shortcut },
     };
   }
 
@@ -92,10 +90,11 @@ export function fieldMapToProjection(
   const projection = emptyDimensionCodes();
   for (const d of descriptors) {
     const raw = flat[d.fieldName];
-    if (raw == null || String(raw).trim() === '') continue;
+    const code = raw?.trim() ?? '';
+    if (code === '') continue;
     const key = String(d.dimensionNo);
-    if (d.kind === 'global') projection.global[key] = String(raw).trim().toUpperCase();
-    else projection.shortcut[key] = String(raw).trim().toUpperCase();
+    if (d.kind === 'global') projection.global[key] = code.toUpperCase();
+    else projection.shortcut[key] = code.toUpperCase();
   }
   return projection;
 }
