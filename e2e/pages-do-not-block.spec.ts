@@ -33,6 +33,7 @@ const screens: [string, string, RegExp, string | RegExp][] = [
   ['company appearance', '/admin/company/appearance', /Loading the appearance settings/, 'Appearance'],
   ['company modules', '/admin/company/modules', /Loading the module names/, 'Module names'],
   ['company support', '/admin/company/support', /Loading the support settings/, 'Customer support'],
+  ['customers', '/admin/customers', /Loading customers/, 'Customers'],
   ['payment settings', '/admin/settings/payments', /Loading payment settings/, 'Payments'],
 ];
 
