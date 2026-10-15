@@ -36,3 +36,16 @@ export async function clickUntilVisible(trigger: Locator, target: Locator): Prom
     await expect(target).toBeVisible({ timeout: 3000 });
   }).toPass({ timeout: 60_000 });
 }
+
+/** No box on the page scrolls sideways: nothing is hidden off-screen behind a scroll bar a person would have to find. */
+export const noInnerHorizontalScroll = async (page: Page): Promise<void> => {
+  const wide = await page.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>('main *, section *')]
+      .filter((el) => {
+        const { overflowX } = getComputedStyle(el);
+        return (overflowX === 'auto' || overflowX === 'scroll') && el.scrollWidth > el.clientWidth + 1 && el.clientWidth > 0;
+      })
+      .map((el) => `${el.tagName}.${el.className.slice(0, 60)}`),
+  );
+  expect(wide).toEqual([]);
+};
