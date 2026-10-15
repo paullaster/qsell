@@ -1,3 +1,4 @@
+import { notFound } from 'next/navigation';
 import { inArray } from 'drizzle-orm';
 import { drizzleDb } from '@/server/db/drizzle/client';
 import { products } from '@/server/db/drizzle/schema';
@@ -16,7 +17,10 @@ export default async function DiscountDetailPage({ params }: { params: Promise<{
     getDiscountLookupsAction(),
     canPermission('pricing:manage'),
   ]);
-  if (!detail.ok) return <ErrorNote message={detail.error} />;
+  if (!detail.ok) {
+    if (detail.code === 'NOT_FOUND') notFound();
+    return <ErrorNote message={detail.error} />;
+  }
   if (!lookups.ok) return <ErrorNote message={lookups.error} />;
   const named = detail.data.rule.target.productIds ?? [];
   const rows = named.length

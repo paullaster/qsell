@@ -1,3 +1,4 @@
+import { notFound } from 'next/navigation';
 import { getDiscountLookupsAction } from '@/server/domains/pricing/discount-actions';
 import { getRebateAction } from '@/server/domains/pricing/retrospective-actions';
 import { canPermission } from '@/server/domains/access-control/guard';
@@ -11,7 +12,10 @@ export default async function RebateDetailPage({ params }: { params: Promise<{ i
     getDiscountLookupsAction(),
     canPermission('pricing:manage'),
   ]);
-  if (!detail.ok) return <ErrorNote message={detail.error} />;
+  if (!detail.ok) {
+    if (detail.code === 'NOT_FOUND') notFound();
+    return <ErrorNote message={detail.error} />;
+  }
   if (!lookups.ok) return <ErrorNote message={lookups.error} />;
   return <RebateDetailClient detail={detail.data} lookups={lookups.data} canManage={canManage} />;
 }

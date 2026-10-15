@@ -9,6 +9,7 @@ import { AccessDeniedError } from '@/server/domains/access-control/engine';
 import { requirePermission } from '@/server/domains/access-control/guard';
 import { getContainer } from '@/server/di/container';
 import { ReasonError } from '../reason-codes/service';
+import { isMalformedId, NO_SUCH_RECORD } from '@/server/domains/settings/errors';
 import { ApprovalConfigError } from './config-service';
 import { ApprovalError, type Simulation } from './engine';
 import type { DefinitionIssue } from './domain/definition';
@@ -67,6 +68,7 @@ async function run<T>(
     if (error instanceof ApprovalError || error instanceof ReasonError) {
       return { ok: false, error: error.message, code: error.code };
     }
+    if (isMalformedId(error)) return NO_SUCH_RECORD;
     console.error('[approvals]', error);
     return { ok: false, error: 'Something went wrong. Please try again.' };
   }
@@ -221,27 +223,42 @@ function flatten(obj: Record<string, unknown>, prefix = ''): [string, unknown][]
 
 // ── approver and requester actions ───────────────────────────────────────
 
-export async function listInboxAction(): Promise<ApprovalResult<InboxItem[]>> {
+/** A page of rows with where the next page begins. */
+export interface Paged<Row> {
+  rows: Row[];
+  nextCursor: string | null;
+}
+
+/** One page of what waits on the signed-in person, oldest first; text and `overdueOnly` narrow it in the database. */
+export async function inboxPageAction(input: PageInput & { overdueOnly?: boolean }): Promise<ApprovalResult<Paged<InboxItem>>> {
   return run('approvals:act', async ({ userId }) => {
-    const rows = await getContainer().approvals.inbox(userId);
-    const names = await namesOf(rows.flatMap((r) => [r.requestedBy, r.onBehalfOfUserId]));
+    const page = await getContainer().approvals.inboxPage(userId, { query: input.query, cursor: input.cursor, overdueOnly: input.overdueOnly === true });
+    const names = await namesOf(page.rows.flatMap((r) => [r.requestedBy, r.onBehalfOfUserId]));
     const now = Date.now();
-    return rows.map((r) => ({
-      entryId: r.entryId,
-      requestId: r.requestId,
-      documentKind: r.documentKind,
-      documentId: r.documentId,
-      triggerLabel: triggerLabel(r.trigger),
-      amount: Number(r.amount),
-      requestedByName: names.get(r.requestedBy) ?? 'Unknown',
-      step: r.step,
-      onBehalfOfName: has(r.onBehalfOfUserId) ? (names.get(r.onBehalfOfUserId) ?? null) : null,
-      dueAt: r.dueAt?.toISOString() ?? null,
-      overdue: r.dueAt ? r.dueAt.getTime() < now : false,
-      handedOver: r.replacesEntryId !== null,
-      waitingSince: r.waitingSince.toISOString(),
-    }));
+    return {
+      nextCursor: page.nextCursor,
+      rows: page.rows.map((r) => ({
+        entryId: r.entryId,
+        requestId: r.requestId,
+        documentKind: r.documentKind,
+        documentId: r.documentId,
+        triggerLabel: triggerLabel(r.trigger),
+        amount: Number(r.amount),
+        requestedByName: names.get(r.requestedBy) ?? 'Unknown',
+        step: r.step,
+        onBehalfOfName: has(r.onBehalfOfUserId) ? (names.get(r.onBehalfOfUserId) ?? null) : null,
+        dueAt: r.dueAt?.toISOString() ?? null,
+        overdue: r.dueAt ? r.dueAt.getTime() < now : false,
+        handedOver: r.replacesEntryId !== null,
+        waitingSince: r.waitingSince.toISOString(),
+      })),
+    };
   });
+}
+
+/** How many approvals wait on the signed-in person, and how many are overdue, counted by the database. */
+export async function inboxCountsAction(): Promise<ApprovalResult<{ waiting: number; overdue: number }>> {
+  return run('approvals:act', ({ userId }) => getContainer().approvals.inboxCounts(userId));
 }
 
 export async function getRequestDetailAction(
@@ -346,7 +363,7 @@ export async function rejectEntryAction(
 }
 
 function toMine(
-  r: Awaited<ReturnType<ReturnType<typeof getContainer>['approvals']['requestsBy']>>[number],
+  r: Awaited<ReturnType<ReturnType<typeof getContainer>['approvals']['requestsPage']>>['rows'][number],
   names: Map<string, string>,
 ): MyRequest {
   return {
@@ -365,13 +382,15 @@ function toMine(
   };
 }
 
-export async function listMyRequestsAction(): Promise<ApprovalResult<MyRequest[]>> {
+const REQUEST_STATUSES = ['pending', 'rejected', 'approved'] as const;
+
+/** One page of what the signed-in person has sent for approval, newest first; an unknown status shows all. */
+export async function myRequestsPageAction(input: PageInput & { status?: string }): Promise<ApprovalResult<Paged<MyRequest>>> {
   return run('approvals:request', async ({ companyId, userId }) => {
-    const rows = await getContainer().approvals.requestsBy(companyId, userId);
-    const names = await namesOf(
-      rows.flatMap((r) => r.openEntries.flatMap((e) => [e.approverUserId, e.onBehalfOfUserId])),
-    );
-    return rows.map((r) => toMine(r, names));
+    const status = REQUEST_STATUSES.find((s) => s === input.status);
+    const page = await getContainer().approvals.requestsPage(companyId, userId, { cursor: input.cursor, status });
+    const names = await namesOf(page.rows.flatMap((r) => r.openEntries.flatMap((e) => [e.approverUserId, e.onBehalfOfUserId])));
+    return { nextCursor: page.nextCursor, rows: page.rows.map((r) => toMine(r, names)) };
   });
 }
 

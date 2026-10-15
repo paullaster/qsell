@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCustomerCreated } from '@/components/admin/customer-created';
 import { Copy, Plus, Star, X } from 'lucide-react';
 import { buildCatalogueIndex, type CatalogueProduct } from '@/lib/catalogue-entry';
 import { QuoteLayoutBoard } from './quote-layout/QuoteLayoutBoard';
@@ -556,6 +557,7 @@ function TemplateEditor({
       setError(err instanceof Error ? err.message : 'Could not choose that customer.');
     }
   };
+  useCustomerCreated((created) => void chooseCustomer({ id: created.id, label: created.label }));
   const submit = async (event: React.SyntheticEvent) => {
     event.preventDefault();
     try {
@@ -760,6 +762,8 @@ function TemplateEditor({
               value={input.customerId ?? null}
               valueLabel={customerLabel}
               placeholder="Any customer"
+              createHref="/admin/customers/new"
+              createLabel="+ Create a customer"
               onChange={(option) => void chooseCustomer(option)}
             />
             <LookupAutocomplete

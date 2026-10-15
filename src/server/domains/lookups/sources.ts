@@ -20,6 +20,8 @@ import { PAYMENT_LOOKUP_SOURCES } from '@/server/domains/payments/lookup-sources
 import { FINANCE_LOOKUP_SOURCES } from '@/server/domains/finance/lookup-sources';
 import { NUMBERING_LOOKUP_SOURCES } from '@/server/kernel/numbering/lookup-sources';
 import { TAX_LOOKUP_SOURCES } from '@/server/domains/taxes/lookup-sources';
+import { COMPANY_LOOKUP_SOURCES } from '@/server/domains/company/lookup-sources';
+import { CUSTOMER_LOOKUP_SOURCES } from '@/server/domains/customers/lookup-sources';
 import { KRA_LOOKUP_SOURCES } from '@/server/domains/kra/lookup-sources';
 import { APPROVAL_LOOKUP_SOURCES } from '@/server/kernel/approvals/lookup-sources';
 import { REASON_LOOKUP_SOURCES } from '@/server/kernel/reason-codes/lookup-sources';
@@ -204,6 +206,8 @@ const SOURCES: ReadonlyMap<string, LookupSource> = new Map(
     ...APPROVAL_LOOKUP_SOURCES,
     ...KRA_LOOKUP_SOURCES,
     ...TAX_LOOKUP_SOURCES,
+    ...CUSTOMER_LOOKUP_SOURCES,
+    ...COMPANY_LOOKUP_SOURCES,
   ].map((source) => [source.key, source]),
 );
 

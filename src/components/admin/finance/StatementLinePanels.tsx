@@ -1,6 +1,7 @@
 'use client';
 
 import { useId, useState } from 'react';
+import { useCustomerCreated } from '@/components/admin/customer-created';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { entryType, pickedCents, canMatchTotal, fromCents } from '@/lib/bank-statement';
 import { needsComment } from '@/lib/receipt-detail';
@@ -68,6 +69,7 @@ export function FindEntriesPanel({ lineAmount, candidates, busy, onMatch, onClos
 /** A deposit nobody recorded: choose who paid and how, and a posted receipt is made from the line. */
 export function CustomerReceiptPanel({ accountId, lineAmount, lineDate, busy, onCreate, onClose }: { accountId: string; lineAmount: string; lineDate: string; busy: boolean; onCreate: (input: { customerId: string; paymentMethodId: string; allocate: 'oldest_first' | 'none' }) => void; onClose: () => void }) {
   const [customer, setCustomer] = useState<Choice | null>(null);
+  useCustomerCreated(setCustomer);
   const [method, setMethod] = useState<Choice | null>(null);
   const [allocate, setAllocate] = useState<Choice | null>({ id: 'oldest_first', label: 'Apply to oldest invoices' });
   return (
@@ -80,7 +82,7 @@ export function CustomerReceiptPanel({ accountId, lineAmount, lineDate, busy, on
       }}
     >
       <p className="text-xs text-fg-muted">This creates a posted receipt of {money(lineAmount)} dated {lineDate} and closes the line against it.</p>
-      <ChoicePicker label="Customer" source="statement-customers" choice={customer} onChoice={setCustomer} clearable={false} required placeholder="Name, number or phone" />
+      <ChoicePicker label="Customer" source="statement-customers" choice={customer} onChoice={setCustomer} clearable={false} required placeholder="Name, number or phone" createHref="/admin/customers/new" createLabel="+ Create a customer" />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <ChoicePicker label="Paid by" source="statement-receipt-methods" filters={{ account: accountId }} choice={method} onChoice={setMethod} clearable={false} required placeholder="How did they pay?" />
         <ChoicePicker label="Apply to invoices" source="statement-allocation-modes" choice={allocate} onChoice={setAllocate} clearable={false} required />

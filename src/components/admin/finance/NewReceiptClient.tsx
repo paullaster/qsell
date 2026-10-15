@@ -7,6 +7,7 @@ import type { walletFormOptionsAction } from '@/server/domains/finance/wallet-ac
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { amountHint, customerStanding, isForeign, methodTraits, postOptions, receiptInput, receiptProblem, receiptRoute, type ReceiptForm } from '@/lib/receipt-form';
 import type { Choice } from '@/lib/payment-options';
+import { useCustomerCreated } from '@/components/admin/customer-created';
 import { Chip, Field, LoadFailed, Message, PageHeader, buttonClass, cardClass, fieldClass, money, primaryClass, today, type Notice, attempt } from './ui';
 
 type Wallet = { enabled: boolean; label: string; canDeposit: boolean } | null;
@@ -29,6 +30,7 @@ function NewReceiptView({ baseCurrency, presetCustomer, wallet }: { baseCurrency
   const uid = useId();
   const router = useRouter();
   const [customer, setCustomer] = useState<Choice | null>(presetCustomer);
+  useCustomerCreated(setCustomer);
   const [method, setMethod] = useState<Choice | null>(null);
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(today());
@@ -74,7 +76,7 @@ function NewReceiptView({ baseCurrency, presetCustomer, wallet }: { baseCurrency
       <Message notice={notice} />
       <form className={`${cardClass} space-y-5`} aria-label="New receipt" onSubmit={(e) => { e.preventDefault(); void submit(false); }}>
         <div className="space-y-1">
-          <ChoicePicker label="Customer" source="receipt-customers" choice={customer} onChoice={setCustomer} clearable={false} required placeholder="Type a name, number, phone or email" listHref="/admin/customers" listLabel="View all customers" />
+          <ChoicePicker label="Customer" source="receipt-customers" choice={customer} onChoice={setCustomer} clearable={false} required placeholder="Type a name, number, phone or email" listHref="/admin/customers" listLabel="View all customers" createHref="/admin/customers/new" createLabel="+ Create a customer" />
           {customer !== null ? <p className="text-xs text-fg-muted">{customerStanding(customer.meta, money)}</p> : null}
         </div>
 

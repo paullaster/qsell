@@ -22,6 +22,7 @@ async function main(): Promise<void> {
   if ((await quotes.listTemplates()).length > 0) {
     console.warn('e2e seed: already seeded');
     await seedFinance();
+    await seedApprovals();
     return;
   }
   await container.organizations.ensureDefaultOrgAndBranch(company.id, 'E2E Co');
@@ -164,6 +165,7 @@ async function main(): Promise<void> {
     }
   }
   await seedFinance();
+  await seedApprovals();
   console.warn('e2e seed: done');
 }
 
@@ -172,6 +174,35 @@ async function main(): Promise<void> {
  * be refunded through, and one posted receipt with money left unapplied (so there is something to
  * refund). Safe to run again.
  */
+/**
+ * 27 documents waiting on the admin for approval, sent by the admin (a step may allow self-approval), so the
+ * inbox and "my requests" have more than a page to show. Safe to run again.
+ */
+async function seedApprovals(): Promise<void> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const schema = await import('@/server/db/drizzle/schema');
+  const { getContainer } = await import('@/server/di/container');
+  const container = getContainer();
+  const company = await container.companySettings.ensureSeeded();
+  const admin = (await db.select().from(schema.users).limit(1)).at(0);
+  if (admin === undefined) throw new Error('e2e seed: the admin was not created');
+  const existing = await db.select({ id: schema.approvalWorkflows.id }).from(schema.approvalWorkflows).where(eq(schema.approvalWorkflows.code, 'E2E-INBOX')).limit(1);
+  if (existing.length > 0) return;
+  await container.reasonCodes.ensureSystemReasons(company.id);
+  // The seed only writes the requests; nothing here may touch real orders.
+  container.approvals.registerDocument('sales_order', { snapshot: () => Promise.resolve({}), onReleased: () => Promise.resolve(), onRejected: () => Promise.resolve(), onReopened: () => Promise.resolve() });
+  const actor = { type: 'user' as const, id: admin.id };
+  const customerId = randomUUID();
+  const wf = await container.approvalConfig.createWorkflow(company.id, { code: 'E2E-INBOX', name: 'E2E inbox', trigger: 'sales_order.submitted' }, actor);
+  await container.approvalConfig.saveDraft(company.id, wf.id, { conditions: { op: 'eq', field: 'customer.id', value: customerId }, steps: [{ sequence: 1, name: 'Admin', approver: { type: 'user', userId: admin.id }, allowSelfApproval: true }] } as never, actor);
+  await container.approvalConfig.publish(company.id, wf.id, actor, { code: 'POLICY_CHANGE' });
+  for (let i = 0; i < 27; i++) {
+    await db.transaction((t) =>
+      container.approvals.submit({ companyId: company.id, trigger: 'sales_order.submitted', documentId: `E2E-INBOX-${String(i).padStart(2, '0')}`, requestedBy: admin.id, amount: 5 + i, snapshot: { customer: { id: customerId } } }, t),
+    );
+  }
+}
+
 async function seedFinance(): Promise<void> {
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
   const schema = await import('@/server/db/drizzle/schema');

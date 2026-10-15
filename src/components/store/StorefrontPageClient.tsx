@@ -23,11 +23,11 @@ import {
 } from '@/server/actions';
 import type { PublicProduct, Order, PaymentProvider, CurrencyConfig } from '@/types/index';
 import { resolveBaseCurrency } from '@/lib/cartMoney';
-import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
+import type { PublicCompany } from '@/lib/company-view';
 
 interface StorefrontPageClientProps {
   productsPromise: Promise<PublicProduct[]>;
-  companyPromise: Promise<CompanySettingsRow>;
+  companyPromise: Promise<PublicCompany>;
   /** Signed-in shopper's display name, resolved on the server; null for guests. */
   sessionNamePromise: Promise<string | null>;
 }

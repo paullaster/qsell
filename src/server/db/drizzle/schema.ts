@@ -866,6 +866,8 @@ export const approvalRequests = pgTable(
       .where(sql`${t.status} = 'pending'`),
     index('approval_requests_document_idx').on(t.documentKind, t.documentId, t.createdAt),
     index('approval_requests_submission_idx').on(t.submissionId),
+    // "My requests": one person's requests, newest first, a page at a time.
+    index('approval_requests_requester_idx').on(t.companyId, t.requestedBy, t.createdAt),
   ],
 );
 

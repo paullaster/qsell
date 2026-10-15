@@ -36,7 +36,7 @@ function storefront() {
   return StorefrontCustomerService;
 }
 
-function firstNonEmpty(values: Array<string | null | undefined>, fallback = ''): string {
+function firstNonEmpty(values: (string | null | undefined)[], fallback = ''): string {
   return values.find((v) => v != null && v !== '') ?? fallback;
 }
 
@@ -241,7 +241,7 @@ export async function addCustomerAddressAction(
   addressData: Omit<CustomerAddress, 'id'>,
 ): Promise<{ address: CustomerAddress; customer: CustomerAccount }> {
   const tradeId = await requireTradeCustomerId(customerId);
-  const row = await master().addAddress(tradeId, addressData as CustomerAddressInput);
+  const row = await master().addAddress(tradeId, addressData);
   const customer = await reloadAccount(tradeId, customerId);
   return { address: mapAddress(row), customer };
 }

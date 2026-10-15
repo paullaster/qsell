@@ -22,6 +22,7 @@ import type { GiftCardDetail, GiftCardView } from './giftcard-service';
 import type { LoyaltyAccountView, LoyaltyProgramView } from './loyalty-service';
 import type { Statement } from './rebate-config-service';
 import type { TenderInput, TenderResult } from './tender-service';
+import { isMalformedId, NO_SUCH_RECORD } from '@/server/domains/settings/errors';
 
 type Reason = { code: string; text?: string };
 
@@ -44,6 +45,7 @@ async function run<T>(
     if (error instanceof PricingConfigError)
       return { ok: false, error: error.message, code: error.code, issues: error.issues };
     if (error instanceof ReasonError) return { ok: false, error: error.message, code: error.code };
+    if (isMalformedId(error)) return NO_SUCH_RECORD;
     console.error('[retrospective]', error);
     return { ok: false, error: 'Something went wrong. Please try again.' };
   }

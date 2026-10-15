@@ -30,12 +30,12 @@ import { generateInvoicePdfAction, emailInvoiceAction } from '@/server/domains/i
 import { OrderCreditNotesPanel } from '@/components/admin/OrderCreditNotesPanel';
 import { OrderTenderPanel } from '@/components/admin/pricing/OrderTenderPanel';
 import { downloadPdfBase64 } from '@/lib/downloadPdf';
-import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
+import type { PublicCompany } from '@/lib/company-view';
 import { shownPaymentReference } from '@/lib/paymentReference';
 
 interface AdminOrdersProps {
   ordersPromise: Promise<Order[]>;
-  companyPromise: Promise<CompanySettingsRow>;
+  companyPromise: Promise<PublicCompany>;
   onRefresh: () => void;
 }
 
