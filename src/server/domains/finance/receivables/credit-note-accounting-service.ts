@@ -89,20 +89,20 @@ export class CreditNoteAccountingService {
 
     const split = splitCredit(p.grossCents, toCents(order.subtotal), toCents(order.tax));
     const [s] = await tx.select().from(financeSettings).where(eq(financeSettings.companyId, cn.companyId));
-    const live = Boolean(s?.salesGlGoLive) && date >= s!.salesGlGoLive!;
+    const live = Boolean(s?.salesGlGoLive) && date >= s.salesGlGoLive!;
     let registerId: string | null = null;
     if (live) {
-      if (currency.toUpperCase() !== s!.baseCurrency) {
+      if (currency.toUpperCase() !== s.baseCurrency) {
         throw new FinanceError('FOREIGN_CURRENCY', `This order is in ${currency}; credit notes in a foreign currency are not posted to the general ledger yet.`);
       }
       const group = (await this.policies.forCustomer(tx, cn.companyId, inv.customerId, date)).groupCode;
       const [returns, receivables] = await Promise.all([
-        this.setup.resolveGeneral(cn.companyId, s!.defaultBusinessGroup, s!.defaultProductGroup, 'sales_returns', date),
+        this.setup.resolveGeneral(cn.companyId, s.defaultBusinessGroup, s.defaultProductGroup, 'sales_returns', date),
         this.setup.resolveCustomer(cn.companyId, group, 'receivables'),
       ]).catch((e: unknown) => {
         throw new FinanceError('POSTING_SETUP_MISSING', `The credit note cannot be posted: ${e instanceof Error ? e.message : 'posting setup is incomplete.'}`);
       });
-      const lines = creditNoteLines(split, { salesReturns: returns.accountId, outputTax: s!.outputTaxAccountId, receivables: receivables.accountId }, cn.creditNoteNo);
+      const lines = creditNoteLines(split, { salesReturns: returns.accountId, outputTax: s.outputTaxAccountId, receivables: receivables.accountId }, cn.creditNoteNo);
       const req: PostingRequest = {
         companyId: cn.companyId,
         idempotencyKey: `credit-note:${cn.id}`,
@@ -110,7 +110,7 @@ export class CreditNoteAccountingService {
         documentType: 'credit_note',
         documentNo: cn.creditNoteNo,
         description: `Credit note ${cn.creditNoteNo} for ${order.orderNumber}`,
-        currency: s!.baseCurrency,
+        currency: s.baseCurrency,
         rate: '1',
         rateSource: 'base',
         lines: lines.map((l) => ({ accountId: l.accountId, debit: fromCents(l.debitCents), credit: fromCents(l.creditCents), description: l.description, sourceLedger: l.creditCents > 0 ? 'customer' : null, sourceEntryId: l.creditCents > 0 ? inv.customerId : null })),
@@ -169,7 +169,7 @@ export class CreditNoteAccountingService {
       .for('update');
     if (!a) throw new FinanceError('NOT_FOUND', 'That credit note has no account entry (it was issued before credit notes reached the customer account).');
     const [cn] = await tx.select().from(creditNotes).where(eq(creditNotes.id, creditNoteId));
-    return { a, cn: cn! };
+    return { a, cn };
   }
 
   private async walletIn(tx: Tx, ctx: FinanceContext, creditNoteId: string, cents?: number, perms?: { canPostSoftClosed: boolean; canPostControlAccounts: boolean }) {
@@ -216,7 +216,7 @@ export class CreditNoteAccountingService {
 
   /** Uses a credit note's excess against the customer's other unpaid invoices. */
   async applyExcess(ctx: FinanceContext, creditNoteId: string, applications: PlannedApplication[] | 'oldest_first') {
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const { a } = await this.lockAccounting(tx, ctx, creditNoteId);
       const open = await this.openIn(tx, creditNoteId, a.excess);
       if (open <= 0) throw new FinanceError('NOTHING_TO_RESOLVE', 'Nothing is left to resolve on this credit note.');

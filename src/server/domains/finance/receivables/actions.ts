@@ -10,6 +10,8 @@ import type { PaymentMethodInput } from './payment-method-service';
 import type { AllocateMode, ReceiptInput, ReceiptListFilter } from './receipt-service';
 import { fromCents } from '../domain/receivables';
 
+import { has } from '@/lib/has';
+
 const fin = () => getContainer().finance;
 const ROOT = '/admin/finance';
 const BANK = `${ROOT}/bank-accounts`;
@@ -20,10 +22,7 @@ const RECEIPTS = `${ROOT}/receipts`;
 
 export async function listBankAccountsAction() {
   return run('bank_accounts:read', { surface: 'finance/bank-accounts', action: 'list' }, async (ctx) => {
-    const [rows, glAccounts] = await Promise.all([
-      fin().bankAccounts.list(ctx.companyId),
-      fin().setup.listAccounts(ctx.companyId),
-    ]);
+    const rows = await fin().bankAccounts.list(ctx.companyId);
     const settings = await fin().setup.getSettings(ctx.companyId);
     return {
       baseCurrency: settings?.baseCurrency ?? null,
@@ -35,15 +34,13 @@ export async function listBankAccountsAction() {
         currency: r.account.currency,
         glNos: r.glNos,
         feeGlAccountId: r.account.feeGlAccountId,
+        feeGlLabel: r.feeGlLabel,
         providerConfigId: r.account.providerConfigId,
         details: r.account.details,
         blocked: r.account.blocked,
         balance: r.balance,
         methods: r.methods,
       })),
-      glChoices: glAccounts
-        .filter((a) => a.type === 'posting' && !a.blocked)
-        .map((a) => ({ id: a.id, no: a.no, name: a.name, category: a.category })),
       can: {
         create: await canPermission('bank_accounts:create'),
         edit: await canPermission('bank_accounts:edit'),
@@ -144,34 +141,18 @@ export async function linkOrdersToMethodsAction() {
 
 export async function receiptFormOptionsAction() {
   return run('receipts:create', { surface: 'finance/receipts', action: 'form_options' }, async (ctx) => {
-    const [methods, settings] = await Promise.all([
-      fin().paymentMethods.list(ctx.companyId),
-      fin().setup.getSettings(ctx.companyId),
-    ]);
-    return {
-      baseCurrency: settings?.baseCurrency ?? 'KES',
-      methods: methods
-        .filter((m) => m.method.enabled && m.method.usableFor.includes('customer_receipt') && !m.bankBlocked)
-        .map((m) => ({
-          id: m.method.id,
-          code: m.method.code,
-          name: m.method.name,
-          kind: m.method.kind,
-          bankLabel: `${m.bankCode} — ${m.bankName}`,
-          currency: m.bankCurrency,
-          requiresReference: m.method.requiresReference,
-          requiresEvidence: m.method.requiresEvidence,
-          requiresCounterparty: m.method.requiresCounterparty,
-          limits: m.method.limits,
-        })),
-    };
+    const settings = await fin().setup.getSettings(ctx.companyId);
+    return { baseCurrency: settings?.baseCurrency ?? 'KES' };
   });
 }
 
-export async function searchCustomersForReceiptAction(q: string) {
-  return run('receipts:create', { surface: 'finance/receipts', action: 'search_customers' }, async (ctx) =>
-    fin().receipts.searchCustomers(ctx.companyId, q),
-  );
+/** Arriving from a customer's statement (?customer=<their number>): the customer, already chosen. */
+export async function receiptPresetCustomerAction(number: string) {
+  return run('receipts:create', { surface: 'finance/receipts', action: 'preset_customer' }, async (ctx) => {
+    const found = (await fin().receipts.searchCustomers(ctx.companyId, number)).find((c) => c.number === number);
+    if (found === undefined) return null;
+    return { id: found.id, label: found.name, meta: { number: found.number, phone: found.phone ?? '', accountType: found.accountType, balance: found.balance } };
+  });
 }
 
 export async function listReceiptsAction(filter: ReceiptListFilter = {}) {
@@ -219,7 +200,6 @@ export async function receiptDetailAction(id: string) {
         url: await media.deliveryUrlById(a.mediaAssetId).catch(() => null),
       })),
     );
-    const reasons = (await getContainer().reasonCodes.list(ctx.companyId)).filter((r) => r.isActive);
     const r = d.receipt;
     return {
       receipt: {
@@ -238,7 +218,7 @@ export async function receiptDetailAction(id: string) {
         narration: r.narration,
         source: r.source,
         postedAt: r.postedAt ? r.postedAt.toISOString() : null,
-        postedBy: r.postedBy ? (d.actors[r.postedBy] ?? r.postedBy) : null,
+        postedBy: has(r.postedBy) ? (d.actors[r.postedBy] ?? r.postedBy) : null,
         createdBy: d.actors[r.createdBy] ?? r.createdBy,
         createdAt: r.createdAt.toISOString(),
         registerId: r.registerId,
@@ -267,7 +247,7 @@ export async function receiptDetailAction(id: string) {
         toStatus: e.toStatus,
         reasonCode: e.reasonCode,
         reasonText: e.reasonText,
-        actorId: e.actorId ? (d.actors[e.actorId] ?? e.actorId) : null,
+        actorId: has(e.actorId) ? (d.actors[e.actorId] ?? e.actorId) : null,
         actorType: e.actorType,
         surface: (e.origin as { surface?: string }).surface ?? null,
         permission: (e.origin as { permissionUsed?: string }).permissionUsed ?? null,
@@ -275,7 +255,6 @@ export async function receiptDetailAction(id: string) {
         data: e.data,
       })),
       attachments,
-      reasons: reasons.map((x) => ({ code: x.code, description: x.description, requiresComment: x.requiresComment })),
       can: {
         post: await canPermission('receipts:post'),
         cancel: await canPermission('receipts:cancel_draft'),
@@ -302,7 +281,7 @@ export async function createReceiptAction(input: ReceiptInput, post?: { allocate
     'receipts:create',
     { surface: 'finance/receipts/new', action: post ? 'create_and_post' : 'create_draft' },
     async (ctx) => {
-      if (input.isDeposit && !(await canPermission('wallet:deposit'))) {
+      if (input.isDeposit === true && !(await canPermission('wallet:deposit'))) {
         throw new FinanceError('CANNOT_DEPOSIT', 'You may not record advance deposits.');
       }
       if (post && !(await canPermission('receipts:post'))) {
@@ -319,10 +298,10 @@ export async function createReceiptAction(input: ReceiptInput, post?: { allocate
         return { ...created, posted: true, postError: null as string | null };
       } catch (error) {
         if (error instanceof FinanceError || error instanceof PostingError) {
-          return { ...created, posted: false, postError: error.message as string | null };
+          return { ...created, posted: false, postError: error.message };
         }
         console.error('[finance] posting a new receipt failed', error);
-        return { ...created, posted: false, postError: 'Something went wrong while posting. The draft was saved.' as string | null };
+        return { ...created, posted: false, postError: 'Something went wrong while posting. The draft was saved.' };
       }
     },
     [RECEIPTS],
@@ -380,13 +359,6 @@ export async function bounceChequeAction(id: string, reason: { code: string; tex
   return run('cheques:bounce', { surface: 'finance/receipts/detail', action: 'cheque_bounce' }, async (ctx) => {
     await fin().receipts.bounceCheque(ctx, id, reason, { permissions: await postingPermissions() });
   }, [RECEIPTS, `${RECEIPTS}/${id}`]);
-}
-
-/** Payment methods (a bank account and the G/L account it posts to) a cheque can be deposited through. */
-export async function chequeDepositBanksAction() {
-  return run('cheques:deposit', { surface: 'finance/receipts/detail', action: 'deposit_banks' }, async (ctx) =>
-    (await fin().receipts.chequeDepositMethods(ctx.companyId)).map((m) => ({ id: m.id, label: `${m.name} — ${m.bankCode}` })),
-  );
 }
 
 /** Open invoices and unapplied credit of one customer, for the "apply" panel. */

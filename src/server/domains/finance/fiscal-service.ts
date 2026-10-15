@@ -7,6 +7,8 @@ import { periodTransition } from './domain/periods-status';
 import type { PeriodStatus } from './domain/types';
 import { FinanceError, type FinanceContext } from './errors';
 
+import { has } from '@/lib/has';
+
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
 export class FiscalService {
@@ -24,7 +26,7 @@ export class FiscalService {
   }
 
   async createYear(ctx: FinanceContext, input: { startsOn: string; shape: CalendarShape }) {
-    return this.db.transaction((tx) => this.createYearIn(tx, ctx, input));
+    return await this.db.transaction((tx) => this.createYearIn(tx, ctx, input));
   }
 
   /** Creates a fiscal year and its periods in the caller's transaction. */
@@ -32,7 +34,7 @@ export class FiscalService {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(input.startsOn)) {
       throw new FinanceError('DATE_INVALID', 'The fiscal year start is not a date.');
     }
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'finance-calendar:' + ctx.companyId}))`);
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`finance-calendar:${  ctx.companyId}`}))`);
     const endsOn = addDays(addMonths(input.startsOn, 12), -1);
     const [clash] = await tx
       .select({ code: fiscalYears.code })
@@ -44,9 +46,9 @@ export class FiscalService {
     }
     const periods = generatePeriods(input.startsOn, input.shape);
     const problems = checkPeriodsTile(periods);
-    if (problems.length > 0) throw new FinanceError('PERIODS_INVALID', problems[0]!);
+    if (problems.length > 0) throw new FinanceError('PERIODS_INVALID', problems[0]);
 
-    const code = `FY${input.startsOn.slice(0, 4)}${input.startsOn.slice(5, 7) === '01' ? '' : '-' + input.startsOn.slice(5, 7)}`;
+    const code = `FY${input.startsOn.slice(0, 4)}${input.startsOn.slice(5, 7) === '01' ? '' : `-${  input.startsOn.slice(5, 7)}`}`;
     const [year] = await tx
       .insert(fiscalYears)
       .values({ companyId: ctx.companyId, code, startsOn: input.startsOn, endsOn, shape: input.shape })
@@ -54,7 +56,7 @@ export class FiscalService {
     await tx.insert(accountingPeriods).values(
       periods.map((p) => ({
         companyId: ctx.companyId,
-        fiscalYearId: year!.id,
+        fiscalYearId: year.id,
         no: p.no,
         name: p.name,
         startsOn: p.startsOn,
@@ -64,7 +66,7 @@ export class FiscalService {
     await this.decisions.record(
       {
         companyId: ctx.companyId,
-        subject: { type: 'fiscal_year', id: year!.id },
+        subject: { type: 'fiscal_year', id: year.id },
         action: 'finance.fiscal_year_created',
         actor: ctx.actor,
         inputs: { origin: ctx.origin },
@@ -72,7 +74,7 @@ export class FiscalService {
       },
       tx,
     );
-    return year!;
+    return year;
   }
 
   /** The permission needed to take a period from its current status to `to`, or null if illegal. */
@@ -100,7 +102,7 @@ export class FiscalService {
           p.status === 'locked' ? 'A locked period can never be changed.' : `A period cannot go from ${p.status} to ${to}.`,
         );
       }
-      if (t.reasonRequired && !(reason ?? '').trim()) {
+      if (t.reasonRequired && !has((reason ?? '').trim())) {
         throw new FinanceError('REASON_REQUIRED', 'A reason is required for this change.');
       }
       await tx

@@ -59,11 +59,11 @@ export class PostingSetupService {
       await this.decisions.record(
         {
           companyId: ctx.companyId,
-          subject: { type: `${kind}_posting_group`, id: row!.id },
+          subject: { type: `${kind}_posting_group`, id: row.id },
           action: 'finance.posting_group_created',
           actor: ctx.actor,
           inputs: { origin: ctx.origin },
-          outcome: { code: row!.code, name: row!.name },
+          outcome: { code: row.code, name: row.name },
         },
         tx,
       );

@@ -10,6 +10,9 @@ import {
   testProviderAction,
   type paymentSetupAction,
 } from '@/server/domains/finance/payment-setup-actions';
+import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { METHOD_KINDS, PROVIDER_ENVIRONMENTS, labelOf, savedHint, type Choice } from '@/lib/payment-options';
+import { when } from '@/lib/payment-activity-format';
 import { Chip, Field, Message, buttonClass, cardClass, dangerClass, fieldClass, primaryClass, type Notice, attempt } from '../finance/ui';
 import { CAPABILITY_LABEL, CREDENTIAL_FIELDS } from './payment-credential-fields';
 import { DarajaPanel } from './DarajaPanel';
@@ -18,7 +21,6 @@ import { PaymentMethodForm, type SetupMethod } from './PaymentMethodForm';
 type Setup = Extract<Awaited<ReturnType<typeof paymentSetupAction>>, { ok: true }>['data'];
 type Provider = Setup['providers'][number];
 
-const KIND_WORDS: Record<string, string> = { cash: 'Cash', bank_transfer: 'Bank transfer', bank_deposit: 'Bank deposit', cheque: 'Cheque', mobile_money: 'Mobile money', card: 'Card', gateway: 'Online gateway', other: 'Other' };
 
 /** One provider: the connection and its shared credentials, and the payment methods that go through it. */
 export function PaymentProviderCard({ setup, provider: p, open, onToggle, onChanged }: { setup: Setup; provider: Provider; open: boolean; onToggle: () => void; onChanged: (text?: string) => void }) {
@@ -28,7 +30,7 @@ export function PaymentProviderCard({ setup, provider: p, open, onToggle, onChan
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [name, setName] = useState(p.label);
-  const [env, setEnv] = useState(p.environment);
+  const [env, setEnv] = useState<Choice | null>({ id: p.environment, label: labelOf(PROVIDER_ENVIRONMENTS, p.environment) ?? p.environment });
   const [url, setUrl] = useState(p.apiBaseUrl);
   const [creds, setCreds] = useState<Record<string, string>>({});
   const [form, setForm] = useState<{ method: SetupMethod | null } | null>(null);
@@ -41,7 +43,7 @@ export function PaymentProviderCard({ setup, provider: p, open, onToggle, onChan
     setNotice(null);
     const res = await attempt(call());
     setBusy(null);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     setNotice({ kind: 'ok', text: okText });
     onChanged();
     return res;
@@ -52,7 +54,7 @@ export function PaymentProviderCard({ setup, provider: p, open, onToggle, onChan
     setNotice(null);
     const res = await attempt(testProviderAction(p.id));
     setBusy(null);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     setNotice({ kind: res.data.ok ? 'ok' : 'error', text: res.data.ok ? `Connected: ${res.data.message}` : `Could not connect: ${res.data.message}` });
     onChanged();
   };
@@ -79,14 +81,9 @@ export function PaymentProviderCard({ setup, provider: p, open, onToggle, onChan
 
           {!manual ? (
             <>
-              <form className="grid grid-cols-1 gap-3 sm:grid-cols-2" onSubmit={(e) => { e.preventDefault(); void run('save', 'Saved.', () => saveProviderAction({ id: p.id, displayName: name, environment: env, apiBaseUrl: url })); }}>
+              <form className="grid grid-cols-1 gap-3 sm:grid-cols-2" onSubmit={(e) => { e.preventDefault(); void run('save', 'Saved.', () => saveProviderAction({ id: p.id, displayName: name, environment: (env?.id ?? p.environment) as 'staging', apiBaseUrl: url })); }}>
                 <Field id={`${uid}-nm`} label="Name"><input id={`${uid}-nm`} value={name} onChange={(e) => setName(e.target.value)} className={fieldClass} disabled={!can.editProvider} required maxLength={80} /></Field>
-                <Field id={`${uid}-env`} label="Environment">
-                  <select id={`${uid}-env`} value={env} onChange={(e) => setEnv(e.target.value as 'staging')} className={fieldClass} disabled={!can.editProvider}>
-                    <option value="staging">Testing (sandbox)</option>
-                    <option value="production">Production</option>
-                  </select>
-                </Field>
+                <ChoicePicker label="Environment" source="provider-environments" choice={env} onChoice={setEnv} clearable={false} required disabled={!can.editProvider} />
                 <div className="sm:col-span-2"><Field id={`${uid}-url`} label="Service address"><input id={`${uid}-url`} value={url} onChange={(e) => setUrl(e.target.value)} className={`${fieldClass} font-mono text-xs`} disabled={!can.editProvider} /></Field></div>
                 {can.editProvider ? <div><button type="submit" className={buttonClass} disabled={busy !== null}>Save connection</button></div> : null}
               </form>
@@ -96,9 +93,9 @@ export function PaymentProviderCard({ setup, provider: p, open, onToggle, onChan
                 <p className="text-xs text-fg-muted">Leave a field empty to keep what is saved. Enter a value only to set or replace it.</p>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   {fields.map((f) => (
-                    <div key={f.key} className={f.multiline ? 'sm:col-span-2' : ''}>
-                      <Field id={`${uid}-c-${f.key}`} label={f.label} hint={p.maskedCredentials?.[f.key] ? `Saved: ${p.maskedCredentials[f.key]}` : undefined}>
-                        {f.multiline ? (
+                    <div key={f.key} className={f.multiline === true ? 'sm:col-span-2' : ''}>
+                      <Field id={`${uid}-c-${f.key}`} label={f.label} hint={savedHint(p.maskedCredentials, f.key)}>
+                        {f.multiline === true ? (
                           <textarea id={`${uid}-c-${f.key}`} rows={4} value={creds[f.key] ?? ''} onChange={(e) => setCreds({ ...creds, [f.key]: e.target.value })} className={`${fieldClass} font-mono text-xs`} disabled={!can.setCredentials} autoComplete="off" />
                         ) : (
                           <input id={`${uid}-c-${f.key}`} type="password" value={creds[f.key] ?? ''} onChange={(e) => setCreds({ ...creds, [f.key]: e.target.value })} className={`${fieldClass} font-mono`} disabled={!can.setCredentials} autoComplete="new-password" />
@@ -107,28 +104,27 @@ export function PaymentProviderCard({ setup, provider: p, open, onToggle, onChan
                     </div>
                   ))}
                 </div>
-                {can.setCredentials ? <button type="submit" className={buttonClass} disabled={busy !== null || Object.values(creds).every((v) => !v.trim())}>Save credentials</button> : null}
+                {can.setCredentials ? <button type="submit" className={buttonClass} disabled={busy !== null || Object.values(creds).every((v) => v.trim() === '')}>Save credentials</button> : null}
               </form>
 
               <div className="space-y-2 text-xs">
                 {p.capabilities.length > 0 ? <p className="flex flex-wrap items-center gap-1"><span className="text-fg-muted">Can:</span>{p.capabilities.map((c) => <Chip key={c} tone="gray">{CAPABILITY_LABEL[c] ?? c}</Chip>)}</p> : null}
-                {p.callbackUrl ? <p className="break-all text-fg-muted">Callback address: <span className="font-mono">{p.callbackUrl}</span></p> : <p className="text-fg-muted">Set the company&apos;s public address above to see the callback address.</p>}
-                {p.lastTestAt ? <p role="status" className={p.lastTestOk ? 'text-green-700' : 'text-red-700'}>Last test {new Date(p.lastTestAt).toLocaleString()}: {p.lastTestOk ? 'connected' : 'failed'} — {p.lastTestMessage}</p> : <p className="text-fg-muted">Not tested yet.</p>}
+                {p.callbackUrl !== null && p.callbackUrl !== '' ? <p className="break-all text-fg-muted">Callback address: <span className="font-mono">{p.callbackUrl}</span></p> : <p className="text-fg-muted">Set the company&apos;s public address above to see the callback address.</p>}
+                {p.lastTestAt !== null ? <p role="status" className={p.lastTestOk === true ? 'text-green-700' : 'text-red-700'}>Last test {when(p.lastTestAt)}: {p.lastTestOk === true ? 'connected' : 'failed'} — {p.lastTestMessage}</p> : <p className="text-fg-muted">Not tested yet.</p>}
               </div>
 
               <div className="flex flex-wrap gap-2">
                 {can.test ? <button type="button" className={buttonClass} disabled={busy !== null || !p.hasCredentials} onClick={() => void test()}>{busy === 'test' ? 'Testing…' : 'Test connection'}</button> : null}
                 {can.enable ? <button type="button" className={p.isEnabled ? buttonClass : primaryClass} disabled={busy !== null} onClick={() => void run('enable', p.isEnabled ? 'Switched off.' : 'Switched on.', () => setProviderEnabledAction(p.id, !p.isEnabled))}>{p.isEnabled ? 'Switch off' : 'Switch on'}</button> : null}
-                {can.deleteProvider ? (confirm === 'provider'
-                  ? <><button type="button" className={dangerClass} disabled={busy !== null} onClick={() => void run('delete', 'Provider deleted.', () => deleteProviderAction(p.id))}>Yes, delete {p.label}</button><button type="button" className={buttonClass} onClick={() => setConfirm(null)}>Keep it</button></>
-                  : <button type="button" className={dangerClass} disabled={busy !== null || methods.length > 0} title={methods.length > 0 ? 'Move or delete its payment methods first' : undefined} onClick={() => setConfirm('provider')}>Delete provider</button>) : null}
+                {can.deleteProvider && confirm === 'provider' ? <><button type="button" className={dangerClass} disabled={busy !== null} onClick={() => void run('delete', 'Provider deleted.', () => deleteProviderAction(p.id))}>Yes, delete {p.label}</button><button type="button" className={buttonClass} onClick={() => setConfirm(null)}>Keep it</button></> : null}
+                {can.deleteProvider && confirm !== 'provider' ? <button type="button" className={dangerClass} disabled={busy !== null || methods.length > 0} title={methods.length > 0 ? 'Move or delete its payment methods first' : undefined} onClick={() => setConfirm('provider')}>Delete provider</button> : null}
               </div>
             </>
           ) : (
             <p className="text-sm text-fg-muted">Cash, cheques and manual bank deposits do not go through an outside company, so there is nothing to connect here. Add your cash, cheque and deposit methods below, with whatever names and G/L accounts you want.</p>
           )}
 
-          {p.daraja ? <DarajaPanel setup={setup} provider={p} onChanged={onChanged} /> : null}
+          {p.daraja !== null ? <DarajaPanel setup={setup} provider={p} daraja={p.daraja} onChanged={onChanged} /> : null}
 
           <div className={`${cardClass} space-y-3 bg-surface-sunken/40`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -144,14 +140,13 @@ export function PaymentProviderCard({ setup, provider: p, open, onToggle, onChan
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="font-semibold text-fg-strong">{m.name} <span className="font-normal text-fg-muted">· {m.code}</span> {!m.enabled ? <Chip tone="gray">Off</Chip> : null}</p>
-                      <p className="text-xs text-fg-muted">{KIND_WORDS[m.kind] ?? m.kind} · {m.branchName ?? 'every branch'} · {m.bankLabel} · posts to {m.glLabel}{m.channelNumber ? ` · ${m.channelKind ?? 'number'} ${m.channelNumber}` : ''}</p>
+                      <p className="text-xs text-fg-muted">{labelOf(METHOD_KINDS, m.kind)} · {m.branchName ?? 'every branch'} · {m.bankLabel} · posts to {m.glLabel}{m.channelNumber !== null && m.channelNumber !== '' ? ` · ${m.channelKind ?? 'number'} ${m.channelNumber}` : ''}</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {can.editMethod ? <button type="button" className={buttonClass} onClick={() => setForm({ method: m })} aria-label={`Edit ${m.name}`}>Edit</button> : null}
-                      {can.disableMethod ? <button type="button" className={buttonClass} disabled={busy !== null} onClick={() => void run('m' + m.id, m.enabled ? `${m.name} switched off.` : `${m.name} switched on.`, () => setPaymentMethodEnabledAction(m.id, !m.enabled))} aria-label={`${m.enabled ? 'Switch off' : 'Switch on'} ${m.name}`}>{m.enabled ? 'Switch off' : 'Switch on'}</button> : null}
-                      {can.deleteMethod ? (confirm === m.id
-                        ? <><button type="button" className={dangerClass} onClick={() => void run('d' + m.id, 'Deleted.', async () => { setConfirm(null); return deletePaymentMethodAction(m.id); })}>Yes, delete</button><button type="button" className={buttonClass} onClick={() => setConfirm(null)}>Keep</button></>
-                        : <button type="button" className={dangerClass} onClick={() => setConfirm(m.id)} aria-label={`Delete ${m.name}`}>Delete</button>) : null}
+                      {can.disableMethod ? <button type="button" className={buttonClass} disabled={busy !== null} onClick={() => void run(`m${m.id}`, m.enabled ? `${m.name} switched off.` : `${m.name} switched on.`, () => setPaymentMethodEnabledAction(m.id, !m.enabled))} aria-label={`${m.enabled ? 'Switch off' : 'Switch on'} ${m.name}`}>{m.enabled ? 'Switch off' : 'Switch on'}</button> : null}
+                      {can.deleteMethod && confirm === m.id ? <><button type="button" className={dangerClass} onClick={() => void run(`d${m.id}`, 'Deleted.', async () => { setConfirm(null); return await deletePaymentMethodAction(m.id); })}>Yes, delete</button><button type="button" className={buttonClass} onClick={() => setConfirm(null)}>Keep</button></> : null}
+                      {can.deleteMethod && confirm !== m.id ? <button type="button" className={dangerClass} onClick={() => setConfirm(m.id)} aria-label={`Delete ${m.name}`}>Delete</button> : null}
                     </div>
                   </div>
                 </li>

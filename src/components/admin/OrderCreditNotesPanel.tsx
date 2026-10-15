@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
   getOrderCreditableAction,
   issueOrderCreditNoteAction,
@@ -8,7 +8,9 @@ import {
   retryCreditNoteSigningAction,
   type CreditNoteView,
 } from '@/server/domains/credit-notes/actions';
-import { CREDIT_NOTE_REASONS, type CreditNoteReason } from '@/server/domains/credit-notes/reasons';
+import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { anythingLeft, chosenLines, creditEstimate, creditNoteRequest, formatMoney, noteMissing, reasonLabel } from '@/lib/credit-note-form';
+import type { Choice } from '@/lib/payment-options';
 
 type Creditable = NonNullable<
   Awaited<ReturnType<typeof getOrderCreditableAction>> extends infer R
@@ -17,15 +19,6 @@ type Creditable = NonNullable<
       : never
     : never
 >;
-
-const REASON_LABEL: Record<CreditNoteReason, string> = {
-  returned_goods: 'Goods returned',
-  damaged_goods: 'Damaged goods',
-  pricing_error: 'Pricing error',
-  order_cancelled: 'Order cancelled',
-  goodwill: 'Goodwill',
-  other: 'Other (explain below)',
-};
 
 const STATUS: Record<string, { label: string; style: string }> = {
   transmitted: {
@@ -45,9 +38,8 @@ const fieldClass =
   'min-h-10 w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong focus:border-indigo-500 focus:outline-none';
 const buttonClass =
   'min-h-10 cursor-pointer rounded-lg border border-line-strong bg-surface-sunken px-3 py-2 text-xs font-semibold text-fg hover:bg-hover disabled:opacity-50';
-const round2 = (n: number) => Math.round(n * 100) / 100;
-const money = (n: number, currency: string) =>
-  `${currency} ${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const money = formatMoney;
+const RETURNED_GOODS: Choice = { id: 'returned_goods', label: reasonLabel('returned_goods') };
 
 /**
  * Credit notes for one order: what exists, and a form to issue another against the order's
@@ -62,7 +54,7 @@ export function OrderCreditNotesPanel({ orderId }: { orderId: string }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [qty, setQty] = useState<Record<string, string>>({});
-  const [reason, setReason] = useState<CreditNoteReason>('returned_goods');
+  const [reason, setReason] = useState<Choice | null>(RETURNED_GOODS);
   const [note, setNote] = useState('');
   const [restock, setRestock] = useState(false);
   // Plain busy state, deliberately not a transition: the actions revalidate the orders page,
@@ -81,21 +73,17 @@ export function OrderCreditNotesPanel({ orderId }: { orderId: string }) {
       listOrderCreditNotesAction(orderId),
     ]);
     if (currentOrder.current !== orderId) return;
-    if ((!c.ok && c.forbidden) || (!n.ok && n.forbidden)) return setHidden(true);
+    if ((!c.ok && c.forbidden) || (!n.ok && n.forbidden)) { setHidden(true); return; }
     if (c.ok) setData(c.data);
     else setError(c.error);
     if (n.ok) setNotes(n.data);
   }, [orderId]);
 
   useEffect(() => {
+    // The panel is keyed by order, so each order starts with fresh state; this only fetches.
     currentOrder.current = orderId;
     const waiting = timers.current;
-    setData(null);
-    setNotes([]);
-    setOpen(false);
-    setError(null);
-    setNotice(null);
-    setQty({});
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount: state is set when the answer arrives
     void load();
     return () => {
       for (const t of waiting) clearTimeout(t);
@@ -104,43 +92,20 @@ export function OrderCreditNotesPanel({ orderId }: { orderId: string }) {
   }, [load, orderId]);
 
   const lines = data?.lines ?? [];
-  const anythingLeft = lines.some((l) => l.remainingQuantity > 0);
-  const chosen = useMemo(
-    () =>
-      lines
-        .map((l) => ({ line: l, quantity: Math.floor(Number(qty[l.productId] ?? 0)) }))
-        .filter((x) => x.quantity > 0),
-    [lines, qty],
-  );
-  const estimate = round2(
-    chosen.reduce(
-      (sum, { line, quantity }) =>
-        // The last unit takes whatever is left, exactly as the server prices it.
-        sum +
-        (quantity === line.remainingQuantity
-          ? line.remainingAmount
-          : round2(line.unitPrice * quantity)),
-      0,
-    ),
-  );
-  const noteMissing = reason === 'other' && note.trim() === '';
+  const chosen = chosenLines(lines, qty);
+  const estimate = creditEstimate(chosen);
+  const missingNote = noteMissing(reason?.id ?? null, note);
 
   if (hidden) return null;
 
-  const submit = (e: React.FormEvent) => {
+  const submit = (e: React.SyntheticEvent) => {
     e.preventDefault();
     void (async () => {
       setIssuing(true);
       setError(null);
       setNotice(null);
       try {
-        const res = await issueOrderCreditNoteAction({
-          orderId,
-          lines: chosen.map(({ line, quantity }) => ({ productId: line.productId, quantity })),
-          reasonCode: reason,
-          reasonNote: note.trim() || undefined,
-          restock: restock && data?.canRestock,
-        });
+        const res = await issueOrderCreditNoteAction(creditNoteRequest(orderId, chosen, reason?.id ?? '', note, restock, data?.canRestock === true) as never);
         if (!res.ok) {
           setError(res.error);
           return;
@@ -189,7 +154,7 @@ export function OrderCreditNotesPanel({ orderId }: { orderId: string }) {
         <h4 id={`${uid}-h`} className="text-xs font-bold tracking-wider text-fg-strong uppercase">
           Credit notes
         </h4>
-        {data?.hasTaxInvoice && anythingLeft && !open ? (
+        {data?.hasTaxInvoice === true && anythingLeft(lines) && !open ? (
           <button type="button" className={buttonClass} onClick={() => setOpen(true)}>
             Issue credit note
           </button>
@@ -197,7 +162,7 @@ export function OrderCreditNotesPanel({ orderId }: { orderId: string }) {
       </div>
 
       <div aria-live="polite" className="space-y-1">
-        {error ? (
+        {error !== null ? (
           <p
             role="alert"
             className="rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-red-700"
@@ -205,34 +170,34 @@ export function OrderCreditNotesPanel({ orderId }: { orderId: string }) {
             {error}
           </p>
         ) : null}
-        {notice ? (
+        {notice !== null ? (
           <p role="status" className="text-emerald-700">
             {notice}
           </p>
         ) : null}
       </div>
 
-      {data && !data.hasTaxInvoice ? (
+      {data !== null && !data.hasTaxInvoice ? (
         <p className="text-fg-muted">
           A credit note reverses a tax invoice. Generate this order&apos;s tax invoice first.
         </p>
       ) : null}
 
-      {data?.hasTaxInvoice && !anythingLeft ? (
+      {data?.hasTaxInvoice === true && !anythingLeft(lines) ? (
         <p className="text-fg-muted">Everything on this invoice has been credited.</p>
       ) : null}
 
       {notes.length > 0 ? (
         <ul className="divide-y divide-line/60">
           {notes.map((n) => {
-            const status = STATUS[n.kraStatus] ?? STATUS.pending!;
+            const status = STATUS[n.kraStatus] ?? STATUS.pending;
             return (
               <li key={n.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
                 <span>
                   <span className="font-mono font-semibold text-fg-strong">{n.creditNoteNo}</span>{' '}
                   <span className="text-fg-muted">
                     {money(n.totalAmount, n.currency)} ·{' '}
-                    {REASON_LABEL[n.reasonCode as CreditNoteReason] ?? n.reasonCode}
+                    {reasonLabel(n.reasonCode)}
                   </span>
                   {n.accounting ? (
                     <span className="block text-xs text-fg-muted">
@@ -271,11 +236,10 @@ export function OrderCreditNotesPanel({ orderId }: { orderId: string }) {
             );
           })}
         </ul>
-      ) : data?.hasTaxInvoice ? (
-        <p className="text-fg-muted">No credit notes yet.</p>
       ) : null}
+      {notes.length === 0 && data?.hasTaxInvoice === true ? <p className="text-fg-muted">No credit notes yet.</p> : null}
 
-      {open && data ? (
+      {open && data !== null ? (
         <form
           onSubmit={submit}
           className="space-y-4 border-t border-line pt-4"
@@ -322,32 +286,18 @@ export function OrderCreditNotesPanel({ orderId }: { orderId: string }) {
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
-              <label htmlFor={`${uid}-r`} className="mb-1 block font-semibold text-fg">
-                Reason
-              </label>
-              <select
-                id={`${uid}-r`}
-                value={reason}
-                onChange={(e) => setReason(e.target.value as CreditNoteReason)}
-                className={fieldClass}
-              >
-                {CREDIT_NOTE_REASONS.map((r) => (
-                  <option key={r} value={r}>
-                    {REASON_LABEL[r]}
-                  </option>
-                ))}
-              </select>
+              <ChoicePicker label="Reason" source="credit-note-reasons" choice={reason} onChoice={setReason} clearable={false} required />
             </div>
             <div>
               <label htmlFor={`${uid}-n`} className="mb-1 block font-semibold text-fg">
-                Note{reason === 'other' ? ' (required)' : ''}
+                Note{reason?.id === 'other' ? ' (required)' : ''}
               </label>
               <input
                 id={`${uid}-n`}
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
                 className={fieldClass}
-                required={reason === 'other'}
+                required={reason?.id === 'other'}
               />
             </div>
           </div>
@@ -386,7 +336,7 @@ export function OrderCreditNotesPanel({ orderId }: { orderId: string }) {
               </button>
               <button
                 type="submit"
-                disabled={issuing || chosen.length === 0 || noteMissing}
+                disabled={issuing || chosen.length === 0 || missingNote || reason === null}
                 className="min-h-10 cursor-pointer rounded-lg bg-indigo-600 px-5 py-2 text-xs font-bold text-white hover:bg-indigo-500 disabled:opacity-50"
               >
                 {issuing ? 'Issuing…' : 'Issue credit note'}

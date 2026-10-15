@@ -1,16 +1,12 @@
 import { listBankAccountsAction } from '@/server/domains/finance/receivables/actions';
 import { BankAccountsClient } from '@/components/admin/finance/BankAccountsClient';
-import { FinanceGate } from '@/components/admin/finance/gate';
-import { LoadFailed } from '@/components/admin/finance/ui';
+import { FinancePage } from '@/components/admin/finance/gate';
 
-export default async function AdminBankAccountsPage() {
+export default function Page() {
+  const view = listBankAccountsAction();
   return (
-    <FinanceGate>
-      {async () => {
-        const res = await listBankAccountsAction();
-        if (!res.ok) return <LoadFailed error={res.error} />;
-        return <BankAccountsClient view={res.data} />;
-      }}
-    </FinanceGate>
+    <FinancePage label="bank accounts">
+      <BankAccountsClient viewPromise={view} />
+    </FinancePage>
   );
 }

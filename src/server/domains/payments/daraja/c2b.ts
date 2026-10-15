@@ -15,6 +15,9 @@ import { parseC2b } from './parsers';
 import { looksLikeReceipt, toCentsLoose } from './security';
 import { readStatusAnswer, statusAgrees } from './verify';
 
+import { has } from '@/lib/has';
+import { readText } from '@/lib/values';
+
 /** What counting a verified direct payment means (a customer's receipt, for instance). null: leave it for a person. */
 export interface C2bConsumer {
   allocate(tx: ProviderTransactionRow, info: { method: PaymentMethodRow; payerName: string | null; accountReference: string | null; autoAllocate: 'off' | 'by_customer_number' }): Promise<{ type: string; id: string } | null>;
@@ -51,11 +54,11 @@ export function pullRecords(body: Record<string, unknown> | null): PullRecord[] 
       if (!item || typeof item !== 'object') continue;
       const r = item as Record<string, unknown>;
       const id = r.transactionId ?? r.TransactionId ?? r.transactionID;
-      if (typeof id !== 'string' || !id) continue;
+      if (typeof id !== 'string' || !has(id)) continue;
       out.set(id, {
         transactionId: id,
         trxDate: typeof r.trxDate === 'string' ? r.trxDate : null,
-        msisdn: r.msisdn === undefined || r.msisdn === null ? null : String(r.msisdn),
+        msisdn: r.msisdn === undefined || r.msisdn === null ? null : readText(r.msisdn),
         billReference: typeof r.billreference === 'string' ? r.billreference : typeof r.billReference === 'string' ? r.billReference : null,
         amountCents: toCentsLoose(r.amount),
         type: typeof r.transactiontype === 'string' ? r.transactiontype : null,
@@ -91,7 +94,7 @@ export class DarajaC2b {
 
   /** The method (shortcode, branch, bank account, G/L account) a payment to this shortcode belongs to. */
   private async methodFor(providerId: string, shortcode: string | null): Promise<PaymentMethodRow | null> {
-    if (!shortcode) return null;
+    if (!has(shortcode)) return null;
     const [m] = await this.db
       .select()
       .from(paymentMethods)
@@ -133,7 +136,7 @@ export class DarajaC2b {
 
   /** A completed payment was announced. Claim it (once), then have it checked with Safaricom. */
   async confirmed(event: ProviderEventRow, claim: InboundClaim | null, providerId: string): Promise<void> {
-    if (!claim || !claim.platformReference || claim.amountCents === null) {
+    if (!has(claim?.platformReference) || claim.amountCents === null) {
       await this.events.setState(event.id, 'mismatch', { failureCode: 'UNREADABLE', failureReason: 'The confirmation has no transaction id or amount.' });
       return;
     }
@@ -177,40 +180,40 @@ export class DarajaC2b {
     const ctx = await this.contexts.forProvider(tx.providerId);
     const settings = darajaSettings(ctx.settings);
     const creds = ctx.credentials;
-    const hasInitiator = !!(creds.initiatorName?.trim() && creds.initiatorPassword && creds.certificate?.trim());
+    const hasInitiator = Boolean(has(creds.initiatorName?.trim()) && has(creds.initiatorPassword) && creds.certificate?.trim());
 
     // 1. Transaction Status by the M-Pesa code, when the API operator is set up.
-    if (hasInitiator && settings.operations.transaction_status?.enabled) {
+    if (hasInitiator && settings.operations.transaction_status?.enabled === true) {
       const [existing] = (await this.ops.bySubject('provider_transaction', tx.id, 'transaction_status')).slice(-1);
       if (!existing) {
         await this.darajaOps.start({ providerId: tx.providerId, methodId: tx.methodId, operation: 'transaction_status', input: { transactionId: tx.platformReference, shortcode: tx.shortcode }, idempotencyKey: `txs:${tx.platformReference}`, subject: { type: 'provider_transaction', id: tx.id } });
         return { state: 'waiting', reason: 'Asked Safaricom for the transaction status.' };
       }
       if (['succeeded', 'failed'].includes(existing.status)) {
-        const answer = readStatusAnswer(existing.result as Record<string, unknown>);
-        if (!answer) return this.reject(tx, 'STATUS_UNREADABLE', 'The transaction status answer could not be read.');
+        const answer = readStatusAnswer(existing.result);
+        if (!answer) return await this.reject(tx, 'STATUS_UNREADABLE', 'The transaction status answer could not be read.');
         const agreed = statusAgrees(answer, { receipt: tx.platformReference, amountCents: Math.round(Number(tx.amount) * 100), shortcode: tx.shortcode });
-        if (!agreed.ok) return this.reject(tx, agreed.code, agreed.reason);
+        if (!agreed.ok) return await this.reject(tx, agreed.code, agreed.reason);
         await this.txs.addEvidence(tx.id, { transactionStatus: existing.result }, 'transaction_status');
-        return this.verified(tx, 'transaction_status');
+        return await this.verified(tx, 'transaction_status');
       }
-      if (existing.status === 'failed') return this.reject(tx, existing.failureCode ?? 'STATUS_FAILED', existing.failureReason ?? 'Safaricom could not confirm the transaction.');
+      if (existing.status === 'failed') return await this.reject(tx, existing.failureCode ?? 'STATUS_FAILED', existing.failureReason ?? 'Safaricom could not confirm the transaction.');
       return { state: 'waiting', reason: 'Waiting for the transaction status answer.' };
     }
 
     // 2. Pull Transactions, when registered.
-    if (settings.pull.registered && settings.operations.pull_query?.enabled) {
+    if (settings.pull.registered && settings.operations.pull_query?.enabled === true) {
       const when = tx.occurredAt ?? tx.createdAt;
       const from = new Date(when.getTime() - 30 * 60_000);
       const to = new Date(when.getTime() + 30 * 60_000);
       const { op } = await this.darajaOps.start({ providerId: tx.providerId, methodId: tx.methodId, operation: 'pull_query', input: { shortcode: tx.shortcode, startDate: pullTime(from), endDate: pullTime(to), offset: 0 }, idempotencyKey: `pull:${tx.id}:${Math.floor(Date.now() / 300_000)}`, subject: { type: 'provider_transaction', id: tx.id } });
       if (op.status !== 'succeeded') return { state: 'waiting', reason: op.failureReason ?? 'The pull did not answer.' };
-      const hit = pullRecords(op.result as Record<string, unknown>).find((r) => r.transactionId === tx.platformReference);
+      const hit = pullRecords(op.result).find((r) => r.transactionId === tx.platformReference);
       if (!hit) return { state: 'waiting', reason: 'Safaricom does not list this transaction yet.' };
-      if (hit.amountCents !== null && hit.amountCents !== Math.round(Number(tx.amount) * 100)) return this.reject(tx, 'PULL_AMOUNT_MISMATCH', `Safaricom lists ${(hit.amountCents / 100).toFixed(2)} for this code, not ${Number(tx.amount).toFixed(2)}.`);
-      if (hit.billReference && tx.accountReference && hit.billReference !== tx.accountReference) return this.reject(tx, 'PULL_REFERENCE_MISMATCH', 'Safaricom lists a different account number for this code.');
+      if (hit.amountCents !== null && hit.amountCents !== Math.round(Number(tx.amount) * 100)) return await this.reject(tx, 'PULL_AMOUNT_MISMATCH', `Safaricom lists ${(hit.amountCents / 100).toFixed(2)} for this code, not ${Number(tx.amount).toFixed(2)}.`);
+      if (has(hit.billReference) && has(tx.accountReference) && hit.billReference !== tx.accountReference) return await this.reject(tx, 'PULL_REFERENCE_MISMATCH', 'Safaricom lists a different account number for this code.');
       await this.txs.addEvidence(tx.id, { pull: { transactionId: hit.transactionId, amountCents: hit.amountCents, billReference: hit.billReference, type: hit.type } }, 'pull');
-      return this.verified(tx, 'pull');
+      return await this.verified(tx, 'pull');
     }
 
     // 3. Nothing to ask with: it stays claimed. Counting it on the callback alone is exactly what is refused.
@@ -226,12 +229,12 @@ export class DarajaC2b {
   /** Confirmed by Safaricom: put it on someone's account if the rules say so, else leave it for a person to place. */
   private async verified(tx: ProviderTransactionRow, by: string) {
     await this.txs.setState(tx.id, 'verified', { verifiedBy: by });
-    const method = tx.methodId ? (await this.db.select().from(paymentMethods).where(eq(paymentMethods.id, tx.methodId)))[0] ?? null : null;
+    const method = has(tx.methodId) ? (await this.db.select().from(paymentMethods).where(eq(paymentMethods.id, tx.methodId)))[0] ?? null : null;
     const ctx = await this.contexts.forProvider(tx.providerId);
     const settings = darajaSettings(ctx.settings);
     let placed: { type: string; id: string } | null = null;
     if (this.consumer && method && settings.c2b.autoAllocate !== 'off') {
-      placed = await this.consumer.allocate((await this.txs.get(tx.id))!, { method, payerName: null, accountReference: tx.accountReference, autoAllocate: settings.c2b.autoAllocate });
+      placed = await this.consumer.allocate((await this.txs.get(tx.id)), { method, payerName: null, accountReference: tx.accountReference, autoAllocate: settings.c2b.autoAllocate });
     }
     if (placed) {
       await this.txs.consume(tx.id, placed.type, placed.id);
@@ -248,9 +251,9 @@ export class DarajaC2b {
   async pullSweep(providerId: string, windowMinutes = 120): Promise<{ checked: number; found: number; missing: number }> {
     const ctx = await this.contexts.forProvider(providerId);
     const settings = darajaSettings(ctx.settings);
-    if (!settings.pull.registered || !settings.operations.pull_query?.enabled) return { checked: 0, found: 0, missing: 0 };
+    if (!settings.pull.registered || settings.operations.pull_query?.enabled !== true) return { checked: 0, found: 0, missing: 0 };
     const methods = await this.db.select().from(paymentMethods).where(and(eq(paymentMethods.providerId, providerId), eq(paymentMethods.enabled, true)));
-    const shortcodes = [...new Set(methods.map((m) => m.channelNumber).filter((x): x is string => !!x))];
+    const shortcodes = [...new Set(methods.map((m) => m.channelNumber).filter((x): x is string => Boolean(x)))];
     let checked = 0;
     let found = 0;
     let missing = 0;
@@ -260,7 +263,7 @@ export class DarajaC2b {
       for (let offset = 0; offset < 5; offset += 1) {
         const { op } = await this.darajaOps.start({ providerId, methodId: methods.find((m) => m.channelNumber === shortcode)?.id ?? null, operation: 'pull_query', input: { shortcode, startDate: pullTime(from), endDate: pullTime(to), offset }, idempotencyKey: `pullsweep:${providerId}:${shortcode}:${Math.floor(to.getTime() / 600_000)}:${offset}` });
         if (op.status !== 'succeeded') break;
-        const records = pullRecords(op.result as Record<string, unknown>);
+        const records = pullRecords(op.result);
         if (records.length === 0) break;
         for (const r of records) {
           checked += 1;
@@ -283,11 +286,11 @@ export class DarajaC2b {
             kind: 'c2b',
             platformReference: r.transactionId,
             amount: (r.amountCents / 100).toFixed(2),
-            payerMasked: r.msisdn ? maskPhone(r.msisdn) : null,
-            payerHash: r.msisdn && r.msisdn.replace(/\D/g, '').length >= 9 ? phoneFingerprint(r.msisdn) : null,
+            payerMasked: has(r.msisdn) ? maskPhone(r.msisdn) : null,
+            payerHash: has(r.msisdn) && r.msisdn.replace(/\D/g, '').length >= 9 ? phoneFingerprint(r.msisdn) : null,
             shortcode,
             accountReference: r.billReference,
-            occurredAt: r.trxDate ? new Date(r.trxDate) : null,
+            occurredAt: has(r.trxDate) ? new Date(r.trxDate) : null,
           });
           await this.txs.addEvidence(row.id, { pull: { transactionId: r.transactionId, amountCents: r.amountCents, billReference: r.billReference, found: 'by sweep, no callback had arrived' } }, 'pull');
           await this.verified(row, 'pull');

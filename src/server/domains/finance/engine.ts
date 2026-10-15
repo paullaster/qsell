@@ -25,6 +25,9 @@ import {
 } from './domain/journal';
 import type { Issue, JournalLineInput, PostingRequest } from './domain/types';
 
+import { has } from '@/lib/has';
+import { emptyToNull } from '@/lib/values';
+
 export type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
 /** What the caller (the entry point that checked permissions) allows this posting to do. */
@@ -236,7 +239,7 @@ export class PostingEngine {
     perms: PostingPermissions = NO_SPECIAL_PERMISSIONS,
     tx?: Tx,
   ): Promise<PostedRegister> {
-    if (tx) return this.postIn(tx, req, perms);
+    if (tx) return await this.postIn(tx, req, perms);
     try {
       return await this.db.transaction((t) => this.postIn(t, req, perms));
     } catch (error) {
@@ -280,7 +283,7 @@ export class PostingEngine {
     if (!result.ok) {
       throw new PostingError(
         result.issues[0]?.code ?? 'INVALID',
-        result.issues.map((i) => (i.line ? `Line ${i.line}: ${i.message}` : i.message)).join(' '),
+        result.issues.map((i) => (i.line !== null && i.line !== undefined && i.line !== 0 ? `Line ${i.line}: ${i.message}` : i.message)).join(' '),
         result.issues,
       );
     }
@@ -349,7 +352,7 @@ export class PostingEngine {
       sql`, `,
     );
     const unusedAccounts = [...new Set(prepared.lines.map((l) => l.accountId))].filter(
-      (id) => !policy.accounts.get(id)?.used,
+      (id) => (policy.accounts.get(id)?.used) !== true,
     );
 
     // None of these depends on another's result, so they are sent together on the one
@@ -442,9 +445,9 @@ export class PostingEngine {
         {
           companyId: req.companyId,
           subject: { type: 'ledger_register', id: registerId },
-          action: req.reversalOf ? 'finance.register_reversed' : 'finance.register_posted',
+          action: has(req.reversalOf) ? 'finance.register_reversed' : 'finance.register_posted',
           reason:
-            req.reasonCode || req.reasonText
+            has(req.reasonCode) || has(req.reasonText)
               ? { code: req.reasonCode ?? undefined, text: req.reasonText }
               : undefined,
           inputs: {
@@ -483,19 +486,19 @@ export class PostingEngine {
     tx?: Tx;
   }): Promise<PostedRegister> {
     const perms = input.permissions ?? NO_SPECIAL_PERMISSIONS;
-    if (input.reasonCode.trim() === '' && !(input.reasonText ?? '').trim()) {
+    if (input.reasonCode.trim() === '' && !has((input.reasonText ?? '').trim())) {
       throw new PostingError('REASON_REQUIRED', 'A reason is required to reverse a posting.');
     }
     const run = <T,>(fn: (tx: Tx) => Promise<T>): Promise<T> =>
       input.tx ? fn(input.tx) : this.db.transaction(fn);
-    return run(async (tx) => {
+    return await run(async (tx) => {
       const [original] = await tx
         .select()
         .from(ledgerRegisters)
         .where(and(eq(ledgerRegisters.companyId, input.companyId), eq(ledgerRegisters.id, input.registerId)))
         .limit(1);
       if (!original) throw new PostingError('NOT_FOUND', 'That posting does not exist.');
-      if (original.reversalOfId) {
+      if (has(original.reversalOfId)) {
         throw new PostingError('IS_REVERSAL', 'A reversal cannot be reversed; post the original again instead.');
       }
       const [already] = await tx
@@ -536,10 +539,10 @@ export class PostingEngine {
           lines,
           chainKey: original.chainKey,
           branchId: original.branchId,
-          reasonCode: input.reasonCode || null,
+          reasonCode: emptyToNull(input.reasonCode),
           reasonText: input.reasonText ?? null,
           origin: input.origin,
-          source: original.sourceType ? { type: original.sourceType, id: original.sourceId ?? '' } : null,
+          source: has(original.sourceType) ? { type: original.sourceType, id: original.sourceId ?? '' } : null,
           reversalOf: original.id,
           postedBy: 'engine',
         },

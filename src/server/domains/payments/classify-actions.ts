@@ -14,7 +14,7 @@ export async function listCallbackEventsRequiringReviewAction(
   limit = 50,
 ): Promise<PaymentCallbackEventRow[]> {
   await requirePermission('transactions:read');
-  return getContainer().paymentCallbacks.listRequiringReview(limit);
+  return await getContainer().paymentCallbacks.listRequiringReview(limit);
 }
 
 /**

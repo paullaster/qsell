@@ -13,6 +13,8 @@ import { FinanceError } from './errors';
 import type { AccountInput } from './setup-service';
 import type { LineInput } from './journal-service';
 
+import { has } from '@/lib/has';
+
 const fin = () => getContainer().finance;
 const ROOT = '/admin/finance';
 
@@ -54,7 +56,7 @@ export async function applyTemplateAction(code: string, fiscalYearStart?: string
   return run(
     'gl_templates:apply',
     { surface: 'finance/setup', action: 'apply_template' },
-    (ctx) => fin().setup.applyTemplate(ctx, code, fiscalYearStart ? { fiscalYearStart } : {}),
+    (ctx) => fin().setup.applyTemplate(ctx, code, has(fiscalYearStart) ? { fiscalYearStart } : {}),
     [ROOT],
   );
 }
@@ -133,7 +135,7 @@ export async function listFiscalAction() {
         name: p.name,
         startsOn: p.startsOn,
         endsOn: p.endsOn,
-        status: p.status as PeriodStatus,
+        status: p.status,
       })),
     }));
   });
@@ -191,27 +193,25 @@ export async function postingSetupAction() {
           sales_discount: g.salesDiscountAccountId,
           cogs: g.cogsAccountId,
           inventory_adjustment: g.inventoryAdjustmentAccountId,
-        } as Record<GeneralPurpose, string | null>,
+        },
       })),
-      customer: ov.customer.map((c) => ({
-        id: c.id,
-        code: c.code,
-        name: c.name,
-        accounts: {
-          receivables: c.receivablesAccountId,
-          customer_deposits: c.customerDepositsAccountId,
-          refunds_payable: c.refundsPayableAccountId,
-          payment_discount: c.paymentDiscountAccountId,
-          write_off: c.writeOffAccountId,
-          rounding: c.roundingAccountId,
-          fx_gain: c.fxGainAccountId,
-          fx_loss: c.fxLossAccountId,
-          service_charge: c.serviceChargeAccountId,
-          rebate_expense: c.rebateExpenseAccountId,
-          gift_card_liability: c.giftCardLiabilityAccountId,
-          loyalty_provision: c.loyaltyProvisionAccountId,
-        } as Record<string, string | null>,
-      })),
+      customer: ov.customer.map((c) => {
+        const accounts: Record<string, string | null> = {
+            receivables: c.receivablesAccountId,
+            customer_deposits: c.customerDepositsAccountId,
+            refunds_payable: c.refundsPayableAccountId,
+            payment_discount: c.paymentDiscountAccountId,
+            write_off: c.writeOffAccountId,
+            rounding: c.roundingAccountId,
+            fx_gain: c.fxGainAccountId,
+            fx_loss: c.fxLossAccountId,
+            service_charge: c.serviceChargeAccountId,
+            rebate_expense: c.rebateExpenseAccountId,
+            gift_card_liability: c.giftCardLiabilityAccountId,
+            loyalty_provision: c.loyaltyProvisionAccountId,
+        };
+        return { id: c.id, code: c.code, name: c.name, accounts };
+      }),
       accounts: accounts
         .filter((a) => a.type === 'posting')
         .map((a) => ({ id: a.id, no: a.no, name: a.name })),
@@ -291,7 +291,7 @@ export async function getBatchAction(batchId: string) {
 export type BatchView = Extract<Awaited<ReturnType<typeof getBatchAction>>, { ok: true }>['data'];
 
 export async function saveJournalLineAction(batchId: string, input: LineInput, lineId?: string) {
-  return run('journals:edit_draft', { surface: 'finance/journals/batch', action: lineId ? 'edit_line' : 'add_line' }, (ctx) =>
+  return run('journals:edit_draft', { surface: 'finance/journals/batch', action: has(lineId) ? 'edit_line' : 'add_line' }, (ctx) =>
     fin().journals.saveLine(ctx, batchId, input, lineId),
   );
 }

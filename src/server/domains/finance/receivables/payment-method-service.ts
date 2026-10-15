@@ -18,6 +18,9 @@ import { toCents } from '../domain/receivables';
 import { ensureManualProvider } from '@/server/domains/payments/manual-provider';
 import { FinanceError, type FinanceContext } from '../errors';
 
+import { has } from '@/lib/has';
+import { trimToNull } from '@/lib/values';
+
 export const METHOD_KINDS: PaymentMethodKind[] = [
   'cash', 'bank_transfer', 'bank_deposit', 'cheque', 'mobile_money', 'card', 'gateway', 'wallet', 'gift_card', 'offset', 'other',
 ];
@@ -59,7 +62,7 @@ export class PaymentMethodService {
   ) {}
 
   async list(companyId: string) {
-    return this.db
+    return await this.db
       .select({
         method: paymentMethods,
         bankCode: bankAccounts.code,
@@ -95,7 +98,7 @@ export class PaymentMethodService {
     if (!/^[A-Z0-9][A-Z0-9_-]{0,29}$/.test(input.code.trim())) {
       throw new FinanceError('CODE_INVALID', 'The code uses capital letters, digits, "-" or "_" (up to 30).');
     }
-    if (!input.name.trim()) throw new FinanceError('INVALID', 'A payment method needs a name.');
+    if (!has(input.name.trim())) throw new FinanceError('INVALID', 'A payment method needs a name.');
     if (!METHOD_KINDS.includes(input.kind)) throw new FinanceError('INVALID', 'Unknown kind of payment method.');
     for (const u of input.usableFor ?? []) {
       if (!(USABLE_FOR as readonly string[]).includes(u)) throw new FinanceError('INVALID', `"${u}" is not something a method can be used for.`);
@@ -106,7 +109,7 @@ export class PaymentMethodService {
         try { toCents(v); } catch { throw new FinanceError('LIMIT_INVALID', `The ${k} limit "${v}" is not an amount.`); }
       }
     }
-    if (input.limits?.min && input.limits?.max && toCents(input.limits.min) > toCents(input.limits.max)) {
+    if (has(input.limits?.min) && has(input.limits?.max) && toCents(input.limits.min) > toCents(input.limits.max)) {
       throw new FinanceError('LIMIT_INVALID', 'The minimum is higher than the maximum.');
     }
     const [bank] = await db
@@ -125,7 +128,7 @@ export class PaymentMethodService {
       .where(and(eq(paymentProviderConfigs.companyId, companyId), eq(paymentProviderConfigs.id, input.providerId)))
       .limit(1);
     if (!provider) throw new FinanceError('PROVIDER_REQUIRED', 'Choose the payment provider this method goes through (cash and cheques use the built-in Manual one).');
-    if (input.branchId) {
+    if (has(input.branchId)) {
       const [b] = await db.select({ id: branches.id }).from(branches).where(and(eq(branches.companyId, companyId), eq(branches.id, input.branchId))).limit(1);
       if (!b) throw new FinanceError('BRANCH_NOT_FOUND', 'That branch does not exist.');
     }
@@ -135,12 +138,12 @@ export class PaymentMethodService {
     if (gl.blocked) throw new FinanceError('ACCOUNT_BLOCKED', `${gl.no} ${gl.name} is blocked.`);
     if (gl.category !== 'assets') throw new FinanceError('ACCOUNT_NOT_ASSET', `${gl.no} ${gl.name} is not an asset account; money received is an asset.`);
     if (gl.currencyPolicy !== 'any' && gl.currencyPolicy !== bank.currency) throw new FinanceError('CURRENCY_MISMATCH', `${gl.no} only carries ${gl.currencyPolicy}, and ${bank.code} holds ${bank.currency}.`);
-    if (input.channelNumber && input.channelNumber.length > 40) throw new FinanceError('INVALID', 'The paybill, till or account number is too long.');
+    if (has(input.channelNumber) && input.channelNumber.length > 40) throw new FinanceError('INVALID', 'The paybill, till or account number is too long.');
     return bank;
   }
 
   async create(ctx: FinanceContext, input: PaymentMethodInput): Promise<PaymentMethodRow> {
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       await this.check(tx, ctx.companyId, input);
       const [dup] = await tx
         .select({ id: paymentMethods.id })
@@ -161,8 +164,8 @@ export class PaymentMethodService {
           providerId: input.providerId,
           branchId: input.branchId ?? null,
           glAccountId: input.glAccountId,
-          channelKind: input.channelKind?.trim() || null,
-          channelNumber: input.channelNumber?.trim() || null,
+          channelKind: trimToNull(input.channelKind),
+          channelNumber: trimToNull(input.channelNumber),
           usableFor: input.usableFor ?? ['customer_receipt'],
           settlementMode: input.settlementMode ?? 'immediate',
           settlementDays: input.settlementDays ?? 0,
@@ -177,27 +180,27 @@ export class PaymentMethodService {
       await this.decisions.record(
         {
           companyId: ctx.companyId,
-          subject: { type: 'payment_method', id: row!.id },
+          subject: { type: 'payment_method', id: row.id },
           action: 'finance.payment_method_created',
           actor: ctx.actor,
           inputs: { origin: ctx.origin },
-          outcome: { code: row!.code, kind: row!.kind, bankAccountId: row!.balancingBankAccountId, providerId: row!.providerId, branchId: row!.branchId, glAccountId: row!.glAccountId },
+          outcome: { code: row.code, kind: row.kind, bankAccountId: row.balancingBankAccountId, providerId: row.providerId, branchId: row.branchId, glAccountId: row.glAccountId },
         },
         tx,
       );
-      return row!;
+      return row;
     });
   }
 
   async update(ctx: FinanceContext, id: string, patch: Partial<PaymentMethodInput>): Promise<PaymentMethodRow> {
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const [current] = await tx
         .select()
         .from(paymentMethods)
         .where(and(eq(paymentMethods.companyId, ctx.companyId), eq(paymentMethods.id, id)))
         .for('update');
       if (!current) throw new FinanceError('NOT_FOUND', 'That payment method does not exist.');
-      if (patch.code && patch.code !== current.code) {
+      if (has(patch.code) && patch.code !== current.code) {
         throw new FinanceError('CODE_FIXED', 'The code of a payment method does not change; switch it off and add a new one.');
       }
       const merged: PaymentMethodInput = {
@@ -223,7 +226,7 @@ export class PaymentMethodService {
         sortOrder: patch.sortOrder ?? current.sortOrder,
       };
       await this.check(tx, ctx.companyId, merged);
-      if (patch.glAccountId && patch.glAccountId !== current.glAccountId) {
+      if (has(patch.glAccountId) && patch.glAccountId !== current.glAccountId) {
         const [moved] = await tx.select({ id: bankLedgerEntries.id }).from(bankLedgerEntries).where(eq(bankLedgerEntries.glAccountId, current.glAccountId)).limit(1);
         const [used] = await tx.select({ id: customerReceipts.id }).from(customerReceipts).where(eq(customerReceipts.paymentMethodId, id)).limit(1);
         if (used && moved) throw new FinanceError('METHOD_IN_USE', 'Receipts were posted through this method, so its G/L account cannot change. Switch it off and add a new method.');
@@ -240,8 +243,8 @@ export class PaymentMethodService {
           providerId: merged.providerId,
           branchId: merged.branchId ?? null,
           glAccountId: merged.glAccountId,
-          channelKind: merged.channelKind?.trim() || null,
-          channelNumber: merged.channelNumber?.trim() || null,
+          channelKind: trimToNull(merged.channelKind),
+          channelNumber: trimToNull(merged.channelNumber),
           usableFor: merged.usableFor,
           settlementMode: merged.settlementMode,
           settlementDays: merged.settlementDays,
@@ -264,7 +267,7 @@ export class PaymentMethodService {
         },
         tx,
       );
-      return row!;
+      return row;
     });
   }
 
@@ -282,7 +285,7 @@ export class PaymentMethodService {
           subject: { type: 'payment_method', id },
           action: enabled ? 'finance.payment_method_enabled' : 'finance.payment_method_disabled',
           actor: ctx.actor,
-          reason: reason ? { text: reason } : undefined,
+          reason: has(reason) ? { text: reason } : undefined,
           inputs: { origin: ctx.origin },
         },
         tx,
@@ -316,9 +319,9 @@ export class PaymentMethodService {
    * account for that provider when there is one.
    */
   async seedStandard(ctx: FinanceContext): Promise<{ bankAccounts: number; methods: number }> {
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const [settings] = await tx.select().from(financeSettings).where(eq(financeSettings.companyId, ctx.companyId)).limit(1);
-      if (!settings?.chartTemplate) {
+      if (!has(settings?.chartTemplate)) {
         throw new FinanceError('FINANCE_NOT_SET_UP', 'Apply a chart of accounts first (Finance → Chart of accounts).');
       }
       const template = findTemplate(settings.chartTemplate);
@@ -333,7 +336,7 @@ export class PaymentMethodService {
       let banksCreated = 0;
       for (const b of template.bankAccounts) {
         if (existingBanks.has(b.code)) continue;
-        if (!gl.get(b.glAccount)) continue; // the company removed that account from its chart: skip rather than guess
+        if (!has(gl.get(b.glAccount))) continue; // the company removed that account from its chart: skip rather than guess
         const [row] = await tx
           .insert(bankAccounts)
           .values({
@@ -342,11 +345,11 @@ export class PaymentMethodService {
             name: b.name,
             kind: b.kind,
             currency: settings.baseCurrency,
-            feeGlAccountId: b.feeAccount ? (gl.get(b.feeAccount) ?? null) : null,
+            feeGlAccountId: has(b.feeAccount) ? (gl.get(b.feeAccount) ?? null) : null,
             createdBy: ctx.actor.id ?? 'system',
           })
           .returning({ id: bankAccounts.id });
-        existingBanks.set(b.code, row!.id);
+        existingBanks.set(b.code, row.id);
         banksCreated += 1;
       }
 
@@ -358,7 +361,7 @@ export class PaymentMethodService {
         .orderBy(asc(paymentProviderConfigs.createdAt));
       // A method that stands for an outside service goes through the first provider of that service, if there is one.
       const providerByCode = new Map<string, string>();
-      for (const p of providers) if (!providerByCode.has(p.code as string)) providerByCode.set(p.code as string, p.id);
+      for (const p of providers) if (!providerByCode.has(p.code)) providerByCode.set(p.code, p.id);
       const glByBank = new Map(template.bankAccounts.map((b) => [b.code, gl.get(b.glAccount)]));
 
       const existingMethods = new Set(
@@ -369,7 +372,7 @@ export class PaymentMethodService {
         if (existingMethods.has(m.code)) continue;
         const bankId = existingBanks.get(m.bankAccount);
         const glId = glByBank.get(m.bankAccount);
-        if (!bankId || !glId) continue;
+        if (!has(bankId) || !has(glId)) continue;
         await tx.insert(paymentMethods).values({
           companyId: ctx.companyId,
           code: m.code,
@@ -379,7 +382,7 @@ export class PaymentMethodService {
           requiresReference: m.requiresReference ?? false,
           requiresEvidence: m.requiresEvidence ?? false,
           requiresCounterparty: m.requiresCounterparty ?? false,
-          providerId: (m.provider ? providerByCode.get(m.provider) : undefined) ?? manual.id,
+          providerId: (has(m.provider) ? providerByCode.get(m.provider) : undefined) ?? manual.id,
           glAccountId: glId,
           usableFor: (m.refundDestination ?? 'none') === 'none' ? ['customer_receipt'] : ['customer_receipt', 'customer_refund'],
           refundDestination: m.refundDestination ?? 'none',
@@ -445,7 +448,7 @@ export class PaymentMethodService {
   /** The providers a method can go through (the built-in Manual one is always there). */
   async providerChoices(companyId: string) {
     await ensureManualProvider(this.db, companyId);
-    return this.db
+    return await this.db
       .select({
         id: paymentProviderConfigs.id,
         providerCode: paymentProviderConfigs.providerCode,
@@ -461,6 +464,6 @@ export class PaymentMethodService {
 
   async methodsByIds(ids: string[]) {
     if (ids.length === 0) return [];
-    return this.db.select().from(paymentMethods).where(inArray(paymentMethods.id, ids));
+    return await this.db.select().from(paymentMethods).where(inArray(paymentMethods.id, ids));
   }
 }

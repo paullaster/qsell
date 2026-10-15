@@ -3,16 +3,12 @@
 import { useId, useState } from 'react';
 import { createPaymentMethodAction, updatePaymentMethodAction } from '@/server/domains/finance/receivables/actions';
 import type { paymentSetupAction } from '@/server/domains/finance/payment-setup-actions';
+import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { CHANNEL_KINDS, MANUAL_OR_AUTOMATIC_REFUND, METHOD_KINDS, labelOf, refundDestination, suggestGlAccount, type Choice } from '@/lib/payment-options';
 import { Field, Message, buttonClass, fieldClass, primaryClass, type Notice, attempt } from '../finance/ui';
 
 type Setup = Extract<Awaited<ReturnType<typeof paymentSetupAction>>, { ok: true }>['data'];
 export type SetupMethod = Setup['methods'][number];
-
-const KINDS: [string, string][] = [
-  ['cash', 'Cash'], ['bank_transfer', 'Bank transfer / EFT'], ['bank_deposit', 'Bank deposit slip'], ['cheque', 'Cheque'],
-  ['mobile_money', 'Mobile money'], ['card', 'Card'], ['gateway', 'Online gateway'], ['other', 'Other'],
-];
-const CHANNELS: [string, string][] = [['', 'No number'], ['paybill', 'Paybill number'], ['till', 'Till number'], ['account', 'Account number'], ['other', 'Other number']];
 
 const slug = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 30);
 
@@ -21,57 +17,54 @@ export function PaymentMethodForm({ setup, providerId, providerName, method, onD
   const uid = useId();
   const [name, setName] = useState(method?.name ?? '');
   const [code, setCode] = useState(method?.code ?? '');
-  const [kind, setKind] = useState<string>(method?.kind ?? 'mobile_money');
-  const [branchId, setBranchId] = useState(method?.branchId ?? '');
-  const [bankId, setBankId] = useState(method?.bankAccountId ?? '');
-  const [glId, setGlId] = useState(method?.glAccountId ?? '');
-  const [channelKind, setChannelKind] = useState(method?.channelKind ?? '');
+  const [kind, setKind] = useState<Choice | null>({ id: method?.kind ?? 'mobile_money', label: labelOf(METHOD_KINDS, method?.kind ?? 'mobile_money') ?? '' });
+  const [branch, setBranch] = useState<Choice | null>(method?.branchId == null ? null : { id: method.branchId, label: method.branchName ?? method.branchId });
+  const [bank, setBank] = useState<Choice | null>(method ? { id: method.bankAccountId, label: method.bankLabel } : null);
+  const [gl, setGl] = useState<Choice | null>(method ? { id: method.glAccountId, label: method.glLabel } : null);
+  const [channelKind, setChannelKind] = useState<Choice | null>(method?.channelKind == null ? null : { id: method.channelKind, label: labelOf(CHANNEL_KINDS, method.channelKind) ?? method.channelKind });
   const [channelNumber, setChannelNumber] = useState(method?.channelNumber ?? '');
   const [reqRef, setReqRef] = useState(method?.requiresReference ?? false);
   const [reqEv, setReqEv] = useState(method?.requiresEvidence ?? false);
   const [reqCp, setReqCp] = useState(method?.requiresCounterparty ?? false);
   const [refundable, setRefundable] = useState(method ? method.usableFor.includes('customer_refund') : false);
-  const [refundDest, setRefundDest] = useState<'none' | 'manual' | 'automatic'>(method?.refundDestination ?? 'none');
+  const [refundDest, setRefundDest] = useState<Choice | null>({ id: method?.refundDestination === 'automatic' ? 'automatic' : 'manual', label: labelOf(MANUAL_OR_AUTOMATIC_REFUND, method?.refundDestination === 'automatic' ? 'automatic' : 'manual') ?? '' });
   const [min, setMin] = useState(method?.limits.min ?? '');
   const [max, setMax] = useState(method?.limits.max ?? '');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
 
   // Choosing a bank account that other methods already use suggests the G/L account they post to.
-  const pickBank = (id: string) => {
-    setBankId(id);
-    if (!glId) {
-      const used = [...new Set(setup.methods.filter((m) => m.bankAccountId === id).map((m) => m.glAccountId))];
-      if (used.length === 1) setGlId(used[0]!);
-    }
+  const pickBank = (choice: Choice | null) => {
+    setBank(choice);
+    if (choice && !gl) setGl(suggestGlAccount(setup.methods, choice.id));
   };
 
-  const save = async (e: React.FormEvent) => {
+  const save = async (e: React.SyntheticEvent) => {
     e.preventDefault();
     setBusy(true);
     setNotice(null);
     const limits: { min?: string; max?: string } = {};
-    if (min.trim()) limits.min = min.trim();
-    if (max.trim()) limits.max = max.trim();
+    if (min.trim() !== '') limits.min = min.trim();
+    if (max.trim() !== '') limits.max = max.trim();
     const body = {
       name,
-      kind: kind as never,
-      balancingBankAccountId: bankId,
+      kind: (kind?.id ?? 'other') as never,
+      balancingBankAccountId: bank?.id ?? '',
       providerId,
-      branchId: branchId || null,
-      glAccountId: glId,
-      channelKind: channelNumber.trim() ? channelKind || 'other' : null,
-      channelNumber: channelNumber.trim() || null,
+      branchId: branch?.id ?? null,
+      glAccountId: gl?.id ?? '',
+      channelKind: channelNumber.trim() === '' ? null : (channelKind?.id ?? 'other'),
+      channelNumber: channelNumber.trim() === '' ? null : channelNumber.trim(),
       requiresReference: reqRef,
       requiresEvidence: reqEv,
       requiresCounterparty: reqCp,
       usableFor: refundable ? ['customer_receipt', 'customer_refund'] : ['customer_receipt'],
-      refundDestination: refundable ? (refundDest === 'none' ? ('manual' as const) : refundDest) : ('none' as const),
+      refundDestination: refundDestination(refundable, refundDest?.id),
       limits,
     };
-    const res = method ? await attempt(updatePaymentMethodAction(method.id, body)) : await attempt(createPaymentMethodAction({ code: code.trim() || slug(name), ...body }));
+    const res = method ? await attempt(updatePaymentMethodAction(method.id, body)) : await attempt(createPaymentMethodAction({ code: code.trim() === '' ? slug(name) : code.trim(), ...body }));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     onDone(method ? `${name} saved.` : `${name} added under ${providerName}.`);
   };
 
@@ -81,35 +74,16 @@ export function PaymentMethodForm({ setup, providerId, providerName, method, onD
       <Message notice={notice} />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field id={`${uid}-n`} label="Name" hint="What staff and customers see, e.g. “M-Pesa paybill — Nairobi”.">
-          <input id={`${uid}-n`} value={name} onChange={(e) => { setName(e.target.value); if (!method && !code) setCode(''); }} className={fieldClass} required maxLength={80} autoComplete="off" />
+          <input id={`${uid}-n`} value={name} onChange={(e) => setName(e.target.value)} className={fieldClass} required maxLength={80} autoComplete="off" />
         </Field>
         <Field id={`${uid}-c`} label="Code" hint={method ? 'The code never changes.' : 'Capital letters and digits; made from the name if left empty.'}>
-          <input id={`${uid}-c`} value={method ? method.code : code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder={slug(name)} className={fieldClass} disabled={!!method} maxLength={30} autoComplete="off" />
+          <input id={`${uid}-c`} value={method ? method.code : code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder={slug(name)} className={fieldClass} disabled={Boolean(method)} maxLength={30} autoComplete="off" />
         </Field>
-        <Field id={`${uid}-k`} label="Kind">
-          <select id={`${uid}-k`} value={kind} onChange={(e) => setKind(e.target.value)} className={fieldClass}>{KINDS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
-        </Field>
-        <Field id={`${uid}-b`} label="Branch" hint="Which branch takes payments this way. Every branch if you leave it empty.">
-          <select id={`${uid}-b`} value={branchId} onChange={(e) => setBranchId(e.target.value)} className={fieldClass}>
-            <option value="">Every branch</option>
-            {setup.branches.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}
-          </select>
-        </Field>
-        <Field id={`${uid}-ba`} label="Bank account" hint="The real account the money lands in (its statement is reconciled).">
-          <select id={`${uid}-ba`} value={bankId} onChange={(e) => pickBank(e.target.value)} className={fieldClass} required>
-            <option value="">Choose…</option>
-            {setup.banks.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}
-          </select>
-        </Field>
-        <Field id={`${uid}-g`} label="G/L account" hint="The account the books debit when money comes in this way.">
-          <select id={`${uid}-g`} value={glId} onChange={(e) => setGlId(e.target.value)} className={fieldClass} required>
-            <option value="">Choose…</option>
-            {setup.glChoices.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
-          </select>
-        </Field>
-        <Field id={`${uid}-ck`} label="Paybill, till or account">
-          <select id={`${uid}-ck`} value={channelKind} onChange={(e) => setChannelKind(e.target.value)} className={fieldClass}>{CHANNELS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
-        </Field>
+        <ChoicePicker label="Kind" source="payment-method-kinds" choice={kind} onChoice={setKind} clearable={false} required />
+        <ChoicePicker label="Branch" source="branches" choice={branch} onChoice={setBranch} placeholder="Every branch" emptyMessage="No branches match" />
+        <ChoicePicker label="Bank account" source="bank-accounts" choice={bank} onChoice={pickBank} clearable={false} required />
+        <ChoicePicker label="G/L account" source="asset-gl-accounts" choice={gl} onChoice={setGl} clearable={false} required />
+        <ChoicePicker label="Paybill, till or account" source="payment-channel-kinds" choice={channelKind} onChoice={setChannelKind} placeholder="No number" />
         <Field id={`${uid}-cn`} label="Number">
           <input id={`${uid}-cn`} value={channelNumber} onChange={(e) => setChannelNumber(e.target.value)} className={fieldClass} maxLength={40} inputMode="numeric" autoComplete="off" />
         </Field>
@@ -124,12 +98,7 @@ export function PaymentMethodForm({ setup, providerId, providerName, method, onD
         <legend className="text-xs font-bold uppercase text-fg-muted">Refunds</legend>
         <label className="flex min-h-10 items-center gap-2 text-sm"><input type="checkbox" checked={refundable} onChange={(e) => setRefundable(e.target.checked)} /> Customers can be refunded through this method</label>
         {refundable ? (
-          <Field id={`${uid}-rd`} label="Paid out">
-            <select id={`${uid}-rd`} value={refundDest === 'none' ? 'manual' : refundDest} onChange={(e) => setRefundDest(e.target.value as 'manual')} className={fieldClass}>
-              <option value="manual">By hand, with evidence</option>
-              <option value="automatic">Automatically through the provider (when available)</option>
-            </select>
-          </Field>
+          <ChoicePicker label="Paid out" source="refund-payout-modes" choice={refundDest} onChoice={setRefundDest} clearable={false} required />
         ) : null}
       </fieldset>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

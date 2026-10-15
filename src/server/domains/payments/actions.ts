@@ -18,6 +18,9 @@ import type { BranchRow, PaymentProviderConfigRow } from '@/server/db/drizzle/sc
 import { extractPaymentReference } from '@/server/domains/payments/payment-reference';
 import { amountDue } from '@/server/domains/orders/amount-due';
 
+import { has } from '@/lib/has';
+import { emptyToNull, orElse, trimToNull } from '@/lib/values';
+
 /** Which branches act independently decides what the KRA screens show, so they must refresh. */
 const KRA_SETTINGS_PATH = '/admin/settings/tax-compliance/kra-tims-etims';
 
@@ -26,7 +29,7 @@ async function ensureBranchContext() {
   const company = await companySettings.ensureSeeded();
   const { branch } = await organizations.ensureDefaultOrgAndBranch(
     company.id,
-    company.tradingName || company.legalName,
+    orElse(company.tradingName, company.legalName),
   );
   return { company, branch };
 }
@@ -36,7 +39,7 @@ export async function listBranchesAction(): Promise<BranchRow[]> {
   const { company, branch } = await ensureBranchContext();
   const { branches } = getContainer();
   const list = await branches.listByCompany(company.id);
-  return list.length ? list : [branch];
+  return list.length !== 0 ? list : [branch];
 }
 
 export async function createBranchAction(input: {
@@ -54,8 +57,8 @@ export async function createBranchAction(input: {
     code: input.code.trim().toUpperCase(),
     name: input.name.trim(),
     actsIndependently: Boolean(input.actsIndependently),
-    kraPin: input.kraPin?.trim() || null,
-    publicBaseUrl: input.publicBaseUrl?.trim() || null,
+    kraPin: trimToNull(input.kraPin),
+    publicBaseUrl: trimToNull(input.publicBaseUrl),
     isDefault: false,
     isActive: true,
   });
@@ -92,11 +95,11 @@ export async function updateCompanyPublicBaseUrlAction(url: string): Promise<voi
   const { companySettings } = getContainer();
   const cleaned = url.trim().replace(/\/$/, '');
   // Payment providers only call back over https; plain http is allowed for a machine's own address.
-  if (cleaned && !/^https:\/\//i.test(cleaned) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(cleaned)) {
+  if (has(cleaned) && !/^https:\/\//i.test(cleaned) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(cleaned)) {
     throw new Error('The public address must start with https:// (payment providers will not call back over plain http).');
   }
   await companySettings.update({
-    publicBaseUrl: cleaned || null,
+    publicBaseUrl: emptyToNull(cleaned),
   });
   revalidatePath('/admin/settings');
   revalidatePath('/admin/company');
@@ -111,7 +114,7 @@ export async function listEnabledCheckoutProvidersAction(): Promise<
   return enabled.map((c) => {
     const code = c.providerCode as PaymentProviderCode;
     const meta = PAYMENT_PROVIDER_META[code];
-    const rawLabel = c.displayName || meta.label;
+    const rawLabel = orElse(c.displayName, meta.label);
     const rawDescription = meta.description;
 
     // Keep provider implementation terminology out of the storefront UI.
@@ -184,12 +187,12 @@ export async function initiateDarajaStkAction(orderId: string, _phone?: string) 
     providerCode: 'mpesa_daraja',
   });
   if (res.status === 'failed') {
-    throw new Error(res.errorMessage || 'M-Pesa initiation failed');
+    throw new Error(orElse(res.errorMessage, 'M-Pesa initiation failed'));
   }
   return {
     checkoutRequestId: res.attemptId,
     merchantRequestId: res.attemptId,
-    customerMessage: res.customerMessage || 'STK push sent',
+    customerMessage: orElse(res.customerMessage, 'STK push sent'),
   };
 }
 
@@ -201,12 +204,12 @@ export async function initiatePesapalPaymentAction(orderId: string) {
     providerCode: 'pesapal_v3',
   });
   if (res.status === 'failed') {
-    throw new Error(res.errorMessage || 'Pesapal initiation failed');
+    throw new Error(orElse(res.errorMessage, 'Pesapal initiation failed'));
   }
   return {
     orderTrackingId: res.attemptId,
     merchantReference: res.attemptId,
-    redirectUrl: res.redirectUrl || '',
+    redirectUrl: orElse(res.redirectUrl, ''),
   };
 }
 

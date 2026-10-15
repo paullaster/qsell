@@ -53,7 +53,7 @@ export function PeriodsClient({ years, canEdit }: { years: FiscalYearView[]; can
     setBusy(true);
     const res = await attempt(createFiscalYearAction(start, shape));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     setNotice({ kind: 'ok', text: 'Fiscal year created.' });
     setAdding(false);
     router.refresh();
@@ -63,7 +63,7 @@ export function PeriodsClient({ years, canEdit }: { years: FiscalYearView[]; can
     setBusy(true);
     const res = await attempt(setPeriodStatusAction(id, to, why));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     setNotice({ kind: 'ok', text: 'Period updated.' });
     setPending(null);
     setReason('');

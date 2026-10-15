@@ -9,6 +9,8 @@ import { AmountErrorGuard } from './action-support';
 import { PostingError, type PostingPermissions } from './engine';
 import { FinanceError, type FinanceContext } from './errors';
 
+import { has } from '@/lib/has';
+
 export type FinanceResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: string; code?: string; issues?: { code?: string; message: string; line?: number }[]; forbidden?: true };
@@ -18,6 +20,18 @@ export type FinanceResult<T> =
  * origin (which screen, from where) set on the server, and failures returned as data because
  * server-action errors are masked in production.
  */
+/**
+ * Test-only fault injection: when the end-to-end server is started with E2E_FAULTS=1, a request
+ * carrying an `e2e-delay=<ms>` cookie makes every finance action wait that long. It lets a browser
+ * test prove a screen shows at once and loads in parallel instead of waiting on its data. Without
+ * the variable (every real environment) it does nothing.
+ */
+export async function injectedDelay(): Promise<void> {
+  if (process.env.E2E_FAULTS !== '1') return;
+  const match = /(?:^|;\s*)e2e-delay=(\d{1,5})(?:;|$)/.exec((await headers()).get('cookie') ?? '');
+  if (match?.[1] !== undefined) await new Promise((resolve) => setTimeout(resolve, Number(match[1])));
+}
+
 export async function run<T>(
   permission: PermissionKey,
   origin: { surface: string; action: string },
@@ -25,6 +39,7 @@ export async function run<T>(
   paths: string[] = [],
 ): Promise<FinanceResult<T>> {
   try {
+    await injectedDelay();
     const userId = await requirePermission(permission);
     const company = await getContainer().companySettings.ensureSeeded();
     await getContainer().reasonCodes.ensureSystemReasons(company.id);
@@ -55,7 +70,7 @@ export async function run<T>(
     }
     if (error instanceof ReasonError) return { ok: false, error: error.message, code: error.code };
     const guarded = AmountErrorGuard(error);
-    if (guarded) return { ok: false, error: guarded, code: 'AMOUNT_INVALID' };
+    if (has(guarded)) return { ok: false, error: guarded, code: 'AMOUNT_INVALID' };
     console.error('[finance]', error);
     return { ok: false, error: 'Something went wrong. Please try again.' };
   }

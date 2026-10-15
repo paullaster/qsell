@@ -1,0 +1,10 @@
+{
+  // What ESLint reads types from. It is the project's own configuration plus one stricter setting:
+  // reading `list[0]` or `record[key]` gives "the item, or nothing". The compiler is not held to it
+  // yet, but the linter needs the honest types to tell a check that is needed from one that is not.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noUncheckedIndexedAccess": true,
+    "incremental": false
+  }
+}

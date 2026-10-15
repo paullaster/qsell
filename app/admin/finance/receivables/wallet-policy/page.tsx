@@ -1,16 +1,12 @@
 import { creditPolicyAction } from '@/server/domains/finance/wallet-actions';
 import { WalletPolicyClient } from '@/components/admin/finance/WalletPolicyClient';
-import { FinanceGate } from '@/components/admin/finance/gate';
-import { LoadFailed } from '@/components/admin/finance/ui';
+import { FinancePage } from '@/components/admin/finance/gate';
 
-export default async function AdminWalletPolicyPage() {
+export default function Page() {
+  const view = creditPolicyAction();
   return (
-    <FinanceGate>
-      {async () => {
-        const res = await creditPolicyAction();
-        if (!res.ok) return <LoadFailed error={res.error} />;
-        return <WalletPolicyClient view={res.data} />;
-      }}
-    </FinanceGate>
+    <FinancePage label="the wallet policy">
+      <WalletPolicyClient viewPromise={view} />
+    </FinancePage>
   );
 }

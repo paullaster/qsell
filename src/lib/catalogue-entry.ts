@@ -1,6 +1,9 @@
 import type { Product } from '@/types/index';
 import type { CatalogueEntry } from '@/lib/quote-layout';
 
+import { has } from '@/lib/has';
+import { orElse } from '@/lib/values';
+
 /**
  * What the quote and template editors need to know about a product. The full record carries
  * descriptions, specifications and media, which a long catalogue should not send to the browser.
@@ -56,7 +59,7 @@ export function searchCatalogue(
       (category === 'all' || e.product.category === category) &&
       words.every((w) => e.haystack.includes(w)),
   );
-  if (!exact) return found;
+  if (!has(exact)) return found;
   return [
     ...found.filter((e) => e.codes.includes(exact)),
     ...found.filter((e) => !e.codes.includes(exact)),
@@ -141,7 +144,7 @@ export function parseBulkList(
 ): { rows: BulkRow[]; problems: BulkProblem[]; truncated: boolean } {
   const byCode = new Map<string, CatalogueProduct>();
   for (const e of index)
-    for (const code of e.codes) if (code && !byCode.has(code)) byCode.set(code, e.product);
+    for (const code of e.codes) if (has(code) && !byCode.has(code)) byCode.set(code, e.product);
 
   const rows: BulkRow[] = [];
   const problems: BulkProblem[] = [];
@@ -154,7 +157,7 @@ export function parseBulkList(
     const [code = '', quantity = '', price = '', discount = ''] = cells(raw);
     if (!seenData) {
       seenData = true;
-      if (HEADER.has(code.toLowerCase()) && !Number.isFinite(Number(quantity || NaN))) continue;
+      if (HEADER.has(code.toLowerCase()) && !Number.isFinite(Number(orElse(quantity, NaN)))) continue;
     }
     if (rows.length + problems.length >= BULK_MAX_ROWS) {
       truncated = true;

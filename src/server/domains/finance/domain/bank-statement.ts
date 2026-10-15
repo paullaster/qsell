@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto';
 
+import { has } from '@/lib/has';
+import { emptyToNull, orElse, trimToNull } from '@/lib/values';
+
 /** Reading bank statements and suggesting matches. No database; money is in whole cents. */
 
 export interface ParsedLine {
@@ -60,7 +63,7 @@ export function detectDelimiter(text: string): string {
   const first = text.split(/\r?\n/).find((l) => l.trim() !== '') ?? '';
   const counts = [',', ';', '\t', '|'].map((d) => [d, first.split(d).length - 1] as const);
   counts.sort((a, b) => b[1] - a[1]);
-  return counts[0]![1] > 0 ? counts[0]![0] : ',';
+  return counts[0][1] > 0 ? counts[0][0] : ',';
 }
 
 /** Rows of cells; quotes, doubled quotes and line breaks inside quotes are honoured. */
@@ -71,7 +74,7 @@ export function parseCsv(text: string, delimiter = detectDelimiter(text)): strin
   let quoted = false;
   const src = text.replace(/^﻿/, '');
   for (let i = 0; i < src.length; i++) {
-    const c = src[i]!;
+    const c = src[i];
     if (quoted) {
       if (c === '"') {
         if (src[i + 1] === '"') {
@@ -110,34 +113,34 @@ function iso(y: number, m: number, d: number): string | null {
 /** A date in the ways banks write it. Returns YYYY-MM-DD or null. Day-first unless told otherwise. */
 export function parseDate(raw: string, format: 'auto' | 'dmy' | 'mdy' | 'ymd' = 'auto'): string | null {
   const s = raw.trim();
-  if (!s) return null;
+  if (!has(s)) return null;
   let m = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[T\s].*)?$/.exec(s);
-  if (m) return iso(+m[1]!, +m[2]!, +m[3]!);
+  if (m) return iso(+m[1], +m[2], +m[3]);
   m = /^(\d{1,2})[-/. ]([A-Za-z]{3})[A-Za-z]*[-/. ,]+(\d{2,4})(?:[T\s].*)?$/.exec(s);
   if (m) {
-    const mo = MONTHS[m[2]!.toLowerCase()];
-    if (!mo) return null;
-    const y = +m[3]!;
-    return iso(y < 100 ? 2000 + y : y, mo, +m[1]!);
+    const mo = MONTHS[m[2].toLowerCase()];
+    if (mo === null || mo === undefined || mo === 0) return null;
+    const y = +m[3];
+    return iso(y < 100 ? 2000 + y : y, mo, +m[1]);
   }
   m = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})(?:[T\s].*)?$/.exec(s);
   if (m) {
-    const a = +m[1]!;
-    const b = +m[2]!;
-    const y0 = +m[3]!;
+    const a = +m[1];
+    const b = +m[2];
+    const y0 = +m[3];
     const y = y0 < 100 ? 2000 + y0 : y0;
     if (format === 'mdy') return iso(y, a, b);
     return iso(y, b, a);
   }
   m = /^(\d{4})(\d{2})(\d{2})$/.exec(s);
-  if (m) return iso(+m[1]!, +m[2]!, +m[3]!);
+  if (m) return iso(+m[1], +m[2], +m[3]);
   return null;
 }
 
 /** "1,234.50", "(120.00)", "KES 5,000", "300.00 DR", "-45" -> cents. null when it is not a number. */
 export function parseMoney(raw: string): number | null {
   let s = raw.trim();
-  if (!s) return null;
+  if (!has(s)) return null;
   let negative = false;
   if (/^\(.*\)$/.test(s)) {
     negative = true;
@@ -164,7 +167,7 @@ export function parseMoney(raw: string): number | null {
   if (!/^\d*\.?\d+$|^\d+\.$/.test(s)) return null;
   const [w = '0', f = ''] = s.split('.');
   if (/[1-9]/.test(f.slice(2))) return null;
-  const cents = Number(w || '0') * 100 + Number((f + '00').slice(0, 2));
+  const cents = Number(orElse(w, '0')) * 100 + Number((`${f  }00`).slice(0, 2));
   return negative ? -cents : cents;
 }
 
@@ -189,21 +192,21 @@ export function withHashes<T extends { date: string; amountCents: number; refere
 function finish(lines: ParsedLine[], skipped: ParsedStatement['skipped'], errors: ParsedStatement['errors'], headers: string[]): ParsedStatement {
   let ordered = lines;
   // Newest-first files are put in the order things happened.
-  if (ordered.length > 1 && ordered[0]!.date > ordered[ordered.length - 1]!.date) ordered = [...ordered].reverse();
+  if (ordered.length > 1 && ordered[0].date > ordered[ordered.length - 1].date) ordered = [...ordered].reverse();
   ordered = ordered.map((l, i) => ({ ...l, lineNo: i + 1 }));
   const breaks: number[] = [];
   const allBal = ordered.length > 0 && ordered.every((l) => l.balanceCents !== null);
   if (allBal) {
     for (let i = 1; i < ordered.length; i++) {
-      if (ordered[i - 1]!.balanceCents! + ordered[i]!.amountCents !== ordered[i]!.balanceCents!) breaks.push(ordered[i]!.lineNo);
+      if (ordered[i - 1].balanceCents! + ordered[i].amountCents !== ordered[i].balanceCents!) breaks.push(ordered[i].lineNo);
     }
   }
   return {
     lines: ordered,
     skipped,
     errors,
-    openingCents: allBal ? ordered[0]!.balanceCents! - ordered[0]!.amountCents : null,
-    closingCents: allBal ? ordered[ordered.length - 1]!.balanceCents! : null,
+    openingCents: allBal ? ordered[0].balanceCents! - ordered[0].amountCents : null,
+    closingCents: allBal ? ordered[ordered.length - 1].balanceCents! : null,
     balanceBreaks: breaks,
     headers,
   };
@@ -222,7 +225,7 @@ export function parseCsvStatement(text: string, m: CsvMapping): ParsedStatement 
   const idx = new Map(headerCells.map((h, i) => [norm(h), i] as const));
   const errors: ParsedStatement['errors'] = [];
   const col = (name: string | undefined, label: string, required = false): number | null => {
-    if (!name) {
+    if (!has(name)) {
       if (required) errors.push({ row: m.headerRow, message: `Choose the ${label} column.` });
       return null;
     }
@@ -241,13 +244,13 @@ export function parseCsvStatement(text: string, m: CsvMapping): ParsedStatement 
   const cIn = col(m.paidIn, 'money-in');
   const cOut = col(m.withdrawn, 'money-out');
   const cBal = col(m.balance, 'balance');
-  if (!m.amount && !m.paidIn && !m.withdrawn) errors.push({ row: m.headerRow, message: 'Choose the amount column, or the money-in and money-out columns.' });
+  if (!has(m.amount) && !has(m.paidIn) && !has(m.withdrawn)) errors.push({ row: m.headerRow, message: 'Choose the amount column, or the money-in and money-out columns.' });
   if (errors.length > 0) return finish([], [], errors, headerCells);
 
   const lines: ParsedLine[] = [];
   const skipped: ParsedStatement['skipped'] = [];
   for (let r = m.headerRow; r < rows.length; r++) {
-    const cells = rows[r]!;
+    const cells = rows[r];
     const n = r + 1;
     if (cells.every((c) => c.trim() === '')) continue;
     const get = (i: number | null) => (i === null ? '' : (cells[i] ?? '').trim());
@@ -274,11 +277,11 @@ export function parseCsvStatement(text: string, m: CsvMapping): ParsedStatement 
       skipped.push({ row: n, reason: 'no amount' });
       continue;
     }
-    if (!date && get(cDate) === '' && /total|balance|brought|carried|b\/f|c\/f|summary/i.test(cDesc.map((i) => get(i)).join(' '))) {
+    if (!has(date) && get(cDate) === '' && /total|balance|brought|carried|b\/f|c\/f|summary/i.test(cDesc.map((i) => get(i)).join(' '))) {
       skipped.push({ row: n, reason: 'a total or carried-forward row' });
       continue;
     }
-    if (!date) {
+    if (!has(date)) {
       errors.push({ row: n, message: `Row ${n}: the date "${get(cDate)}" could not be read, and the row has money in it.` });
       continue;
     }
@@ -287,8 +290,8 @@ export function parseCsvStatement(text: string, m: CsvMapping): ParsedStatement 
       lineNo: 0,
       date,
       description: cDesc.map((i) => get(i)).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim(),
-      reference: get(cRef) || null,
-      counterparty: get(cCp) || null,
+      reference: emptyToNull(get(cRef)),
+      counterparty: emptyToNull(get(cCp)),
       amountCents: cents,
       balanceCents: balRaw === '' ? null : parseMoney(balRaw),
     });
@@ -315,26 +318,26 @@ export function parseMt940(text: string): ParsedStatement {
   blocks.forEach((b, i) => {
     const m = /^:(\d{2}[A-Z]?):([\s\S]*)$/.exec(b.trim());
     if (!m) return;
-    const tag = m[1]!;
-    const body = m[2]!;
+    const tag = m[1];
+    const body = m[2];
     if (tag === '60F' || tag === '60M') {
       const o = /^([CD])(\d{6})[A-Z]{3}([\d,]+)/.exec(body);
-      if (o) opening = (o[1] === 'D' ? -1 : 1) * (mtAmount(o[3]!) ?? 0);
+      if (o) opening = (o[1] === 'D' ? -1 : 1) * (mtAmount(o[3]) ?? 0);
     } else if (tag === '62F' || tag === '62M') {
       const o = /^([CD])(\d{6})[A-Z]{3}([\d,]+)/.exec(body);
-      if (o) closing = (o[1] === 'D' ? -1 : 1) * (mtAmount(o[3]!) ?? 0);
+      if (o) closing = (o[1] === 'D' ? -1 : 1) * (mtAmount(o[3]) ?? 0);
     } else if (tag === '61') {
-      const first = body.split('\n')[0]!;
+      const first = body.split('\n')[0];
       const o = /^(\d{6})(\d{4})?(R?[CD])[A-Z]?([\d,]+)N([A-Z0-9]{3})([^/]*)(?:\/\/(.*))?/.exec(first);
-      const date = o ? mtDate(o[1]!) : null;
-      const cents = o ? mtAmount(o[4]!) : null;
-      if (!o || !date || cents === null) {
+      const date = o ? mtDate(o[1]) : null;
+      const cents = o ? mtAmount(o[4]) : null;
+      if (!o || !has(date) || cents === null) {
         errors.push({ row: i + 1, message: `Statement line ${i + 1} could not be read: ${first.slice(0, 60)}` });
         current = null;
         return;
       }
-      const sign = o[3]!.endsWith('D') ? -1 : 1;
-      current = { lineNo: 0, date, description: '', reference: (o[7] ?? o[6] ?? '').trim() || null, counterparty: null, amountCents: sign * cents * (o[3]!.startsWith('R') ? -1 : 1), balanceCents: null };
+      const sign = o[3].endsWith('D') ? -1 : 1;
+      current = { lineNo: 0, date, description: '', reference: trimToNull((o[7] ?? o[6] ?? '')), counterparty: null, amountCents: sign * cents * (o[3].startsWith('R') ? -1 : 1), balanceCents: null };
       lines.push(current);
     } else if (tag === '86' && current) {
       current.description = body.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
@@ -397,8 +400,8 @@ export function suggestMatches(lines: LineForMatch[], entries: EntryForMatch[], 
     const hay = normRef(`${line.reference ?? ''} ${line.description}`);
     const hits = pool.filter((e) => e.refs.some((r) => normRef(r).length >= 5 && hay.includes(normRef(r))));
     if (hits.length === 1) {
-      used.add(hits[0]!.id);
-      out.push({ lineId: line.id, entryIds: [hits[0]!.id], rule: 'reference', certainty: 'matched' });
+      used.add(hits[0].id);
+      out.push({ lineId: line.id, entryIds: [hits[0].id], rule: 'reference', certainty: 'matched' });
       continue;
     }
     const near = (hits.length > 1 ? hits : pool)
@@ -422,6 +425,6 @@ export function centsOf(value: string): number {
   if (!m) throw new Error(`"${value}" is not an amount.`);
   const frac = m[3] ?? '';
   if (/[1-9]/.test(frac.slice(2))) throw new Error(`"${value}" has more than 2 decimal places.`);
-  const cents = Number(m[2]) * 100 + Number((frac + '00').slice(0, 2));
-  return m[1] ? -cents : cents;
+  const cents = Number(m[2]) * 100 + Number((`${frac  }00`).slice(0, 2));
+  return has(m[1]) ? -cents : cents;
 }

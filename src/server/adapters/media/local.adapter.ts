@@ -20,7 +20,11 @@ const EXTENSIONS: Partial<Record<string, string>> = {
 export const LOCAL_MEDIA_URL_PREFIX = '/api/media/file/';
 
 export function localMediaRoot(): string {
-  return path.resolve(process.env.MEDIA_LOCAL_DIR ?? path.join(process.cwd(), 'storage', 'media'));
+  // A runtime data folder, not source: the build must not trace the whole project for it.
+  return path.resolve(
+    /*turbopackIgnore: true*/ process.env.MEDIA_LOCAL_DIR ??
+      path.join(process.cwd(), 'storage', 'media'),
+  );
 }
 
 /**

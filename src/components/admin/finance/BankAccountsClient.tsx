@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { use, useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   bankLedgerAction,
@@ -10,76 +10,44 @@ import {
   updateBankAccountAction,
   type listBankAccountsAction,
 } from '@/server/domains/finance/receivables/actions';
-import { Chip, Field, Message, PageHeader, buttonClass, cardClass, dangerClass, fieldClass, money, primaryClass, type Notice, attempt } from './ui';
+import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { accountInput, accountNumberLine, blankAccountForm, editAccountForm, kindLabel, type AccountForm, type BankKind } from '@/lib/bank-account-form';
+import type { Choice } from '@/lib/payment-options';
+import { Chip, Field, LoadFailed, Message, PageHeader, buttonClass, cardClass, dangerClass, fieldClass, money, primaryClass, type Notice, attempt } from './ui';
 
 type View = Extract<Awaited<ReturnType<typeof listBankAccountsAction>>, { ok: true }>['data'];
 type Account = View['accounts'][number];
-type Kind = 'bank' | 'cash' | 'mobile_money' | 'clearing';
-
-const KINDS: Record<Kind, string> = {
-  bank: 'Bank account',
-  cash: 'Cash (till or drawer)',
-  mobile_money: 'Mobile-money account (paybill, till)',
-  clearing: 'Clearing account (money on its way)',
-};
-
-interface FormState {
-  id: string | null;
-  code: string;
-  name: string;
-  kind: Kind;
-  currency: string;
-  feeGlAccountId: string;
-  bankName: string;
-  accountNumber: string;
-  paybill: string;
+export function BankAccountsClient({ viewPromise }: { viewPromise: ReturnType<typeof listBankAccountsAction> }) {
+  const res = use(viewPromise);
+  return res.ok ? <BankAccountsView view={res.data} /> : <LoadFailed error={res.error} />;
 }
 
-const blank = (currency: string): FormState => ({
-  id: null, code: '', name: '', kind: 'bank', currency, feeGlAccountId: '', bankName: '', accountNumber: '', paybill: '',
-});
-
-export function BankAccountsClient({ view }: { view: View }) {
+function BankAccountsView({ view }: { view: View }) {
   const uid = useId();
   const router = useRouter();
-  const [form, setForm] = useState<FormState | null>(null);
+  const [form, setForm] = useState<AccountForm | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [movements, setMovements] = useState<{ account: { code: string; name: string; currency: string }; entries: { id: string; postingDate: string; documentType: string; documentNo: string; description: string | null; amount: string; running: string }[] } | null>(null);
 
-  const expenses = view.glChoices.filter((a) => a.category === 'expense');
-  const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setForm((f) => (f ? { ...f, [k]: v } : f));
+  const set = <K extends keyof AccountForm>(k: K, v: AccountForm[K]) => setForm((f) => (f === null ? f : { ...f, [k]: v }));
 
-  const edit = (a: Account) =>
-    setForm({
-      id: a.id, code: a.code, name: a.name, kind: a.kind, currency: a.currency,
-      feeGlAccountId: a.feeGlAccountId ?? '',
-      bankName: a.details.bankName ?? '', accountNumber: a.details.accountNumber ?? '', paybill: a.details.paybill ?? '',
-    });
-
-  const save = async (e: React.FormEvent) => {
+  const save = async (e: React.SyntheticEvent) => {
     e.preventDefault();
-    if (!form) return;
+    if (form === null) return;
     setBusy(true);
     setNotice(null);
-    const details: Record<string, string> = {};
-    if (form.bankName.trim()) details.bankName = form.bankName.trim();
-    if (form.accountNumber.trim()) details.accountNumber = form.accountNumber.trim();
-    if (form.paybill.trim()) details.paybill = form.paybill.trim();
-    const common = {
-      name: form.name,
-      kind: form.kind,
-      currency: form.currency.toUpperCase(),
-      feeGlAccountId: form.feeGlAccountId || null,
-      details,
-    };
-    const res = form.id
-      ? await attempt(updateBankAccountAction(form.id, common))
-      : await attempt(createBankAccountAction({ code: form.code.trim().toUpperCase(), ...common }));
+    const common = accountInput(form);
+    const res = form.id === null
+      ? await attempt(createBankAccountAction({ code: form.code.trim().toUpperCase(), ...common }))
+      : await attempt(updateBankAccountAction(form.id, common));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
-    setNotice({ kind: 'ok', text: form.id ? 'Bank account saved.' : 'Bank account added.' });
+    if (!res.ok) {
+      setNotice({ kind: 'error', text: res.error });
+      return;
+    }
+    setNotice({ kind: 'ok', text: form.id === null ? 'Bank account added.' : 'Bank account saved.' });
     setForm(null);
     router.refresh();
   };
@@ -105,7 +73,10 @@ export function BankAccountsClient({ view }: { view: View }) {
     setBusy(true);
     const res = await attempt(bankLedgerAction(a.id));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) {
+      setNotice({ kind: 'error', text: res.error });
+      return;
+    }
     setMovements(res.data);
   };
 
@@ -115,40 +86,29 @@ export function BankAccountsClient({ view }: { view: View }) {
         title="Bank and cash accounts"
         intro="The real accounts money sits in: bank accounts, cash drawers, mobile-money accounts and clearing accounts. Statements are reconciled per account. Which branch and which G/L account a payment posts to is set on each payment method (Settings → Payments)."
         actions={
-          <>
-            {view.can.create ? (
-              <button type="button" className={primaryClass} aria-expanded={form !== null} onClick={() => setForm(form ? null : blank(view.baseCurrency ?? 'KES'))}>
+          view.can.create ? (
+              <button type="button" className={primaryClass} aria-expanded={form !== null} onClick={() => setForm(form === null ? blankAccountForm(view.baseCurrency ?? 'KES') : null)}>
                 Add account
               </button>
-            ) : null}
-          </>
+            ) : null
         }
       />
       <Message notice={notice} />
 
-      {form ? (
-        <form onSubmit={save} className={`${cardClass} space-y-4`} aria-label={form.id ? `Edit ${form.code}` : 'Add a bank account'}>
+      {form === null ? null : (
+        <form onSubmit={(e) => void save(e)} className={`${cardClass} space-y-4`} aria-label={form.id === null ? 'Add a bank account' : `Edit ${form.code}`}>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <Field id={`${uid}-code`} label="Code" hint={form.id ? 'A code does not change.' : 'Capital letters and digits, e.g. BANK-KCB.'}>
+            <Field id={`${uid}-code`} label="Code" hint={form.id === null ? 'Capital letters and digits, e.g. BANK-KCB.' : 'A code does not change.'}>
               <input id={`${uid}-code`} value={form.code} onChange={(e) => set('code', e.target.value)} className={fieldClass} required disabled={form.id !== null} maxLength={20} autoComplete="off" />
             </Field>
             <Field id={`${uid}-name`} label="Name">
               <input id={`${uid}-name`} value={form.name} onChange={(e) => set('name', e.target.value)} className={fieldClass} required maxLength={120} />
             </Field>
-            <Field id={`${uid}-kind`} label="Kind">
-              <select id={`${uid}-kind`} value={form.kind} onChange={(e) => set('kind', e.target.value as Kind)} className={fieldClass}>
-                {Object.entries(KINDS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-              </select>
-            </Field>
+            <ChoicePicker label="Kind" source="bank-account-kinds" choice={{ id: form.kind, label: kindLabel(form.kind) }} onChoice={(c: Choice | null) => set('kind', (c?.id ?? form.kind) as BankKind)} clearable={false} required />
             <Field id={`${uid}-cur`} label="Currency" hint="An account holds one currency.">
               <input id={`${uid}-cur`} value={form.currency} onChange={(e) => set('currency', e.target.value.toUpperCase())} className={fieldClass} required maxLength={3} pattern="[A-Za-z]{3}" autoComplete="off" />
             </Field>
-            <Field id={`${uid}-fee`} label="Fees go to" hint="Where bank or mobile-money charges post (optional).">
-              <select id={`${uid}-fee`} value={form.feeGlAccountId} onChange={(e) => set('feeGlAccountId', e.target.value)} className={fieldClass}>
-                <option value="">None</option>
-                {expenses.map((a) => <option key={a.id} value={a.id}>{a.no} {a.name}</option>)}
-              </select>
-            </Field>
+            <ChoicePicker label="Fees go to" source="expense-gl-accounts" choice={form.fee} onChoice={(c) => set('fee', c)} placeholder="None" />
             {form.kind === 'bank' ? (
               <>
                 <Field id={`${uid}-bank`} label="Bank"><input id={`${uid}-bank`} value={form.bankName} onChange={(e) => set('bankName', e.target.value)} className={fieldClass} maxLength={80} /></Field>
@@ -160,22 +120,21 @@ export function BankAccountsClient({ view }: { view: View }) {
             ) : null}
           </div>
           <div className="flex flex-wrap gap-2">
-            <button type="submit" className={primaryClass} disabled={busy}>{form.id ? 'Save changes' : 'Add account'}</button>
+            <button type="submit" className={primaryClass} disabled={busy}>{form.id === null ? 'Add account' : 'Save changes'}</button>
             <button type="button" className={buttonClass} onClick={() => setForm(null)}>Cancel</button>
           </div>
         </form>
-      ) : null}
+      )}
 
-      {view.accounts.length === 0 ? (
-        <p className="text-sm text-fg-muted">No bank or cash accounts yet. Add one, or add the standard set under Settings → Payments.</p>
-      ) : (
+      {view.accounts.length === 0 ? <p className="text-sm text-fg-muted">No bank or cash accounts yet. Add one, or add the standard set under Settings → Payments.</p> : null}
+      {view.accounts.length > 0 ? (
         <ul className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
           {view.accounts.map((a) => (
             <li key={a.id} className={`${cardClass} flex flex-col gap-3`}>
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-bold text-fg-strong">{a.code} · {a.name}</p>
-                  <p className="text-xs text-fg-muted">{KINDS[a.kind]} · {a.currency}</p>
+                  <p className="text-xs text-fg-muted">{kindLabel(a.kind)} · {a.currency}</p>
                 </div>
                 {a.blocked ? <Chip tone="red">Blocked</Chip> : <Chip tone="green">Open</Chip>}
               </div>
@@ -183,39 +142,35 @@ export function BankAccountsClient({ view }: { view: View }) {
                 <div><dt className="text-fg-muted">Posts to</dt><dd className="font-semibold text-fg-strong">{a.glNos.length > 0 ? a.glNos.join(', ') : 'Nothing yet'}</dd></div>
                 <div><dt className="text-fg-muted">Balance</dt><dd className="font-semibold tabular-nums text-fg-strong">{a.currency} {money(a.balance)}</dd></div>
                 <div><dt className="text-fg-muted">Used by</dt><dd className="font-semibold text-fg-strong">{a.methods} payment {a.methods === 1 ? 'method' : 'methods'}</dd></div>
-                {a.details.paybill || a.details.accountNumber ? (
-                  <div><dt className="text-fg-muted">{a.details.paybill ? 'Paybill / till' : 'Account no.'}</dt><dd className="font-semibold text-fg-strong">{a.details.paybill ?? a.details.accountNumber}</dd></div>
-                ) : null}
+                {accountNumberLine(a.details) === null ? null : (
+                  <div><dt className="text-fg-muted">{accountNumberLine(a.details)?.label}</dt><dd className="font-semibold text-fg-strong">{accountNumberLine(a.details)?.value}</dd></div>
+                )}
               </dl>
               <div className="mt-auto flex flex-wrap gap-2">
-                {view.can.ledger ? <button type="button" className={buttonClass} disabled={busy} onClick={() => showMovements(a)} aria-label={`View movements of ${a.code}`}>Movements</button> : null}
-                {view.can.edit ? <button type="button" className={buttonClass} onClick={() => edit(a)} aria-label={`Edit ${a.code}`}>Edit</button> : null}
-                {view.can.block ? <button type="button" className={buttonClass} disabled={busy} onClick={() => toggleBlock(a)} aria-label={`${a.blocked ? 'Unblock' : 'Block'} ${a.code}`}>{a.blocked ? 'Unblock' : 'Block'}</button> : null}
-                {view.can.delete && a.methods === 0 ? (
-                  confirmDelete === a.id ? (
-                    <>
-                      <button type="button" className={dangerClass} disabled={busy} onClick={() => remove(a.id)}>Confirm delete</button>
-                      <button type="button" className={buttonClass} onClick={() => setConfirmDelete(null)}>Keep</button>
-                    </>
-                  ) : (
-                    <button type="button" className={dangerClass} onClick={() => setConfirmDelete(a.id)} aria-label={`Delete ${a.code}`}>Delete</button>
-                  )
+                {view.can.ledger ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void showMovements(a)} aria-label={`View movements of ${a.code}`}>Movements</button> : null}
+                {view.can.edit ? <button type="button" className={buttonClass} onClick={() => setForm(editAccountForm(a))} aria-label={`Edit ${a.code}`}>Edit</button> : null}
+                {view.can.block ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void toggleBlock(a)} aria-label={`${a.blocked ? 'Unblock' : 'Block'} ${a.code}`}>{a.blocked ? 'Unblock' : 'Block'}</button> : null}
+                {view.can.delete && a.methods === 0 && confirmDelete === a.id ? (
+                  <>
+                    <button type="button" className={dangerClass} disabled={busy} onClick={() => void remove(a.id)}>Confirm delete</button>
+                    <button type="button" className={buttonClass} onClick={() => setConfirmDelete(null)}>Keep</button>
+                  </>
                 ) : null}
+                {view.can.delete && a.methods === 0 && confirmDelete !== a.id ? <button type="button" className={dangerClass} onClick={() => setConfirmDelete(a.id)} aria-label={`Delete ${a.code}`}>Delete</button> : null}
               </div>
             </li>
           ))}
         </ul>
-      )}
+      ) : null}
 
-      {movements ? (
+      {movements !== null ? (
         <section className={`${cardClass} space-y-3`} aria-labelledby={`${uid}-mov`}>
           <div className="flex items-center justify-between gap-2">
             <h3 id={`${uid}-mov`} className="text-sm font-bold text-fg-strong">Movements on {movements.account.code} — {movements.account.name}</h3>
             <button type="button" className={buttonClass} onClick={() => setMovements(null)}>Close</button>
           </div>
-          {movements.entries.length === 0 ? (
-            <p className="text-sm text-fg-muted">Nothing has moved through this account yet.</p>
-          ) : (
+          {movements.entries.length === 0 ? <p className="text-sm text-fg-muted">Nothing has moved through this account yet.</p> : null}
+          {movements.entries.length > 0 ? (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[34rem] text-left text-xs">
                 <caption className="sr-only">Money in and out of {movements.account.code}, newest first</caption>
@@ -235,7 +190,7 @@ export function BankAccountsClient({ view }: { view: View }) {
                 </tbody>
               </table>
             </div>
-          )}
+          ) : null}
         </section>
       ) : null}
     </div>

@@ -3,6 +3,8 @@ import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { providerOperations, type ProviderOperationRow, type ProviderOperationStatus } from '@/server/db/drizzle/schema';
 import { redactDeep } from './redact';
 
+import { has } from '@/lib/has';
+
 export interface CreateOperation {
   companyId: string;
   providerId: string;
@@ -61,7 +63,7 @@ export class ProviderOperationService {
       .select()
       .from(providerOperations)
       .where(and(eq(providerOperations.companyId, input.companyId), eq(providerOperations.idempotencyKey, input.idempotencyKey)));
-    return { op: existing!, created: false };
+    return { op: existing, created: false };
   }
 
   async get(id: string) {
@@ -86,10 +88,10 @@ export class ProviderOperationService {
   }
 
   async bySubject(subjectType: string, subjectId: string, operation?: string) {
-    return this.db
+    return await this.db
       .select()
       .from(providerOperations)
-      .where(and(eq(providerOperations.subjectType, subjectType), eq(providerOperations.subjectId, subjectId), operation ? eq(providerOperations.operation, operation) : undefined))
+      .where(and(eq(providerOperations.subjectType, subjectType), eq(providerOperations.subjectId, subjectId), has(operation) ? eq(providerOperations.operation, operation) : undefined))
       .orderBy(asc(providerOperations.createdAt));
   }
 
@@ -118,7 +120,7 @@ export class ProviderOperationService {
         response: patch.response ? redactDeep(patch.response) : undefined,
         result: patch.result ? redactDeep(patch.result) : undefined,
         updatedAt: new Date(),
-        ...(terminal ? { completedAt: new Date(), nextAttemptAt: null } : {}),
+        ...(terminal === true ? { completedAt: new Date(), nextAttemptAt: null } : {}),
       })
       .where(eq(providerOperations.id, id))
       .returning();
@@ -131,7 +133,7 @@ export class ProviderOperationService {
 
   /** Operations whose turn has come (to be asked about again). */
   async due(limit = 100) {
-    return this.db
+    return await this.db
       .select()
       .from(providerOperations)
       .where(and(inArray(providerOperations.status, ACTIVE), lte(providerOperations.nextAttemptAt, new Date())))

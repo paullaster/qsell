@@ -1,5 +1,8 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
+import { has } from '@/lib/has';
+import { readText } from '@/lib/values';
+
 /**
  * What may be written to a log. Secrets never are, phone numbers are masked, and the secret
  * path segment of a callback address is hidden. Applied to everything sent to or received from a
@@ -27,18 +30,18 @@ export function redactDeep<T>(value: T): T {
     if (v && typeof v === 'object') {
       const rec = v as Record<string, unknown>;
       // The M-Pesa metadata shape: { Name: 'PhoneNumber', Value: 254... }
-      const named = typeof rec.Name === 'string' && PHONE_KEY.test(rec.Name) ? true : false;
+      const named = Boolean(typeof rec.Name === 'string' && PHONE_KEY.test(rec.Name));
       return Object.fromEntries(
         Object.entries(rec).map(([k, x]) => {
           if (SECRET_KEY.test(k)) return [k, '[REDACTED]'];
-          if (named && k === 'Value' && x != null) return [k, maskPhone(String(x))];
+          if (named && k === 'Value' && x != null) return [k, maskPhone(readText(x))];
           return [k, walk(x, k)];
         }),
       );
     }
     if (typeof v === 'string' && /^https?:\/\//i.test(v)) return redactUrl(v);
-    if (typeof v === 'string' && key && PHONE_KEY.test(key) && /^\+?\d{9,15}$/.test(v.replace(/\s/g, ''))) return maskPhone(v);
-    if (typeof v === 'number' && key && PHONE_KEY.test(key) && String(v).length >= 9) return maskPhone(String(v));
+    if (typeof v === 'string' && has(key) && PHONE_KEY.test(key) && /^\+?\d{9,15}$/.test(v.replace(/\s/g, ''))) return maskPhone(v);
+    if (typeof v === 'number' && has(key) && PHONE_KEY.test(key) && String(v).length >= 9) return maskPhone(String(v));
     return v;
   };
   return walk(value) as T;
@@ -70,7 +73,7 @@ export const hashSecret = (secret: string) => createHash('sha256').update(secret
 
 /** Constant-time comparison of a presented secret with a stored hash. */
 export function secretMatches(presented: string, storedHash: string | null | undefined): boolean {
-  if (!storedHash || !presented) return false;
+  if (!has(storedHash) || !has(presented)) return false;
   const a = Buffer.from(hashSecret(presented), 'hex');
   const b = Buffer.from(storedHash, 'hex');
   return a.length === b.length && timingSafeEqual(a, b);
@@ -81,13 +84,13 @@ export const bodyHash = (text: string) => createHash('sha256').update(text).dige
 /** Is an address inside one of the allowed ranges ("1.2.3.4" or "1.2.3.0/24")? IPv4 only; IPv6 never matches a CIDR. */
 export function ipAllowed(ip: string | null, allowed: string[]): boolean {
   if (allowed.length === 0) return true;
-  if (!ip) return false;
+  if (!has(ip)) return false;
   const clean = ip.replace(/^::ffff:/, '');
   const num = (a: string) => a.split('.').reduce((n, p) => (n << 8) + Number(p), 0) >>> 0;
   if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(clean)) return allowed.includes(clean);
   for (const entry of allowed) {
     const [base, bits] = entry.trim().split('/');
-    if (!base || !/^\d{1,3}(\.\d{1,3}){3}$/.test(base)) continue;
+    if (!has(base) || !/^\d{1,3}(\.\d{1,3}){3}$/.test(base)) continue;
     const prefix = bits === undefined ? 32 : Number(bits);
     if (!(prefix >= 0 && prefix <= 32)) continue;
     const mask = prefix === 0 ? 0 : (~0 << (32 - prefix)) >>> 0;

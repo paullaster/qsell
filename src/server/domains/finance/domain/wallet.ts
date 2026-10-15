@@ -1,5 +1,7 @@
 import { fromCents } from './receivables';
 
+import { has } from '@/lib/has';
+
 /** The "refund or wallet" rules in force for a customer, as plain data. */
 export interface CreditPolicy {
   walletEnabled: boolean;
@@ -44,7 +46,7 @@ export function pickPolicy(rows: PolicyRow[], groupCode: string | null, date: st
   const inForce = (r: PolicyRow) => r.effectiveFrom <= date;
   const newest = (list: PolicyRow[]) => [...list].filter(inForce).sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))[0];
   const company = newest(rows.filter((r) => r.groupCode === null));
-  const group = groupCode ? newest(rows.filter((r) => r.groupCode === groupCode)) : undefined;
+  const group = has(groupCode) ? newest(rows.filter((r) => r.groupCode === groupCode)) : undefined;
   const chosen = group ?? company;
   if (!chosen) return { ...DEFAULT_POLICY, source: 'default' };
   return { ...chosen, label: company?.label ?? chosen.label, source: group ? 'group' : 'company' };

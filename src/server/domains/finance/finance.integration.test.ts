@@ -1,27 +1,41 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { and, eq, sql } from 'drizzle-orm';
 
+import { has } from '@/lib/has';
+import { required } from '@/lib/values';
+import type { DrizzleDb } from '@/server/db/drizzle/client';
+import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
+import type { FinanceSetupService } from './setup-service';
+import type { FiscalService } from './fiscal-service';
+import type { PostingEngine } from './engine';
+import type { JournalService } from './journal-service';
+import type { FinanceReportsService } from './reports-service';
+import type { PostingSetupService } from './posting-setup-service';
+import type * as mod_errors from './errors';
+import type * as mod_engine from './engine';
+import type { FinanceContext } from './errors';
+
 /** Needs a Postgres built from the migrations:  TEST_DATABASE_URL=postgres://... pnpm test */
 const url = process.env.TEST_DATABASE_URL;
 
-describe.skipIf(!url)('core finance (database)', () => {
-  type Db = import('@/server/db/drizzle/client').DrizzleDb;
+describe.skipIf(!has(url))('core finance (database)', () => {
+  type Db = DrizzleDb;
   let db: Db;
-  let schema: typeof import('@/server/db/drizzle/schema');
-  let setup: import('./setup-service').FinanceSetupService;
-  let fiscal: import('./fiscal-service').FiscalService;
-  let engine: import('./engine').PostingEngine;
-  let journals: import('./journal-service').JournalService;
-  let reports: import('./reports-service').FinanceReportsService;
-  let postingSetup: import('./posting-setup-service').PostingSetupService;
-  let FinanceError: typeof import('./errors').FinanceError;
-  let PostingError: typeof import('./engine').PostingError;
+  let schema: typeof mod_server_db_drizzle_schema;
+  let setup: FinanceSetupService;
+  let fiscal: FiscalService;
+  let engine: PostingEngine;
+  let journals: JournalService;
+  let reports: FinanceReportsService;
+  let postingSetup: PostingSetupService;
+  let FinanceError: typeof mod_errors.FinanceError;
+  let PostingError: typeof mod_engine.PostingError;
   let companyId: string;
-  let ctx: import('./errors').FinanceContext;
+  let ctx: FinanceContext;
   const acct: Record<string, string> = {};
 
   const origin = { surface: 'test', action: 'run' };
-  const line = (no: string, debit: string, credit: string) => ({ accountId: acct[no]!, debit, credit });
+  const line = (no: string, debit: string, credit: string) => ({ accountId: acct[no], debit, credit });
   const request = (key: string, lines: [string, string, string][], over: Record<string, unknown> = {}) => ({
     companyId,
     idempotencyKey: key,
@@ -72,7 +86,7 @@ describe.skipIf(!url)('core finance (database)', () => {
       .insert(schema.companySettings)
       .values({ legalName: 'F', tradingName: 'F', email: 'a@b.c', phone: '1', streetAddress: 's', city: 'c', countyOrState: 'x', postalCode: '1', kraPin: 'P' })
       .returning();
-    companyId = company!.id;
+    companyId = company.id;
     ctx = { companyId, actor: { type: 'user', id: 'tester' }, origin };
     await setup.applyTemplate(ctx, 'kenya', { fiscalYearStart: '2026-01-01' });
     for (const a of await setup.listAccounts(companyId)) acct[a.no] = a.id;
@@ -86,7 +100,7 @@ describe.skipIf(!url)('core finance (database)', () => {
       expect(acct['4100']).toBeTruthy();
       const years = await fiscal.listYears(companyId);
       expect(years).toHaveLength(1);
-      expect(years[0]!.periods).toHaveLength(12);
+      expect(years[0].periods).toHaveLength(12);
       const ov = await postingSetup.overview(companyId);
       expect(ov.general).toHaveLength(4);
       const r = await postingSetup.resolveGeneral(companyId, 'DOMESTIC', 'GOODS', 'sales', '2026-10-01');
@@ -127,7 +141,7 @@ describe.skipIf(!url)('core finance (database)', () => {
     });
 
     it('refuses what the rules forbid, and writes nothing', async () => {
-      const count = async () => (await db.select({ n: sql<number>`count(*)::int` }).from(schema.glEntries))[0]!.n;
+      const count = async () => (await db.select({ n: sql<number>`count(*)::int` }).from(schema.glEntries))[0].n;
       const n0 = await count();
       expect(await codeOf(engine.post(request('bad1', [['6200', '10', '0'], ['4400', '0', '9']])))).toBe('NOT_BALANCED');
       expect(await codeOf(engine.post(request('bad2', [['1210', '10', '0'], ['4400', '0', '10']])))).toBe('CONTROL_ACCOUNT');
@@ -144,24 +158,24 @@ describe.skipIf(!url)('core finance (database)', () => {
     it('posts in a foreign currency with a rate and keeps the base balanced', async () => {
       const posted = await engine.post(request('fx1', [['6200', '100', '0'], ['4400', '0', '100']], { currency: 'USD', rate: '129.5', rateSource: 'manual' }));
       const [reg] = await db.select().from(schema.ledgerRegisters).where(eq(schema.ledgerRegisters.id, posted.registerId));
-      expect(reg!.baseTotalDebit).toBe('12950.0000');
-      expect(reg!.baseTotalDebit).toBe(reg!.baseTotalCredit);
+      expect(reg.baseTotalDebit).toBe('12950.0000');
+      expect(reg.baseTotalDebit).toBe(reg.baseTotalCredit);
     });
 
     it('enforces period status', async () => {
-      const [p] = (await fiscal.listYears(companyId))[0]!.periods.filter((x) => x.no === 9);
-      await fiscal.setStatus(ctx, p!.id, 'soft_closed');
+      const [p] = (await fiscal.listYears(companyId))[0].periods.filter((x) => x.no === 9);
+      await fiscal.setStatus(ctx, p.id, 'soft_closed');
       const lines: [string, string, string][] = [['6200', '5', '0'], ['4400', '0', '5']];
       expect(await codeOf(engine.post(request('sc1', lines, { postingDate: '2026-09-15' })))).toBe('PERIOD_SOFT_CLOSED');
       expect(await codeOf(engine.post(request('sc2', lines, { postingDate: '2026-09-15' }), { canPostSoftClosed: true, canPostControlAccounts: false }))).toBe('OK');
-      await fiscal.setStatus(ctx, p!.id, 'closed');
+      await fiscal.setStatus(ctx, p.id, 'closed');
       expect(await codeOf(engine.post(request('sc3', lines, { postingDate: '2026-09-16' }), { canPostSoftClosed: true, canPostControlAccounts: false }))).toBe('PERIOD_CLOSED');
-      expect(await codeOf(fiscal.setStatus(ctx, p!.id, 'open'))).toBe('REASON_REQUIRED');
-      await fiscal.setStatus(ctx, p!.id, 'open', 'correcting a late invoice');
+      expect(await codeOf(fiscal.setStatus(ctx, p.id, 'open'))).toBe('REASON_REQUIRED');
+      await fiscal.setStatus(ctx, p.id, 'open', 'correcting a late invoice');
       expect(await codeOf(engine.post(request('sc4', lines, { postingDate: '2026-09-17' })))).toBe('OK');
-      await fiscal.setStatus(ctx, p!.id, 'closed');
-      await fiscal.setStatus(ctx, p!.id, 'locked', 'year-end');
-      expect(await codeOf(fiscal.setStatus(ctx, p!.id, 'open', 'x'))).toBe('TRANSITION_ILLEGAL');
+      await fiscal.setStatus(ctx, p.id, 'closed');
+      await fiscal.setStatus(ctx, p.id, 'locked', 'year-end');
+      expect(await codeOf(fiscal.setStatus(ctx, p.id, 'open', 'x'))).toBe('TRANSITION_ILLEGAL');
     });
 
     it('honours the company posting window', async () => {
@@ -198,13 +212,13 @@ describe.skipIf(!url)('core finance (database)', () => {
     });
 
     it('a used account freezes its identity and cannot be deleted', async () => {
-      expect(await codeOf(setup.updateAccount(ctx, acct['6200']!, { no: '6201', name: 'Rent', type: 'posting', category: 'expense', normalBalance: 'debit' }))).toBe('ACCOUNT_USED');
-      const a = await setup.getAccount(companyId, acct['6200']!);
+      expect(await codeOf(setup.updateAccount(ctx, acct['6200'], { no: '6201', name: 'Rent', type: 'posting', category: 'expense', normalBalance: 'debit' }))).toBe('ACCOUNT_USED');
+      const a = await setup.getAccount(companyId, acct['6200']);
       expect(a?.usedAt).not.toBeNull();
-      expect(await codeOf(setup.deleteAccount(ctx, acct['6200']!))).toBe('ACCOUNT_USED');
+      expect(await codeOf(setup.deleteAccount(ctx, acct['6200']))).toBe('ACCOUNT_USED');
       // naming and blocking stay editable
-      await setup.updateAccount(ctx, acct['6200']!, { no: '6200', name: 'Rent and service charges', type: 'posting', category: 'expense', normalBalance: 'debit' });
-      expect(await codeOf(setup.deleteAccount(ctx, acct['6990']!))).toBe('OK');
+      await setup.updateAccount(ctx, acct['6200'], { no: '6200', name: 'Rent and service charges', type: 'posting', category: 'expense', normalBalance: 'debit' });
+      expect(await codeOf(setup.deleteAccount(ctx, acct['6990']))).toBe('OK');
     });
   });
 
@@ -217,8 +231,8 @@ describe.skipIf(!url)('core finance (database)', () => {
       expect(r.seq).toBeGreaterThan(a.seq);
       const after = await reports.trialBalance(companyId, '2026-10-01', '2026-10-31');
       const net = (tb: typeof before, no: string) => tb.rows.find((x) => x.no === no);
-      expect(Number(net(after, '6310')!.closingDebit)).toBe(0);
-      expect(Number(net(before, '6310')!.closingDebit)).toBe(250);
+      expect(Number(required(net(after, '6310')).closingDebit)).toBe(0);
+      expect(Number(required(net(before, '6310')).closingDebit)).toBe(250);
 
       expect(await codeOf(engine.reverse({ companyId, registerId: a.registerId, postingDate: '2026-10-13', reasonCode: 'X', origin }))).toBe('ALREADY_REVERSED');
       expect(await codeOf(engine.reverse({ companyId, registerId: r.registerId, postingDate: '2026-10-13', reasonCode: 'X', origin }))).toBe('IS_REVERSAL');
@@ -229,23 +243,23 @@ describe.skipIf(!url)('core finance (database)', () => {
     it('drafts, previews and posts a batch all-or-nothing, then clears the draft', async () => {
       const b = await journals.createBatch(ctx, 'GEN1', 'General');
       const base = { postingDate: '2026-10-14', description: 'Office rent' };
-      await journals.saveLine(ctx, b.id, { ...base, documentNo: 'DOC-1', accountId: acct['6200']!, debit: '800', credit: '0' });
-      await journals.saveLine(ctx, b.id, { ...base, documentNo: 'DOC-1', accountId: acct['4400']!, debit: '0', credit: '800' });
-      await journals.saveLine(ctx, b.id, { ...base, documentNo: 'DOC-2', accountId: acct['6200']!, debit: '50', credit: '0' });
-      await journals.saveLine(ctx, b.id, { ...base, documentNo: 'DOC-2', accountId: acct['4400']!, debit: '0', credit: '49' });
+      await journals.saveLine(ctx, b.id, { ...base, documentNo: 'DOC-1', accountId: acct['6200'], debit: '800', credit: '0' });
+      await journals.saveLine(ctx, b.id, { ...base, documentNo: 'DOC-1', accountId: acct['4400'], debit: '0', credit: '800' });
+      await journals.saveLine(ctx, b.id, { ...base, documentNo: 'DOC-2', accountId: acct['6200'], debit: '50', credit: '0' });
+      await journals.saveLine(ctx, b.id, { ...base, documentNo: 'DOC-2', accountId: acct['4400'], debit: '0', credit: '49' });
 
       const none = { canPostSoftClosed: false, canPostControlAccounts: false };
       const preview = await journals.preview(ctx, b.id, none);
       expect(preview.map((p) => [p.documentNo, p.ok])).toEqual([['DOC-1', true], ['DOC-2', false]]);
       expect(await codeOf(journals.post(ctx, b.id, none))).toBe('NOT_BALANCED');
-      expect((await journals.getBatch(companyId, b.id))!.lines).toHaveLength(4); // nothing posted, draft intact
+      expect(required((await journals.getBatch(companyId, b.id))).lines).toHaveLength(4); // nothing posted, draft intact
       expect((await db.select().from(schema.ledgerRegisters).where(and(eq(schema.ledgerRegisters.companyId, companyId), eq(schema.ledgerRegisters.documentNo, 'DOC-1'))))).toHaveLength(0);
 
-      const fix = (await journals.getBatch(companyId, b.id))!.lines.find((l) => l.documentNo === 'DOC-2' && l.credit !== '0.0000')!;
-      await journals.saveLine(ctx, b.id, { ...base, documentNo: 'DOC-2', accountId: acct['4400']!, debit: '0', credit: '50' }, fix.id);
+      const fix = required(required((await journals.getBatch(companyId, b.id))).lines.find((l) => l.documentNo === 'DOC-2' && l.credit !== '0.0000'));
+      await journals.saveLine(ctx, b.id, { ...base, documentNo: 'DOC-2', accountId: acct['4400'], debit: '0', credit: '50' }, fix.id);
       const posted = await journals.post(ctx, b.id, none);
       expect(posted).toHaveLength(2);
-      expect((await journals.getBatch(companyId, b.id))!.lines).toHaveLength(0);
+      expect(required((await journals.getBatch(companyId, b.id))).lines).toHaveLength(0);
       expect(await codeOf(journals.post(ctx, b.id, none))).toBe('NOTHING_TO_POST');
     });
   });
@@ -265,15 +279,15 @@ describe.skipIf(!url)('core finance (database)', () => {
     it('the hash chain verifies, and notices a missing register', async () => {
       const ok = await reports.verifyChain(companyId);
       expect(ok.every((c) => c.ok)).toBe(true);
-      expect(ok.find((c) => c.chainKey === 'general')!.checked).toBeGreaterThan(5);
+      expect(required(ok.find((c) => c.chainKey === 'general')).checked).toBeGreaterThan(5);
     });
 
     it('lists entries with keyset paging', async () => {
       const first = await reports.entries(companyId, { limit: 5 });
       expect(first.rows).toHaveLength(5);
       expect(first.next).not.toBeNull();
-      const second = await reports.entries(companyId, { limit: 5, cursor: first.next! });
-      expect(second.rows[0]!.id).toBeLessThan(first.rows[4]!.id + 1);
+      const second = await reports.entries(companyId, { limit: 5, cursor: required(first.next) });
+      expect(second.rows[0].id).toBeLessThan(first.rows[4].id + 1);
       expect(new Set([...first.rows, ...second.rows].map((r) => r.id)).size).toBe(10);
     });
   });

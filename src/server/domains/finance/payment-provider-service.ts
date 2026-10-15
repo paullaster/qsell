@@ -11,6 +11,11 @@ import { PAYMENT_PROVIDER_META, type PaymentProviderCode, type PaymentProviderEn
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { FinanceError, type FinanceContext } from './errors';
 
+import { has } from '@/lib/has';
+import { orElse } from '@/lib/values';
+import type { DarajaSettings } from '@/server/domains/payments/daraja/config';
+import type { FieldSpec } from '@/server/domains/payments/daraja/catalog';
+
 export interface ProviderView {
   id: string;
   providerCode: PaymentProviderCode | 'manual';
@@ -33,8 +38,8 @@ export interface ProviderView {
   methods: { id: string; name: string; kind: string; enabled: boolean; branchName: string | null; channel: string | null }[];
   /** M-Pesa: how payments are confirmed, who may call us, which operations are on. */
   daraja: null | {
-    settings: import('@/server/domains/payments/daraja/config').DarajaSettings;
-    operations: { code: string; label: string; description: string; group: string; async: boolean; moneyOut: boolean; needsInitiator: boolean; needsMethod: boolean; internal: boolean; sandboxOnly: boolean; fields: import('@/server/domains/payments/daraja/catalog').FieldSpec[]; enabled: boolean; maxAmount: string | null }[];
+    settings: DarajaSettings;
+    operations: { code: string; label: string; description: string; group: string; async: boolean; moneyOut: boolean; needsInitiator: boolean; needsMethod: boolean; internal: boolean; sandboxOnly: boolean; fields: FieldSpec[]; enabled: boolean; maxAmount: string | null }[];
     hasInitiator: boolean;
   };
 }
@@ -87,7 +92,7 @@ export class PaymentProviderService {
       }
       let creds: Record<string, string> = {};
       try {
-        creds = (decryptCredentials(row.credentialsEncrypted) ?? {}) as Record<string, string>;
+        creds = (decryptCredentials(row.credentialsEncrypted) ?? {});
       } catch {
         creds = {};
       }
@@ -100,25 +105,25 @@ export class PaymentProviderService {
         description: meta?.description ?? MANUAL_DESCRIPTION,
         isSystem: row.isSystem,
         isEnabled: row.isEnabled,
-        environment: row.environment as PaymentProviderEnvironment,
+        environment: row.environment,
         apiBaseUrl: row.apiBaseUrl,
         hasCredentials: Boolean(row.credentialsEncrypted),
         maskedCredentials: masked,
         capabilities: manual ? [] : this.payments.capabilitiesOf(code),
-        callbackUrl: meta && publicBaseUrl ? `${publicBaseUrl.replace(/\/$/, '')}${meta.callbackPathPrefix}/<per-payment token>` : null,
+        callbackUrl: meta && has(publicBaseUrl) ? `${publicBaseUrl.replace(/\/$/, '')}${meta.callbackPathPrefix}/<per-payment token>` : null,
         lastTestAt: row.lastTestAt ? row.lastTestAt.toISOString() : null,
         lastTestOk: row.lastTestOk,
         lastTestMessage: row.lastTestMessage,
         daraja: dj
           ? {
               settings: dj,
-              operations: Object.values(DARAJA_OPERATIONS).map((o) => ({ code: o.code, label: o.label, description: o.description, group: o.group, async: o.async, moneyOut: o.moneyOut, needsInitiator: o.needsInitiator, needsMethod: o.needsMethod, internal: !!o.internal, sandboxOnly: !!o.sandboxOnly, fields: o.fields, enabled: dj.operations[o.code]?.enabled ?? false, maxAmount: dj.operations[o.code]?.maxAmount ?? null })),
-              hasInitiator: !!(creds.initiatorName && creds.initiatorPassword && creds.certificate),
+              operations: Object.values(DARAJA_OPERATIONS).map((o) => ({ code: o.code, label: o.label, description: o.description, group: o.group, async: o.async, moneyOut: o.moneyOut, needsInitiator: o.needsInitiator, needsMethod: o.needsMethod, internal: Boolean(o.internal), sandboxOnly: Boolean(o.sandboxOnly), fields: o.fields, enabled: dj.operations[o.code]?.enabled ?? false, maxAmount: dj.operations[o.code]?.maxAmount ?? null })),
+              hasInitiator: Boolean(has(creds.initiatorName) && has(creds.initiatorPassword) && creds.certificate),
             }
           : null,
         methods: methods
           .filter((x) => x.m.providerId === row.id)
-          .map((x) => ({ id: x.m.id, name: x.m.name, kind: x.m.kind, enabled: x.m.enabled, branchName: x.branchName, channel: x.m.channelNumber ? `${x.m.channelKind ?? 'number'} ${x.m.channelNumber}` : null })),
+          .map((x) => ({ id: x.m.id, name: x.m.name, kind: x.m.kind, enabled: x.m.enabled, branchName: x.branchName, channel: has(x.m.channelNumber) ? `${x.m.channelKind ?? 'number'} ${x.m.channelNumber}` : null })),
       };
     });
   }
@@ -127,9 +132,9 @@ export class PaymentProviderService {
     const meta = PAYMENT_PROVIDER_META[input.providerCode];
     if (!meta) throw new FinanceError('SERVICE_UNKNOWN', 'Choose which service this provider connects to.');
     const environment = input.environment ?? 'staging';
-    const url = (input.apiBaseUrl?.trim() || (environment === 'production' ? meta.defaultProductionBaseUrl : meta.defaultStagingBaseUrl)).replace(/\/$/, '');
+    const url = (orElse(input.apiBaseUrl?.trim(), environment === 'production' ? meta.defaultProductionBaseUrl : meta.defaultStagingBaseUrl)).replace(/\/$/, '');
     if (!/^https:\/\//i.test(url)) throw new FinanceError('URL_INVALID', 'The provider address must start with https://.');
-    const name = input.displayName?.trim() || meta.label;
+    const name = orElse(input.displayName?.trim(), meta.label);
     const [dup] = await this.db.select({ id: paymentProviderConfigs.id }).from(paymentProviderConfigs).where(and(eq(paymentProviderConfigs.companyId, ctx.companyId), sql`lower(${paymentProviderConfigs.displayName}) = lower(${name})`));
     if (dup) throw new FinanceError('DUPLICATE', `A provider named "${name}" already exists. Give this one a different name.`);
     const row = await this.configs.create({ companyId: ctx.companyId, providerCode: input.providerCode, displayName: name, environment, apiBaseUrl: url });
@@ -142,7 +147,7 @@ export class PaymentProviderService {
     this.notSystem(row);
     const url = (input.apiBaseUrl ?? row.apiBaseUrl).trim().replace(/\/$/, '');
     if (!/^https:\/\//i.test(url)) throw new FinanceError('URL_INVALID', 'The provider address must start with https://.');
-    const name = input.displayName?.trim() || row.displayName;
+    const name = orElse(input.displayName?.trim(), row.displayName);
     if (name.toLowerCase() !== row.displayName.toLowerCase()) {
       const [dup] = await this.db.select({ id: paymentProviderConfigs.id }).from(paymentProviderConfigs).where(and(eq(paymentProviderConfigs.companyId, ctx.companyId), sql`lower(${paymentProviderConfigs.displayName}) = lower(${name})`));
       if (dup) throw new FinanceError('DUPLICATE', `A provider named "${name}" already exists.`);
@@ -159,13 +164,13 @@ export class PaymentProviderService {
     const row = await this.load(ctx.companyId, id);
     this.notSystem(row);
     const { darajaSettings } = await import('@/server/domains/payments/daraja/config');
-    const merged = { ...((row.settings ?? {}) as Record<string, unknown>) };
-    for (const [k, v] of Object.entries(patch)) merged[k] = v && typeof v === 'object' && !Array.isArray(v) ? { ...((merged[k] as Record<string, unknown>) ?? {}), ...(v as Record<string, unknown>) } : v;
+    const merged = { ...((row.settings ?? {})) };
+    for (const [k, v] of Object.entries(patch)) merged[k] = v && typeof v === 'object' && !Array.isArray(v) ? { ...((merged[k]) ?? {}), ...(v as Record<string, unknown>) } : v;
     const clean = row.providerCode === 'mpesa_daraja' ? darajaSettings(merged) : (await import('@/server/domains/payments/engine/settings')).engineSettings(merged);
     for (const cidr of clean.security.allowedCidrs) {
       if (!/^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?$/.test(cidr)) throw new FinanceError('CIDR_INVALID', `"${cidr}" is not an address or range (use 1.2.3.4 or 1.2.3.0/24).`);
     }
-    await this.configs.update(id, { settings: { ...merged, ...clean } as Record<string, unknown> });
+    await this.configs.update(id, { settings: { ...merged, ...clean } });
     await this.decisions.record({ companyId: ctx.companyId, subject: { type: 'payment_provider', id }, action: 'finance.payment_provider_settings_changed', actor: ctx.actor, inputs: { origin: ctx.origin, changed: Object.keys(patch) } });
   }
 
@@ -173,7 +178,7 @@ export class PaymentProviderService {
     const row = await this.load(ctx.companyId, id);
     this.notSystem(row);
     const cleaned: Record<string, string> = {};
-    for (const [k, v] of Object.entries(credentials)) if (typeof v === 'string' && v.trim() && !v.includes('•')) cleaned[k] = v.trim();
+    for (const [k, v] of Object.entries(credentials)) if (typeof v === 'string' && has(v.trim()) && !v.includes('•')) cleaned[k] = v.trim();
     if (Object.keys(cleaned).length === 0) throw new FinanceError('NOTHING_TO_SAVE', 'Enter at least one value to save.');
     const previous = decryptCredentials(row.credentialsEncrypted) ?? {};
     await this.configs.update(id, { credentialsEncrypted: encryptCredentials({ ...previous, ...cleaned }) });
@@ -202,7 +207,7 @@ export class PaymentProviderService {
     const row = await this.load(ctx.companyId, id);
     this.notSystem(row);
     const [m] = await this.db.select({ n: count() }).from(paymentMethods).where(eq(paymentMethods.providerId, id));
-    if ((m?.n ?? 0) > 0) throw new FinanceError('PROVIDER_IN_USE', `${m!.n} payment method${m!.n === 1 ? ' goes' : 's go'} through this provider. Move or delete ${m!.n === 1 ? 'it' : 'them'} first.`);
+    if ((m?.n ?? 0) > 0) throw new FinanceError('PROVIDER_IN_USE', `${m.n} payment method${m.n === 1 ? ' goes' : 's go'} through this provider. Move or delete ${m.n === 1 ? 'it' : 'them'} first.`);
     const [a] = await this.db.select({ n: count() }).from(paymentAttempts).where(eq(paymentAttempts.providerConfigId, id));
     if ((a?.n ?? 0) > 0) throw new FinanceError('PROVIDER_HAS_PAYMENTS', 'Customers have paid through this provider, so it is kept for the records. Switch it off instead.');
     await this.configs.remove(id);

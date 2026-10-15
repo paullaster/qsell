@@ -14,7 +14,8 @@ const eslintConfig = defineConfig([
   {
     languageOptions: {
       parserOptions: {
-        projectService: true,
+        // Types come from tsconfig.eslint.json (the project's settings plus honest indexed access).
+        project: ['./tsconfig.eslint.json'],
         tsconfigRootDir: import.meta.dirname,
       },
     },

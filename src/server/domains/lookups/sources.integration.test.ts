@@ -185,6 +185,11 @@ describe.skipIf(url === '')('lookup sources (database)', () => {
   });
 
   it('lists enabled currencies only', async () => {
+    // A database built only from the migrations has no currencies; the test brings its own.
+    await db
+      .insert(schema.currencies)
+      .values({ code: 'KES', name: 'Kenyan Shilling', symbol: 'KSh', isBaseCurrency: true })
+      .onConflictDoNothing();
     await db
       .insert(schema.currencies)
       .values({

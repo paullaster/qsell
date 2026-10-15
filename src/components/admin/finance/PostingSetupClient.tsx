@@ -10,6 +10,9 @@ import {
 } from '@/server/domains/finance/actions';
 import { Field, Message, PageHeader, buttonClass, cardClass, fieldClass, primaryClass, today, type Notice, attempt } from './ui';
 
+import { has } from '@/lib/has';
+import { emptyToNull } from '@/lib/values';
+
 const GENERAL: [key: 'sales' | 'sales_returns' | 'sales_discount' | 'cogs' | 'inventory_adjustment', label: string][] = [
   ['sales', 'Sales'],
   ['sales_returns', 'Sales returns'],
@@ -68,9 +71,9 @@ export function PostingSetupClient({ view }: { view: PostingSetupView }) {
     e.preventDefault();
     if (!custEdit) return;
     setBusy(true);
-    const res = await attempt(saveCustomerGroupAction(custEdit.code, Object.fromEntries(CUSTOMER.map(([k]) => [k, custEdit.accounts[k] || null]))));
+    const res = await attempt(saveCustomerGroupAction(custEdit.code, Object.fromEntries(CUSTOMER.map(([k]) => [k, emptyToNull(custEdit.accounts[k])]))));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     setNotice({ kind: 'ok', text: `Customer group ${custEdit.code} saved.` });
     setCustEdit(null);
     router.refresh();
@@ -85,10 +88,10 @@ export function PostingSetupClient({ view }: { view: PostingSetupView }) {
       businessGroupId: row.businessGroupId,
       productGroupId: row.productGroupId,
       effectiveFrom: from,
-      accounts: Object.fromEntries(GENERAL.map(([k]) => [k, accounts[k] || null])),
+      accounts: Object.fromEntries(GENERAL.map(([k]) => [k, emptyToNull(accounts[k])])),
     }));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     setNotice({ kind: 'ok', text: `Saved. It applies from ${from}; earlier documents keep the setup they used.` });
     setEditing(null);
     router.refresh();
@@ -100,7 +103,7 @@ export function PostingSetupClient({ view }: { view: PostingSetupView }) {
     setBusy(true);
     const res = await attempt(addPostingGroupAction(group.kind, group.code, group.name));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     setNotice({ kind: 'ok', text: 'Group added. Give each business × product pair its accounts below.' });
     setGroup(null);
     router.refresh();
@@ -135,7 +138,7 @@ export function PostingSetupClient({ view }: { view: PostingSetupView }) {
 
       <section aria-labelledby={`${uid}-gen`} className="space-y-3">
         <h3 id={`${uid}-gen`} className="text-sm font-bold text-fg-strong">Sales and cost accounts (business group × product group)</h3>
-        {editing ? (
+        {has(editing) ? (
           <form onSubmit={save} className={`${cardClass} space-y-4`} aria-label="Edit posting setup">
             {(() => {
               const row = view.general.find((g) => g.id === editing)!;

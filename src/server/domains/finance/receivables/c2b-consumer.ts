@@ -6,6 +6,8 @@ import { FinanceError, type FinanceContext } from '../errors';
 import { fromCents } from '../domain/receivables';
 import type { ReceiptService } from './receipt-service';
 
+import { has } from '@/lib/has';
+
 /**
  * Puts a payment that Safaricom confirmed (made straight to a paybill or till) on a customer's account:
  * a posted receipt through the payment method of that shortcode, so it lands in the right bank account,
@@ -20,11 +22,11 @@ export class FinanceC2bConsumer implements C2bConsumer {
 
   async knownReference(companyId: string, reference: string | null): Promise<boolean> {
     const ref = reference?.trim();
-    if (!ref) return false;
+    if (!has(ref)) return false;
     const [c] = await this.db.select({ id: customers.id }).from(customers).where(and(eq(customers.companyId, companyId), sql`lower(${customers.number}) = lower(${ref})`)).limit(1);
     if (c) return true;
     const [o] = await this.db.select({ id: orders.id }).from(orders).where(sql`lower(${orders.orderNumber}) = lower(${ref})`).limit(1);
-    return !!o;
+    return Boolean(o);
   }
 
   /** A person chose the customer: the same receipt, made in their name. Problems are told, not hidden. */
@@ -52,9 +54,9 @@ export class FinanceC2bConsumer implements C2bConsumer {
   async allocate(tx: ProviderTransactionRow, info: { method: PaymentMethodRow; payerName: string | null; accountReference: string | null; autoAllocate: 'off' | 'by_customer_number' }) {
     if (info.autoAllocate !== 'by_customer_number') return null;
     const ref = info.accountReference?.trim();
-    if (!ref) return null;
+    if (!has(ref)) return null;
     const [customer] = await this.db.select().from(customers).where(and(eq(customers.companyId, tx.companyId), sql`lower(${customers.number}) = lower(${ref})`)).limit(1);
-    if (!customer || !customer.isActive) return null;
+    if (customer?.isActive !== true) return null;
     const ctx: FinanceContext = { companyId: tx.companyId, actor: { type: 'integration', id: tx.providerId }, origin: { surface: 'payments/c2b', action: 'auto_allocate' } };
     const when = (tx.occurredAt ?? tx.createdAt).toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' });
     try {

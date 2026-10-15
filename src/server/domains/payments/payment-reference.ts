@@ -1,3 +1,6 @@
+
+import { has } from '@/lib/has';
+import { emptyToNull } from '@/lib/values';
 /**
  * The payment reference a provider assigns when money is captured.
  * This is not the checkout-request id we sent when the prompt was created.
@@ -6,12 +9,12 @@
  * Body.stkCallback.CallbackMetadata.Item[{ Name: "MpesaReceiptNumber" }].
  */
 
-type MetadataItem = {
+interface MetadataItem {
   Name?: string;
   name?: string;
   Value?: string | number;
   value?: string | number;
-};
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -35,13 +38,13 @@ export function metadataItemValue(items: MetadataItem[], name: string): string |
   const value = found?.Value ?? found?.value;
   if (value == null) return null;
   const text = String(value).trim();
-  return text || null;
+  return emptyToNull(text);
 }
 
 function firstText(body: Record<string, unknown>, keys: string[]): string | null {
   for (const key of keys) {
     const value = body[key];
-    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (typeof value === 'string' && has(value.trim())) return value.trim();
     if (typeof value === 'number' && Number.isFinite(value)) return String(value);
   }
   return null;

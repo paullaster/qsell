@@ -16,6 +16,8 @@ import { findTemplate } from './domain/templates';
 import { FinanceError, type FinanceContext } from './errors';
 import type { FiscalService } from './fiscal-service';
 
+import { has } from '@/lib/has';
+
 export interface AccountInput {
   no: string;
   name: string;
@@ -39,8 +41,8 @@ export class FinanceSetupService {
   ) {}
 
   async getSettings(companyId: string) {
-    const [row] = await this.db.select().from(financeSettings).where(eq(financeSettings.companyId, companyId));
-    return row ?? null;
+    const rows = await this.db.select().from(financeSettings).where(eq(financeSettings.companyId, companyId));
+    return rows.at(0) ?? null;
   }
 
   async updateSettings(
@@ -49,7 +51,7 @@ export class FinanceSetupService {
   ) {
     const s = await this.getSettings(ctx.companyId);
     if (!s) throw new FinanceError('NOT_SET_UP', 'Apply a chart of accounts first.');
-    if (input.postingFrom && input.postingTo && input.postingFrom > input.postingTo) {
+    if (has(input.postingFrom) && has(input.postingTo) && input.postingFrom > input.postingTo) {
       throw new FinanceError('WINDOW_INVALID', 'The posting window ends before it starts.');
     }
     await this.db.transaction(async (tx) => {
@@ -74,7 +76,7 @@ export class FinanceSetupService {
   // ── chart of accounts ──────────────────────────────────────────────────────
 
   async listAccounts(companyId: string, q?: string) {
-    const where = q
+    const where = has(q)
       ? and(
           eq(glAccounts.companyId, companyId),
           or(ilike(glAccounts.no, `%${q}%`), ilike(glAccounts.name, `%${q}%`)),
@@ -98,20 +100,20 @@ export class FinanceSetupService {
     if (input.type === 'posting' && !input.category) {
       throw new FinanceError('CATEGORY_REQUIRED', 'A posting account needs a category.');
     }
-    if ((input.type === 'total' || input.type === 'end_total') && !input.totaling) {
+    if ((input.type === 'total' || input.type === 'end_total') && !has(input.totaling)) {
       throw new FinanceError('TOTALING_REQUIRED', 'A total account needs a range to add up, like 1000..1999.');
     }
-    if (input.totaling && !isValidTotaling(input.totaling)) {
+    if (has(input.totaling) && !isValidTotaling(input.totaling)) {
       throw new FinanceError('TOTALING_INVALID', `"${input.totaling}" is not a valid range.`);
     }
-    if (input.type !== 'posting' && input.directPosting) {
+    if (input.type !== 'posting' && input.directPosting === true) {
       throw new FinanceError('NOT_POSTABLE', 'Only posting accounts can allow posting.');
     }
   }
 
   async createAccount(ctx: FinanceContext, input: AccountInput) {
     this.check(input);
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const [dup] = await tx
         .select({ id: glAccounts.id })
         .from(glAccounts)
@@ -138,21 +140,21 @@ export class FinanceSetupService {
       await this.decisions.record(
         {
           companyId: ctx.companyId,
-          subject: { type: 'gl_account', id: row!.id },
+          subject: { type: 'gl_account', id: row.id },
           action: 'finance.account_created',
           actor: ctx.actor,
           inputs: { origin: ctx.origin },
-          outcome: { no: row!.no, name: row!.name, type: row!.type },
+          outcome: { no: row.no, name: row.name, type: row.type },
         },
         tx,
       );
-      return row!;
+      return row;
     });
   }
 
   async updateAccount(ctx: FinanceContext, id: string, input: AccountInput) {
     this.check(input);
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const [before] = await tx
         .select()
         .from(glAccounts)
@@ -204,11 +206,11 @@ export class FinanceSetupService {
           action: 'finance.account_changed',
           actor: ctx.actor,
           inputs: { origin: ctx.origin, before: { no: before.no, name: before.name, type: before.type } },
-          outcome: { no: row!.no, name: row!.name, type: row!.type },
+          outcome: { no: row.no, name: row.name, type: row.type },
         },
         tx,
       );
-      return row!;
+      return row;
     });
   }
 
@@ -278,10 +280,10 @@ export class FinanceSetupService {
     if (!template) throw new FinanceError('TEMPLATE_UNKNOWN', `There is no template "${code}".`);
     const problems = validateChart(template.accounts);
     if (problems.length > 0) {
-      throw new FinanceError('TEMPLATE_INVALID', problems[0]!.message, problems.map((p) => ({ message: p.message })));
+      throw new FinanceError('TEMPLATE_INVALID', problems[0].message, problems.map((p) => ({ message: p.message })));
     }
-    return this.db.transaction(async (tx) => {
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'finance-template:' + ctx.companyId}))`);
+    return await this.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`finance-template:${  ctx.companyId}`}))`);
       const [any] = await tx
         .select({ id: glAccounts.id })
         .from(glAccounts)
@@ -314,7 +316,7 @@ export class FinanceSetupService {
       const byNo = new Map(inserted.map((r) => [r.no, r.id]));
       const acct = (no: string): string => {
         const id = byNo.get(no);
-        if (!id) throw new FinanceError('TEMPLATE_INVALID', `The template refers to account ${no}, which it does not define.`);
+        if (!has(id)) throw new FinanceError('TEMPLATE_INVALID', `The template refers to account ${no}, which it does not define.`);
         return id;
       };
 

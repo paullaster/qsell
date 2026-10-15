@@ -20,6 +20,9 @@ import { businessDate } from '@/server/kernel/numbering/business-date';
 import type { NumberSeriesService } from '@/server/kernel/numbering/service';
 import type { ReasonCodes } from '@/server/kernel/reason-codes/service';
 
+import { has } from '@/lib/has';
+import { trimToNull } from '@/lib/values';
+
 export class ReturnError extends Error {
   constructor(
     readonly code: string,
@@ -83,17 +86,17 @@ export class ReturnReceiptService {
     const costs = await tx.select({ productId: orderItems.productId, cost: orderItems.unitCost }).from(orderItems).where(eq(orderItems.orderId, p.orderId));
     const cost = new Map(costs.map((c) => [c.productId, c.cost]));
     await tx.insert(returnReceiptLines).values(
-      p.lines.map((l) => ({ receiptId: r!.id, productId: l.productId, description: l.description, expectedQty: l.quantity, unitCost: cost.get(l.productId) ?? null })),
+      p.lines.map((l) => ({ receiptId: r.id, productId: l.productId, description: l.description, expectedQty: l.quantity, unitCost: cost.get(l.productId) ?? null })),
     );
     await this.decisions.record(
-      { companyId: p.companyId, subject: { type: 'return_receipt', id: r!.id }, action: 'returns.requested', actor: { type: 'user', id: p.requestedBy }, to: 'awaiting_goods', inputs: { creditNote: p.creditNote.creditNoteNo }, outcome: { number, lines: p.lines.length } },
+      { companyId: p.companyId, subject: { type: 'return_receipt', id: r.id }, action: 'returns.requested', actor: { type: 'user', id: p.requestedBy }, to: 'awaiting_goods', inputs: { creditNote: p.creditNote.creditNoteNo }, outcome: { number, lines: p.lines.length } },
       tx,
     );
-    return { id: r!.id, number };
+    return { id: r.id, number };
   }
 
   async list(companyId: string, filter: 'open' | 'closed' = 'open', limit = 100) {
-    return this.db
+    return await this.db
       .select({
         r: returnReceipts,
         creditNoteNo: creditNotes.creditNoteNo,
@@ -140,7 +143,7 @@ export class ReturnReceiptService {
    */
   async confirm(a: ReturnActor, receiptId: string, items: ConfirmItem[]): Promise<{ status: ReturnReceiptRow['status']; stockAdded: number }> {
     if (items.length === 0) throw new ReturnError('NOTHING_TO_CONFIRM', 'Enter what arrived.');
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const [r] = await tx.select().from(returnReceipts).where(and(eq(returnReceipts.companyId, a.companyId), eq(returnReceipts.id, receiptId))).for('update');
       if (!r) throw new ReturnError('NOT_FOUND', 'That return does not exist.');
       if (r.closedAt || (r.status !== 'awaiting_goods' && r.status !== 'partially_confirmed')) {
@@ -161,7 +164,7 @@ export class ReturnReceiptService {
         }
         if (!CONDITIONS.includes(it.condition) || !DISPOSITIONS.includes(it.disposition)) throw new ReturnError('INVALID', 'Choose the condition and what was done with the goods.');
         const bad = checkDisposition(it.condition, it.disposition);
-        if (bad) throw new ReturnError('DISPOSITION_INVALID', `${line.description}: ${bad}`);
+        if (has(bad)) throw new ReturnError('DISPOSITION_INVALID', `${line.description}: ${bad}`);
         const toStock = it.disposition === 'return_to_stock';
         if (toStock) {
           await applyStockDelta(tx, {
@@ -182,7 +185,7 @@ export class ReturnReceiptService {
           condition: it.condition,
           disposition: it.disposition,
           stockAdded: toStock,
-          note: it.note?.trim() || null,
+          note: trimToNull(it.note),
           confirmedBy: a.actorId,
           origin: a.origin,
         });
@@ -218,6 +221,6 @@ export class ReturnReceiptService {
   }
 
   async creditNoteLinesFor(creditNoteId: string) {
-    return this.db.select().from(creditNoteLines).where(eq(creditNoteLines.creditNoteId, creditNoteId));
+    return await this.db.select().from(creditNoteLines).where(eq(creditNoteLines.creditNoteId, creditNoteId));
   }
 }

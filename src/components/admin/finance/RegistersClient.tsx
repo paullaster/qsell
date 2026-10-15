@@ -11,6 +11,9 @@ import {
 } from '@/server/domains/finance/actions';
 import { Chip, Field, Message, PageHeader, buttonClass, cardClass, fieldClass, money, primaryClass, today, type Notice, attempt } from './ui';
 
+import { has } from '@/lib/has';
+import { readText } from '@/lib/values';
+
 type Detail = Extract<Awaited<ReturnType<typeof registerDetailAction>>, { ok: true }>['data'];
 type Chain = Extract<Awaited<ReturnType<typeof verifyChainAction>>, { ok: true }>['data'];
 
@@ -27,11 +30,11 @@ export function RegistersClient({ registers, canReverse }: { registers: Register
   const [notice, setNotice] = useState<Notice>(null);
 
   const toggle = async (id: string) => {
-    if (open === id) return setOpen(null);
+    if (open === id) { setOpen(null); return; }
     setOpen(id);
     setDetail(null);
     const res = await attempt(registerDetailAction(id));
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     setDetail(res.data);
   };
 
@@ -46,11 +49,11 @@ export function RegistersClient({ registers, canReverse }: { registers: Register
 
   const reverse = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!reversing) return;
+    if (!has(reversing)) return;
     setBusy(true);
     const res = await attempt(reverseRegisterAction(reversing, rev.date, { code: rev.code, text: rev.text }));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     setNotice({ kind: 'ok', text: 'Reversed. The original stays in the books; the reversal is a new posting linked to it.' });
     setReversing(null);
     router.refresh();
@@ -60,7 +63,7 @@ export function RegistersClient({ registers, canReverse }: { registers: Register
     setBusy(true);
     const res = await attempt(verifyChainAction());
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     setChain(res.data);
   };
 
@@ -83,7 +86,7 @@ export function RegistersClient({ registers, canReverse }: { registers: Register
         </div>
       ) : null}
 
-      {reversing ? (
+      {has(reversing) ? (
         <form onSubmit={reverse} className={`${cardClass} space-y-3`} aria-label="Reverse posting">
           <p className="text-sm font-semibold text-fg-strong">Reverse this posting</p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -132,14 +135,14 @@ export function RegistersClient({ registers, canReverse }: { registers: Register
                     </ul>
                     <dl className="grid grid-cols-1 gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
                       <div><dt className="inline text-fg-muted">Posted by </dt><dd className="inline text-fg">{r.postedBy ?? 'system'} at {new Date(r.postedAt).toLocaleString()}</dd></div>
-                      <div><dt className="inline text-fg-muted">From </dt><dd className="inline text-fg">{String((detail.origin as Record<string, unknown>).surface ?? '—')} → {String((detail.origin as Record<string, unknown>).action ?? '—')}</dd></div>
-                      <div><dt className="inline text-fg-muted">Permission </dt><dd className="inline text-fg">{String((detail.origin as Record<string, unknown>).permissionUsed ?? '—')}</dd></div>
-                      <div><dt className="inline text-fg-muted">IP </dt><dd className="inline text-fg">{String((detail.origin as Record<string, unknown>).ip ?? '—')}</dd></div>
+                      <div><dt className="inline text-fg-muted">From </dt><dd className="inline text-fg">{readText((detail.origin).surface, '—')} → {readText((detail.origin).action, '—')}</dd></div>
+                      <div><dt className="inline text-fg-muted">Permission </dt><dd className="inline text-fg">{readText((detail.origin).permissionUsed, '—')}</dd></div>
+                      <div><dt className="inline text-fg-muted">IP </dt><dd className="inline text-fg">{readText((detail.origin).ip, '—')}</dd></div>
                       <div className="sm:col-span-2 break-all"><dt className="inline text-fg-muted">Hash </dt><dd className="inline font-mono text-[10px] text-fg">{detail.hash}</dd></div>
                     </dl>
                     {detail.trail.length > 0 ? (
                       <ol className="space-y-1 border-l border-line pl-3 text-xs">
-                        {detail.trail.map((t, i) => <li key={i}><span className="text-fg-muted">{new Date(t.at).toLocaleString()}</span> {t.action} {t.reason ? `— ${t.reason}` : ''}</li>)}
+                        {detail.trail.map((t, i) => <li key={i}><span className="text-fg-muted">{new Date(t.at).toLocaleString()}</span> {t.action} {has(t.reason) ? `— ${t.reason}` : ''}</li>)}
                       </ol>
                     ) : null}
                     {canReverse && !r.isReversal && !r.reversed ? <button type="button" className={buttonClass} onClick={() => startReverse(r.id)}>Reverse…</button> : null}

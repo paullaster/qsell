@@ -1,16 +1,12 @@
 import { creditNoteExcessWorklistAction } from '@/server/domains/finance/credit-note-actions';
 import { CreditNoteExcessClient } from '@/components/admin/finance/CreditNoteExcessClient';
-import { FinanceGate } from '@/components/admin/finance/gate';
-import { LoadFailed } from '@/components/admin/finance/ui';
+import { FinancePage } from '@/components/admin/finance/gate';
 
-export default async function AdminCreditNoteExcessPage() {
+export default function Page() {
+  const view = creditNoteExcessWorklistAction();
   return (
-    <FinanceGate>
-      {async () => {
-        const res = await creditNoteExcessWorklistAction();
-        if (!res.ok) return <LoadFailed error={res.error} />;
-        return <CreditNoteExcessClient view={res.data} />;
-      }}
-    </FinanceGate>
+    <FinancePage label="credit note excess">
+      <CreditNoteExcessClient viewPromise={view} />
+    </FinancePage>
   );
 }

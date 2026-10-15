@@ -2,9 +2,12 @@ import type { InboundClaim } from '../engine/types';
 import { maskPhone, phoneFingerprint } from '../engine/redact';
 import { toCentsLoose } from './security';
 
+import { has } from '@/lib/has';
+import { firstFilled, readText } from '@/lib/values';
+
 /** A payer number becomes a fingerprint and a masked form; one that Safaricom already masked has no fingerprint. */
 function payer(raw: string | null): { payerFingerprint: string | null; payerMasked: string | null } {
-  if (!raw) return { payerFingerprint: null, payerMasked: null };
+  if (!has(raw)) return { payerFingerprint: null, payerMasked: null };
   if (/[*•x]/i.test(raw) || raw.replace(/\D/g, '').length < 9) return { payerFingerprint: null, payerMasked: raw.slice(0, 16) };
   return { payerFingerprint: phoneFingerprint(raw), payerMasked: maskPhone(raw) };
 }
@@ -14,7 +17,7 @@ function payer(raw: string | null): { payerFingerprint: string | null; payerMask
  * throws: the result says what the payload claims, and whether it could be read at all.
  */
 const rec = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
-const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : typeof v === 'number' && Number.isFinite(v) ? String(v) : null);
+const str = (v: unknown): string | null => (typeof v === 'string' && has(v.trim()) ? v.trim() : typeof v === 'number' && Number.isFinite(v) ? String(v) : null);
 
 function emptyClaim(kind: string): InboundClaim {
   return { kind, claimsSuccess: null, platformReference: null, conversationId: null, originatorId: null, requestIds: {}, amountCents: null, currency: 'KES', payerFingerprint: null, payerMasked: null, shortcode: null, accountReference: null, occurredAt: null, failureCode: null, failureReason: null, extra: {} };
@@ -23,7 +26,7 @@ function emptyClaim(kind: string): InboundClaim {
 /** "20240131124530" -> Date in East Africa Time. */
 export function parseDarajaTime(v: unknown): Date | null {
   const t = str(v);
-  if (!t || !/^\d{14}$/.test(t)) return null;
+  if (!has(t) || !/^\d{14}$/.test(t)) return null;
   const d = new Date(`${t.slice(0, 4)}-${t.slice(4, 6)}-${t.slice(6, 8)}T${t.slice(8, 10)}:${t.slice(10, 12)}:${t.slice(12, 14)}+03:00`);
   return Number.isNaN(d.getTime()) ? null : d;
 }
@@ -37,7 +40,7 @@ export function resultParameters(result: Record<string, unknown>): Record<string
   for (const item of items) {
     const r = rec(item);
     const k = str(r.Key);
-    if (k) out[k] = r.Value === undefined || r.Value === null ? '' : typeof r.Value === 'object' ? JSON.stringify(r.Value) : String(r.Value);
+    if (has(k)) out[k] = r.Value === undefined || r.Value === null ? '' : typeof r.Value === 'object' ? JSON.stringify(r.Value) : readText(r.Value);
   }
   return out;
 }
@@ -50,7 +53,7 @@ export function referenceItems(result: Record<string, unknown>): Record<string, 
   for (const it of items) {
     const r = rec(it);
     const k = str(r.Key);
-    if (k) out[k] = r.Value === undefined || r.Value === null ? '' : String(r.Value);
+    if (has(k)) out[k] = r.Value === undefined || r.Value === null ? '' : readText(r.Value);
   }
   return out;
 }
@@ -64,12 +67,12 @@ export function parseStkCallback(body: unknown): InboundClaim | null {
   claim.claimsSuccess = code === null ? null : code === '0';
   claim.requestIds = { checkoutRequestId: str(cb.CheckoutRequestID) ?? '', merchantRequestId: str(cb.MerchantRequestID) ?? '' };
   claim.conversationId = str(cb.CheckoutRequestID);
-  claim.failureCode = code && code !== '0' ? code : null;
-  claim.failureReason = code && code !== '0' ? (str(cb.ResultDesc) ?? `ResultCode ${code}`) : null;
+  claim.failureCode = has(code) && code !== '0' ? code : null;
+  claim.failureReason = has(code) && code !== '0' ? (str(cb.ResultDesc) ?? `ResultCode ${code}`) : null;
   const meta = rec(cb.CallbackMetadata).Item;
   const items = Array.isArray(meta) ? meta : [];
   const get = (name: string) => {
-    const hit = items.map(rec).find((i) => String(i.Name ?? '').toLowerCase() === name.toLowerCase());
+    const hit = items.map(rec).find((i) => readText(i.Name, '').toLowerCase() === name.toLowerCase());
     return hit ? hit.Value : undefined;
   };
   claim.platformReference = str(get('MpesaReceiptNumber'));
@@ -83,7 +86,7 @@ export function parseStkCallback(body: unknown): InboundClaim | null {
 /** Customer-to-Business validation or confirmation. */
 export function parseC2b(kind: 'c2b_validation' | 'c2b_confirmation', body: unknown): InboundClaim | null {
   const b = rec(body);
-  if (!str(b.TransID) && !str(b.BusinessShortCode)) return null;
+  if (!has(str(b.TransID)) && !has(str(b.BusinessShortCode))) return null;
   const claim = emptyClaim(kind);
   claim.claimsSuccess = kind === 'c2b_confirmation' ? true : null;
   claim.platformReference = str(b.TransID);
@@ -130,21 +133,21 @@ export function parseAsyncResult(body: unknown): AsyncResult | null {
 
 /** The M-Pesa receipt out of an async result's parameters (it is named differently by operation). */
 export function receiptFromParams(p: Record<string, string>): string | null {
-  return p.ReceiptNo || p.TransactionReceipt || p.TransactionID || null;
+  return firstFilled(p.ReceiptNo, p.TransactionReceipt, p.TransactionID);
 }
 
 /** B2B Express Checkout's callback is flat, not wrapped in "Result". */
 export function parseB2bExpress(body: unknown): InboundClaim | null {
   const b = rec(body);
-  if (!str(b.requestId) && !str(b.resultCode)) return null;
+  if (!has(str(b.requestId)) && !has(str(b.resultCode))) return null;
   const claim = emptyClaim('b2b_express_callback');
   const code = str(b.resultCode);
-  claim.claimsSuccess = code === null ? null : code === '0' && String(b.status ?? 'SUCCESS').toUpperCase() !== 'FAILED';
+  claim.claimsSuccess = code === null ? null : code === '0' && readText(b.status, 'SUCCESS').toUpperCase() !== 'FAILED';
   claim.originatorId = str(b.requestId);
   claim.conversationId = str(b.conversationID);
   claim.platformReference = str(b.transactionId);
   claim.amountCents = toCentsLoose(b.amount);
-  claim.failureCode = code && code !== '0' ? code : null;
+  claim.failureCode = has(code) && code !== '0' ? code : null;
   claim.failureReason = str(b.resultDesc);
   claim.accountReference = str(b.paymentReference);
   return claim;
@@ -153,7 +156,7 @@ export function parseB2bExpress(body: unknown): InboundClaim | null {
 /** Bill Manager tells us a customer paid an invoice. */
 export function parseBillPayment(body: unknown): InboundClaim | null {
   const b = rec(body);
-  if (!str(b.transactionId)) return null;
+  if (!has(str(b.transactionId))) return null;
   const claim = emptyClaim('bill_payment');
   claim.claimsSuccess = true;
   claim.platformReference = str(b.transactionId);
@@ -161,7 +164,7 @@ export function parseBillPayment(body: unknown): InboundClaim | null {
   Object.assign(claim, payer(str(b.msisdn)));
   claim.shortcode = str(b.shortCode);
   claim.accountReference = str(b.accountReference);
-  claim.occurredAt = b.dateCreated ? new Date(String(b.dateCreated)) : null;
+  claim.occurredAt = b.dateCreated ? new Date(readText(b.dateCreated)) : null;
   return claim;
 }
 
@@ -171,5 +174,5 @@ export function parseAccountBalance(value: string): { account: string; currency:
     .split('&')
     .map((part) => part.split('|'))
     .filter((f) => f.length >= 3)
-    .map((f) => ({ account: f[0]!.trim(), currency: f[1]!.trim(), available: (f[2] ?? '').trim(), uncleared: (f[3] ?? '').trim(), reserved: (f[4] ?? '').trim() }));
+    .map((f) => ({ account: f[0].trim(), currency: f[1].trim(), available: (f[2] ?? '').trim(), uncleared: (f[3] ?? '').trim(), reserved: (f[4] ?? '').trim() }));
 }

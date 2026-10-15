@@ -153,7 +153,8 @@ describe.skipIf(url === '')('template lists (database)', () => {
       `${tag} Zulu`,
     ]);
     expect((await quotePage({ query: `${tag} bravo` })).rows).toHaveLength(1);
-    expect((await quotePage({ query: '%' })).rows).toHaveLength(0);
+    // A literal %, after this test's own tag so other tests' rows cannot match it.
+    expect((await quotePage({ query: `${tag}%` })).rows).toHaveLength(0);
   });
 
   it('pages by cursor without repeating or skipping', async () => {
