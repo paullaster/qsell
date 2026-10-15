@@ -2,18 +2,24 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { and, eq, sql } from 'drizzle-orm';
 
 import { has } from '@/lib/has';
+import { required } from '@/lib/values';
+import type { DrizzleDb } from '@/server/db/drizzle/client';
+import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
+import type { FinanceServices } from '../index';
+import type * as mod_errors from '../errors';
+import type { FinanceContext } from '../errors';
 
 /** Needs a Postgres built from the migrations:  TEST_DATABASE_URL=postgres://... pnpm test */
 const url = process.env.TEST_DATABASE_URL;
 
 describe.skipIf(!has(url))('receivables (database)', () => {
-  type Db = import('@/server/db/drizzle/client').DrizzleDb;
+  type Db = DrizzleDb;
   let db: Db;
-  let schema: typeof import('@/server/db/drizzle/schema');
-  let fin: import('../index').FinanceServices;
-  let FinanceError: typeof import('../errors').FinanceError;
+  let schema: typeof mod_server_db_drizzle_schema;
+  let fin: FinanceServices;
+  let FinanceError: typeof mod_errors.FinanceError;
   let companyId: string;
-  let ctx: import('../errors').FinanceContext;
+  let ctx: FinanceContext;
   let ids: { methods: Record<string, string>; banks: Record<string, string> };
   let seq = 0;
 
@@ -109,9 +115,9 @@ describe.skipIf(!has(url))('receivables (database)', () => {
     });
 
     it('guards bank accounts and methods', async () => {
-      const gl = (await fin.setup.listAccounts(companyId)).find((a) => a.no === '6200')!;
-      const manual = (await fin.paymentMethods.providerChoices(companyId)).find((p) => p.isSystem)!;
-      const cashGl = (await fin.paymentMethods.list(companyId)).find((m) => m.method.code === 'CASH')!.method.glAccountId;
+      const gl = required((await fin.setup.listAccounts(companyId)).find((a) => a.no === '6200'));
+      const manual = required((await fin.paymentMethods.providerChoices(companyId)).find((p) => p.isSystem));
+      const cashGl = required((await fin.paymentMethods.list(companyId)).find((m) => m.method.code === 'CASH')).method.glAccountId;
       const base = { name: 'X', kind: 'cash' as const, balancingBankAccountId: ids.banks.CASH, providerId: manual.id, glAccountId: cashGl };
       expect(await codeOf(fin.bankAccounts.create(ctx, { code: 'bad code', name: 'X', kind: 'bank', currency: 'KES' }))).toBe('CODE_INVALID');
       expect(await codeOf(fin.paymentMethods.create(ctx, { ...base, code: 'X', glAccountId: gl.id }))).toBe('ACCOUNT_NOT_ASSET');
@@ -187,7 +193,7 @@ describe.skipIf(!has(url))('receivables (database)', () => {
       const r = await receive(c.id, '1000');
       const out = await fin.receipts.post(ctx, r.id);
       expect(out).toMatchObject({ glPosted: false, registerId: null, appliedCents: 0 });
-      const d = (await fin.receipts.detail(companyId, r.id))!;
+      const d = required((await fin.receipts.detail(companyId, r.id)));
       expect(d.receipt.status).toBe('posted');
       expect(d.unappliedCents).toBe(100000);
       expect(d.events.map((e) => e.event)).toEqual(['created', 'posted']);
@@ -208,7 +214,7 @@ describe.skipIf(!has(url))('receivables (database)', () => {
       expect(await remaining(c.entries[0])).toBe('200.00'); // 500 - 300
       expect(await remaining(c.entries[2])).toBe('900.00');
       expect(await balanceOf(c.id)).toBe('1100.00'); // 1700 - 600
-      expect((await fin.receipts.detail(companyId, r.id))!.unappliedCents).toBe(0);
+      expect(required((await fin.receipts.detail(companyId, r.id))).unappliedCents).toBe(0);
     });
 
     it('keeps an excess as an unapplied credit, never a negative debtor', async () => {
@@ -231,7 +237,7 @@ describe.skipIf(!has(url))('receivables (database)', () => {
       expect(await remaining(c.entries[0])).toBe('500.00'); // nothing leaked from the refusals
       await fin.receipts.apply(ctx, r.id, [{ entryId: c.entries[1], amountCents: 40000 }]);
       expect(await remaining(c.entries[1])).toBe('100.00');
-      expect((await fin.receipts.detail(companyId, r.id))!.unappliedCents).toBe(20000);
+      expect(required((await fin.receipts.detail(companyId, r.id))).unappliedCents).toBe(20000);
     });
 
     it('cannot apply across currencies or to a payment', async () => {
@@ -274,33 +280,33 @@ describe.skipIf(!has(url))('receivables (database)', () => {
       const r = await receive(c.id, '900');
       await fin.receipts.post(ctx, r.id, { allocate: 'oldest_first' }); // 500 + 300 + 100
       expect(await remaining(c.entries[2])).toBe('600.00');
-      const detail = (await fin.receipts.detail(companyId, r.id))!;
+      const detail = required((await fin.receipts.detail(companyId, r.id)));
       const applicationId = detail.applications[0].application_id;
       expect(new Set(detail.applications.map((a) => a.application_id)).size).toBe(1);
       expect(detail.applications).toHaveLength(3);
       await fin.receipts.unapply(ctx, r.id, applicationId, { code: 'DATA_ENTRY_ERROR' });
       expect(await Promise.all(c.entries.map(remaining))).toEqual(['500.00', '300.00', '700.00']);
       expect(await balanceOf(c.id)).toBe('1500.00');
-      expect((await fin.receipts.detail(companyId, r.id))!.unappliedCents).toBe(90000);
+      expect(required((await fin.receipts.detail(companyId, r.id))).unappliedCents).toBe(90000);
       expect(await codeOf(fin.receipts.unapply(ctx, r.id, applicationId, { code: 'DATA_ENTRY_ERROR' }))).toBe('ALREADY_UNAPPLIED');
       // and the money can be applied again, to different invoices
       await fin.receipts.apply(ctx, r.id, [{ entryId: c.entries[2], amountCents: 40000 }, { entryId: c.entries[1], amountCents: 30000 }]);
       expect(await remaining(c.entries[2])).toBe('300.00');
       expect(await remaining(c.entries[1])).toBe('0.00');
-      expect((await fin.receipts.detail(companyId, r.id))!.unappliedCents).toBe(20000);
+      expect(required((await fin.receipts.detail(companyId, r.id))).unappliedCents).toBe(20000);
     });
 
     it('undoes an application once, with a reason, and reopens the invoice', async () => {
       const c = await customerWith([['500', '2026-09-20']]);
       const r = await receive(c.id, '500');
       await fin.receipts.post(ctx, r.id, { allocate: 'oldest_first' });
-      const app = (await fin.receipts.detail(companyId, r.id))!.applications[0];
+      const app = required((await fin.receipts.detail(companyId, r.id))).applications[0];
       expect(await codeOf(fin.receipts.unapply(ctx, r.id, app.application_id, { code: 'NOPE' }))).toMatch(/does not exist/);
       await fin.receipts.unapply(ctx, r.id, app.application_id, { code: 'DATA_ENTRY_ERROR' });
       expect(await remaining(c.entries[0])).toBe('500.00');
       expect(await balanceOf(c.id)).toBe('500.00');
       expect(await codeOf(fin.receipts.unapply(ctx, r.id, app.application_id, { code: 'DATA_ENTRY_ERROR' }))).toBe('ALREADY_UNAPPLIED');
-      expect((await fin.receipts.detail(companyId, r.id))!.unappliedCents).toBe(50000);
+      expect(required((await fin.receipts.detail(companyId, r.id))).unappliedCents).toBe(50000);
     });
   });
 
@@ -310,14 +316,14 @@ describe.skipIf(!has(url))('receivables (database)', () => {
       const r = await receive(c.id, '500');
       await fin.receipts.post(ctx, r.id, { allocate: 'oldest_first' });
       expect(await codeOf(fin.receipts.reverse(ctx, r.id, { code: 'DATA_ENTRY_ERROR' }))).toBe('HAS_APPLICATIONS');
-      const app = (await fin.receipts.detail(companyId, r.id))!.applications[0];
+      const app = required((await fin.receipts.detail(companyId, r.id))).applications[0];
       await fin.receipts.unapply(ctx, r.id, app.application_id, { code: 'DATA_ENTRY_ERROR' });
       await fin.receipts.reverse(ctx, r.id, { code: 'DATA_ENTRY_ERROR', text: 'wrong customer' });
-      const d = (await fin.receipts.detail(companyId, r.id))!;
+      const d = required((await fin.receipts.detail(companyId, r.id)));
       expect(d.receipt.status).toBe('reversed');
       const bank = await db.select().from(schema.bankLedgerEntries).where(eq(schema.bankLedgerEntries.documentId, r.id));
       expect(bank.reduce((n, b) => n + Number(b.amount), 0)).toBe(0);
-      const [entry] = await db.select().from(schema.customerLedgerEntries).where(eq(schema.customerLedgerEntries.id, d.receipt.ledgerEntryId!));
+      const [entry] = await db.select().from(schema.customerLedgerEntries).where(eq(schema.customerLedgerEntries.id, required(d.receipt.ledgerEntryId)));
       expect(entry.remainingAmount).toBe('0.00');
       const legacy = await db.select().from(schema.transactionLedgerEntries).where(eq(schema.transactionLedgerEntries.idempotencyKey, `receipt-reversal:${r.id}`));
       expect(legacy[0]).toMatchObject({ direction: 'debit', amount: '500.00' });
@@ -339,18 +345,18 @@ describe.skipIf(!has(url))('receivables (database)', () => {
       const r = await receive(c.id, '500', { paymentMethodId: ids.methods.MPESA, externalReference: `GL${seq}` });
       const out = await fin.receipts.post(ctx, r.id, { allocate: 'oldest_first' });
       expect(out.glPosted).toBe(true);
-      const lines = await glOf(out.registerId!);
+      const lines = await glOf(required(out.registerId));
       const accounts = new Map((await fin.setup.listAccounts(companyId)).map((a) => [a.id, a.no]));
       expect(lines.map((l) => [accounts.get(l.accountId), l.debit, l.credit])).toEqual([
         ['1125', '500.0000', '0.0000'], // M-Pesa settlement account
         ['1210', '0.0000', '500.0000'], // trade debtors
       ]);
-      const reg = await fin.reports.register(companyId, out.registerId!);
+      const reg = await fin.reports.register(companyId, required(out.registerId));
       expect(reg).toBeTruthy();
-      const app = (await fin.receipts.detail(companyId, r.id))!.applications[0];
+      const app = required((await fin.receipts.detail(companyId, r.id))).applications[0];
       await fin.receipts.unapply(ctx, r.id, app.application_id, { code: 'DATA_ENTRY_ERROR' });
       await fin.receipts.reverse(ctx, r.id, { code: 'DATA_ENTRY_ERROR' });
-      const net = await db.execute<{ d: string; c: string }>(sql`SELECT COALESCE(SUM(debit),0) d, COALESCE(SUM(credit),0) c FROM gl_entries WHERE company_id = ${companyId}::uuid AND document_no = ${(await fin.receipts.detail(companyId, r.id))!.receipt.number}`);
+      const net = await db.execute<{ d: string; c: string }>(sql`SELECT COALESCE(SUM(debit),0) d, COALESCE(SUM(credit),0) c FROM gl_entries WHERE company_id = ${companyId}::uuid AND document_no = ${required((await fin.receipts.detail(companyId, r.id))).receipt.number}`);
       const row = [...net][0];
       expect(Number(row.d)).toBe(Number(row.c));
       expect(Number(row.d)).toBe(1000); // 500 posted + 500 reversed, each side
@@ -371,7 +377,7 @@ describe.skipIf(!has(url))('receivables (database)', () => {
       await db.update(schema.customers).set({ postingGroupCode: 'NOPE' }).where(eq(schema.customers.id, c.id));
       const r = await receive(c.id, '10');
       expect(await codeOf(fin.receipts.post(ctx, r.id))).toBe('POSTING_SETUP_MISSING');
-      const d = (await fin.receipts.detail(companyId, r.id))!;
+      const d = required((await fin.receipts.detail(companyId, r.id)));
       expect(d.receipt.status).toBe('draft');
       expect(await db.select().from(schema.bankLedgerEntries).where(eq(schema.bankLedgerEntries.documentId, r.id))).toHaveLength(0);
     });
@@ -392,7 +398,7 @@ describe.skipIf(!has(url))('receivables (database)', () => {
       expect(await remaining(c.entries[0])).toBe('0.00');
 
       await fin.receipts.bounceCheque(ctx, r.id, { code: 'OTHER', text: 'refer to drawer' });
-      const d = (await fin.receipts.detail(companyId, r.id))!;
+      const d = required((await fin.receipts.detail(companyId, r.id)));
       expect(d.receipt).toMatchObject({ status: 'reversed', chequeStatus: 'bounced' });
       expect(await bal('BANK')).toBe(0);
       expect(await remaining(c.entries[0])).toBe('800.00');
@@ -408,11 +414,11 @@ describe.skipIf(!has(url))('receivables (database)', () => {
       const c = await customerWith([['100', '2026-09-20']]);
       const r = await receive(c.id, '100');
       await fin.receipts.post(ctx, r.id);
-      const d = (await fin.receipts.detail(companyId, r.id))!;
+      const d = required((await fin.receipts.detail(companyId, r.id)));
       const fails = async (p: Promise<unknown>) => { try { await p; return false; } catch { return true; } };
       expect(await fails(db.update(schema.customerReceipts).set({ amount: '1.00' }).where(eq(schema.customerReceipts.id, r.id)))).toBe(true);
       expect(await fails(db.delete(schema.customerReceipts).where(eq(schema.customerReceipts.id, r.id)))).toBe(true);
-      expect(await fails(db.update(schema.customerLedgerEntries).set({ amount: '-1.00' }).where(eq(schema.customerLedgerEntries.id, d.receipt.ledgerEntryId!)))).toBe(true);
+      expect(await fails(db.update(schema.customerLedgerEntries).set({ amount: '-1.00' }).where(eq(schema.customerLedgerEntries.id, required(d.receipt.ledgerEntryId))))).toBe(true);
       expect(await fails(db.delete(schema.customerLedgerEntries).where(eq(schema.customerLedgerEntries.id, c.entries[0])))).toBe(true);
       expect(await fails(db.update(schema.customerDetailedEntries).set({ amount: '1.00' }).where(eq(schema.customerDetailedEntries.ledgerEntryId, c.entries[0])))).toBe(true);
       expect(await fails(db.delete(schema.bankLedgerEntries).where(eq(schema.bankLedgerEntries.documentId, r.id)))).toBe(true);
@@ -448,7 +454,7 @@ describe.skipIf(!has(url))('receivables (database)', () => {
       await master.postInvoice(order(2));
       await master.receivePayment(companyId, cust.id, { amount: 1000, reference: 'LEGACYPAY1', currency: 'KES' });
       const found = await master.getCustomer(companyId, cust.id);
-      expect(found!.customer.balance).toBe('400.00');
+      expect(required(found).customer.balance).toBe('400.00');
       expect(await fin.customerLedger.drift(companyId)).toEqual([]);
       const open = await fin.customerLedger.openItems(companyId, cust.id);
       expect(open.map((o) => o.remainingAmount)).toEqual(['400.00']);
@@ -513,7 +519,7 @@ describe.skipIf(!has(url))('receivables (database)', () => {
       const { createCipheriv, randomBytes } = await import('node:crypto');
       // A blob exactly as it was sealed before key ids existed (no key id bound in).
       const iv = randomBytes(12);
-      const cipher = createCipheriv('aes-256-gcm', Buffer.from(process.env.DATA_ENCRYPTION_KEY!, 'base64'), iv);
+      const cipher = createCipheriv('aes-256-gcm', Buffer.from(required(process.env.DATA_ENCRYPTION_KEY), 'base64'), iv);
       const ct = Buffer.concat([cipher.update(Buffer.from(JSON.stringify({ consumerKey: 'legacy-key' }))), cipher.final()]);
       const legacy = { v: 1 as const, iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), ciphertext: ct.toString('base64') };
       const garbage = { v: 1 as const, iv: legacy.iv, tag: legacy.tag, ciphertext: Buffer.from('not the real ciphertext').toString('base64') };

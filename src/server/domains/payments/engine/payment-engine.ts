@@ -20,6 +20,9 @@ import type { ProviderTransactionStore } from './transaction-store';
 import type { PaymentVerificationService } from './verification-service';
 
 import { has } from '@/lib/has';
+import { orElse } from '@/lib/values';
+import type { PaymentActivityService } from './activity-service';
+import type { ProviderOperationRow } from '@/server/db/drizzle/schema';
 
 export interface IngestInput {
   rawText: string;
@@ -45,7 +48,7 @@ export type HookKind = 'c2b-validate' | 'c2b-confirm' | 'result' | 'timeout' | '
  */
 export class PaymentEngine {
   /** Read-only views for the people watching over payments. */
-  activity!: import('./activity-service').PaymentActivityService;
+  activity!: PaymentActivityService;
 
   constructor(
     readonly db: DrizzleDb,
@@ -88,7 +91,7 @@ export class PaymentEngine {
     const providerCode = attempt.providerCode;
     const adapter = this.registry.resolve(providerCode);
     const claim = refusal ? null : (adapter.parseCallback?.(body) ?? null);
-    const rawText = input.rawText || (input.query ? JSON.stringify(input.query) : '');
+    const rawText = orElse(input.rawText, input.query ? JSON.stringify(input.query) : '');
     const { event } = await this.events.record({
       companyId: ctx.companyId,
       providerId: ctx.provider.id,
@@ -236,7 +239,7 @@ export class PaymentEngine {
 
   /** The once-a-minute safety net: anything a lost job or a restart left half done is picked up again. */
   /** Told when a payout finishes (paid, failed or held), so what it was for can follow. */
-  payoutConsumer: { finished(op: import('@/server/db/drizzle/schema').ProviderOperationRow): Promise<void> } | null = null;
+  payoutConsumer: { finished(op: ProviderOperationRow): Promise<void> } | null = null;
 
   private async finished(opId: string) {
     const op = await this.ops.get(opId);

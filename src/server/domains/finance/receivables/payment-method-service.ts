@@ -19,6 +19,7 @@ import { ensureManualProvider } from '@/server/domains/payments/manual-provider'
 import { FinanceError, type FinanceContext } from '../errors';
 
 import { has } from '@/lib/has';
+import { trimToNull } from '@/lib/values';
 
 export const METHOD_KINDS: PaymentMethodKind[] = [
   'cash', 'bank_transfer', 'bank_deposit', 'cheque', 'mobile_money', 'card', 'gateway', 'wallet', 'gift_card', 'offset', 'other',
@@ -163,8 +164,8 @@ export class PaymentMethodService {
           providerId: input.providerId,
           branchId: input.branchId ?? null,
           glAccountId: input.glAccountId,
-          channelKind: input.channelKind?.trim() || null,
-          channelNumber: input.channelNumber?.trim() || null,
+          channelKind: trimToNull(input.channelKind),
+          channelNumber: trimToNull(input.channelNumber),
           usableFor: input.usableFor ?? ['customer_receipt'],
           settlementMode: input.settlementMode ?? 'immediate',
           settlementDays: input.settlementDays ?? 0,
@@ -242,8 +243,8 @@ export class PaymentMethodService {
           providerId: merged.providerId,
           branchId: merged.branchId ?? null,
           glAccountId: merged.glAccountId,
-          channelKind: merged.channelKind?.trim() || null,
-          channelNumber: merged.channelNumber?.trim() || null,
+          channelKind: trimToNull(merged.channelKind),
+          channelNumber: trimToNull(merged.channelNumber),
           usableFor: merged.usableFor,
           settlementMode: merged.settlementMode,
           settlementDays: merged.settlementDays,

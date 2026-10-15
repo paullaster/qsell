@@ -21,6 +21,7 @@ import type { NumberSeriesService } from '@/server/kernel/numbering/service';
 import type { ReasonCodes } from '@/server/kernel/reason-codes/service';
 
 import { has } from '@/lib/has';
+import { trimToNull } from '@/lib/values';
 
 export class ReturnError extends Error {
   constructor(
@@ -184,7 +185,7 @@ export class ReturnReceiptService {
           condition: it.condition,
           disposition: it.disposition,
           stockAdded: toStock,
-          note: it.note?.trim() || null,
+          note: trimToNull(it.note),
           confirmedBy: a.actorId,
           origin: a.origin,
         });

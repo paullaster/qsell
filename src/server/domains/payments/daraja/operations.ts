@@ -13,6 +13,7 @@ import { parseAsyncResult, receiptFromParams, resultParameters } from './parsers
 import { darajaTimestamp, looksLikeReceipt, securityCredential, stkPassword, toMsisdn } from './security';
 
 import { has } from '@/lib/has';
+import { emptyToNull, firstFilled, orElse, readText } from '@/lib/values';
 
 export { DARAJA_OPERATIONS, MONEY_OUT_OPERATIONS, validateOperationInput, type DarajaOperationCode, type OperationInfo, type FieldSpec } from './catalog';
 
@@ -40,8 +41,8 @@ export class OperationRefused extends Error {
 
 /** Did Safaricom accept this request? Each operation answers in its own shape. */
 export function acceptance(operation: DarajaOperationCode, body: Record<string, unknown>): { ok: true } | { ok: false; code: string; reason: string } {
-  const text = (k: string) => (body[k] === undefined || body[k] === null ? '' : String(body[k]));
-  const refused = (code: string, fallback: string) => ({ ok: false as const, code: code || 'REFUSED', reason: text('ResponseDescription') || text('errorMessage') || text('resmsg') || fallback });
+  const text = (k: string) => (body[k] === undefined || body[k] === null ? '' : readText(body[k]));
+  const refused = (code: string, fallback: string) => ({ ok: false as const, code: orElse(code, 'REFUSED'), reason: (firstFilled(text('ResponseDescription'), text('errorMessage'), text('resmsg')) ?? fallback) });
   switch (operation) {
     case 'pull_register':
       return ['1000', '1001'].includes(text('ResponseStatus')) ? { ok: true } : refused(text('ResponseStatus'), 'The registration was refused.');
@@ -49,7 +50,7 @@ export function acceptance(operation: DarajaOperationCode, body: Record<string, 
       // 1000 = transactions, 1001 = none in the period; both are answers.
       return !has(text('ResponseCode')) || ['0', '1000', '1001'].includes(text('ResponseCode')) ? { ok: true } : refused(text('ResponseCode'), 'The query was refused.');
     case 'b2b_express':
-      return text('code') === '0' ? { ok: true } : refused(text('code'), text('status') || 'The prompt could not be sent.');
+      return text('code') === '0' ? { ok: true } : refused(text('code'), orElse(text('status'), 'The prompt could not be sent.'));
     case 'bill_optin':
     case 'bill_update_optin':
     case 'bill_invoice':
@@ -57,7 +58,7 @@ export function acceptance(operation: DarajaOperationCode, body: Record<string, 
     case 'bill_cancel':
     case 'bill_cancel_bulk':
     case 'bill_acknowledge':
-      return text('rescode') === '200' ? { ok: true } : { ok: false, code: text('rescode') || 'REFUSED', reason: text('resmsg') || text('Status_Message') || 'Bill Manager did not accept the request.' };
+      return text('rescode') === '200' ? { ok: true } : { ok: false, code: orElse(text('rescode'), 'REFUSED'), reason: (firstFilled(text('resmsg'), text('Status_Message')) ?? 'Bill Manager did not accept the request.') };
     case 'qr_generate':
       return has(text('QRCode')) ? { ok: true } : refused(text('ResponseCode'), 'No QR code came back.');
     default:
@@ -193,7 +194,7 @@ export class DarajaOperations {
       await this.ops.update(op.id, {
         status: 'accepted',
         response: body,
-        conversationId: String(body.ConversationID ?? body.CheckoutRequestID ?? '') || null,
+        conversationId: emptyToNull(readText(body.ConversationID, body.CheckoutRequestID, '')),
         nextAttemptAt: new Date(Date.now() + ASYNC_WAIT_SECONDS * 1000),
         failureCode: null,
         failureReason: null,
@@ -207,17 +208,17 @@ export class DarajaOperations {
   private async finishSync(op: ProviderOperationRow, body: Record<string, unknown>, ctx: PlatformContext) {
     const result: Record<string, unknown> = { ...body };
     if (op.operation === 'pull_register') {
-      const code = String(body.ResponseStatus ?? body.ResponseCode ?? '');
+      const code = readText(body.ResponseStatus, body.ResponseCode, '');
       if (code === '1000' || code === '1001') {
-        const settings = { ...(ctx.settings ?? {}), pull: { ...((ctx.settings?.pull as Record<string, unknown>) ?? {}), registered: true, nominatedNumber: String((op.input).nominatedNumber ?? '') } };
+        const settings = { ...(ctx.settings ?? {}), pull: { ...((ctx.settings?.pull as Record<string, unknown>) ?? {}), registered: true, nominatedNumber: readText((op.input).nominatedNumber, '') } };
         await this.db.update(paymentProviderConfigs).set({ settings, updatedAt: new Date() }).where(eq(paymentProviderConfigs.id, op.providerId));
       } else {
-        await this.ops.update(op.id, { status: 'failed', failureCode: code || 'REGISTER_FAILED', failureReason: String(body.ResponseDescription ?? 'Registration was refused.'), response: body });
+        await this.ops.update(op.id, { status: 'failed', failureCode: orElse(code, 'REGISTER_FAILED'), failureReason: readText(body.ResponseDescription, 'Registration was refused.'), response: body });
         return;
       }
     }
-    if (op.operation === 'c2b_register_urls' && String(body.ResponseCode ?? '0') !== '0') {
-      await this.ops.update(op.id, { status: 'failed', failureCode: String(body.ResponseCode), failureReason: String(body.ResponseDescription ?? 'Registration was refused.'), response: body });
+    if (op.operation === 'c2b_register_urls' && readText(body.ResponseCode, '0') !== '0') {
+      await this.ops.update(op.id, { status: 'failed', failureCode: String(body.ResponseCode), failureReason: readText(body.ResponseDescription, 'Registration was refused.'), response: body });
       return;
     }
     await this.ops.update(op.id, { status: 'succeeded', response: body, result, platformReference: null, failureCode: null, failureReason: null });
@@ -228,11 +229,11 @@ export class DarajaOperations {
     const input = op.input;
     const creds = ctx.credentials;
     const now = ctx.now();
-    const shortcode = String(input.shortcode ?? method?.channelNumber ?? creds.shortcode ?? '').trim();
+    const shortcode = readText(input.shortcode, method?.channelNumber, creds.shortcode, '').trim();
     switch (op.operation as DarajaOperationCode) {
       case 'stk_push': {
         if (!has(creds.shortcode?.trim()) || !has(creds.passkey?.trim())) throw new OperationRefused('NO_CREDENTIALS', 'M-Pesa Express needs the business shortcode and passkey.');
-        const phone = toMsisdn(String(input.phone ?? ''));
+        const phone = toMsisdn(readText(input.phone, ''));
         if (!has(phone)) throw new OperationRefused('PHONE_INVALID', 'The phone number is not a Kenyan mobile number.');
         const ts = darajaTimestamp(now);
         const amount = Math.max(1, Math.round(Number(input.amount)));
@@ -242,15 +243,15 @@ export class DarajaOperations {
             BusinessShortCode: creds.shortcode.trim(),
             Password: stkPassword(creds.shortcode.trim(), creds.passkey.trim(), ts),
             Timestamp: ts,
-            TransactionType: creds.transactionType || 'CustomerPayBillOnline',
+            TransactionType: orElse(creds.transactionType, 'CustomerPayBillOnline'),
             Amount: amount,
             PartyA: phone,
             // A till payment names the till (PartyB); a paybill payment names the paybill.
-            PartyB: String(input.partyB ?? method?.channelNumber ?? creds.shortcode).trim(),
+            PartyB: readText(input.partyB, method?.channelNumber, creds.shortcode).trim(),
             PhoneNumber: phone,
             CallBackURL: String(input.callbackUrl),
-            AccountReference: String(input.accountReference ?? '').slice(0, 12),
-            TransactionDesc: String(input.description ?? 'Payment').slice(0, 13),
+            AccountReference: readText(input.accountReference, '').slice(0, 12),
+            TransactionDesc: readText(input.description, 'Payment').slice(0, 13),
           },
         };
       }
@@ -269,7 +270,7 @@ export class DarajaOperations {
           path: `/mpesa/c2b/${settings.c2b.apiVersion}/registerurl`,
           body: {
             ShortCode: shortcode,
-            ResponseType: String(input.responseType ?? settings.c2b.responseType),
+            ResponseType: readText(input.responseType, settings.c2b.responseType),
             ConfirmationURL: callbackUrl(ctx, secret, 'c2b-confirm'),
             ValidationURL: callbackUrl(ctx, secret, 'c2b-validate'),
           },
@@ -278,7 +279,7 @@ export class DarajaOperations {
       case 'c2b_simulate':
         return {
           path: `/mpesa/c2b/${settings.c2b.apiVersion}/simulate`,
-          body: { ShortCode: Number(shortcode), CommandID: String(input.commandId ?? 'CustomerPayBillOnline'), Amount: Number(input.amount), Msisdn: Number(toMsisdn(String(input.phone ?? '254708374149'))), BillRefNumber: input.billRef ?? null },
+          body: { ShortCode: Number(shortcode), CommandID: readText(input.commandId, 'CustomerPayBillOnline'), Amount: Number(input.amount), Msisdn: Number(toMsisdn(readText(input.phone, '254708374149'))), BillRefNumber: input.billRef ?? null },
         };
       case 'transaction_status': {
         const init = this.initiator(ctx);
@@ -290,29 +291,29 @@ export class DarajaOperations {
             Initiator: init.name,
             SecurityCredential: init.credential,
             CommandID: 'TransactionStatusQuery',
-            ...(input.transactionId ? { TransactionID: String(input.transactionId) } : {}),
-            ...(input.originalConversationId ? { OriginalConversationID: String(input.originalConversationId) } : {}),
+            ...(input.transactionId ? { TransactionID: readText(input.transactionId) } : {}),
+            ...(input.originalConversationId ? { OriginalConversationID: readText(input.originalConversationId) } : {}),
             PartyA: shortcode,
             IdentifierType: '4',
             ResultURL: callbackUrl(ctx, secret, 'result'),
             QueueTimeOutURL: callbackUrl(ctx, secret, 'timeout'),
-            Remarks: String(input.remarks ?? 'Status check').slice(0, 100),
-            Occasion: String(input.occasion ?? 'check').slice(0, 100),
+            Remarks: readText(input.remarks, 'Status check').slice(0, 100),
+            Occasion: readText(input.occasion, 'check').slice(0, 100),
           },
         };
       }
       case 'pull_register': {
         const secret = await this.contexts.callbackSecret(ctx.provider.id);
-        const nominated = String(input.nominatedNumber ?? settings.pull.nominatedNumber ?? '').trim();
+        const nominated = readText(input.nominatedNumber, settings.pull.nominatedNumber, '').trim();
         if (!has(shortcode) || !has(nominated)) throw new OperationRefused('PULL_INPUT', 'Registering for Pull Transactions needs the shortcode and the nominated phone number on the M-Pesa portal.');
         return { path: '/pulltransactions/v1/register', body: { ShortCode: shortcode, RequestType: 'Pull', NominatedNumber: nominated, CallBackURL: callbackUrl(ctx, secret, 'pull') } };
       }
       case 'pull_query':
-        return { path: '/pulltransactions/v1/query', body: { ShortCode: shortcode, StartDate: String(input.startDate), EndDate: String(input.endDate), OffSetValue: String(input.offset ?? 0) } };
+        return { path: '/pulltransactions/v1/query', body: { ShortCode: shortcode, StartDate: String(input.startDate), EndDate: String(input.endDate), OffSetValue: readText(input.offset, 0) } };
       case 'qr_generate':
         return {
           path: '/mpesa/qrcode/v1/generate',
-          body: { MerchantName: String(input.merchantName).slice(0, 26), RefNo: String(input.refNo).slice(0, 12), Amount: Number(input.amount), TrxCode: String(input.trxCode ?? 'BG'), CPI: String(input.cpi ?? shortcode), Size: String(input.size ?? '300') },
+          body: { MerchantName: String(input.merchantName).slice(0, 26), RefNo: String(input.refNo).slice(0, 12), Amount: Number(input.amount), TrxCode: readText(input.trxCode, 'BG'), CPI: readText(input.cpi, shortcode), Size: readText(input.size, '300') },
         };
       case 'account_balance': {
         const init = this.initiator(ctx);
@@ -322,16 +323,16 @@ export class DarajaOperations {
       case 'reversal': {
         const init = this.initiator(ctx);
         const secret = await this.contexts.callbackSecret(ctx.provider.id);
-        return { path: '/mpesa/reversal/v1/request', body: { Initiator: init.name, SecurityCredential: init.credential, CommandID: 'TransactionReversal', TransactionID: String(input.transactionId), Amount: String(input.amount), ReceiverParty: shortcode, RecieverIdentifierType: '11', ResultURL: callbackUrl(ctx, secret, 'result'), QueueTimeOutURL: callbackUrl(ctx, secret, 'timeout'), Remarks: String(input.remarks ?? 'Reversal').slice(0, 100), Occasion: String(input.occasion ?? 'reversal').slice(0, 100) } };
+        return { path: '/mpesa/reversal/v1/request', body: { Initiator: init.name, SecurityCredential: init.credential, CommandID: 'TransactionReversal', TransactionID: String(input.transactionId), Amount: String(input.amount), ReceiverParty: shortcode, RecieverIdentifierType: '11', ResultURL: callbackUrl(ctx, secret, 'result'), QueueTimeOutURL: callbackUrl(ctx, secret, 'timeout'), Remarks: readText(input.remarks, 'Reversal').slice(0, 100), Occasion: readText(input.occasion, 'reversal').slice(0, 100) } };
       }
       case 'b2c': {
         const init = this.initiator(ctx);
         const secret = await this.contexts.callbackSecret(ctx.provider.id);
-        const phone = toMsisdn(String(input.phone ?? ''));
+        const phone = toMsisdn(readText(input.phone, ''));
         if (!has(phone)) throw new OperationRefused('PHONE_INVALID', 'The phone number is not a Kenyan mobile number.');
         return {
           path: '/mpesa/b2c/v3/paymentrequest',
-          body: { OriginatorConversationID: op.originatorId, InitiatorName: init.name, SecurityCredential: init.credential, CommandID: String(input.commandId ?? 'BusinessPayment'), Amount: String(input.amount), PartyA: shortcode, PartyB: phone, Remarks: String(input.remarks ?? 'Payment').slice(0, 100), QueueTimeOutURL: callbackUrl(ctx, secret, 'timeout'), ResultURL: callbackUrl(ctx, secret, 'result'), Occassion: String(input.occasion ?? '').slice(0, 100) },
+          body: { OriginatorConversationID: op.originatorId, InitiatorName: init.name, SecurityCredential: init.credential, CommandID: readText(input.commandId, 'BusinessPayment'), Amount: String(input.amount), PartyA: shortcode, PartyB: phone, Remarks: readText(input.remarks, 'Payment').slice(0, 100), QueueTimeOutURL: callbackUrl(ctx, secret, 'timeout'), ResultURL: callbackUrl(ctx, secret, 'result'), Occassion: readText(input.occasion, '').slice(0, 100) },
         };
       }
       case 'b2b_paybill':
@@ -349,9 +350,9 @@ export class DarajaOperations {
             Amount: String(input.amount),
             PartyA: shortcode,
             PartyB: String(input.partyB),
-            AccountReference: String(input.accountReference ?? '').slice(0, 13),
-            ...(input.requester ? { Requester: toMsisdn(String(input.requester)) ?? undefined } : {}),
-            Remarks: String(input.remarks ?? 'Payment').slice(0, 100),
+            AccountReference: readText(input.accountReference, '').slice(0, 13),
+            ...(input.requester ? { Requester: toMsisdn(readText(input.requester)) ?? undefined } : {}),
+            Remarks: readText(input.remarks, 'Payment').slice(0, 100),
             QueueTimeOutURL: callbackUrl(ctx, secret, 'timeout'),
             ResultURL: callbackUrl(ctx, secret, 'result'),
           },
@@ -362,7 +363,7 @@ export class DarajaOperations {
         const secret = await this.contexts.callbackSecret(ctx.provider.id);
         return {
           path: '/mpesa/b2b/v1/remittax',
-          body: { Initiator: init.name, SecurityCredential: init.credential, CommandID: 'PayTaxToKRA', SenderIdentifierType: '4', RecieverIdentifierType: '4', Amount: String(input.amount), PartyA: shortcode, PartyB: '572572', AccountReference: String(input.prn), Remarks: String(input.remarks ?? 'Tax').slice(0, 100), QueueTimeOutURL: callbackUrl(ctx, secret, 'timeout'), ResultURL: callbackUrl(ctx, secret, 'result') },
+          body: { Initiator: init.name, SecurityCredential: init.credential, CommandID: 'PayTaxToKRA', SenderIdentifierType: '4', RecieverIdentifierType: '4', Amount: String(input.amount), PartyA: shortcode, PartyB: '572572', AccountReference: String(input.prn), Remarks: readText(input.remarks, 'Tax').slice(0, 100), QueueTimeOutURL: callbackUrl(ctx, secret, 'timeout'), ResultURL: callbackUrl(ctx, secret, 'result') },
         };
       }
       case 'b2b_express': {
@@ -373,7 +374,7 @@ export class DarajaOperations {
       case 'bill_optin':
       case 'bill_update_optin': {
         const secret = await this.contexts.callbackSecret(ctx.provider.id);
-        return { path: op.operation === 'bill_optin' ? '/v1/billmanager-invoice/optin' : '/v1/billmanager-invoice/change-optin-details', body: { shortcode, email: String(input.email), officialContact: String(input.officialContact), sendReminders: String(input.sendReminders ?? '1'), callbackurl: callbackUrl(ctx, secret, 'bill') } };
+        return { path: op.operation === 'bill_optin' ? '/v1/billmanager-invoice/optin' : '/v1/billmanager-invoice/change-optin-details', body: { shortcode, email: String(input.email), officialContact: String(input.officialContact), sendReminders: readText(input.sendReminders, '1'), callbackurl: callbackUrl(ctx, secret, 'bill') } };
       }
       case 'bill_invoice':
         return { path: '/v1/billmanager-invoice/single-invoicing', body: billInvoice(input) };
@@ -384,7 +385,7 @@ export class DarajaOperations {
       case 'bill_cancel_bulk':
         return { path: '/v1/billmanager-invoice/cancel-bulk-invoices', body: Array.isArray(input.references) ? input.references.map((externalReference) => ({ externalReference })) : [] };
       case 'bill_acknowledge':
-        return { path: '/v1/billmanager-invoice/reconciliation', body: { paymentDate: String(input.paymentDate), paidAmount: String(input.paidAmount), accountReference: String(input.accountReference), transactionId: String(input.transactionId), phoneNumber: String(input.phoneNumber ?? ''), fullName: String(input.fullName ?? ''), invoiceName: String(input.invoiceName ?? ''), externalReference: String(input.externalReference ?? '') } };
+        return { path: '/v1/billmanager-invoice/reconciliation', body: { paymentDate: String(input.paymentDate), paidAmount: String(input.paidAmount), accountReference: String(input.accountReference), transactionId: String(input.transactionId), phoneNumber: readText(input.phoneNumber, ''), fullName: readText(input.fullName, ''), invoiceName: readText(input.invoiceName, ''), externalReference: readText(input.externalReference, '') } };
       default:
         throw new OperationRefused('UNKNOWN_OPERATION', `${op.operation} cannot be built.`);
     }
@@ -419,7 +420,7 @@ export class DarajaOperations {
       conversationId: op.conversationId ?? result.conversationId,
       platformReference: receiptFromParams(params) ?? result.transactionId,
       result: { resultCode: result.resultCode, resultDesc: result.resultDesc, params, references: result.references, transactionId: result.transactionId },
-      failureCode: ok ? null : result.resultCode || 'RESULT_FAILED',
+      failureCode: ok ? null : orElse(result.resultCode, 'RESULT_FAILED'),
       failureReason: ok ? null : (result.resultDesc ?? 'The platform reported a failure.'),
     });
     return { matched: true, op: (await this.ops.get(op.id)) };

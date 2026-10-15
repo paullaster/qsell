@@ -1,5 +1,6 @@
 import { AmountError, convert, isZero, parseAmount, type Scaled } from './amount';
 import type { Issue, JournalLineInput, PostingRequest } from './types';
+import { trimToNull } from '@/lib/values';
 
 /** What the validator needs to know about an account, loaded once per posting. */
 export interface AccountFacts {
@@ -201,7 +202,7 @@ export function validatePosting(req: PostingRequest, policy: PostingPolicy): Val
       credit,
       baseDebit: bd,
       baseCredit: bc,
-      description: l.description?.trim() || null,
+      description: trimToNull(l.description),
       dimensionSetId: l.dimensionSetId ?? null,
       currency,
       sourceLedger: l.sourceLedger ?? null,

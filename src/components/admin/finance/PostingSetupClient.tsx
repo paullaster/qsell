@@ -11,6 +11,7 @@ import {
 import { Field, Message, PageHeader, buttonClass, cardClass, fieldClass, primaryClass, today, type Notice, attempt } from './ui';
 
 import { has } from '@/lib/has';
+import { emptyToNull } from '@/lib/values';
 
 const GENERAL: [key: 'sales' | 'sales_returns' | 'sales_discount' | 'cogs' | 'inventory_adjustment', label: string][] = [
   ['sales', 'Sales'],
@@ -70,7 +71,7 @@ export function PostingSetupClient({ view }: { view: PostingSetupView }) {
     e.preventDefault();
     if (!custEdit) return;
     setBusy(true);
-    const res = await attempt(saveCustomerGroupAction(custEdit.code, Object.fromEntries(CUSTOMER.map(([k]) => [k, custEdit.accounts[k] || null]))));
+    const res = await attempt(saveCustomerGroupAction(custEdit.code, Object.fromEntries(CUSTOMER.map(([k]) => [k, emptyToNull(custEdit.accounts[k])]))));
     setBusy(false);
     if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     setNotice({ kind: 'ok', text: `Customer group ${custEdit.code} saved.` });
@@ -87,7 +88,7 @@ export function PostingSetupClient({ view }: { view: PostingSetupView }) {
       businessGroupId: row.businessGroupId,
       productGroupId: row.productGroupId,
       effectiveFrom: from,
-      accounts: Object.fromEntries(GENERAL.map(([k]) => [k, accounts[k] || null])),
+      accounts: Object.fromEntries(GENERAL.map(([k]) => [k, emptyToNull(accounts[k])])),
     }));
     setBusy(false);
     if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }

@@ -13,11 +13,12 @@ import {
   placeOf,
   removeSection,
 } from './quote-layout';
+import { nth, required } from '@/lib/values';
 
 interface L { name: string; sectionId?: string | null }
 const l = (name: string, sectionId: string | null = null): L => ({ name, sectionId });
 const names = (lines: L[], slot: string | null) =>
-  indexesIn(lines, slot).map((i) => lines[i]!.name);
+  indexesIn(lines, slot).map((i) => nth(lines, i).name);
 const S = [{ id: 'A' }, { id: 'B' }];
 
 // Individual: i1 i2 i3.  A: a1 a2.  B: b1.   (interleaved in the list, as real quotes are)
@@ -34,7 +35,7 @@ describe('moving a line to a place', () => {
     expect(names(out, 'A')).toEqual(['a1', 'i1', 'a2']);
     expect(names(out, null)).toEqual(['i2', 'i3']);
     expect(names(out, 'B')).toEqual(['b1']);
-    expect(out.find((x) => x.name === 'i1')!.sectionId).toBe('A');
+    expect(required(out.find((x) => x.name === 'i1')).sectionId).toBe('A');
   });
   it('into an empty section', () => {
     const out = moveLine([l('x'), l('y')], 1, 'C', 0);
@@ -44,7 +45,7 @@ describe('moving a line to a place', () => {
   it('out of a section to the individual items', () => {
     const out = moveLine(base(), 1, null, 2);
     expect(names(out, null)).toEqual(['i1', 'i2', 'a1', 'i3']);
-    expect(out.find((x) => x.name === 'a1')!.sectionId).toBeNull();
+    expect(required(out.find((x) => x.name === 'a1')).sectionId).toBeNull();
   });
   it('never loses or duplicates a line, whatever the move', () => {
     for (let from = 0; from < 6; from++)
@@ -56,7 +57,7 @@ describe('moving a line to a place', () => {
               .map((x) => x.name)
               .sort(),
           );
-          expect(out[out.findIndex((x) => x.name === base()[from]!.name)]!.sectionId ?? null).toBe(
+          expect(required(out[out.findIndex((x) => x.name === nth(base(), from).name)]).sectionId ?? null).toBe(
             slot,
           );
         }
@@ -228,7 +229,7 @@ describe('addCatalogueEntry', () => {
     const first = addCatalogueEntry([], entry(), make, typed).lines;
     const r = addCatalogueEntry(first, entry({ quantity: 1.5 }), make, typed);
     expect(r.lines).toHaveLength(1);
-    expect(r.lines[0]!.quantity).toBe(3.5);
+    expect(nth(r.lines, 0).quantity).toBe(3.5);
     expect(r.index).toBe(0);
   });
 
@@ -237,7 +238,7 @@ describe('addCatalogueEntry', () => {
     for (let i = 0; i < 3; i++) {
       lines = addCatalogueEntry(lines, entry({ quantity: 0.1 }), make, typed).lines;
     }
-    expect(lines[0]!.quantity).toBe(0.3);
+    expect(nth(lines, 0).quantity).toBe(0.3);
   });
 
   it('keeps separate lines for another section, discount or price', () => {
@@ -259,6 +260,6 @@ describe('addCatalogueEntry', () => {
   it('does not change the lines it was given', () => {
     const base = addCatalogueEntry([], entry(), make, typed).lines;
     addCatalogueEntry(base, entry(), make, typed);
-    expect(base[0]!.quantity).toBe(2);
+    expect(nth(base, 0).quantity).toBe(2);
   });
 });

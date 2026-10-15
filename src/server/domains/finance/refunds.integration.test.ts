@@ -3,26 +3,36 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { and, eq, sql } from 'drizzle-orm';
 
 import { has } from '@/lib/has';
+import { required } from '@/lib/values';
+import type { DrizzleDb } from '@/server/db/drizzle/client';
+import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
+import type { AppContainer } from '@/server/di/container';
+import type { FinanceServices } from './index';
+import type { CustomerMasterService } from '@/server/domains/customers/master-service';
+import type * as mod_server_kernel_after_commit from '@/server/kernel/after-commit';
+import type { FinanceContext } from './errors';
+import type { PolicyInput } from './receivables/credit-policy-service';
+import type { RefundInput } from './receivables/refund-service';
 
 /** Needs a Postgres built from the migrations:  TEST_DATABASE_URL=postgres://... pnpm test */
 const url = process.env.TEST_DATABASE_URL;
 
 describe.skipIf(!has(url))('refunds (database)', () => {
-  type Db = import('@/server/db/drizzle/client').DrizzleDb;
+  type Db = DrizzleDb;
   let db: Db;
-  let schema: typeof import('@/server/db/drizzle/schema');
-  let c: import('@/server/di/container').AppContainer;
-  let fin: import('./index').FinanceServices;
-  let master: import('@/server/domains/customers/master-service').CustomerMasterService;
-  let withAfterCommit: typeof import('@/server/kernel/after-commit').withAfterCommit;
+  let schema: typeof mod_server_db_drizzle_schema;
+  let c: AppContainer;
+  let fin: FinanceServices;
+  let master: CustomerMasterService;
+  let withAfterCommit: typeof mod_server_kernel_after_commit.withAfterCommit;
   let companyId: string;
   let branchId: string;
   let productId: string;
   let boss: string;
   let requester: string;
-  let ctx: import('./errors').FinanceContext; // a person who may do everything (not the approver)
-  let reqCtx: import('./errors').FinanceContext; // the requester, a real user (approvals need one)
-  let bossCtx: import('./errors').FinanceContext;
+  let ctx: FinanceContext; // a person who may do everything (not the approver)
+  let reqCtx: FinanceContext; // the requester, a real user (approvals need one)
+  let bossCtx: FinanceContext;
   const acct: Record<string, string> = {};
   const methodId: Record<string, string> = {};
   const run = randomUUID().slice(0, 6);
@@ -39,7 +49,7 @@ describe.skipIf(!has(url))('refunds (database)', () => {
       return `OTHER:${(e as Error).message}`;
     }
   };
-  const policy = (o: Partial<import('./receivables/credit-policy-service').PolicyInput> = {}) =>
+  const policy = (o: Partial<PolicyInput> = {}) =>
     fin.creditPolicy.save(ctx, { groupCode: null, walletEnabled: false, allowDeposits: true, overpaymentDefault: 'ask', autoApply: 'never', creditNoteExcess: 'ask', refundsEnabled: true, walletCashOut: false, maxBalance: null, label: 'Wallet', ...o });
   const user = async (label: string) =>
     (await db.insert(schema.users).values({ email: `${label}-${randomUUID()}@refund.test`, passwordHash: 'x', name: label, role: 'manager' }).returning())[0].id;
@@ -59,7 +69,7 @@ describe.skipIf(!has(url))('refunds (database)', () => {
     const cn = await c.creditNotes.issueForOrder({ orderId: id, lines: [{ productId, quantity: qty }], reason: { code: 'returned_goods' }, issuedBy: 'tester' });
     return { orderId: id, customer: cust, cn, cents: 58000 * qty };
   }
-  const request = (customerId: string, kind: 'credit_note_excess' | 'wallet' | 'receipt_unapplied', sourceId: string, amount: string, o: Partial<import('./receivables/refund-service').RefundInput> = {}) =>
+  const request = (customerId: string, kind: 'credit_note_excess' | 'wallet' | 'receipt_unapplied', sourceId: string, amount: string, o: Partial<RefundInput> = {}) =>
     fin.refunds.create(ctx, { customerId, sourceKind: kind, sourceId, amount, paymentMethodId: methodId.CASH, payoutDetails: { recipientName: 'Customer' }, reasonCode: 'CUSTOMER_REQUEST', mayChangeDestination: false, ...o });
   const status = async (id: string) => (await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, id)))[0].status;
   const cnOpen = async (cnId: string) => {
@@ -78,7 +88,7 @@ describe.skipIf(!has(url))('refunds (database)', () => {
     await c.approvalConfig.publish(companyId, wf.id, { type: 'user', id: 'tester' }, { code: 'POLICY_CHANGE' });
     return wf;
   }
-  const openEntry = async (id: string) => (await c.approvals.forDocument(companyId, 'refund', id)).flatMap((r) => r.entries).find((e) => e.status === 'open')!;
+  const openEntry = async (id: string) => required((await c.approvals.forDocument(companyId, 'refund', id)).flatMap((r) => r.entries).find((e) => e.status === 'open'));
   const approve = (entryId: string, by: string) => withAfterCommit(db, (tx) => c.approvals.approve(entryId, by, null, tx));
 
   beforeAll(async () => {
@@ -127,7 +137,7 @@ describe.skipIf(!has(url))('refunds (database)', () => {
       const o = await owed();
       expect(await codeOf(request(o.customer.id, 'credit_note_excess', o.cn.id, '100', { paymentMethodId: methodId.MPESA, payoutDetails: {} }))).toBe('PAYOUT_DETAILS');
       expect(await codeOf(request(o.customer.id, 'credit_note_excess', o.cn.id, '100', { paymentMethodId: methodId.MPESA, payoutDetails: { phone: '0799000111' } }))).toBe('DESTINATION_CHANGED');
-      const own = await request(o.customer.id, 'credit_note_excess', o.cn.id, '100', { paymentMethodId: methodId.MPESA, payoutDetails: { phone: o.customer.phone! } });
+      const own = await request(o.customer.id, 'credit_note_excess', o.cn.id, '100', { paymentMethodId: methodId.MPESA, payoutDetails: { phone: required(o.customer.phone) } });
       expect(own.detailsChanged).toBe(false);
       const other = await request(o.customer.id, 'credit_note_excess', o.cn.id, '120', { paymentMethodId: methodId.MPESA, payoutDetails: { phone: '0799000111' }, mayChangeDestination: true });
       expect(other.detailsChanged).toBe(true);
@@ -233,7 +243,7 @@ describe.skipIf(!has(url))('refunds (database)', () => {
       await fin.receipts.post(ctx, rc.id, { allocate: 'none' });
       const r = await request(o.customer.id, 'receipt_unapplied', rc.id, '250');
       await fin.refunds.submit(ctx, r.id);
-      expect((await fin.receipts.detail(companyId, rc.id))!.unappliedCents).toBe(0);
+      expect(required((await fin.receipts.detail(companyId, rc.id))).unappliedCents).toBe(0);
       await payOut(r.id);
       expect(await status(r.id)).toBe('paid');
       expect(await fin.customerLedger.drift(companyId)).toEqual([]);
@@ -247,7 +257,7 @@ describe.skipIf(!has(url))('refunds (database)', () => {
       const [before] = await db.select().from(schema.paymentMethods).where(eq(schema.paymentMethods.id, methodId.MPESA));
       await db.update(schema.paymentMethods).set({ providerId, refundDestination: 'automatic' }).where(eq(schema.paymentMethods.id, methodId.MPESA));
       try {
-        const r = await request(o.customer.id, 'credit_note_excess', o.cn.id, '300', { paymentMethodId: methodId.MPESA, payoutDetails: { phone: o.customer.phone! } });
+        const r = await request(o.customer.id, 'credit_note_excess', o.cn.id, '300', { paymentMethodId: methodId.MPESA, payoutDetails: { phone: required(o.customer.phone) } });
         // not approved yet: nothing to send
         expect(await codeOf(fin.refunds.prepareAutomatic(reqCtx, r.id))).toBe('NOT_APPROVED');
         await fin.refunds.submit(reqCtx, r.id);
@@ -279,7 +289,7 @@ describe.skipIf(!has(url))('refunds (database)', () => {
 
     it('goes to the approver, is set aside only when approved, and the approver cannot record the payment', async () => {
       const o = await owed();
-      const r = await request(o.customer.id, 'credit_note_excess', o.cn.id, '580', { paymentMethodId: methodId.MPESA, payoutDetails: { phone: o.customer.phone! } });
+      const r = await request(o.customer.id, 'credit_note_excess', o.cn.id, '580', { paymentMethodId: methodId.MPESA, payoutDetails: { phone: required(o.customer.phone) } });
       expect((await fin.refunds.submit(reqCtx, r.id)).status).toBe('pending_approval');
       expect(await cnOpen(o.cn.id)).toBe(58000);
       await approve((await openEntry(r.id)).id, boss);
@@ -300,7 +310,7 @@ describe.skipIf(!has(url))('refunds (database)', () => {
 
     it('a rejected refund sets nothing aside; it can be reopened, and a waiting one can be withdrawn', async () => {
       const o = await owed(2);
-      const r = await request(o.customer.id, 'credit_note_excess', o.cn.id, '300', { paymentMethodId: methodId.MPESA, payoutDetails: { phone: o.customer.phone! } });
+      const r = await request(o.customer.id, 'credit_note_excess', o.cn.id, '300', { paymentMethodId: methodId.MPESA, payoutDetails: { phone: required(o.customer.phone) } });
       await fin.refunds.submit(reqCtx, r.id);
       const entry = await openEntry(r.id);
       await withAfterCommit(db, (tx) => c.approvals.reject(entry.id, boss, { reasonCode: 'OTHER', comment: 'No' }, tx));
@@ -343,7 +353,7 @@ describe.skipIf(!has(url))('refunds (database)', () => {
       expect((await fin.refunds.payableReconciliation(companyId)).map((r) => r.diffCents)).toEqual([0]);
       await payOut(early.id);
       const [paid] = await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, early.id));
-      expect(await glOf(paid.payoutRegisterId!)).toEqual([['1110', 0, 580], ['2220', 580, 0]]);
+      expect(await glOf(required(paid.payoutRegisterId))).toEqual([['1110', 0, 580], ['2220', 580, 0]]);
       expect((await fin.refunds.payableReconciliation(companyId)).map((r) => r.diffCents)).toEqual([0]);
     });
 
@@ -353,7 +363,7 @@ describe.skipIf(!has(url))('refunds (database)', () => {
       const r = await request(o.customer.id, 'credit_note_excess', o.cn.id, '580');
       await fin.refunds.submit(ctx, r.id);
       const [a] = await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, r.id));
-      expect(await glOf(a.reserveRegisterId!)).toEqual([['1210', 580, 0], ['2220', 0, 580]]);
+      expect(await glOf(required(a.reserveRegisterId))).toEqual([['1210', 580, 0], ['2220', 0, 580]]);
       expect((await fin.refunds.payableReconciliation(companyId)).map((x) => x.diffCents)).toEqual([0]);
       expect((await fin.salesPosting.reconciliation(companyId)).rows.map((x) => x.diffCents)).toEqual([0]);
       await payOut(r.id);
@@ -378,7 +388,7 @@ describe.skipIf(!has(url))('refunds (database)', () => {
       const r = await request(o.customer.id, 'wallet', w.id, '580');
       await fin.refunds.submit(ctx, r.id);
       const [a] = await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, r.id));
-      expect(await glOf(a.reserveRegisterId!)).toEqual([['2210', 580, 0], ['2220', 0, 580]]);
+      expect(await glOf(required(a.reserveRegisterId))).toEqual([['2210', 580, 0], ['2220', 0, 580]]);
       await payOut(r.id);
       expect((await fin.wallets.reconciliation(companyId)).map((x) => x.diffCents)).toEqual([0]);
       expect((await fin.refunds.payableReconciliation(companyId)).map((x) => x.diffCents)).toEqual([0]);

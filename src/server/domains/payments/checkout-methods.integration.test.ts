@@ -3,6 +3,13 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 
 import { has } from '@/lib/has';
+import { required } from '@/lib/values';
+import type { DrizzleDb } from '@/server/db/drizzle/client';
+import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
+import type { FinanceServices } from '@/server/domains/finance';
+import type { PaymentService } from './service';
+import type { FinanceContext } from '@/server/domains/finance/errors';
+import type { BranchRow } from '@/server/db/drizzle/schema';
 
 /**
  * A customer paying at checkout goes through the payment method of the order's branch: the
@@ -12,15 +19,15 @@ import { has } from '@/lib/has';
 const url = process.env.TEST_DATABASE_URL;
 
 describe.skipIf(!has(url))('checkout through payment methods (database)', () => {
-  type Db = import('@/server/db/drizzle/client').DrizzleDb;
+  type Db = DrizzleDb;
   let db: Db;
-  let schema: typeof import('@/server/db/drizzle/schema');
-  let fin: import('@/server/domains/finance').FinanceServices;
-  let service: import('./service').PaymentService;
+  let schema: typeof mod_server_db_drizzle_schema;
+  let fin: FinanceServices;
+  let service: PaymentService;
   let companyId: string;
-  let ctx: import('@/server/domains/finance/errors').FinanceContext;
-  let branchA: import('@/server/db/drizzle/schema').BranchRow;
-  let branchB: import('@/server/db/drizzle/schema').BranchRow;
+  let ctx: FinanceContext;
+  let branchA: BranchRow;
+  let branchB: BranchRow;
   let providerId: string;
   let methodA: string;
   let methodB: string;
@@ -76,8 +83,8 @@ describe.skipIf(!has(url))('checkout through payment methods (database)', () => 
       const b = await fin.bankAccounts.create(ctx, { code: `CKB${run}${++seq}`, name, kind: 'mobile_money', currency: 'KES' });
       return (await fin.paymentMethods.create(ctx, { code: `CKM${run}${seq}`, name, kind: 'mobile_money', balancingBankAccountId: b.id, providerId, branchId: branch.id, glAccountId: gl })).id;
     };
-    methodA = await mk(branchA, accts.find((a) => a.no === '1125')!.id, 'M-Pesa — A');
-    methodB = await mk(branchB, accts.find((a) => a.no === '1130')!.id, 'M-Pesa — B');
+    methodA = await mk(branchA, required(accts.find((a) => a.no === '1125')).id, 'M-Pesa — A');
+    methodB = await mk(branchB, required(accts.find((a) => a.no === '1130')).id, 'M-Pesa — B');
   });
 
   it('the branch\'s own method is used: the provider\'s credentials are sent and the order is pinned to the method', async () => {
@@ -85,7 +92,7 @@ describe.skipIf(!has(url))('checkout through payment methods (database)', () => 
     const out = await service.initiatePayment({ branch: branchA, providerCode: 'mpesa_daraja', orderId: o.id, orderNumber: o.number, amount: 116, currency: 'KES', customerName: 'n', customerEmail: 'e@x.io', customerPhone: '254700000001' });
     expect(out.attempt.status).toBe('pending');
     expect(out.attempt.providerConfigId).toBe(providerId);
-    expect(seen.at(-1)!.creds).toMatchObject({ consumerKey: 'K', shortcode: '174379' });
+    expect(required(seen.at(-1)).creds).toMatchObject({ consumerKey: 'K', shortcode: '174379' });
     const [row] = await db.select().from(schema.orders).where(eq(schema.orders.id, o.id));
     expect(row.paymentMethodId).toBe(methodA);
     expect(row.paymentMethod).toBe('mpesa_daraja');
@@ -96,7 +103,7 @@ describe.skipIf(!has(url))('checkout through payment methods (database)', () => 
     await service.initiatePayment({ branch: branchB, providerCode: 'mpesa_daraja', orderId: o.id, orderNumber: o.number, amount: 116, currency: 'KES', customerName: 'n', customerEmail: 'e@x.io', customerPhone: '254700000001' });
     const [row] = await db.select().from(schema.orders).where(eq(schema.orders.id, o.id));
     expect(row.paymentMethodId).toBe(methodB);
-    const [m] = await db.select().from(schema.paymentMethods).where(eq(schema.paymentMethods.id, row.paymentMethodId!));
+    const [m] = await db.select().from(schema.paymentMethods).where(eq(schema.paymentMethods.id, required(row.paymentMethodId)));
     const [gl] = await db.select().from(schema.glAccounts).where(eq(schema.glAccounts.id, m.glAccountId));
     expect(gl.no).toBe('1130');
   });
@@ -122,7 +129,7 @@ describe.skipIf(!has(url))('checkout through payment methods (database)', () => 
     }));
     const [a, b] = await Promise.all(rows.map(async (r) => (r instanceof Error ? null : (await db.select().from(schema.orders).where(eq(schema.orders.id, (r as { id: string }).id)))[0] ?? null)));
     expect(rows.filter((r) => r instanceof Error).map((r) => (r).message)).toEqual([]);
-    expect(a!.paymentMethodId).toBe(methodA);
-    expect(b!.paymentMethodId).toBe(methodB);
+    expect(required(a).paymentMethodId).toBe(methodA);
+    expect(required(b).paymentMethodId).toBe(methodB);
   });
 });

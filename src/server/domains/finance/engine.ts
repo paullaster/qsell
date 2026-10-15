@@ -26,6 +26,7 @@ import {
 import type { Issue, JournalLineInput, PostingRequest } from './domain/types';
 
 import { has } from '@/lib/has';
+import { emptyToNull } from '@/lib/values';
 
 export type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
@@ -538,7 +539,7 @@ export class PostingEngine {
           lines,
           chainKey: original.chainKey,
           branchId: original.branchId,
-          reasonCode: input.reasonCode || null,
+          reasonCode: emptyToNull(input.reasonCode),
           reasonText: input.reasonText ?? null,
           origin: input.origin,
           source: has(original.sourceType) ? { type: original.sourceType, id: original.sourceId ?? '' } : null,

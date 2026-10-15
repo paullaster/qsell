@@ -1,5 +1,6 @@
 
 import { has } from '@/lib/has';
+import { firstFilled, readText } from '@/lib/values';
 /**
  * Everything Daraja can do, described once. The forms on screen, the checks on what is typed, the
  * settings (which operations are on, how much each may move) and the permissions are all generated
@@ -104,7 +105,7 @@ export function validateOperationInput(info: OperationInfo, raw: Record<string, 
   const input: Record<string, unknown> = {};
   for (const f of info.fields) {
     const v = raw[f.key];
-    const text = (v === undefined || v === null ? '' : String(v).trim()) || f.defaultValue || '';
+    const text = (firstFilled(v === undefined || v === null ? '' : readText(v).trim(), f.defaultValue) ?? '');
     if (text === '') {
       if (f.required === true) return { ok: false, error: `${f.label} is required.` };
       continue;

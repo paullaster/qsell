@@ -1,6 +1,7 @@
 import { constants, createPublicKey, publicEncrypt } from 'node:crypto';
 
 import { has } from '@/lib/has';
+import { readText } from '@/lib/values';
 
 /** Daraja timestamps are East Africa Time, yyyyMMddHHmmss. */
 export function darajaTimestamp(now: Date): string {
@@ -57,7 +58,7 @@ export function samePhone(a: string | null | undefined, b: string | null | undef
 /** "71", 71, "71.0", "1,000.50" -> cents. Null for anything that is not a plain amount. */
 export function toCentsLoose(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
-  const text = String(value).trim().replace(/,/g, '');
+  const text = readText(value).trim().replace(/,/g, '');
   const m = /^(-?)(\d+)(?:\.(\d*))?$/.exec(text);
   if (!m) return null;
   const frac = m[3] ?? '';

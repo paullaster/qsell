@@ -4,6 +4,7 @@ import { integrationAuditLog } from '@/server/db/drizzle/schema';
 import { redactDeep, redactHeaders, redactUrl } from './redact';
 
 import { has } from '@/lib/has';
+import { orElse } from '@/lib/values';
 
 export interface HttpCallInput {
   companyId: string;
@@ -93,7 +94,7 @@ export async function loggedCall(
       url: redactUrl(input.url),
       statusCode: res.reached ? res.status : null,
       errorCode: res.reached ? (res.status >= 400 ? `HTTP_${res.status}` : null) : 'NO_RESPONSE',
-      errorMessage: res.networkError ?? (res.reached && res.status >= 400 ? (res.text || '').slice(0, 500) : null),
+      errorMessage: res.networkError ?? (res.reached && res.status >= 400 ? (orElse(res.text, '')).slice(0, 500) : null),
       durationMs: res.durationMs,
       requestSentAt: sentAt,
       responseReceivedAt: res.reached ? new Date() : null,

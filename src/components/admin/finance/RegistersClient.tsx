@@ -12,6 +12,7 @@ import {
 import { Chip, Field, Message, PageHeader, buttonClass, cardClass, fieldClass, money, primaryClass, today, type Notice, attempt } from './ui';
 
 import { has } from '@/lib/has';
+import { readText } from '@/lib/values';
 
 type Detail = Extract<Awaited<ReturnType<typeof registerDetailAction>>, { ok: true }>['data'];
 type Chain = Extract<Awaited<ReturnType<typeof verifyChainAction>>, { ok: true }>['data'];
@@ -134,9 +135,9 @@ export function RegistersClient({ registers, canReverse }: { registers: Register
                     </ul>
                     <dl className="grid grid-cols-1 gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
                       <div><dt className="inline text-fg-muted">Posted by </dt><dd className="inline text-fg">{r.postedBy ?? 'system'} at {new Date(r.postedAt).toLocaleString()}</dd></div>
-                      <div><dt className="inline text-fg-muted">From </dt><dd className="inline text-fg">{String((detail.origin).surface ?? '—')} → {String((detail.origin).action ?? '—')}</dd></div>
-                      <div><dt className="inline text-fg-muted">Permission </dt><dd className="inline text-fg">{String((detail.origin).permissionUsed ?? '—')}</dd></div>
-                      <div><dt className="inline text-fg-muted">IP </dt><dd className="inline text-fg">{String((detail.origin).ip ?? '—')}</dd></div>
+                      <div><dt className="inline text-fg-muted">From </dt><dd className="inline text-fg">{readText((detail.origin).surface, '—')} → {readText((detail.origin).action, '—')}</dd></div>
+                      <div><dt className="inline text-fg-muted">Permission </dt><dd className="inline text-fg">{readText((detail.origin).permissionUsed, '—')}</dd></div>
+                      <div><dt className="inline text-fg-muted">IP </dt><dd className="inline text-fg">{readText((detail.origin).ip, '—')}</dd></div>
                       <div className="sm:col-span-2 break-all"><dt className="inline text-fg-muted">Hash </dt><dd className="inline font-mono text-[10px] text-fg">{detail.hash}</dd></div>
                     </dl>
                     {detail.trail.length > 0 ? (

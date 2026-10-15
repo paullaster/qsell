@@ -3,23 +3,33 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { and, eq, sql } from 'drizzle-orm';
 
 import { has } from '@/lib/has';
+import { required } from '@/lib/values';
+import type { DrizzleDb } from '@/server/db/drizzle/client';
+import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
+import type { AppContainer } from '@/server/di/container';
+import type { FinanceServices } from './index';
+import type { CustomerMasterService } from '@/server/domains/customers/master-service';
+import type * as mod_errors from './errors';
+import type * as mod_server_domains_returns_return_receipt_service from '@/server/domains/returns/return-receipt-service';
+import type { FinanceContext } from './errors';
+import type { PolicyInput } from './receivables/credit-policy-service';
 
 /** Needs a Postgres built from the migrations:  TEST_DATABASE_URL=postgres://... pnpm test */
 const url = process.env.TEST_DATABASE_URL;
 
 describe.skipIf(!has(url))('credit notes: accounting and returns (database)', () => {
-  type Db = import('@/server/db/drizzle/client').DrizzleDb;
+  type Db = DrizzleDb;
   let db: Db;
-  let schema: typeof import('@/server/db/drizzle/schema');
-  let c: import('@/server/di/container').AppContainer;
-  let fin: import('./index').FinanceServices;
-  let master: import('@/server/domains/customers/master-service').CustomerMasterService;
-  let FinanceError: typeof import('./errors').FinanceError;
-  let ReturnError: typeof import('@/server/domains/returns/return-receipt-service').ReturnError;
+  let schema: typeof mod_server_db_drizzle_schema;
+  let c: AppContainer;
+  let fin: FinanceServices;
+  let master: CustomerMasterService;
+  let FinanceError: typeof mod_errors.FinanceError;
+  let ReturnError: typeof mod_server_domains_returns_return_receipt_service.ReturnError;
   let companyId: string;
   let branchId: string;
   let productId: string;
-  let ctx: import('./errors').FinanceContext;
+  let ctx: FinanceContext;
   const acct: Record<string, string> = {};
   const run = randomUUID().slice(0, 6);
   let seq = 0;
@@ -37,7 +47,7 @@ describe.skipIf(!has(url))('credit notes: accounting and returns (database)', ()
       return `OTHER:${(e as Error).message}`;
     }
   };
-  const policy = (o: Partial<import('./receivables/credit-policy-service').PolicyInput> = {}) =>
+  const policy = (o: Partial<PolicyInput> = {}) =>
     fin.creditPolicy.save(ctx, { groupCode: null, walletEnabled: false, allowDeposits: true, overpaymentDefault: 'ask', autoApply: 'never', creditNoteExcess: 'ask', refundsEnabled: true, walletCashOut: false, maxBalance: null, label: 'Wallet', ...o });
 
   /** A sold order for a customer: two units at 580 (net 500 + tax 80 each), invoiced and with a tax invoice. */
@@ -62,7 +72,7 @@ describe.skipIf(!has(url))('credit notes: accounting and returns (database)', ()
   const stock = async () => (await db.select().from(schema.products).where(eq(schema.products.id, productId)))[0].stockQuantity;
   const wallet = async (customerId: string) => (await db.select().from(schema.customerWallets).where(eq(schema.customerWallets.customerId, customerId)))[0]?.balance ?? '0.00';
   const paid = async (cust: { id: string }, amount: string) => {
-    const cash = (await fin.paymentMethods.list(companyId)).find((m) => m.method.code === 'CASH')!.method.id;
+    const cash = required((await fin.paymentMethods.list(companyId)).find((m) => m.method.code === 'CASH')).method.id;
     const r = await fin.receipts.create(ctx, { customerId: cust.id, paymentMethodId: cash, amount, paymentDate: today });
     await fin.receipts.post(ctx, r.id, { allocate: 'oldest_first' });
   };
@@ -112,7 +122,7 @@ describe.skipIf(!has(url))('credit notes: accounting and returns (database)', ()
     await paid(o.customer, '1160'); // paid in full
     const cn = await issue(o.id, 1);
     expect(await accounting(cn.id)).toMatchObject({ applied: '0.00', excess: '580.00' });
-    const work = (await fin.creditNoteAccounting.worklist(companyId)).find((r) => r.a.creditNoteId === cn.id)!;
+    const work = required((await fin.creditNoteAccounting.worklist(companyId)).find((r) => r.a.creditNoteId === cn.id));
     expect(work.openCents).toBe(58000);
     expect((await fin.customerLedger.statement(companyId, o.customerId, null, null)).unappliedCents).toBe(58000);
   });
@@ -163,7 +173,7 @@ describe.skipIf(!has(url))('credit notes: accounting and returns (database)', ()
     const out = await fin.creditNoteAccounting.applyExcess(ctx, cn.id, 'oldest_first');
     expect(out.appliedCents).toBe(40000);
     expect(await remainingOf(mine)).toBe('0.00');
-    const s = (await fin.creditNoteAccounting.summaries(companyId, [cn.id])).get(cn.id)!;
+    const s = required((await fin.creditNoteAccounting.summaries(companyId, [cn.id])).get(cn.id));
     expect(s.openCents).toBe(18000);
     expect(s.resolutions).toEqual([{ kind: 'applied', amount: '400.00' }]);
     expect(await fin.customerLedger.drift(companyId)).toEqual([]);
@@ -245,7 +255,7 @@ describe.skipIf(!has(url))('credit notes: accounting and returns (database)', ()
       const cn = await issue(o.id, 1);
       const a = await accounting(cn.id);
       expect(a.registerId).toBeTruthy();
-      expect(await glOf(a.registerId!)).toEqual([['1210', 0, 580], ['2310', 80, 0], ['4200', 500, 0]]);
+      expect(await glOf(required(a.registerId))).toEqual([['1210', 0, 580], ['2310', 80, 0], ['4200', 500, 0]]);
       const recon = await fin.salesPosting.reconciliation(companyId);
       expect(recon.rows.map((r) => r.diffCents)).toEqual([0]);
     });
@@ -259,7 +269,7 @@ describe.skipIf(!has(url))('credit notes: accounting and returns (database)', ()
       const cn = await issue(o.id, 1);
       await fin.creditNoteAccounting.resolveToWallet(ctx, cn.id);
       const [res] = await db.select().from(schema.creditNoteResolutions).where(eq(schema.creditNoteResolutions.creditNoteId, cn.id));
-      expect(await glOf(res.registerId!)).toEqual([['1210', 580, 0], ['2210', 0, 580]]);
+      expect(await glOf(required(res.registerId))).toEqual([['1210', 580, 0], ['2210', 0, 580]]);
       expect((await fin.salesPosting.reconciliation(companyId)).rows.map((r) => r.diffCents)).toEqual([0]);
       expect((await fin.wallets.reconciliation(companyId)).map((r) => r.diffCents)).toEqual([0]);
     });

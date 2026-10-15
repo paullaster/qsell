@@ -2,6 +2,7 @@ import type { Product } from '@/types/index';
 import type { CatalogueEntry } from '@/lib/quote-layout';
 
 import { has } from '@/lib/has';
+import { orElse } from '@/lib/values';
 
 /**
  * What the quote and template editors need to know about a product. The full record carries
@@ -156,7 +157,7 @@ export function parseBulkList(
     const [code = '', quantity = '', price = '', discount = ''] = cells(raw);
     if (!seenData) {
       seenData = true;
-      if (HEADER.has(code.toLowerCase()) && !Number.isFinite(Number(quantity || NaN))) continue;
+      if (HEADER.has(code.toLowerCase()) && !Number.isFinite(Number(orElse(quantity, NaN)))) continue;
     }
     if (rows.length + problems.length >= BULK_MAX_ROWS) {
       truncated = true;

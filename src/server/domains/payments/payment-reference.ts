@@ -1,5 +1,6 @@
 
 import { has } from '@/lib/has';
+import { emptyToNull } from '@/lib/values';
 /**
  * The payment reference a provider assigns when money is captured.
  * This is not the checkout-request id we sent when the prompt was created.
@@ -37,7 +38,7 @@ export function metadataItemValue(items: MetadataItem[], name: string): string |
   const value = found?.Value ?? found?.value;
   if (value == null) return null;
   const text = String(value).trim();
-  return text || null;
+  return emptyToNull(text);
 }
 
 function firstText(body: Record<string, unknown>, keys: string[]): string | null {

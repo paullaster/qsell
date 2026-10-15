@@ -12,6 +12,9 @@ import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { FinanceError, type FinanceContext } from './errors';
 
 import { has } from '@/lib/has';
+import { orElse } from '@/lib/values';
+import type { DarajaSettings } from '@/server/domains/payments/daraja/config';
+import type { FieldSpec } from '@/server/domains/payments/daraja/catalog';
 
 export interface ProviderView {
   id: string;
@@ -35,8 +38,8 @@ export interface ProviderView {
   methods: { id: string; name: string; kind: string; enabled: boolean; branchName: string | null; channel: string | null }[];
   /** M-Pesa: how payments are confirmed, who may call us, which operations are on. */
   daraja: null | {
-    settings: import('@/server/domains/payments/daraja/config').DarajaSettings;
-    operations: { code: string; label: string; description: string; group: string; async: boolean; moneyOut: boolean; needsInitiator: boolean; needsMethod: boolean; internal: boolean; sandboxOnly: boolean; fields: import('@/server/domains/payments/daraja/catalog').FieldSpec[]; enabled: boolean; maxAmount: string | null }[];
+    settings: DarajaSettings;
+    operations: { code: string; label: string; description: string; group: string; async: boolean; moneyOut: boolean; needsInitiator: boolean; needsMethod: boolean; internal: boolean; sandboxOnly: boolean; fields: FieldSpec[]; enabled: boolean; maxAmount: string | null }[];
     hasInitiator: boolean;
   };
 }
@@ -129,9 +132,9 @@ export class PaymentProviderService {
     const meta = PAYMENT_PROVIDER_META[input.providerCode];
     if (!meta) throw new FinanceError('SERVICE_UNKNOWN', 'Choose which service this provider connects to.');
     const environment = input.environment ?? 'staging';
-    const url = (input.apiBaseUrl?.trim() || (environment === 'production' ? meta.defaultProductionBaseUrl : meta.defaultStagingBaseUrl)).replace(/\/$/, '');
+    const url = (orElse(input.apiBaseUrl?.trim(), environment === 'production' ? meta.defaultProductionBaseUrl : meta.defaultStagingBaseUrl)).replace(/\/$/, '');
     if (!/^https:\/\//i.test(url)) throw new FinanceError('URL_INVALID', 'The provider address must start with https://.');
-    const name = input.displayName?.trim() || meta.label;
+    const name = orElse(input.displayName?.trim(), meta.label);
     const [dup] = await this.db.select({ id: paymentProviderConfigs.id }).from(paymentProviderConfigs).where(and(eq(paymentProviderConfigs.companyId, ctx.companyId), sql`lower(${paymentProviderConfigs.displayName}) = lower(${name})`));
     if (dup) throw new FinanceError('DUPLICATE', `A provider named "${name}" already exists. Give this one a different name.`);
     const row = await this.configs.create({ companyId: ctx.companyId, providerCode: input.providerCode, displayName: name, environment, apiBaseUrl: url });
@@ -144,7 +147,7 @@ export class PaymentProviderService {
     this.notSystem(row);
     const url = (input.apiBaseUrl ?? row.apiBaseUrl).trim().replace(/\/$/, '');
     if (!/^https:\/\//i.test(url)) throw new FinanceError('URL_INVALID', 'The provider address must start with https://.');
-    const name = input.displayName?.trim() || row.displayName;
+    const name = orElse(input.displayName?.trim(), row.displayName);
     if (name.toLowerCase() !== row.displayName.toLowerCase()) {
       const [dup] = await this.db.select({ id: paymentProviderConfigs.id }).from(paymentProviderConfigs).where(and(eq(paymentProviderConfigs.companyId, ctx.companyId), sql`lower(${paymentProviderConfigs.displayName}) = lower(${name})`));
       if (dup) throw new FinanceError('DUPLICATE', `A provider named "${name}" already exists.`);

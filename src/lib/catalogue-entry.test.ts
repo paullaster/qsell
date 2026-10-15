@@ -7,6 +7,7 @@ import {
   readDraft,
   searchCatalogue,
 } from './catalogue-entry';
+import { nth } from '@/lib/values';
 
 const p = (id: string, name: string, sku: string, over: Partial<Product> = {}): Product =>
   ({
@@ -42,7 +43,7 @@ describe('searchCatalogue', () => {
   it('puts an exact code first', () => {
     expect(searchCatalogue(index, 'panel').map((e) => e.product.id)).toEqual(['1', '3']);
     const withCode = buildCatalogueIndex([p('a', 'Panel big', 'PAN'), p('b', 'Panel', 'PANEL')]);
-    expect(searchCatalogue(withCode, 'panel')[0]!.product.id).toBe('b');
+    expect(nth(searchCatalogue(withCode, 'panel'), 0).product.id).toBe('b');
   });
 });
 
@@ -97,7 +98,7 @@ describe('parseBulkList', () => {
   it('skips a header row and blank lines, and strips quotes', () => {
     const r = parseBulkList('SKU,Qty\n\n"PAN-550",5\n', index);
     expect(r.rows).toHaveLength(1);
-    expect(r.rows[0]!.line).toBe(3);
+    expect(nth(r.rows, 0).line).toBe(3);
     expect(r.problems).toEqual([]);
   });
   it('reports what is wrong with a line, by number, and keeps going', () => {

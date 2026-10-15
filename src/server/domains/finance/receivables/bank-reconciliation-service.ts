@@ -8,6 +8,7 @@ import type { ReasonCodes } from '@/server/kernel/reason-codes/service';
 import { centsOf, reconciliationDifference } from '../domain/bank-statement';
 import { fromCents } from '../domain/receivables';
 import { FinanceError, type FinanceContext } from '../errors';
+import { trimToNull } from '@/lib/values';
 
 export interface ReconcileInput {
   bankAccountId: string;
@@ -139,7 +140,7 @@ export class BankReconciliationService {
         linesTotal: fromCents(sum.total),
         lineCount: lines.length,
         ignoredTotal: fromCents(ignored.reduce((n, l) => n + centsOf(l.amount), 0)),
-        notes: input.notes?.trim() || null,
+        notes: trimToNull(input.notes),
         postedBy: ctx.actor.id ?? 'system',
         origin: ctx.origin,
       });

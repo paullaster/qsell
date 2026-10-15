@@ -7,6 +7,7 @@ import {
   encryptCredentials,
   needsResealing,
 } from './crypto';
+import { required } from '@/lib/values';
 
 const KEYS = ['DATA_ENCRYPTION_KEY', 'PAYMENT_DATA_KEY', 'DATA_ENCRYPTION_KEY_ID', 'DATA_ENCRYPTION_OLD_KEYS', 'DATA_ENCRYPTION_KEY_FILE'];
 const saved: Record<string, string | undefined> = {};
@@ -53,7 +54,7 @@ describe('credential sealing', () => {
     process.env.DATA_ENCRYPTION_OLD_KEYS = JSON.stringify({ k1 });
     expect(decryptCredentials(old)).toEqual({ secret: 'x' });
     expect(needsResealing(old)).toBe(true);
-    const fresh = encryptCredentials(decryptCredentials(old)!);
+    const fresh = encryptCredentials(required(decryptCredentials(old)));
     expect(fresh.kid).toBe('k2');
     expect(needsResealing(fresh)).toBe(false);
   });

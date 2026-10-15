@@ -1,5 +1,6 @@
 
 import { has } from '@/lib/has';
+import { orElse } from '@/lib/values';
 /**
  * Product descriptions are stored as a single string.
  * Structured sections use Markdown AT2 headings:
@@ -99,7 +100,7 @@ export function productDescriptionPlainText(raw: string | null | undefined): str
       const heading = s.heading.trim();
       const body = s.body.trim();
       if (has(heading) && has(body)) return `${heading}: ${body}`;
-      return heading || body;
+      return orElse(heading, body);
     })
     .filter(Boolean)
     .join(' ')

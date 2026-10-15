@@ -46,6 +46,7 @@ import type { CustomerLedgerService } from './customer-ledger-service';
 import type { WalletService } from './wallet-service';
 
 import { has } from '@/lib/has';
+import { orElse } from '@/lib/values';
 
 export interface RefundInput {
   customerId: string;
@@ -637,7 +638,7 @@ export class RefundService {
     ]);
     const ids = [...new Set([...events.map((e) => e.actorId), head.r.requestedBy, head.r.approvedBy, head.r.paidBy])].filter((x): x is string => typeof x === 'string' && /^[0-9a-f-]{36}$/i.test(x));
     const named = ids.length !== 0 ? await this.db.select({ id: users.id, name: users.name, email: users.email }).from(users).where(inArray(users.id, ids)) : [];
-    return { ...head, events, attachments, sourceLabel: source?.label ?? '', actors: Object.fromEntries(named.map((u) => [u.id, u.name || u.email])) };
+    return { ...head, events, attachments, sourceLabel: source?.label ?? '', actors: Object.fromEntries(named.map((u) => [u.id, orElse(u.name, u.email)])) };
   }
 
   /** For the owner: what was asked, paid and is stuck, over a period. */

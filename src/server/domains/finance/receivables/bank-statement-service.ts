@@ -40,6 +40,7 @@ import { FinanceError, type FinanceContext } from '../errors';
 import type { ReceiptService } from './receipt-service';
 
 import { has } from '@/lib/has';
+import { orElse } from '@/lib/values';
 
 export type StatementFormat = 'csv' | 'mt940';
 export const MAX_STATEMENT_BYTES = 10 * 1024 * 1024;
@@ -282,7 +283,7 @@ export class BankStatementService {
     );
     let autoMatched = 0;
     let proposed = 0;
-    const origin = { ...ctx.origin, action: ctx.origin.action || 'auto_match' };
+    const origin = { ...ctx.origin, action: orElse(ctx.origin.action, 'auto_match') };
     const actor = ctx.actor;
     for (const s of suggestions) {
       if (s.certainty === 'matched') {

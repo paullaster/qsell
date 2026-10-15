@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { has } from '@/lib/has';
+import { emptyToNull, orElse, trimToNull } from '@/lib/values';
 
 /** Reading bank statements and suggesting matches. No database; money is in whole cents. */
 
@@ -166,7 +167,7 @@ export function parseMoney(raw: string): number | null {
   if (!/^\d*\.?\d+$|^\d+\.$/.test(s)) return null;
   const [w = '0', f = ''] = s.split('.');
   if (/[1-9]/.test(f.slice(2))) return null;
-  const cents = Number(w || '0') * 100 + Number((`${f  }00`).slice(0, 2));
+  const cents = Number(orElse(w, '0')) * 100 + Number((`${f  }00`).slice(0, 2));
   return negative ? -cents : cents;
 }
 
@@ -289,8 +290,8 @@ export function parseCsvStatement(text: string, m: CsvMapping): ParsedStatement 
       lineNo: 0,
       date,
       description: cDesc.map((i) => get(i)).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim(),
-      reference: get(cRef) || null,
-      counterparty: get(cCp) || null,
+      reference: emptyToNull(get(cRef)),
+      counterparty: emptyToNull(get(cCp)),
       amountCents: cents,
       balanceCents: balRaw === '' ? null : parseMoney(balRaw),
     });
@@ -336,7 +337,7 @@ export function parseMt940(text: string): ParsedStatement {
         return;
       }
       const sign = o[3].endsWith('D') ? -1 : 1;
-      current = { lineNo: 0, date, description: '', reference: (o[7] ?? o[6] ?? '').trim() || null, counterparty: null, amountCents: sign * cents * (o[3].startsWith('R') ? -1 : 1), balanceCents: null };
+      current = { lineNo: 0, date, description: '', reference: trimToNull((o[7] ?? o[6] ?? '')), counterparty: null, amountCents: sign * cents * (o[3].startsWith('R') ? -1 : 1), balanceCents: null };
       lines.push(current);
     } else if (tag === '86' && current) {
       current.description = body.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();

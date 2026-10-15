@@ -3,6 +3,7 @@ import { maskPhone, phoneFingerprint } from '../engine/redact';
 import { toCentsLoose } from './security';
 
 import { has } from '@/lib/has';
+import { firstFilled, readText } from '@/lib/values';
 
 /** A payer number becomes a fingerprint and a masked form; one that Safaricom already masked has no fingerprint. */
 function payer(raw: string | null): { payerFingerprint: string | null; payerMasked: string | null } {
@@ -39,7 +40,7 @@ export function resultParameters(result: Record<string, unknown>): Record<string
   for (const item of items) {
     const r = rec(item);
     const k = str(r.Key);
-    if (has(k)) out[k] = r.Value === undefined || r.Value === null ? '' : typeof r.Value === 'object' ? JSON.stringify(r.Value) : String(r.Value);
+    if (has(k)) out[k] = r.Value === undefined || r.Value === null ? '' : typeof r.Value === 'object' ? JSON.stringify(r.Value) : readText(r.Value);
   }
   return out;
 }
@@ -52,7 +53,7 @@ export function referenceItems(result: Record<string, unknown>): Record<string, 
   for (const it of items) {
     const r = rec(it);
     const k = str(r.Key);
-    if (has(k)) out[k] = r.Value === undefined || r.Value === null ? '' : String(r.Value);
+    if (has(k)) out[k] = r.Value === undefined || r.Value === null ? '' : readText(r.Value);
   }
   return out;
 }
@@ -71,7 +72,7 @@ export function parseStkCallback(body: unknown): InboundClaim | null {
   const meta = rec(cb.CallbackMetadata).Item;
   const items = Array.isArray(meta) ? meta : [];
   const get = (name: string) => {
-    const hit = items.map(rec).find((i) => String(i.Name ?? '').toLowerCase() === name.toLowerCase());
+    const hit = items.map(rec).find((i) => readText(i.Name, '').toLowerCase() === name.toLowerCase());
     return hit ? hit.Value : undefined;
   };
   claim.platformReference = str(get('MpesaReceiptNumber'));
@@ -132,7 +133,7 @@ export function parseAsyncResult(body: unknown): AsyncResult | null {
 
 /** The M-Pesa receipt out of an async result's parameters (it is named differently by operation). */
 export function receiptFromParams(p: Record<string, string>): string | null {
-  return p.ReceiptNo || p.TransactionReceipt || p.TransactionID || null;
+  return firstFilled(p.ReceiptNo, p.TransactionReceipt, p.TransactionID);
 }
 
 /** B2B Express Checkout's callback is flat, not wrapped in "Result". */
@@ -141,7 +142,7 @@ export function parseB2bExpress(body: unknown): InboundClaim | null {
   if (!has(str(b.requestId)) && !has(str(b.resultCode))) return null;
   const claim = emptyClaim('b2b_express_callback');
   const code = str(b.resultCode);
-  claim.claimsSuccess = code === null ? null : code === '0' && String(b.status ?? 'SUCCESS').toUpperCase() !== 'FAILED';
+  claim.claimsSuccess = code === null ? null : code === '0' && readText(b.status, 'SUCCESS').toUpperCase() !== 'FAILED';
   claim.originatorId = str(b.requestId);
   claim.conversationId = str(b.conversationID);
   claim.platformReference = str(b.transactionId);
@@ -163,7 +164,7 @@ export function parseBillPayment(body: unknown): InboundClaim | null {
   Object.assign(claim, payer(str(b.msisdn)));
   claim.shortcode = str(b.shortCode);
   claim.accountReference = str(b.accountReference);
-  claim.occurredAt = b.dateCreated ? new Date(String(b.dateCreated)) : null;
+  claim.occurredAt = b.dateCreated ? new Date(readText(b.dateCreated)) : null;
   return claim;
 }
 

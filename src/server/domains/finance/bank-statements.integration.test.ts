@@ -3,20 +3,25 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { and, eq, sql } from 'drizzle-orm';
 
 import { has } from '@/lib/has';
+import { required } from '@/lib/values';
+import type { DrizzleDb } from '@/server/db/drizzle/client';
+import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
+import type { FinanceServices } from './index';
+import type { FinanceContext } from './errors';
 
 /** Needs a Postgres built from the migrations:  TEST_DATABASE_URL=postgres://... pnpm test */
 const url = process.env.TEST_DATABASE_URL;
 
 describe.skipIf(!has(url))('bank statements (database)', () => {
-  type Db = import('@/server/db/drizzle/client').DrizzleDb;
+  type Db = DrizzleDb;
   let db: Db;
-  let schema: typeof import('@/server/db/drizzle/schema');
-  let fin: import('./index').FinanceServices;
+  let schema: typeof mod_server_db_drizzle_schema;
+  let fin: FinanceServices;
   let companyId: string;
   let glBank: string;
   let manualProvider: string;
   let glFee: string;
-  let ctx: import('./errors').FinanceContext;
+  let ctx: FinanceContext;
   const run = randomUUID().slice(0, 6).toUpperCase();
   let seq = 0;
   const origin = { surface: 'test', action: 'run' };
@@ -83,9 +88,9 @@ describe.skipIf(!has(url))('bank statements (database)', () => {
     await fin.setup.applyTemplate(ctx, 'kenya', { fiscalYearStart: '2026-01-01' });
     await fin.paymentMethods.seedStandard(ctx);
     const accts = await fin.setup.listAccounts(companyId);
-    glBank = accts.find((a) => a.no === '1120')!.id;
-    manualProvider = (await fin.paymentMethods.providerChoices(companyId)).find((p) => p.isSystem)!.id;
-    glFee = accts.find((a) => a.category === 'expense' && a.type === 'posting')!.id;
+    glBank = required(accts.find((a) => a.no === '1120')).id;
+    manualProvider = required((await fin.paymentMethods.providerChoices(companyId)).find((p) => p.isSystem)).id;
+    glFee = required(accts.find((a) => a.category === 'expense' && a.type === 'posting')).id;
   });
 
   describe('importing', () => {
@@ -129,7 +134,7 @@ describe.skipIf(!has(url))('bank statements (database)', () => {
       expect(await codeOf(importCsv(f.account.id, [['soon', 'x', '', '5.00', '', '']]))).toBe('STATEMENT_UNREADABLE');
       expect(await codeOf(importCsv(f.account.id, [[dmy(day(-30)), 'Future', 'F1', '5.00', '', '']]))).toBe('FUTURE_DATES');
       expect(await codeOf(fin.bankStatements.import(ctx, { bankAccountId: f.account.id, fileName: 'x.csv', text: 'a,b', format: 'csv' }))).toBe('MAPPING_REQUIRED');
-      const clearing = (await fin.bankAccounts.list(companyId)).find((b) => b.account.kind === 'clearing')!.account.id;
+      const clearing = required((await fin.bankAccounts.list(companyId)).find((b) => b.account.kind === 'clearing')).account.id;
       expect(await codeOf(importCsv(clearing, [[dmy(day(2)), 'x', 'X1', '5.00', '', '']]))).toBe('ACCOUNT_KIND');
       expect(await lines(f.account.id)).toHaveLength(0);
     });
@@ -325,7 +330,7 @@ describe.skipIf(!has(url))('bank statements (database)', () => {
       await importCsv(f.account.id, [[dmy(day(3)), 'REC3AAAAA', 'REC3AAAAA', '600.00', '', '600.00']]);
       const p = await fin.bankReconciliation.preview(companyId, f.account.id, day(1));
       expect(p).toMatchObject({ bookBalance: '1000.0000', outstandingNet: '400.0000', outstandingCount: 1, lineCount: 1, blockingCount: 0, suggestedStatementBalance: '600.0000', needsOpening: true });
-      const o = (await fin.bankStatements.overview(companyId)).find((r) => r.id === f.account.id)!;
+      const o = required((await fin.bankStatements.overview(companyId)).find((r) => r.id === f.account.id));
       expect(o).toMatchObject({ unmatched: 0, outstanding: 1, matched_open: 1 });
     });
   });
@@ -355,7 +360,7 @@ describe.skipIf(!has(url))('bank statements (database)', () => {
 
   describe('once the books are live', () => {
     it('a charge from a statement line posts to the general ledger and the reconciliation still agrees', async () => {
-      await fin.salesPosting.goLive(ctx, { offsetAccountId: (await fin.setup.listAccounts(companyId)).find((a) => a.no === '3100')!.id });
+      await fin.salesPosting.goLive(ctx, { offsetAccountId: required((await fin.setup.listAccounts(companyId)).find((a) => a.no === '3100')).id });
       const f = await fresh('live');
       await importCsv(f.account.id, [[dmy(day(0)), 'Monthly ledger fee', 'LF1', '', '150.00', '']]);
       const [l] = await lines(f.account.id);
@@ -363,7 +368,7 @@ describe.skipIf(!has(url))('bank statements (database)', () => {
       expect(out.gl).toBe(true);
       const [e] = await db.select().from(schema.bankLedgerEntries).where(and(eq(schema.bankLedgerEntries.bankAccountId, f.account.id), eq(schema.bankLedgerEntries.documentType, 'bank_charge')));
       expect(e.registerId).not.toBeNull();
-      const gl = await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, e.registerId!));
+      const gl = await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, required(e.registerId)));
       expect(gl.reduce((n, x) => n + Number(x.debit), 0)).toBe(150);
       expect(gl.reduce((n, x) => n + Number(x.credit), 0)).toBe(150);
       expect(gl.find((x) => x.accountId === glFee && Number(x.debit) === 150)).toBeTruthy();

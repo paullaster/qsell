@@ -30,6 +30,7 @@ import type { CustomerLedgerService } from './customer-ledger-service';
 import type { WalletService } from './wallet-service';
 
 import { has } from '@/lib/has';
+import { orElse, trimToNull } from '@/lib/values';
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -188,7 +189,7 @@ export class ReceiptService {
       } catch {
         throw new FinanceError('AMOUNT_INVALID', 'The amount must be a number with at most 2 decimal places.');
       }
-      const reference = input.externalReference?.trim() || null;
+      const reference = trimToNull(input.externalReference);
       const counterparty = Object.fromEntries(
         Object.entries(input.counterparty ?? {}).filter(([, v]) => typeof v === 'string' && v.trim()).map(([k, v]) => [k, v.trim()]),
       );
@@ -262,9 +263,9 @@ export class ReceiptService {
         paymentDate,
         postingDate,
         externalReference: reference,
-        payerName: input.payerName?.trim() || null,
+        payerName: trimToNull(input.payerName),
         counterparty,
-        narration: input.narration?.trim() || null,
+        narration: trimToNull(input.narration),
         branchId,
         source: input.source ?? 'manual',
         sourceRef: input.sourceRef ?? null,
@@ -954,7 +955,7 @@ export class ReceiptService {
     const named = actorIds.length !== 0
       ? await this.db.select({ id: users.id, name: users.name, email: users.email }).from(users).where(inArray(users.id, actorIds))
       : [];
-    const actors = Object.fromEntries(named.map((u) => [u.id, u.name || u.email]));
+    const actors = Object.fromEntries(named.map((u) => [u.id, orElse(u.name, u.email)]));
     const depositId = head.receipt.counterparty.depositBankAccountId;
     const [deposit] = has(depositId)
       ? await this.db.select({ code: bankAccounts.code, name: bankAccounts.name }).from(bankAccounts).where(eq(bankAccounts.id, depositId))

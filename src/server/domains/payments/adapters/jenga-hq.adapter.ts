@@ -12,6 +12,7 @@ import { asJengaCredentials, type JengaHqCredentials } from '../types';
 import { extractPaymentReference } from '../payment-reference';
 
 import { has } from '@/lib/has';
+import { orElse, readText } from '@/lib/values';
 
 /**
  * Jenga HQ receive-money / checkout adapter.
@@ -57,7 +58,7 @@ export class JengaHqAdapter implements PaymentPort {
       throw new Error(`Jenga auth failed (${res.status}): ${await res.text()}`);
     }
     const data = (await res.json()) as { accessToken?: string; token?: string };
-    const token = data.accessToken || data.token;
+    const token = orElse(data.accessToken, data.token);
     if (!has(token)) throw new Error('Jenga auth missing access token');
     return token;
   }
@@ -78,7 +79,7 @@ export class JengaHqAdapter implements PaymentPort {
 
     try {
       const token = await this.authenticate(apiBaseUrl, creds);
-      const countryCode = String(settings.countryCode || 'KE');
+      const countryCode = readText(settings.countryCode, 'KE');
       const ref = input.orderNumber.replace(/[^A-Za-z0-9]/g, '').slice(0, 20);
       // Concat order per Jenga receive-money / checkout docs — amount + currency + reference + etc.
       const plain = `${Math.round(input.amount)}${input.currency}${ref}${creds.merchantCode}`;
@@ -95,7 +96,7 @@ export class JengaHqAdapter implements PaymentPort {
           ref,
           amount: String(input.amount),
           currency: input.currency,
-          description: input.description || `Order ${input.orderNumber}`,
+          description: orElse(input.description, `Order ${input.orderNumber}`),
           callbackUrl: input.callbackUrl,
         },
         customer: {
@@ -118,7 +119,7 @@ export class JengaHqAdapter implements PaymentPort {
       if (!res.ok) {
         return {
           status: 'failed',
-          errorMessage: String(raw.message || raw.responseMessage || `Jenga failed (${res.status})`),
+          errorMessage: readText(raw.message, raw.responseMessage, `Jenga failed (${res.status})`),
           rawResponse: raw,
         };
       }
@@ -132,8 +133,8 @@ export class JengaHqAdapter implements PaymentPort {
 
       return {
         status: has(redirect) ? 'awaiting_redirect' : 'pending',
-        providerReference: String(raw.transactionId || raw.transactionReference || ref),
-        externalReference: String(raw.reference || ref),
+        providerReference: readText(raw.transactionId, raw.transactionReference, ref),
+        externalReference: readText(raw.reference, ref),
         redirectUrl: redirect,
         rawResponse: raw,
       };
@@ -147,12 +148,12 @@ export class JengaHqAdapter implements PaymentPort {
 
   async handleCallback(input: CallbackInput): Promise<CallbackResult> {
     const body = (input.body || {}) as Record<string, unknown>;
-    const status = String(body.status || body.transactionStatus || body.state || '').toLowerCase();
+    const status = readText(body.status, body.transactionStatus, body.state, '').toLowerCase();
     if (status.includes('success') || status.includes('completed') || status === '0') {
       return {
         ok: true,
         status: 'successful',
-        providerReference: String(body.transactionId || body.transactionReference || ''),
+        providerReference: readText(body.transactionId, body.transactionReference, ''),
         receiptNumber: extractPaymentReference('jenga_hq', body) ?? undefined,
         raw: body,
       };
@@ -161,7 +162,7 @@ export class JengaHqAdapter implements PaymentPort {
       return {
         ok: true,
         status: 'failed',
-        errorMessage: String(body.message || body.responseMessage || status),
+        errorMessage: readText(body.message, body.responseMessage, status),
         raw: body,
       };
     }

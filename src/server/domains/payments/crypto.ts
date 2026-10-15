@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import type { EncryptedCredentialsBlob } from './types';
 
 import { has } from '@/lib/has';
+import { firstFilled, orElse } from '@/lib/values';
 
 /**
  * The master data-encryption key seals every provider credential. It is one of the two things
@@ -46,11 +47,11 @@ function readCurrentRaw(): string {
       throw new MissingEncryptionKeyError();
     }
   }
-  return process.env.DATA_ENCRYPTION_KEY || process.env.PAYMENT_DATA_KEY || '';
+  return (firstFilled(process.env.DATA_ENCRYPTION_KEY, process.env.PAYMENT_DATA_KEY) ?? '');
 }
 
 export function currentKeyId(): string {
-  return process.env.DATA_ENCRYPTION_KEY_ID?.trim() || DEFAULT_KEY_ID;
+  return orElse(process.env.DATA_ENCRYPTION_KEY_ID?.trim(), DEFAULT_KEY_ID);
 }
 
 function currentKey(): Buffer {

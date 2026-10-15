@@ -3,6 +3,13 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { and, desc, eq, like, sql } from 'drizzle-orm';
 
 import { has } from '@/lib/has';
+import { nth, readText, required } from '@/lib/values';
+import type { DrizzleDb } from '@/server/db/drizzle/client';
+import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
+import type { FinanceServices } from '@/server/domains/finance';
+import type { PaymentService } from '../service';
+import type { PaymentEngine } from './payment-engine';
+import type { BranchRow } from '@/server/db/drizzle/schema';
 
 /**
  * The payment engine against a stand-in for Safaricom (and Pesapal). A payment is counted only when the
@@ -24,8 +31,8 @@ class FakePlatform {
     return this.calls.filter((c) => c.path === path).length;
   }
   fetch: typeof fetch = async (input, init) => {
-    const u = new URL(String(input));
-    const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+    const u = new URL(readText(input));
+    const body = init?.body ? (JSON.parse(readText(init.body)) as Record<string, unknown>) : {};
     const headers = Object.fromEntries(Object.entries((init?.headers ?? {}) as Record<string, string>));
     this.calls.push({ method: String(init?.method ?? 'GET'), path: u.pathname, body, headers });
     if (this.down) throw new Error('connect ECONNREFUSED');
@@ -37,15 +44,15 @@ class FakePlatform {
 }
 
 describe.skipIf(!has(url))('payment engine (database)', () => {
-  type Db = import('@/server/db/drizzle/client').DrizzleDb;
+  type Db = DrizzleDb;
   let db: Db;
-  let schema: typeof import('@/server/db/drizzle/schema');
-  let fin: import('@/server/domains/finance').FinanceServices;
-  let payments: import('../service').PaymentService;
-  let engine: import('./payment-engine').PaymentEngine;
+  let schema: typeof mod_server_db_drizzle_schema;
+  let fin: FinanceServices;
+  let payments: PaymentService;
+  let engine: PaymentEngine;
   let fake: FakePlatform;
   let companyId: string;
-  let branch: import('@/server/db/drizzle/schema').BranchRow;
+  let branch: BranchRow;
   let glMobile: string;
   let bankId: string;
   let certificate: string;
@@ -136,9 +143,9 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
     await c.reasonCodes.ensureSystemReasons(companyId);
     await fin.setup.applyTemplate(ctx(), 'kenya', { fiscalYearStart: '2026-01-01' });
     const accts = await fin.setup.listAccounts(companyId);
-    glMobile = accts.find((a) => a.no === '1125')!.id;
+    glMobile = required(accts.find((a) => a.no === '1125')).id;
     bankId = (await fin.bankAccounts.create(ctx(), { code: `PEB${run}`, name: 'Engine M-Pesa', kind: 'mobile_money', currency: 'KES' })).id;
-    branch = (await db.insert(schema.branches).values({ companyId, code: `PEBR${run}`, name: 'Engine branch', isDefault: false }).returning())[0]!;
+    branch = nth((await db.insert(schema.branches).values({ companyId, code: `PEBR${run}`, name: 'Engine branch', isDefault: false }).returning()), 0);
     stkOk();
   });
 
@@ -310,7 +317,7 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       expect((await reload(a.attempt.id)).status).toBe('pending');
       const op = (await engine.ops.bySubject('payment_attempt', a.attempt.id, 'transaction_status'))[0];
       expect(op).toMatchObject({ status: 'accepted', platformReference: null });
-      const sent = fake.calls.filter((c) => c.path === '/mpesa/transactionstatus/v1/query').at(-1)!.body;
+      const sent = required(fake.calls.filter((c) => c.path === '/mpesa/transactionstatus/v1/query').at(-1)).body;
       expect(sent).toMatchObject({ TransactionID: receipt, CommandID: 'TransactionStatusQuery', Initiator: 'apiuser', IdentifierType: '4' });
       expect(String(sent.SecurityCredential).length).toBeGreaterThan(100);
       expect(String(sent.ResultURL)).toMatch(/\/api\/hooks\/pay\/.+\/result\//);
@@ -417,7 +424,7 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       const a = await pesapalAttempt(p);
       expect(a.attempt.status).toBe('awaiting_redirect');
       pesapalOk({ merchant_reference: a.number });
-      const reply = await engine.ingestAttemptCallback({ trackingId: a.attempt.externalReference!, rawText: JSON.stringify({ OrderTrackingId: a.attempt.externalReference, OrderMerchantReference: a.number, OrderNotificationType: 'IPNCHANGE' }), headers: {}, sourceIp: '1.2.3.4', https: true, method: 'POST' });
+      const reply = await engine.ingestAttemptCallback({ trackingId: required(a.attempt.externalReference), rawText: JSON.stringify({ OrderTrackingId: a.attempt.externalReference, OrderMerchantReference: a.number, OrderNotificationType: 'IPNCHANGE' }), headers: {}, sourceIp: '1.2.3.4', https: true, method: 'POST' });
       expect(reply.httpStatus).toBe(200);
       expect((await order(a.orderId)).paymentStatus).not.toBe('paid');
       expect((await engine.verification.verifyAttempt(a.attempt.id)).outcome).toBe('confirmed');
@@ -428,7 +435,7 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       const p = await provider({ code: 'pesapal_v3' });
       const a = await pesapalAttempt(p);
       pesapalOk({ merchant_reference: a.number, amount: 1 });
-      await engine.ingestAttemptCallback({ trackingId: a.attempt.externalReference!, rawText: JSON.stringify({ OrderTrackingId: a.attempt.externalReference }), headers: {}, sourceIp: null, https: true, method: 'POST' });
+      await engine.ingestAttemptCallback({ trackingId: required(a.attempt.externalReference), rawText: JSON.stringify({ OrderTrackingId: a.attempt.externalReference }), headers: {}, sourceIp: null, https: true, method: 'POST' });
       expect((await engine.verification.verifyAttempt(a.attempt.id)).outcome).toBe('mismatch');
       pesapalOk({ merchant_reference: 'SOMEONE-ELSE' });
       expect((await engine.verification.verifyAttempt(a.attempt.id)).outcome).toBe('mismatch');
@@ -450,7 +457,7 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       fake.on('/mpesa/c2b/v2/registerurl', () => ({ json: { OriginatorCoversationID: 'x', ResponseCode: '0', ResponseDescription: 'success' } }));
       const { op } = await engine.daraja.start({ providerId: p.providerId, operation: 'c2b_register_urls', input: { shortcode: '600638' }, idempotencyKey: `reg:${p.providerId}` });
       expect(op.status).toBe('succeeded');
-      const sent = fake.calls.filter((c) => c.path === '/mpesa/c2b/v2/registerurl').at(-1)!.body;
+      const sent = required(fake.calls.filter((c) => c.path === '/mpesa/c2b/v2/registerurl').at(-1)).body;
       expect(sent).toMatchObject({ ShortCode: '600638', ResponseType: 'Completed' });
       expect(String(sent.ConfirmationURL)).toMatch(/^https:\/\/shop\.example\/api\/hooks\/pay\/[0-9a-f-]{36}\/c2b-confirm\/[A-Za-z0-9_-]{43}$/);
       expect(String(sent.ConfirmationURL)).not.toMatch(/(mpesa|safaricom|exe|exec|cmd|sql|query)/i);
@@ -499,7 +506,7 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       expect((await engine.c2b.verify(tx.id)).state).toBe('consumed');
       tx = await txOf(id);
       expect(tx).toMatchObject({ state: 'consumed', consumedType: 'customer_receipt', verifiedBy: 'transaction_status' });
-      const [receipt] = await db.select().from(schema.customerReceipts).where(eq(schema.customerReceipts.id, tx.consumedId!));
+      const [receipt] = await db.select().from(schema.customerReceipts).where(eq(schema.customerReceipts.id, required(tx.consumedId)));
       expect(receipt).toMatchObject({ customerId: cust.id, status: 'posted', amount: '250.00', externalReference: id, source: 'gateway', paymentMethodId: p.methodId, branchId: branch.id });
       const [entry] = await db.select().from(schema.bankLedgerEntries).where(eq(schema.bankLedgerEntries.documentId, receipt.id));
       expect(entry).toMatchObject({ amount: '250.0000', glAccountId: glMobile, bankAccountId: bankId });
@@ -605,7 +612,7 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       expect(t).toMatchObject({ state: 'consumed', consumedType: 'customer_receipt', verifiedBy: 'pull', amount: '75.5000', accountReference: number });
       expect(JSON.stringify(t.evidence)).toContain('by sweep, no callback had arrived');
       expect((await txOf(known)).state).toBe('consumed');
-      const [r] = await db.select().from(schema.customerReceipts).where(eq(schema.customerReceipts.id, t.consumedId!));
+      const [r] = await db.select().from(schema.customerReceipts).where(eq(schema.customerReceipts.id, required(t.consumedId)));
       expect(r.customerId).toBe(cust.id);
       // running it again finds nothing new
       expect((await engine.c2b.pullSweep(p.providerId)).missing).toBe(0);
@@ -669,7 +676,7 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       const { op } = await engine.daraja.start({ providerId: p.providerId, methodId: p.methodId, operation: 'qr_generate', input: { merchantName: 'Acme Shop', refNo: 'INV-1', amount: 250, trxCode: 'BG', size: '300' } });
       expect(op.status).toBe('succeeded');
       expect((op.result as { QRCode?: string }).QRCode).toBe('iVBORw0KGgoAAAANSUhEUg');
-      expect(fake.calls.filter((c) => c.path === '/mpesa/qrcode/v1/generate').at(-1)!.body).toMatchObject({ MerchantName: 'Acme Shop', TrxCode: 'BG', CPI: '174379', Amount: 250 });
+      expect(required(fake.calls.filter((c) => c.path === '/mpesa/qrcode/v1/generate').at(-1)).body).toMatchObject({ MerchantName: 'Acme Shop', TrxCode: 'BG', CPI: '174379', Amount: 250 });
     });
 
     it('a customer prompt is closed off with the payment: succeeded when paid, failed when not, never "in doubt" for want of a result address', async () => {
@@ -686,7 +693,7 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       expect(await opOf(bad.attempt.id)).toMatchObject({ status: 'failed', failureReason: 'Request cancelled by user' });
       const wait = await opOf(pending.attempt.id);
       expect(wait.status).toBe('accepted');
-      expect(wait.nextAttemptAt!.getTime()).toBeGreaterThan(Date.now() + 5 * 60_000);
+      expect(required(wait.nextAttemptAt).getTime()).toBeGreaterThan(Date.now() + 5 * 60_000);
     });
 
     it('an answer we did not ask for is recorded and matched to nothing', async () => {
@@ -704,11 +711,11 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       const p = await provider({ initiator: true });
       const ctxu = ctx();
       await fin.paymentProviders.updateSettings(ctxu, p.providerId, { verification: { mode: 'strict', windowMinutes: 30 }, security: { allowedCidrs: ['196.201.214.0/24'] }, operations: { qr_generate: { enabled: true, maxAmount: '5000' }, reversal: { enabled: true } } });
-      const view = (await fin.paymentProviders.list(companyId, null)).find((x) => x.id === p.providerId)!;
-      expect(view.daraja!.settings.verification).toMatchObject({ mode: 'strict', windowMinutes: 30 });
-      expect(view.daraja!.settings.security.allowedCidrs).toEqual(['196.201.214.0/24']);
-      expect(view.daraja!.operations.find((o) => o.code === 'qr_generate')).toMatchObject({ enabled: true, maxAmount: '5000', moneyOut: false });
-      expect(view.daraja!.hasInitiator).toBe(true);
+      const view = required((await fin.paymentProviders.list(companyId, null)).find((x) => x.id === p.providerId));
+      expect(required(view.daraja).settings.verification).toMatchObject({ mode: 'strict', windowMinutes: 30 });
+      expect(required(view.daraja).settings.security.allowedCidrs).toEqual(['196.201.214.0/24']);
+      expect(required(view.daraja).operations.find((o) => o.code === 'qr_generate')).toMatchObject({ enabled: true, maxAmount: '5000', moneyOut: false });
+      expect(required(view.daraja).hasInitiator).toBe(true);
       await expect(fin.paymentProviders.updateSettings(ctxu, p.providerId, { security: { allowedCidrs: ['not an address'] } })).rejects.toMatchObject({ code: 'CIDR_INVALID' });
     });
   });
@@ -774,13 +781,13 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       // the same limit counts what is already asked for
       await expect(ask(p, { input: { phone: '0712345678', amount: '800', remarks: 'Refund' } })).rejects.toMatchObject({ code: 'DAILY_LIMIT' });
       const { withAfterCommit } = await import('@/server/kernel/after-commit');
-      const entry = (await c.approvals.forDocument(companyId, 'provider_operation', r.op.id)).flatMap((x) => x.entries).find((e) => e.status === 'open')!;
+      const entry = required((await c.approvals.forDocument(companyId, 'provider_operation', r.op.id)).flatMap((x) => x.entries).find((e) => e.status === 'open'));
       await withAfterCommit(db, (tx) => c.approvals.approve(entry.id, boss, null, tx));
       const queued = (await engine.ops.get(r.op.id));
       expect(queued.status).toBe('queued');
       await engine.sweep();
       expect(b2cCalls().length).toBe(before + 1);
-      const sent = b2cCalls().at(-1)!;
+      const sent = required(b2cCalls().at(-1));
       expect(sent.body).toMatchObject({ Amount: '500', PartyB: '254712345678', CommandID: 'BusinessPayment', OriginatorConversationID: queued.originatorId });
       await engine.sweep();
       expect(b2cCalls().length).toBe(before + 1); // never sent twice
@@ -813,7 +820,7 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
         const r = await ask(p, { operation, input });
         await approveAll(c, r.op.id);
         await engine.sweep();
-        const sent = fake.calls.filter((x) => x.path === path).at(-1)!;
+        const sent = required(fake.calls.filter((x) => x.path === path).at(-1));
         expect(sent.body, operation).toMatchObject(expected);
         expect(JSON.stringify(sent.body)).not.toContain('Init#Pass1');
         expect(typeof (sent.body as { SecurityCredential?: unknown }).SecurityCredential).toBe('string');
@@ -840,8 +847,8 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       const secret = (await db.select().from(schema.paymentProviderConfigs).where(eq(schema.paymentProviderConfigs.id, p.providerId)))[0];
       secret;
       const hook = async (op: { originatorId: string | null }, body: Record<string, unknown>) => {
-        const sentBody = fake.calls.filter((x) => x.path === '/v1/ussdpush/get-msisdn').at(-1)!.body as { callbackUrl: string };
-        const token = sentBody.callbackUrl.split('/').pop()!;
+        const sentBody = required(fake.calls.filter((x) => x.path === '/v1/ussdpush/get-msisdn').at(-1)).body as { callbackUrl: string };
+        const token = required(sentBody.callbackUrl.split('/').pop());
         return await engine.ingestHook({ providerId: p.providerId, kind: 'express', secret: token, rawText: JSON.stringify({ requestId: op.originatorId, ...body }), headers: {}, sourceIp: '196.201.214.200', https: true } as never);
       };
       const bad = await start();
@@ -861,8 +868,8 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       fake.on('/oauth/v1/generate', () => ({ json: { access_token: 'tok', expires_in: '3599' } }));
       fake.on('/mpesa/b2c/v3/paymentrequest', (b) => ({ json: { ConversationID: `AG_${b.Amount}`, OriginatorConversationID: b.OriginatorConversationID, ResponseCode: '0', ResponseDescription: 'Accept the service request successfully.' } }));
       fake.on('/mpesa/transactionstatus/v1/query', (b) => ({ json: { ConversationID: 'AG_ST', OriginatorConversationID: 'x', ResponseCode: '0', ResponseDescription: 'Accept the service request successfully.' } }));
-      const resultUrl = () => (fake.calls.filter((x) => x.path === '/mpesa/b2c/v3/paymentrequest').at(-1)!.body as { ResultURL: string }).ResultURL;
-      const secret = () => resultUrl().split('/').pop()!;
+      const resultUrl = () => (required(fake.calls.filter((x) => x.path === '/mpesa/b2c/v3/paymentrequest').at(-1)).body as { ResultURL: string }).ResultURL;
+      const secret = () => required(resultUrl().split('/').pop());
       const run = async (amount: string, receipt: string, statusAmount: number) => {
         const r = await ask(p, { input: { phone: '0712345678', amount, commandId: 'BusinessPayment', remarks: 'Payout check' } });
         await approveAll(c, r.op.id);
@@ -887,7 +894,7 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       const before = b2cCalls().length;
       const r = await ask(p);
       const { withAfterCommit } = await import('@/server/kernel/after-commit');
-      const entry = (await c.approvals.forDocument(companyId, 'provider_operation', r.op.id)).flatMap((x) => x.entries).find((e) => e.status === 'open')!;
+      const entry = required((await c.approvals.forDocument(companyId, 'provider_operation', r.op.id)).flatMap((x) => x.entries).find((e) => e.status === 'open'));
       await withAfterCommit(db, (tx) => c.approvals.reject(entry.id, boss, { reasonCode: 'OTHER', comment: 'No' }, tx));
       expect((await engine.ops.get(r.op.id)).status).toBe('rejected');
       await engine.sweep();
@@ -901,7 +908,7 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       fake.on('/oauth/v1/generate', () => ({ json: { access_token: 'tok', expires_in: '3599' } }));
       const answer = (code: string) => () => ({ json: { rescode: code, resmsg: code === '200' ? 'Success' : 'Invalid request', Status_Message: '' } });
       for (const path of ['optin', 'single-invoicing', 'bulk-invoicing', 'cancel-single-invoice', 'cancel-bulk-invoices']) fake.on(`/v1/billmanager-invoice/${path}`, answer('200'));
-      const last = (path: string) => fake.calls.filter((x) => x.path === `/v1/billmanager-invoice/${path}`).at(-1)!.body as Record<string, unknown> & unknown[];
+      const last = (path: string) => required(fake.calls.filter((x) => x.path === `/v1/billmanager-invoice/${path}`).at(-1)).body as Record<string, unknown> & unknown[];
       const run = (operation: string, input: Record<string, unknown>) => engine.daraja.start({ providerId: p.providerId, methodId: p.methodId, operation: operation as never, input });
       expect((await run('bill_optin', { email: 'a@b.co', officialContact: '0712345678', sendReminders: '1' })).op.status).toBe('succeeded');
       expect(last('optin')).toMatchObject({ shortcode: '174379', email: 'a@b.co', sendReminders: '1' });

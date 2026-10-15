@@ -2,18 +2,24 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { and, eq, sql } from 'drizzle-orm';
 
 import { has } from '@/lib/has';
+import { required } from '@/lib/values';
+import type { DrizzleDb } from '@/server/db/drizzle/client';
+import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
+import type { FinanceServices } from './index';
+import type { CustomerMasterService } from '@/server/domains/customers/master-service';
+import type { FinanceContext } from './errors';
 
 /** Needs a Postgres built from the migrations:  TEST_DATABASE_URL=postgres://... pnpm test */
 const url = process.env.TEST_DATABASE_URL;
 
 describe.skipIf(!has(url))('sales posting (database)', () => {
-  type Db = import('@/server/db/drizzle/client').DrizzleDb;
+  type Db = DrizzleDb;
   let db: Db;
-  let schema: typeof import('@/server/db/drizzle/schema');
-  let fin: import('./index').FinanceServices;
-  let master: import('@/server/domains/customers/master-service').CustomerMasterService;
+  let schema: typeof mod_server_db_drizzle_schema;
+  let fin: FinanceServices;
+  let master: CustomerMasterService;
   let companyId: string;
-  let ctx: import('./errors').FinanceContext;
+  let ctx: FinanceContext;
   const acct: Record<string, string> = {};
   let seq = 0;
   const run = Math.random().toString(36).slice(2, 7);
@@ -44,7 +50,7 @@ describe.skipIf(!has(url))('sales posting (database)', () => {
   const glFor = async (registerId: string) => {
     const lines = await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, registerId));
     const no = new Map(Object.entries(acct).map(([n, id]) => [id, n]));
-    return lines.map((l) => [no.get(l.accountId)!, Number(l.debit), Number(l.credit)] as const).sort((a, b) => a[0].localeCompare(b[0]));
+    return lines.map((l) => [required(no.get(l.accountId)), Number(l.debit), Number(l.credit)] as const).sort((a, b) => a[0].localeCompare(b[0]));
   };
   const reconcile = async () => (await fin.salesPosting.reconciliation(companyId)).rows.map((r) => r.diffCents);
 
@@ -125,7 +131,7 @@ describe.skipIf(!has(url))('sales posting (database)', () => {
     await fin.salesPosting.processDue();
     const [done] = (await rows('invoice')).filter((r) => r.status === 'posted');
     expect(done.status).toBe('posted');
-    expect(await glFor(done.registerId!)).toEqual([['1210', 11600, 0], ['2310', 0, 1600], ['4100', 0, 9500], ['4400', 0, 500]].sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
+    expect(await glFor(required(done.registerId))).toEqual([['1210', 11600, 0], ['2310', 0, 1600], ['4100', 0, 9500], ['4400', 0, 500]].sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
     expect(await reconcile()).toEqual([0]);
     // queued twice, posted once
     await fin.salesPosting.attempt(done.id);
@@ -142,7 +148,7 @@ describe.skipIf(!has(url))('sales posting (database)', () => {
     await fin.salesPosting.processDue();
     const [p] = await rows('credit_payment');
     expect(p).toMatchObject({ status: 'posted' });
-    expect(await glFor(p.registerId!)).toEqual([['1125', 5000, 0], ['1210', 0, 5000]]);
+    expect(await glFor(required(p.registerId))).toEqual([['1125', 5000, 0], ['1210', 0, 5000]]);
     expect(await reconcile()).toEqual([0]);
     const [row] = await db.select().from(schema.orders).where(eq(schema.orders.id, o.id));
     expect(row.paymentMethodId).toBeNull(); // raw insert here; new orders get it from the repository
@@ -156,9 +162,9 @@ describe.skipIf(!has(url))('sales posting (database)', () => {
     await db.execute(sql`UPDATE orders SET transaction_reference = 'MP2', payment_status = 'paid' WHERE id = ${o.id}`);
     await master.applyOrderPayment(o.id);
     await fin.salesPosting.processDue();
-    const row = (await rows('cash_sale')).find((r) => r.subjectId === o.id)!;
+    const row = required((await rows('cash_sale')).find((r) => r.subjectId === o.id));
     expect(row.status).toBe('posted');
-    expect(await glFor(row.registerId!)).toEqual([['1125', 7000, 0], ['2230', 3000, 0], ['2310', 0, 1379], ['4100', 0, 8621]]);
+    expect(await glFor(required(row.registerId))).toEqual([['1125', 7000, 0], ['2230', 3000, 0], ['2310', 0, 1379], ['4100', 0, 8621]]);
     expect(await reconcile()).toEqual([0]);
   });
 
@@ -176,7 +182,7 @@ describe.skipIf(!has(url))('sales posting (database)', () => {
     await fin.salesPosting.saveCustomerGroupAccounts(ctx, 'DOMESTIC', { service_charge: acct['4400'] });
     const r2 = await fin.salesPosting.retry(ctx, waiting.id);
     expect(r2.posted).toBeGreaterThanOrEqual(1);
-    expect((await rows('invoice')).find((r) => r.subjectId === o.id)!.status).toBe('posted');
+    expect(required((await rows('invoice')).find((r) => r.subjectId === o.id)).status).toBe('posted');
     expect(await reconcile()).toEqual([0]);
   });
 
@@ -185,7 +191,7 @@ describe.skipIf(!has(url))('sales posting (database)', () => {
     const o = await order(c, { total: 100, currency: 'USD' });
     await master.postInvoice({ customer: c, orderId: o.id, orderNumber: o.number, amount: 100, currency: 'USD' });
     await fin.salesPosting.processDue();
-    const r = (await rows('invoice')).find((x) => x.subjectId === o.id)!;
+    const r = required((await rows('invoice')).find((x) => x.subjectId === o.id));
     expect(r.status).toBe('failed');
     expect(r.lastError).toMatch(/foreign currency/);
     // the receivables reconciliation says what it left out
@@ -203,9 +209,9 @@ describe.skipIf(!has(url))('sales posting (database)', () => {
     await db.transaction((tx) => fin.customerLedger.applyIn(tx, ctx, { customerId: c.id, creditEntryId: credit, applications: [{ entryId: inv.id, amountCents: 60000 }], postingDate: today, createdBy: null }));
     await fin.salesPosting.enqueue(db, { companyId, kind: 'rebate_credit', subjectId: credit });
     await fin.salesPosting.processDue();
-    const r = (await rows('rebate_credit')).find((x) => x.subjectId === credit)!;
+    const r = required((await rows('rebate_credit')).find((x) => x.subjectId === credit));
     expect(r.status).toBe('posted');
-    expect(await glFor(r.registerId!)).toEqual([['1210', 0, 600], ['6310', 600, 0]]);
+    expect(await glFor(required(r.registerId))).toEqual([['1210', 0, 600], ['6310', 600, 0]]);
     await db.execute(sql`UPDATE customers SET balance = balance - 600 WHERE id = ${c.id}::uuid`);
     expect(await reconcile()).toEqual([0]);
   });
@@ -222,7 +228,7 @@ describe.skipIf(!has(url))('sales posting (database)', () => {
     const o = await order(c, { total: 700 });
     await invoice(c, o, 700);
     await fin.salesPosting.processDue();
-    const r = await fin.receipts.create(ctx, { customerId: c.id, paymentMethodId: (await fin.paymentMethods.list(companyId)).find((m) => m.method.code === 'CASH')!.method.id, amount: '700', paymentDate: today });
+    const r = await fin.receipts.create(ctx, { customerId: c.id, paymentMethodId: required((await fin.paymentMethods.list(companyId)).find((m) => m.method.code === 'CASH')).method.id, amount: '700', paymentDate: today });
     await fin.receipts.post(ctx, r.id, { allocate: 'oldest_first' });
     expect(await reconcile()).toEqual([0]);
   });

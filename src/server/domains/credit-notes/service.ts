@@ -22,6 +22,7 @@ import { CREDIT_NOTE_REASONS, type CreditNoteReason } from './reasons';
 import { isSigningModule, type SigningModule } from '@/server/domains/kra/signing/types';
 
 import { has } from '@/lib/has';
+import { trimToNull } from '@/lib/values';
 
 export { CREDIT_NOTE_REASONS, type CreditNoteReason };
 
@@ -148,7 +149,7 @@ export class CreditNoteService {
           creditNoteNo,
           originalDocumentKey: input.original.documentKey,
           reasonCode: input.reason.code,
-          reasonNote: input.reason.note?.trim() || null,
+          reasonNote: trimToNull(input.reason.note),
           currency: input.original.currency,
           totalAmount: total.toFixed(2),
           issuedBy: input.issuedBy,

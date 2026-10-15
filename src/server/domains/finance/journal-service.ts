@@ -9,6 +9,7 @@ import { type PostingEngine, PostingError, type PostingPermissions, type Posting
 import { FinanceError, type FinanceContext } from './errors';
 
 import { has } from '@/lib/has';
+import { trimToNull } from '@/lib/values';
 
 export interface LineInput {
   postingDate: string;
@@ -130,7 +131,7 @@ export class JournalService {
       postingDate: input.postingDate,
       documentNo: input.documentNo.trim(),
       accountId: input.accountId,
-      description: input.description?.trim() || null,
+      description: trimToNull(input.description),
       debit: formatAmount(debit),
       credit: formatAmount(credit),
       currency: input.currency ?? settings.baseCurrency,

@@ -16,6 +16,7 @@ import { looksLikeReceipt, toCentsLoose } from './security';
 import { readStatusAnswer, statusAgrees } from './verify';
 
 import { has } from '@/lib/has';
+import { readText } from '@/lib/values';
 
 /** What counting a verified direct payment means (a customer's receipt, for instance). null: leave it for a person. */
 export interface C2bConsumer {
@@ -57,7 +58,7 @@ export function pullRecords(body: Record<string, unknown> | null): PullRecord[] 
       out.set(id, {
         transactionId: id,
         trxDate: typeof r.trxDate === 'string' ? r.trxDate : null,
-        msisdn: r.msisdn === undefined || r.msisdn === null ? null : String(r.msisdn),
+        msisdn: r.msisdn === undefined || r.msisdn === null ? null : readText(r.msisdn),
         billReference: typeof r.billreference === 'string' ? r.billreference : typeof r.billReference === 'string' ? r.billReference : null,
         amountCents: toCentsLoose(r.amount),
         type: typeof r.transactiontype === 'string' ? r.transactiontype : null,

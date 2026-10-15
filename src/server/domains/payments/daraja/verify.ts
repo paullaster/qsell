@@ -5,6 +5,7 @@ import { phoneFingerprint } from '../engine/redact';
 import { darajaTimestamp, looksLikeReceipt, stkPassword } from './security';
 
 import { has } from '@/lib/has';
+import { orElse, readText } from '@/lib/values';
 
 /**
  * Deciding whether a payment is real. A callback is only a claim. These checks compare the claim
@@ -58,20 +59,20 @@ export async function verifyStk(input: VerifyAttemptInput, ctx: PlatformContext)
     if (/being processed|still processing|in progress/i.test(failure.message)) return { status: 'pending', by: 'stk_query', reason: failure.message, evidence: { code: failure.code } };
     return { status: 'error', by: 'stk_query', reason: `${failure.code}: ${failure.message}`, retryable: failure.retryable || failure.tokenRejected };
   }
-  const responseCode = String(j.ResponseCode ?? '');
-  const resultCode = j.ResultCode === undefined ? null : String(j.ResultCode);
+  const responseCode = readText(j.ResponseCode, '');
+  const resultCode = j.ResultCode === undefined ? null : readText(j.ResultCode);
   const evidence = { stkQuery: { responseCode, resultCode, resultDesc: j.ResultDesc ?? null, checkoutRequestId: j.CheckoutRequestID ?? null, merchantRequestId: j.MerchantRequestID ?? null } };
   if (responseCode !== '0' || resultCode === null) {
-    return { status: 'error', by: 'stk_query', reason: `Safaricom's answer to the check was not usable (ResponseCode ${responseCode || 'none'}).`, retryable: true };
+    return { status: 'error', by: 'stk_query', reason: `Safaricom's answer to the check was not usable (ResponseCode ${orElse(responseCode, 'none')}).`, retryable: true };
   }
   // The answer must be about the request we asked about.
-  if (j.CheckoutRequestID && String(j.CheckoutRequestID) !== input.providerReference) {
+  if (j.CheckoutRequestID && readText(j.CheckoutRequestID) !== input.providerReference) {
     return { status: 'mismatch', by: 'stk_query', code: 'QUERY_ID_MISMATCH', reason: 'Safaricom answered about a different checkout request than the one we asked about.', evidence };
   }
   if (resultCode === '0') {
     return { status: 'confirmed', by: 'stk_query', platformReference: input.claim?.platformReference ?? null, amountCents: input.amountCents, evidence: { ...evidence, claimContradicted: input.claim?.claimsSuccess === false } };
   }
-  return { status: 'failed', by: 'stk_query', code: resultCode, reason: String(j.ResultDesc ?? `ResultCode ${resultCode}`), evidence: { ...evidence, claimContradicted: input.claim?.claimsSuccess === true } };
+  return { status: 'failed', by: 'stk_query', code: resultCode, reason: readText(j.ResultDesc, `ResultCode ${resultCode}`), evidence: { ...evidence, claimContradicted: input.claim?.claimsSuccess === true } };
 }
 
 export interface StatusAnswer {
@@ -103,7 +104,7 @@ export function readStatusAnswer(result: Record<string, unknown>): StatusAnswer 
 
 /** Does a Transaction Status answer agree with the payment we are confirming? */
 export function statusAgrees(answer: StatusAnswer, expect: { receipt: string | null; amountCents: number; shortcode: string | null }): { ok: true } | { ok: false; code: string; reason: string } {
-  if (!answer.ok) return { ok: false, code: 'STATUS_NOT_COMPLETED', reason: `The transaction status is "${answer.status || 'unknown'}" (${answer.resultDesc ?? answer.resultCode}).` };
+  if (!answer.ok) return { ok: false, code: 'STATUS_NOT_COMPLETED', reason: `The transaction status is "${orElse(answer.status, 'unknown')}" (${answer.resultDesc ?? answer.resultCode}).` };
   if (has(expect.receipt) && has(answer.receipt) && answer.receipt !== expect.receipt) return { ok: false, code: 'STATUS_RECEIPT_MISMATCH', reason: `The status answer is for ${answer.receipt}, not ${expect.receipt}.` };
   if (answer.amountCents !== null && answer.amountCents !== expect.amountCents) {
     return { ok: false, code: 'STATUS_AMOUNT_MISMATCH', reason: `The platform says ${(answer.amountCents / 100).toFixed(2)} was moved, not ${(expect.amountCents / 100).toFixed(2)}.` };

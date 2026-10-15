@@ -28,8 +28,7 @@ export function formatPriceWithCurrency(
 
   const currConfig: CurrencyConfig =
     typeof currency === 'string'
-      ? customCurrencies.find((c) => c.code.toUpperCase() === currency.toUpperCase()) ||
-        FORMAT_FALLBACK_CURRENCY
+      ? customCurrencies.find((c) => c.code.toUpperCase() === currency.toUpperCase()) ?? FORMAT_FALLBACK_CURRENCY
       : currency;
 
   const converted = baseAmountKes * currConfig.exchangeRate;

@@ -11,6 +11,7 @@ import { OperationRefused } from './operations';
 import { randomUUID } from 'node:crypto';
 
 import { has } from '@/lib/has';
+import { orElse, readText } from '@/lib/values';
 
 export interface PayoutRequest {
   companyId: string;
@@ -48,7 +49,7 @@ export class DarajaDisbursements {
     if ((cfg?.enabled ?? OPERATION_DEFAULTS[input.operation]) !== true) throw new OperationRefused('OPERATION_OFF', `${info.label} is switched off for this provider (Settings → Payments).`);
     const checked = validateOperationInput(info, input.input);
     if (!checked.ok) throw new OperationRefused('INVALID_INPUT', checked.error);
-    const amount = String(checked.input.amount ?? '');
+    const amount = readText(checked.input.amount, '');
     if (!has(amount) || Number(amount) <= 0) throw new OperationRefused('INVALID_INPUT', 'An amount is required.');
     if (has(cfg?.maxAmount) && Number(amount) > Number(cfg.maxAmount)) throw new OperationRefused('OVER_LIMIT', `${info.label} is limited to ${cfg.maxAmount} per request for this provider.`);
     const c = ctx.credentials;
@@ -132,7 +133,7 @@ export class DarajaDisbursements {
         await this.jobs.sendOperation(id, 1).catch(() => undefined); // the minute sweep sends it if this cannot be queued
       },
       onRejected: async (id, tx, info) => {
-        await (tx as unknown as DrizzleDb).update(providerOperations).set({ status: 'rejected', failureCode: 'REJECTED', failureReason: info.comment || info.reasonCode, updatedAt: new Date() }).where(and(eq(providerOperations.id, id), eq(providerOperations.status, 'pending_approval')));
+        await (tx as unknown as DrizzleDb).update(providerOperations).set({ status: 'rejected', failureCode: 'REJECTED', failureReason: orElse(info.comment, info.reasonCode), updatedAt: new Date() }).where(and(eq(providerOperations.id, id), eq(providerOperations.status, 'pending_approval')));
       },
       onReopened: async () => {},
       onCanceled: async (id, tx) => {

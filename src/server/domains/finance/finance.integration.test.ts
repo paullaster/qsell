@@ -2,24 +2,36 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { and, eq, sql } from 'drizzle-orm';
 
 import { has } from '@/lib/has';
+import { required } from '@/lib/values';
+import type { DrizzleDb } from '@/server/db/drizzle/client';
+import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
+import type { FinanceSetupService } from './setup-service';
+import type { FiscalService } from './fiscal-service';
+import type { PostingEngine } from './engine';
+import type { JournalService } from './journal-service';
+import type { FinanceReportsService } from './reports-service';
+import type { PostingSetupService } from './posting-setup-service';
+import type * as mod_errors from './errors';
+import type * as mod_engine from './engine';
+import type { FinanceContext } from './errors';
 
 /** Needs a Postgres built from the migrations:  TEST_DATABASE_URL=postgres://... pnpm test */
 const url = process.env.TEST_DATABASE_URL;
 
 describe.skipIf(!has(url))('core finance (database)', () => {
-  type Db = import('@/server/db/drizzle/client').DrizzleDb;
+  type Db = DrizzleDb;
   let db: Db;
-  let schema: typeof import('@/server/db/drizzle/schema');
-  let setup: import('./setup-service').FinanceSetupService;
-  let fiscal: import('./fiscal-service').FiscalService;
-  let engine: import('./engine').PostingEngine;
-  let journals: import('./journal-service').JournalService;
-  let reports: import('./reports-service').FinanceReportsService;
-  let postingSetup: import('./posting-setup-service').PostingSetupService;
-  let FinanceError: typeof import('./errors').FinanceError;
-  let PostingError: typeof import('./engine').PostingError;
+  let schema: typeof mod_server_db_drizzle_schema;
+  let setup: FinanceSetupService;
+  let fiscal: FiscalService;
+  let engine: PostingEngine;
+  let journals: JournalService;
+  let reports: FinanceReportsService;
+  let postingSetup: PostingSetupService;
+  let FinanceError: typeof mod_errors.FinanceError;
+  let PostingError: typeof mod_engine.PostingError;
   let companyId: string;
-  let ctx: import('./errors').FinanceContext;
+  let ctx: FinanceContext;
   const acct: Record<string, string> = {};
 
   const origin = { surface: 'test', action: 'run' };
@@ -219,8 +231,8 @@ describe.skipIf(!has(url))('core finance (database)', () => {
       expect(r.seq).toBeGreaterThan(a.seq);
       const after = await reports.trialBalance(companyId, '2026-10-01', '2026-10-31');
       const net = (tb: typeof before, no: string) => tb.rows.find((x) => x.no === no);
-      expect(Number(net(after, '6310')!.closingDebit)).toBe(0);
-      expect(Number(net(before, '6310')!.closingDebit)).toBe(250);
+      expect(Number(required(net(after, '6310')).closingDebit)).toBe(0);
+      expect(Number(required(net(before, '6310')).closingDebit)).toBe(250);
 
       expect(await codeOf(engine.reverse({ companyId, registerId: a.registerId, postingDate: '2026-10-13', reasonCode: 'X', origin }))).toBe('ALREADY_REVERSED');
       expect(await codeOf(engine.reverse({ companyId, registerId: r.registerId, postingDate: '2026-10-13', reasonCode: 'X', origin }))).toBe('IS_REVERSAL');
@@ -240,14 +252,14 @@ describe.skipIf(!has(url))('core finance (database)', () => {
       const preview = await journals.preview(ctx, b.id, none);
       expect(preview.map((p) => [p.documentNo, p.ok])).toEqual([['DOC-1', true], ['DOC-2', false]]);
       expect(await codeOf(journals.post(ctx, b.id, none))).toBe('NOT_BALANCED');
-      expect((await journals.getBatch(companyId, b.id))!.lines).toHaveLength(4); // nothing posted, draft intact
+      expect(required((await journals.getBatch(companyId, b.id))).lines).toHaveLength(4); // nothing posted, draft intact
       expect((await db.select().from(schema.ledgerRegisters).where(and(eq(schema.ledgerRegisters.companyId, companyId), eq(schema.ledgerRegisters.documentNo, 'DOC-1'))))).toHaveLength(0);
 
-      const fix = (await journals.getBatch(companyId, b.id))!.lines.find((l) => l.documentNo === 'DOC-2' && l.credit !== '0.0000')!;
+      const fix = required(required((await journals.getBatch(companyId, b.id))).lines.find((l) => l.documentNo === 'DOC-2' && l.credit !== '0.0000'));
       await journals.saveLine(ctx, b.id, { ...base, documentNo: 'DOC-2', accountId: acct['4400'], debit: '0', credit: '50' }, fix.id);
       const posted = await journals.post(ctx, b.id, none);
       expect(posted).toHaveLength(2);
-      expect((await journals.getBatch(companyId, b.id))!.lines).toHaveLength(0);
+      expect(required((await journals.getBatch(companyId, b.id))).lines).toHaveLength(0);
       expect(await codeOf(journals.post(ctx, b.id, none))).toBe('NOTHING_TO_POST');
     });
   });
@@ -267,14 +279,14 @@ describe.skipIf(!has(url))('core finance (database)', () => {
     it('the hash chain verifies, and notices a missing register', async () => {
       const ok = await reports.verifyChain(companyId);
       expect(ok.every((c) => c.ok)).toBe(true);
-      expect(ok.find((c) => c.chainKey === 'general')!.checked).toBeGreaterThan(5);
+      expect(required(ok.find((c) => c.chainKey === 'general')).checked).toBeGreaterThan(5);
     });
 
     it('lists entries with keyset paging', async () => {
       const first = await reports.entries(companyId, { limit: 5 });
       expect(first.rows).toHaveLength(5);
       expect(first.next).not.toBeNull();
-      const second = await reports.entries(companyId, { limit: 5, cursor: first.next! });
+      const second = await reports.entries(companyId, { limit: 5, cursor: required(first.next) });
       expect(second.rows[0].id).toBeLessThan(first.rows[4].id + 1);
       expect(new Set([...first.rows, ...second.rows].map((r) => r.id)).size).toBe(10);
     });

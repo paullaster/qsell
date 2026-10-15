@@ -1,6 +1,7 @@
 import type { CallbackOutcome, PaymentProviderCode } from './types';
 
 import { has } from '@/lib/has';
+import { readText } from '@/lib/values';
 
 export interface CallbackStatusVerdict {
   /**
@@ -73,13 +74,13 @@ export function extractCallbackStatus(
     case 'pesapal_v3': {
       const text = body.payment_status_description ?? body.status ?? body.OrderNotificationType;
       if (text == null) return null;
-      const value = String(text);
+      const value = readText(text);
       return has(value) ? value : null;
     }
     case 'jenga_hq': {
       const text = body.status ?? body.transactionStatus ?? body.state;
       if (text == null) return null;
-      const value = String(text);
+      const value = readText(text);
       return has(value) ? value : null;
     }
     default:

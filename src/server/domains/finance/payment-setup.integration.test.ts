@@ -3,25 +3,33 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 
 import { has } from '@/lib/has';
+import { nth, required } from '@/lib/values';
+import type { DrizzleDb } from '@/server/db/drizzle/client';
+import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
+import type { FinanceServices } from './index';
+import type { PaymentService } from '@/server/domains/payments/service';
+import type { FinanceContext } from './errors';
+import type { BranchRow } from '@/server/db/drizzle/schema';
+import type { PaymentMethodInput } from './receivables/payment-method-service';
 
 /** Needs a Postgres built from the migrations:  TEST_DATABASE_URL=postgres://... pnpm test */
 const url = process.env.TEST_DATABASE_URL;
 
 describe.skipIf(!has(url))('payment providers and methods (database)', () => {
-  type Db = import('@/server/db/drizzle/client').DrizzleDb;
+  type Db = DrizzleDb;
   let db: Db;
-  let schema: typeof import('@/server/db/drizzle/schema');
-  let fin: import('./index').FinanceServices;
-  let payments: import('@/server/domains/payments/service').PaymentService;
+  let schema: typeof mod_server_db_drizzle_schema;
+  let fin: FinanceServices;
+  let payments: PaymentService;
   let companyId: string;
-  let ctx: import('./errors').FinanceContext;
+  let ctx: FinanceContext;
   let manual: string;
   let glNairobi: string;
   let glMombasa: string;
   let glDefault: string;
-  let branchA: import('@/server/db/drizzle/schema').BranchRow;
-  let branchB: import('@/server/db/drizzle/schema').BranchRow;
-  let branchC: import('@/server/db/drizzle/schema').BranchRow;
+  let branchA: BranchRow;
+  let branchB: BranchRow;
+  let branchC: BranchRow;
   const run = randomUUID().slice(0, 6).toUpperCase();
   let seq = 0;
   const origin = { surface: 'test', action: 'run' };
@@ -37,7 +45,7 @@ describe.skipIf(!has(url))('payment providers and methods (database)', () => {
     }
   };
   const bank = async (label: string) => await fin.bankAccounts.create(ctx, { code: `PS${run}${++seq}`, name: `Setup ${label}`, kind: 'bank', currency: 'KES' });
-  const method = (providerId: string, bankId: string, o: Partial<import('./receivables/payment-method-service').PaymentMethodInput> = {}) =>
+  const method = (providerId: string, bankId: string, o: Partial<PaymentMethodInput> = {}) =>
     fin.paymentMethods.create(ctx, { code: `PM${run}${++seq}`, name: `Method ${seq}`, kind: 'mobile_money', balancingBankAccountId: bankId, providerId, glAccountId: glDefault, ...o });
   const customer = async () => {
     const [c] = await db.insert(schema.customers).values({ companyId, number: `PC${run}${++seq}`, name: `Setup customer ${seq}`, phone: `0733${String(100000 + seq)}`, accountType: 'cash', creditLimit: '0' }).returning();
@@ -65,10 +73,10 @@ describe.skipIf(!has(url))('payment providers and methods (database)', () => {
     ctx = { companyId, actor: { type: 'user', id: 'tester' }, origin };
     await fin.setup.applyTemplate(ctx, 'kenya', { fiscalYearStart: '2026-01-01' });
     const accts = await fin.setup.listAccounts(companyId);
-    glDefault = accts.find((a) => a.no === '1120')!.id;
-    glNairobi = accts.find((a) => a.no === '1125')!.id;
-    glMombasa = accts.find((a) => a.no === '1130')!.id;
-    manual = (await fin.paymentMethods.providerChoices(companyId)).find((p) => p.isSystem)!.id;
+    glDefault = required(accts.find((a) => a.no === '1120')).id;
+    glNairobi = required(accts.find((a) => a.no === '1125')).id;
+    glMombasa = required(accts.find((a) => a.no === '1130')).id;
+    manual = required((await fin.paymentMethods.providerChoices(companyId)).find((p) => p.isSystem)).id;
     [branchA, branchB, branchC] = await Promise.all(['A', 'B', 'C'].map(async (n) => (await db.insert(schema.branches).values({ companyId, code: `PB${run}${n}`, name: `Branch ${n}`, isDefault: false }).returning())[0]));
   });
 
@@ -89,7 +97,7 @@ describe.skipIf(!has(url))('payment providers and methods (database)', () => {
       await fin.paymentProviders.setCredentials(ctx, id, { consumerKey: 'KEY-123456789', consumerSecret: 'SECRET-123456789', passkey: 'PASS-123456789', shortcode: '174379' });
       const [row] = await db.select().from(schema.paymentProviderConfigs).where(eq(schema.paymentProviderConfigs.id, id));
       expect(JSON.stringify(row.credentialsEncrypted)).not.toContain('SECRET-123456789');
-      const view = (await fin.paymentProviders.list(companyId, null)).find((p) => p.id === id)!;
+      const view = required((await fin.paymentProviders.list(companyId, null)).find((p) => p.id === id));
       expect(view.hasCredentials).toBe(true);
       expect(JSON.stringify(view.maskedCredentials)).not.toContain('SECRET-123456789');
       expect(await codeOf(fin.paymentProviders.setEnabled(ctx, id, true))).toBe('NOT_TESTED');
@@ -126,14 +134,14 @@ describe.skipIf(!has(url))('payment providers and methods (database)', () => {
 
     it('each method has its own branch, bank account, G/L account and number under the one provider', async () => {
       const list = await fin.paymentMethods.list(companyId);
-      const n = list.find((m) => m.method.id === nairobi.id)!;
-      const m = list.find((x) => x.method.id === mombasa.id)!;
+      const n = required(list.find((m) => m.method.id === nairobi.id));
+      const m = required(list.find((x) => x.method.id === mombasa.id));
       expect([n.method.providerId, m.method.providerId]).toEqual([providerId, providerId]);
       expect([n.branchName, m.branchName]).toEqual(['Branch A', 'Branch B']);
       expect([n.glNo, m.glNo]).toEqual(['1125', '1130']);
       expect([n.method.channelNumber, m.method.channelNumber]).toEqual(['123456', '987654']);
       expect(n.method.balancingBankAccountId).not.toBe(m.method.balancingBankAccountId);
-      expect((await fin.paymentProviders.list(companyId, null)).find((p) => p.id === providerId)!.methods.map((x) => x.id).sort()).toEqual([nairobi.id, mombasa.id].sort());
+      expect(required((await fin.paymentProviders.list(companyId, null)).find((p) => p.id === providerId)).methods.map((x) => x.id).sort()).toEqual([nairobi.id, mombasa.id].sort());
     });
 
     it('a receipt takes its branch from the method and the bank ledger records the method\'s G/L account', async () => {
@@ -174,7 +182,7 @@ describe.skipIf(!has(url))('payment providers and methods (database)', () => {
   describe('a charge from a statement line', () => {
     it('asks which G/L account when the bank account\'s methods post to several, and uses the chosen one', async () => {
       const b = await bank('charge');
-      await db.update(schema.bankAccounts).set({ feeGlAccountId: (await fin.setup.listAccounts(companyId)).find((a) => a.category === 'expense' && a.type === 'posting')!.id }).where(eq(schema.bankAccounts.id, b.id));
+      await db.update(schema.bankAccounts).set({ feeGlAccountId: required((await fin.setup.listAccounts(companyId)).find((a) => a.category === 'expense' && a.type === 'posting')).id }).where(eq(schema.bankAccounts.id, b.id));
       await method(manual, b.id, { kind: 'bank_transfer', glAccountId: glNairobi });
       await method(manual, b.id, { kind: 'bank_deposit', glAccountId: glMombasa });
       const day = (n: number) => new Date(Date.parse(`${today}T00:00:00Z`) - n * 86400000).toISOString().slice(0, 10).split('-').reverse().join('/');
@@ -196,11 +204,11 @@ describe.skipIf(!has(url))('payment providers and methods (database)', () => {
 
   describe('what checkout offers a branch', () => {
     let providerId: string;
-    let legacyBranch: import('@/server/db/drizzle/schema').BranchRow;
+    let legacyBranch: BranchRow;
     beforeAll(async () => {
       providerId = (await fin.paymentProviders.create(ctx, { providerCode: 'jenga_hq', displayName: 'Equity Checkout' })).id;
       await db.update(schema.paymentProviderConfigs).set({ isEnabled: true }).where(eq(schema.paymentProviderConfigs.id, providerId));
-      legacyBranch = (await db.insert(schema.branches).values({ companyId, code: `PL${run}`, name: 'Legacy branch', isDefault: false }).returning())[0]!;
+      legacyBranch = nth((await db.insert(schema.branches).values({ companyId, code: `PL${run}`, name: 'Legacy branch', isDefault: false }).returning()), 0);
     });
 
     it('a branch gets its own method\'s provider; a method for every branch serves the rest; first by sort order', async () => {
@@ -210,8 +218,8 @@ describe.skipIf(!has(url))('payment providers and methods (database)', () => {
       const all = await method(providerId, b2.id, { branchId: null, kind: 'gateway', sortOrder: 10 });
       const forA = await payments.resolveCheckout(branchA, 'jenga_hq');
       expect(forA).toMatchObject({ methodId: own.id });
-      expect(forA!.provider.id).toBe(providerId);
-      expect((await payments.resolveCheckout(branchB, 'jenga_hq'))!.methodId).toBe(all.id);
+      expect(required(forA).provider.id).toBe(providerId);
+      expect(required((await payments.resolveCheckout(branchB, 'jenga_hq'))).methodId).toBe(all.id);
       expect((await payments.listEnabledProviders(branchA)).map((p) => p.id)).toEqual(expect.arrayContaining([providerId]));
     });
 
@@ -227,26 +235,26 @@ describe.skipIf(!has(url))('payment providers and methods (database)', () => {
       const [legacy] = await db.insert(schema.paymentProviderConfigs).values({ companyId, branchId: legacyBranch.id, providerCode: 'kcb_buni', displayName: `KCB legacy ${run}`, isEnabled: true, apiBaseUrl: 'https://x.test', credentialsEncrypted: { v: 1 } as never }).returning();
       const found = await payments.resolveCheckout(legacyBranch, 'kcb_buni');
       expect(found).toMatchObject({ methodId: null });
-      expect(found!.provider.id).toBe(legacy.id);
+      expect(required(found).provider.id).toBe(legacy.id);
       expect(await payments.resolveCheckout(branchA, 'kcb_buni')).toBeNull();
       expect((await payments.listEnabledProviders(legacyBranch)).map((p) => p.id)).toContain(legacy.id);
       // once a method exists for the branch it goes through that provider's method
       const m = await method(legacy.id, (await bank('co3')).id, { branchId: legacyBranch.id, kind: 'gateway' });
-      expect((await payments.resolveCheckout(legacyBranch, 'kcb_buni'))!.methodId).toBe(m.id);
+      expect(required((await payments.resolveCheckout(legacyBranch, 'kcb_buni'))).methodId).toBe(m.id);
     });
   });
 
   describe('once the books are live', () => {
     it('a receipt through a branch method posts to that method\'s G/L account, on that branch', async () => {
-      await fin.salesPosting.goLive(ctx, { offsetAccountId: (await fin.setup.listAccounts(companyId)).find((a) => a.no === '3100')!.id });
+      await fin.salesPosting.goLive(ctx, { offsetAccountId: required((await fin.setup.listAccounts(companyId)).find((a) => a.no === '3100')).id });
       const providerId = (await fin.paymentProviders.create(ctx, { providerCode: 'pesapal_v3', displayName: 'Pesapal Live' })).id;
       const m = await method(providerId, (await bank('live')).id, { branchId: branchB.id, glAccountId: glMombasa, kind: 'card' });
       const r = await receive(m.id, '750');
       const [rc] = await db.select().from(schema.customerReceipts).where(eq(schema.customerReceipts.id, r.id));
       expect(rc.branchId).toBe(branchB.id);
       const [entry] = await db.select().from(schema.bankLedgerEntries).where(eq(schema.bankLedgerEntries.documentId, r.id));
-      const lines = await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, entry.registerId!));
-      expect(lines.find((l) => Number(l.debit) === 750)!.accountId).toBe(glMombasa);
+      const lines = await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, required(entry.registerId)));
+      expect(required(lines.find((l) => Number(l.debit) === 750)).accountId).toBe(glMombasa);
       expect((await fin.salesPosting.reconciliation(companyId)).rows.map((x) => x.diffCents)).toEqual([0]);
     });
   });

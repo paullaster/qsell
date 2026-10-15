@@ -11,6 +11,7 @@ import { asKcbBuniCredentials, type KcbBuniCredentials } from '../types';
 import { extractPaymentReference } from '../payment-reference';
 
 import { has } from '@/lib/has';
+import { orElse, readText } from '@/lib/values';
 
 function formatPhoneKe(phone: string): string {
   let clean = phone.replace(/[^0-9]/g, '');
@@ -78,12 +79,12 @@ export class KcbBuniAdapter implements PaymentPort {
       const body = {
         phoneNumber: formatPhoneKe(input.customerPhone),
         amount: String(Math.round(input.amount)),
-        invoiceNumber: creds.invoiceNumber || input.orderNumber,
+        invoiceNumber: orElse(creds.invoiceNumber, input.orderNumber),
         sharedShortCode: creds.sharedShortCode !== false,
         orgShortCode: creds.orgShortCode,
-        orgPassKey: creds.orgPassKey || '',
+        orgPassKey: orElse(creds.orgPassKey, ''),
         callbackUrl: input.callbackUrl,
-        transactionDescription: (input.description || `Order ${input.orderNumber}`).slice(0, 50),
+        transactionDescription: (orElse(input.description, `Order ${input.orderNumber}`)).slice(0, 50),
       };
 
       const res = await fetch(`${apiBaseUrl}${path}`, {
@@ -98,20 +99,16 @@ export class KcbBuniAdapter implements PaymentPort {
       if (!res.ok) {
         return {
           status: 'failed',
-          errorMessage: String(
-            raw.message || raw.responseDescription || `KCB Buni STK failed (${res.status})`,
-          ),
+          errorMessage: readText(raw.message, raw.responseDescription, `KCB Buni STK failed (${res.status})`),
           rawResponse: raw,
         };
       }
 
       return {
         status: 'pending',
-        providerReference: String(
-          raw.checkoutRequestID || raw.CheckoutRequestID || raw.conversationId || input.attemptId,
-        ),
-        externalReference: String(raw.merchantRequestID || raw.MerchantRequestID || ''),
-        customerMessage: String(raw.customerMessage || raw.responseDescription || 'STK push sent'),
+        providerReference: readText(raw.checkoutRequestID, raw.CheckoutRequestID, raw.conversationId, input.attemptId),
+        externalReference: readText(raw.merchantRequestID, raw.MerchantRequestID, ''),
+        customerMessage: readText(raw.customerMessage, raw.responseDescription, 'STK push sent'),
         rawResponse: raw,
       };
     } catch (err) {
@@ -130,17 +127,13 @@ export class KcbBuniAdapter implements PaymentPort {
     const resultCode = Number(
       nested?.ResultCode ?? body.ResultCode ?? body.resultCode ?? body.statusCode ?? -1,
     );
-    const desc = String(
-      nested?.ResultDesc || body.ResultDesc || body.resultDesc || body.message || '',
-    );
+    const desc = readText(nested?.ResultDesc, body.ResultDesc, body.resultDesc, body.message, '');
 
     if (resultCode === 0 || String(body.status).toLowerCase() === 'success') {
       return {
         ok: true,
         status: 'successful',
-        providerReference: String(
-          nested?.CheckoutRequestID || body.CheckoutRequestID || body.checkoutRequestID || '',
-        ),
+        providerReference: readText(nested?.CheckoutRequestID, body.CheckoutRequestID, body.checkoutRequestID, ''),
         receiptNumber: extractPaymentReference('kcb_buni', body) ?? undefined,
         raw: body,
       };
@@ -149,10 +142,10 @@ export class KcbBuniAdapter implements PaymentPort {
       return {
         ok: true,
         status: 'failed',
-        errorMessage: desc || `ResultCode ${resultCode}`,
+        errorMessage: orElse(desc, `ResultCode ${resultCode}`),
         raw: body,
       };
     }
-    return { ok: true, status: 'pending', raw: body, errorMessage: desc || undefined };
+    return { ok: true, status: 'pending', raw: body, errorMessage: orElse(desc, undefined) };
   }
 }

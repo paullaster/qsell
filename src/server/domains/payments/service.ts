@@ -18,6 +18,7 @@ import { InventoryReservationService } from '@/server/domains/inventory/reservat
 import type { PaymentProvider } from '@/types/index';
 
 import { has } from '@/lib/has';
+import { readText } from '@/lib/values';
 
 function headersToRecord(headers: Headers): Record<string, string> {
   const out: Record<string, string> = {};
@@ -221,7 +222,7 @@ export class PaymentService implements AttemptSettler {
           description: params.description,
         },
         credentials,
-        (config.settings) || {},
+        config.settings ?? {},
         config.apiBaseUrl,
       );
     }
@@ -289,9 +290,9 @@ export class PaymentService implements AttemptSettler {
     const r = op.response;
     return {
       status: 'pending',
-      providerReference: String(r.CheckoutRequestID ?? op.conversationId ?? ''),
-      externalReference: String(r.MerchantRequestID ?? ''),
-      customerMessage: String(r.CustomerMessage ?? 'STK push sent'),
+      providerReference: readText(r.CheckoutRequestID, op.conversationId, ''),
+      externalReference: readText(r.MerchantRequestID, ''),
+      customerMessage: readText(r.CustomerMessage, 'STK push sent'),
       rawResponse: r,
     };
   }

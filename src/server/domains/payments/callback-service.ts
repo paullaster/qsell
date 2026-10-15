@@ -83,7 +83,7 @@ export class PaymentCallbackService {
     }
 
     const config = await this.configs.getById(attempt.providerConfigId);
-    const credentials = decryptCredentials(config?.credentialsEncrypted) || {};
+    const credentials = decryptCredentials(config?.credentialsEncrypted) ?? {};
     const adapter = this.registry.resolve(event.providerCode);
 
     let result: CallbackResult;
@@ -96,7 +96,7 @@ export class PaymentCallbackService {
           rawBodyText: event.rawBody ? JSON.stringify(event.rawBody) : '',
         },
         credentials,
-        (config?.settings!) || {},
+        config?.settings! ?? {},
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Classification failed';

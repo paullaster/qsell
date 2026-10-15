@@ -2,20 +2,29 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { and, eq, sql } from 'drizzle-orm';
 
 import { has } from '@/lib/has';
+import { required } from '@/lib/values';
+import type { DrizzleDb } from '@/server/db/drizzle/client';
+import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
+import type { FinanceServices } from './index';
+import type { AppContainer } from '@/server/di/container';
+import type { CustomerMasterService } from '@/server/domains/customers/master-service';
+import type * as mod_errors from './errors';
+import type { FinanceContext } from './errors';
+import type { PolicyInput } from './receivables/credit-policy-service';
 
 /** Needs a Postgres built from the migrations:  TEST_DATABASE_URL=postgres://... pnpm test */
 const url = process.env.TEST_DATABASE_URL;
 
 describe.skipIf(!has(url))('customer wallet (database)', () => {
-  type Db = import('@/server/db/drizzle/client').DrizzleDb;
+  type Db = DrizzleDb;
   let db: Db;
-  let schema: typeof import('@/server/db/drizzle/schema');
-  let fin: import('./index').FinanceServices;
-  let container: import('@/server/di/container').AppContainer;
-  let master: import('@/server/domains/customers/master-service').CustomerMasterService;
-  let FinanceError: typeof import('./errors').FinanceError;
+  let schema: typeof mod_server_db_drizzle_schema;
+  let fin: FinanceServices;
+  let container: AppContainer;
+  let master: CustomerMasterService;
+  let FinanceError: typeof mod_errors.FinanceError;
   let companyId: string;
-  let ctx: import('./errors').FinanceContext;
+  let ctx: FinanceContext;
   const acct: Record<string, string> = {};
   let seq = 0;
   const run = Math.random().toString(36).slice(2, 7);
@@ -32,7 +41,7 @@ describe.skipIf(!has(url))('customer wallet (database)', () => {
       return `OTHER:${(e as Error).message}`;
     }
   };
-  const policy = (o: Partial<import('./receivables/credit-policy-service').PolicyInput> = {}) =>
+  const policy = (o: Partial<PolicyInput> = {}) =>
     fin.creditPolicy.save(ctx, { groupCode: null, walletEnabled: true, allowDeposits: true, overpaymentDefault: 'ask', autoApply: 'never', creditNoteExcess: 'ask', refundsEnabled: true, walletCashOut: false, maxBalance: null, label: 'Wallet', ...o });
   async function customer() {
     seq += 1;
@@ -45,7 +54,7 @@ describe.skipIf(!has(url))('customer wallet (database)', () => {
     return id;
   }
   async function receipt(c: { id: string }, amount: string, o: { deposit?: boolean; allocate?: 'oldest_first' | 'none' } = {}) {
-    const cash = (await fin.paymentMethods.list(companyId)).find((m) => m.method.code === 'CASH')!.method.id;
+    const cash = required((await fin.paymentMethods.list(companyId)).find((m) => m.method.code === 'CASH')).method.id;
     const r = await fin.receipts.create(ctx, { customerId: c.id, paymentMethodId: cash, amount, paymentDate: today, isDeposit: o.deposit });
     await fin.receipts.post(ctx, r.id, { allocate: o.allocate ?? 'oldest_first' });
     return r.id;
@@ -83,7 +92,7 @@ describe.skipIf(!has(url))('customer wallet (database)', () => {
     const c = await customer();
     const r = await receipt(c, '500');
     expect(await codeOf(fin.wallets.moveReceiptToWallet(ctx, r))).toBe('WALLET_OFF');
-    expect((await fin.receipts.detail(companyId, r))!.unappliedCents).toBe(50000);
+    expect(required((await fin.receipts.detail(companyId, r))).unappliedCents).toBe(50000);
     expect(await wallet(c)).toBeUndefined();
   });
 
@@ -92,14 +101,14 @@ describe.skipIf(!has(url))('customer wallet (database)', () => {
     const c = await customer();
     const inv = await invoice(c, 300);
     const r = await receipt(c, '1000'); // 300 to the invoice, 700 over
-    expect((await fin.receipts.detail(companyId, r))!.unappliedCents).toBe(70000);
+    expect(required((await fin.receipts.detail(companyId, r))).unappliedCents).toBe(70000);
     await fin.wallets.moveReceiptToWallet(ctx, r, { cents: 20000 });
     expect(await bal(c)).toBe('200.00');
-    expect((await fin.receipts.detail(companyId, r))!.unappliedCents).toBe(50000);
+    expect(required((await fin.receipts.detail(companyId, r))).unappliedCents).toBe(50000);
     expect(await codeOf(fin.wallets.moveReceiptToWallet(ctx, r, { cents: 60000 }))).toBe('NOTHING_TO_MOVE');
     await fin.wallets.moveReceiptToWallet(ctx, r);
     expect(await bal(c)).toBe('700.00');
-    expect((await fin.receipts.detail(companyId, r))!.unappliedCents).toBe(0);
+    expect(required((await fin.receipts.detail(companyId, r))).unappliedCents).toBe(0);
     expect(await entries(c)).toEqual([['overpayment', '200.00'], ['overpayment', '500.00']]);
     expect(await remaining(inv)).toBe('0.00');
     expect(await fin.customerLedger.drift(companyId)).toEqual([]);
@@ -115,7 +124,7 @@ describe.skipIf(!has(url))('customer wallet (database)', () => {
     const r = await receipt(c, '2500', { deposit: true });
     expect(await bal(c)).toBe('2500.00');
     expect(await entries(c)).toEqual([['deposit', '2500.00']]);
-    expect((await fin.receipts.detail(companyId, r))!.unappliedCents).toBe(0);
+    expect(required((await fin.receipts.detail(companyId, r))).unappliedCents).toBe(0);
     const bank = await db.select().from(schema.bankLedgerEntries).where(eq(schema.bankLedgerEntries.documentId, r));
     expect(bank.map((b) => b.amount)).toEqual(['2500.0000']);
   });
@@ -129,8 +138,8 @@ describe.skipIf(!has(url))('customer wallet (database)', () => {
     await fin.wallets.setFrozen(ctx, c.id, 'KES', true, 'dispute');
     const r2 = await receipt(c, '50');
     expect(await bal(c)).toBe('300.00');
-    expect((await fin.receipts.detail(companyId, r2))!.unappliedCents).toBe(5000);
-    expect((await fin.receipts.detail(companyId, r2))!.events.map((e) => e.event)).toContain('wallet_move_skipped');
+    expect(required((await fin.receipts.detail(companyId, r2))).unappliedCents).toBe(5000);
+    expect(required((await fin.receipts.detail(companyId, r2))).events.map((e) => e.event)).toContain('wallet_move_skipped');
     await policy();
   });
 
@@ -235,7 +244,7 @@ describe.skipIf(!has(url))('customer wallet (database)', () => {
     expect(await remaining(inv)).toBe('700.00');
     await fin.receipts.reverse(ctx, r, { code: 'DATA_ENTRY_ERROR' });
     expect(await bal(c)).toBe('0.00');
-    expect((await fin.receipts.detail(companyId, r))!.receipt.status).toBe('reversed');
+    expect(required((await fin.receipts.detail(companyId, r))).receipt.status).toBe('reversed');
     expect(await fin.customerLedger.drift(companyId)).toEqual([]);
   });
 
@@ -277,7 +286,7 @@ describe.skipIf(!has(url))('customer wallet (database)', () => {
       await fin.salesPosting.processDue();
       const [post] = await db.select().from(schema.financeSalesPostings).where(and(eq(schema.financeSalesPostings.kind, 'wallet_use'), eq(schema.financeSalesPostings.subjectId, String(out.walletEntryId))));
       expect(post).toMatchObject({ status: 'posted' });
-      const useLines = await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, post.registerId!));
+      const useLines = await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, required(post.registerId)));
       expect(useLines.map((l) => [no.get(l.accountId), Number(l.debit), Number(l.credit)]).sort()).toEqual([['1210', 0, 500], ['2210', 500, 0]]);
       expect((await fin.wallets.reconciliation(companyId))[0].diffCents).toBe(0);
 
@@ -311,7 +320,7 @@ describe.skipIf(!has(url))('customer wallet (database)', () => {
       await fin.salesPosting.processDue();
       const [row] = await db.select().from(schema.financeSalesPostings).where(and(eq(schema.financeSalesPostings.kind, 'cash_sale'), eq(schema.financeSalesPostings.subjectId, id)));
       expect(row).toMatchObject({ status: 'posted' });
-      const lines = await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, row.registerId!));
+      const lines = await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, required(row.registerId)));
       const no = new Map(Object.entries(acct).map(([n, aid]) => [aid, n]));
       expect(lines.map((l) => [no.get(l.accountId), Number(l.debit), Number(l.credit)]).sort()).toEqual([['2210', 1000, 0], ['4100', 0, 1000]]);
       expect((await fin.wallets.reconciliation(companyId))[0].diffCents).toBe(0);

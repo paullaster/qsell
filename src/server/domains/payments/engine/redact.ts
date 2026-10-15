@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
 import { has } from '@/lib/has';
+import { readText } from '@/lib/values';
 
 /**
  * What may be written to a log. Secrets never are, phone numbers are masked, and the secret
@@ -33,7 +34,7 @@ export function redactDeep<T>(value: T): T {
       return Object.fromEntries(
         Object.entries(rec).map(([k, x]) => {
           if (SECRET_KEY.test(k)) return [k, '[REDACTED]'];
-          if (named && k === 'Value' && x != null) return [k, maskPhone(String(x))];
+          if (named && k === 'Value' && x != null) return [k, maskPhone(readText(x))];
           return [k, walk(x, k)];
         }),
       );
