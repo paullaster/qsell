@@ -25,10 +25,11 @@ export const editor = (page: Page): Locator =>
 /** Opens the editor for a new quote, retrying while the page is still hydrating. */
 export async function openNewQuote(page: Page): Promise<Locator> {
   await gotoAdmin(page, '/admin/quotes', 'Sales Quotes');
+  // The editor fetches its data before it draws, so give each press time: pressing again while it loads only starts it over.
   await expect(async () => {
     await page.getByRole('button', { name: /New quote/ }).click();
-    await expect(editor(page)).toBeVisible({ timeout: 3000 });
-  }).toPass({ timeout: 90_000 });
+    await expect(editor(page)).toBeVisible({ timeout: 20_000 });
+  }).toPass({ timeout: 100_000, intervals: [1000, 5000] });
   return editor(page);
 }
 
