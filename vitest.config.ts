@@ -12,6 +12,9 @@ export default defineConfig({
     // Integration tests need a real Postgres built from the migrations:
     //   TEST_DATABASE_URL=postgres://... pnpm test
     // They are skipped (not failed) when it is not set.
+    // The auth module refuses to load without a secret; tests get one that is good for nothing else.
+    // A real value in the environment still wins.
+    env: { AUTH_SECRET: process.env.AUTH_SECRET ?? 'test-only-auth-secret-not-for-deployment' },
     testTimeout: 30_000,
     hookTimeout: 60_000,
     fileParallelism: false,
