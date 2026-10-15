@@ -1,85 +1,65 @@
 'use client';
 
-import { useEffect, useId, useState } from 'react';
-import { listReasonCodesAction } from '@/server/kernel/numbering/actions';
+import { useId, useState } from 'react';
+import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { Field, fieldClass } from '@/components/ui/screen-kit';
+import type { Choice } from '@/lib/payment-options';
 
 export interface ReasonValue {
   code: string;
   text: string;
 }
 
-const fieldClass =
-  'min-h-10 w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong focus:border-indigo-500 focus:outline-none';
+/** The lists of reasons a change can be explained by, one per screen family (each behind its own permission). */
+export type ReasonSource = 'numbering-reasons' | 'approval-config-reasons' | 'approval-reasons' | 'pricing-reasons';
 
 /**
- * "Why are you doing this?" — a reason from the controlled list plus a comment, which some
- * reasons require. Used before any change that must be explainable later.
+ * "Why are you doing this?": a reason from the controlled list plus a comment, which some reasons
+ * require. The list is read from the server when the field is opened, a page at a time, and searched
+ * there. Used before any change that must be explainable later.
  */
-type ReasonLoader = () => Promise<
-  | { ok: true; data: { code: string; description: string; requiresComment: boolean }[] }
-  | { ok: false; error: string }
->;
+/** The reason to show: none when the code is empty, the one picked when it matches, else the bare code. */
+function shownChoice(code: string, picked: Choice | null): Choice | null {
+  if (code === '') return null;
+  return picked?.id === code ? picked : { id: code, label: code };
+}
 
 export function ReasonField({
   value,
   onChange,
-  load = listReasonCodesAction,
+  source = 'numbering-reasons',
   showComment = true,
 }: {
   value: ReasonValue;
   onChange: (next: ReasonValue) => void;
-  /** Where the reasons come from; defaults to the numbering screens' permission. */
-  load?: ReasonLoader;
+  /** Which list of reasons to offer. */
+  source?: ReasonSource;
   /** Hide the comment box when the screen already asks for one. */
   showComment?: boolean;
 }) {
   const uid = useId();
-  const [reasons, setReasons] = useState<
-    { code: string; description: string; requiresComment: boolean }[]
-  >([]);
-
-  useEffect(() => {
-    void load().then((r) => {
-      if (r.ok) setReasons(r.data);
-    });
-  }, [load]);
-
-  const chosen = reasons.find((r) => r.code === value.code);
+  const [choice, setChoice] = useState<Choice | null>(value.code === '' ? null : { id: value.code, label: value.code });
+  // A reason cleared from outside (a form reset) clears the field too.
+  const shown = shownChoice(value.code, choice);
+  const commentRequired = shown?.meta?.requiresComment === '1';
 
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-      <div>
-        <label htmlFor={`${uid}-r`} className="mb-1 block text-xs font-semibold text-fg">
-          Reason
-        </label>
-        <select
-          id={`${uid}-r`}
-          value={value.code}
-          onChange={(e) => onChange({ ...value, code: e.target.value })}
-          className={fieldClass}
-          required
-        >
-          <option value="">Choose a reason…</option>
-          {reasons.map((r) => (
-            <option key={r.code} value={r.code}>
-              {r.description}
-            </option>
-          ))}
-        </select>
-      </div>
+      <ChoicePicker
+        label="Reason"
+        source={source}
+        choice={shown}
+        onChoice={(next) => {
+          setChoice(next);
+          onChange({ ...value, code: next?.id ?? '' });
+        }}
+        placeholder="Choose a reason…"
+        required
+      />
       {showComment ? (
-        <div>
-          <label htmlFor={`${uid}-c`} className="mb-1 block text-xs font-semibold text-fg">
-            Comment{chosen?.requiresComment ? ' (required)' : ''}
-          </label>
-          <input
-            id={`${uid}-c`}
-            value={value.text}
-            onChange={(e) => onChange({ ...value, text: e.target.value })}
-            className={fieldClass}
-            required={chosen?.requiresComment}
-          />
-        </div>
+        <Field id={`${uid}-c`} label={`Comment${commentRequired ? ' (required)' : ''}`}>
+          <input id={`${uid}-c`} value={value.text} onChange={(e) => onChange({ ...value, text: e.target.value })} className={fieldClass} required={commentRequired} />
+        </Field>
       ) : null}
     </div>
   );

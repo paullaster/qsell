@@ -1,9 +1,8 @@
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { and, desc, eq, like, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 
-import { has } from '@/lib/has';
-import { nth, readText, required } from '@/lib/values';
+import { has, nth, readText, required } from '@/lib/values';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
 import type { FinanceServices } from '@/server/domains/finance';
@@ -32,9 +31,9 @@ class FakePlatform {
   }
   fetch: typeof fetch = async (input, init) => {
     const u = new URL(readText(input));
-    const body = init?.body ? (JSON.parse(readText(init.body)) as Record<string, unknown>) : {};
+    const body = init?.body === undefined || init.body === null ? {} : (JSON.parse(readText(init.body)) as Record<string, unknown>);
     const headers = Object.fromEntries(Object.entries((init?.headers ?? {}) as Record<string, string>));
-    this.calls.push({ method: String(init?.method ?? 'GET'), path: u.pathname, body, headers });
+    this.calls.push({ method: init?.method ?? 'GET', path: u.pathname, body, headers });
     if (this.down) throw new Error('connect ECONNREFUSED');
     const h = this.handlers.get(u.pathname);
     const r = h ? await h(body, u) : { status: 404, json: { errorCode: '404.001.01', errorMessage: `No handler for ${u.pathname}` } };
@@ -61,23 +60,22 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
   let seq = 0;
   const rc = () => `${run}${String(++seq).padStart(4, '0')}`.slice(0, 10);
   const ctx = () => ({ companyId, actor: { type: 'user' as const, id: 'tester' }, origin: { surface: 'test', action: 'run' } });
-  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' });
+
+  const credentialsFor = (code: string, initiator: boolean): Record<string, string> => {
+    if (code === 'mpesa_daraja') return { consumerKey: 'ck', consumerSecret: 'cs', shortcode: '174379', passkey: 'pk-secret-value', ...(initiator ? { initiatorName: 'apiuser', initiatorPassword: 'Init#Pass1', certificate } : {}) };
+    if (code === 'pesapal_v3') return { consumerKey: 'ck', consumerSecret: 'cs' };
+    return { merchantCode: 'm', consumerSecret: 's', apiKey: 'k', privateKeyPem: 'p' };
+  };
 
   async function provider(opts: { code?: 'mpesa_daraja' | 'pesapal_v3' | 'jenga_hq'; settings?: Record<string, unknown>; initiator?: boolean; channel?: string; autoAllocate?: boolean } = {}) {
     const code = opts.code ?? 'mpesa_daraja';
     // One method serves a branch's checkout for a service at a time (the first by sort order): earlier ones are stood down.
     await db.update(schema.paymentMethods).set({ enabled: false }).where(and(eq(schema.paymentMethods.companyId, companyId), eq(schema.paymentMethods.branchId, branch.id)));
     const { id } = await fin.paymentProviders.create(ctx(), { providerCode: code, displayName: `${code} ${run} ${++seq}` });
-    await fin.paymentProviders.setCredentials(ctx(), id, code === 'mpesa_daraja'
-      ? { consumerKey: 'ck', consumerSecret: 'cs', shortcode: '174379', passkey: 'pk-secret-value', ...(opts.initiator === true ? { initiatorName: 'apiuser', initiatorPassword: 'Init#Pass1', certificate } : {}) }
-      : code === 'pesapal_v3'
-        ? { consumerKey: 'ck', consumerSecret: 'cs' }
-        : { merchantCode: 'm', consumerSecret: 's', apiKey: 'k', privateKeyPem: 'p' });
+    await fin.paymentProviders.setCredentials(ctx(), id, credentialsFor(code, opts.initiator === true));
     const settings = { ...(opts.settings ?? {}), ...(opts.autoAllocate === true ? { c2b: { autoAllocate: 'by_customer_number' } } : {}) };
     await db.update(schema.paymentProviderConfigs).set({ isEnabled: true, lastTestOk: true, settings, apiBaseUrl: 'https://sandbox.safaricom.co.ke' }).where(eq(schema.paymentProviderConfigs.id, id));
-    const accts = await fin.setup.listAccounts(companyId);
     const m = await fin.paymentMethods.create(ctx(), { code: `PE${run}${++seq}`, name: `Method ${seq}`, kind: 'mobile_money', balancingBankAccountId: bankId, providerId: id, glAccountId: glMobile, branchId: branch.id, channelKind: 'paybill', channelNumber: opts.channel ?? '174379', requiresReference: false });
-    accts;
     return { providerId: id, methodId: m.id };
   }
   const setSettings = (providerId: string, settings: Record<string, unknown>) => db.update(schema.paymentProviderConfigs).set({ settings }).where(eq(schema.paymentProviderConfigs.id, providerId));
@@ -130,10 +128,10 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       consumer: new FinanceC2bConsumer(db, fin.receipts),
       fetchImpl: fake.fetch,
       jobs: {
-        verifyAttempt: async (id, s) => void jobCalls.push(['attempt', id, s]),
-        verifyTransaction: async (id, s) => void jobCalls.push(['transaction', id, s]),
-        processEvent: async (id) => void jobCalls.push(['event', id, 0]),
-        sendOperation: async (id, s) => void jobCalls.push(['send', id, s]),
+        verifyAttempt: (id, s) => Promise.resolve(void jobCalls.push(['attempt', id, s])),
+        verifyTransaction: (id, s) => Promise.resolve(void jobCalls.push(['transaction', id, s])),
+        processEvent: (id) => Promise.resolve(void jobCalls.push(['event', id, 0])),
+        sendOperation: (id, s) => Promise.resolve(void jobCalls.push(['send', id, s])),
       },
     });
     const { publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -393,7 +391,7 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       const a = await startPayment(p, { amount: 500 });
       await callback(a.attempt, stkBody(a.attempt, { amount: 5 }));
       await engine.verification.verifyAttempt(a.attempt.id);
-      expect(await engine.confirmAttemptManually({ attemptId: a.attempt.id, reference: 'FORCE00001', reason: 'The customer says they paid, trust me', userId: 'u1' })).toMatchObject({ ok: false, error: expect.stringMatching(/contradict/) });
+      expect(await engine.confirmAttemptManually({ attemptId: a.attempt.id, reference: 'FORCE00001', reason: 'The customer says they paid, trust me', userId: 'u1' })).toMatchObject({ ok: false, error: expect.stringMatching(/contradict/) as unknown });
       expect(await engine.failAttemptManually({ attemptId: a.attempt.id, reason: 'x', userId: 'u1' })).toMatchObject({ ok: false });
       expect(await engine.failAttemptManually({ attemptId: a.attempt.id, reason: 'The customer confirmed they never paid', userId: 'u1' })).toEqual({ ok: true });
       expect((await reload(a.attempt.id)).status).toBe('failed');
@@ -721,8 +719,8 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
   });
 
   describe('money out', () => {
-    let boss: string;
-    let requester: string;
+    let boss: string | undefined;
+    let requester: string | undefined;
     const approver = async (label: string) => (await db.insert(schema.users).values({ email: `${label}-${randomUUID()}@payout.test`, passwordHash: 'x', name: label, role: 'manager' }).returning())[0].id;
     async function payoutWorkflow() {
       const { getContainer } = await import('@/server/di/container');
@@ -742,7 +740,7 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       for (let i = 0; i < 5; i++) {
         const entry = (await c.approvals.forDocument(companyId, 'provider_operation', id)).flatMap((x) => x.entries).find((e) => e.status === 'open');
         if (!entry) return;
-        await withAfterCommit(db, (tx) => c.approvals.approve(entry.id, boss, null, tx));
+        await withAfterCommit(db, (tx) => c.approvals.approve(entry.id, required(boss), null, tx));
       }
     };
     const b2cCalls = () => fake.calls.filter((c) => c.path === '/mpesa/b2c/v3/paymentrequest');
@@ -782,7 +780,7 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       await expect(ask(p, { input: { phone: '0712345678', amount: '800', remarks: 'Refund' } })).rejects.toMatchObject({ code: 'DAILY_LIMIT' });
       const { withAfterCommit } = await import('@/server/kernel/after-commit');
       const entry = required((await c.approvals.forDocument(companyId, 'provider_operation', r.op.id)).flatMap((x) => x.entries).find((e) => e.status === 'open'));
-      await withAfterCommit(db, (tx) => c.approvals.approve(entry.id, boss, null, tx));
+      await withAfterCommit(db, (tx) => c.approvals.approve(entry.id, required(boss), null, tx));
       const queued = (await engine.ops.get(r.op.id));
       expect(queued.status).toBe('queued');
       await engine.sweep();
@@ -805,7 +803,6 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       const on = (code: string) => [code, { enabled: true }] as const;
       const p = await provider({ initiator: true, settings: { operations: Object.fromEntries([on('reversal'), on('b2b_paybill'), on('b2b_buygoods'), on('tax_remittance')]) } });
       const { c } = await payoutWorkflow();
-      const { withAfterCommit } = await import('@/server/kernel/after-commit');
       fake.on('/oauth/v1/generate', () => ({ json: { access_token: 'tok', expires_in: '3599' } }));
       for (const path of ['/mpesa/reversal/v1/request', '/mpesa/b2b/v1/paymentrequest', '/mpesa/b2b/v1/remittax']) {
         fake.on(path, () => ({ json: { ConversationID: `AG_${path.length}`, OriginatorConversationID: 'x', ResponseCode: '0', ResponseDescription: 'Accept the service request successfully.' } }));
@@ -844,8 +841,6 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       fake.on('/oauth/v1/generate', () => ({ json: { access_token: 'tok', expires_in: '3599' } }));
       fake.on('/v1/ussdpush/get-msisdn', (b) => ({ json: { code: '0', status: 'USSD Initiated Successfully', requestRefID: b.RequestRefID } }));
       const start = async () => (await engine.daraja.start({ providerId: p.providerId, methodId: p.methodId, operation: 'b2b_express', input: { primaryShortCode: '555550', amount: '70', paymentRef: 'INV-9', partnerName: 'Shop' } })).op;
-      const secret = (await db.select().from(schema.paymentProviderConfigs).where(eq(schema.paymentProviderConfigs.id, p.providerId)))[0];
-      secret;
       const hook = async (op: { originatorId: string | null }, body: Record<string, unknown>) => {
         const sentBody = required(fake.calls.filter((x) => x.path === '/v1/ussdpush/get-msisdn').at(-1)).body as { callbackUrl: string };
         const token = required(sentBody.callbackUrl.split('/').pop());
@@ -866,8 +861,8 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       const p = await provider({ initiator: true, settings: { operations: { b2c: { enabled: true } } } });
       const { c } = await payoutWorkflow();
       fake.on('/oauth/v1/generate', () => ({ json: { access_token: 'tok', expires_in: '3599' } }));
-      fake.on('/mpesa/b2c/v3/paymentrequest', (b) => ({ json: { ConversationID: `AG_${b.Amount}`, OriginatorConversationID: b.OriginatorConversationID, ResponseCode: '0', ResponseDescription: 'Accept the service request successfully.' } }));
-      fake.on('/mpesa/transactionstatus/v1/query', (b) => ({ json: { ConversationID: 'AG_ST', OriginatorConversationID: 'x', ResponseCode: '0', ResponseDescription: 'Accept the service request successfully.' } }));
+      fake.on('/mpesa/b2c/v3/paymentrequest', (b) => ({ json: { ConversationID: `AG_${readText(b.Amount)}`, OriginatorConversationID: b.OriginatorConversationID, ResponseCode: '0', ResponseDescription: 'Accept the service request successfully.' } }));
+      fake.on('/mpesa/transactionstatus/v1/query', () => ({ json: { ConversationID: 'AG_ST', OriginatorConversationID: 'x', ResponseCode: '0', ResponseDescription: 'Accept the service request successfully.' } }));
       const resultUrl = () => (required(fake.calls.filter((x) => x.path === '/mpesa/b2c/v3/paymentrequest').at(-1)).body as { ResultURL: string }).ResultURL;
       const secret = () => required(resultUrl().split('/').pop());
       const run = async (amount: string, receipt: string, statusAmount: number) => {
@@ -895,7 +890,7 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       const r = await ask(p);
       const { withAfterCommit } = await import('@/server/kernel/after-commit');
       const entry = required((await c.approvals.forDocument(companyId, 'provider_operation', r.op.id)).flatMap((x) => x.entries).find((e) => e.status === 'open'));
-      await withAfterCommit(db, (tx) => c.approvals.reject(entry.id, boss, { reasonCode: 'OTHER', comment: 'No' }, tx));
+      await withAfterCommit(db, (tx) => c.approvals.reject(entry.id, required(boss), { reasonCode: 'OTHER', comment: 'No' }, tx));
       expect((await engine.ops.get(r.op.id)).status).toBe('rejected');
       await engine.sweep();
       expect(b2cCalls().length).toBe(before);
@@ -959,4 +954,3 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
   });
 });
 
-like;

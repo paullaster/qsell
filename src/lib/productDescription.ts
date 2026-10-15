@@ -1,6 +1,5 @@
 
-import { has } from '@/lib/has';
-import { orElse } from '@/lib/values';
+import { has, orElse } from '@/lib/values';
 /**
  * Product descriptions are stored as a single string.
  * Structured sections use Markdown AT2 headings:
@@ -54,7 +53,7 @@ export function parseProductDescription(raw: string | null | undefined): Product
   const sections: ProductDescriptionSection[] = [];
 
   // Leading content before the first ## becomes an untitled intro block.
-  const firstIndex = matches[0]!.index ?? 0;
+  const firstIndex = matches[0]?.index ?? 0;
   if (firstIndex > 0) {
     const intro = text.slice(0, firstIndex).trim();
     if (has(intro)) {
@@ -62,11 +61,10 @@ export function parseProductDescription(raw: string | null | undefined): Product
     }
   }
 
-  for (let i = 0; i < matches.length; i += 1) {
-    const match = matches[i]!;
+  for (const [i, match] of matches.entries()) {
     const heading = (match[1] ?? '').trim();
-    const start = (match.index ?? 0) + match[0].length;
-    const end = i + 1 < matches.length ? (matches[i + 1]!.index ?? text.length) : text.length;
+    const start = match.index + match[0].length;
+    const end = matches[i + 1]?.index ?? text.length;
     const body = text.slice(start, end).trim();
     sections.push(createEmptyDescriptionSection({ heading, body }));
   }

@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useId, useState } from 'react';
-import { listPricingReasonsAction } from '@/server/domains/pricing/actions';
 import type { DiscountLookups } from '@/server/domains/pricing/discount-actions';
 import {
   rebateStatementAction,
@@ -90,7 +89,7 @@ export function RebateDetailClient({
     setMessage(null);
     const r = await rebateStatusAction(p.id, action, reason);
     setBusy(false);
-    if (!r.ok) return setMessage({ kind: 'error', text: r.error });
+    if (!r.ok) { setMessage({ kind: 'error', text: r.error }); return; }
     setMessage({
       kind: 'ok',
       text:
@@ -114,7 +113,7 @@ export function RebateDetailClient({
       reason,
     );
     setBusy(false);
-    if (!r.ok) return setMessage({ kind: 'error', text: r.error });
+    if (!r.ok) { setMessage({ kind: 'error', text: r.error }); return; }
     setMessage({
       kind: 'ok',
       text: r.data.pending
@@ -194,7 +193,7 @@ export function RebateDetailClient({
                 ? 'Pause this programme? Orders stop counting; what is counted so far is kept.'
                 : 'Retire this programme for good? Totals stay readable and payable.'}
           </p>
-          <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
@@ -338,7 +337,7 @@ export function RebateDetailClient({
               Credit <strong>{paying.name}</strong> with {money(paying.amount)} for{' '}
               {statement?.label}? It reduces what they owe, oldest invoice first.
             </p>
-            <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+            <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"

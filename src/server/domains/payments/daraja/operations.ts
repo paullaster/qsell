@@ -7,13 +7,12 @@ import type { PaymentJobs } from '../engine/jobs';
 import type { ProviderOperationService } from '../engine/operation-service';
 import type { PlatformContext } from '../engine/types';
 import { DarajaClient, darajaFailure } from './client';
-import { DARAJA_OPERATIONS, type DarajaOperationCode } from './catalog';
+import { type DarajaOperationCode, operationInfo } from './catalog';
 import { darajaSettings, OPERATION_DEFAULTS } from './config';
 import { parseAsyncResult, receiptFromParams, resultParameters } from './parsers';
 import { darajaTimestamp, looksLikeReceipt, securityCredential, stkPassword, toMsisdn } from './security';
 
-import { has } from '@/lib/has';
-import { emptyToNull, firstFilled, orElse, readText } from '@/lib/values';
+import { asRecord, emptyToNull, firstFilled, has, orElse, readText, toList } from '@/lib/values';
 
 export { DARAJA_OPERATIONS, MONEY_OUT_OPERATIONS, validateOperationInput, type DarajaOperationCode, type OperationInfo, type FieldSpec } from './catalog';
 
@@ -61,7 +60,17 @@ export function acceptance(operation: DarajaOperationCode, body: Record<string, 
       return text('rescode') === '200' ? { ok: true } : { ok: false, code: orElse(text('rescode'), 'REFUSED'), reason: (firstFilled(text('resmsg'), text('Status_Message')) ?? 'Bill Manager did not accept the request.') };
     case 'qr_generate':
       return has(text('QRCode')) ? { ok: true } : refused(text('ResponseCode'), 'No QR code came back.');
-    default:
+    case 'account_balance':
+    case 'b2b_buygoods':
+    case 'b2b_paybill':
+    case 'b2c':
+    case 'c2b_register_urls':
+    case 'c2b_simulate':
+    case 'reversal':
+    case 'stk_push':
+    case 'stk_query':
+    case 'tax_remittance':
+    case 'transaction_status':
       return text('ResponseCode') === '0' ? { ok: true } : refused(text('ResponseCode'), 'Safaricom did not accept the request.');
   }
 }
@@ -80,6 +89,12 @@ export function callbackUrl(ctx: PlatformContext, secret: string, kind: 'c2b-con
  * the same id however many times it takes, and finishes them from the platform's answer. Whatever
  * happens, the operation row says where it stands and why.
  */
+/** Where an operation stands once its reply is read: waiting for a check, done, or failed. */
+function finalStatus(awaitingCheck: boolean, ok: boolean): 'accepted' | 'succeeded' | 'failed' {
+  if (awaitingCheck) return 'accepted';
+  return ok ? 'succeeded' : 'failed';
+}
+
 export class DarajaOperations {
   constructor(
     private readonly db: DrizzleDb,
@@ -96,8 +111,8 @@ export class DarajaOperations {
 
   /** Checks that the operation may run, writes it down, and sends it. Returns the row as it stands after the first send. */
   async start(input: StartOperation): Promise<{ op: ProviderOperationRow; created: boolean }> {
-    const info = DARAJA_OPERATIONS[input.operation];
-    if (!info) throw new OperationRefused('UNKNOWN_OPERATION', `"${input.operation}" is not something this provider can do.`);
+    const info = operationInfo(input.operation);
+    if (info === undefined) throw new OperationRefused('UNKNOWN_OPERATION', `"${input.operation}" is not something this provider can do.`);
     const ctx = await this.contexts.forProvider(input.providerId);
     if (ctx.provider.providerCode !== 'mpesa_daraja') throw new OperationRefused('WRONG_PROVIDER', 'That provider is not an M-Pesa (Daraja) connection.');
     const settings = darajaSettings(ctx.settings);
@@ -111,7 +126,7 @@ export class DarajaOperations {
     if (info.moneyOut) throw new OperationRefused('USE_REQUEST', `${info.label} moves money out, so it is requested and approved first, not run directly.`);
     if (info.needsInitiator) this.initiator(ctx); // refuse now, in words, not after it is written down
     const method = await this.method(input.methodId);
-    if (has(input.methodId) && (!method || method.providerId !== input.providerId)) throw new OperationRefused('METHOD_MISMATCH', 'That payment method does not go through this provider.');
+    if (has(input.methodId) && (method?.providerId !== input.providerId)) throw new OperationRefused('METHOD_MISMATCH', 'That payment method does not go through this provider.');
 
     const originatorId = randomUUID();
     const { op, created } = await this.ops.create({
@@ -164,7 +179,7 @@ export class DarajaOperations {
     await this.ops.update(op.id, { status: 'submitted', request: (built.body ?? {}) as Record<string, unknown> });
     const res = await client.request(op.operation, built.method ?? 'POST', built.path, built.body, { operationId: op.id });
     const failure = darajaFailure(res);
-    const info = DARAJA_OPERATIONS[op.operation as DarajaOperationCode];
+    const info = operationInfo(op.operation);
     if (failure) {
       // Safaricom already has this exact request: it is as good as accepted, and its answer will come.
       if (failure.duplicate) {
@@ -174,7 +189,7 @@ export class DarajaOperations {
       const fresh = (await this.ops.get(op.id));
       // Sending a customer prompt twice would ask them to pay twice, and we cannot tell whether an unanswered one arrived.
       // Only B2C is de-duplicated by Safaricom (on the originator id). Any other payout sent twice could pay twice.
-      const unsafeToRepeat = op.operation === 'stk_push' || ((info?.moneyOut) && op.operation !== 'b2c');
+      const unsafeToRepeat = op.operation === 'stk_push' || (info?.moneyOut === true && op.operation !== 'b2c');
       if (failure.retryable && !unsafeToRepeat && fresh.attempts < RESEND_SECONDS.length + 1) {
         const wait = RESEND_SECONDS[Math.min(fresh.attempts - 1, RESEND_SECONDS.length - 1)];
         await this.ops.update(op.id, { status: 'queued', failureCode: failure.code, failureReason: failure.message, response: res.json ?? {}, nextAttemptAt: new Date(Date.now() + wait * 1000) });
@@ -190,7 +205,7 @@ export class DarajaOperations {
       await this.ops.update(op.id, { status: 'failed', failureCode: verdict.code, failureReason: verdict.reason, response: body });
       return;
     }
-    if (info.async) {
+    if (info?.async === true) {
       await this.ops.update(op.id, {
         status: 'accepted',
         response: body,
@@ -210,7 +225,7 @@ export class DarajaOperations {
     if (op.operation === 'pull_register') {
       const code = readText(body.ResponseStatus, body.ResponseCode, '');
       if (code === '1000' || code === '1001') {
-        const settings = { ...(ctx.settings ?? {}), pull: { ...((ctx.settings?.pull as Record<string, unknown>) ?? {}), registered: true, nominatedNumber: readText((op.input).nominatedNumber, '') } };
+        const settings = { ...ctx.settings, pull: { ...asRecord(ctx.settings.pull), registered: true, nominatedNumber: readText((op.input).nominatedNumber, '') } };
         await this.db.update(paymentProviderConfigs).set({ settings, updatedAt: new Date() }).where(eq(paymentProviderConfigs.id, op.providerId));
       } else {
         await this.ops.update(op.id, { status: 'failed', failureCode: orElse(code, 'REGISTER_FAILED'), failureReason: readText(body.ResponseDescription, 'Registration was refused.'), response: body });
@@ -284,15 +299,15 @@ export class DarajaOperations {
       case 'transaction_status': {
         const init = this.initiator(ctx);
         const secret = await this.contexts.callbackSecret(ctx.provider.id);
-        if (!input.transactionId && !input.originalConversationId) throw new OperationRefused('NO_TRANSACTION', 'Give the M-Pesa code (or the original conversation id) to check.');
+        if (!has(readText(input.transactionId)) && !has(readText(input.originalConversationId))) throw new OperationRefused('NO_TRANSACTION', 'Give the M-Pesa code (or the original conversation id) to check.');
         return {
           path: '/mpesa/transactionstatus/v1/query',
           body: {
             Initiator: init.name,
             SecurityCredential: init.credential,
             CommandID: 'TransactionStatusQuery',
-            ...(input.transactionId ? { TransactionID: readText(input.transactionId) } : {}),
-            ...(input.originalConversationId ? { OriginalConversationID: readText(input.originalConversationId) } : {}),
+            ...(has(readText(input.transactionId)) ? { TransactionID: readText(input.transactionId) } : {}),
+            ...(has(readText(input.originalConversationId)) ? { OriginalConversationID: readText(input.originalConversationId) } : {}),
             PartyA: shortcode,
             IdentifierType: '4',
             ResultURL: callbackUrl(ctx, secret, 'result'),
@@ -351,7 +366,7 @@ export class DarajaOperations {
             PartyA: shortcode,
             PartyB: String(input.partyB),
             AccountReference: readText(input.accountReference, '').slice(0, 13),
-            ...(input.requester ? { Requester: toMsisdn(readText(input.requester)) ?? undefined } : {}),
+            ...(has(readText(input.requester)) ? { Requester: toMsisdn(readText(input.requester)) ?? undefined } : {}),
             Remarks: readText(input.remarks, 'Payment').slice(0, 100),
             QueueTimeOutURL: callbackUrl(ctx, secret, 'timeout'),
             ResultURL: callbackUrl(ctx, secret, 'result'),
@@ -383,7 +398,7 @@ export class DarajaOperations {
       case 'bill_cancel':
         return { path: '/v1/billmanager-invoice/cancel-single-invoice', body: { externalReference: String(input.externalReference) } };
       case 'bill_cancel_bulk':
-        return { path: '/v1/billmanager-invoice/cancel-bulk-invoices', body: Array.isArray(input.references) ? input.references.map((externalReference) => ({ externalReference })) : [] };
+        return { path: '/v1/billmanager-invoice/cancel-bulk-invoices', body: toList(input.references).map((externalReference) => ({ externalReference: readText(externalReference) })) };
       case 'bill_acknowledge':
         return { path: '/v1/billmanager-invoice/reconciliation', body: { paymentDate: String(input.paymentDate), paidAmount: String(input.paidAmount), accountReference: String(input.accountReference), transactionId: String(input.transactionId), phoneNumber: readText(input.phoneNumber, ''), fullName: readText(input.fullName, ''), invoiceName: readText(input.invoiceName, ''), externalReference: readText(input.externalReference, '') } };
       default:
@@ -406,7 +421,7 @@ export class DarajaOperations {
     }
     const ok = result.resultCode === '0';
     const params = result.params;
-    const moneyOut = DARAJA_OPERATIONS[op.operation as DarajaOperationCode]?.moneyOut;
+    const moneyOut = operationInfo(op.operation)?.moneyOut === true;
     // An answer is only trusted as "money moved" when it names the transaction. Without that it is held for a person.
     if (ok && moneyOut && !looksLikeReceipt(receiptFromParams(params) ?? result.transactionId ?? '')) {
       await this.ops.update(op.id, { status: 'in_doubt', conversationId: op.conversationId ?? result.conversationId, result: { resultCode: result.resultCode, resultDesc: result.resultDesc, params }, failureCode: 'NO_RECEIPT', failureReason: 'Safaricom said the payout succeeded but gave no transaction number. Check it on the M-Pesa statement before doing anything else.', nextAttemptAt: null });
@@ -415,7 +430,7 @@ export class DarajaOperations {
     // A payout's "success" is only the callback's word until Safaricom's own record of the transaction agrees (settled by the engine).
     const awaitingCheck = ok && moneyOut;
     await this.ops.update(op.id, {
-      status: awaitingCheck ? 'accepted' : ok ? 'succeeded' : 'failed',
+      status: finalStatus(awaitingCheck, ok),
       ...(awaitingCheck ? { nextAttemptAt: new Date(Date.now() + 15 * 60_000) } : {}),
       conversationId: op.conversationId ?? result.conversationId,
       platformReference: receiptFromParams(params) ?? result.transactionId,

@@ -4,9 +4,7 @@ import { useCallback, useEffect, useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   changeGroupMembersAction,
-  customerGroupMembersAction,
-  listPricingReasonsAction,
-  saveCustomerGroupAction,
+  customerGroupMembersAction, saveCustomerGroupAction,
   searchCustomersAction,
   type CustomerGroupView,
 } from '@/server/domains/pricing/actions';
@@ -150,7 +148,7 @@ export function GroupsClient({
               In use
             </label>
           </div>
-          <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
           <div className="flex flex-wrap gap-2">
             <button type="submit" className={primaryButtonClass} disabled={busy || !reason.code}>
               {busy ? 'Saving…' : 'Save group'}
@@ -233,10 +231,10 @@ function Members({
 }) {
   const uid = useId();
   const [members, setMembers] = useState<
-    Array<{ id: string; number: string; name: string; email: string | null }>
+    { id: string; number: string; name: string; email: string | null }[]
   >([]);
   const [q, setQ] = useState('');
-  const [found, setFound] = useState<Array<{ id: string; number: string; name: string }>>([]);
+  const [found, setFound] = useState<{ id: string; number: string; name: string }[]>([]);
   const [reason, setReason] = useState<ReasonValue>({ code: '', text: '' });
   const [message, setMessage] = useState<Message>(null);
   const [busy, setBusy] = useState(false);
@@ -249,7 +247,7 @@ function Members({
   useEffect(() => void load(), [load]);
 
   useEffect(() => {
-    if (q.trim().length < 2) return setFound([]);
+    if (q.trim().length < 2) { setFound([]); return; }
     let live = true;
     const t = setTimeout(() => {
       void searchCustomersAction(q).then((r) => live && r.ok && setFound(r.data));
@@ -261,7 +259,7 @@ function Members({
   }, [q]);
 
   const change = async (change: { add?: string[]; remove?: string[] }) => {
-    if (!reason.code) return setMessage({ kind: 'error', text: 'Choose a reason first.' });
+    if (!reason.code) { setMessage({ kind: 'error', text: 'Choose a reason first.' }); return; }
     setBusy(true);
     const r = await changeGroupMembersAction(group.id, change, reason);
     setBusy(false);
@@ -308,7 +306,7 @@ function Members({
               </ul>
             ) : null}
           </div>
-          <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
         </>
       ) : null}
       <Notice message={message} />

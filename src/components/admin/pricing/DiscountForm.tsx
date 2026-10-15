@@ -8,7 +8,7 @@ import {
   type DiscountLookups,
   type DiscountRuleDto,
 } from '@/server/domains/pricing/discount-actions';
-import { listPricingReasonsAction, type PricingLookups } from '@/server/domains/pricing/actions';
+import { type PricingLookups } from '@/server/domains/pricing/actions';
 import {
   summariseDiscount,
   type DiscountRuleInput,
@@ -63,7 +63,7 @@ const ORDER_REWARDS = [
   { value: 'amount', label: 'Amount off the order' },
 ];
 
-const KINDS: Array<{ value: DiscountKind; label: string }> = [
+const KINDS: { value: DiscountKind; label: string }[] = [
   { value: 'line', label: 'A line (each product on its own)' },
   { value: 'order', label: 'The whole order (what the lines come to)' },
   { value: 'mix', label: 'A product deal (buy and get, mix and match, bundle)' },
@@ -86,7 +86,7 @@ interface State {
   stacking: Stacking;
   rewardType: string;
   rewardValue: string;
-  tiers: Array<{ from: string; value: string }>;
+  tiers: { from: string; value: string }[];
   target: TargetState;
   deal: DealState;
   scopes: Scopes;
@@ -801,7 +801,7 @@ export function DiscountForm({
         </p>
       </fieldset>
 
-      <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+      <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
       <Notice message={message} />
       <div className="flex flex-wrap gap-2">
         <button

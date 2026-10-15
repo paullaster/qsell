@@ -1,17 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { pick } from './support/quotes';
-
-async function open(page: Page, url: string, heading: string | RegExp): Promise<void> {
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    await page.goto(url);
-    try {
-      await expect(page.getByRole('heading', { name: heading, level: 2 }).first()).toBeVisible({ timeout: 30_000 });
-      return;
-    } catch (error) {
-      if (attempt === 3) throw error;
-    }
-  }
-}
+import { open, noHorizontalScroll } from './support/page';
 
 /** Says which column is which, choosing each from the file's own headings. */
 async function chooseColumns(page: Page): Promise<void> {
@@ -20,9 +9,6 @@ async function chooseColumns(page: Page): Promise<void> {
   await pick(page, page.getByRole('combobox', { name: 'Money in (credit)' }), 'Paid', /^Paid In$/);
   await pick(page, page.getByRole('combobox', { name: 'Money out (debit)' }), 'Withdr', /^Withdrawn$/);
 }
-
-const noHorizontalScroll = async (page: Page) =>
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
 test.describe('bank accounts', () => {
   test('an account is added with pickers for its kind and its fee account', async ({ page }, testInfo) => {

@@ -9,7 +9,7 @@ import { PostingError } from '@/server/domains/finance/engine';
 import { FinanceError } from '@/server/domains/finance/errors';
 import type { CreditNoteReason } from './reasons';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 /** `forbidden` lets the screen hide itself for people without the permission. */
 export type CreditNoteActionResult<T> =
@@ -96,23 +96,26 @@ export async function listOrderCreditNotesAction(
     const notes = await c.creditNotes.listForSource('order', orderId);
     const ids = notes.map((n) => n.id);
     const companyId = notes[0]?.companyId;
-    const [acc, returns] = has(companyId) ? await Promise.all([c.finance.creditNoteAccounting.summaries(companyId, ids), c.returns.forCreditNotes(ids)]) : [new Map(), new Map()];
+    const [acc, returns] = await Promise.all([
+      has(companyId) ? c.finance.creditNoteAccounting.summaries(companyId, ids) : Promise.resolve(undefined),
+      has(companyId) ? c.returns.forCreditNotes(ids) : Promise.resolve(undefined),
+    ]);
     return notes.map((n) => {
-      const a = acc.get(n.id);
-      const r = returns.get(n.id);
+      const a = acc?.get(n.id);
+      const r = returns?.get(n.id);
       return {
         ...toView(n),
-        ...(a
+        ...(a !== undefined
           ? {
               accounting: {
                 applied: Number(a.applied),
                 excessOpen: a.openCents / 100,
-                toWallet: a.resolutions.filter((x: { kind: string }) => x.kind === 'wallet').reduce((s: number, x: { amount: string }) => s + Number(x.amount), 0),
-                toInvoices: a.resolutions.filter((x: { kind: string }) => x.kind === 'applied').reduce((s: number, x: { amount: string }) => s + Number(x.amount), 0),
+                toWallet: a.resolutions.filter((x) => x.kind === 'wallet').reduce((sum, x) => sum + Number(x.amount), 0),
+                toInvoices: a.resolutions.filter((x) => x.kind === 'applied').reduce((sum, x) => sum + Number(x.amount), 0),
               },
             }
           : {}),
-        ...(r ? { returnReceipt: { id: r.id, number: r.number, status: r.status } } : {}),
+        ...(r !== undefined ? { returnReceipt: { id: r.id, number: r.number, status: r.status } } : {}),
       };
     });
   });

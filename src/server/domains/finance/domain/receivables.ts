@@ -1,5 +1,5 @@
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 /**
  * Receivables rules that need no database: money in whole cents, who a payment is applied to,
  * ageing, and whether a receipt satisfies its payment method. Customer ledger amounts are
@@ -136,11 +136,11 @@ export function ageOpenItems(
 ): { buckets: AgeBucket[]; creditsCents: number; creditsCount: number } {
   const edges = [...bounds].sort((a, b) => a - b);
   const buckets: AgeBucket[] = [{ label: 'Not yet due', fromDays: Number.NEGATIVE_INFINITY, toDays: 0, cents: 0, count: 0 }];
-  for (let i = 0; i < edges.length; i++) {
-    const from = edges[i] + 1;
-    const to = i + 1 < edges.length ? edges[i + 1] : null;
+  for (const [i, edge] of edges.entries()) {
+    const from = edge + 1;
+    const to = edges[i + 1] ?? null;
     buckets.push({
-      label: to === null ? `Over ${edges[i]} days` : `${from}–${to} days`,
+      label: to === null ? `Over ${String(edge)} days` : `${String(from)}–${String(to)} days`,
       fromDays: from,
       toDays: to,
       cents: 0,

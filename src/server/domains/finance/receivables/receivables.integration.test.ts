@@ -1,8 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { and, eq, sql } from 'drizzle-orm';
 
-import { has } from '@/lib/has';
-import { required } from '@/lib/values';
+import { has, required } from '@/lib/values';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
 import type { FinanceServices } from '../index';

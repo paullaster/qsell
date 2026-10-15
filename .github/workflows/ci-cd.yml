@@ -61,6 +61,7 @@ jobs:
         run: pnpm test
         env:
           TEST_DATABASE_URL: postgresql://qsell:ci-only-password@localhost:5432/qsell
+          AUTH_SECRET: ci-only-auth-secret-not-for-deployment
       - name: Verify media storage adapters
         # Runs the Cloudinary adapter against a local fake: retries, timeouts, signed private
         # links and the "private upload must not land public" safety check. No credentials needed.

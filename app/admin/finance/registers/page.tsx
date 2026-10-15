@@ -1,16 +1,12 @@
 import { registersAction } from '@/server/domains/finance/actions';
 import { RegistersClient } from '@/components/admin/finance/RegistersClient';
-import { FinanceGate } from '@/components/admin/finance/gate';
-import { LoadFailed } from '@/components/admin/finance/ui';
+import { FinancePage } from '@/components/admin/finance/gate';
 
-export default async function AdminRegistersPage() {
+export default function Page() {
+  const view = registersAction();
   return (
-    <FinanceGate>
-      {async () => {
-        const res = await registersAction();
-        if (!res.ok) return <LoadFailed error={res.error} />;
-        return <RegistersClient registers={res.data.registers} canReverse={res.data.canReverse} />;
-      }}
-    </FinanceGate>
+    <FinancePage label="postings">
+      <RegistersClient viewPromise={view} />
+    </FinancePage>
   );
 }

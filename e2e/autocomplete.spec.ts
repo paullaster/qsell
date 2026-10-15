@@ -89,10 +89,13 @@ test.describe('the Autocomplete', () => {
       '/admin/quotes/templates/new',
     );
     await dialog.getByLabel('Customer name').fill('Typed before navigating');
-    await field.click();
-    await dialog.getByRole('link', { name: 'View all templates' }).click();
-
-    await expect(page).toHaveURL(/\/admin\/quotes\/templates$/);
+    // A click that lands before the page is wired up does nothing; trying again is what a person does.
+    await expect(async () => {
+      await field.click();
+      await dialog.getByRole('link', { name: 'View all templates' }).click({ timeout: 3000 });
+      // Once clicked, give the route time to build: clicking again would only cancel it.
+      await expect(page).toHaveURL(/\/admin\/quotes\/templates$/, { timeout: 25_000 });
+    }).toPass({ timeout: 100_000 });
     const modal = page.getByRole('dialog', { name: 'Quote templates' });
     await expect(modal).toBeVisible();
     await expect(editor(page)).toBeVisible();

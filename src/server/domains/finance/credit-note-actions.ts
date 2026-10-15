@@ -5,7 +5,7 @@ import { getContainer } from '@/server/di/container';
 import { postingPermissions, run } from './action-runner';
 import { fromCents, toCents } from './domain/receivables';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 const fin = () => getContainer().finance;
 const PATH = '/admin/finance/receivables/credit-note-excess';

@@ -10,7 +10,10 @@ const stub = vi.hoisted(() => async (file: string) => {
   const { readFileSync } = await import('node:fs');
   const source = readFileSync(`${process.cwd()}/src/server/domains/${file}.ts`, 'utf8');
   const names = [...source.matchAll(/export (?:async )?(?:function|const) (\w+)/g)].map((m) => m[1]);
-  return Object.fromEntries(names.map((name) => [name, () => new Promise<never>(() => undefined)]));
+  const never = (): Promise<never> => new Promise<never>(() => undefined);
+  const stub: Record<string, () => Promise<never>> = {};
+  for (const name of names) stub[name] = never;
+  return stub;
 });
 
 vi.mock('@/server/domains/finance/actions', () => stub('finance/actions'));
@@ -43,6 +46,16 @@ const pages: [string, () => Promise<{ default: (props: never) => unknown }>, Rec
   ['customer account', () => import('../../../../app/admin/finance/receivables/customer/[id]/page'), { params: pending() }],
   ['returns', () => import('../../../../app/admin/finance/receivables/returns/page'), {}],
   ['return', () => import('../../../../app/admin/finance/receivables/returns/[id]/page'), { params: pending() }],
+  ['chart of accounts', () => import('../../../../app/admin/finance/accounts/page'), {}],
+  ['ledger entries', () => import('../../../../app/admin/finance/entries/page'), {}],
+  ['journals', () => import('../../../../app/admin/finance/journals/page'), {}],
+  ['journal batch', () => import('../../../../app/admin/finance/journals/[id]/page'), { params: pending() }],
+  ['fiscal periods', () => import('../../../../app/admin/finance/periods/page'), {}],
+  ['posting setup', () => import('../../../../app/admin/finance/posting-setup/page'), {}],
+  ['ageing', () => import('../../../../app/admin/finance/receivables/ageing/page'), {}],
+  ['registers', () => import('../../../../app/admin/finance/registers/page'), {}],
+  ['sales posting', () => import('../../../../app/admin/finance/sales-posting/page'), {}],
+  ['trial balance', () => import('../../../../app/admin/finance/trial-balance/page'), {}],
   ['bank accounts', () => import('../../../../app/admin/finance/bank-accounts/page'), {}],
   ['bank statements', () => import('../../../../app/admin/finance/bank-statements/page'), {}],
   ['bank statement', () => import('../../../../app/admin/finance/bank-statements/[accountId]/page'), { params: pending() }],

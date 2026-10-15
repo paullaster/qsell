@@ -1,14 +1,12 @@
 import { getBindingsAction } from '@/server/kernel/numbering/actions';
 import { DocumentNumberingClient } from '@/components/admin/settings/numbering/DocumentNumberingClient';
+import { SettingsFrame } from '@/components/admin/settings/frame';
 
-export default async function AdminDocumentNumberingPage() {
-  const result = await getBindingsAction();
-  if (!result.ok) {
-    return (
-      <p role="alert" className="text-sm text-red-700">
-        {result.error}
-      </p>
-    );
-  }
-  return <DocumentNumberingClient view={result.data} />;
+export default function AdminDocumentNumberingPage() {
+  const view = getBindingsAction();
+  return (
+    <SettingsFrame label="document numbering">
+      <DocumentNumberingClient viewPromise={view} />
+    </SettingsFrame>
+  );
 }

@@ -1,60 +1,58 @@
 'use client';
 
 import Link from 'next/link';
-import { useId, useState } from 'react';
+import { use, useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  createWorkflowAction,
-  type Lookups,
-  type WorkflowSummary,
-} from '@/server/kernel/approvals/actions';
+import { createWorkflowAction, workflowsPageAction, type WorkflowSummary } from '@/server/kernel/approvals/actions';
 import { MODULE_LABELS } from '@/server/kernel/approvals/domain/triggers';
-import {
-  Chip,
-  EmptyState,
-  Notice,
-  PageHeader,
-  StatusChip,
-  buttonClass,
-  cardClass,
-  fieldClass,
-  labelClass,
-  primaryButtonClass,
-  type Message,
-} from './shared';
+import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { usePagedList } from '@/components/ui/usePagedList';
+import { attempt, LoadFailed } from '@/components/ui/screen-kit';
+import { newWorkflowPayload } from '@/lib/approval-forms';
+import type { Choice } from '@/lib/payment-options';
+import { Chip, EmptyState, Notice, PageHeader, StatusChip, buttonClass, cardClass, fieldClass, labelClass, primaryButtonClass, type Message } from './shared';
 
-export function WorkflowListClient({
-  workflows,
-  lookups,
-}: {
-  workflows: WorkflowSummary[];
-  lookups: Lookups;
-}) {
+type FirstPage = Extract<Awaited<ReturnType<typeof workflowsPageAction>>, { ok: true }>;
+
+export function WorkflowListClient({ firstPage }: { firstPage: ReturnType<typeof workflowsPageAction> }) {
+  const first = use(firstPage);
+  return first.ok ? <Workflows first={first} /> : <LoadFailed error={first.error} />;
+}
+
+function Workflows({ first }: { first: FirstPage }) {
   const uid = useId();
   const router = useRouter();
+  const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<Message>(null);
-  const [form, setForm] = useState({
-    code: '',
-    name: '',
-    trigger: lookups.triggers[0]!.code,
-    branchId: '',
-  });
-  const branchName = (id: string | null) =>
-    lookups.branches.find((b) => b.id === id)?.name ?? 'All branches';
+  const [form, setForm] = useState({ code: '', name: '' });
+  const [trigger, setTrigger] = useState<Choice | null>(null);
+  const [branch, setBranch] = useState<Choice | null>(null);
 
-  const create = async (e: React.FormEvent) => {
+  const list = usePagedList<WorkflowSummary, { query: string }>({
+    load: (filters, cursor) => workflowsPageAction({ query: filters.query, cursor }),
+    filters: { query: query.trim() },
+    initialPage: first,
+  });
+
+  const create = async (e: React.SyntheticEvent) => {
     e.preventDefault();
+    const checked = newWorkflowPayload(form, trigger?.id ?? null, branch?.id ?? null);
+    if (!checked.ok) {
+      setMessage({ kind: 'error', text: checked.error });
+      return;
+    }
     setBusy(true);
     setMessage(null);
-    const res = await createWorkflowAction({ ...form, branchId: form.branchId || null });
+    const res = await attempt(createWorkflowAction(checked.payload));
     setBusy(false);
-    if (!res.ok) return setMessage({ kind: 'error', text: res.error });
+    if (!res.ok) {
+      setMessage({ kind: 'error', text: res.error });
+      return;
+    }
     router.push(`/admin/settings/approvals/workflows/${res.data.id}`);
   };
-
-  const byModule = [...new Set(workflows.map((w) => w.module))];
 
   return (
     <div className="max-w-5xl space-y-6">
@@ -68,38 +66,25 @@ export function WorkflowListClient({
             <Link href="/admin/settings/approvals/switches" className={buttonClass}>
               Switches
             </Link>
-            <button
-              type="button"
-              className={primaryButtonClass}
-              aria-expanded={creating}
-              onClick={() => setCreating((v) => !v)}
-            >
+            <button type="button" className={primaryButtonClass} aria-expanded={creating} onClick={() => setCreating((v) => !v)}>
               New workflow
             </button>
           </>
         }
       >
-        A workflow says when a document needs approval and who approves it, step by step. When
-        several workflows match one document, all of them apply.
+        A workflow says when a document needs approval and who approves it, step by step. When several workflows match one document, all of them apply.
       </PageHeader>
 
       <Notice message={message} />
 
       {creating ? (
-        <form onSubmit={create} aria-label="New workflow" className={`${cardClass} space-y-4`}>
+        <form onSubmit={(e) => void create(e)} aria-label="New workflow" className={`${cardClass} space-y-4`}>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label htmlFor={`${uid}-n`} className={labelClass}>
                 Name
               </label>
-              <input
-                id={`${uid}-n`}
-                required
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                className={fieldClass}
-                placeholder="Large discounts"
-              />
+              <input id={`${uid}-n`} required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={fieldClass} placeholder="Large discounts" />
             </div>
             <div>
               <label htmlFor={`${uid}-c`} className={labelClass}>
@@ -116,41 +101,8 @@ export function WorkflowListClient({
                 title="Letters, numbers, - and _"
               />
             </div>
-            <div>
-              <label htmlFor={`${uid}-t`} className={labelClass}>
-                When is approval asked for?
-              </label>
-              <select
-                id={`${uid}-t`}
-                value={form.trigger}
-                onChange={(e) => setForm({ ...form, trigger: e.target.value })}
-                className={fieldClass}
-              >
-                {lookups.triggers.map((t) => (
-                  <option key={t.code} value={t.code}>
-                    {MODULE_LABELS[t.module] ?? t.module} · {t.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label htmlFor={`${uid}-b`} className={labelClass}>
-                Branch
-              </label>
-              <select
-                id={`${uid}-b`}
-                value={form.branchId}
-                onChange={(e) => setForm({ ...form, branchId: e.target.value })}
-                className={fieldClass}
-              >
-                <option value="">All branches</option>
-                {lookups.branches.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <ChoicePicker label="When is approval asked for?" source="approval-triggers" choice={trigger} onChoice={setTrigger} placeholder="Choose a situation…" required />
+            <ChoicePicker label="Branch" source="approval-branches" choice={branch} onChoice={setBranch} placeholder="All branches" />
           </div>
           <div className="flex gap-2">
             <button type="submit" className={primaryButtonClass} disabled={busy}>
@@ -163,50 +115,53 @@ export function WorkflowListClient({
         </form>
       ) : null}
 
-      {workflows.length === 0 ? (
-        <EmptyState title="No approval workflows yet">
-          Until you publish one, every document goes ahead without approval. Create a workflow to
-          require approval for large discounts, big orders, credit notes and more.
+      <div className="max-w-sm">
+        <label htmlFor={`${uid}-search`} className="sr-only">
+          Search workflows
+        </label>
+        <input id={`${uid}-search`} type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by name or code" className={fieldClass} autoComplete="off" />
+      </div>
+      {list.phase === 'error' ? (
+        <p role="alert" className="text-sm text-red-700">
+          {list.error}{' '}
+          <button type="button" className={buttonClass} onClick={list.retry}>
+            Try again
+          </button>
+        </p>
+      ) : null}
+      {list.phase === 'loading' ? (
+        <p role="status" className="text-sm text-fg-muted">
+          Loading…
+        </p>
+      ) : null}
+      {list.phase === 'idle' && list.rows.length === 0 ? (
+        <EmptyState title={query.trim() === '' ? 'No approval workflows yet' : `No workflow matches “${query.trim()}”`}>
+          {query.trim() === '' ? 'Until you publish one, every document goes ahead without approval. Create a workflow to require approval for large discounts, big orders, credit notes and more.' : undefined}
         </EmptyState>
-      ) : (
-        byModule.map((m) => (
-          <section key={m} aria-labelledby={`${uid}-${m}`} className="space-y-2">
-            <h3
-              id={`${uid}-${m}`}
-              className="text-xs font-bold tracking-wide text-fg-muted uppercase"
-            >
-              {MODULE_LABELS[m] ?? m}
-            </h3>
-            <ul className="space-y-2">
-              {workflows
-                .filter((w) => w.module === m)
-                .map((w) => (
-                  <li key={w.id}>
-                    <Link
-                      href={`/admin/settings/approvals/workflows/${w.id}`}
-                      className={`${cardClass} flex flex-wrap items-center justify-between gap-3 hover:border-indigo-500`}
-                    >
-                      <span className="min-w-0">
-                        <span className="block text-sm font-bold text-fg-strong">{w.name}</span>
-                        <span className="block text-xs text-fg-muted">
-                          <span className="font-mono">{w.code}</span> · {w.triggerLabel} ·{' '}
-                          {branchName(w.branchId)} · {w.stepCount} step
-                          {w.stepCount === 1 ? '' : 's'}
-                          {w.version ? ` · version ${w.version}` : ''}
-                        </span>
-                      </span>
-                      <span className="flex flex-wrap gap-1.5">
-                        {w.hasUnpublishedChanges ? (
-                          <Chip tone="amber">Unpublished changes</Chip>
-                        ) : null}
-                        <StatusChip status={w.status} />
-                      </span>
-                    </Link>
-                  </li>
-                ))}
-            </ul>
-          </section>
-        ))
+      ) : null}
+      <ul className="space-y-2" aria-label="Workflows">
+        {list.rows.map((w) => (
+          <li key={w.id}>
+            <Link href={`/admin/settings/approvals/workflows/${w.id}`} className={`${cardClass} flex flex-wrap items-center justify-between gap-3 hover:border-indigo-500`}>
+              <span className="min-w-0">
+                <span className="block text-sm font-bold text-fg-strong">{w.name}</span>
+                <span className="block text-xs text-fg-muted">
+                  <span className="font-mono">{w.code}</span> · {MODULE_LABELS[w.module] ?? w.module} · {w.triggerLabel} · {w.branchLabel ?? 'All branches'} · {w.stepCount} step{w.stepCount === 1 ? '' : 's'}
+                  {w.version === null || w.version === 0 ? '' : ` · version ${String(w.version)}`}
+                </span>
+              </span>
+              <span className="flex flex-wrap gap-1.5">
+                {w.hasUnpublishedChanges ? <Chip tone="amber">Unpublished changes</Chip> : null}
+                <StatusChip status={w.status} />
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+      {list.cursor === null ? null : (
+        <button type="button" className={buttonClass} onClick={list.loadMore} disabled={list.phase === 'more'}>
+          {list.phase === 'more' ? 'Loading…' : 'Show more workflows'}
+        </button>
       )}
     </div>
   );

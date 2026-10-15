@@ -1,4 +1,5 @@
 import { and, eq, asc } from 'drizzle-orm';
+import { afterCursor, matching, pageOf, PAGE_SIZE, searchText, type PageInput } from '@/server/domains/settings/paging';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   organizations,
@@ -19,6 +20,17 @@ export class BranchRepository {
       .from(branches)
       .where(eq(branches.companyId, companyId))
       .orderBy(asc(branches.name));
+  }
+
+  /** One page of the company's branches in name order, optionally narrowed by text. */
+  async pageByCompany(companyId: string, input: PageInput) {
+    const rows = await this.db
+      .select()
+      .from(branches)
+      .where(and(eq(branches.companyId, companyId), matching(searchText(input), [branches.name, branches.code]), afterCursor(input.cursor, branches.name, branches.id)))
+      .orderBy(asc(branches.name), asc(branches.id))
+      .limit(PAGE_SIZE + 1);
+    return pageOf(rows, PAGE_SIZE, (r) => ({ k: r.name, id: r.id }));
   }
 
   /** All active branches, unordered — used by the users & access module. */

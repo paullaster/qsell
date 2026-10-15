@@ -1,6 +1,7 @@
 'use client';
 
 import { parseProductDescription } from '@/lib/productDescription';
+import { has } from '@/lib/values';
 
 interface ProductDescriptionViewProps {
   description: string;
@@ -16,7 +17,7 @@ export function ProductDescriptionView({
   dense = false,
 }: ProductDescriptionViewProps) {
   const sections = parseProductDescription(description).filter(
-    (s) => s.heading.trim() || s.body.trim(),
+    (s) => has(s.heading.trim()) || has(s.body.trim()),
   );
 
   if (sections.length === 0) {
@@ -30,12 +31,12 @@ export function ProductDescriptionView({
         const body = section.body.trim();
         return (
           <div key={section.id} className={dense ? 'space-y-1' : 'space-y-1.5'}>
-            {heading ? (
+            {has(heading) ? (
               <h4 className={`font-semibold text-fg-strong ${dense ? 'text-[11px]' : 'text-xs'}`}>
                 {heading}
               </h4>
             ) : null}
-            {body ? (
+            {has(body) ? (
               <p
                 className={`leading-relaxed whitespace-pre-wrap text-fg ${
                   dense ? 'text-[11px]' : 'text-xs'

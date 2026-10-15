@@ -1,5 +1,7 @@
 import { isIsoDate } from './period';
 
+import { has } from '@/lib/values';
+
 export class TemplateError extends Error {
   constructor(
     readonly code: 'BRANCH_REQUIRED' | 'BAD_DATE',
@@ -58,7 +60,7 @@ export function renderTemplate(template: string, ctx: RenderContext): string {
         return mm;
       default: {
         const branch = ctx.branchCode?.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-        if (!branch) {
+        if (!has(branch)) {
           throw new TemplateError(
             'BRANCH_REQUIRED',
             'This series numbers by branch, but the document has none.',

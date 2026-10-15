@@ -10,8 +10,7 @@ import { darajaSettings, OPERATION_DEFAULTS } from './config';
 import { OperationRefused } from './operations';
 import { randomUUID } from 'node:crypto';
 
-import { has } from '@/lib/has';
-import { orElse, readText } from '@/lib/values';
+import { has, orElse, readText } from '@/lib/values';
 
 export interface PayoutRequest {
   companyId: string;
@@ -41,7 +40,7 @@ export class DarajaDisbursements {
   /** Writes the request down and sends it to the approval workflow. Nothing is sent to the platform yet. */
   async request(input: PayoutRequest): Promise<{ op: ProviderOperationRow; status: 'pending_approval' | 'queued' }> {
     const info = DARAJA_OPERATIONS[input.operation];
-    if (!info?.moneyOut) throw new OperationRefused('NOT_MONEY_OUT', `${input.operation} is not a payout.`);
+    if (!info.moneyOut) throw new OperationRefused('NOT_MONEY_OUT', `${input.operation} is not a payout.`);
     const ctx = await this.contexts.forProvider(input.providerId);
     if (ctx.provider.providerCode !== 'mpesa_daraja') throw new OperationRefused('WRONG_PROVIDER', 'That provider is not an M-Pesa (Daraja) connection.');
     const settings = darajaSettings(ctx.settings);
@@ -58,7 +57,7 @@ export class DarajaDisbursements {
     }
     if (!has(input.methodId)) throw new OperationRefused('NO_METHOD', 'Choose the paybill or till the money is paid from.');
     const [method] = await this.db.select().from(paymentMethods).where(eq(paymentMethods.id, input.methodId));
-    if (!method || method.providerId !== input.providerId) throw new OperationRefused('METHOD_MISMATCH', 'That payment method does not go through this provider.');
+    if (method?.providerId !== input.providerId) throw new OperationRefused('METHOD_MISMATCH', 'That payment method does not go through this provider.');
     if (has(settings.dailyPayoutLimit)) {
       const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
       const [row] = await this.db
@@ -135,7 +134,7 @@ export class DarajaDisbursements {
       onRejected: async (id, tx, info) => {
         await (tx as unknown as DrizzleDb).update(providerOperations).set({ status: 'rejected', failureCode: 'REJECTED', failureReason: orElse(info.comment, info.reasonCode), updatedAt: new Date() }).where(and(eq(providerOperations.id, id), eq(providerOperations.status, 'pending_approval')));
       },
-      onReopened: async () => {},
+      onReopened: () => Promise.resolve(),
       onCanceled: async (id, tx) => {
         await (tx as unknown as DrizzleDb).update(providerOperations).set({ status: 'cancelled', failureCode: 'WITHDRAWN', failureReason: 'The request was withdrawn.', updatedAt: new Date() }).where(and(eq(providerOperations.id, id), eq(providerOperations.status, 'pending_approval')));
       },
@@ -145,7 +144,7 @@ export class DarajaDisbursements {
         const i = op.input;
         const info = DARAJA_OPERATIONS[op.operation as DarajaOperationCode];
         const to = [i.phone, i.partyB, i.prn, i.transactionId].find((v) => typeof v === 'string');
-        return { title: `${info?.label ?? op.operation}: KES ${Number(op.amount ?? 0).toLocaleString('en-KE', { minimumFractionDigits: 2 })}${has(to) ? ` to ${String(to)}` : ''}`, lines: [typeof i.remarks === 'string' ? `Remarks: ${i.remarks}` : '', typeof i.accountReference === 'string' ? `Account: ${i.accountReference}` : ''].filter(Boolean) };
+        return { title: `${info.label}: KES ${Number(op.amount ?? 0).toLocaleString('en-KE', { minimumFractionDigits: 2 })}${has(to) ? ` to ${to}` : ''}`, lines: [typeof i.remarks === 'string' ? `Remarks: ${i.remarks}` : '', typeof i.accountReference === 'string' ? `Account: ${i.accountReference}` : ''].filter(Boolean) };
       },
     };
   }

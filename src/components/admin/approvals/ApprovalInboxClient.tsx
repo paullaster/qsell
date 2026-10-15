@@ -4,9 +4,7 @@ import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   approveEntryAction,
-  getRequestDetailAction,
-  listApprovalReasonsAction,
-  rejectEntryAction,
+  getRequestDetailAction, rejectEntryAction,
   type InboxItem,
   type RequestDetail,
 } from '@/server/kernel/approvals/actions';
@@ -29,6 +27,8 @@ import {
   primaryButtonClass,
   type Message,
 } from './shared';
+
+import { has, orElse } from '@/lib/values';
 
 export function ApprovalInboxClient({ items: initial }: { items: InboxItem[] }) {
   const uid = useId();
@@ -100,9 +100,9 @@ export function ApprovalInboxClient({ items: initial }: { items: InboxItem[] }) 
         <EmptyState title="Nothing is waiting on you">
           New requests appear here as soon as someone submits something you are asked to approve.
         </EmptyState>
-      ) : shown.length === 0 ? (
-        <EmptyState title="No requests match your search" />
-      ) : (
+      ) : null}
+      {items.length > 0 && shown.length === 0 ? <EmptyState title="No requests match your search" /> : null}
+      {shown.length > 0 ? (
         <ul className="space-y-3">
           {shown.map((item) => (
             <li key={item.entryId}>
@@ -115,7 +115,7 @@ export function ApprovalInboxClient({ items: initial }: { items: InboxItem[] }) 
             </li>
           ))}
         </ul>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -145,7 +145,7 @@ function InboxCard({
             <When iso={item.waitingSince} />
           </p>
           <div className="mt-2 flex flex-wrap gap-1.5">
-            {item.onBehalfOfName ? (
+            {has(item.onBehalfOfName) ? (
               <Chip tone="sky">Covering for {item.onBehalfOfName}</Chip>
             ) : null}
             {item.handedOver ? <Chip tone="amber">Handed over to you</Chip> : null}
@@ -200,21 +200,21 @@ function Review({
     };
   }, [item.requestId]);
 
-  const submit = async (e: React.FormEvent) => {
+  const submit = async (e: React.SyntheticEvent) => {
     e.preventDefault();
-    if (!mode) return;
+    if (mode === null) return;
     setBusy(true);
     setMessage(null);
     const res =
       mode === 'approve'
         ? await approveEntryAction(item.entryId, comment)
-        : await rejectEntryAction(item.entryId, reason.code, comment || reason.text);
+        : await rejectEntryAction(item.entryId, reason.code, orElse(comment, reason.text));
     setBusy(false);
-    if (!res.ok) return setMessage({ kind: 'error', text: res.error });
+    if (!res.ok) { setMessage({ kind: 'error', text: res.error }); return; }
     onDone(item.entryId, res.data.message);
   };
 
-  if (loadError)
+  if (has(loadError))
     return (
       <p role="alert" className="text-sm text-red-700">
         {loadError}
@@ -233,7 +233,7 @@ function Review({
         <h4 id={`${uid}-why`} className="text-xs font-bold tracking-wide text-fg-muted uppercase">
           Why this needs approval
         </h4>
-        {detail.what ? (
+        {has(detail.what) ? (
           <p className="mt-1 rounded-lg border border-line bg-surface-sunken p-3 text-sm font-medium text-fg-strong">
             {detail.what}
           </p>
@@ -271,14 +271,14 @@ function Review({
                 <p className="mt-1 text-xs text-fg-muted">Not reached yet.</p>
               ) : (
                 <ul className="mt-1 space-y-1">
-                  {s.entries.map((e, i) => (
-                    <li key={i} className="flex flex-wrap items-center gap-2 text-sm text-fg">
+                  {s.entries.map((e) => (
+                    <li key={`${e.approverName}-${e.status}-${e.actedAt ?? ''}`} className="flex flex-wrap items-center gap-2 text-sm text-fg">
                       <span>
                         {e.approverName}
-                        {e.onBehalfOfName ? ` (for ${e.onBehalfOfName})` : ''}
+                        {has(e.onBehalfOfName) ? ` (for ${e.onBehalfOfName})` : ''}
                       </span>
                       <StatusChip status={e.status} />
-                      {e.comment ? (
+                      {has(e.comment) ? (
                         <span className="text-xs text-fg-muted">“{e.comment}”</span>
                       ) : null}
                     </li>
@@ -295,11 +295,11 @@ function Review({
           History ({detail.timeline.length})
         </summary>
         <ol className="mt-2 space-y-1.5">
-          {detail.timeline.map((t, i) => (
-            <li key={i} className="text-sm text-fg">
+          {detail.timeline.map((t) => (
+            <li key={`${t.at}-${t.action}`} className="text-sm text-fg">
               <span className="font-medium">{actionLabel(t.action)}</span> · {t.actorName} ·{' '}
               <When iso={t.at} />
-              {t.reason ? <span className="block text-xs text-fg-muted">{t.reason}</span> : null}
+              {has(t.reason) ? <span className="block text-xs text-fg-muted">{t.reason}</span> : null}
             </li>
           ))}
         </ol>
@@ -324,7 +324,7 @@ function Review({
             <ReasonField
               value={reason}
               onChange={setReason}
-              load={listApprovalReasonsAction}
+              source="approval-reasons"
               showComment={false}
             />
           ) : null}

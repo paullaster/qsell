@@ -29,8 +29,7 @@ import type { CreditPolicyService } from './credit-policy-service';
 import type { CustomerLedgerService } from './customer-ledger-service';
 import type { WalletService } from './wallet-service';
 
-import { has } from '@/lib/has';
-import { orElse, trimToNull } from '@/lib/values';
+import { filledStrings, has, orElse, trimToNull } from '@/lib/values';
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -130,8 +129,8 @@ export class ReceiptService {
     return { settings: s, live: s.salesGlGoLive !== null && postingDate >= s.salesGlGoLive };
   }
 
-  private async customerGroup(settingsDefault: string, customerGroup: string | null) {
-    return customerGroup ?? settingsDefault;
+  private customerGroup(settingsDefault: string, customerGroup: string | null) {
+    return Promise.resolve(customerGroup ?? settingsDefault);
   }
 
   private async assertDate(tx: Tx, companyId: string, date: string, perms: PostingPermissions) {
@@ -190,9 +189,7 @@ export class ReceiptService {
         throw new FinanceError('AMOUNT_INVALID', 'The amount must be a number with at most 2 decimal places.');
       }
       const reference = trimToNull(input.externalReference);
-      const counterparty = Object.fromEntries(
-        Object.entries(input.counterparty ?? {}).filter(([, v]) => typeof v === 'string' && v.trim()).map(([k, v]) => [k, v.trim()]),
-      );
+      const counterparty = filledStrings(input.counterparty);
       const issues = checkReceiptAgainstMethod(
         { ...method, kind: method.kind, limits: method.limits, usableFor: method.usableFor },
         { amountCents: cents, externalReference: reference, counterparty, evidenceCount: 0 },
@@ -675,7 +672,7 @@ export class ReceiptService {
   private async requireCheque(tx: Tx, ctx: FinanceContext, id: string, from: CustomerReceiptRow['chequeStatus'][]) {
     const r = await this.lock(tx, ctx, id);
     if (r.status !== 'posted') throw new FinanceError('NOT_POSTED', 'Only a posted cheque can be moved on.');
-    if (!r.chequeStatus || !from.includes(r.chequeStatus)) {
+    if (!has(r.chequeStatus) || !from.includes(r.chequeStatus)) {
       throw new FinanceError('CHEQUE_STATE', `A cheque that is "${r.chequeStatus ?? 'not a cheque'}" cannot do that.`);
     }
     return r;
@@ -858,7 +855,7 @@ export class ReceiptService {
       .where(
         and(
           eq(customerReceipts.companyId, companyId),
-          f.status ? eq(customerReceipts.status, f.status) : undefined,
+          has(f.status) ? eq(customerReceipts.status, f.status) : undefined,
           has(f.customerId) ? eq(customerReceipts.customerId, f.customerId) : undefined,
           has(f.before) ? lt(customerReceipts.createdAt, new Date(f.before)) : undefined,
           has(q)

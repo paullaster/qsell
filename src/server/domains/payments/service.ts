@@ -9,24 +9,11 @@ import { type PaymentRegistry } from './registry';
 import { PaymentAttemptRepository, PaymentConfigRepository } from './repository';
 import { decryptCredentials, encryptCredentials, needsResealing } from './crypto';
 import { PAYMENT_PROVIDER_META, type PaymentProviderCode } from './types';
-import { classifyCallbackPayload } from './callback-status';
-import { extractPaymentReference } from './payment-reference';
-import type { CallbackResult } from './port';
 import { OrderRepository } from '@/server/domains/orders/repository';
 import { getContainer } from '@/server/di/container';
 import { InventoryReservationService } from '@/server/domains/inventory/reservation-service';
-import type { PaymentProvider } from '@/types/index';
 
-import { has } from '@/lib/has';
-import { readText } from '@/lib/values';
-
-function headersToRecord(headers: Headers): Record<string, string> {
-  const out: Record<string, string> = {};
-  headers.forEach((value, key) => {
-    out[key] = value;
-  });
-  return out;
-}
+import { has, readText } from '@/lib/values';
 
 export class PaymentService implements AttemptSettler {
   private readonly orderRepo: OrderRepository;
@@ -47,7 +34,7 @@ export class PaymentService implements AttemptSettler {
   }
 
   async resolvePublicBaseUrl(branch: BranchRow): Promise<string> {
-    if (has(branch?.publicBaseUrl?.trim())) return branch.publicBaseUrl.replace(/\/$/, '');
+    if (has(branch.publicBaseUrl?.trim())) return branch.publicBaseUrl.replace(/\/$/, '');
     const companies = await this.db
       .select()
       .from(companySettings)
@@ -85,7 +72,7 @@ export class PaymentService implements AttemptSettler {
       } else {
         result = await this.registry
           .resolve(code)
-          .testConnection(credentials, config.settings ?? {}, config.apiBaseUrl);
+          .testConnection(credentials, config.settings, config.apiBaseUrl);
       }
     } catch (error) {
       result = { ok: false, message: error instanceof Error ? error.message.slice(0, 300) : 'The test could not run.' };
@@ -137,7 +124,7 @@ export class PaymentService implements AttemptSettler {
       if (provider) return { provider, methodId: hit.methodId as string | null };
     }
     const legacy = await this.configs.getByBranchAndProvider(branch.id, providerCode);
-    return legacy && legacy.isEnabled ? { provider: legacy, methodId: null as string | null } : null;
+    return legacy?.isEnabled === true ? { provider: legacy, methodId: null as string | null } : null;
   }
 
   /** One provider per service that this branch can offer at checkout. */
@@ -222,17 +209,12 @@ export class PaymentService implements AttemptSettler {
           description: params.description,
         },
         credentials,
-        config.settings ?? {},
+        config.settings,
         config.apiBaseUrl,
       );
     }
 
-    const status =
-      result.status === 'failed'
-        ? 'failed'
-        : result.status === 'awaiting_redirect'
-          ? 'awaiting_redirect'
-          : 'pending';
+    const status = result.status === 'failed' || result.status === 'awaiting_redirect' ? result.status : 'pending';
 
     const updated = await this.attempts.update(attempt.id, {
       status,
@@ -246,7 +228,7 @@ export class PaymentService implements AttemptSettler {
     if (status !== 'failed' && this.engine) {
       // Whether or not a callback arrives, the payment is checked with the platform.
       const { engineSettings } = await import('./engine/settings');
-      await this.engine.jobs.verifyAttempt(attempt.id, engineSettings(config.settings).verification.pollSeconds[0] ?? 15).catch((e) => console.error('[payments] could not schedule the check', e));
+      await this.engine.jobs.verifyAttempt(attempt.id, engineSettings(config.settings).verification.pollSeconds[0] ?? 15).catch((e: unknown) => console.error('[payments] could not schedule the check', e));
     }
 
     await this.orderRepo.update(params.orderId, {
@@ -275,7 +257,8 @@ export class PaymentService implements AttemptSettler {
     callbackUrl: string,
     params: { orderNumber: string; amount: number; customerPhone: string; description?: string },
   ): Promise<InitiatePaymentResult> {
-    const { op } = await this.engine!.daraja.start({
+    if (!this.engine) return { status: 'failed', errorMessage: 'M-Pesa Express is not available right now.' };
+    const { op } = await this.engine.daraja.start({
       providerId,
       methodId,
       operation: 'stk_push',
@@ -284,7 +267,7 @@ export class PaymentService implements AttemptSettler {
       subject: { type: 'payment_attempt', id: attemptId },
       origin: { surface: 'storefront', action: 'checkout' },
     }).catch((error: unknown) => ({ op: null, error }));
-    if (!op || op.status !== 'accepted') {
+    if (op?.status !== 'accepted') {
       return { status: 'failed', errorMessage: op?.failureReason ?? 'M-Pesa Express could not be started.', rawResponse: (op?.response ?? {}) };
     }
     const r = op.response;

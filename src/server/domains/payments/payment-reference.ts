@@ -1,6 +1,5 @@
 
-import { has } from '@/lib/has';
-import { emptyToNull } from '@/lib/values';
+import { emptyToNull, has, isRecord, readText } from '@/lib/values';
 /**
  * The payment reference a provider assigns when money is captured.
  * This is not the checkout-request id we sent when the prompt was created.
@@ -17,8 +16,8 @@ interface MetadataItem {
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
+  if (!isRecord(value)) return null;
+  return value;
 }
 
 export function stkMetadataItems(body: unknown): MetadataItem[] {
@@ -33,7 +32,7 @@ export function stkMetadataItems(body: unknown): MetadataItem[] {
 export function metadataItemValue(items: MetadataItem[], name: string): string | null {
   const wanted = name.toLowerCase();
   const found = items.find(
-    (item) => String(item.Name ?? item.name ?? '').toLowerCase() === wanted,
+    (item) => readText(item.Name, item.name).toLowerCase() === wanted,
   );
   const value = found?.Value ?? found?.value;
   if (value == null) return null;

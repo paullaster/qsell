@@ -2,7 +2,7 @@ import type { MpesaDarajaCredentials } from '../types';
 import type { HttpCallResult } from '../engine/http-client';
 import type { PlatformContext } from '../engine/types';
 
-import { has } from '@/lib/has';
+import { has, isRecord } from '@/lib/values';
 
 /** Access tokens last about an hour; a new token invalidates the previous one, so one is shared per app. */
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();
@@ -60,7 +60,7 @@ export function standaloneContext(credentials: Record<string, unknown>, apiBaseU
         let json: Record<string, unknown> | null = null;
         try {
           const p: unknown = has(text) ? JSON.parse(text) : null;
-          json = p && typeof p === 'object' && !Array.isArray(p) ? (p as Record<string, unknown>) : null;
+          json = isRecord(p) ? p : null;
         } catch {
           json = null;
         }
@@ -84,7 +84,7 @@ export class DarajaClient {
   }
 
   private cacheKey(): string {
-    return `${this.baseUrl}|${(this.credentials.consumerKey ?? '').trim()}`;
+    return `${this.baseUrl}|${this.credentials.consumerKey.trim()}`;
   }
 
   forgetToken() {
@@ -92,8 +92,8 @@ export class DarajaClient {
   }
 
   async token(force = false): Promise<{ token: string } | { error: DarajaFailure }> {
-    const key = (this.credentials.consumerKey ?? '').trim();
-    const secret = (this.credentials.consumerSecret ?? '').trim();
+    const key = this.credentials.consumerKey.trim();
+    const secret = this.credentials.consumerSecret.trim();
     if (!has(key) || !has(secret)) return { error: { code: 'NO_CREDENTIALS', message: 'The consumer key and secret are not saved yet.', retryable: false, duplicate: false, tokenRejected: false } };
     const cached = tokenCache.get(this.cacheKey());
     if (!force && cached && cached.expiresAt > Date.now()) return { token: cached.token };

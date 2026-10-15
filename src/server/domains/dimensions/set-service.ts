@@ -1,3 +1,4 @@
+import { has, required } from '@/lib/values';
 import { createHash } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
@@ -8,13 +9,14 @@ import {
   type DimensionRow,
   type DimensionSetRow,
 } from '@/server/db/drizzle/schema';
-import { DimensionRepository } from './repository';
+import { type DimensionRepository } from './repository';
 import {
   buildProjectionFromEntries,
   emptyDimensionCodes,
   fieldMapToProjection,
   listDimensionFieldDescriptors,
 } from './projection';
+
 
 export class DimensionSetService {
   constructor(
@@ -53,7 +55,7 @@ export class DimensionSetService {
     for (const d of descriptors) {
       const bucket = d.kind === 'global' ? projection.global : projection.shortcut;
       const code = bucket[String(d.dimensionNo)];
-      if (!code) continue;
+      if (!has(code)) continue;
 
       const values = await this.dims.listValues(d.dimensionId);
       const match = values.find(
@@ -65,7 +67,7 @@ export class DimensionSetService {
         );
       }
       valueIds.push({
-        dimension: prominent.find((x) => x.id === d.dimensionId)!,
+        dimension: required(prominent.find((x) => x.id === d.dimensionId), `dimension ${d.dimensionId}`),
         valueId: match.id,
         valueCode: match.code,
       });
@@ -97,7 +99,7 @@ export class DimensionSetService {
         .insert(dimensionSets)
         .values({ companyId, contentHash })
         .returning();
-      setRow = created!;
+      setRow = required(created, 'the saved dimension set');
       await this.db.insert(dimensionSetEntries).values(
         valueIds.map((v) => ({
           dimensionSetId: setRow.id,

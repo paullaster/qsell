@@ -7,22 +7,13 @@ import { getContainer } from '@/server/di/container';
 import {
   PAYMENT_PROVIDER_META,
   type PaymentProviderCode,
-  type PaymentProviderEnvironment,
 } from '@/server/domains/payments/types';
-import {
-  encryptCredentials,
-  decryptCredentials,
-  maskCredentials,
-} from '@/server/domains/payments/crypto';
-import type { BranchRow, PaymentProviderConfigRow } from '@/server/db/drizzle/schema';
 import { extractPaymentReference } from '@/server/domains/payments/payment-reference';
 import { amountDue } from '@/server/domains/orders/amount-due';
 
-import { has } from '@/lib/has';
-import { emptyToNull, orElse, trimToNull } from '@/lib/values';
+import { emptyToNull, has, orElse } from '@/lib/values';
 
 /** Which branches act independently decides what the KRA screens show, so they must refresh. */
-const KRA_SETTINGS_PATH = '/admin/settings/tax-compliance/kra-tims-etims';
 
 async function ensureBranchContext() {
   const { companySettings, organizations } = getContainer();
@@ -32,62 +23,6 @@ async function ensureBranchContext() {
     orElse(company.tradingName, company.legalName),
   );
   return { company, branch };
-}
-
-export async function listBranchesAction(): Promise<BranchRow[]> {
-  await requirePermission('branches:read');
-  const { company, branch } = await ensureBranchContext();
-  const { branches } = getContainer();
-  const list = await branches.listByCompany(company.id);
-  return list.length !== 0 ? list : [branch];
-}
-
-export async function createBranchAction(input: {
-  code: string;
-  name: string;
-  actsIndependently?: boolean;
-  kraPin?: string;
-  publicBaseUrl?: string;
-}): Promise<BranchRow> {
-  await requirePermission('branches:manage');
-  const { company } = await ensureBranchContext();
-  const { branches } = getContainer();
-  const created = await branches.create({
-    companyId: company.id,
-    code: input.code.trim().toUpperCase(),
-    name: input.name.trim(),
-    actsIndependently: Boolean(input.actsIndependently),
-    kraPin: trimToNull(input.kraPin),
-    publicBaseUrl: trimToNull(input.publicBaseUrl),
-    isDefault: false,
-    isActive: true,
-  });
-
-  revalidatePath('/admin/settings');
-  revalidatePath('/admin/settings/payments');
-  revalidatePath(KRA_SETTINGS_PATH, 'layout');
-  return created;
-}
-
-export async function updateBranchAction(
-  id: string,
-  patch: Partial<{
-    name: string;
-    code: string;
-    actsIndependently: boolean;
-    kraPin: string | null;
-    publicBaseUrl: string | null;
-    isDefault: boolean;
-    isActive: boolean;
-  }>,
-): Promise<BranchRow> {
-  await requirePermission('branches:manage');
-  const { branches } = getContainer();
-  const updated = await branches.update(id, patch);
-  revalidatePath('/admin/settings');
-  revalidatePath('/admin/settings/payments');
-  revalidatePath(KRA_SETTINGS_PATH, 'layout');
-  return updated;
 }
 
 export async function updateCompanyPublicBaseUrlAction(url: string): Promise<void> {
@@ -196,8 +131,7 @@ export async function initiateDarajaStkAction(orderId: string, _phone?: string) 
   };
 }
 
-/** @deprecated Prefer initiateBranchPaymentAction */
-export async function initiatePesapalPaymentAction(orderId: string) {
+async function startPesapal(orderId: string) {
   await requirePermission('orders:update');
   const res = await initiateBranchPaymentAction({
     orderId,
@@ -213,9 +147,14 @@ export async function initiatePesapalPaymentAction(orderId: string) {
   };
 }
 
+/** @deprecated Prefer initiateBranchPaymentAction */
+export async function initiatePesapalPaymentAction(orderId: string) {
+  return startPesapal(orderId);
+}
+
 export async function submitPesapalOrderAction(orderId: string) {
   await requirePermission('orders:update');
-  return initiatePesapalPaymentAction(orderId);
+  return startPesapal(orderId);
 }
 
 /** Removed: payments are live via provider callbacks. */

@@ -159,7 +159,7 @@ export class BankReconciliationService {
       if (r.status !== 'posted') throw new FinanceError('ALREADY_REVERSED', 'This reconciliation was already reversed.');
       await tx.select().from(bankAccounts).where(eq(bankAccounts.id, r.bankAccountId)).for('update');
       const latest = await this.previous(tx, r.bankAccountId);
-      if (latest?.id !== r.id) throw new FinanceError('NOT_LATEST', `Only the latest reconciliation can be reversed (${latest?.number}). Reverse that one first.`);
+      if (latest?.id !== r.id) throw new FinanceError('NOT_LATEST', `Only the latest reconciliation can be reversed (${latest?.number ?? ''}). Reverse that one first.`);
       await tx.update(bankStatementLines).set({ reconciliationId: null }).where(eq(bankStatementLines.reconciliationId, id));
       await tx.update(bankReconciliations).set({ status: 'reversed', reversedBy: ctx.actor.id, reversedAt: new Date(), reverseReasonCode: rs.code, reverseReasonText: rs.text }).where(eq(bankReconciliations.id, id));
       await this.decisions.record({ companyId: ctx.companyId, subject: { type: 'bank_reconciliation', id }, action: 'finance.bank_reconciliation_reversed', actor: ctx.actor, from: 'posted', to: 'reversed', reason: rs, inputs: { origin: ctx.origin } }, tx);

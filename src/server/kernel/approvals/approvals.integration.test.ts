@@ -2,21 +2,28 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 
+import { has, nth, required } from '@/lib/values';
+import type * as mod_server_di_container from '@/server/di/container';
+import type * as mod_server_db_drizzle_client from '@/server/db/drizzle/client';
+import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
+import type * as mod_engine from './engine';
+import type * as mod_config_service from './config-service';
+
 /**
  * The approval engine against a real database:  TEST_DATABASE_URL=postgres://... pnpm test
  * Each test scopes its workflows to its own customer id, so tests do not see each other's rules.
  */
 const url = process.env.TEST_DATABASE_URL;
-if (url) process.env.DATABASE_URL = url;
+if (has(url)) process.env.DATABASE_URL = url;
 
-describe.skipIf(!url)('approvals (database)', () => {
-  type Container = ReturnType<typeof import('@/server/di/container').getContainer>;
+describe.skipIf(!has(url))('approvals (database)', () => {
+  type Container = ReturnType<typeof mod_server_di_container.getContainer>;
   let c: Container;
-  let db: typeof import('@/server/db/drizzle/client').drizzleDb;
-  let schema: typeof import('@/server/db/drizzle/schema');
+  let db: typeof mod_server_db_drizzle_client.drizzleDb;
+  let schema: typeof mod_server_db_drizzle_schema;
   let companyId: string;
-  let ApprovalError: typeof import('./engine').ApprovalError;
-  let ApprovalConfigError: typeof import('./config-service').ApprovalConfigError;
+  let ApprovalError: typeof mod_engine.ApprovalError;
+  let ApprovalConfigError: typeof mod_config_service.ApprovalConfigError;
 
   const actor = { type: 'user' as const, id: 'admin-test' };
   const reason = { code: 'POLICY_CHANGE' };
@@ -36,7 +43,7 @@ describe.skipIf(!url)('approvals (database)', () => {
         role: 'manager',
       })
       .returning();
-    return u!.id;
+    return required(u).id;
   };
   const tx = <T>(fn: (t: Parameters<Parameters<typeof db.transaction>[0]>[0]) => Promise<T>) =>
     db.transaction(fn);
@@ -59,29 +66,29 @@ describe.skipIf(!url)('approvals (database)', () => {
     ];
     await c.approvalConfig.saveProfile(
       companyId,
-      { userId: fin!, limits: limit(null) },
+      { userId: required(fin), limits: limit(null) },
       actor,
       reason,
     );
     await c.approvalConfig.saveProfile(
       companyId,
-      { userId: mgr!, approverUserId: fin, limits: limit(500_000) },
+      { userId: required(mgr), approverUserId: fin, limits: limit(500_000) },
       actor,
       reason,
     );
     await c.approvalConfig.saveProfile(
       companyId,
-      { userId: sup!, approverUserId: mgr, limits: limit(50_000) },
+      { userId: required(sup), approverUserId: mgr, limits: limit(50_000) },
       actor,
       reason,
     );
     await c.approvalConfig.saveProfile(
       companyId,
-      { userId: clerk!, approverUserId: sup, limits: [] },
+      { userId: required(clerk), approverUserId: sup, limits: [] },
       actor,
       reason,
     );
-    return { clerk: clerk!, sup: sup!, mgr: mgr!, fin: fin! };
+    return { clerk: required(clerk), sup: required(sup), mgr: required(mgr), fin: required(fin) };
   }
 
   async function workflow(scope: string, steps: unknown[], extra: { code?: string } = {}) {
@@ -153,10 +160,10 @@ describe.skipIf(!url)('approvals (database)', () => {
     companyId = (await c.companySettings.ensureSeeded()).id;
     await c.reasonCodes.ensureSystemReasons(companyId);
     c.approvals.registerDocument('sales_order', {
-      snapshot: async (id) => live.get(id) ?? {},
-      onReleased: async (id) => void released.push(id),
-      onRejected: async (id) => void rejected.push(id),
-      onReopened: async (id) => void reopened.push(id),
+      snapshot: (id) => Promise.resolve(live.get(id) ?? {}),
+      onReleased: (id) => Promise.resolve(void released.push(id)),
+      onRejected: (id) => Promise.resolve(void rejected.push(id)),
+      onReopened: (id) => Promise.resolve(void reopened.push(id)),
     });
   });
 
@@ -179,15 +186,15 @@ describe.skipIf(!url)('approvals (database)', () => {
     let open = await openEntries(s.documentId);
     expect(open.map((e) => e.approverUserId)).toEqual([p.sup]);
     expect(
-      (await c.approvals.forDocument(companyId, 'sales_order', s.documentId))[0]!.entries,
+      nth((await c.approvals.forDocument(companyId, 'sales_order', s.documentId)), 0).entries,
     ).toHaveLength(1);
 
-    expect((await approve(open[0]!.id, p.sup)).outcome).toBe('approved');
+    expect((await approve(nth(open, 0).id, p.sup)).outcome).toBe('approved');
     open = await openEntries(s.documentId);
     expect(open.map((e) => e.approverUserId)).toEqual([p.mgr]);
     expect(released).not.toContain(s.documentId);
 
-    const last = await approve(open[0]!.id, p.mgr, 'fine');
+    const last = await approve(nth(open, 0).id, p.mgr, 'fine');
     expect(last).toMatchObject({ outcome: 'approved', requestStatus: 'approved', released: true });
     expect(released.filter((d) => d === s.documentId)).toHaveLength(1);
     expect(await openEntries(s.documentId)).toHaveLength(0);
@@ -200,10 +207,10 @@ describe.skipIf(!url)('approvals (database)', () => {
     const s = submit(scope, p.clerk, 10);
     await s.run();
     const [entry] = await openEntries(s.documentId);
-    expect(await codeOf(approve(entry!.id, p.sup))).toBe('NOT_APPROVER');
+    expect(await codeOf(approve(required(entry).id, p.sup))).toBe('NOT_APPROVER');
     const results = await Promise.all([
-      codeOf(approve(entry!.id, p.mgr)),
-      codeOf(approve(entry!.id, p.mgr)),
+      codeOf(approve(required(entry).id, p.mgr)),
+      codeOf(approve(required(entry).id, p.mgr)),
     ]);
     expect(results.sort()).toEqual(['ALREADY_DECIDED', 'OK']);
     expect(released.filter((d) => d === s.documentId)).toHaveLength(1);
@@ -226,14 +233,14 @@ describe.skipIf(!url)('approvals (database)', () => {
 
     expect(
       await codeOf(
-        tx((t) => c.approvals.reject(entry!.id, p.mgr, { reasonCode: 'OTHER', comment: '  ' }, t)),
+        tx((t) => c.approvals.reject(required(entry).id, p.mgr, { reasonCode: 'OTHER', comment: '  ' }, t)),
       ),
     ).toBe('COMMENT_REQUIRED');
     expect(
       (
         await tx((t) =>
           c.approvals.reject(
-            entry!.id,
+            required(entry).id,
             p.mgr,
             { reasonCode: 'OTHER', comment: 'Price too low' },
             t,
@@ -275,9 +282,9 @@ describe.skipIf(!url)('approvals (database)', () => {
     expect(await s.run()).toMatchObject({ required: true });
     const history = await c.approvals.forDocument(companyId, 'sales_order', s.documentId);
     expect(history.map((r) => r.status)).toEqual(['reopened', 'pending']);
-    expect(history[1]).toMatchObject({ attempt: 2, previousRequestId: history[0]!.id });
+    expect(history[1]).toMatchObject({ attempt: 2, previousRequestId: nth(history, 0).id });
     // Nothing carried over: the new request has only its own, fresh entry.
-    expect(history[1]!.entries.map((e) => e.status)).toEqual(['open']);
+    expect(nth(history, 1).entries.map((e) => e.status)).toEqual(['open']);
   });
 
   it('when several workflows match, all apply; one rejection cancels the rest', async () => {
@@ -292,9 +299,9 @@ describe.skipIf(!url)('approvals (database)', () => {
 
     const entries = await openEntries(s.documentId);
     expect(entries).toHaveLength(2);
-    await approve(entries.find((e) => e.approverUserId === p.sup)!.id, p.sup);
+    await approve(required(entries.find((e) => e.approverUserId === p.sup)).id, p.sup);
     expect(released).not.toContain(s.documentId);
-    await approve(entries.find((e) => e.approverUserId === p.mgr)!.id, p.mgr);
+    await approve(required(entries.find((e) => e.approverUserId === p.mgr)).id, p.mgr);
     expect(released).toContain(s.documentId);
 
     // And the rejection path.
@@ -303,7 +310,7 @@ describe.skipIf(!url)('approvals (database)', () => {
     const e2 = await openEntries(s2.documentId);
     await tx((t) =>
       c.approvals.reject(
-        e2.find((e) => e.approverUserId === p.sup)!.id,
+        required(e2.find((e) => e.approverUserId === p.sup)).id,
         p.sup,
         { reasonCode: 'OTHER', comment: 'No' },
         t,
@@ -330,12 +337,12 @@ describe.skipIf(!url)('approvals (database)', () => {
     const s = submit(scope, p.clerk, 5_000);
     await s.run();
     const [e] = await openEntries(s.documentId);
-    expect(await approve(e!.id, p.sup)).toMatchObject({
+    expect(await approve(required(e).id, p.sup)).toMatchObject({
       requestStatus: 'approved',
       released: true,
     });
     const [request] = await c.approvals.forDocument(companyId, 'sales_order', s.documentId);
-    const log = await c.decisionLog.timeline('approval_request', request!.id);
+    const log = await c.decisionLog.timeline('approval_request', required(request).id);
     expect(log.map((l) => l.action)).toContain('approvals.step_skipped');
   });
 
@@ -353,8 +360,8 @@ describe.skipIf(!url)('approvals (database)', () => {
     await s.run();
     const entries = await openEntries(s.documentId);
     expect(entries).toHaveLength(2);
-    await approve(entries[0]!.id, entries[0]!.approverUserId);
-    const all = (await c.approvals.forDocument(companyId, 'sales_order', s.documentId))[0]!.entries;
+    await approve(nth(entries, 0).id, nth(entries, 0).approverUserId);
+    const all = nth((await c.approvals.forDocument(companyId, 'sales_order', s.documentId)), 0).entries;
     expect(all.map((e) => e.status).sort()).toEqual(['approved', 'canceled']);
     expect(released).toContain(s.documentId);
   });
@@ -409,8 +416,8 @@ describe.skipIf(!url)('approvals (database)', () => {
     await s.run();
     const [e] = await openEntries(s.documentId);
     expect(e).toMatchObject({ approverUserId: cover, onBehalfOfUserId: p.sup });
-    expect(await codeOf(approve(e!.id, p.sup))).toBe('NOT_APPROVER');
-    expect((await approve(e!.id, cover)).outcome).toBe('approved');
+    expect(await codeOf(approve(required(e).id, p.sup))).toBe('NOT_APPROVER');
+    expect((await approve(required(e).id, cover)).outcome).toBe('approved');
   });
 
   it('voids approvals when the document changes after submission', async () => {
@@ -421,10 +428,10 @@ describe.skipIf(!url)('approvals (database)', () => {
     await s.run();
     const [e] = await openEntries(s.documentId);
     live.set(s.documentId, { customer: { id: scope }, total: 999 }); // edited meanwhile
-    const result = await approve(e!.id, p.sup);
+    const result = await approve(required(e).id, p.sup);
     expect(result.outcome).toBe('superseded');
     expect(released).not.toContain(s.documentId);
-    expect((await c.approvals.forDocument(companyId, 'sales_order', s.documentId))[0]!.status).toBe(
+    expect(nth((await c.approvals.forDocument(companyId, 'sales_order', s.documentId)), 0).status).toBe(
       'superseded',
     );
     // A fresh submission is allowed.
@@ -453,13 +460,13 @@ describe.skipIf(!url)('approvals (database)', () => {
     );
     await c.approvalConfig.publish(companyId, wf.id, actor, reason);
     const [e] = await openEntries(s.documentId);
-    expect(await approve(e!.id, p.sup)).toMatchObject({ requestStatus: 'pending' }); // still asks step 2 (v1)
+    expect(await approve(required(e).id, p.sup)).toMatchObject({ requestStatus: 'pending' }); // still asks step 2 (v1)
     expect((await openEntries(s.documentId)).map((x) => x.approverUserId)).toEqual([p.mgr]);
     // A new document uses v2: one step.
     const s2 = submit(scope, p.clerk, 1);
     await s2.run();
     const [e2] = await openEntries(s2.documentId);
-    expect(await approve(e2!.id, p.sup)).toMatchObject({ requestStatus: 'approved' });
+    expect(await approve(required(e2).id, p.sup)).toMatchObject({ requestStatus: 'approved' });
   });
 
   it('a switch turns approvals off per module, and a branch-level switch is more specific', async () => {
@@ -487,7 +494,7 @@ describe.skipIf(!url)('approvals (database)', () => {
   });
 
   it('refuses to publish a workflow that could get stuck', async () => {
-    const p = await people();
+    await people();
     const emptyGroup = await c.approvalConfig.saveGroup(
       companyId,
       { code: `E-${randomUUID().slice(0, 6)}`, name: 'Empty', memberUserIds: [] },
@@ -523,7 +530,6 @@ describe.skipIf(!url)('approvals (database)', () => {
     expect(messages).toMatch(/no members/);
     expect(messages).toMatch(/does not exist/);
     expect(messages).toMatch(/share the order/);
-    void p;
   });
 
   it('refuses an approval chain that loops back, and a change with no reason', async () => {
@@ -560,7 +566,7 @@ describe.skipIf(!url)('approvals (database)', () => {
     await workflow(scope, [step(1, { type: 'chain_by_limit' }, { dueAfterHours: 1 })]);
     const s = submit(scope, p.clerk, 10);
     await s.run();
-    expect((await openEntries(s.documentId))[0]!.dueAt).not.toBeNull();
+    expect(nth((await openEntries(s.documentId)), 0).dueAt).not.toBeNull();
 
     // Not due yet: nothing happens to this document.
     await c.approvals.sweepOverdue({ now: new Date() });
@@ -574,14 +580,14 @@ describe.skipIf(!url)('approvals (database)', () => {
     ]);
     const all = await entriesOf(s.documentId);
     expect(all.map((e) => e.status).sort()).toEqual(['canceled', 'open']);
-    const open = (await openEntries(s.documentId))[0]!;
+    const open = nth((await openEntries(s.documentId)), 0);
     expect(open.approverUserId).toBe(p.mgr);
-    expect(open.replacesEntryId).toBe(all.find((e) => e.status === 'canceled')!.id);
-    expect(open.dueAt!.getTime()).toBeGreaterThan(at.getTime()); // it can escalate again later
+    expect(open.replacesEntryId).toBe(required(all.find((e) => e.status === 'canceled')).id);
+    expect(required(open.dueAt).getTime()).toBeGreaterThan(at.getTime()); // it can escalate again later
 
     const log = await c.decisionLog.timeline(
       'approval_request',
-      (await c.approvals.forDocument(companyId, 'sales_order', s.documentId))[0]!.id,
+      nth((await c.approvals.forDocument(companyId, 'sales_order', s.documentId)), 0).id,
     );
     expect(log.filter((l) => l.action === 'approvals.escalated')).toHaveLength(1);
 
@@ -603,7 +609,7 @@ describe.skipIf(!url)('approvals (database)', () => {
     expect(first.stuck).toBeGreaterThanOrEqual(1);
     expect((await openEntries(s.documentId)).map((e) => e.approverUserId)).toEqual([p.fin]);
     await c.approvals.sweepOverdue({ now: at });
-    const requestId = (await c.approvals.forDocument(companyId, 'sales_order', s.documentId))[0]!
+    const requestId = nth((await c.approvals.forDocument(companyId, 'sales_order', s.documentId)), 0)
       .id;
     const log = await c.decisionLog.timeline('approval_request', requestId);
     expect(log.filter((l) => l.action === 'approvals.escalation_failed')).toHaveLength(1);
@@ -624,7 +630,7 @@ describe.skipIf(!url)('approvals (database)', () => {
 
     const reroute = (to: string, code = 'POLICY_CHANGE') =>
       tx((t) =>
-        c.approvals.reroute(entry!.id, to, { userId: p.fin }, { code, text: 'On leave' }, t),
+        c.approvals.reroute(required(entry).id, to, { userId: p.fin }, { code, text: 'On leave' }, t),
       );
     expect(await codeOf(reroute(suspended))).toBe('NO_ELIGIBLE_APPROVER');
     expect(await codeOf(reroute(p.clerk))).toBe('NO_ELIGIBLE_APPROVER'); // the requester
@@ -632,10 +638,10 @@ describe.skipIf(!url)('approvals (database)', () => {
     await reroute(p.fin);
 
     const all = await entriesOf(s.documentId);
-    expect(all.find((e) => e.id === entry!.id)).toMatchObject({ status: 'canceled' });
-    const now = (await openEntries(s.documentId))[0]!;
-    expect(now).toMatchObject({ approverUserId: p.fin, replacesEntryId: entry!.id });
-    expect(await codeOf(approve(entry!.id, p.sup))).toBe('ALREADY_DECIDED');
+    expect(all.find((e) => e.id === required(entry).id)).toMatchObject({ status: 'canceled' });
+    const now = nth((await openEntries(s.documentId)), 0);
+    expect(now).toMatchObject({ approverUserId: p.fin, replacesEntryId: required(entry).id });
+    expect(await codeOf(approve(required(entry).id, p.sup))).toBe('ALREADY_DECIDED');
     expect((await approve(now.id, p.fin)).outcome).toBe('approved');
     expect(released).toContain(s.documentId);
   });
@@ -658,10 +664,10 @@ describe.skipIf(!url)('approvals (database)', () => {
     await s.run();
     const open = await openEntries(s.documentId);
     expect(open).toHaveLength(3);
-    expect((await approve(open[0]!.id, open[0]!.approverUserId)).outcome).toBe('approved');
+    expect((await approve(nth(open, 0).id, nth(open, 0).approverUserId)).outcome).toBe('approved');
     expect(released).not.toContain(s.documentId);
     expect(await openEntries(s.documentId)).toHaveLength(2);
-    expect(await approve(open[1]!.id, open[1]!.approverUserId)).toMatchObject({ released: true });
+    expect(await approve(nth(open, 1).id, nth(open, 1).approverUserId)).toMatchObject({ released: true });
     expect((await entriesOf(s.documentId)).map((e) => e.status).sort()).toEqual([
       'approved',
       'approved',
@@ -710,14 +716,14 @@ describe.skipIf(!url)('approvals (database)', () => {
       .values({ key: roleKey, name: 'Test approvers' })
       .returning();
     for (const u of [p.sup, p.mgr])
-      await db.insert(schema.userRoles).values({ userId: u, roleId: role!.id });
+      await db.insert(schema.userRoles).values({ userId: u, roleId: required(role).id });
     const scope = randomUUID();
     await workflow(scope, [step(1, { type: 'role', roleKey })]);
     const s = submit(scope, p.clerk, 1);
     await s.run();
     const open = await openEntries(s.documentId);
     expect(open.map((e) => e.approverUserId).sort()).toEqual([p.sup, p.mgr].sort());
-    await approve(open[0]!.id, open[0]!.approverUserId);
+    await approve(nth(open, 0).id, nth(open, 0).approverUserId);
     expect((await entriesOf(s.documentId)).map((e) => e.status).sort()).toEqual([
       'approved',
       'canceled',

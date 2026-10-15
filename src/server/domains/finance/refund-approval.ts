@@ -3,7 +3,7 @@ import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { customers, paymentMethods, refundRequests } from '@/server/db/drizzle/schema';
 import type { DocumentHandler } from '@/server/kernel/approvals/engine';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 /** How approvals hold, release, reject and reopen a refund. The refund service does the work. */
 export function refundApprovalHandler(db: DrizzleDb): DocumentHandler {

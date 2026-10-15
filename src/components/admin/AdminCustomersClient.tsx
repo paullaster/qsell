@@ -24,19 +24,19 @@ import {
 const fieldClass =
   'w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong placeholder:text-fg-faint focus:border-indigo-500 focus:outline-none';
 
-type SetupField = {
+interface SetupField {
   fieldName: string;
   dimensionId: string;
   dimensionCode: string;
   kind: 'global' | 'shortcut';
   values: { code: string; name: string }[];
-};
+}
 
-type Setup = {
+interface Setup {
   customers: CustomerRow[];
   profiles: CustomerProfileRow[];
   fields: SetupField[];
-};
+}
 
 type AccountType = 'cash' | 'credit';
 type Block = 'none' | 'ship' | 'invoice' | 'all';
@@ -49,7 +49,7 @@ function money(value: string | number | null | undefined): string {
 }
 
 function fieldNumber(fieldName: string): string | null {
-  const match = fieldName.match(/^(?:global|shortcut)Dimension(\d+)Code$/);
+  const match = /^(?:global|shortcut)Dimension(\d+)Code$/.exec(fieldName);
   return match?.[1] ?? null;
 }
 
@@ -169,10 +169,10 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
       countyOrState: '',
       postalCode: '',
       country: '',
-      accountType: 'cash' as AccountType,
+      accountType: 'cash',
       creditLimit: '0',
       paymentTermDays: '0',
-      blocked: 'none' as Block,
+      blocked: 'none',
       transmitInvoicesToKra: true,
       buyerKraPin: '',
       notes: '',
@@ -188,7 +188,7 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
       code: '',
       name: '',
       description: '',
-      accountType: 'cash' as AccountType,
+      accountType: 'cash',
       creditLimit: '0',
       paymentTermDays: '0',
       transmitInvoicesToKra: true,
@@ -313,7 +313,7 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
       accountType: row.accountType === 'credit' ? 'credit' : 'cash',
       creditLimit: String(row.creditLimit),
       paymentTermDays: String(row.paymentTermDays),
-      blocked: (row.blocked as Block) || 'none',
+      blocked: (row.blocked) || 'none',
       transmitInvoicesToKra: row.transmitInvoicesToKra,
       buyerKraPin: row.buyerKraPin ?? '',
       notes: row.notes ?? '',
@@ -670,7 +670,7 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
                     className={`${fieldClass} mt-1`}
                     value={customerForm.blocked}
                     onChange={(e) =>
-                      setCustomerForm((f) => ({ ...f, blocked: e.target.value as Block }))
+                      setCustomerForm((f) => ({ ...f, blocked: e.target.value }))
                     }
                   >
                     <option value="none">None</option>

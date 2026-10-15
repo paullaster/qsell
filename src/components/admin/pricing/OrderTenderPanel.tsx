@@ -62,7 +62,7 @@ export function OrderTenderPanel({
         : undefined,
     });
     setBusy(false);
-    if (!r.ok) return setMessage({ kind: 'error', text: r.error });
+    if (!r.ok) { setMessage({ kind: 'error', text: r.error }); return; }
     setCode('');
     setPoints('');
     setMessage({

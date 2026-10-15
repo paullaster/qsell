@@ -10,8 +10,7 @@ import {
 import { asKcbBuniCredentials, type KcbBuniCredentials } from '../types';
 import { extractPaymentReference } from '../payment-reference';
 
-import { has } from '@/lib/has';
-import { orElse, readText } from '@/lib/values';
+import { asRecord, has, orElse, readText } from '@/lib/values';
 
 function formatPhoneKe(phone: string): string {
   let clean = phone.replace(/[^0-9]/g, '');
@@ -119,8 +118,12 @@ export class KcbBuniAdapter implements PaymentPort {
     }
   }
 
-  async handleCallback(input: CallbackInput): Promise<CallbackResult> {
-    const body = (input.body || {}) as Record<string, unknown>;
+  handleCallback(input: CallbackInput): Promise<CallbackResult> {
+    return Promise.resolve(this.readCallback(input));
+  }
+
+  private readCallback(input: CallbackInput): CallbackResult {
+    const body = asRecord(input.body);
     const nested = (body.Body as Record<string, unknown> | undefined)?.stkCallback as
       | Record<string, unknown>
       | undefined;

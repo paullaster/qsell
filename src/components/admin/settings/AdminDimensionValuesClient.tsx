@@ -1,321 +1,201 @@
 'use client';
 
-import React, { use, useState, useTransition } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Edit2, Plus, Trash2, X } from 'lucide-react';
-import type { DimensionRow, DimensionValueRow } from '@/server/db/drizzle/schema';
+import { use, useId, useState } from 'react';
 import {
   createDimensionValueAction,
   deleteDimensionValueAction,
+  dimensionValuesPageAction,
+  type getDimensionAction,
   updateDimensionValueAction,
+  type DimensionValueView,
 } from '@/server/domains/dimensions/actions';
+import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { InlineConfirm } from '@/components/ui/InlineConfirm';
+import { usePagedList } from '@/components/ui/usePagedList';
+import { buttonClass, cardClass, Chip, Field, fieldClass, LoadFailed, Message, PageHeader, primaryClass, attempt, type Notice } from '@/components/ui/screen-kit';
+import { emptyValueForm, parentValueDimension, valuePayload, type DimensionValueForm } from '@/lib/dimension-forms';
+import { has } from '@/lib/values';
+import { savedWords, submitWords } from '@/lib/form-words';
+import type { Choice } from '@/lib/payment-options';
 
-const fieldClass =
-  'w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong placeholder:text-fg-faint focus:border-indigo-500 focus:outline-none';
+type Dimension = Extract<Awaited<ReturnType<typeof getDimensionAction>>, { ok: true }>['data'];
+type FirstPage = Awaited<ReturnType<typeof dimensionValuesPageAction>>;
 
-type FormState = {
-  code: string;
-  name: string;
-  description: string;
-  parentId: string;
-};
+interface Props {
+  dimensionPromise: ReturnType<typeof getDimensionAction>;
+  firstPage: ReturnType<typeof dimensionValuesPageAction>;
+  canManage: Promise<boolean>;
+}
 
-const emptyForm = (): FormState => ({
-  code: '',
-  name: '',
-  description: '',
-  parentId: '',
-});
-
-export function AdminDimensionValuesClient({
-  dimensionPromise,
-  valuesPromise,
-  parentValuesPromise,
-}: {
-  dimensionPromise: Promise<DimensionRow | null>;
-  valuesPromise: Promise<DimensionValueRow[]>;
-  parentValuesPromise: Promise<DimensionValueRow[]>;
-}) {
+export function AdminDimensionValuesClient({ dimensionPromise, firstPage, canManage }: Props) {
   const dimension = use(dimensionPromise);
-  const initial = use(valuesPromise);
-  const parentValues = use(parentValuesPromise);
-  const [rows, setRows] = useState(initial);
-  const [form, setForm] = useState<FormState>(emptyForm);
+  const first = use(firstPage);
+  const may = use(canManage);
+  if (!dimension.ok) return <LoadFailed error={dimension.error} />;
+  if (!first.ok) return <LoadFailed error={first.error} />;
+  return <ValuesView dimension={dimension.data} first={first} may={may} />;
+}
+
+function ValuesView({ dimension, first, may }: { dimension: Dimension; first: FirstPage; may: boolean }) {
+  const uid = useId();
+  const [query, setQuery] = useState('');
+  const [form, setForm] = useState<DimensionValueForm>(emptyValueForm);
+  const [parent, setParent] = useState<Choice | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<Notice>(null);
 
-  if (!dimension) {
-    return (
-      <p className="text-sm text-fg-muted">
-        Dimension not found.{' '}
-        <Link href="/admin/settings/dimensions" className="text-indigo-400 hover:underline">
-          Back
-        </Link>
-      </p>
-    );
-  }
+  const list = usePagedList<DimensionValueView, { query: string }>({
+    load: (filters, cursor) => dimensionValuesPageAction(dimension.id, { query: filters.query, cursor }),
+    filters: { query: query.trim() },
+    initialPage: first,
+  });
 
-  const parentOptions = dimension.parentId ? parentValues : rows;
-  const isBranchOption = dimension.optionString === 'branch';
-
-  const openCreate = () => {
+  const reset = () => {
     setEditingId(null);
-    setForm(emptyForm());
-    setError(null);
+    setForm(emptyValueForm());
+    setParent(null);
   };
-
-  const openEdit = (row: DimensionValueRow) => {
+  const edit = (row: DimensionValueView) => {
+    setNotice(null);
     setEditingId(row.id);
-    setForm({
-      code: row.code,
-      name: row.name,
-      description: row.description ?? '',
-      parentId: row.parentId ?? '',
-    });
-    setError(null);
+    setForm({ code: row.code, name: row.name, description: row.description ?? '', parentId: row.parentId ?? '' });
+    setParent(row.parentId === null ? null : { id: row.parentId, label: row.parentLabel ?? row.parentId });
+  };
+  const finish = (ok: boolean, text: string) => {
+    setBusy(false);
+    setNotice({ kind: ok ? 'ok' : 'error', text });
+    if (ok) list.reload();
   };
 
-  const handleSave = () => {
-    startTransition(async () => {
-      try {
-        setError(null);
-        const payload = {
-          code: form.code,
-          name: form.name,
-          description: form.description || null,
-          parentId: form.parentId || null,
-        };
-        if (editingId) {
-          const updated = await updateDimensionValueAction(editingId, payload);
-          setRows((prev) =>
-            prev
-              .map((r) => (r.id === updated.id ? updated : r))
-              .sort((a, b) => a.code.localeCompare(b.code)),
-          );
-        } else {
-          const created = await createDimensionValueAction({
-            dimensionId: dimension.id,
-            ...payload,
-          });
-          setRows((prev) => [...prev, created].sort((a, b) => a.code.localeCompare(b.code)));
-        }
-        openCreate();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to save value');
-      }
-    });
+  const save = async (e: React.SyntheticEvent) => {
+    e.preventDefault();
+    const checked = valuePayload({ ...form, parentId: parent?.id ?? '' });
+    if (!checked.ok) {
+      setNotice({ kind: 'error', text: checked.error });
+      return;
+    }
+    setBusy(true);
+    const res = editingId === null ? await attempt(createDimensionValueAction({ dimensionId: dimension.id, ...checked.payload })) : await attempt(updateDimensionValueAction(editingId, checked.payload));
+    if (res.ok) reset();
+    finish(res.ok, res.ok ? savedWords(editingId, 'Value') : res.error);
+  };
+  const toggleActive = async (row: DimensionValueView) => {
+    setBusy(true);
+    const res = await attempt(updateDimensionValueAction(row.id, { isActive: !row.isActive }));
+    finish(res.ok, res.ok ? `${row.code} is ${row.isActive ? 'switched off' : 'switched on'}.` : res.error);
+  };
+  const remove = async (row: DimensionValueView) => {
+    setBusy(true);
+    const res = await attempt(deleteDimensionValueAction(row.id));
+    if (res.ok && editingId === row.id) reset();
+    finish(res.ok, res.ok ? `${row.code} deleted.` : res.error);
   };
 
-  const handleDelete = (row: DimensionValueRow) => {
-    if (!window.confirm(`Delete value "${row.code}"?`)) return;
-    startTransition(async () => {
-      try {
-        setError(null);
-        await deleteDimensionValueAction(row.id);
-        setRows((prev) => prev.filter((r) => r.id !== row.id));
-        if (editingId === row.id) openCreate();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to delete value');
-      }
-    });
-  };
-
-  const toggleActive = (row: DimensionValueRow) => {
-    startTransition(async () => {
-      try {
-        const updated = await updateDimensionValueAction(row.id, { isActive: !row.isActive });
-        setRows((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to update value');
-      }
-    });
-  };
+  const filters = { dimension: parentValueDimension(dimension), ...(editingId === null ? {} : { exclude: editingId }) };
 
   return (
-    <div className="space-y-6">
-      <div>
-        <Link
-          href="/admin/settings/dimensions"
-          className="mb-3 inline-flex items-center gap-1 text-xs text-fg-subtle hover:text-indigo-400"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" /> All dimensions
-        </Link>
-        <h2 className="text-xl font-bold text-fg-strong">
-          {dimension.code} <span className="font-normal text-fg-muted">— {dimension.name}</span>
-        </h2>
-        <p className="mt-1 text-sm text-fg-muted">
-          Values for this dimension
-          {dimension.optionString ? (
-            <>
-              {' '}
-              · option <span className="font-mono text-indigo-300">{dimension.optionString}</span>
-            </>
-          ) : null}
-          {isBranchOption ? <> · each value creates/updates a real branch</> : null}
-        </p>
-      </div>
+    <div className="max-w-6xl space-y-5">
+      <Link href="/admin/settings/dimensions" className="inline-flex min-h-10 items-center text-xs text-fg-subtle hover:text-indigo-500">
+        ← All dimensions
+      </Link>
+      <PageHeader
+        title={`${dimension.code} — ${dimension.name}`}
+        intro={
+          <>
+            Values for this dimension
+            {has(dimension.optionLabel) ? <> · option {dimension.optionLabel}</> : null}
+            {dimension.optionString === 'branch' ? ' · each value creates or updates a real branch' : null}
+          </>
+        }
+      />
+      <Message notice={notice} />
 
-      <div className="space-y-3 rounded-xl border border-line bg-surface-sunken/50 p-4">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-fg-strong">
-            {editingId ? 'Edit value' : 'New value'}
-          </h3>
-          {editingId ? (
-            <button
-              type="button"
-              onClick={openCreate}
-              className="inline-flex items-center gap-1 text-xs text-fg-muted hover:text-fg-strong"
-            >
-              <X className="h-3.5 w-3.5" /> Cancel
-            </button>
-          ) : null}
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <label className="mb-1 block text-[11px] font-semibold text-fg-muted">Code</label>
-            <input
-              value={form.code}
-              onChange={(e) => setForm((p) => ({ ...p, code: e.target.value }))}
-              className={`${fieldClass} font-mono uppercase`}
-              placeholder="WH-A"
-            />
+      {may ? (
+        <form onSubmit={(e) => void save(e)} className={`${cardClass} space-y-4`} aria-label={editingId === null ? 'New value' : 'Edit value'}>
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-sm font-bold text-fg-strong">{editingId === null ? 'New value' : 'Edit value'}</h3>
+            {editingId === null ? null : (
+              <button type="button" className={buttonClass} onClick={reset}>
+                Cancel
+              </button>
+            )}
           </div>
-          <div>
-            <label className="mb-1 block text-[11px] font-semibold text-fg-muted">Name</label>
-            <input
-              value={form.name}
-              onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
-              className={fieldClass}
-            />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field id={`${uid}-code`} label="Code">
+              <input id={`${uid}-code`} value={form.code} onChange={(e) => setForm((p) => ({ ...p, code: e.target.value }))} placeholder="WH-A" className={`${fieldClass} font-mono uppercase`} required />
+            </Field>
+            <Field id={`${uid}-name`} label="Name">
+              <input id={`${uid}-name`} value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} className={fieldClass} required />
+            </Field>
+            <div className="sm:col-span-2">
+              <Field id={`${uid}-desc`} label="Description">
+                <input id={`${uid}-desc`} value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} className={fieldClass} />
+              </Field>
+            </div>
+            <ChoicePicker label="Parent value" source="dimension-values" filters={filters} choice={parent} onChoice={setParent} placeholder="None" />
           </div>
-          <div className="sm:col-span-2">
-            <label className="mb-1 block text-[11px] font-semibold text-fg-muted">
-              Description
-            </label>
-            <input
-              value={form.description}
-              onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
-              className={fieldClass}
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-[11px] font-semibold text-fg-muted">
-              Parent value
-            </label>
-            <select
-              value={form.parentId}
-              onChange={(e) => setForm((p) => ({ ...p, parentId: e.target.value }))}
-              className={fieldClass}
-            >
-              <option value="">None</option>
-              {parentOptions
-                .filter((v) => v.id !== editingId)
-                .map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.dimensionCode}:{v.code} — {v.name}
-                  </option>
-                ))}
-            </select>
-          </div>
-        </div>
-        <button
-          type="button"
-          disabled={pending || !form.code || !form.name}
-          onClick={handleSave}
-          className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
-        >
-          <Plus className="h-4 w-4" />
-          {pending ? 'Saving…' : editingId ? 'Save changes' : 'Add value'}
-        </button>
-      </div>
-
-      {error ? (
-        <div className="rounded-lg border border-red-800 bg-red-50 px-3 py-2 text-xs text-red-800">
-          {error}
-        </div>
+          <button type="submit" disabled={busy} className={primaryClass}>
+            {submitWords(busy, editingId, 'Create value')}
+          </button>
+        </form>
       ) : null}
 
-      <div className="overflow-hidden rounded-xl border border-line">
-        <table className="w-full text-left text-xs">
-          <thead className="border-b border-line bg-surface text-[10px] tracking-wider text-fg-subtle uppercase">
-            <tr>
-              <th className="px-4 py-3">Code</th>
-              <th className="px-4 py-3">Name</th>
-              <th className="px-4 py-3">Parent</th>
-              <th className="px-4 py-3">Status</th>
-              {isBranchOption ? <th className="px-4 py-3">Branch</th> : null}
-              <th className="px-4 py-3 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-line">
-            {rows.length === 0 ? (
-              <tr>
-                <td
-                  colSpan={isBranchOption ? 6 : 5}
-                  className="px-4 py-8 text-center text-fg-subtle"
-                >
-                  No values yet.
-                </td>
-              </tr>
-            ) : (
-              rows.map((row) => {
-                const parent =
-                  parentOptions.find((p) => p.id === row.parentId) ||
-                  rows.find((p) => p.id === row.parentId);
-                return (
-                  <tr key={row.id} className="bg-surface-sunken/40">
-                    <td className="px-4 py-3 font-mono text-indigo-300">{row.code}</td>
-                    <td className="px-4 py-3 text-fg-strong">{row.name}</td>
-                    <td className="px-4 py-3 text-fg-subtle">{parent?.code || '—'}</td>
-                    <td className="px-4 py-3">
-                      <button
-                        type="button"
-                        disabled={pending}
-                        onClick={() => toggleActive(row)}
-                        className={
-                          row.isActive
-                            ? 'text-[11px] font-semibold text-emerald-600'
-                            : 'text-[11px] font-semibold text-fg-subtle'
-                        }
-                      >
-                        {row.isActive ? 'Active' : 'Inactive'}
-                      </button>
-                    </td>
-                    {isBranchOption ? (
-                      <td className="px-4 py-3 font-mono text-[10px] text-fg-subtle">
-                        {row.linkedBranchId ? row.linkedBranchId.slice(0, 8) : '—'}
-                      </td>
-                    ) : null}
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-3">
-                        <button
-                          type="button"
-                          disabled={pending}
-                          onClick={() => openEdit(row)}
-                          className="text-fg-muted hover:text-fg-strong"
-                          title="Edit"
-                        >
-                          <Edit2 className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          disabled={pending}
-                          onClick={() => handleDelete(row)}
-                          className="text-fg-muted hover:text-red-600"
-                          title="Delete"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+      <div className="max-w-sm">
+        <label htmlFor={`${uid}-search`} className="sr-only">
+          Search values
+        </label>
+        <input id={`${uid}-search`} type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by code or name" className={fieldClass} autoComplete="off" />
       </div>
+      {list.phase === 'error' ? (
+        <p role="alert" className="text-sm text-red-700">
+          {list.error}{' '}
+          <button type="button" className={buttonClass} onClick={list.retry}>
+            Try again
+          </button>
+        </p>
+      ) : null}
+      {list.phase === 'loading' ? (
+        <p role="status" className="text-sm text-fg-muted">
+          Loading…
+        </p>
+      ) : null}
+
+      <ul className="space-y-2" aria-label="Values">
+        {list.rows.map((row) => (
+          <li key={row.id} className="rounded-xl border border-line bg-surface-raised p-3 sm:p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-fg-strong">
+                  <span className="font-mono">{row.code}</span> · {row.name}
+                </p>
+                <p className="mt-1 flex flex-wrap gap-1.5">
+                  <Chip tone={row.isActive ? 'green' : 'gray'}>{row.isActive ? 'In use' : 'Switched off'}</Chip>
+                  {has(row.parentLabel) ? <Chip tone="gray">Under {row.parentLabel}</Chip> : null}
+                </p>
+              </div>
+              {may ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <button type="button" className={buttonClass} onClick={() => void toggleActive(row)} disabled={busy} aria-label={`${row.isActive ? 'Switch off' : 'Switch on'} ${row.code}`}>
+                    {row.isActive ? 'Switch off' : 'Switch on'}
+                  </button>
+                  <button type="button" className={buttonClass} onClick={() => edit(row)} disabled={busy} aria-label={`Edit ${row.code}`}>
+                    Edit
+                  </button>
+                  <InlineConfirm label={`Delete value ${row.code}`} action="Delete" confirm="Delete for good" busy={busy} onConfirm={() => void remove(row)} />
+                </div>
+              ) : null}
+            </div>
+          </li>
+        ))}
+      </ul>
+      {list.phase === 'idle' && list.rows.length === 0 ? <p className="text-sm text-fg-muted">{query.trim() === '' ? 'No values yet.' : `No values match “${query.trim()}”.`}</p> : null}
+      {list.cursor === null ? null : (
+        <button type="button" className={buttonClass} onClick={list.loadMore} disabled={list.phase === 'more'}>
+          {list.phase === 'more' ? 'Loading…' : 'Show more values'}
+        </button>
+      )}
     </div>
   );
 }

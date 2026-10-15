@@ -2,8 +2,7 @@ import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'node:
 import { readFileSync } from 'node:fs';
 import type { EncryptedCredentialsBlob } from './types';
 
-import { has } from '@/lib/has';
-import { firstFilled, orElse } from '@/lib/values';
+import { firstFilled, has, orElse } from '@/lib/values';
 
 /**
  * The master data-encryption key seals every provider credential. It is one of the two things
@@ -96,10 +95,10 @@ export function encryptCredentials(plaintext: Record<string, unknown>): Encrypte
   };
 }
 
-export function decryptCredentials<T extends Record<string, unknown> = Record<string, unknown>>(
+export function decryptCredentials(
   blob: EncryptedCredentialsBlob | null | undefined,
-): T | null {
-  if (!blob || (blob.v !== 1 && blob.v !== 2)) return null;
+): Record<string, unknown> | null {
+  if (blob === null || blob === undefined) return null;
   let key: Buffer;
   if (blob.v === 2 && has(blob.kid) && blob.kid !== currentKeyId()) {
     const old = oldKeys().get(blob.kid);
@@ -119,7 +118,7 @@ export function decryptCredentials<T extends Record<string, unknown> = Record<st
     decipher.update(Buffer.from(blob.ciphertext, 'base64')),
     decipher.final(),
   ]);
-  return JSON.parse(plain.toString('utf8')) as T;
+  return JSON.parse(plain.toString('utf8')) as Record<string, unknown>;
 }
 
 /** Fields whose value is a secret: shown only as "saved", with no characters of it. */

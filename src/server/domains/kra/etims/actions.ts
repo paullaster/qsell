@@ -1,44 +1,22 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
-import { inArray } from 'drizzle-orm';
-import { requirePermission } from '@/server/domains/access-control/guard';
 import { getContainer } from '@/server/di/container';
-import { products, type EtimsItemRow } from '@/server/db/drizzle/schema';
+import { runSetting, type SettingsResult } from '@/server/domains/settings/action-runner';
+import type { PageInput } from '@/server/domains/settings/paging';
+import type { EtimsItemRow } from '@/server/db/drizzle/schema';
 import { KraConfigError } from '../types';
-import {
-  EtimsItemError,
-  type EtimsTargetView,
-  type ProductEtimsOverview,
-  type RegistrableProduct,
-  type RemoteEtimsItem,
-} from './item-service';
+import { EtimsItemError, type EtimsTargetView, type ProductEtimsOverview, type RemoteEtimsItem } from './item-service';
 import { EtimsApiError } from './client';
 
 const ITEMS_PATH = '/admin/settings/tax-compliance/kra-tims-etims/items';
 
-export type ActionResult<T> = { ok: true; data: T } | { ok: false; error: string };
+export type ActionResult<T> = SettingsResult<T>;
 
-/** Server action errors are masked in production, so failures come back as data. */
-async function run<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
-  try {
-    return { ok: true, data: await fn() };
-  } catch (error: unknown) {
-    if (
-      error instanceof KraConfigError ||
-      error instanceof EtimsItemError ||
-      error instanceof EtimsApiError
-    ) {
-      return { ok: false, error: error.message };
-    }
-    console.error('[etims-items]', error);
-    return { ok: false, error: 'Something went wrong. Please try again.' };
-  }
-}
+/** Failures that come with words for the person (a refusal by KRA, a missing setting, a rule). */
+const friendly = (error: unknown): string | null => (error instanceof KraConfigError || error instanceof EtimsItemError || error instanceof EtimsApiError ? error.message : null);
 
-async function companyId(): Promise<string> {
-  return (await getContainer().companySettings.ensureSeeded()).id;
-}
+/** Every eTIMS action: one explicit permission, failures returned as data. */
+const run = <T,>(fn: (companyId: string) => Promise<T>, paths: string[] = []) => runSetting('taxes:manage', ({ companyId }) => fn(companyId), { paths, friendly });
 
 export interface EtimsItemView {
   id: string;
@@ -57,37 +35,24 @@ export interface EtimsItemView {
   lastSyncedAt: string | null;
 }
 
-export interface EtimsItems {
-  items: EtimsItemView[];
-  registrable: RegistrableProduct[];
+export interface EtimsItemsPage {
+  rows: EtimsItemView[];
+  nextCursor: string | null;
 }
 
-export async function listEtimsItemsAction(
-  branchId: string | null,
-): Promise<ActionResult<EtimsItems>> {
-  await requirePermission('taxes:manage');
-  return run(async () => {
+/** One page of the items registered in a scope (the company, or an independent branch), found by name or KRA code. */
+export async function etimsItemsPageAction(input: PageInput & { branchId: string | null }): Promise<ActionResult<EtimsItemsPage>> {
+  return run(async (companyId) => {
     const svc = getContainer().etimsItems;
-    const target = { companyId: await companyId(), branchId };
-    const [rows, registrable] = await Promise.all([
-      svc.listLocal(target),
-      svc.listRegistrable(target),
-    ]);
-    const ids = rows.map((r) => r.productId);
-    const names = ids.length
-      ? await getContainer()
-          .db.select({ id: products.id, name: products.name, sku: products.sku })
-          .from(products)
-          .where(inArray(products.id, ids))
-      : [];
-    const byId = new Map(names.map((n) => [n.id, n]));
+    const page = await svc.pageLocal({ companyId, branchId: input.branchId }, input);
+    const facts = await svc.productFacts(page.rows.map((r) => r.productId));
     return {
-      registrable,
-      items: rows.map((r) => ({
+      nextCursor: page.nextCursor,
+      rows: page.rows.map((r) => ({
         id: r.id,
         productId: r.productId,
-        productName: byId.get(r.productId)?.name ?? r.name,
-        sku: byId.get(r.productId)?.sku ?? '',
+        productName: facts.get(r.productId)?.name ?? r.name,
+        sku: facts.get(r.productId)?.sku ?? '',
         kraItemCode: r.kraItemCode,
         status: r.status,
         taxCode: r.taxCode,
@@ -103,123 +68,78 @@ export async function listEtimsItemsAction(
   });
 }
 
-export async function listRemoteEtimsItemsAction(
-  branchId: string | null,
-): Promise<ActionResult<RemoteEtimsItem[]>> {
-  await requirePermission('taxes:manage');
-  return run(async () =>
-    getContainer().etimsItems.listRemote({ companyId: await companyId(), branchId }),
-  );
+/** The items KRA itself holds for a scope, tagged with the local item each matches. */
+export async function listRemoteEtimsItemsAction(branchId: string | null): Promise<ActionResult<RemoteEtimsItem[]>> {
+  return run((companyId) => getContainer().etimsItems.listRemote({ companyId, branchId }));
 }
 
 /** Where eTIMS items can be managed: the company and independent branches in eTIMS mode. */
 export async function listEtimsTargetsAction(): Promise<ActionResult<EtimsTargetView[]>> {
-  await requirePermission('taxes:manage');
-  return run(async () => {
-    const { companySettings, branches, etimsItems } = getContainer();
-    const company = await companySettings.ensureSeeded();
-    return etimsItems.listTargets({
-      companyId: company.id,
-      branches: await branches.listByCompany(company.id),
-    });
+  return run(async (companyId) => {
+    const { branches, etimsItems } = getContainer();
+    return etimsItems.listTargets({ companyId, branches: await branches.listByCompany(companyId) });
   });
 }
 
-export async function registerEtimsItemAction(input: {
-  /** Null or omitted manages the company's items; a branch id only works for independent branches. */
+/** Null or omitted manages the company's items; a branch id only works for independent branches. */
+interface ScopeInput {
   branchId?: string | null;
   productId: string;
-  qtyUnitCode: string;
-  pkgUnitCode: string;
-  itemClassCode: string;
-  orgCountryCode?: string;
-  initialStock?: number;
-}): Promise<ActionResult<{ id: string; status: string }>> {
-  await requirePermission('taxes:manage');
-  return run(async () => {
-    const row = await getContainer().etimsItems.register({
-      ...input,
-      companyId: await companyId(),
-    });
-    revalidatePath(ITEMS_PATH);
-    return { id: row.id, status: row.status };
-  });
 }
 
-export async function updateEtimsItemAction(input: {
-  /** Null or omitted manages the company's items; a branch id only works for independent branches. */
-  branchId?: string | null;
-  productId: string;
-  qtyUnitCode?: string;
-  pkgUnitCode?: string;
-  itemClassCode?: string;
-  stock?: number;
-}): Promise<ActionResult<{ id: string }>> {
-  await requirePermission('taxes:manage');
-  return run(async () => {
-    const row = await getContainer().etimsItems.update({ ...input, companyId: await companyId() });
-    revalidatePath(ITEMS_PATH);
-    return { id: row.id };
-  });
+export async function registerEtimsItemAction(input: ScopeInput & { qtyUnitCode: string; pkgUnitCode: string; itemClassCode: string; orgCountryCode?: string; initialStock?: number }): Promise<ActionResult<{ id: string; status: string }>> {
+  return run(
+    async (companyId) => {
+      const row = await getContainer().etimsItems.register({ ...input, companyId });
+      return { id: row.id, status: row.status };
+    },
+    [ITEMS_PATH],
+  );
 }
 
-export async function updateEtimsStockAction(input: {
-  /** Null or omitted manages the company's items; a branch id only works for independent branches. */
-  branchId?: string | null;
-  productId: string;
-  quantity: number;
-}): Promise<ActionResult<{ id: string }>> {
-  await requirePermission('taxes:manage');
-  return run(async () => {
-    const row = await getContainer().etimsItems.updateStock({
-      ...input,
-      companyId: await companyId(),
-    });
-    revalidatePath(ITEMS_PATH);
-    return { id: row.id };
-  });
+export async function updateEtimsItemAction(input: ScopeInput & { qtyUnitCode?: string; pkgUnitCode?: string; itemClassCode?: string; stock?: number }): Promise<ActionResult<{ id: string }>> {
+  return run(
+    async (companyId) => {
+      const row = await getContainer().etimsItems.update({ ...input, companyId });
+      return { id: row.id };
+    },
+    [ITEMS_PATH],
+  );
 }
 
-export async function removeEtimsItemAction(input: {
-  /** Null or omitted manages the company's items; a branch id only works for independent branches. */
-  branchId?: string | null;
-  productId: string;
-}): Promise<ActionResult<{ id: string }>> {
-  await requirePermission('taxes:manage');
-  return run(async () => {
-    const row = await getContainer().etimsItems.remove({ ...input, companyId: await companyId() });
-    revalidatePath(ITEMS_PATH);
-    return { id: row.id };
-  });
+export async function updateEtimsStockAction(input: ScopeInput & { quantity: number }): Promise<ActionResult<{ id: string }>> {
+  return run(
+    async (companyId) => {
+      const row = await getContainer().etimsItems.updateStock({ ...input, companyId });
+      return { id: row.id };
+    },
+    [ITEMS_PATH],
+  );
 }
 
-export async function reconcileEtimsItemAction(input: {
-  /** Null or omitted manages the company's items; a branch id only works for independent branches. */
-  branchId?: string | null;
-  productId: string;
-}): Promise<ActionResult<{ id: string; status: string }>> {
-  await requirePermission('taxes:manage');
-  return run(async () => {
-    const row = await getContainer().etimsItems.reconcile({
-      ...input,
-      companyId: await companyId(),
-    });
-    revalidatePath(ITEMS_PATH);
-    return { id: row.id, status: row.status };
-  });
+export async function removeEtimsItemAction(input: ScopeInput): Promise<ActionResult<{ id: string }>> {
+  return run(
+    async (companyId) => {
+      const row = await getContainer().etimsItems.remove({ ...input, companyId });
+      return { id: row.id };
+    },
+    [ITEMS_PATH],
+  );
 }
 
-export async function getProductEtimsAction(
-  productId: string,
-): Promise<ActionResult<ProductEtimsOverview>> {
-  await requirePermission('taxes:manage');
-  return run(async () => {
-    const { companySettings, branches, etimsItems } = getContainer();
-    const company = await companySettings.ensureSeeded();
-    return etimsItems.overviewForProduct({
-      companyId: company.id,
-      productId,
-      branches: await branches.listByCompany(company.id),
-    });
+export async function reconcileEtimsItemAction(input: ScopeInput): Promise<ActionResult<{ id: string; status: string }>> {
+  return run(
+    async (companyId) => {
+      const row = await getContainer().etimsItems.reconcile({ ...input, companyId });
+      return { id: row.id, status: row.status };
+    },
+    [ITEMS_PATH],
+  );
+}
+
+export async function getProductEtimsAction(productId: string): Promise<ActionResult<ProductEtimsOverview>> {
+  return run(async (companyId) => {
+    const { branches, etimsItems } = getContainer();
+    return etimsItems.overviewForProduct({ companyId, productId, branches: await branches.listByCompany(companyId) });
   });
 }

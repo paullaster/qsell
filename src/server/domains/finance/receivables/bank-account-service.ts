@@ -10,7 +10,7 @@ import {
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { FinanceError, type FinanceContext } from '../errors';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 export interface BankAccountInput {
   code: string;
@@ -139,7 +139,7 @@ export class BankAccountService {
       if (used && has(input.currency) && input.currency !== current.currency) {
         throw new FinanceError('ACCOUNT_IN_USE', 'Money has moved through this account, so its currency cannot change.');
       }
-      if (used && input.kind && input.kind !== current.kind) {
+      if (used && has(input.kind) && input.kind !== current.kind) {
         throw new FinanceError('ACCOUNT_IN_USE', 'Money has moved through this account, so its kind cannot change.');
       }
       const next = { ...current, ...stripUndefined(input) };

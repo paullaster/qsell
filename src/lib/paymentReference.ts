@@ -1,6 +1,5 @@
 
-import { has } from '@/lib/has';
-import { emptyToNull, firstFilled, orElse } from '@/lib/values';
+import { emptyToNull, firstFilled, has, orElse } from '@/lib/values';
 /** The reference the provider assigned when the payment succeeded. Not a checkout-request id. */
 export function shownPaymentReference(order: {
   paymentMethod?: string | null;

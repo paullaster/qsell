@@ -1,27 +1,12 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import { pick } from './support/quotes';
-
-async function open(page: Page, url: string, heading: string | RegExp): Promise<void> {
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    await page.goto(url);
-    try {
-      await expect(page.getByRole('heading', { name: heading, level: 2 }).first()).toBeVisible({ timeout: 30_000 });
-      return;
-    } catch (error) {
-      if (attempt === 3) throw error;
-    }
-  }
-}
-
-const noHorizontalScroll = async (page: Page) =>
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+import { clickUntilVisible, open, noHorizontalScroll } from './support/page';
 
 test.describe('wallets', () => {
   test('the policy is set with pickers and saved', async ({ page }) => {
     await open(page, '/admin/finance/receivables/wallet-policy', 'Wallet policy');
-    await page.getByRole('button', { name: 'Change', exact: true }).first().click();
     const form = page.getByRole('form', { name: 'Rules for the whole business' });
-    await expect(form).toBeVisible();
+    await clickUntilVisible(page.getByRole('button', { name: 'Change', exact: true }).first(), form);
     await form.getByLabel('Customers can hold credit with us').check();
     await pick(page, form.getByRole('combobox', { name: 'Money paid beyond what is owed' }), 'wallet', /Put it in the wallet/);
     await form.getByRole('combobox', { name: 'On a new credit invoice' }).click();

@@ -11,6 +11,7 @@ import type { KraConfigReader } from './resolver';
 import type { ModuleSigning } from './signing/types';
 import type { KraEnvironment, KraMode } from './types';
 
+import { required } from '@/lib/values';
 export interface KraConfigWrite {
   mode: KraMode;
   isEnabled: boolean;
@@ -55,7 +56,7 @@ export class KraConfigRepository implements KraConfigReader {
   }
 
   async listBranchConfigs(): Promise<BranchKraConfigRow[]> {
-    return this.db.select().from(branchKraConfigs);
+    return await this.db.select().from(branchKraConfigs);
   }
 
   async upsertCompanyConfig(
@@ -72,7 +73,7 @@ export class KraConfigRepository implements KraConfigReader {
         set: { ...rest, ...creds, updatedAt: new Date() },
       })
       .returning();
-    return row!;
+    return required(row, 'the saved KRA configuration');
   }
 
   async upsertBranchConfig(branchId: string, input: KraConfigWrite): Promise<BranchKraConfigRow> {
@@ -86,6 +87,6 @@ export class KraConfigRepository implements KraConfigReader {
         set: { ...rest, ...creds, updatedAt: new Date() },
       })
       .returning();
-    return row!;
+    return required(row, 'the saved KRA configuration');
   }
 }

@@ -11,8 +11,7 @@ import {
 import { asJengaCredentials, type JengaHqCredentials } from '../types';
 import { extractPaymentReference } from '../payment-reference';
 
-import { has } from '@/lib/has';
-import { orElse, readText } from '@/lib/values';
+import { asRecord, firstFilled, has, orElse, readText } from '@/lib/values';
 
 /**
  * Jenga HQ receive-money / checkout adapter.
@@ -124,12 +123,7 @@ export class JengaHqAdapter implements PaymentPort {
         };
       }
 
-      const redirect =
-        typeof raw.redirectUrl === 'string'
-          ? raw.redirectUrl
-          : typeof raw.paymentUrl === 'string'
-            ? raw.paymentUrl
-            : undefined;
+      const redirect = firstFilled(typeof raw.redirectUrl === 'string' ? raw.redirectUrl : null, typeof raw.paymentUrl === 'string' ? raw.paymentUrl : null) ?? undefined;
 
       return {
         status: has(redirect) ? 'awaiting_redirect' : 'pending',
@@ -146,8 +140,12 @@ export class JengaHqAdapter implements PaymentPort {
     }
   }
 
-  async handleCallback(input: CallbackInput): Promise<CallbackResult> {
-    const body = (input.body || {}) as Record<string, unknown>;
+  handleCallback(input: CallbackInput): Promise<CallbackResult> {
+    return Promise.resolve(this.readCallback(input));
+  }
+
+  private readCallback(input: CallbackInput): CallbackResult {
+    const body = asRecord(input.body);
     const status = readText(body.status, body.transactionStatus, body.state, '').toLowerCase();
     if (status.includes('success') || status.includes('completed') || status === '0') {
       return {

@@ -1,5 +1,7 @@
 import type { StepDefinition } from './types';
 
+import { has, required } from '@/lib/values';
+
 /** What the resolver needs to know about people; the service reads it from the database. */
 export interface ApproverDirectory {
   /** The next link up the chain, or null at the top. */
@@ -33,7 +35,7 @@ export interface ResolveInput {
 }
 
 export type Offer =
-  { done: true } | { done: false; offers: Array<{ userId: string; position: number }> };
+  { done: true } | { done: false; offers: { userId: string; position: number }[] };
 
 export class NoEligibleApprover extends Error {
   constructor(message: string) {
@@ -122,13 +124,13 @@ export function nextOffers(input: ResolveInput): Offer {
         }
         return { done: true };
       }
-      return { done: false, offers: [{ userId: remaining[0]!, position: entries.length }] };
+      return { done: false, offers: [{ userId: required(remaining[0], 'the next approver in the group'), position: entries.length }] };
     }
 
     case 'owner_approver': {
       if (entries.length > 0) return { done: true };
       const target = directory.approverOf(requesterId);
-      if (!target || !ok(target)) {
+      if (!has(target) || !ok(target)) {
         throw new NoEligibleApprover(`Step "${step.name}": the requester has no approver set up.`);
       }
       return { done: false, offers: [{ userId: target, position: 0 }] };
@@ -147,7 +149,7 @@ export function nextOffers(input: ResolveInput): Offer {
       }
       for (let hops = 0; hops < 100; hops++) {
         const next = directory.approverOf(from);
-        if (!next || visited.has(next)) {
+        if (!has(next) || visited.has(next)) {
           throw new NoEligibleApprover(
             `Step "${step.name}": nobody up the approval chain can approve ${amount.toLocaleString('en-KE')} for this document.`,
           );

@@ -7,7 +7,7 @@ import { fromCents, toCents } from '../domain/receivables';
 import { pickPolicy, type CreditPolicy, type PolicyRow } from '../domain/wallet';
 import { FinanceError, type FinanceContext } from '../errors';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 type Reader = Pick<DrizzleDb, 'select'>;
 

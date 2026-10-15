@@ -42,7 +42,7 @@ export class FinanceMaintenanceService {
       SELECT finance_ensure_gl_partitions(
         date_trunc('month', now())::date,
         (date_trunc('month', now()) + make_interval(months => ${monthsAhead}))::date) AS n`);
-    return Number([...res][0]?.n ?? 0);
+    return [...res][0]?.n ?? 0;
   }
 
   /**
@@ -121,7 +121,7 @@ export class FinanceMaintenanceService {
       this.verifyChainTails(companyId),
       this.db.execute<{ n: number }>(sql`SELECT count(*)::int AS n FROM finance_sales_postings WHERE company_id = ${companyId}::uuid AND status = 'failed' AND created_at < now() - interval '1 hour'`),
     ]);
-    const stuckSalesPostings = Number([...stuck][0]?.n ?? 0);
+    const stuckSalesPostings = [...stuck][0]?.n ?? 0;
     const report: IntegrityReport = {
       ranAt: new Date().toISOString(),
       balanceDrift,

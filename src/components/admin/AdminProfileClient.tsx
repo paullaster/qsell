@@ -42,7 +42,7 @@ interface CustomerProfile {
   email: string;
   phone: string;
   customerNumber?: string;
-  addresses: Array<{
+  addresses: {
     id: string;
     label: string;
     isDefault: boolean;
@@ -50,14 +50,14 @@ interface CustomerProfile {
     city: string;
     countyOrState: string;
     country: string;
-  }>;
-  orders: Array<{
+  }[];
+  orders: {
     id: string;
     orderNumber: string;
     status: string;
     totalAmount: number;
     createdAt: string;
-  }>;
+  }[];
 }
 
 export function AdminProfileClient({
@@ -71,7 +71,7 @@ export function AdminProfileClient({
     session: null,
     customer: null,
   };
-  const customer = customerData as CustomerAccount | null;
+  const customer = customerData;
 
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(session?.name || '');

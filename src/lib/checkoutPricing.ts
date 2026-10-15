@@ -31,7 +31,7 @@ export function computeCheckoutTotals(
 
   for (const line of lines) {
     const lineGross = line.unitPrice * line.quantity;
-    const rate = Math.max(0, line.taxRate || 0);
+    const rate = Math.max(0, Number.isFinite(line.taxRate) ? line.taxRate : 0);
     if (line.isTaxInclusive && rate > 0) {
       const lineNet = lineGross / (1 + rate / 100);
       net += lineNet;

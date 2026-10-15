@@ -1,5 +1,7 @@
 import type { ConsideredLine, LineConfig } from './types';
 
+import { has } from '@/lib/values';
+
 export interface SelectionRequest {
   branchId: string | null;
   /** ISO business date. */
@@ -30,14 +32,14 @@ export function selectLines(lines: LineConfig[], req: SelectionRequest): Selecti
     else if (line.branchId !== null && line.branchId !== req.branchId)
       reason = 'for a different branch';
 
-    if (reason) {
+    if (has(reason)) {
       considered.push({ lineNo: line.lineNo, accepted: false, reason });
     } else {
       usable.push(line);
       considered.push({
         lineNo: line.lineNo,
         accepted: true,
-        reason: line.branchId ? 'open, for this branch' : 'open, for every branch',
+        reason: has(line.branchId) ? 'open, for this branch' : 'open, for every branch',
       });
     }
   }

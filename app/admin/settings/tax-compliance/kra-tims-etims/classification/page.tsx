@@ -1,7 +1,11 @@
-import { listTaxCategoriesAction } from '@/server/domains/taxes/actions';
+import { taxCategoriesPageAction, taxSummaryAction } from '@/server/domains/taxes/actions';
 import { AdminTaxesClient } from '@/components/admin/AdminTaxesClient';
+import { SettingsFrame } from '@/components/admin/settings/frame';
 
-export default async function AdminKraTaxClassificationPage() {
-  const taxesPromise = listTaxCategoriesAction();
-  return <AdminTaxesClient taxesPromise={taxesPromise} />;
+export default function AdminKraTaxClassificationPage() {
+  return (
+    <SettingsFrame label="tax classification">
+      <AdminTaxesClient firstPage={taxCategoriesPageAction({})} summary={taxSummaryAction()} />
+    </SettingsFrame>
+  );
 }

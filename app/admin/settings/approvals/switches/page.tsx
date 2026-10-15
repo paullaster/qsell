@@ -1,10 +1,11 @@
-import { getLookupsAction, listSwitchesAction } from '@/server/kernel/approvals/actions';
+import { branchSwitchesPageAction, companySwitchesAction } from '@/server/kernel/approvals/actions';
 import { SwitchesClient } from '@/components/admin/approvals/SwitchesClient';
-import { ErrorNote } from '@/components/admin/approvals/ErrorNote';
+import { SettingsFrame } from '@/components/admin/settings/frame';
 
-export default async function AdminApprovalSwitchesPage() {
-  const [switches, lookups] = await Promise.all([listSwitchesAction(), getLookupsAction()]);
-  if (!switches.ok) return <ErrorNote message={switches.error} />;
-  if (!lookups.ok) return <ErrorNote message={lookups.error} />;
-  return <SwitchesClient switches={switches.data} lookups={lookups.data} />;
+export default function AdminApprovalSwitchesPage() {
+  return (
+    <SettingsFrame label="the approval switches">
+      <SwitchesClient companyPromise={companySwitchesAction()} branchPromise={branchSwitchesPageAction({})} />
+    </SettingsFrame>
+  );
 }

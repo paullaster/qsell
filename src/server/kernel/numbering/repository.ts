@@ -1,4 +1,5 @@
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { afterCursor, matching, pageOf, PAGE_SIZE, searchText, type PageInput } from '@/server/domains/settings/paging';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   branches,
@@ -23,10 +24,8 @@ export interface LineWithBranch {
   branchCode: string | null;
 }
 
-export function isUniqueViolation(error: unknown): boolean {
-  const e = error as { code?: string; cause?: { code?: string } };
-  return e?.code === '23505' || e?.cause?.code === '23505';
-}
+import { required } from '@/lib/values';
+export { isUniqueViolation } from '@/server/domains/settings/errors';
 
 /** All Drizzle access for number series. Contains no rules; the service decides. */
 export interface BranchRef {
@@ -80,11 +79,52 @@ export const seriesRepo = {
   },
 
   async listSeries(ex: Executor, companyId: string): Promise<NumberSeriesRow[]> {
-    return ex
+    return await ex
       .select()
       .from(numberSeries)
       .where(eq(numberSeries.companyId, companyId))
       .orderBy(numberSeries.code);
+  },
+
+  /** One page of the company's series in code order, optionally narrowed by text. */
+  async pageSeries(ex: Executor, companyId: string, input: PageInput) {
+    const rows = await ex
+      .select()
+      .from(numberSeries)
+      .where(and(eq(numberSeries.companyId, companyId), matching(searchText(input), [numberSeries.code, numberSeries.description]), afterCursor(input.cursor, numberSeries.code, numberSeries.id)))
+      .orderBy(asc(numberSeries.code), asc(numberSeries.id))
+      .limit(PAGE_SIZE + 1);
+    return pageOf(rows, PAGE_SIZE, (r) => ({ k: r.code, id: r.id }));
+  },
+
+  async seriesLabels(ex: Executor, companyId: string, ids: string[]): Promise<Map<string, string>> {
+    if (ids.length === 0) return new Map();
+    const rows = await ex.select({ id: numberSeries.id, code: numberSeries.code, description: numberSeries.description }).from(numberSeries).where(and(eq(numberSeries.companyId, companyId), inArray(numberSeries.id, ids)));
+    return new Map(rows.map((r) => [r.id, `${r.code} — ${r.description}`]));
+  },
+
+  async branchCodes(ex: Executor, ids: string[]): Promise<Map<string, string>> {
+    if (ids.length === 0) return new Map();
+    const rows = await ex.select({ id: branches.id, code: branches.code }).from(branches).where(inArray(branches.id, ids));
+    return new Map(rows.map((r) => [r.id, r.code]));
+  },
+
+  /** "Name (code)" of these branches, by id, so a screen can name a branch without loading all of them. */
+  async branchLabels(ex: Executor, ids: string[]): Promise<Map<string, string>> {
+    if (ids.length === 0) return new Map();
+    const rows = await ex.select({ id: branches.id, code: branches.code, name: branches.name }).from(branches).where(inArray(branches.id, ids));
+    return new Map(rows.map((r) => [r.id, `${r.name} (${r.code})`]));
+  },
+
+  /** How many lines each of these series has, in one query. */
+  async lineCounts(ex: Executor, seriesIds: string[]): Promise<Map<string, number>> {
+    if (seriesIds.length === 0) return new Map();
+    const rows = await ex
+      .select({ seriesId: numberSeriesLines.seriesId, n: sql<number>`count(*)::int` })
+      .from(numberSeriesLines)
+      .where(inArray(numberSeriesLines.seriesId, seriesIds))
+      .groupBy(numberSeriesLines.seriesId);
+    return new Map(rows.map((r) => [r.seriesId, r.n]));
   },
 
   async insertSeries(
@@ -92,7 +132,7 @@ export const seriesRepo = {
     values: typeof numberSeries.$inferInsert,
   ): Promise<NumberSeriesRow> {
     const [row] = await ex.insert(numberSeries).values(values).returning();
-    return row!;
+    return required(row, 'the saved record');
   },
 
   async updateSeries(
@@ -105,7 +145,7 @@ export const seriesRepo = {
       .set({ ...patch, updatedAt: new Date() })
       .where(eq(numberSeries.id, id))
       .returning();
-    return row!;
+    return required(row, 'the saved record');
   },
 
   async deleteSeries(ex: Executor, id: string): Promise<void> {
@@ -144,7 +184,7 @@ export const seriesRepo = {
     values: typeof numberSeriesLines.$inferInsert,
   ): Promise<NumberSeriesLineRow> {
     const [row] = await ex.insert(numberSeriesLines).values(values).returning();
-    return row!;
+    return required(row, 'the saved record');
   },
 
   async updateLine(
@@ -157,7 +197,7 @@ export const seriesRepo = {
       .set({ ...patch, updatedAt: new Date() })
       .where(eq(numberSeriesLines.id, id))
       .returning();
-    return row!;
+    return required(row, 'the saved record');
   },
 
   /** Has this line ever issued a number? Decides what may still be edited. */
@@ -210,7 +250,7 @@ export const seriesRepo = {
       )
       .for('update')
       .limit(1);
-    return row!;
+    return required(row, 'the saved record');
   },
 
   async readCounter(
@@ -230,7 +270,7 @@ export const seriesRepo = {
 
   async countersForLines(ex: Executor, lineIds: string[]): Promise<NumberSeriesCounterRow[]> {
     if (lineIds.length === 0) return [];
-    return ex
+    return await ex
       .select()
       .from(numberSeriesCounters)
       .where(inArray(numberSeriesCounters.lineId, lineIds))
@@ -306,7 +346,7 @@ export const seriesRepo = {
     seriesId: string,
     limit: number,
   ): Promise<NumberSeriesAllocationRow[]> {
-    return ex
+    return await ex
       .select()
       .from(numberSeriesAllocations)
       .where(eq(numberSeriesAllocations.seriesId, seriesId))
@@ -339,14 +379,19 @@ export const seriesRepo = {
   },
 
   async bindings(ex: Executor, companyId: string): Promise<NumberSeriesBindingRow[]> {
-    return ex
+    return await ex
       .select()
       .from(numberSeriesBindings)
       .where(eq(numberSeriesBindings.companyId, companyId));
   },
 
+  async bindingsForSeriesIds(ex: Executor, seriesIds: string[]): Promise<NumberSeriesBindingRow[]> {
+    if (seriesIds.length === 0) return [];
+    return await ex.select().from(numberSeriesBindings).where(inArray(numberSeriesBindings.seriesId, seriesIds));
+  },
+
   async bindingsForSeries(ex: Executor, seriesId: string): Promise<NumberSeriesBindingRow[]> {
-    return ex
+    return await ex
       .select()
       .from(numberSeriesBindings)
       .where(eq(numberSeriesBindings.seriesId, seriesId));
@@ -368,7 +413,7 @@ export const seriesRepo = {
   },
 
   async relationships(ex: Executor, seriesId: string) {
-    return ex
+    return await ex
       .select()
       .from(numberSeriesRelationships)
       .where(eq(numberSeriesRelationships.seriesId, seriesId));

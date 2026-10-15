@@ -2,7 +2,6 @@ import { eq } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { paymentAttempts, providerOperations, type PaymentAttemptRow, type ProviderEventRow } from '@/server/db/drizzle/schema';
 import type { PaymentRegistry } from '../registry';
-import type { PaymentProviderCode } from '../types';
 import type { PlatformContexts } from './context';
 import type { ProviderEventService } from './event-service';
 import type { PaymentJobs } from './jobs';
@@ -11,7 +10,7 @@ import { delayForAge, engineSettings } from './settings';
 import type { ProviderTransactionStore } from './transaction-store';
 import type { InboundClaim, VerificationOutcome, VerifyAttemptInput } from './types';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 /** What counting a verified payment means. The payment domain implements it; the engine only decides when. */
 export interface AttemptSettler {

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { listPricingReasonsAction, searchProductsAction } from '@/server/domains/pricing/actions';
+import { searchProductsAction } from '@/server/domains/pricing/actions';
 import {
   addProductGroupMembersAction,
   productGroupMembersAction,
@@ -137,7 +137,7 @@ export function ProductGroupsClient({
               In use
             </label>
           </div>
-          <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
           <div className="flex flex-wrap gap-2">
             <button type="submit" className={primaryButtonClass} disabled={busy || !reason.code}>
               {busy ? 'Saving…' : 'Save group'}
@@ -218,10 +218,10 @@ function Members({
 }) {
   const uid = useId();
   const [members, setMembers] = useState<
-    Array<{ id: string; sku: string; name: string; cost: string }>
+    { id: string; sku: string; name: string; cost: string }[]
   >([]);
   const [q, setQ] = useState('');
-  const [found, setFound] = useState<Array<{ id: string; name: string; sku: string }>>([]);
+  const [found, setFound] = useState<{ id: string; name: string; sku: string }[]>([]);
   const [paste, setPaste] = useState('');
   const [reason, setReason] = useState<ReasonValue>({ code: '', text: '' });
   const [message, setMessage] = useState<Message>(null);
@@ -235,7 +235,7 @@ function Members({
   useEffect(() => void load(), [load]);
 
   useEffect(() => {
-    if (q.trim().length < 2) return setFound([]);
+    if (q.trim().length < 2) { setFound([]); return; }
     let live = true;
     const t = setTimeout(() => {
       void searchProductsAction(q).then((r) => live && r.ok && setFound(r.data));
@@ -247,7 +247,7 @@ function Members({
   }, [q]);
 
   const run = async (work: () => Promise<{ ok: boolean; error?: string; text?: string }>) => {
-    if (!reason.code) return setMessage({ kind: 'error', text: 'Choose a reason first.' });
+    if (!reason.code) { setMessage({ kind: 'error', text: 'Choose a reason first.' }); return; }
     setBusy(true);
     setMessage(null);
     const r = await work();
@@ -332,7 +332,7 @@ function Members({
               Add these products
             </button>
           </div>
-          <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
         </>
       ) : null}
       <Notice message={message} />

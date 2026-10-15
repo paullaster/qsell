@@ -18,8 +18,7 @@ import { toCents } from '../domain/receivables';
 import { ensureManualProvider } from '@/server/domains/payments/manual-provider';
 import { FinanceError, type FinanceContext } from '../errors';
 
-import { has } from '@/lib/has';
-import { trimToNull } from '@/lib/values';
+import { has, trimToNull } from '@/lib/values';
 
 export const METHOD_KINDS: PaymentMethodKind[] = [
   'cash', 'bank_transfer', 'bank_deposit', 'cheque', 'mobile_money', 'card', 'gateway', 'wallet', 'gift_card', 'offset', 'other',
@@ -109,7 +108,7 @@ export class PaymentMethodService {
         try { toCents(v); } catch { throw new FinanceError('LIMIT_INVALID', `The ${k} limit "${v}" is not an amount.`); }
       }
     }
-    if (has(input.limits?.min) && has(input.limits?.max) && toCents(input.limits.min) > toCents(input.limits.max)) {
+    if (has(input.limits?.min) && has(input.limits.max) && toCents(input.limits.min) > toCents(input.limits.max)) {
       throw new FinanceError('LIMIT_INVALID', 'The minimum is higher than the maximum.');
     }
     const [bank] = await db
@@ -120,8 +119,8 @@ export class PaymentMethodService {
     if (!bank) throw new FinanceError('BANK_NOT_FOUND', 'Choose the bank or cash account this method pays into.');
     if (bank.blocked) throw new FinanceError('BANK_BLOCKED', `${bank.code} is blocked.`);
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (!uuid.test(input.providerId ?? '')) throw new FinanceError('PROVIDER_REQUIRED', 'Choose the payment provider this method goes through (cash and cheques use the built-in Manual one).');
-    if (!uuid.test(input.glAccountId ?? '')) throw new FinanceError('GL_REQUIRED', 'Choose the G/L account this method posts to.');
+    if (!uuid.test(input.providerId)) throw new FinanceError('PROVIDER_REQUIRED', 'Choose the payment provider this method goes through (cash and cheques use the built-in Manual one).');
+    if (!uuid.test(input.glAccountId)) throw new FinanceError('GL_REQUIRED', 'Choose the G/L account this method posts to.');
     const [provider] = await db
       .select({ id: paymentProviderConfigs.id })
       .from(paymentProviderConfigs)

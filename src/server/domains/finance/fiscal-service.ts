@@ -7,7 +7,7 @@ import { periodTransition } from './domain/periods-status';
 import type { PeriodStatus } from './domain/types';
 import { FinanceError, type FinanceContext } from './errors';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 

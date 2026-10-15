@@ -2,7 +2,7 @@ import { and, desc, eq, inArray, lt, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { paymentAttempts, paymentMethods, paymentProviderConfigs, providerEvents, providerOperations, providerTransactions } from '@/server/db/drizzle/schema';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 /** What has happened on the payment platforms, for the people who watch over it. Read-only. */
 export class PaymentActivityService {

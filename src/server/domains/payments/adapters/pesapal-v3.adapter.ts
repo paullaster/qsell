@@ -12,8 +12,7 @@ import { extractPaymentReference } from '../payment-reference';
 import type { InboundClaim, PlatformContext, VerificationOutcome, VerifyAttemptInput } from '../engine/types';
 import { toCentsLoose } from '../daraja/security';
 
-import { has } from '@/lib/has';
-import { emptyToNull, orElse, readText } from '@/lib/values';
+import { asRecord, emptyToNull, has, orElse, readText, trimToNull } from '@/lib/values';
 
 export class PesapalV3Adapter implements PaymentPort {
   readonly code = 'pesapal_v3' as const;
@@ -118,7 +117,7 @@ export class PesapalV3Adapter implements PaymentPort {
 
   /** An IPN only tells us which order to look at; it is never believed. */
   parseCallback(body: unknown): InboundClaim | null {
-    const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+    const b = asRecord(body);
     const tracking = readText(b.OrderTrackingId, b.order_tracking_id, '');
     if (!has(tracking)) return null;
     return {
@@ -153,7 +152,7 @@ export class PesapalV3Adapter implements PaymentPort {
     }
     const tokenRes = await ctx.call({ label: 'oauth', provider: 'pesapal_v3', method: 'POST', url: `${base}/api/Auth/RequestToken`, body: { consumer_key: creds.consumerKey, consumer_secret: creds.consumerSecret }, timeoutMs: 15000 });
     const token = typeof tokenRes.json?.token === 'string' ? tokenRes.json.token : null;
-    if (!has(token)) return { status: 'error', by: 'pesapal_status', reason: `Pesapal did not give a token (${tokenRes.reached ? tokenRes.status : tokenRes.networkError}).`, retryable: true };
+    if (!has(token)) return { status: 'error', by: 'pesapal_status', reason: `Pesapal did not give a token (${tokenRes.reached ? String(tokenRes.status) : (tokenRes.networkError ?? 'no answer')}).`, retryable: true };
     const res = await ctx.call({ label: 'get_transaction_status', provider: 'pesapal_v3', method: 'GET', url: `${base}/api/Transactions/GetTransactionStatus?orderTrackingId=${encodeURIComponent(tracking)}`, headers: { Authorization: `Bearer ${token}` }, timeoutMs: 20000 });
     if (!res.reached || res.status >= 500 || res.status === 429) return { status: 'error', by: 'pesapal_status', reason: res.networkError ?? `Pesapal answered ${res.status}.`, retryable: true };
     const j = res.json ?? {};
@@ -164,17 +163,17 @@ export class PesapalV3Adapter implements PaymentPort {
     const status = readText(j.payment_status_description, '').toLowerCase();
     const code = readText(j.status_code, '');
     if (status === 'completed' || code === '1') {
-      if (j.merchant_reference && readText(j.merchant_reference) !== input.orderNumber) {
+      if (has(readText(j.merchant_reference)) && readText(j.merchant_reference) !== input.orderNumber) {
         return { status: 'mismatch', by: 'pesapal_status', code: 'MERCHANT_REFERENCE_MISMATCH', reason: `Pesapal says this order belongs to ${readText(j.merchant_reference)}, not ${input.orderNumber}.`, evidence };
       }
       const amount = toCentsLoose(j.amount);
       if (amount === null || amount !== input.amountCents) {
-        return { status: 'mismatch', by: 'pesapal_status', code: 'AMOUNT_MISMATCH', reason: `Pesapal says ${j.amount ?? 'no amount'} was paid, but ${(input.amountCents / 100).toFixed(2)} was asked for.`, evidence };
+        return { status: 'mismatch', by: 'pesapal_status', code: 'AMOUNT_MISMATCH', reason: `Pesapal says ${orElse(readText(j.amount), 'no amount')} was paid, but ${(input.amountCents / 100).toFixed(2)} was asked for.`, evidence };
       }
-      if (j.currency && readText(j.currency).toUpperCase() !== input.currency.toUpperCase()) {
+      if (has(readText(j.currency)) && readText(j.currency).toUpperCase() !== input.currency.toUpperCase()) {
         return { status: 'mismatch', by: 'pesapal_status', code: 'CURRENCY_MISMATCH', reason: `Pesapal says the currency is ${readText(j.currency)}, not ${input.currency}.`, evidence };
       }
-      const confirmation = j.confirmation_code ? readText(j.confirmation_code) : null;
+      const confirmation = trimToNull(readText(j.confirmation_code));
       return { status: 'confirmed', by: 'pesapal_status', platformReference: confirmation ?? tracking, amountCents: amount, evidence };
     }
     if (status === 'failed' || status === 'invalid' || status === 'reversed' || ['0', '2', '3'].includes(code)) {
@@ -183,8 +182,12 @@ export class PesapalV3Adapter implements PaymentPort {
     return { status: 'pending', by: 'pesapal_status', reason: `Pesapal reports "${readText(j.payment_status_description, 'pending')}".`, evidence };
   }
 
-  async handleCallback(input: CallbackInput): Promise<CallbackResult> {
-    const body = (input.body || {}) as Record<string, unknown>;
+  handleCallback(input: CallbackInput): Promise<CallbackResult> {
+    return Promise.resolve(this.readCallback(input));
+  }
+
+  private readCallback(input: CallbackInput): CallbackResult {
+    const body = asRecord(input.body);
     const status =
       readText(body.payment_status_description, body.status, body.OrderNotificationType, '')
         .toLowerCase();

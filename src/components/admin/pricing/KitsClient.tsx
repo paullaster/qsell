@@ -2,7 +2,6 @@
 
 import { useEffect, useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { listPricingReasonsAction } from '@/server/domains/pricing/actions';
 import {
   previewKitAction,
   removeKitAction,
@@ -34,7 +33,7 @@ interface Draft {
   productLabel: string;
   allocation: KitAllocation;
   isActive: boolean;
-  components: Array<{ productId: string; label: string; quantity: string; weight: string }>;
+  components: { productId: string; label: string; quantity: string; weight: string }[];
   editing: boolean;
   price: number | null;
 }
@@ -48,7 +47,7 @@ export function KitsClient({ kits, canManage }: { kits: KitView[]; canManage: bo
   const [message, setMessage] = useState<Message>(null);
   const [busy, setBusy] = useState(false);
   const [split, setSplit] = useState<
-    Array<{ productId: string; name: string; quantity: number; amount: number; taxRate: number }>
+    { productId: string; name: string; quantity: number; amount: number; taxRate: number }[]
   >([]);
 
   const parts = draft
@@ -62,7 +61,7 @@ export function KitsClient({ kits, canManage }: { kits: KitView[]; canManage: bo
 
   // Shows how today's price would be split, as the kit is set up.
   useEffect(() => {
-    if (!draft || !draft.price || parts.length === 0 || parts.some((p) => p.quantity < 1)) {
+    if (!draft?.price || parts.length === 0 || parts.some((p) => p.quantity < 1)) {
       setSplit([]);
       return;
     }
@@ -323,7 +322,7 @@ export function KitsClient({ kits, canManage }: { kits: KitView[]; canManage: bo
             In use (when off, it sells as an ordinary product)
           </label>
 
-          <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
           <div className="flex flex-wrap gap-2">
             <button
               type="submit"
@@ -345,7 +344,7 @@ export function KitsClient({ kits, canManage }: { kits: KitView[]; canManage: bo
             Make <strong>{removing.productName}</strong> an ordinary product again? Orders already
             made keep their component lines.
           </p>
-          <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
           <div className="flex flex-wrap gap-2">
             <button
               type="button"

@@ -95,7 +95,7 @@ function RequestCard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Message>(null);
 
-  const submit = async (e: React.FormEvent) => {
+  const submit = async (e: React.SyntheticEvent) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
@@ -104,7 +104,7 @@ function RequestCard({
         ? await cancelRequestAction(r.submissionId, reason)
         : await reopenRequestAction(r.documentKind, r.documentId, reason);
     setBusy(false);
-    if (!res.ok) return setError({ kind: 'error', text: res.error });
+    if (!res.ok) { setError({ kind: 'error', text: res.error }); return; }
     setAction(null);
     onDone(
       action === 'withdraw'
@@ -147,7 +147,7 @@ function RequestCard({
           ) : null}
         </div>
       </div>
-      {action ? (
+      {action === null ? null : (
         <form onSubmit={submit} className="mt-4 space-y-3 border-t border-line pt-4">
           <div>
             <label htmlFor={`${uid}-r`} className={labelClass}>
@@ -183,7 +183,7 @@ function RequestCard({
             </button>
           </div>
         </form>
-      ) : null}
+      )}
     </article>
   );
 }

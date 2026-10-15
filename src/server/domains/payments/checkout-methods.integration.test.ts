@@ -2,8 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 
-import { has } from '@/lib/has';
-import { required } from '@/lib/values';
+import { has, required } from '@/lib/values';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
 import type { FinanceServices } from '@/server/domains/finance';
@@ -57,15 +56,15 @@ describe.skipIf(!has(url))('checkout through payment methods (database)', () => 
     const fake = {
       code: 'mpesa_daraja' as const,
       capabilities: ['collect'] as const,
-      async initiate(_input: unknown, creds: Record<string, string>, _settings: unknown, baseUrl: string) {
+      initiate(_input: unknown, creds: Record<string, string>, _settings: unknown, baseUrl: string) {
         seen.push({ creds, baseUrl });
-        return { status: 'pending' as const, providerReference: 'CHK1', customerMessage: 'STK sent' };
+        return Promise.resolve({ status: 'pending' as const, providerReference: 'CHK1', customerMessage: 'STK sent' });
       },
-      async handleCallback() {
-        return { ok: true, status: 'successful' as const };
+      handleCallback() {
+        return Promise.resolve({ ok: true, status: 'successful' as const });
       },
-      async testConnection() {
-        return { ok: true, message: 'ok' };
+      testConnection() {
+        return Promise.resolve({ ok: true, message: 'ok' });
       },
     };
     service = new PaymentService(db, new PaymentRegistry([fake]));
@@ -124,7 +123,7 @@ describe.skipIf(!has(url))('checkout through payment methods (database)', () => 
     };
     const rows = await Promise.all([branchA, branchB].map(async (b) => {
       seq += 1;
-      const created = await repo.create({ ...base, id: `cr_${run}_${seq}`, orderNumber: `CR-${run}-${seq}` } as never, b.id).catch((e: Error) => e);
+      const created = await repo.create({ ...base, id: `cr_${run}_${seq}`, orderNumber: `CR-${run}-${seq}` } as never, b.id).catch((e: unknown) => e);
       return created;
     }));
     const [a, b] = await Promise.all(rows.map(async (r) => (r instanceof Error ? null : (await db.select().from(schema.orders).where(eq(schema.orders.id, (r as { id: string }).id)))[0] ?? null)));

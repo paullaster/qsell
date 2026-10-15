@@ -1,3 +1,4 @@
+import type { PageInput } from '@/server/domains/settings/paging';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import type {
   NumberSeriesAllocationRow,
@@ -20,6 +21,8 @@ import {
   type Executor,
   type LineWithBranch,
 } from './repository';
+
+import { has, required } from '@/lib/values';
 
 export type NumberSeriesErrorCode =
   | 'UNKNOWN_DOCUMENT_KIND'
@@ -227,7 +230,7 @@ export class NumberSeriesService {
     }
     const ex = tx ?? this.db;
     const find = async () =>
-      (req.branchId ? await repo.binding(ex, req.companyId, kind, req.branchId) : null) ??
+      (has(req.branchId) ? await repo.binding(ex, req.companyId, kind, req.branchId) : null) ??
       (await repo.binding(ex, req.companyId, kind, null));
     let binding = await find();
     if (!binding && this.options.autoSetup !== false) {
@@ -250,7 +253,7 @@ export class NumberSeriesService {
     const series = await repo.seriesById(ex, req.companyId, binding.seriesId);
     if (!series)
       throw new NumberSeriesError('SERIES_NOT_FOUND', 'The bound number series no longer exists.');
-    return this.assignIn(series, req, tx);
+    return await this.assignIn(series, req, tx);
   }
 
   /** Numbers a document from a specific series (e.g. one a user picked from related series). */
@@ -265,7 +268,7 @@ export class NumberSeriesService {
         'SERIES_NOT_FOUND',
         `Number series "${seriesCode}" does not exist.`,
       );
-    return this.assignIn(series, req, tx);
+    return await this.assignIn(series, req, tx);
   }
 
   private async assignIn(
@@ -290,12 +293,12 @@ export class NumberSeriesService {
       if (existing) return this.fromAllocation(series, existing, true, []);
     }
 
-    let branch = req.branchId ? await repo.branchRef(ex, req.branchId) : null;
-    if (req.branchId && (!branch || branch.companyId !== req.companyId)) {
+    let branch = has(req.branchId) ? await repo.branchRef(ex, req.branchId) : null;
+    if (has(req.branchId) && branch?.companyId !== req.companyId) {
       throw new NumberSeriesError('BRANCH_REQUIRED', `Branch ${req.branchId} was not found.`);
     }
 
-    if (req.manualNo !== undefined) return this.assignManual(series, req, ex, branch?.id ?? null);
+    if (req.manualNo !== undefined) return await this.assignManual(series, req, ex, branch?.id ?? null);
 
     if (!series.defaultNumbers) {
       throw new NumberSeriesError(
@@ -329,7 +332,7 @@ export class NumberSeriesService {
 
     const trace = [...selection.considered];
     for (const line of selection.ranked) {
-      if (numbersPerBranch(line) && !branch && this.options.fallbackToDefaultBranch) {
+      if (numbersPerBranch(line) && !branch && this.options.fallbackToDefaultBranch === true) {
         branch = await repo.defaultBranchRef(ex, req.companyId);
       }
       if (numbersPerBranch(line) && !branch) {
@@ -382,7 +385,7 @@ export class NumberSeriesService {
         `Series ${series.code} does not allow typed-in numbers.`,
       );
     }
-    const number = req.manualNo!.trim();
+    const number = required(req.manualNo, 'the typed number').trim();
     if (!MANUAL_PATTERN.test(number)) {
       throw new NumberSeriesError(
         'MANUAL_NUMBER_INVALID',
@@ -436,7 +439,7 @@ export class NumberSeriesService {
       );
       if (existing) return { allocation: existing, reused: true, warning: null };
     }
-    if (series.dateOrder && counter.lastDate && req.date < counter.lastDate) {
+    if (series.dateOrder && has(counter.lastDate) && req.date < counter.lastDate) {
       throw new NumberSeriesError(
         'DATE_ORDER',
         `Series ${series.code} numbers documents in date order. The last one was dated ${counter.lastDate}, so a document dated ${req.date} cannot be numbered now.`,
@@ -453,7 +456,7 @@ export class NumberSeriesService {
       );
       if (allocation) {
         const lastDate =
-          counter.lastDate && counter.lastDate > req.date ? counter.lastDate : req.date;
+          has(counter.lastDate) && counter.lastDate > req.date ? counter.lastDate : req.date;
         const crossed = line.warnAt !== null && seq >= line.warnAt && !counter.warned;
         await repo.updateCounter(ex, counter.id, {
           lastNo: seq,
@@ -546,7 +549,7 @@ export class NumberSeriesService {
     line: LineConfig,
     period: string,
   ): Promise<Block | 'exhausted'> {
-    return (this.options.counterDb ?? this.db).transaction(async (tx) => {
+    return await (this.options.counterDb ?? this.db).transaction(async (tx) => {
       await repo.ensureCounter(tx, line.id, period);
       const counter = await repo.lockCounter(tx, line.id, period);
       const start = nextSequence(counter.lastNo, line);
@@ -683,7 +686,7 @@ export class NumberSeriesService {
       if (!isDocumentKind(target.kind))
         return fail('UNKNOWN_DOCUMENT_KIND', `"${target.kind}" is not a numbered document kind.`);
       const binding =
-        (opts.branchId
+        (has(opts.branchId)
           ? await repo.binding(this.db, companyId, target.kind, opts.branchId)
           : null) ?? (await repo.binding(this.db, companyId, target.kind, null));
       if (!binding) return fail('NO_BINDING', 'No number series is set up for this document.');
@@ -693,7 +696,7 @@ export class NumberSeriesService {
     if (!series.isActive)
       return fail('SERIES_INACTIVE', `Number series ${series.code} is not active.`);
 
-    const branch = opts.branchId ? await repo.branchRef(this.db, opts.branchId) : null;
+    const branch = has(opts.branchId) ? await repo.branchRef(this.db, opts.branchId) : null;
     const lines = await repo.lines(this.db, series.id);
     const selection = selectLines(
       lines.map((l) => toLineConfig(l.line)),
@@ -756,7 +759,26 @@ export class NumberSeriesService {
   // ═══ Administration ════════════════════════════════════════════════════
 
   async listSeries(companyId: string): Promise<NumberSeriesRow[]> {
-    return repo.listSeries(this.db, companyId);
+    return await repo.listSeries(this.db, companyId);
+  }
+
+  async seriesLabels(companyId: string, ids: string[]) {
+    return await repo.seriesLabels(this.db, companyId, ids);
+  }
+
+  async branchCodes(ids: string[]) {
+    return await repo.branchCodes(this.db, ids);
+  }
+
+  async branchLabels(ids: string[]) {
+    return await repo.branchLabels(this.db, ids);
+  }
+
+  async pageSeries(companyId: string, input: PageInput) {
+    const page = await repo.pageSeries(this.db, companyId, input);
+    const counts = await repo.lineCounts(this.db, page.rows.map((r) => r.id));
+    const bindings = await repo.bindingsForSeriesIds(this.db, page.rows.map((r) => r.id));
+    return { rows: page.rows, lineCounts: counts, bindings, nextCursor: page.nextCursor };
   }
 
   async seriesDetail(companyId: string, seriesId: string) {
@@ -779,7 +801,7 @@ export class NumberSeriesService {
   ): Promise<NumberSeriesAllocationRow[]> {
     const series = await repo.seriesById(this.db, companyId, seriesId);
     if (!series) throw new NumberSeriesError('NOT_FOUND', 'Number series not found.');
-    return repo.recentAllocations(this.db, seriesId, Math.min(limit, 200));
+    return await repo.recentAllocations(this.db, seriesId, Math.min(limit, 200));
   }
 
   async createSeries(
@@ -798,12 +820,12 @@ export class NumberSeriesService {
         },
       );
     }
-    if (!input.description.trim()) {
+    if (!has(input.description.trim())) {
       throw new NumberSeriesError('INVALID_CONFIG', 'Add a description.', {
         issues: [{ field: 'description', message: 'Required.' }],
       });
     }
-    if (input.dateOrder && input.mode !== 'gap_free') {
+    if (input.dateOrder === true && input.mode !== 'gap_free') {
       throw new NumberSeriesError(
         'INVALID_CONFIG',
         'Date order can only be enforced on a gap-free series.',
@@ -812,7 +834,7 @@ export class NumberSeriesService {
         },
       );
     }
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       if (await repo.seriesByCode(tx, companyId, code)) {
         throw new NumberSeriesError(
           'DUPLICATE_CODE',
@@ -858,7 +880,7 @@ export class NumberSeriesService {
     reason: ReasonInput,
   ): Promise<NumberSeriesRow> {
     const checked = await this.reasons.require(companyId, reason, 'numbering.series_updated');
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const series = await repo.seriesById(tx, companyId, seriesId);
       if (!series) throw new NumberSeriesError('NOT_FOUND', 'Number series not found.');
       const mode = patch.mode ?? series.mode;
@@ -949,7 +971,7 @@ export class NumberSeriesService {
     actor: Actor,
     reason?: ReasonInput,
   ): Promise<NumberSeriesLineRow> {
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const series = await repo.seriesById(tx, companyId, seriesId);
       if (!series) throw new NumberSeriesError('NOT_FOUND', 'Number series not found.');
       const candidate = this.lineDefaults(input);
@@ -993,16 +1015,16 @@ export class NumberSeriesService {
     reason: ReasonInput,
   ): Promise<NumberSeriesLineRow> {
     const checked = await this.reasons.require(companyId, reason, 'numbering.line_updated');
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const current = await repo.lineById(tx, lineId);
       const series = current ? await repo.seriesById(tx, companyId, current.seriesId) : null;
       if (!current || !series) throw new NumberSeriesError('NOT_FOUND', 'Line not found.');
 
-      const merged = { ...toLineConfig(current), ...definedOnly(patch) } as LineConfig;
+      const merged = { ...toLineConfig(current), ...definedOnly(patch) };
       if (await repo.lineHasIssued(tx, current.id)) {
         const violations = frozenViolations(
           toLineConfig(current),
-          definedOnly(patch) as Partial<LineConfig>,
+          definedOnly(patch),
         );
         if (violations.length > 0) {
           throw new NumberSeriesError(
@@ -1016,7 +1038,7 @@ export class NumberSeriesService {
       const updated = await repo.updateLine(
         tx,
         current.id,
-        definedOnly(patch) as Partial<NumberSeriesLineRow>,
+        definedOnly(patch),
       );
       await this.decisions.record(
         {
@@ -1043,7 +1065,7 @@ export class NumberSeriesService {
     reason: ReasonInput,
   ): Promise<NumberSeriesLineRow> {
     const checked = await this.reasons.require(companyId, reason, 'numbering.line_open_changed');
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const current = await repo.lineById(tx, lineId);
       const series = current ? await repo.seriesById(tx, companyId, current.seriesId) : null;
       if (!current || !series) throw new NumberSeriesError('NOT_FOUND', 'Line not found.');
@@ -1079,7 +1101,7 @@ export class NumberSeriesService {
   // ── bindings ─────────────────────────────────────────────────────────
 
   async bindings(companyId: string) {
-    return repo.bindings(this.db, companyId);
+    return await repo.bindings(this.db, companyId);
   }
 
   async setBinding(
@@ -1243,7 +1265,7 @@ export class NumberSeriesService {
         );
         const startAt = (await this.legacyStart?.(companyId, kind)) ?? 1;
         const custom = await this.options.legacyPrefix?.(companyId, kind);
-        const prefix = custom && !validateTemplate(custom) ? custom : def.suggested.prefix;
+        const prefix = has(custom) && !has(validateTemplate(custom)) ? custom : def.suggested.prefix;
         await this.addLine(
           companyId,
           series.id,
@@ -1291,7 +1313,7 @@ export class NumberSeriesService {
   // ── helpers ──────────────────────────────────────────────────────────
 
   private cleanReason(reason?: ReasonInput) {
-    return reason?.code ? { code: reason.code, text: reason.text ?? undefined } : undefined;
+    return has(reason?.code) ? { code: reason.code, text: reason.text ?? undefined } : undefined;
   }
 
   private lineDefaults(input: LineInput): Omit<LineConfig, 'id' | 'lineNo'> {
@@ -1323,9 +1345,9 @@ export class NumberSeriesService {
         issues,
       });
     }
-    if (line.branchId) {
+    if (has(line.branchId)) {
       const branch = await repo.branchRef(ex, line.branchId);
-      if (!branch || branch.companyId !== series.companyId) {
+      if (branch?.companyId !== series.companyId) {
         throw new NumberSeriesError('INVALID_CONFIG', 'That branch was not found.', {
           issues: [{ field: 'branchId', message: 'Unknown branch.' }],
         });
@@ -1342,7 +1364,7 @@ export class NumberSeriesService {
     if (clash) {
       throw new NumberSeriesError(
         'LINE_OVERLAP',
-        `Line ${clash.lineNo} already covers ${clash.startsOn} to ${clash.endsOn ?? 'no end'} for ${clash.branchId ? 'this branch' : 'all branches'}. Close it or change the dates.`,
+        `Line ${clash.lineNo} already covers ${clash.startsOn} to ${clash.endsOn ?? 'no end'} for ${has(clash.branchId) ? 'this branch' : 'all branches'}. Close it or change the dates.`,
         { issues: [{ field: 'startsOn', message: 'Overlaps another open line.' }] },
       );
     }

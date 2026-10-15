@@ -12,6 +12,9 @@ function newId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/** What a new rule needs; the rest is filled in with sensible defaults. */
+export type NewTaxCategory = Pick<TaxCategory, 'name' | 'code' | 'rate' | 'type'> & Partial<Omit<TaxCategory, 'id' | 'createdAt' | 'updatedAt' | 'productCount'>>;
+
 function assertKraCodes(codes: { timsCode?: string; etimsCode?: string }): void {
   if (codes.timsCode !== undefined && !isValidTimsCode(codes.timsCode)) {
     throw new Error(`Invalid KRA TIMS code "${codes.timsCode}"`);
@@ -33,12 +36,12 @@ export class TaxDomainService {
     return row ? toTaxCategory(row) : undefined;
   }
 
-  static async create(
-    data: Omit<TaxCategory, 'id' | 'createdAt' | 'updatedAt' | 'productCount'>,
-  ): Promise<TaxCategory> {
+  static async create(data: NewTaxCategory): Promise<TaxCategory> {
     assertKraCodes(data);
     const catalog = repo();
-    if (data.isDefault) await catalog.clearDefaultTaxCategory('__none__');
+    // The very first rule is always the default, whatever the form said: someone has to be.
+    const isDefault = data.isDefault === true || (await catalog.taxSummary()).total === 0;
+    if (isDefault) await catalog.clearDefaultTaxCategory('__none__');
 
     const row = await catalog.insertTaxCategory({
       id: newId('tax'),
@@ -52,7 +55,7 @@ export class TaxDomainService {
       countryName: data.countryName ?? '',
       description: data.description ?? '',
       isInclusive: data.isInclusive ?? false,
-      isDefault: data.isDefault ?? false,
+      isDefault,
       isActive: data.isActive ?? true,
     });
 
@@ -67,7 +70,7 @@ export class TaxDomainService {
     const existing = await catalog.getTaxCategoryById(id);
     if (!existing) throw new Error(`Tax category ${id} not found`);
 
-    if (updates.isDefault) await catalog.clearDefaultTaxCategory(id);
+    if (updates.isDefault === true) await catalog.clearDefaultTaxCategory(id);
 
     const row = await catalog.updateTaxCategory(id, {
       ...(updates.name !== undefined ? { name: updates.name } : {}),

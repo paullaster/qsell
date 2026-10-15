@@ -11,8 +11,9 @@ export default async function InterceptedDimensionValueCreatePage({
 }) {
   const { id } = await params;
   const { field } = await searchParams;
-  const dimension = await getDimensionAction(id);
-  if (!dimension) notFound();
+  const result = await getDimensionAction(id);
+  if (!result.ok) notFound();
+  const dimension = result.data;
   return (
     <DimensionValueCreateModal
       presentation="intercepted"
