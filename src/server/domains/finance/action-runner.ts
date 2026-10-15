@@ -8,6 +8,7 @@ import { ReasonError } from '@/server/kernel/reason-codes/service';
 import { AmountErrorGuard } from './action-support';
 import { PostingError, type PostingPermissions } from './engine';
 import { FinanceError, type FinanceContext } from './errors';
+import { isMalformedId, NO_SUCH_RECORD } from '@/server/domains/settings/errors';
 
 import { has } from '@/lib/values';
 
@@ -71,6 +72,7 @@ export async function run<T>(
     if (error instanceof ReasonError) return { ok: false, error: error.message, code: error.code };
     const guarded = AmountErrorGuard(error);
     if (has(guarded)) return { ok: false, error: guarded, code: 'AMOUNT_INVALID' };
+    if (isMalformedId(error)) return NO_SUCH_RECORD;
     console.error('[finance]', error);
     return { ok: false, error: 'Something went wrong. Please try again.' };
   }

@@ -158,7 +158,6 @@ export { getSessionAction as fetchSessionAction } from '@/server/domains/auth/ac
 export {
   getCompanySettingsAction,
   getCompanyUiConfigAction,
-  updateCompanySettingsAction,
   uploadCompanyLogoAction,
 } from '@/server/domains/company/actions';
 

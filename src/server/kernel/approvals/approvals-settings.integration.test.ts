@@ -194,5 +194,56 @@ describe.skipIf(url === '')('approval settings (database)', () => {
       expect(onlyOverdue.rows.length).toBeGreaterThanOrEqual(1);
       expect(onlyOverdue.rows.every((r) => r.openEntries.some((e) => e.dueAt !== null && e.dueAt.getTime() < Date.now()))).toBe(true);
     });
+
+    it('pages what waits on one approver and what one requester sent, each with the database doing the narrowing', async () => {
+      const mine = randomUUID();
+      c.approvals.registerDocument('sales_order', { snapshot: () => Promise.resolve({}), onReleased: () => Promise.resolve(), onRejected: () => Promise.resolve(), onReopened: () => Promise.resolve() });
+      const approver = await user(`${tag} Inbox approver`);
+      const sender = await user(`${tag} Inbox sender`);
+      const wf = await c.approvalConfig.createWorkflow(companyId, { code: `${tag}-INBOX`, name: `${tag} inbox`, trigger: 'sales_order.submitted' }, actor);
+      await c.approvalConfig.saveDraft(companyId, wf.id, { conditions: { op: 'eq', field: 'customer.id', value: mine }, steps: [{ sequence: 1, name: 'Approver', approver: { type: 'user', userId: approver } }] } as never, actor);
+      await c.approvalConfig.publish(companyId, wf.id, actor, reason);
+      for (let i = 0; i < 27; i++) {
+        await db.transaction((t) =>
+          c.approvals.submit({ companyId, trigger: 'sales_order.submitted', documentId: `${tag}-INB-${String(i).padStart(2, '0')}`, requestedBy: sender, amount: 5 + i, snapshot: { customer: { id: mine } } }, t),
+        );
+      }
+
+      // The inbox: 25 then 2, oldest first, no repeats, and only this approver's.
+      const first = await c.approvals.inboxPage(approver, {});
+      expect(first.rows).toHaveLength(25);
+      expect(first.nextCursor).not.toBeNull();
+      const second = await c.approvals.inboxPage(approver, { cursor: first.nextCursor });
+      expect(second.rows).toHaveLength(2);
+      expect(second.nextCursor).toBeNull();
+      const entries = [...first.rows, ...second.rows].map((r) => r.entryId);
+      expect(new Set(entries).size).toBe(27);
+      expect((await c.approvals.inboxPage(sender, {})).rows).toHaveLength(0);
+      expect(await c.approvals.inboxCounts(approver)).toEqual({ waiting: 27, overdue: 0 });
+
+      // Text finds a document, or a situation by its name; a wildcard is just text.
+      expect((await c.approvals.inboxPage(approver, { query: `${tag}-INB-07`.toLowerCase() })).rows.map((r) => r.documentId)).toEqual([`${tag}-INB-07`]);
+      expect((await c.approvals.inboxPage(approver, { query: 'sales order' })).rows.length).toBeGreaterThan(0);
+      expect((await c.approvals.inboxPage(approver, { query: '%' })).rows).toHaveLength(0);
+
+      // Overdue: two entries past their time are the only ones listed and counted.
+      const open = await db.select().from(schema.approvalEntries).where(and(eq(schema.approvalEntries.approverUserId, approver), eq(schema.approvalEntries.status, 'open'))).limit(2);
+      for (const e of open) await db.update(schema.approvalEntries).set({ dueAt: new Date(Date.now() - 3_600_000) }).where(eq(schema.approvalEntries.id, e.id));
+      expect(await c.approvals.inboxCounts(approver)).toEqual({ waiting: 27, overdue: 2 });
+      expect((await c.approvals.inboxPage(approver, { overdueOnly: true })).rows.map((r) => r.entryId).sort()).toEqual(open.map((e) => e.id).sort());
+
+      // My requests: newest first, 25 then 2, no repeats, narrowed by status in the database.
+      const sent = await c.approvals.requestsPage(companyId, sender, {});
+      expect(sent.rows).toHaveLength(25);
+      const rest = await c.approvals.requestsPage(companyId, sender, { cursor: sent.nextCursor });
+      expect(rest.rows).toHaveLength(2);
+      const times = sent.rows.map((r) => r.createdAt.getTime());
+      expect([...times].sort((a, b) => b - a)).toEqual(times);
+      expect(new Set([...sent.rows, ...rest.rows].map((r) => r.id)).size).toBe(27);
+      expect((await c.approvals.requestsPage(companyId, sender, { status: 'pending' })).rows).toHaveLength(25);
+      expect((await c.approvals.requestsPage(companyId, sender, { status: 'approved' })).rows).toHaveLength(0);
+      expect((await c.approvals.requestsPage(companyId, approver, {})).rows).toHaveLength(0);
+      expect(sent.rows[0]?.openEntries).toHaveLength(1);
+    });
   });
 });

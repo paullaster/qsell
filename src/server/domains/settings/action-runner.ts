@@ -4,7 +4,7 @@ import { requirePermission } from '@/server/domains/access-control/guard';
 import type { PermissionKey } from '@/server/domains/access-control/permissions';
 import { getContainer } from '@/server/di/container';
 import { injectedDelay } from '@/server/domains/finance/action-runner';
-import { SettingsError } from './errors';
+import { isMalformedId, NO_SUCH_RECORD, SettingsError } from './errors';
 
 export { SettingsError } from './errors';
 
@@ -38,6 +38,7 @@ export async function runSetting<T>(
     if (error instanceof SettingsError) return { ok: false, error: error.message, code: error.code };
     const friendly = options.friendly?.(error) ?? null;
     if (friendly !== null) return { ok: false, error: friendly };
+    if (isMalformedId(error)) return NO_SUCH_RECORD;
     console.error('[settings]', error);
     return { ok: false, error: 'Something went wrong. Please try again.' };
   }

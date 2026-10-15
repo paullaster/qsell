@@ -5,6 +5,7 @@ import { requirePermission } from '@/server/domains/access-control/guard';
 import { AccessDeniedError } from '@/server/domains/access-control/engine';
 import { getContainer } from '@/server/di/container';
 import { ReasonError } from '../reason-codes/service';
+import { isMalformedId, NO_SUCH_RECORD } from '@/server/domains/settings/errors';
 import { DOCUMENT_KINDS, DOCUMENT_KIND_LIST, isDocumentKind, type DocumentKind } from './document-kinds';
 import { NumberSeriesError, type LineInput, type NumberPreview, type SeriesInput } from './service';
 import type { Issue } from './domain/types';
@@ -45,6 +46,7 @@ async function run<T>(
       return { ok: false, error: error.message, code: error.code, issues: error.detail.issues };
     }
     if (error instanceof ReasonError) return { ok: false, error: error.message, code: error.code };
+    if (isMalformedId(error)) return NO_SUCH_RECORD;
     console.error('[numbering]', error);
     return { ok: false, error: 'Something went wrong. Please try again.' };
   }

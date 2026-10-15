@@ -29,7 +29,7 @@ function isUniqueViolation(error: unknown): boolean {
 export type CustomerAccountType = 'cash' | 'credit';
 export type CustomerBlock = 'none' | 'ship' | 'invoice' | 'all';
 
-export type CustomerAddressInput = {
+export interface CustomerAddressInput {
   label: string;
   recipientName: string;
   recipientPhone: string;
@@ -39,7 +39,7 @@ export type CustomerAddressInput = {
   postalCode?: string | null;
   country: string;
   isDefault?: boolean;
-};
+}
 
 function num(value: string | number | null | undefined): number {
   if (value == null) return 0;
@@ -58,7 +58,7 @@ export class CustomerMasterService {
   ) {}
 
   async listProfiles(companyId: string): Promise<CustomerProfileRow[]> {
-    return this.db
+    return await this.db
       .select()
       .from(customerProfiles)
       .where(eq(customerProfiles.companyId, companyId))
@@ -122,7 +122,7 @@ export class CustomerMasterService {
   }
 
   async listCustomers(companyId: string): Promise<CustomerRow[]> {
-    return this.db
+    return await this.db
       .select()
       .from(customers)
       .where(eq(customers.companyId, companyId))
@@ -227,7 +227,7 @@ export class CustomerMasterService {
         { companyId, date: businessDate(), document: { kind: 'customer', id: customerId } },
         tx,
       );
-      return tx
+      return await tx
         .insert(customers)
         .values({ id: customerId, companyId, number, balance: '0', ...values })
         .returning();
@@ -238,7 +238,7 @@ export class CustomerMasterService {
 
   async listAddresses(customerId: string): Promise<CustomerAddressRow[]> {
     await this.migrateLegacyAddressIfNeeded(customerId);
-    return this.db
+    return await this.db
       .select()
       .from(customerAddresses)
       .where(eq(customerAddresses.customerId, customerId))
@@ -380,7 +380,7 @@ export class CustomerMasterService {
       .where(eq(customerAddresses.id, addressId))
       .returning();
     await this.mirrorDefaultOntoCustomer(customerId, updated!);
-    return this.listAddresses(customerId);
+    return await this.listAddresses(customerId);
   }
 
   /**
@@ -398,7 +398,7 @@ export class CustomerMasterService {
       const nextName = input.name.trim() || existing.name;
       const nextPhone = input.phone?.trim() || existing.phone;
       if (nextName !== existing.name || nextPhone !== existing.phone) {
-        return this.saveCustomer(companyId, {
+        return await this.saveCustomer(companyId, {
           id: existing.id,
           profileId: existing.profileId,
           name: nextName,
@@ -422,7 +422,7 @@ export class CustomerMasterService {
       }
       return existing;
     }
-    return this.saveCustomer(companyId, {
+    return await this.saveCustomer(companyId, {
       name: input.name.trim() || email.split('@')[0] || 'Customer',
       email,
       phone: input.phone?.trim() || null,
@@ -729,7 +729,7 @@ export class CustomerMasterService {
       // goes through Finance → Receipts, where those are recorded.
       throw new Error('Sales now post to the general ledger. Record this payment under Finance → Receipts so it reaches the bank account and the books.');
     }
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       // Lock the open invoices so two payments arriving together cannot both settle the same one.
       const open = await tx
         .select()

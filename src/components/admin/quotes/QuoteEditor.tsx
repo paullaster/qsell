@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useRef, useState } from 'react';
+import { useCustomerCreated } from '@/components/admin/customer-created';
 
 import { FilePlus2, X } from 'lucide-react';
 import { buildCatalogueIndex, type CatalogueProduct } from '@/lib/catalogue-entry';
@@ -211,6 +212,8 @@ export function QuoteEditor({
     }
   };
 
+  useCustomerCreated((created) => void chooseCustomer({ id: created.id, label: created.label }));
+
   const submit = async (event: React.SyntheticEvent) => {
     event.preventDefault();
     try {
@@ -275,6 +278,8 @@ export function QuoteEditor({
                 : input.customerName
             }
             placeholder="New / one-time customer"
+            createHref="/admin/customers/new"
+            createLabel="+ Create a customer"
             disabled={switching}
             onChange={(option) => void chooseCustomer(option)}
           />

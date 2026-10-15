@@ -23,7 +23,7 @@ function master() {
 
 export async function listCustomerProfilesAction(): Promise<CustomerProfileRow[]> {
   await requirePermission('customers:read');
-  return master().listProfiles(await companyId());
+  return await master().listProfiles(await companyId());
 }
 
 export async function saveCustomerProfileAction(input: {
@@ -46,14 +46,14 @@ export async function saveCustomerProfileAction(input: {
 
 export async function listTradeCustomersAction(): Promise<CustomerRow[]> {
   await requirePermission('customers:read');
-  return master().listCustomers(await companyId());
+  return await master().listCustomers(await companyId());
 }
 
 export async function getTradeCustomerAction(
   id: string,
 ): Promise<{ customer: CustomerRow; ledger: CustomerLedgerEntryRow[] } | null> {
   await requirePermission('customers:read');
-  return master().getCustomer(await companyId(), id);
+  return await master().getCustomer(await companyId(), id);
 }
 
 export async function saveTradeCustomerAction(input: {
@@ -117,7 +117,7 @@ export async function lookupCheckoutCustomerAction(email: string): Promise<{
   const isSelf = session?.user.email.toLowerCase() === email.trim().toLowerCase();
   const allowed = isSelf || session?.user.isStaff === true;
   const customer = allowed ? await master().lookupByEmail(await companyId(), email) : null;
-  if (!customer || !customer.isActive) {
+  if (!customer?.isActive) {
     return {
       found: false,
       accountType: null,

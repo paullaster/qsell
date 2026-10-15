@@ -1,61 +1,20 @@
 'use client';
 
-import { use, useId, useState, useTransition } from 'react';
+import { use, useId, useState } from 'react';
 import { ArrowDown, ArrowUp, LifeBuoy, Plus, Save, Trash2 } from 'lucide-react';
-import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
-import { updateCompanySupportAction } from '@/server/domains/company/actions';
+import { type companySupportAction, saveCompanySupportAction } from '@/server/domains/company/actions';
+import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { attempt, LoadFailed } from '@/components/ui/screen-kit';
+import { SUPPORT_KIND_META } from '@/lib/support-kinds';
+import { has, orElse } from '@/lib/values';
 import {
   SUPPORT_CHANNEL_KINDS,
   SUPPORT_LIMITS,
-  resolveSupportConfig,
   type CompanySupportConfig,
   type SupportChannel,
-  type SupportChannelKind,
 } from '@/config/company-ui';
 
-const KIND_META: Record<
-  SupportChannelKind,
-  { label: string; valueLabel: string; placeholder: string; showUrl: boolean }
-> = {
-  phone: {
-    label: 'Phone call',
-    valueLabel: 'Phone number',
-    placeholder: '+254 700 000 000',
-    showUrl: false,
-  },
-  whatsapp: {
-    label: 'WhatsApp',
-    valueLabel: 'WhatsApp number',
-    placeholder: '+254 700 000 000',
-    showUrl: false,
-  },
-  sms: { label: 'SMS', valueLabel: 'SMS number', placeholder: '+254 700 000 000', showUrl: false },
-  email: {
-    label: 'Email',
-    valueLabel: 'Email address',
-    placeholder: 'help@yourcompany.com',
-    showUrl: false,
-  },
-  location: {
-    label: 'Location / branch',
-    valueLabel: 'Address',
-    placeholder: 'Street, building, town',
-    showUrl: true,
-  },
-  website: {
-    label: 'Website / chat page',
-    valueLabel: 'Page URL',
-    placeholder: 'https://',
-    showUrl: true,
-  },
-  telegram: {
-    label: 'Telegram',
-    valueLabel: 'Username',
-    placeholder: '@yourcompany',
-    showUrl: false,
-  },
-  other: { label: 'Other', valueLabel: 'Details', placeholder: '', showUrl: true },
-};
+const KIND_META = SUPPORT_KIND_META;
 
 const fieldClass =
   'min-h-11 w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong placeholder:text-fg-faint focus:border-indigo-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40';
@@ -88,14 +47,14 @@ function Field({
   children: (props: { id: string; 'aria-describedby'?: string }) => React.ReactNode;
 }) {
   const id = useId();
-  const hintId = hint ? `${id}-hint` : undefined;
+  const hintId = has(hint) ? `${id}-hint` : undefined;
   return (
     <div>
       <label htmlFor={id} className={labelClass}>
         {label}
       </label>
       {children({ id, 'aria-describedby': hintId })}
-      {hint ? (
+      {has(hint) ? (
         <p id={hintId} className="mt-1 text-[11px] text-fg-subtle">
           {hint}
         </p>
@@ -150,18 +109,17 @@ function RowControls({
   );
 }
 
-export function AdminCompanySupportClient({
-  settingsPromise,
-}: {
-  settingsPromise: Promise<CompanySettingsRow>;
-}) {
-  const initial = use(settingsPromise);
-  const [support, setSupport] = useState<CompanySupportConfig>(() =>
-    resolveSupportConfig(initial.uiConfig?.support),
-  );
+export function AdminCompanySupportClient({ supportPromise }: { supportPromise: ReturnType<typeof companySupportAction> }) {
+  const loaded = use(supportPromise);
+  if (!loaded.ok) return <LoadFailed error={loaded.error} />;
+  return <SupportForm initial={loaded.data} />;
+}
+
+function SupportForm({ initial }: { initial: CompanySupportConfig }) {
+  const [support, setSupport] = useState<CompanySupportConfig>(initial);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [pending, setPending] = useState(false);
 
   const patch = (next: Partial<CompanySupportConfig>) =>
     setSupport((prev) => ({ ...prev, ...next }));
@@ -169,19 +127,19 @@ export function AdminCompanySupportClient({
   const updateChannel = (id: string, changes: Partial<SupportChannel>) =>
     patch({ channels: support.channels.map((c) => (c.id === id ? { ...c, ...changes } : c)) });
 
-  const onSave = () => {
+  const onSave = async () => {
     setMessage(null);
     setError(null);
-    startTransition(async () => {
-      try {
-        const updated = await updateCompanySupportAction(support);
-        // Show exactly what was stored (incomplete rows are dropped server-side).
-        setSupport(resolveSupportConfig(updated.uiConfig?.support));
-        setMessage('Support settings saved. The storefront now shows the changes.');
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Could not save support settings');
-      }
-    });
+    setPending(true);
+    const res = await attempt(saveCompanySupportAction(support));
+    setPending(false);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
+    // Show exactly what was stored (incomplete rows are dropped server-side).
+    setSupport(res.data);
+    setMessage('Support settings saved. The storefront now shows the changes.');
   };
 
   return (
@@ -199,7 +157,7 @@ export function AdminCompanySupportClient({
         </div>
         <button
           type="button"
-          onClick={onSave}
+          onClick={() => void onSave()}
           disabled={pending}
           className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-60"
         >
@@ -209,23 +167,23 @@ export function AdminCompanySupportClient({
       </div>
 
       <div aria-live="polite">
-        {message ? (
+        {message === null ? null : (
           <div
             role="status"
             className="rounded-lg border border-emerald-800 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"
           >
             {message}
           </div>
-        ) : null}
+        )}
       </div>
-      {error ? (
+      {error === null ? null : (
         <div
           role="alert"
           className="rounded-lg border border-red-800 bg-red-50 px-4 py-3 text-sm text-red-800"
         >
           {error}
         </div>
-      ) : null}
+      )}
 
       <section className={cardClass} aria-labelledby="support-names">
         <h3 id="support-names" className="text-sm font-bold text-fg-strong">
@@ -299,24 +257,13 @@ export function AdminCompanySupportClient({
                 className="space-y-3 rounded-lg border border-line bg-surface p-3 sm:p-4"
               >
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <Field label="Type">
-                    {(p) => (
-                      <select
-                        {...p}
-                        className={fieldClass}
-                        value={channel.kind}
-                        onChange={(e) =>
-                          updateChannel(channel.id, { kind: e.target.value as SupportChannelKind })
-                        }
-                      >
-                        {SUPPORT_CHANNEL_KINDS.map((k) => (
-                          <option key={k} value={k}>
-                            {KIND_META[k].label}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                  </Field>
+                  <ChoicePicker
+                    label="Type"
+                    source="support-channel-kinds"
+                    choice={{ id: channel.kind, label: meta.label }}
+                    onChoice={(c) => updateChannel(channel.id, { kind: SUPPORT_CHANNEL_KINDS.find((k) => k === c?.id) ?? 'other' })}
+                    clearable={false}
+                  />
                   <Field label="Heading shown to customers">
                     {(p) => (
                       <input
@@ -406,7 +353,7 @@ export function AdminCompanySupportClient({
 
       <section className={cardClass} aria-labelledby="support-guarantees">
         <h3 id="support-guarantees" className="text-sm font-bold text-fg-strong">
-          {support.guaranteesTitle || 'Guarantees'}
+          {orElse(support.guaranteesTitle, 'Guarantees')}
         </h3>
         <ul className="space-y-3">
           {support.guarantees.map((g, index) => (
@@ -455,7 +402,7 @@ export function AdminCompanySupportClient({
 
       <section className={cardClass} aria-labelledby="support-faqs">
         <h3 id="support-faqs" className="text-sm font-bold text-fg-strong">
-          {support.faqsTitle || 'FAQs'}
+          {orElse(support.faqsTitle, 'FAQs')}
         </h3>
         <p className="text-xs text-fg-muted">
           Both question and answer are required; incomplete rows are discarded on save.

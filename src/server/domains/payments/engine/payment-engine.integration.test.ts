@@ -31,11 +31,12 @@ class FakePlatform {
   }
   fetch: typeof fetch = async (input, init) => {
     const u = new URL(readText(input));
-    const body = init?.body === undefined || init.body === null ? {} : (JSON.parse(readText(init.body)) as Record<string, unknown>);
+    // A form body (the KCB token call) is not JSON: it has nothing for a handler to read.
+    const body = init?.body === undefined || init.body === null ? {} : (() => { try { return JSON.parse(readText(init.body)) as Record<string, unknown>; } catch { return {}; } })();
     const headers = Object.fromEntries(Object.entries((init?.headers ?? {}) as Record<string, string>));
     this.calls.push({ method: init?.method ?? 'GET', path: u.pathname, body, headers });
     if (this.down) throw new Error('connect ECONNREFUSED');
-    const h = this.handlers.get(u.pathname);
+    const h = this.handlers.get(u.pathname) ?? [...this.handlers].find(([k]) => k.endsWith('*') && u.pathname.startsWith(k.slice(0, -1)))?.[1];
     const r = h ? await h(body, u) : { status: 404, json: { errorCode: '404.001.01', errorMessage: `No handler for ${u.pathname}` } };
     const text = r.text ?? (r.json === undefined ? '' : JSON.stringify(r.json));
     return new Response(text, { status: r.status ?? 200, headers: { 'content-type': 'application/json' } });
@@ -55,6 +56,7 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
   let glMobile: string;
   let bankId: string;
   let certificate: string;
+  let jengaKey: string;
   const jobCalls: [string, string, number | undefined][] = [];
   const run = randomUUID().slice(0, 6).toUpperCase();
   let seq = 0;
@@ -64,10 +66,11 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
   const credentialsFor = (code: string, initiator: boolean): Record<string, string> => {
     if (code === 'mpesa_daraja') return { consumerKey: 'ck', consumerSecret: 'cs', shortcode: '174379', passkey: 'pk-secret-value', ...(initiator ? { initiatorName: 'apiuser', initiatorPassword: 'Init#Pass1', certificate } : {}) };
     if (code === 'pesapal_v3') return { consumerKey: 'ck', consumerSecret: 'cs' };
-    return { merchantCode: 'm', consumerSecret: 's', apiKey: 'k', privateKeyPem: 'p' };
+    if (code === 'kcb_buni') return { consumerKey: 'ck', consumerSecret: 'cs', orgShortCode: '174379' };
+    return { merchantCode: 'm', consumerSecret: 's', apiKey: 'k', privateKeyPem: jengaKey };
   };
 
-  async function provider(opts: { code?: 'mpesa_daraja' | 'pesapal_v3' | 'jenga_hq'; settings?: Record<string, unknown>; initiator?: boolean; channel?: string; autoAllocate?: boolean } = {}) {
+  async function provider(opts: { code?: 'mpesa_daraja' | 'pesapal_v3' | 'jenga_hq' | 'kcb_buni'; settings?: Record<string, unknown>; initiator?: boolean; channel?: string; autoAllocate?: boolean } = {}) {
     const code = opts.code ?? 'mpesa_daraja';
     // One method serves a branch's checkout for a service at a time (the first by sort order): earlier ones are stood down.
     await db.update(schema.paymentMethods).set({ enabled: false }).where(and(eq(schema.paymentMethods.companyId, companyId), eq(schema.paymentMethods.branchId, branch.id)));
@@ -86,7 +89,7 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
     fake.on('/mpesa/stkpush/v1/processrequest', () => ({ json: { MerchantRequestID: `M-${run}-${++n}-${seq}`, CheckoutRequestID: `ws_CO_${run}_${++seq}`, ResponseCode: '0', ResponseDescription: 'Success', CustomerMessage: 'Success. Request accepted for processing' } }));
   };
 
-  async function startPayment(p: { providerId: string }, o: { amount?: number; phone?: string; code?: 'mpesa_daraja' | 'pesapal_v3' | 'jenga_hq' } = {}) {
+  async function startPayment(p: { providerId: string }, o: { amount?: number; phone?: string; code?: 'mpesa_daraja' | 'pesapal_v3' | 'jenga_hq' | 'kcb_buni' } = {}) {
     seq += 1;
     const id = `pe_${run}_${seq}`;
     const number = `PE-${run}-${seq}`;
@@ -134,7 +137,8 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
         sendOperation: (id, s) => Promise.resolve(void jobCalls.push(['send', id, s])),
       },
     });
-    const { publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    jengaKey = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
     certificate = publicKey.export({ type: 'spki', format: 'pem' }).toString();
     const [company] = await db.insert(schema.companySettings).values({ legalName: 'PE', tradingName: 'PE', email: 'a@b.c', phone: '1', streetAddress: 's', city: 'c', countyOrState: 'x', postalCode: '1', kraPin: 'P', publicBaseUrl: 'https://shop.example' }).returning();
     companyId = company.id;
@@ -352,7 +356,7 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
     });
   });
 
-  describe('platforms that cannot be asked are never counted by themselves', () => {
+  describe('a platform whose answer cannot be used is never counted by itself', () => {
     async function jengaAttempt(existing?: { providerId: string; methodId: string }) {
       const p = existing ?? (await provider({ code: 'jenga_hq' }));
       seq += 1;
@@ -362,18 +366,22 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       const [attempt] = await db.insert(schema.paymentAttempts).values({ branchId: branch.id, providerConfigId: p.providerId, providerCode: 'jenga_hq', orderId, orderNumber: `JG-${run}-${seq}`, amount: '100.00', currency: 'KES', status: 'pending', callbackToken: `jg-token-${run}-${seq}-padding-padding`, callbackUrl: 'https://x.test', customerPhone: '0712345678' }).returning();
       return { p, attempt, orderId };
     }
-    it('a Jenga callback is written down and left unverified, with the reason; the order is not paid', async () => {
+    it('a Jenga callback with no usable answer from Jenga is written down and left unverified, with the reason; the order is not paid', async () => {
+      fake.on('/authentication/api/v3/authenticate/merchant', () => ({ json: { accessToken: 'jt' } }));
+      fake.on('/v3-apis/transaction-api/v3.0/payments/*', () => ({ status: 404, json: { message: 'No such payment' } }));
       const { attempt, orderId } = await jengaAttempt();
-      const reply = await engine.ingestAttemptCallback({ token: attempt.callbackToken, rawText: JSON.stringify({ transactionReference: 'JG123', status: 'success' }), headers: {}, sourceIp: '1.2.3.4', https: true, method: 'POST' });
+      const reply = await engine.ingestAttemptCallback({ token: attempt.callbackToken, rawText: JSON.stringify({ reference: attempt.orderNumber.replace(/[^A-Za-z0-9]/g, ''), transactionReference: 'JG123', status: 'success' }), headers: {}, sourceIp: '1.2.3.4', https: true, method: 'POST' });
       expect(reply.httpStatus).toBe(200);
-      expect((await engine.verification.verifyAttempt(attempt.id)).outcome).toBe('unavailable');
+      expect((await engine.verification.verifyAttempt(attempt.id)).outcome).toBe('error');
       expect((await reload(attempt.id)).status).toBe('pending');
       expect((await order(orderId)).paymentStatus).not.toBe('paid');
-      expect((await events(attempt.id))[0]).toMatchObject({ state: 'unverified', failureCode: 'NO_VERIFICATION' });
+      expect((await events(attempt.id))[0]).toMatchObject({ state: 'unverified', failureCode: 'CANNOT_VERIFY' });
     });
     it('a person can confirm it by hand, but only with the platform\'s number and a reason, and never twice for one number', async () => {
+      fake.on('/authentication/api/v3/authenticate/merchant', () => ({ json: { accessToken: 'jt' } }));
+      fake.on('/v3-apis/transaction-api/v3.0/payments/*', () => ({ status: 404, json: { message: 'No such payment' } }));
       const { attempt, orderId } = await jengaAttempt();
-      await engine.ingestAttemptCallback({ token: attempt.callbackToken, rawText: JSON.stringify({ transactionReference: 'JG1', status: 'success' }), headers: {}, sourceIp: null, https: true, method: 'POST' });
+      await engine.ingestAttemptCallback({ token: attempt.callbackToken, rawText: JSON.stringify({ reference: attempt.orderNumber.replace(/[^A-Za-z0-9]/g, ''), transactionReference: 'JG1', status: 'success' }), headers: {}, sourceIp: null, https: true, method: 'POST' });
       await engine.verification.verifyAttempt(attempt.id);
       expect(await engine.confirmAttemptManually({ attemptId: attempt.id, reference: 'x', reason: 'I saw it in the Jenga portal', userId: 'u1' })).toMatchObject({ ok: false });
       expect(await engine.confirmAttemptManually({ attemptId: attempt.id, reference: 'JGREF-0001', reason: 'short', userId: 'u1' })).toMatchObject({ ok: false });
@@ -440,6 +448,86 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       pesapalOk({ merchant_reference: a.number, payment_status_description: 'Failed', status_code: 2 });
       expect((await engine.verification.verifyAttempt(a.attempt.id)).outcome).toBe('failed');
       expect((await order(a.orderId)).paymentStatus).toBe('failed');
+    });
+  });
+
+  describe('Jenga and KCB: their own record of the payment decides', () => {
+    const refOf = (number: string) => number.replace(/[^A-Za-z0-9]/g, '').slice(0, 20);
+    async function jengaPaid(over: Record<string, unknown> = {}, status = 200) {
+      fake.on('/authentication/api/v3/authenticate/merchant', () => ({ json: { accessToken: 'jt' } }));
+      fake.on('/v3-apis/transaction-api/v3.0/payments', (b) => ({ json: { transactionId: `JGTX-${run}-${++seq}`, reference: String((b.payment as Record<string, unknown>).ref) } }));
+      const p = await provider({ code: 'jenga_hq' });
+      const a = await startPayment(p, { code: 'jenga_hq' });
+      fake.on('/v3-apis/transaction-api/v3.0/payments/*', () => ({ status, json: { status: 'SUCCESS', transactionId: `JGREC-${run}-${seq}`, reference: refOf(a.number), amount: 100, currency: 'KES', ...over } }));
+      await callback(a.attempt, { reference: refOf(a.number), status: 'success', amount: 100 });
+      return { ...a, verify: () => engine.verification.verifyAttempt(a.attempt.id) };
+    }
+    it('Jenga: a callback only points at the payment; Jenga\'s own answer, asked by our reference, makes it paid', async () => {
+      const a = await jengaPaid();
+      expect((await order(a.orderId)).paymentStatus).not.toBe('paid');
+      expect((await a.verify()).outcome).toBe('confirmed');
+      expect((await order(a.orderId)).paymentStatus).toBe('paid');
+      const asked = fake.calls.filter((c) => c.path.startsWith('/v3-apis/transaction-api/v3.0/payments/')).at(-1);
+      expect(asked?.method).toBe('GET');
+      expect(asked?.path.endsWith(refOf(a.number))).toBe(true);
+      expect((await db.select().from(schema.providerTransactions).where(eq(schema.providerTransactions.consumedId, a.attempt.id)))[0].platformReference).toMatch(/^JGREC-/);
+    });
+    it('Jenga: a different amount, order or currency is refused, a decline fails the payment, and no answer leaves it waiting', async () => {
+      const wrongAmount = await jengaPaid({ amount: 1 });
+      expect((await wrongAmount.verify()).outcome).toBe('mismatch');
+      const wrongOrder = await jengaPaid({ reference: 'SOMEONEELSE' });
+      expect((await wrongOrder.verify()).outcome).toBe('mismatch');
+      const wrongCurrency = await jengaPaid({ currency: 'USD' });
+      expect((await wrongCurrency.verify()).outcome).toBe('mismatch');
+      for (const x of [wrongAmount, wrongOrder, wrongCurrency]) expect((await order(x.orderId)).paymentStatus).not.toBe('paid');
+      const declined = await jengaPaid({ status: 'FAILED', message: 'Insufficient funds' });
+      expect((await declined.verify()).outcome).toBe('failed');
+      expect((await order(declined.orderId)).paymentStatus).toBe('failed');
+      const waiting = await jengaPaid({ status: 'PENDING' });
+      expect((await waiting.verify()).outcome).toBe('pending');
+      const down = await jengaPaid({}, 503);
+      expect((await down.verify()).outcome).toBe('error');
+      expect((await order(down.orderId)).paymentStatus).not.toBe('paid');
+    });
+    it('Jenga: a callback that names another payment is refused before Jenga is asked', async () => {
+      const a = await jengaPaid();
+      const before = fake.calls.length;
+      await callback(a.attempt, { reference: 'NOTOURS', status: 'success' });
+      expect((await a.verify()).outcome).toBe('mismatch');
+      expect(fake.calls.slice(before).some((c) => c.path.startsWith('/v3-apis/transaction-api/v3.0/payments/'))).toBe(false);
+    });
+
+    async function kcbPaid(over: Record<string, unknown> = {}, status = 200) {
+      let n = 0;
+      fake.on('/token', () => ({ json: { access_token: 'kt' } }));
+      fake.on('/mm/api/request/1.0.0/stkpush', () => ({ json: { checkoutRequestID: `ws_KCB_${run}_${++n}_${++seq}`, MerchantRequestID: `KM-${run}-${seq}`, customerMessage: 'Sent' } }));
+      const p = await provider({ code: 'kcb_buni' });
+      const a = await startPayment(p, { code: 'kcb_buni' });
+      fake.on('/mm/api/request/1.0.0/stkpushquery', (b) => ({ status, json: { CheckoutRequestID: String(b.checkoutRequestID), ResultCode: '0', ResultDesc: 'Processed', Amount: 100, MpesaReceiptNumber: `KCBREC${run}${seq}`, ...over } }));
+      await callback(a.attempt, stkBody(a.attempt));
+      return { ...a, verify: () => engine.verification.verifyAttempt(a.attempt.id) };
+    }
+    it('KCB: the callback points at the payment; KCB\'s own answer for the checkout request makes it paid', async () => {
+      const a = await kcbPaid();
+      expect((await order(a.orderId)).paymentStatus).not.toBe('paid');
+      expect((await a.verify()).outcome).toBe('confirmed');
+      expect((await order(a.orderId)).paymentStatus).toBe('paid');
+      const asked = fake.calls.filter((c) => c.path === '/mm/api/request/1.0.0/stkpushquery').at(-1);
+      expect(asked?.body).toMatchObject({ checkoutRequestID: a.attempt.providerReference, orgShortCode: '174379' });
+      expect((await db.select().from(schema.providerTransactions).where(eq(schema.providerTransactions.consumedId, a.attempt.id)))[0].platformReference).toMatch(/^KCBREC/);
+    });
+    it('KCB: a different amount is refused, a declined request fails the payment, and no answer leaves it waiting', async () => {
+      const wrongAmount = await kcbPaid({ Amount: 1 });
+      expect((await wrongAmount.verify()).outcome).toBe('mismatch');
+      expect((await order(wrongAmount.orderId)).paymentStatus).not.toBe('paid');
+      const declined = await kcbPaid({ ResultCode: '1032', ResultDesc: 'Request cancelled by user' });
+      expect((await declined.verify()).outcome).toBe('failed');
+      expect((await order(declined.orderId)).paymentStatus).toBe('failed');
+      const noCode = await kcbPaid({ ResultCode: null });
+      expect((await noCode.verify()).outcome).toBe('error');
+      const down = await kcbPaid({}, 503);
+      expect((await down.verify()).outcome).toBe('error');
+      expect((await order(down.orderId)).paymentStatus).not.toBe('paid');
     });
   });
 

@@ -1,0 +1,1 @@
+CREATE INDEX "approval_requests_requester_idx" ON "approval_requests" USING btree ("company_id","requested_by","created_at");

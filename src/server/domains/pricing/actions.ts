@@ -28,12 +28,13 @@ import {
   type SpecificityWeights,
   type Tier,
 } from './domain/types';
+import { isMalformedId, NO_SUCH_RECORD } from '@/server/domains/settings/errors';
 
 export type PricingResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: string; code?: string; issues?: RuleIssue[]; forbidden?: true };
 
-type Reason = { code: string; text?: string };
+interface Reason { code: string; text?: string }
 
 /** Server action errors are masked in production, so failures come back as data. */
 async function run<T>(
@@ -62,6 +63,7 @@ async function run<T>(
     if (error instanceof ReasonError) {
       return { ok: false, error: error.message, code: error.code };
     }
+    if (isMalformedId(error)) return NO_SUCH_RECORD;
     console.error('[pricing]', error);
     return { ok: false, error: 'Something went wrong. Please try again.' };
   }
@@ -97,7 +99,7 @@ export interface PriceListView {
 type NameMap = Partial<Record<string, Record<string, string>>>;
 
 /** Names for the customers, groups and branches that lists are limited to. */
-const scopeNames = (lists: Array<{ scopes: Scopes }>): Promise<NameMap> =>
+const scopeNames = (lists: { scopes: Scopes }[]): Promise<NameMap> =>
   getContainer().pricingConfig.scopeNames(lists);
 
 function toView(
@@ -141,13 +143,13 @@ export interface PriceListDetail {
   issues: RuleIssue[];
   /** Names for the customers, groups and branches the list is limited to. */
   names: NameMap;
-  timeline: Array<{
+  timeline: {
     at: string;
     action: string;
     actor: string | null;
     reason: string | null;
     detail: string;
-  }>;
+  }[];
 }
 
 const DETAIL_KEYS: Record<string, (o: Record<string, unknown>) => string> = {
@@ -180,7 +182,7 @@ export async function getPriceListAction(id: string): Promise<PricingResult<Pric
         action: e.action,
         actor: e.actorId,
         reason: [e.reasonCode, e.reasonText].filter(Boolean).join(': ') || null,
-        detail: DETAIL_KEYS[e.action]?.((e.outcome ?? {}) as Record<string, unknown>) ?? '',
+        detail: DETAIL_KEYS[e.action]?.((e.outcome ?? {})) ?? '',
       })),
     };
   });
@@ -236,13 +238,13 @@ export async function priceHistoryAction(
   productId: string,
 ): Promise<
   PricingResult<
-    Array<{
+    {
       validFrom: string;
       validTo: string | null;
       price: number;
       by: string;
       reason: string | null;
-    }>
+    }[]
   >
 > {
   return run('pricing:read', async ({ companyId }) =>
@@ -259,9 +261,9 @@ export async function priceHistoryAction(
 // ── Reasons and lookups ──────────────────────────────────────────────────────
 
 export interface PricingLookups {
-  branches: Array<{ id: string; code: string; name: string }>;
-  currencies: Array<{ code: string; name: string; isBase: boolean }>;
-  groups: Array<{ id: string; code: string; name: string }>;
+  branches: { id: string; code: string; name: string }[];
+  currencies: { code: string; name: string; isBase: boolean }[];
+  groups: { id: string; code: string; name: string }[];
   channels: readonly string[];
   salesTypes: readonly string[];
   baseCurrency: string;
@@ -294,7 +296,7 @@ export async function getPricingLookupsAction(): Promise<PricingResult<PricingLo
 
 export async function searchCustomersAction(
   q: string,
-): Promise<PricingResult<Array<{ id: string; number: string; name: string }>>> {
+): Promise<PricingResult<{ id: string; number: string; name: string }[]>> {
   return run('pricing:read', ({ companyId }) =>
     getContainer().pricingConfig.searchCustomers(companyId, q),
   );
@@ -302,7 +304,7 @@ export async function searchCustomersAction(
 
 export async function searchProductsAction(
   q: string,
-): Promise<PricingResult<Array<{ id: string; name: string; sku: string; price: string | null }>>> {
+): Promise<PricingResult<{ id: string; name: string; sku: string; price: string | null }[]>> {
   return run('pricing:read', () => getContainer().pricingConfig.searchProducts(q));
 }
 
@@ -401,13 +403,13 @@ export async function retirePriceListAction(
 
 export async function savePriceLinesAction(
   id: string,
-  rows: Array<{
+  rows: {
     productId: string;
     price: number;
     tiers?: Tier[];
     floorPrice?: number | null;
     lockedUntil?: string | null;
-  }>,
+  }[],
   reason: Reason,
   opts: { validFrom?: string | null; overrideLock?: boolean } = {},
 ): Promise<PricingResult<Gated<{ created: number; replaced: number; unchanged: number }>>> {
@@ -463,13 +465,13 @@ export async function importPriceLinesAction(
     const first = lines[0]?.split(',')[0]?.trim().toLowerCase();
     const body = first === 'sku' ? lines.slice(1) : lines;
     const issues: RuleIssue[] = [];
-    const parsed: Array<{
+    const parsed: {
       sku: string;
       price: number;
       floor: number | null;
       tiers: Tier[];
       row: number;
-    }> = [];
+    }[] = [];
     body.forEach((line, i) => {
       const row = i + (first === 'sku' ? 2 : 1);
       const [sku = '', price = '', floor = '', breaks = ''] = line.split(',').map((c) => c.trim());
@@ -592,7 +594,7 @@ export async function customerGroupMembersAction(
   groupId: string,
   search?: string,
 ): Promise<
-  PricingResult<Array<{ id: string; number: string; name: string; email: string | null }>>
+  PricingResult<{ id: string; number: string; name: string; email: string | null }[]>
 > {
   return run('pricing:read', ({ companyId }) =>
     getContainer().pricingConfig.groupMembers(companyId, groupId, search),
@@ -731,8 +733,8 @@ export async function checkPriceAction(
 export async function previewQuotePricesAction(input: {
   customerId?: string | null;
   paymentMethod?: string | null;
-  lines: Array<{ productId: string; quantity: number }>;
-}): Promise<PricingResult<Array<{ unitPrice: number | null; trace: PriceResult['trace'] }>>> {
+  lines: { productId: string; quantity: number }[];
+}): Promise<PricingResult<{ unitPrice: number | null; trace: PriceResult['trace'] }[]>> {
   return run('quotes:create', async ({ companyId }) => {
     const { pricing, branches: branchRepo } = getContainer();
     if (input.lines.length === 0) return [];

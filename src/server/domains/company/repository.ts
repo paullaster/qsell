@@ -72,10 +72,10 @@ export function toCompanyProfile(row: CompanySettingsRow): CompanyProfile {
 function dbErrorMessage(err: unknown): string {
   if (!(err instanceof Error)) return 'Unknown database error';
   const cause = (err as Error & { cause?: unknown }).cause;
-  if (cause instanceof Error && cause.message) {
+  if (cause instanceof Error && cause.message !== '') {
     return `${err.message} (${cause.message})`;
   }
-  if (typeof cause === 'string' && cause.trim()) {
+  if (typeof cause === 'string' && cause.trim() !== '') {
     return `${err.message} (${cause})`;
   }
   return err.message;

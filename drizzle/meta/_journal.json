@@ -365,6 +365,13 @@
       "when": 1791950188408,
       "tag": "0051_section_templates",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1792062494073,
+      "tag": "0052_approval_requests_requester",
+      "breakpoints": true
     }
   ]
 }
