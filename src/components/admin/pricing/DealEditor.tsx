@@ -32,14 +32,14 @@ export interface DealState {
   groupKind: 'price' | 'percent';
   groupValue: string;
   // bundle deal
-  slots: Array<{ target: TargetState; qty: string }>;
+  slots: { target: TargetState; qty: string }[];
   bundlePrice: string;
   maxSets: string;
   // gift
   minOrderValue: string;
   minQuantity: string;
   giftTrigger: TargetState;
-  gifts: Array<{ productId: string; label: string; qty: string }>;
+  gifts: { productId: string; label: string; qty: string }[];
 }
 
 export const newDeal = (type: DealState['type'] = 'buy_get'): DealState => ({

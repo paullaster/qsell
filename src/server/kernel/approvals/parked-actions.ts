@@ -5,6 +5,7 @@ import { withAfterCommit } from '../after-commit';
 import type { ApprovalEngine, DocumentHandler, SubmitInput, Tx } from './engine';
 import { triggerByCode } from './domain/triggers';
 
+import { required } from '@/lib/values';
 /** Carries out a parked action, in the approver's transaction. Whatever it returns is kept as the result. */
 export interface ParkedExecutor {
   execute(tx: Tx, row: ApprovalParkedActionRow): Promise<Record<string, unknown>>;
@@ -83,13 +84,13 @@ export class ParkedActions {
           requestedBy: args.requestedBy,
         })
         .returning();
-      const result = await this.engine.submit({ ...input, documentId: row!.id }, tx);
+      const result = await this.engine.submit({ ...input, documentId: required(row, 'the parked action').id }, tx);
       if (!result.required) {
         // The configuration changed between the check and now: nothing needs approval after all.
-        await tx.delete(approvalParkedActions).where(eq(approvalParkedActions.id, row!.id));
+        await tx.delete(approvalParkedActions).where(eq(approvalParkedActions.id, required(row, 'the parked action').id));
         return { skip: true as const };
       }
-      return { skip: false as const, requestId: row!.id };
+      return { skip: false as const, requestId: required(row, 'the parked action').id };
     });
     if (outcome.skip) return { parked: false, value: await now() };
     return { parked: true, requestId: outcome.requestId, message: PARKED_MESSAGE };
@@ -114,17 +115,17 @@ export class ParkedActions {
           .from(approvalParkedActions)
           .where(eq(approvalParkedActions.id, id))
           .for('update');
-        if (!row || row.status !== 'parked') return;
+        if (row?.status !== 'parked') return;
         const executor = this.executors.get(`${row.documentKind}:${row.action}`);
         if (!executor) throw new Error(`Nothing knows how to carry out "${row.action}".`);
         // If this throws, the approval is not recorded either: the approver sees why and can reject instead.
         const result = await executor.execute(tx, row);
         await close(tx, id, 'applied', result);
       },
-      onRejected: async (id, tx) => close(tx, id, 'rejected'),
+      onRejected: async (id, tx) => await close(tx, id, 'rejected'),
       // The action never happened, so there is nothing to reopen: the requester just starts again.
-      onReopened: async (id, tx) => close(tx, id, 'canceled'),
-      onCanceled: async (id, tx) => close(tx, id, 'canceled'),
+      onReopened: async (id, tx) => await close(tx, id, 'canceled'),
+      onCanceled: async (id, tx) => await close(tx, id, 'canceled'),
       describe: async (id) => {
         const [row] = await this.db
           .select({ summary: approvalParkedActions.summary })

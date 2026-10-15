@@ -1,6 +1,8 @@
 import { fieldsUsed } from './conditions';
 import { triggerByCode } from './triggers';
-import type { ConditionNode, WorkflowDefinition } from './types';
+import type { ConditionNode, StepDefinition, WorkflowDefinition } from './types';
+
+import { has } from '@/lib/values';
 
 export interface DefinitionIssue {
   path: string;
@@ -42,32 +44,34 @@ export function validateDefinition(trigger: string, def: WorkflowDefinition): De
   };
   checkFields(def.conditions, 'conditions');
 
+  // A stored draft may be incomplete or from an older shape, so each step is read as if any part could be missing.
+  const steps: Partial<StepDefinition>[] = def.steps;
   const seen = new Set<number>();
-  def.steps.forEach((step, i) => {
-    const at = `steps[${i}]`;
-    if (!Number.isInteger(step.sequence) || step.sequence < 1) {
+  steps.forEach((step, i) => {
+    const at = `steps[${String(i)}]`;
+    if (typeof step.sequence !== 'number' || !Number.isInteger(step.sequence) || step.sequence < 1) {
       issues.push({ path: at, message: 'The step order must be a whole number from 1.' });
     } else if (seen.has(step.sequence)) {
-      issues.push({ path: at, message: `Two steps share the order ${step.sequence}.` });
+      issues.push({ path: at, message: `Two steps share the order ${String(step.sequence)}.` });
     }
-    seen.add(step.sequence);
-    if (!step.name?.trim()) issues.push({ path: at, message: 'Name the step.' });
+    seen.add(step.sequence ?? 0);
+    if (!has(step.name?.trim())) issues.push({ path: at, message: 'Name the step.' });
     if (step.dueAfterHours !== undefined && !(step.dueAfterHours > 0)) {
       issues.push({ path: at, message: 'The due time must be above zero hours.' });
     }
     const a = step.approver;
-    if (!a) issues.push({ path: at, message: 'Choose who approves this step.' });
-    else if (a.type === 'user' && !a.userId)
+    if (a === undefined) issues.push({ path: at, message: 'Choose who approves this step.' });
+    else if (a.type === 'user' && !has(a.userId))
       issues.push({ path: at, message: 'Choose the approving user.' });
-    else if (a.type === 'group' && !a.groupId)
+    else if (a.type === 'group' && !has(a.groupId))
       issues.push({ path: at, message: 'Choose the approver group.' });
     else if (
       a.type === 'group' &&
       a.require === 'n_of' &&
-      !(Number.isInteger(a.count) && a.count! >= 1)
+      !(typeof a.count === 'number' && Number.isInteger(a.count) && a.count >= 1)
     )
       issues.push({ path: at, message: 'Say how many members must approve (at least 1).' });
-    else if (a.type === 'role' && !a.roleKey)
+    else if (a.type === 'role' && !has(a.roleKey))
       issues.push({ path: at, message: 'Choose the role.' });
     else if (
       !['user', 'group', 'role', 'owner_approver', 'chain_by_limit', 'first_qualified'].includes(

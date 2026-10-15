@@ -19,6 +19,8 @@ import {
   type SigningRequest,
 } from './types';
 
+import { has } from '@/lib/values';
+
 /**
  * Decides whether a document is signed with KRA, and records why.
  *
@@ -87,9 +89,9 @@ export class KraSigningPolicy {
     let scope: KraConfigSource = 'company';
     let branchId: string | null = null;
     let scopeDetail = 'No branch on the document: company settings apply.';
-    if (req.branchId) {
+    if (has(req.branchId)) {
       const branch = await this.branches.getById(req.branchId);
-      if (!branch || branch.companyId !== req.companyId) {
+      if (branch?.companyId !== req.companyId) {
         gates.push(
           fail('scope', req.branchId, 'branch_lookup', `Branch ${req.branchId} not found.`),
         );
@@ -113,7 +115,7 @@ export class KraSigningPolicy {
       gate: 'scope',
       result: 'pass',
       value: { scope, branchId },
-      source: req.branchId ? 'branch.acts_independently' : 'no_branch',
+      source: has(req.branchId) ? 'branch.acts_independently' : 'no_branch',
       detail: scopeDetail,
     });
     const common = { scope, branchId };
@@ -121,7 +123,7 @@ export class KraSigningPolicy {
     // Read only what the chosen scope needs. The company row is always needed: it is the
     // global default for module switches and tells us whether KRA is in use at all.
     const company = await this.configs.getCompanyConfig(req.companyId);
-    const branchRecord = scope === 'branch' ? await this.configs.getBranchConfig(branchId!) : null;
+    const branchRecord = scope === 'branch' && branchId !== null ? await this.configs.getBranchConfig(branchId) : null;
     const record: KraConfigRecord | null = scope === 'branch' ? branchRecord : company;
 
     // 3. mode
@@ -141,7 +143,7 @@ export class KraSigningPolicy {
           'mode',
           null,
           'branch_config',
-          `Branch ${branchId} acts independently but has no KRA configuration.`,
+          `Branch ${branchId ?? ''} acts independently but has no KRA configuration.`,
         ),
       );
       return done('fail', 'BRANCH_CONFIG_MISSING', common);
@@ -189,8 +191,8 @@ export class KraSigningPolicy {
     });
 
     // 5. module switch
-    const own = scope === 'branch' ? branchRecord?.moduleSigning?.[req.module] : undefined;
-    const inherited = company?.moduleSigning?.[req.module];
+    const own = scope === 'branch' ? branchRecord?.moduleSigning[req.module] : undefined;
+    const inherited = company?.moduleSigning[req.module];
     let moduleOn: boolean;
     let moduleSource: string;
     if (typeof own === 'boolean') {

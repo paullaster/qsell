@@ -1,7 +1,11 @@
-import { listSigningEventsAction } from '@/server/domains/kra/signing/actions';
+import { signingDocumentsPageAction } from '@/server/domains/kra/signing/actions';
 import { SigningLogClient } from '@/components/admin/settings/SigningLogClient';
+import { SettingsFrame } from '@/components/admin/settings/frame';
 
-export default async function AdminKraSigningLogPage() {
-  const events = await listSigningEventsAction({ limit: 300 });
-  return <SigningLogClient events={events} />;
+export default function AdminKraSigningLogPage() {
+  return (
+    <SettingsFrame label="the signing log">
+      <SigningLogClient firstPage={signingDocumentsPageAction({})} />
+    </SettingsFrame>
+  );
 }

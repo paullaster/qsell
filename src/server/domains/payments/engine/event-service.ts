@@ -4,7 +4,7 @@ import { providerEvents, type ProviderEventRow, type ProviderEventState } from '
 import { bodyHash, ipAllowed, redactDeep, redactHeaders } from './redact';
 import type { EngineSettings } from './settings';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 export interface RecordEvent {
   companyId: string;
@@ -25,6 +25,16 @@ export interface RecordEvent {
  * Everything a platform sends us, written down before anything else happens: who sent it, what it
  * said (secrets and phone numbers masked), whether the sender could be trusted, and what was decided.
  */
+/** What the body says if it is JSON; nothing when it is empty or not JSON (the raw text is kept either way). */
+function parseJsonOrNull(raw: string): unknown {
+  if (!has(raw)) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
 export class ProviderEventService {
   constructor(private readonly db: DrizzleDb) {}
 
@@ -37,12 +47,7 @@ export class ProviderEventService {
   }
 
   async record(input: RecordEvent): Promise<{ event: ProviderEventRow; parsed: unknown }> {
-    let parsed: unknown = null;
-    try {
-      parsed = has(input.rawText) ? JSON.parse(input.rawText) : null;
-    } catch {
-      parsed = null;
-    }
+    const parsed = parseJsonOrNull(input.rawText);
     const hash = bodyHash(input.rawText);
     const [dup] = await this.db
       .select({ id: providerEvents.id })

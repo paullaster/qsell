@@ -3,7 +3,7 @@ export type Operand = string | number | boolean | null | { field: string };
 
 export type Comparison =
   | { op: 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte'; field: string; value: Operand }
-  | { op: 'in' | 'not_in'; field: string; value: Array<string | number> }
+  | { op: 'in' | 'not_in'; field: string; value: (string | number)[] }
   | { op: 'between'; field: string; value: [number, number] }
   | { op: 'contains'; field: string; value: string }
   | { op: 'exists'; field: string; value: boolean };
@@ -47,4 +47,4 @@ export interface WorkflowDefinition {
   steps: StepDefinition[];
 }
 
-export type ConditionTrace = { node: string; result: boolean; detail?: string };
+export interface ConditionTrace { node: string; result: boolean; detail?: string }

@@ -3,9 +3,7 @@
 import { Fragment, useCallback, useEffect, useId, useState } from 'react';
 import {
   importPriceLinesAction,
-  listPriceLinesAction,
-  listPricingReasonsAction,
-  priceHistoryAction,
+  listPriceLinesAction, priceHistoryAction,
   removePriceLinesAction,
   savePriceLinesAction,
   searchProductsAction,
@@ -35,7 +33,7 @@ interface Draft {
   floor: string;
   lockedUntil: string;
   startsAt: string;
-  breaks: Array<{ fromQty: string; price: string }>;
+  breaks: { fromQty: string; price: string }[];
 }
 const blank = (): Draft => ({
   productId: '',
@@ -80,7 +78,7 @@ export function PriceLinesPanel({
   const [busy, setBusy] = useState(false);
   const [history, setHistory] = useState<{
     productId: string;
-    rows: Array<{ validFrom: string; validTo: string | null; price: number; by: string }>;
+    rows: { validFrom: string; validTo: string | null; price: number; by: string }[];
   } | null>(null);
   const [lockOverride, setLockOverride] = useState(false);
   const [removing, setRemoving] = useState<PriceLineView | null>(null);
@@ -109,7 +107,7 @@ export function PriceLinesPanel({
     await load();
     onChanged();
   };
-  const fail = (r: { error: string; code?: string; issues?: Array<{ message: string }> }) => {
+  const fail = (r: { error: string; code?: string; issues?: { message: string }[] }) => {
     const extra =
       r.issues && r.issues.length > 1
         ? ` ${r.issues
@@ -189,7 +187,7 @@ export function PriceLinesPanel({
   };
 
   const showHistory = async (line: PriceLineView) => {
-    if (history?.productId === line.productId) return setHistory(null);
+    if (history?.productId === line.productId) { setHistory(null); return; }
     const r = await priceHistoryAction(listId, line.productId);
     if (r.ok) setHistory({ productId: line.productId, rows: r.data });
   };
@@ -411,7 +409,7 @@ export function PriceLinesPanel({
 
       {needsReason ? (
         <div className="space-y-3 rounded-lg border border-line p-3">
-          <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
           <label className="flex min-h-10 cursor-pointer items-center gap-2 text-xs text-fg">
             <input
               type="checkbox"
@@ -650,7 +648,7 @@ export function ProductPick({
   const uid = useId();
   const [q, setQ] = useState('');
   const [found, setFound] = useState<
-    Array<{ id: string; name: string; sku: string; price: string | null }>
+    { id: string; name: string; sku: string; price: string | null }[]
   >([]);
   useEffect(() => {
     if (q.trim().length < 2) {

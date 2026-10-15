@@ -2,7 +2,6 @@
 
 import { useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { listPricingReasonsAction } from '@/server/domains/pricing/actions';
 import { removeLimitAction, setLimitAction } from '@/server/domains/pricing/guard-actions';
 import { ReasonField, type ReasonValue } from '../settings/numbering/ReasonField';
 import {
@@ -31,7 +30,7 @@ export function LimitsClient({
   canManage,
 }: {
   limits: Limit[];
-  roles: Array<{ key: string; name: string }>;
+  roles: { key: string; name: string }[];
   canManage: boolean;
 }) {
   const router = useRouter();
@@ -149,7 +148,7 @@ export function LimitsClient({
               </p>
             </div>
           </div>
-          <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
           <div className="flex flex-wrap gap-2">
             <button
               type="submit"
@@ -171,7 +170,7 @@ export function LimitsClient({
             Remove the limit for <strong>{removing.roleName}</strong>? They fall back to the
             "Everyone else" limit, or to no limit.
           </p>
-          <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
           <div className="flex flex-wrap gap-2">
             <button
               type="button"

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useId, useState } from 'react';
+import { use, useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   goLiveAction,
@@ -9,26 +9,26 @@ import {
   setOutputTaxAccountAction,
   type salesPostingOverviewAction,
 } from '@/server/domains/finance/sales-actions';
-import { Chip, Field, Message, PageHeader, buttonClass, cardClass, fieldClass, money, primaryClass, type Notice, attempt } from './ui';
-
-import { has } from '@/lib/has';
+import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { checkMark, salesKind } from '@/lib/ledger-forms';
+import type { Choice } from '@/lib/payment-options';
+import { has } from '@/lib/values';
+import { Chip, LoadFailed, Message, PageHeader, buttonClass, cardClass, money, primaryClass, type Notice, attempt } from './ui';
 
 type View = Extract<Awaited<ReturnType<typeof salesPostingOverviewAction>>, { ok: true }>['data'];
 
-const KIND: Record<string, string> = {
-  invoice: 'Credit invoice',
-  cash_sale: 'Cash sale',
-  credit_payment: 'Payment of a credit order',
-  rebate_credit: 'Rebate',
-};
+export function SalesPostingClient({ viewPromise }: { viewPromise: ReturnType<typeof salesPostingOverviewAction> }) {
+  const res = use(viewPromise);
+  return res.ok ? <SalesPostingView view={res.data} /> : <LoadFailed error={res.error} />;
+}
 
-export function SalesPostingClient({ view }: { view: View }) {
+function SalesPostingView({ view }: { view: View }) {
   const uid = useId();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
-  const [tax, setTax] = useState(view.outputTaxAccountId ?? '');
-  const [offset, setOffset] = useState('');
+  const [tax, setTax] = useState<Choice | null>(view.outputTaxAccountId === null ? null : { id: view.outputTaxAccountId, label: view.outputTaxAccountLabel ?? view.outputTaxAccountId });
+  const [offset, setOffset] = useState<Choice | null>(null);
   const [confirm, setConfirm] = useState(false);
   const blocking = view.checks.filter((c) => c.blocking && !c.ok);
 
@@ -37,15 +37,15 @@ export function SalesPostingClient({ view }: { view: View }) {
     setNotice(res.ok ? { kind: 'ok', text: ok } : { kind: 'error', text: res.error });
     router.refresh();
   };
-  const saveTax = async (e: React.FormEvent) => {
+  const saveTax = async (e: React.SyntheticEvent) => {
     e.preventDefault();
     setBusy(true);
-    done(await attempt(setOutputTaxAccountAction(tax)), 'Saved.');
+    done(await attempt(setOutputTaxAccountAction(tax?.id ?? '')), 'Saved.');
   };
-  const live = async (e: React.FormEvent) => {
+  const live = async (e: React.SyntheticEvent) => {
     e.preventDefault();
     setBusy(true);
-    const res = await attempt(goLiveAction(offset));
+    const res = await attempt(goLiveAction(offset?.id ?? ''));
     done(res, res.ok ? `Sales now post to the general ledger, from ${res.data.date}. ${res.data.opening.length} opening balance${res.data.opening.length === 1 ? '' : 's'} brought in.` : '');
   };
   const retry = async (id?: string) => {
@@ -65,34 +65,32 @@ export function SalesPostingClient({ view }: { view: View }) {
       <section className={`${cardClass} space-y-3`} aria-labelledby={`${uid}-st`}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 id={`${uid}-st`} className="text-sm font-bold text-fg-strong">Status</h3>
-          {has(view.goLive) ? <Chip tone="green">Live since {view.goLive}</Chip> : <Chip tone="amber">Not live: sales do not reach the general ledger yet</Chip>}
+          {view.goLive === null ? <Chip tone="amber">Not live: sales do not reach the general ledger yet</Chip> : <Chip tone="green">Live since {view.goLive}</Chip>}
         </div>
         <ul className="space-y-1.5" aria-label="Readiness">
-          {view.checks.map((c) => (
-            <li key={c.key} className="flex items-start gap-2 text-sm">
-              <span aria-hidden className={c.ok ? 'text-emerald-600' : c.blocking ? 'text-red-600' : 'text-amber-600'}>{c.ok ? '✓' : c.blocking ? '✗' : '!'}</span>
-              <span><span className="sr-only">{c.ok ? 'Done: ' : 'To do: '}</span><span className="font-semibold text-fg-strong">{c.label}</span> <span className="text-fg-muted">— {c.detail}</span></span>
-            </li>
-          ))}
+          {view.checks.map((c) => {
+            const mark = checkMark(c);
+            return (
+              <li key={c.key} className="flex items-start gap-2 text-sm">
+                <span aria-hidden className={mark.tone}>{mark.mark}</span>
+                <span><span className="sr-only">{mark.said}</span><span className="font-semibold text-fg-strong">{c.label}</span> <span className="text-fg-muted">— {c.detail}</span></span>
+              </li>
+            );
+          })}
         </ul>
         {view.can.setTax ? (
-          <form onSubmit={saveTax} className="grid grid-cols-1 items-end gap-3 sm:grid-cols-3" aria-label="Tax account">
+          <form onSubmit={(e) => void saveTax(e)} className="grid grid-cols-1 items-end gap-3 sm:grid-cols-3" aria-label="Tax account">
             <div className="sm:col-span-2">
-              <Field id={`${uid}-tax`} label="Account for tax owed on sales" hint="Output VAT or sales tax payable: a liability account.">
-                <select id={`${uid}-tax`} value={tax} onChange={(e) => setTax(e.target.value)} className={fieldClass} required>
-                  <option value="">Choose…</option>
-                  {view.liabilityAccounts.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
-                </select>
-              </Field>
+              <ChoicePicker label="Account for tax owed on sales" source="liability-gl-accounts" choice={tax} onChoice={setTax} clearable={false} required placeholder="Output VAT or sales tax payable (a liability account)" />
             </div>
-            <button type="submit" className={buttonClass} disabled={busy || !has(tax) || tax === view.outputTaxAccountId}>Save tax account</button>
+            <button type="submit" className={buttonClass} disabled={busy || tax === null || tax.id === view.outputTaxAccountId}>Save tax account</button>
           </form>
         ) : null}
         <p className="text-xs text-fg-muted">The other accounts are edited on <Link className="text-indigo-600 hover:underline" href="/admin/finance/posting-setup">Posting setup</Link>.</p>
       </section>
 
-      {!has(view.goLive) && view.can.goLive ? (
-        <form onSubmit={live} className={`${cardClass} space-y-3`} aria-labelledby={`${uid}-gl`}>
+      {view.goLive === null && view.can.goLive ? (
+        <form onSubmit={(e) => void live(e)} className={`${cardClass} space-y-3`} aria-labelledby={`${uid}-gl`}>
           <h3 id={`${uid}-gl`} className="text-sm font-bold text-fg-strong">Switch sales on for the general ledger</h3>
           <p className="text-sm text-fg">
             From today, every sale posts. What customers owe today is brought in as an opening balance, so the ledger and the customer accounts start in agreement. This is done once.
@@ -106,18 +104,13 @@ export function SalesPostingClient({ view }: { view: View }) {
               ))}
             </ul>
           )}
-          <Field id={`${uid}-off`} label="Opening balance goes against" hint="An equity account, for example opening balance equity or retained earnings.">
-            <select id={`${uid}-off`} value={offset} onChange={(e) => setOffset(e.target.value)} className={fieldClass} required>
-              <option value="">Choose…</option>
-              {view.equityAccounts.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
-            </select>
-          </Field>
+          <ChoicePicker label="Opening balance goes against" source="equity-gl-accounts" choice={offset} onChoice={setOffset} clearable={false} required placeholder="An equity account, such as opening balance equity" />
           <label className="flex min-h-10 items-start gap-2 text-sm text-fg">
             <input type="checkbox" checked={confirm} onChange={(e) => setConfirm(e.target.checked)} className="mt-1 h-4 w-4" />
             I understand this starts the books for sales from today and cannot be undone.
           </label>
           {blocking.length > 0 ? <p role="alert" className="text-sm text-red-700">Fix the items marked ✗ above first.</p> : null}
-          <button type="submit" className={primaryClass} disabled={busy || !has(offset) || !confirm || blocking.length > 0}>Switch on</button>
+          <button type="submit" className={primaryClass} disabled={busy || offset === null || !confirm || blocking.length > 0}>Switch on</button>
         </form>
       ) : null}
 
@@ -126,29 +119,29 @@ export function SalesPostingClient({ view }: { view: View }) {
           <h3 id={`${uid}-wait`} className="text-sm font-bold text-fg-strong">Waiting to be posted ({view.backlog.pending + view.backlog.failed})</h3>
           {view.can.retry && view.backlog.failed > 0 ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void retry()}>Retry all that failed</button> : null}
         </div>
-        {view.open.length === 0 ? (
-          <p className="text-sm text-fg-muted">Nothing is waiting.</p>
-        ) : (
+        {view.open.length === 0 ? <p className="text-sm text-fg-muted">Nothing is waiting.</p> : null}
+        {view.open.length > 0 ? (
           <ul className="space-y-2">
             {view.open.map((r) => (
               <li key={r.id} className="rounded-xl border border-line bg-surface-raised p-3 text-sm">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="font-semibold text-fg-strong">{KIND[r.kind] ?? r.kind} <span className="font-normal text-fg-muted">· {r.eventDate} · {r.subjectId.slice(0, 18)}</span></p>
+                  <p className="font-semibold text-fg-strong">{salesKind(r.kind)} <span className="font-normal text-fg-muted">· {r.eventDate} · {r.subjectId.slice(0, 18)}</span></p>
                   <div className="flex items-center gap-2">
                     <Chip tone={r.status === 'failed' ? 'red' : 'amber'}>{r.status === 'failed' ? `Failed ×${r.attempts}` : 'Queued'}</Chip>
-                    {view.can.retry ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void retry(r.id)} aria-label={`Retry ${KIND[r.kind] ?? r.kind} ${r.subjectId.slice(0, 18)}`}>Retry</button> : null}
+                    {view.can.retry ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void retry(r.id)} aria-label={`Retry ${salesKind(r.kind)} ${r.subjectId.slice(0, 18)}`}>Retry</button> : null}
                   </div>
                 </div>
                 {has(r.lastError) ? <p className="mt-1 text-xs text-red-700">{r.lastError}</p> : null}
               </li>
             ))}
           </ul>
-        )}
+        ) : null}
       </section>
 
       <section className="space-y-2" aria-labelledby={`${uid}-rec`}>
         <h3 id={`${uid}-rec`} className="text-sm font-bold text-fg-strong">Receivables: the books against the customer accounts</h3>
-        {view.reconciliation.length === 0 ? <p className="text-sm text-fg-muted">No receivables account is set on a customer posting group.</p> : (
+        {view.reconciliation.length === 0 ? <p className="text-sm text-fg-muted">No receivables account is set on a customer posting group.</p> : null}
+        {view.reconciliation.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[30rem] text-left text-xs">
               <caption className="sr-only">The receivables account in the general ledger compared with what customers owe</caption>
@@ -165,7 +158,7 @@ export function SalesPostingClient({ view }: { view: View }) {
               </tbody>
             </table>
           </div>
-        )}
+        ) : null}
         <p className="text-xs text-fg-muted">
           A difference is normal while sales are waiting above, or before they go live. Credit notes will join this in a later step; foreign-currency entries are left out of the comparison.
         </p>

@@ -4,12 +4,12 @@ import { useEffect, useState, useRef } from 'react';
 
 export interface RealtimeEventPayload {
   type: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
-export function useRealtimeSync(onEvent?: (event: string, data: any) => void) {
+export function useRealtimeSync(onEvent?: (event: string, data: unknown) => void) {
   const [isConnected, setIsConnected] = useState<boolean>(false);
-  const [lastEvent, setLastEvent] = useState<{ event: string; data: any; time: number } | null>(
+  const [lastEvent, setLastEvent] = useState<{ event: string; data: unknown; time: number } | null>(
     null,
   );
   const onEventRef = useRef(onEvent);
@@ -20,7 +20,7 @@ export function useRealtimeSync(onEvent?: (event: string, data: any) => void) {
 
   useEffect(() => {
     let eventSource: EventSource | null = null;
-    let reconnectTimeout: any = null;
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 
     function connect() {
       try {
@@ -32,11 +32,9 @@ export function useRealtimeSync(onEvent?: (event: string, data: any) => void) {
 
         const handleAnyMessage = (e: MessageEvent, eventName: string) => {
           try {
-            const parsed = JSON.parse(e.data);
+            const parsed: unknown = JSON.parse(String(e.data));
             setLastEvent({ event: eventName, data: parsed, time: Date.now() });
-            if (onEventRef.current) {
-              onEventRef.current(eventName, parsed);
-            }
+            onEventRef.current?.(eventName, parsed);
           } catch (err) {
             console.error('Failed to parse SSE payload:', err);
           }
@@ -66,7 +64,7 @@ export function useRealtimeSync(onEvent?: (event: string, data: any) => void) {
           eventSource?.close();
           reconnectTimeout = setTimeout(connect, 3000);
         };
-      } catch (err) {
+      } catch {
         setIsConnected(false);
         reconnectTimeout = setTimeout(connect, 3000);
       }
@@ -76,17 +74,15 @@ export function useRealtimeSync(onEvent?: (event: string, data: any) => void) {
 
     return () => {
       if (eventSource) eventSource.close();
-      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      if (reconnectTimeout !== null) clearTimeout(reconnectTimeout);
     };
   }, []);
 
   return { isConnected, lastEvent };
 }
 
-export function useRealtimeEvents(onEvent?: (event: { type: string; data: any }) => void) {
+export function useRealtimeEvents(onEvent?: (event: { type: string; data: unknown }) => void) {
   return useRealtimeSync((eventName, data) => {
-    if (onEvent) {
-      onEvent({ type: eventName, data });
-    }
+    onEvent?.({ type: eventName, data });
   });
 }

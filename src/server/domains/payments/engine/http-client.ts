@@ -3,8 +3,7 @@ import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { integrationAuditLog } from '@/server/db/drizzle/schema';
 import { redactDeep, redactHeaders, redactUrl } from './redact';
 
-import { has } from '@/lib/has';
-import { orElse } from '@/lib/values';
+import { has, isRecord, orElse } from '@/lib/values';
 
 export interface HttpCallInput {
   companyId: string;
@@ -40,6 +39,29 @@ const MAX_LOGGED_TEXT = 8000;
  * says, and recorded (redacted) with how long it took and how it ended. A failure to write the log
  * never hides the answer, and a failure of the platform never loses the record.
  */
+/** What a reply's JSON is kept as: an object as it is, nothing as nothing, any other value wrapped. */
+function asJsonObject(parsed: unknown): Record<string, unknown> | null {
+  if (isRecord(parsed)) return parsed;
+  return parsed === null ? null : { value: parsed };
+}
+
+/** What a failed call says, in words, without ever repeating more than a short message. */
+function networkMessage(error: unknown, aborted: boolean, timeoutMs: number): string {
+  if (aborted) return `No answer within ${String(Math.round(timeoutMs / 1000))} seconds.`;
+  return error instanceof Error ? error.message.slice(0, 300) : 'The call failed.';
+}
+
+/** The reply as it is written to the audit log: secrets removed, long text cut. */
+function loggedResponse(res: HttpCallResult): Record<string, unknown> | null {
+  if (res.json !== null) return redactDeep(res.json);
+  return has(res.text) ? { text: res.text.slice(0, MAX_LOGGED_TEXT) } : null;
+}
+
+function loggedErrorCode(res: HttpCallResult): string | null {
+  if (!res.reached) return 'NO_RESPONSE';
+  return res.status >= 400 ? `HTTP_${String(res.status)}` : null;
+}
+
 export async function loggedCall(
   db: DrizzleDb,
   input: HttpCallInput,
@@ -62,7 +84,7 @@ export async function loggedCall(
     let json: Record<string, unknown> | null = null;
     try {
       const parsed: unknown = has(text) ? JSON.parse(text) : null;
-      json = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : parsed === null ? null : { value: parsed };
+      json = asJsonObject(parsed);
     } catch {
       json = null;
     }
@@ -75,7 +97,7 @@ export async function loggedCall(
       json: null,
       text: '',
       durationMs: Date.now() - started,
-      networkError: aborted ? `No answer within ${Math.round((input.timeoutMs ?? 20_000) / 1000)} seconds.` : error instanceof Error ? error.message.slice(0, 300) : 'The call failed.',
+      networkError: networkMessage(error, aborted, input.timeoutMs ?? 20_000),
       correlationId,
     };
   } finally {
@@ -88,12 +110,12 @@ export async function loggedCall(
       provider: input.provider,
       operation: input.label,
       requestPayload: input.body === undefined ? null : (redactDeep(input.body) as Record<string, unknown>),
-      responsePayload: res.json ? (redactDeep(res.json) as Record<string, unknown>) : has(res.text) ? { text: res.text.slice(0, MAX_LOGGED_TEXT) } : null,
+      responsePayload: loggedResponse(res),
       requestHeaders: redactHeaders(input.headers ?? {}),
       httpMethod: input.method,
       url: redactUrl(input.url),
       statusCode: res.reached ? res.status : null,
-      errorCode: res.reached ? (res.status >= 400 ? `HTTP_${res.status}` : null) : 'NO_RESPONSE',
+      errorCode: loggedErrorCode(res),
       errorMessage: res.networkError ?? (res.reached && res.status >= 400 ? (orElse(res.text, '')).slice(0, 500) : null),
       durationMs: res.durationMs,
       requestSentAt: sentAt,

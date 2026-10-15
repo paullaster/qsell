@@ -21,8 +21,7 @@ import type { DocumentSigningService } from '@/server/domains/kra/signing/servic
 import { CREDIT_NOTE_REASONS, type CreditNoteReason } from './reasons';
 import { isSigningModule, type SigningModule } from '@/server/domains/kra/signing/types';
 
-import { has } from '@/lib/has';
-import { trimToNull } from '@/lib/values';
+import { has, trimToNull } from '@/lib/values';
 
 export { CREDIT_NOTE_REASONS, type CreditNoteReason };
 

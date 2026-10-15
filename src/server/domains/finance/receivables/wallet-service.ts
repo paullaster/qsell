@@ -20,7 +20,7 @@ import type { ReasonCodes } from '@/server/kernel/reason-codes/service';
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import { fromCents, planOldestFirst, toCents, type PlannedApplication } from '../domain/receivables';
 import type { PostingRequest } from '../domain/types';
-import { autoApplyAmount, checkCredit, checkDebit, type CreditPolicy } from '../domain/wallet';
+import { autoApplyAmount, checkCredit, checkDebit, } from '../domain/wallet';
 import { NO_SPECIAL_PERMISSIONS, type PostingEngine, type PostingPermissions, type Tx } from '../engine';
 import { FinanceError, type FinanceContext } from '../errors';
 import type { PostingSetupService } from '../posting-setup-service';
@@ -28,7 +28,7 @@ import type { SalesPostingService } from '../sales-posting-service';
 import type { CreditPolicyService } from './credit-policy-service';
 import type { CustomerLedgerService } from './customer-ledger-service';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 type Reader = Pick<DrizzleDb, 'select'>;
 
@@ -173,7 +173,8 @@ export class WalletService {
     if (issue) throw new FinanceError(issue.code, issue.message);
 
     const [s] = await tx.select().from(financeSettings).where(eq(financeSettings.companyId, ctx.companyId));
-    const live = Boolean(s?.salesGlGoLive) && p.postingDate >= s.salesGlGoLive!;
+    const goLive = s?.salesGlGoLive ?? null;
+    const live = goLive !== null && p.postingDate >= goLive;
     let registerId: string | null = null;
     if (live) {
       const [receivables, deposits] = await Promise.all([
@@ -381,7 +382,7 @@ export class WalletService {
     const rs = await this.reasons.require(ctx.companyId, reason, 'wallet');
     await this.db.transaction(async (tx) => {
       const [e] = await tx.select().from(walletEntries).where(and(eq(walletEntries.companyId, ctx.companyId), eq(walletEntries.id, walletEntryId)));
-      if (!e || e.entryType !== 'utilisation' || !has(e.ledgerEntryId)) throw new FinanceError('NOT_FOUND', 'That is not a use of the wallet.');
+      if (e?.entryType !== 'utilisation' || !has(e.ledgerEntryId)) throw new FinanceError('NOT_FOUND', 'That is not a use of the wallet.');
       const wallet = await this.lockWallet(tx, ctx.companyId, e.customerId, e.currency);
       const [again] = await tx.select({ id: walletEntries.id }).from(walletEntries).where(and(eq(walletEntries.sourceType, 'wallet_entry'), eq(walletEntries.sourceId, String(walletEntryId)), eq(walletEntries.entryType, 'reversal')));
       if (again) throw new FinanceError('ALREADY_REVERSED', 'That use has already been undone.');

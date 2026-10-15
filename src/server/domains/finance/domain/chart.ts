@@ -1,6 +1,6 @@
 import type { AccountCategory, AccountType, NormalBalance } from './types';
 
-import { has } from '@/lib/has';
+import { compareValues, has } from '@/lib/values';
 
 export interface AccountDraft {
   no: string;
@@ -28,7 +28,7 @@ export function compareAccountNo(a: string, b: string): number {
   const nb = /^\d+$/.test(b);
   if (na && nb) {
     const d = BigInt(a) - BigInt(b);
-    return d < 0n ? -1 : d > 0n ? 1 : 0;
+    return compareValues(Number(d), 0);
   }
   return a.localeCompare(b, 'en', { numeric: true });
 }

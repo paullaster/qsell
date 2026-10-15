@@ -2,6 +2,7 @@ import type { AccountDraft } from '../chart';
 import { INTERNATIONAL_ACCOUNTS, INTERNATIONAL_TEMPLATE } from './international';
 import type { ChartTemplate } from './types';
 
+import { compareValues } from '@/lib/values';
 const rename: Record<string, string> = {
   '1410': 'Input VAT (recoverable)',
   '1420': 'Withholding VAT / income tax recoverable',
@@ -53,7 +54,7 @@ const extra: AccountDraft[] = [
 const accounts: AccountDraft[] = [
   ...INTERNATIONAL_ACCOUNTS.map((a) => ({ ...a, name: rename[a.no] ?? a.name })),
   ...extra,
-].sort((a, b) => (a.no < b.no ? -1 : a.no > b.no ? 1 : 0));
+].sort((a, b) => compareValues(a.no, b.no));
 
 /** Kenya: KES, VAT and withholding accounts named for KRA, mobile-money accounts for M-Pesa. */
 export const KENYA_TEMPLATE: ChartTemplate = {

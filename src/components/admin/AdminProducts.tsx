@@ -140,7 +140,7 @@ export function AdminProducts({
 
   // Header checkbox: everything in view, or nothing.
   const handleSelectAll = (checked: boolean) => {
-    if (!checked) return clearSelection();
+    if (!checked) { clearSelection(); return; }
     if (allInCatalog) {
       const next = new Set(excluded);
       for (const p of filteredProducts) next.delete(p.id);

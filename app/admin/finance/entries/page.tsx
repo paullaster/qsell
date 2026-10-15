@@ -1,16 +1,12 @@
 import { glEntriesAction } from '@/server/domains/finance/actions';
 import { EntriesClient } from '@/components/admin/finance/EntriesClient';
-import { FinanceGate } from '@/components/admin/finance/gate';
-import { LoadFailed } from '@/components/admin/finance/ui';
+import { FinancePage } from '@/components/admin/finance/gate';
 
-export default async function AdminGlEntriesPage() {
+export default function Page() {
+  const initial = glEntriesAction({});
   return (
-    <FinanceGate>
-      {async () => {
-        const res = await glEntriesAction({});
-        if (!res.ok) return <LoadFailed error={res.error} />;
-        return <EntriesClient initial={res.data} />;
-      }}
-    </FinanceGate>
+    <FinancePage label="ledger entries">
+      <EntriesClient initialPromise={initial} />
+    </FinancePage>
   );
 }

@@ -1,7 +1,6 @@
 import type { CallbackOutcome, PaymentProviderCode } from './types';
 
-import { has } from '@/lib/has';
-import { readText } from '@/lib/values';
+import { has, isRecord, readText } from '@/lib/values';
 
 export interface CallbackStatusVerdict {
   /**
@@ -58,7 +57,7 @@ export function extractCallbackStatus(
     transactionStatus?: unknown;
     state?: unknown;
   };
-  if (!body || typeof body !== 'object') return null;
+  if (!isRecord(body)) return null;
 
   switch (providerCode) {
     case 'mpesa_daraja': {

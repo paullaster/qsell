@@ -137,6 +137,27 @@ describe.skipIf(url === '')('finance lookup sources (database)', () => {
     expect((await search('statement-allocation-modes')).options).toHaveLength(2);
   });
 
+  it('offers the ledger lists: fixed choices, and accounts by purpose with blocked ones left out', async () => {
+    expect((await search('gl-account-types')).options).toHaveLength(5);
+    expect((await search('gl-account-categories', { query: 'cost' })).options.map((o) => o.id)).toEqual(['cost_of_sales']);
+    expect((await search('gl-normal-balances')).options.map((o) => o.id).sort()).toEqual(['credit', 'debit']);
+    expect((await search('gl-dimension-rules')).options).toHaveLength(3);
+    expect((await search('fiscal-calendar-shapes', { query: '4-4-5' })).options.map((o) => o.id)).toEqual(['weeks_445']);
+    const open = (await db.insert(schema.glAccounts).values({ companyId, no: `${tag}L1`, name: `${tag} Tax payable`, type: 'posting', category: 'liabilities', normalBalance: 'credit' }).returning())[0];
+    await db.insert(schema.glAccounts).values({ companyId, no: `${tag}L2`, name: `${tag} Closed liability`, type: 'posting', category: 'liabilities', normalBalance: 'credit', blocked: true });
+    const control = (await db.insert(schema.glAccounts).values({ companyId, no: `${tag}Q1`, name: `${tag} Equity control`, type: 'posting', category: 'equity', normalBalance: 'credit', postingSource: 'engine_only' }).returning())[0];
+    await db.insert(schema.glAccounts).values({ companyId, no: `${tag}H1`, name: `${tag} Heading`, type: 'heading', normalBalance: 'debit' });
+    expect((await search('liability-gl-accounts', { query: tag })).options.map((o) => o.id)).toEqual([open.id]);
+    const equity = (await search('equity-gl-accounts', { query: tag })).options;
+    expect(equity.map((o) => o.id)).toEqual([control.id]);
+    expect(equity[0]?.description).toContain('Control account');
+    expect((await search('journal-accounts', { query: `${tag}L` })).options.map((o) => o.label)).toEqual([`${tag}L1 ${tag} Tax payable`]);
+    expect((await search('gl-accounts', { query: `${tag}L` })).options).toHaveLength(2);
+    expect((await search('setup-gl-accounts', { query: `${tag}H` })).options).toEqual([]);
+    expect((await search('register-reasons', { query: tag })).options.map((o) => o.label)).toEqual([`${tag} Wrong item`]);
+    await expect(search('gl-accounts', { filters: { x: 'y' } })).rejects.toThrow();
+  });
+
   it('offers the wallet, return and credit note lists', async () => {
     expect((await search('wallet-overpayment-modes')).options.map((o) => o.id).sort()).toEqual(['ask', 'hold', 'wallet']);
     expect((await search('wallet-auto-apply-modes')).options.map((o) => o.id).sort()).toEqual(['never', 'oldest_first']);

@@ -1,23 +1,30 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 
+import { has, nth, required } from '@/lib/values';
+import type { NumberSeriesService } from './service';
+import type { DecisionLog } from '../decision-log/service';
+import type { DrizzleDb } from '@/server/db/drizzle/client';
+import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
+import type * as mod_service from './service';
+
 /**
  * Integration tests against a real Postgres built from the migrations (the append-only
  * triggers live there). Run with:  TEST_DATABASE_URL=postgres://... pnpm test
  */
 const url = process.env.TEST_DATABASE_URL;
 
-describe.skipIf(!url)('number series (database)', () => {
-  type Svc = import('./service').NumberSeriesService;
+describe.skipIf(!has(url))('number series (database)', () => {
+  type Svc = NumberSeriesService;
   let svc: Svc;
-  let decisions: import('../decision-log/service').DecisionLog;
-  let db: import('@/server/db/drizzle/client').DrizzleDb;
-  let schema: typeof import('@/server/db/drizzle/schema');
+  let decisions: DecisionLog;
+  let db: DrizzleDb;
+  let schema: typeof mod_server_db_drizzle_schema;
   let companyId: string;
   let nbo: { id: string };
   let msa: { id: string };
   let clearBlocks: () => void;
-  let NumberSeriesError: typeof import('./service').NumberSeriesError;
+  let NumberSeriesError: typeof mod_service.NumberSeriesError;
   const actor = { type: 'user' as const, id: 'tester' };
   const reason = { code: 'DATA_ENTRY_ERROR' };
 
@@ -86,7 +93,7 @@ describe.skipIf(!url)('number series (database)', () => {
         kraPin: 'P',
       })
       .returning();
-    companyId = company!.id;
+    companyId = required(company).id;
     await reasons.ensureSystemReasons(companyId);
     [nbo] = await db
       .insert(schema.branches)
@@ -105,7 +112,7 @@ describe.skipIf(!url)('number series (database)', () => {
 
       await expect(
         db.transaction(async (tx) => {
-          const n = await svc.assignFromSeries('GF1', req(), tx as never);
+          const n = await svc.assignFromSeries('GF1', req(), tx);
           expect(n.number).toBe('GF1-0002');
           throw new Error('document save failed');
         }),
@@ -172,7 +179,7 @@ describe.skipIf(!url)('number series (database)', () => {
       );
       expect(new Set(results.map((r) => r.number)).size).toBe(120);
       const detail = await svc.seriesDetail(companyId, s.id);
-      expect(detail.counters[0]!.lastNo).toBeLessThanOrEqual(125); // at most 5 blocks reserved for 120 numbers
+      expect(nth(detail.counters, 0).lastNo).toBeLessThanOrEqual(125); // at most 5 blocks reserved for 120 numbers
     });
 
     it('leaves a gap after a restart but never repeats a number', async () => {
@@ -227,17 +234,16 @@ describe.skipIf(!url)('number series (database)', () => {
     it('stops with a clear error when everything is used up, and never duplicates', async () => {
       await series('EX', {}, { endNo: 1 });
       await next('EX');
-      const err = await next('EX').catch((e) => e);
+      const err = await next('EX').catch((e: unknown) => e);
       expect(err).toBeInstanceOf(NumberSeriesError);
-      expect(err.code).toBe('SERIES_EXHAUSTED');
-      expect(err.detail.trace.length).toBeGreaterThan(0);
+      expect(err).toMatchObject({ code: 'SERIES_EXHAUSTED' });
+      expect((err as { detail?: { trace: unknown[] } }).detail?.trace.length).toBeGreaterThan(0);
     });
 
     it('explains why no line could be used', async () => {
       await series('NL');
-      const err = await next('NL', { date: '2025-06-01' }).catch((e) => e);
-      expect(err.code).toBe('NO_OPEN_LINE');
-      expect(err.message).toContain('starts on 2026-01-01');
+      const err = await next('NL', { date: '2025-06-01' }).catch((e: unknown) => e);
+      expect(err).toMatchObject({ code: 'NO_OPEN_LINE', message: expect.stringContaining('starts on 2026-01-01') as unknown });
     });
 
     it('warns once when the warning number is reached, and records it', async () => {
@@ -304,11 +310,11 @@ describe.skipIf(!url)('number series (database)', () => {
       await next('AD2');
       const [line] = (await svc.seriesDetail(companyId, s.id)).lines;
       expect(
-        await codeOf(svc.updateLine(companyId, line!.line.id, { prefix: 'NEW-' }, actor, reason)),
+        await codeOf(svc.updateLine(companyId, required(line).line.id, { prefix: 'NEW-' }, actor, reason)),
       ).toBe('FROZEN');
       const extended = await svc.updateLine(
         companyId,
-        line!.line.id,
+        required(line).line.id,
         { endNo: 5000 },
         actor,
         reason,
@@ -319,7 +325,7 @@ describe.skipIf(!url)('number series (database)', () => {
     it('needs a valid reason to close, reopen or change things', async () => {
       const s = await series('AD3');
       const [line] = (await svc.seriesDetail(companyId, s.id)).lines;
-      const lineId = line!.line.id;
+      const lineId = required(line).line.id;
       expect(await codeOf(svc.setLineOpen(companyId, lineId, false, actor, { code: '' }))).toBe(
         'OTHER:A reason is required.',
       );
@@ -341,7 +347,7 @@ describe.skipIf(!url)('number series (database)', () => {
         code: 'POLICY_CHANGE',
       });
       const log = await decisions.timeline('number_series', s.id);
-      const update = log.find((e) => e.action === 'numbering.series_updated')!;
+      const update = required(log.find((e) => e.action === 'numbering.series_updated'));
       expect(update.actorId).toBe('tester');
       expect(update.reasonCode).toBe('POLICY_CHANGE');
       expect((update.inputs as { patch: { description: string } }).patch.description).toBe(
@@ -450,18 +456,18 @@ describe.skipIf(!url)('number series (database)', () => {
           kraPin: 'P',
         })
         .returning();
-      const own = other!.id;
+      const own = required(other).id;
       const { ReasonCodes } = await import('../reason-codes/service');
       await new ReasonCodes(db).ensureSystemReasons(own);
 
       const { created } = await svc.seedStandard(own, actor, '2026-03-01');
       expect(created).toContain('tax_invoice');
-      const ownBranch = (
+      const ownBranch = nth((
         await db
           .insert(schema.branches)
           .values({ companyId: own, code: 'NBO', name: 'Nairobi' })
           .returning()
-      )[0]!;
+      ), 0);
       const inv = await inTx((tx) =>
         svc.assign(
           'tax_invoice',
@@ -476,8 +482,8 @@ describe.skipIf(!url)('number series (database)', () => {
       );
       expect(inv.number).toBe('INV-NBO-26-000000001');
       const all = await svc.listSeries(own);
-      expect(all.find((s) => s.code === 'INV')!.mode).toBe('gap_free');
-      expect(all.find((s) => s.code === 'SO')!.mode).toBe('allow_gaps');
+      expect(required(all.find((s) => s.code === 'INV')).mode).toBe('gap_free');
+      expect(required(all.find((s) => s.code === 'SO')).mode).toBe('allow_gaps');
       expect((await svc.seedStandard(own, actor, '2026-03-01')).created).toEqual([]); // safe to repeat
     });
   });
@@ -516,7 +522,7 @@ describe.skipIf(!url)('number series (database)', () => {
           kraPin: 'P',
         })
         .returning();
-      const own = other!.id;
+      const own = required(other).id;
       const numbers = await Promise.all(
         Array.from({ length: 20 }, (_, i) =>
           svc.assign('sales_order', {
@@ -551,9 +557,9 @@ describe.skipIf(!url)('number series (database)', () => {
       const { NumberSeriesService } = await import('./service');
       const { ReasonCodes } = await import('../reason-codes/service');
       const withLegacy = new NumberSeriesService(db, decisions, new ReasonCodes(db), {
-        legacyStart: async (_company, kind) => (kind === 'customer' ? 500 : null),
+        legacyStart: (_company, kind) => Promise.resolve(kind === 'customer' ? 500 : null),
       });
-      const n = await withLegacy.assign('customer', { companyId: other!.id, date: '2026-05-01' });
+      const n = await withLegacy.assign('customer', { companyId: required(other).id, date: '2026-05-01' });
       expect(n.number).toBe('C000000500');
     });
 
@@ -583,7 +589,7 @@ describe.skipIf(!url)('number series (database)', () => {
         (err: unknown) => err,
       )) as { message?: string; cause?: { message?: string } } | null;
       expect(e).not.toBeNull();
-      expect(`${e?.message} ${e?.cause?.message}`).toMatch(/append-only/);
+      expect(`${e?.message ?? ''} ${e?.cause?.message ?? ''}`).toMatch(/append-only/);
     };
 
     it('refuses to change or delete issued numbers and decision log entries', async () => {

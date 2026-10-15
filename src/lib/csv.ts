@@ -50,7 +50,7 @@ export function parseCsv(text: string): CsvRecord[] {
   };
 
   for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
+    const ch = text.charAt(i);
     if (inQuotes) {
       if (ch === '"') {
         if (text[i + 1] === '"') {

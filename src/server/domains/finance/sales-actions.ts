@@ -5,26 +5,27 @@ import { getContainer } from '@/server/di/container';
 import { run } from './action-runner';
 import { fromCents } from './domain/receivables';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 const fin = () => getContainer().finance;
 const PATH = '/admin/finance/sales-posting';
 
 export async function salesPostingOverviewAction() {
   return await run('sales_posting:read', { surface: 'finance/sales-posting', action: 'view' }, async (ctx) => {
-    const [settings, checks, backlog, open, recon, accounts, openingFigures] = await Promise.all([
+    const [settings, checks, backlog, open, recon, openingFigures] = await Promise.all([
       fin().setup.getSettings(ctx.companyId),
       fin().salesPosting.readiness(ctx.companyId),
       fin().salesPosting.backlog(ctx.companyId),
       fin().salesPosting.list(ctx.companyId, 'open'),
       fin().salesPosting.reconciliation(ctx.companyId),
-      fin().setup.listAccounts(ctx.companyId),
       fin().salesPosting.openingFigures(ctx.companyId),
     ]);
-    const postable = accounts.filter((a) => a.type === 'posting' && !a.blocked);
+    const taxId = settings?.outputTaxAccountId ?? null;
+    const taxLabel = taxId === null ? null : ((await fin().setup.accountLabels(ctx.companyId, [taxId]))[taxId] ?? null);
     return {
       goLive: settings?.salesGlGoLive ?? null,
-      outputTaxAccountId: settings?.outputTaxAccountId ?? null,
+      outputTaxAccountId: taxId,
+      outputTaxAccountLabel: taxLabel,
       baseCurrency: settings?.baseCurrency ?? '',
       checks,
       backlog,
@@ -47,8 +48,6 @@ export async function salesPostingOverviewAction() {
         foreignEntries: r.foreignEntries,
       })),
       opening: openingFigures.filter((f) => f.netCents !== 0).map((f) => ({ group: f.group, amount: fromCents(f.netCents), foreignEntries: f.foreignEntries })),
-      liabilityAccounts: postable.filter((a) => a.category === 'liabilities').map((a) => ({ id: a.id, label: `${a.no} ${a.name}` })),
-      equityAccounts: postable.filter((a) => a.category === 'equity').map((a) => ({ id: a.id, label: `${a.no} ${a.name}` })),
       can: {
         setTax: await canPermission('finance_settings:edit'),
         goLive: await canPermission('sales_gl_go_live:set'),

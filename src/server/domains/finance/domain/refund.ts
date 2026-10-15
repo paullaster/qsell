@@ -1,5 +1,5 @@
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 /** Refund rules that need no database. Money is in whole cents. */
 
 export type RefundStatus = 'draft' | 'pending_approval' | 'approved' | 'paid' | 'rejected' | 'cancelled';

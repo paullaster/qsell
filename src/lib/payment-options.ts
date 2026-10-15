@@ -103,5 +103,5 @@ export function refundDestination(refundable: boolean, chosen: string | undefine
 /** "Saved: ****1234" under a credential field that already has a value, else nothing. */
 export function savedHint(masked: Record<string, string> | null, key: string): string | undefined {
   if (masked === null || !Object.hasOwn(masked, key) || masked[key] === '') return undefined;
-  return `Saved: ${masked[key]}`;
+  return `Saved: ${masked[key] ?? ''}`;
 }

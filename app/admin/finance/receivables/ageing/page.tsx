@@ -1,16 +1,12 @@
 import { receivablesAgeingAction } from '@/server/domains/finance/receivables/actions';
 import { AgeingClient } from '@/components/admin/finance/AgeingClient';
-import { FinanceGate } from '@/components/admin/finance/gate';
-import { LoadFailed } from '@/components/admin/finance/ui';
+import { FinancePage } from '@/components/admin/finance/gate';
 
-export default async function AdminReceivablesAgeingPage() {
+export default function Page() {
+  const view = receivablesAgeingAction();
   return (
-    <FinanceGate>
-      {async () => {
-        const res = await receivablesAgeingAction();
-        if (!res.ok) return <LoadFailed error={res.error} />;
-        return <AgeingClient view={res.data} />;
-      }}
-    </FinanceGate>
+    <FinancePage label="receivables ageing">
+      <AgeingClient viewPromise={view} />
+    </FinancePage>
   );
 }

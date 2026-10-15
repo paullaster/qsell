@@ -70,7 +70,7 @@ export function ScopeEditor({
               <input
                 type="checkbox"
                 className="size-4"
-                checked={!!rule}
+                checked={Boolean(rule)}
                 onChange={(e) => set(d, e.target.checked ? { op: 'in', values: [] } : undefined)}
               />
               {SCOPE_LABELS[d]}
@@ -158,7 +158,7 @@ function Checks({
   onChange,
   empty,
 }: {
-  options: Array<{ value: string; label: string }>;
+  options: { value: string; label: string }[];
   selected: string[];
   onChange: (v: string[]) => void;
   empty: string;
@@ -278,7 +278,7 @@ function CustomerPicker({
 }) {
   const uid = useId();
   const [q, setQ] = useState('');
-  const [found, setFound] = useState<Array<{ id: string; number: string; name: string }>>([]);
+  const [found, setFound] = useState<{ id: string; number: string; name: string }[]>([]);
   useEffect(() => {
     if (q.trim().length < 2) {
       setFound([]);

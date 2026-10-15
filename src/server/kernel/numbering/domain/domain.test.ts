@@ -5,6 +5,7 @@ import { selectLines } from './select-line';
 import { renderTemplate, TemplateError, validateTemplate } from './template';
 import type { LineConfig } from './types';
 import { findOverlap, frozenViolations, validateLine } from './validate';
+import { nth } from '@/lib/values';
 
 const line = (over: Partial<LineConfig> = {}): LineConfig => ({
   id: 'l1',
@@ -112,7 +113,7 @@ describe('line selection', () => {
       ],
       { branchId: null, date: '2026-05-01' },
     );
-    expect(r.ranked[0]!.id).toBe('new');
+    expect(nth(r.ranked, 0).id).toBe('new');
   });
 
   it('returns nothing usable when nothing matches', () => {
@@ -192,7 +193,7 @@ describe('line validation', () => {
       }),
     ).toBeNull();
     expect(
-      findOverlap([{ ...existing[0]!, isOpen: false }], {
+      findOverlap([{ ...nth(existing, 0), isOpen: false }], {
         id: 'new',
         branchId: null,
         startsOn: '2026-06-01',

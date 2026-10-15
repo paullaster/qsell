@@ -2,8 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 
-import { has } from '@/lib/has';
-import { nth, required } from '@/lib/values';
+import { has, isRecord, nth, readText, required } from '@/lib/values';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
 import type { FinanceServices } from './index';
@@ -40,7 +39,7 @@ describe.skipIf(!has(url))('payment providers and methods (database)', () => {
       await p;
       return 'OK';
     } catch (e) {
-      if (e && typeof e === 'object' && 'code' in e) return String((e).code);
+      if (isRecord(e) && 'code' in e) return readText(e.code);
       return `OTHER:${(e as Error).message}`;
     }
   };

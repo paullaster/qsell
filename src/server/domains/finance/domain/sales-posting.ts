@@ -1,6 +1,6 @@
 import { fromCents } from './receivables';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 /** An order's money, in whole cents. Goods + tax + shipping = total, always. */
 export interface SaleFigures {

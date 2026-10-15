@@ -15,7 +15,7 @@ import type {
   CallbackOutcome,
 } from './types';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 export class PaymentConfigRepository {
   constructor(private readonly db: DrizzleDb) {}

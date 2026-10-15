@@ -12,7 +12,6 @@ import {
   type DiscountDetail,
   type DiscountLookups,
 } from '@/server/domains/pricing/discount-actions';
-import { listPricingReasonsAction } from '@/server/domains/pricing/actions';
 import { ReasonField, type ReasonValue } from '../settings/numbering/ReasonField';
 import {
   Chip,
@@ -74,7 +73,7 @@ export function DiscountDetailClient({
     if (action === 'activate') {
       const r = await activateDiscountRuleAction(rule.id, reason);
       setBusy(false);
-      if (!r.ok) return setMessage({ kind: 'error', text: r.error });
+      if (!r.ok) { setMessage({ kind: 'error', text: r.error }); return; }
       setMessage({
         kind: 'ok',
         text: r.data.pending ? (r.data.message ?? 'Sent for approval.') : 'The rule is in force.',
@@ -85,7 +84,7 @@ export function DiscountDetailClient({
           ? await pauseDiscountRuleAction(rule.id, reason)
           : await retireDiscountRuleAction(rule.id, reason);
       setBusy(false);
-      if (!r.ok) return setMessage({ kind: 'error', text: r.error });
+      if (!r.ok) { setMessage({ kind: 'error', text: r.error }); return; }
       setMessage({
         kind: 'ok',
         text: action === 'pause' ? 'The rule is paused.' : 'The rule is retired.',
@@ -218,7 +217,7 @@ export function DiscountDetailClient({
                 ? 'Pause this rule? It stops reducing prices at once. You can change it and put it back in force.'
                 : 'Retire this rule? It stops reducing prices and cannot be put back in force. Its history stays.'}
           </p>
-          <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
@@ -356,7 +355,7 @@ function Coupons({ detail, canManage }: { detail: DiscountDetail; canManage: boo
   };
 
   const toggle = async (id: string, status: 'active' | 'disabled') => {
-    if (!reason.code) return setMessage({ kind: 'error', text: 'Choose a reason first.' });
+    if (!reason.code) { setMessage({ kind: 'error', text: 'Choose a reason first.' }); return; }
     setBusy(true);
     const r = await setCouponStatusAction(id, status, reason);
     setBusy(false);
@@ -477,7 +476,7 @@ function Coupons({ detail, canManage }: { detail: DiscountDetail; canManage: boo
               />
             </div>
           </div>
-          <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
           <button
             type="button"
             className={primaryButtonClass}

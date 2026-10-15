@@ -1,16 +1,12 @@
-import { listAccountsAction } from '@/server/domains/finance/actions';
+import { listAccountsPageAction } from '@/server/domains/finance/actions';
 import { ChartOfAccountsClient } from '@/components/admin/finance/ChartOfAccountsClient';
-import { FinanceGate } from '@/components/admin/finance/gate';
-import { LoadFailed } from '@/components/admin/finance/ui';
+import { FinancePage } from '@/components/admin/finance/gate';
 
-export default async function AdminChartOfAccountsPage() {
+export default function Page() {
+  const first = listAccountsPageAction({});
   return (
-    <FinanceGate>
-      {async (o) => {
-        const res = await listAccountsAction();
-        if (!res.ok) return <LoadFailed error={res.error} />;
-        return <ChartOfAccountsClient accounts={res.data} can={o.can} />;
-      }}
-    </FinanceGate>
+    <FinancePage label="the chart of accounts">
+      {(overview) => <ChartOfAccountsClient firstPage={first} can={overview.can} />}
+    </FinancePage>
   );
 }

@@ -4,9 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import {
-  activatePriceListAction,
-  listPricingReasonsAction,
-  retirePriceListAction,
+  activatePriceListAction, retirePriceListAction,
   updatePriceListAction,
   type PriceListDetail,
   type PricingLookups,
@@ -182,7 +180,7 @@ export function PriceListDetailClient({
               ? 'Put this price list in force? Sales it applies to will be priced from it straight away, unless an approval is required first.'
               : 'Retire this price list? It stops pricing sales at once and cannot be put back in force; its history stays.'}
           </p>
-          <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
           <div className="flex flex-wrap gap-2">
             <button
               type="button"

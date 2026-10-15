@@ -2,7 +2,13 @@ import type { CurrencyConfig, PublicProduct } from '@/types/index';
 import { formatPriceWithCurrency } from '@/lib/currency';
 import { computeCheckoutTotals, type PricedLine } from '@/lib/checkoutPricing';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
+
+/** What a tax group is called on the cart: its own name, else "Tax" with the rate when there is one. */
+function taxLabel(name: string | undefined, rate: number): string {
+  if (has(name)) return `${name} (${rate}%)`;
+  return rate > 0 ? `Tax (${rate}%)` : 'Tax';
+}
 
 export function cartLine(product: PublicProduct, quantity: number): PricedLine {
   return {
@@ -38,11 +44,7 @@ export function cartTaxRows(items: { product: PublicProduct; quantity: number }[
     const line = cartLine(item.product, item.quantity);
     const name = item.product.taxCategoryName?.trim();
     const key = `${name ?? ''}|${line.taxRate}|${line.isTaxInclusive ? 'in' : 'ex'}`;
-    const label = has(name)
-      ? `${name} (${line.taxRate}%)`
-      : line.taxRate > 0
-        ? `Tax (${line.taxRate}%)`
-        : 'Tax';
+    const label = taxLabel(name, line.taxRate);
     const current = groups.get(key) ?? { label, amount: 0 };
     current.amount += rawLineTax(line);
     groups.set(key, current);

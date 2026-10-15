@@ -1,7 +1,8 @@
 'use client';
 
 import Image, { type ImageProps } from 'next/image';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { firstFilled, has } from '@/lib/values';
 
 type AppImageProps = Omit<ImageProps, 'src' | 'alt'> & {
   src?: string | null;
@@ -19,29 +20,24 @@ export const PRODUCT_IMAGE_FALLBACK =
 
 /** `next/image` wrapper for runtime product photos and uploaded logos. */
 export function AppImage({ src, alt, fallbackSrc, onError, unoptimized, ...rest }: AppImageProps) {
-  const [failed, setFailed] = useState(false);
+  // Which picture failed to load; a different picture starts afresh, without any effect to reset it.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const failed = failedSrc !== null && failedSrc === src;
 
-  useEffect(() => {
-    setFailed(false);
-  }, [src]);
-
-  const source = (failed ? fallbackSrc : src)?.trim() || fallbackSrc || '';
-  const legacyCompanyLogo = source.match(/^\/uploads\/company\/(logo-[a-zA-Z0-9._-]+)$/);
-  const resolved = legacyCompanyLogo
-    ? `/api/company/logo/${encodeURIComponent(legacyCompanyLogo[1])}`
-    : source;
-  if (!resolved) return null;
+  const source = firstFilled((failed ? fallbackSrc : src)?.trim(), fallbackSrc) ?? '';
+  const legacyCompanyLogo = /^\/uploads\/company\/(logo-[a-zA-Z0-9._-]+)$/.exec(source);
+  const logoName = legacyCompanyLogo?.[1];
+  const resolved = logoName === undefined ? source : `/api/company/logo/${encodeURIComponent(logoName)}`;
+  if (!has(resolved)) return null;
 
   return (
     <Image
       {...rest}
       src={resolved}
       alt={alt}
-      unoptimized={
-        unoptimized || needsUnoptimized(resolved) || resolved.startsWith('/api/company/logo/')
-      }
+      unoptimized={unoptimized === true || needsUnoptimized(resolved) || resolved.startsWith('/api/company/logo/')}
       onError={(event) => {
-        if (fallbackSrc && resolved !== fallbackSrc) setFailed(true);
+        if (has(fallbackSrc) && resolved !== fallbackSrc) setFailedSrc(src ?? null);
         onError?.(event);
       }}
     />

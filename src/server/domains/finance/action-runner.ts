@@ -9,7 +9,7 @@ import { AmountErrorGuard } from './action-support';
 import { PostingError, type PostingPermissions } from './engine';
 import { FinanceError, type FinanceContext } from './errors';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 export type FinanceResult<T> =
   | { ok: true; data: T }

@@ -4,8 +4,7 @@ import { parseAsyncResult } from './parsers';
 import { phoneFingerprint } from '../engine/redact';
 import { darajaTimestamp, looksLikeReceipt, stkPassword } from './security';
 
-import { has } from '@/lib/has';
-import { orElse, readText } from '@/lib/values';
+import { has, orElse, readText } from '@/lib/values';
 
 /**
  * Deciding whether a payment is real. A callback is only a claim. These checks compare the claim
@@ -44,7 +43,7 @@ export async function verifyStk(input: VerifyAttemptInput, ctx: PlatformContext)
   if (!has(input.providerReference)) return { status: 'error', by: 'stk_query', reason: 'This payment has no checkout request id to ask about.', retryable: false };
   const client = new DarajaClient(ctx);
   const creds = client.credentials;
-  if (!has(creds.shortcode?.trim()) || !has(creds.passkey?.trim())) return { status: 'error', by: 'stk_query', reason: 'Checking a payment needs the business shortcode and passkey on the provider.', retryable: false };
+  if (!has(creds.shortcode.trim()) || !has(creds.passkey.trim())) return { status: 'error', by: 'stk_query', reason: 'Checking a payment needs the business shortcode and passkey on the provider.', retryable: false };
   const ts = darajaTimestamp(ctx.now());
   const res = await client.request('stk_query', 'POST', '/mpesa/stkpushquery/v1/query', {
     BusinessShortCode: creds.shortcode.trim(),
@@ -66,7 +65,7 @@ export async function verifyStk(input: VerifyAttemptInput, ctx: PlatformContext)
     return { status: 'error', by: 'stk_query', reason: `Safaricom's answer to the check was not usable (ResponseCode ${orElse(responseCode, 'none')}).`, retryable: true };
   }
   // The answer must be about the request we asked about.
-  if (j.CheckoutRequestID && readText(j.CheckoutRequestID) !== input.providerReference) {
+  if (has(readText(j.CheckoutRequestID)) && readText(j.CheckoutRequestID) !== input.providerReference) {
     return { status: 'mismatch', by: 'stk_query', code: 'QUERY_ID_MISMATCH', reason: 'Safaricom answered about a different checkout request than the one we asked about.', evidence };
   }
   if (resultCode === '0') {
@@ -90,7 +89,7 @@ export function readStatusAnswer(result: Record<string, unknown>): StatusAnswer 
   const parsed = parseAsyncResult({ Result: { ResultCode: (result as { resultCode?: unknown }).resultCode, ResultDesc: (result as { resultDesc?: unknown }).resultDesc, ResultParameters: { ResultParameter: Object.entries((result.params ?? {}) as Record<string, string>).map(([Key, Value]) => ({ Key, Value })) } } });
   if (!parsed) return null;
   const p = parsed.params;
-  const amount = has(p.Amount) ? Math.round(Number(String(p.Amount).replace(/,/g, '')) * 100) : null;
+  const amount = has(p.Amount) ? Math.round(Number(readText(p.Amount).replace(/,/g, '')) * 100) : null;
   return {
     ok: parsed.resultCode === '0' && /^completed$/i.test(p.TransactionStatus ?? 'completed'),
     receipt: p.ReceiptNo ?? null,

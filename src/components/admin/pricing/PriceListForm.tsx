@@ -1,9 +1,7 @@
 'use client';
 
 import { useId, useState } from 'react';
-import {
-  listPricingReasonsAction,
-  type PriceListFormInput,
+import { type PriceListFormInput,
   type PriceListView,
   type PricingLookups,
 } from '@/server/domains/pricing/actions';
@@ -30,7 +28,7 @@ export const fromLocalInput = (v: string) => (v ? new Date(v).toISOString() : nu
 export interface FormResult {
   ok: boolean;
   error?: string;
-  issues?: Array<{ message: string }>;
+  issues?: { message: string }[];
 }
 
 /** The same form creates a list and changes one; the code, currency and kind are fixed after creation. */
@@ -247,7 +245,7 @@ export function PriceListForm({
         lookups={lookups}
         names={names}
       />
-      <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+      <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
       <Notice message={message} />
       <div className="flex flex-wrap gap-2">
         <button type="submit" className={primaryButtonClass} disabled={busy || !reason.code}>

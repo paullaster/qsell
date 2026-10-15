@@ -3,7 +3,7 @@ import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { providerOperations, type ProviderOperationRow, type ProviderOperationStatus } from '@/server/db/drizzle/schema';
 import { redactDeep } from './redact';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 export interface CreateOperation {
   companyId: string;
@@ -111,7 +111,7 @@ export class ProviderOperationService {
       originatorId: string | null;
     }>,
   ) {
-    const terminal = patch.status && ['succeeded', 'failed', 'cancelled', 'rejected'].includes(patch.status);
+    const terminal = patch.status !== undefined && ['succeeded', 'failed', 'cancelled', 'rejected'].includes(patch.status);
     const [row] = await this.db
       .update(providerOperations)
       .set({
@@ -120,7 +120,7 @@ export class ProviderOperationService {
         response: patch.response ? redactDeep(patch.response) : undefined,
         result: patch.result ? redactDeep(patch.result) : undefined,
         updatedAt: new Date(),
-        ...(terminal === true ? { completedAt: new Date(), nextAttemptAt: null } : {}),
+        ...(terminal ? { completedAt: new Date(), nextAttemptAt: null } : {}),
       })
       .where(eq(providerOperations.id, id))
       .returning();

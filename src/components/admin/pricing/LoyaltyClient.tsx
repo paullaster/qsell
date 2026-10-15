@@ -2,7 +2,6 @@
 
 import { useEffect, useId, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { listPricingReasonsAction } from '@/server/domains/pricing/actions';
 import {
   adjustLoyaltyAction,
   checkLoyaltyAction,
@@ -54,7 +53,7 @@ interface State {
   minRedeemPoints: string;
   maxRedeemPercent: string;
   expiryMonths: string;
-  tiers: Array<{ name: string; fromPoints: string; multiplier: string }>;
+  tiers: { name: string; fromPoints: string; multiplier: string }[];
 }
 
 const fromProgram = (p: LoyaltyProgramView | null): State => ({
@@ -128,7 +127,7 @@ export function LoyaltyClient({
     setMessage(null);
     const r = await saveLoyaltyAction({ name: s.name, status: s.status, config }, reason);
     setBusy(false);
-    if (!r.ok) return setMessage({ kind: 'error', text: r.error });
+    if (!r.ok) { setMessage({ kind: 'error', text: r.error }); return; }
     setMessage({
       kind: 'ok',
       text:
@@ -346,7 +345,7 @@ export function LoyaltyClient({
 
         {canManage ? (
           <>
-            <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+            <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
             <button
               type="submit"
               className={primaryButtonClass}
@@ -401,7 +400,7 @@ function CustomerPoints({ canManage, active }: { canManage: boolean; active: boo
       reason,
     );
     setBusy(false);
-    if (!r.ok) return setMessage({ kind: 'error', text: r.error });
+    if (!r.ok) { setMessage({ kind: 'error', text: r.error }); return; }
     setAccount(r.data);
     setPoints('');
     setNote('');
@@ -458,7 +457,7 @@ function CustomerPoints({ canManage, active }: { canManage: boolean; active: boo
                   />
                 </div>
               </div>
-              <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+              <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
               <button
                 type="submit"
                 className={primaryButtonClass}

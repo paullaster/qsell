@@ -19,7 +19,7 @@ import {
 import type { Tx } from '../engine';
 import { FinanceError, type FinanceContext } from '../errors';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 export type Writer = DrizzleDb | Tx;
 
@@ -169,7 +169,7 @@ export class CustomerLedgerService {
     }
 
     const credit = locked.get(input.creditEntryId);
-    if (!credit || credit.companyId !== ctx.companyId || credit.customerId !== input.customerId) {
+    if (credit?.companyId !== ctx.companyId || credit.customerId !== input.customerId) {
       throw new FinanceError('NOT_FOUND', 'That receipt was not found for this customer.');
     }
     const creditAvail = -toCents(credit.remainingAmount);
@@ -179,7 +179,7 @@ export class CustomerLedgerService {
     const invoiceOpen = new Map<string, number>();
     for (const a of planned) {
       const inv = locked.get(a.entryId);
-      if (!inv || inv.companyId !== ctx.companyId || inv.customerId !== input.customerId) {
+      if (inv?.companyId !== ctx.companyId || inv.customerId !== input.customerId) {
         throw new FinanceError('NOT_FOUND', 'One of the invoices was not found for this customer.');
       }
       if (inv.documentType !== 'invoice') {
@@ -188,7 +188,7 @@ export class CustomerLedgerService {
       if (inv.currency !== credit.currency) {
         throw new FinanceError(
           'CURRENCY_MISMATCH',
-          `${inv.documentNo} is in ${inv.currency} and the receipt is in ${credit.currency}. Applying across currencies is not supported yet.`,
+          `${inv.documentNo} is in ${inv.currency ?? ''} and the receipt is in ${credit.currency ?? ''}. Applying across currencies is not supported yet.`,
         );
       }
       invoiceOpen.set(a.entryId, toCents(inv.remainingAmount));
@@ -348,7 +348,7 @@ export class CustomerLedgerService {
   ): Promise<void> {
     const locked = await this.lockEntries(tx, [entryId]);
     const e = locked.get(entryId);
-    if (!e || e.companyId !== ctx.companyId) throw new FinanceError('NOT_FOUND', 'Ledger entry not found.');
+    if (e?.companyId !== ctx.companyId) throw new FinanceError('NOT_FOUND', 'Ledger entry not found.');
     const remaining = toCents(e.remainingAmount);
     if (cents > 0 && -remaining < cents) {
       throw new FinanceError('OVER_CREDIT', `Only ${fromCents(Math.max(-remaining, 0))} is unapplied on that receipt.`);

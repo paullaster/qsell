@@ -2,9 +2,7 @@
 
 import { useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  listPricingReasonsAction,
-  resetWeightsAction,
+import { resetWeightsAction,
   setWeightsAction,
 } from '@/server/domains/pricing/actions';
 import {
@@ -24,7 +22,7 @@ import {
   type Message,
 } from '../approvals/shared';
 
-const ROWS: Array<{ key: keyof SpecificityWeights; label: string }> = [
+const ROWS: { key: keyof SpecificityWeights; label: string }[] = [
   { key: 'contract', label: 'A contract price' },
   ...SCOPE_DIMENSIONS.map((d) => ({
     key: d,
@@ -136,7 +134,7 @@ export function RulesClient({
         </p>
         {canManage ? (
           <>
-            <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+            <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"

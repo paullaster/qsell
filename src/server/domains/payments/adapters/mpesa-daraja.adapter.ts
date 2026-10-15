@@ -1,12 +1,12 @@
 import { probeConnection, type CallbackInput, type CallbackResult, type ConnectionTestResult, type InitiatePaymentInput, type InitiatePaymentResult, type PaymentPort } from '../port';
-import { asDarajaCredentials, type MpesaDarajaCredentials } from '../types';
+import { asDarajaCredentials } from '../types';
 import { extractPaymentReference } from '../payment-reference';
 import { DarajaClient, standaloneContext } from '../daraja/client';
 import { parseStkCallback } from '../daraja/parsers';
 import { statusAgrees, readStatusAnswer, verifyStk } from '../daraja/verify';
 import type { InboundClaim, PlatformContext, VerificationOutcome, VerifyAttemptInput } from '../engine/types';
 
-import { has } from '@/lib/has';
+import { emptyToNull, has } from '@/lib/values';
 
 /**
  * M-Pesa (Daraja) as a place customers pay. Starting a payment goes through the operations engine
@@ -29,9 +29,9 @@ export class MpesaDarajaAdapter implements PaymentPort {
     });
   }
 
-  async initiate(_input: InitiatePaymentInput): Promise<InitiatePaymentResult> {
+  initiate(_input: InitiatePaymentInput): Promise<InitiatePaymentResult> {
     // The engine starts M-Pesa Express (PaymentService → DarajaOperations) so the request is recorded before it is sent.
-    return { status: 'failed', errorMessage: 'M-Pesa Express is started through the payment engine.' };
+    return Promise.resolve({ status: 'failed', errorMessage: 'M-Pesa Express is started through the payment engine.' });
   }
 
   parseCallback(body: unknown): InboundClaim | null {
@@ -48,17 +48,21 @@ export class MpesaDarajaAdapter implements PaymentPort {
     if (!ev) return { status: 'pending', by: 'transaction_status', reason: 'Waiting for Safaricom\'s transaction status for this receipt.', evidence: { ...stk.evidence, needs: 'transaction_status', receipt } };
     const answer = readStatusAnswer((ev.result ?? {}) as Record<string, unknown>);
     if (!answer) return { status: 'error', by: 'transaction_status', reason: 'The transaction status answer could not be read.', retryable: false };
-    const agreed = statusAgrees(answer, { receipt, amountCents: input.amountCents, shortcode: asDarajaCredentials(ctx.credentials).shortcode ?? null });
+    const agreed = statusAgrees(answer, { receipt, amountCents: input.amountCents, shortcode: emptyToNull(asDarajaCredentials(ctx.credentials).shortcode) });
     if (!agreed.ok) return { status: 'mismatch', by: 'transaction_status', code: agreed.code, reason: agreed.reason, evidence: { ...stk.evidence, transactionStatus: ev.result } };
     return { ...stk, by: 'stk_query+transaction_status', platformReference: receipt, evidence: { ...stk.evidence, transactionStatus: ev.result } };
   }
 
   /** Kept for the manual classification screen: what the body says, without any confirmation. */
-  async handleCallback(input: CallbackInput): Promise<CallbackResult> {
+  handleCallback(input: CallbackInput): Promise<CallbackResult> {
+    return Promise.resolve(this.readCallback(input));
+  }
+
+  private readCallback(input: CallbackInput): CallbackResult {
     const claim = parseStkCallback(input.body);
     if (!claim) return { ok: false, status: 'failed', errorMessage: 'Invalid Daraja callback payload' };
     const base = { providerReference: claim.requestIds.checkoutRequestId, externalReference: claim.requestIds.merchantRequestId, raw: input.body as Record<string, unknown> };
     if (claim.claimsSuccess === true) return { ok: true, status: 'successful', receiptNumber: extractPaymentReference('mpesa_daraja', input.body) ?? undefined, ...base };
-    return { ok: true, status: 'failed', errorMessage: claim.failureReason ?? `ResultCode ${claim.failureCode}`, ...base };
+    return { ok: true, status: 'failed', errorMessage: claim.failureReason ?? `ResultCode ${claim.failureCode ?? ''}`, ...base };
   }
 }

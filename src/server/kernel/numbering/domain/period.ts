@@ -1,5 +1,7 @@
 import type { ResetPolicy } from './types';
 
+import { has } from '@/lib/values';
+
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 export function isIsoDate(value: string): boolean {
@@ -24,7 +26,7 @@ export function counterKey(
   const period = periodKey(reset, date);
   if (!perBranch) return period;
   const branch = (branchCode ?? '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-  return period ? `${period}|${branch}` : `|${branch}`;
+  return has(period) ? `${period}|${branch}` : `|${branch}`;
 }
 
 /** The counter a document falls into: one per year or month when the series restarts. */

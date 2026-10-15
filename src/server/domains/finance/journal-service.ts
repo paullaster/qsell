@@ -8,8 +8,7 @@ import type { PostingRequest } from './domain/types';
 import { type PostingEngine, PostingError, type PostingPermissions, type PostingPreview } from './engine';
 import { FinanceError, type FinanceContext } from './errors';
 
-import { has } from '@/lib/has';
-import { trimToNull } from '@/lib/values';
+import { has, orElse, trimToNull } from '@/lib/values';
 
 export interface LineInput {
   postingDate: string;
@@ -143,13 +142,14 @@ export class JournalService {
       await this.db.update(journalLines).set(values).where(and(eq(journalLines.id, lineId), eq(journalLines.batchId, batchId)));
       return lineId;
     }
-    const [{ next }] = await this.db
+    const [last] = await this.db
       .select({ next: sql<number>`coalesce(max(${journalLines.lineNo}), 0) + 1` })
       .from(journalLines)
       .where(eq(journalLines.batchId, batchId));
+    const next = last?.next ?? 1;
     const [row] = await this.db
       .insert(journalLines)
-      .values({ batchId, lineNo: next ?? 1, createdBy: ctx.actor.id ?? 'system', ...values })
+      .values({ batchId, lineNo: next, createdBy: orElse(ctx.actor.id, 'system'), ...values })
       .returning({ id: journalLines.id });
     return row.id;
   }

@@ -6,6 +6,8 @@ import { resubmitOrderApprovalAction } from '@/server/domains/orders/actions';
 import type { Order } from '@/types/index';
 import { Chip, buttonClass, primaryButtonClass } from './shared';
 
+import { has } from '@/lib/values';
+
 /** Says where an order stands with approvals, and what can be done about it. */
 export function OrderApprovalBanner({ order, onChanged }: { order: Order; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
@@ -19,7 +21,7 @@ export function OrderApprovalBanner({ order, onChanged }: { order: Order; onChan
     setError(null);
     const res = await resubmitOrderApprovalAction(order.id);
     setBusy(false);
-    if (!res.ok) return setError(res.error);
+    if (!res.ok) { setError(res.error); return; }
     onChanged();
   };
 
@@ -37,7 +39,8 @@ export function OrderApprovalBanner({ order, onChanged }: { order: Order; onChan
           <strong>Waiting for approval.</strong> This order cannot be shipped or invoiced until it
           is approved. You can still cancel it.
         </p>
-      ) : status === 'rejected' ? (
+      ) : null}
+      {status === 'rejected' ? (
         <p>
           <strong>Approval was refused.</strong> The person who sent it can reopen it from{' '}
           <Link href="/admin/approvals/requests" className="underline">
@@ -45,12 +48,13 @@ export function OrderApprovalBanner({ order, onChanged }: { order: Order; onChan
           </Link>
           , or you can cancel the order.
         </p>
-      ) : (
+      ) : null}
+      {status === 'draft' ? (
         <p>
           <strong>Reopened.</strong> Send it for approval again once the reason it was refused has
           been dealt with, or cancel the order.
         </p>
-      )}
+      ) : null}
       {status === 'draft' ? (
         <button type="button" className={primaryButtonClass} disabled={busy} onClick={resend}>
           {busy ? 'Sending…' : 'Send for approval again'}
@@ -61,7 +65,7 @@ export function OrderApprovalBanner({ order, onChanged }: { order: Order; onChan
           See who it is waiting on
         </Link>
       ) : null}
-      {error ? (
+      {has(error) ? (
         <p role="alert" className="text-red-700">
           {error}
         </p>

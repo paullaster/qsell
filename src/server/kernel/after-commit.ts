@@ -2,7 +2,7 @@ import type { DrizzleDb } from '@/server/db/drizzle/client';
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
-const pending = new WeakMap<object, Array<() => void | Promise<void>>>();
+const pending = new WeakMap<object, (() => void | Promise<void>)[]>();
 
 /**
  * Work that must only happen once the surrounding transaction has committed (sending a signed
@@ -18,13 +18,13 @@ export function afterCommit(tx: object, work: () => void | Promise<void>): void 
 
 /** Runs `fn` in a transaction, then the work queued with `afterCommit` (errors are logged, never thrown). */
 export async function withAfterCommit<T>(db: DrizzleDb, fn: (tx: Tx) => Promise<T>): Promise<T> {
-  let captured: Tx | null = null;
+  const captured: { tx: Tx | null } = { tx: null };
   const result = await db.transaction(async (tx) => {
-    captured = tx;
-    return fn(tx);
+    captured.tx = tx;
+    return await fn(tx);
   });
-  const work = captured ? (pending.get(captured) ?? []) : [];
-  if (captured) pending.delete(captured);
+  const work = captured.tx === null ? [] : (pending.get(captured.tx) ?? []);
+  if (captured.tx !== null) pending.delete(captured.tx);
   for (const job of work) {
     try {
       await job();

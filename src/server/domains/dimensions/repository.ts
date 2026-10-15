@@ -1,4 +1,6 @@
-import { and, asc, count, eq } from 'drizzle-orm';
+import { and, asc, count, eq, inArray } from 'drizzle-orm';
+import { has, required } from '@/lib/values';
+import { afterCursor, matching, pageOf, PAGE_SIZE, searchText, type PageInput } from '@/server/domains/settings/paging';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   dimensions,
@@ -8,15 +10,34 @@ import {
   type DimensionValueRow,
 } from '@/server/db/drizzle/schema';
 
+
 export class DimensionRepository {
   constructor(private readonly db: DrizzleDb) {}
 
   async listByCompany(companyId: string): Promise<DimensionRow[]> {
-    return this.db
+    return await this.db
       .select()
       .from(dimensions)
       .where(eq(dimensions.companyId, companyId))
       .orderBy(asc(dimensions.dimensionNo), asc(dimensions.code));
+  }
+
+  /** One page of the company's dimensions in code order, optionally narrowed by text. */
+  async pageByCompany(companyId: string, input: PageInput) {
+    const rows = await this.db
+      .select()
+      .from(dimensions)
+      .where(and(eq(dimensions.companyId, companyId), matching(searchText(input), [dimensions.code, dimensions.name]), afterCursor(input.cursor, dimensions.code, dimensions.id)))
+      .orderBy(asc(dimensions.code), asc(dimensions.id))
+      .limit(PAGE_SIZE + 1);
+    return pageOf(rows, PAGE_SIZE, (r) => ({ k: r.code, id: r.id }));
+  }
+
+  /** The codes of these dimensions, by id (for showing a parent's name without loading the list). */
+  async codesOf(ids: string[]): Promise<Record<string, string>> {
+    if (ids.length === 0) return {};
+    const rows = await this.db.select({ id: dimensions.id, code: dimensions.code }).from(dimensions).where(inArray(dimensions.id, ids));
+    return Object.fromEntries(rows.map((r) => [r.id, r.code]));
   }
 
   async getById(id: string): Promise<DimensionRow | null> {
@@ -63,7 +84,7 @@ export class DimensionRepository {
 
   async insert(values: typeof dimensions.$inferInsert): Promise<DimensionRow> {
     const [row] = await this.db.insert(dimensions).values(values).returning();
-    return row!;
+    return required(row, 'the saved dimension');
   }
 
   async update(
@@ -83,11 +104,29 @@ export class DimensionRepository {
   }
 
   async listValues(dimensionId: string): Promise<DimensionValueRow[]> {
-    return this.db
+    return await this.db
       .select()
       .from(dimensionValues)
       .where(eq(dimensionValues.dimensionId, dimensionId))
       .orderBy(asc(dimensionValues.code));
+  }
+
+  /** One page of a dimension's values in code order, optionally narrowed by text. */
+  async pageValues(dimensionId: string, input: PageInput) {
+    const rows = await this.db
+      .select()
+      .from(dimensionValues)
+      .where(and(eq(dimensionValues.dimensionId, dimensionId), matching(searchText(input), [dimensionValues.code, dimensionValues.name]), afterCursor(input.cursor, dimensionValues.code, dimensionValues.id)))
+      .orderBy(asc(dimensionValues.code), asc(dimensionValues.id))
+      .limit(PAGE_SIZE + 1);
+    return pageOf(rows, PAGE_SIZE, (r) => ({ k: r.code, id: r.id }));
+  }
+
+  /** The code and name of these values, by id. */
+  async valueLabels(ids: string[]): Promise<Record<string, string>> {
+    if (ids.length === 0) return {};
+    const rows = await this.db.select({ id: dimensionValues.id, code: dimensionValues.code, name: dimensionValues.name }).from(dimensionValues).where(inArray(dimensionValues.id, ids));
+    return Object.fromEntries(rows.map((r) => [r.id, `${r.code} — ${r.name}`]));
   }
 
   async getValueById(id: string): Promise<DimensionValueRow | null> {
@@ -101,7 +140,7 @@ export class DimensionRepository {
 
   async insertValue(values: typeof dimensionValues.$inferInsert): Promise<DimensionValueRow> {
     const [row] = await this.db.insert(dimensionValues).values(values).returning();
-    return row!;
+    return required(row, 'the saved dimension');
   }
 
   async updateValue(
@@ -132,7 +171,7 @@ export class DimensionRepository {
       .select({ n: count() })
       .from(dimensionSetEntries)
       .where(eq(dimensionSetEntries.dimensionId, dimensionId));
-    return Number(rows[0]?.n ?? 0);
+    return rows[0]?.n ?? 0;
   }
 
   async countSetEntriesForValue(dimensionValueId: string): Promise<number> {
@@ -140,7 +179,7 @@ export class DimensionRepository {
       .select({ n: count() })
       .from(dimensionSetEntries)
       .where(eq(dimensionSetEntries.dimensionValueId, dimensionValueId));
-    return Number(rows[0]?.n ?? 0);
+    return rows[0]?.n ?? 0;
   }
 
   async countChildDimensions(parentId: string): Promise<number> {
@@ -148,7 +187,7 @@ export class DimensionRepository {
       .select({ n: count() })
       .from(dimensions)
       .where(eq(dimensions.parentId, parentId));
-    return Number(rows[0]?.n ?? 0);
+    return rows[0]?.n ?? 0;
   }
 
   async countChildValues(parentValueId: string): Promise<number> {
@@ -156,7 +195,7 @@ export class DimensionRepository {
       .select({ n: count() })
       .from(dimensionValues)
       .where(eq(dimensionValues.parentId, parentValueId));
-    return Number(rows[0]?.n ?? 0);
+    return rows[0]?.n ?? 0;
   }
 
   async wouldCreateDimensionCycle(
@@ -164,26 +203,26 @@ export class DimensionRepository {
     dimensionId: string,
     parentId: string | null,
   ): Promise<boolean> {
-    if (!parentId) return false;
+    if (!has(parentId)) return false;
     if (parentId === dimensionId) return true;
     let current: string | null = parentId;
     const seen = new Set<string>([dimensionId]);
-    while (current) {
+    while (has(current)) {
       if (seen.has(current)) return true;
       seen.add(current);
       const row = await this.getById(current);
-      if (!row || row.companyId !== companyId) return true;
+      if (row?.companyId !== companyId) return true;
       current = row.parentId;
     }
     return false;
   }
 
   async wouldCreateValueCycle(valueId: string, parentId: string | null): Promise<boolean> {
-    if (!parentId) return false;
+    if (!has(parentId)) return false;
     if (parentId === valueId) return true;
     let current: string | null = parentId;
     const seen = new Set<string>([valueId]);
-    while (current) {
+    while (has(current)) {
       if (seen.has(current)) return true;
       seen.add(current);
       const row = await this.getValueById(current);

@@ -1,4 +1,5 @@
-/**
+
+import { asRecord } from '@/lib/values';/**
  * Settings every payment provider has, whatever the platform: how a payment is confirmed, who may
  * call us, and how long we keep asking. Non-secret, stored on the provider, edited on its card.
  * Anything missing or invalid falls back to the safe default.
@@ -29,7 +30,7 @@ export const DEFAULT_ENGINE_SETTINGS: EngineSettings = {
   security: { allowedCidrs: [], maxBodyBytes: 64 * 1024 },
 };
 
-const rec = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+const rec = asRecord;
 const strList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim()) : []);
 
 export function engineSettings(raw: unknown): EngineSettings {
@@ -60,9 +61,9 @@ export function nextPollDelay(s: VerificationSettings, asked: number): number {
  */
 export function delayForAge(s: VerificationSettings, ageSeconds: number): number {
   let elapsed = 0;
-  for (let i = 0; i < s.pollSeconds.length; i++) {
-    elapsed += s.pollSeconds[i];
-    if (ageSeconds < elapsed) return s.pollSeconds[i];
+  for (const step of s.pollSeconds) {
+    elapsed += step;
+    if (ageSeconds < elapsed) return step;
   }
-  return s.pollSeconds[s.pollSeconds.length - 1] ?? 60;
+  return s.pollSeconds.at(-1) ?? 60;
 }

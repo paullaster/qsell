@@ -210,6 +210,7 @@ export const DOCUMENT_KIND_LABELS: Record<string, string> = {
   price_list_change: 'Price changes',
   discount_rule: 'Discount rules',
   rebate_settlement: 'Rebate payments',
+  provider_operation: 'Payments sent out through a provider',
 };
 
 export const MODULE_LABELS: Record<string, string> = {

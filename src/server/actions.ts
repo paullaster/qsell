@@ -29,7 +29,6 @@ export {
   updateTaxCategoryAction,
   deleteTaxCategoryAction,
   setDefaultTaxCategoryAction,
-  clearTaxCategoriesAction,
 } from '@/server/domains/taxes/actions';
 
 export {
@@ -74,16 +73,14 @@ export {
   initiatePesapalPaymentAction,
   submitPesapalOrderAction,
   simulatePesapalPaymentAction,
-  listBranchesAction,
   listEnabledCheckoutProvidersAction,
   initiateBranchPaymentAction,
   getPaymentAttemptStatusAction,
 } from '@/server/domains/payments/actions';
 
 export {
-  listDimensionsAction,
-  listDimensionValuesAction,
-  listDimensionOptionStringsAction,
+  dimensionsPageAction,
+  dimensionValuesPageAction,
   listDimensionFieldContractAction,
   createDimensionAction,
   updateDimensionAction,

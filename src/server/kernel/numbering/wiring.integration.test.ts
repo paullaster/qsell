@@ -1,18 +1,22 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { desc, eq } from 'drizzle-orm';
 
+import { has } from '@/lib/values';
+import type * as mod_server_di_container from '@/server/di/container';
+import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
+
 /**
  * The app's own flows number their documents from the series. Run against a throwaway database:
  *   TEST_DATABASE_URL=postgres://... pnpm test
  * (DATABASE_URL is pointed at it before the container loads.)
  */
 const url = process.env.TEST_DATABASE_URL;
-if (url) process.env.DATABASE_URL = url;
+if (has(url)) process.env.DATABASE_URL = url;
 
-describe.skipIf(!url)('flows use the number series', () => {
-  let container: ReturnType<typeof import('@/server/di/container').getContainer>;
+describe.skipIf(!has(url))('flows use the number series', () => {
+  let container: ReturnType<typeof mod_server_di_container.getContainer>;
   let companyId: string;
-  let schema: typeof import('@/server/db/drizzle/schema');
+  let schema: typeof mod_server_db_drizzle_schema;
 
   beforeAll(async () => {
     const mod = await import('@/server/di/container');
@@ -51,7 +55,7 @@ describe.skipIf(!url)('flows use the number series', () => {
       .where(eq(schema.inventoryMovements.productId, p.id))
       .orderBy(desc(schema.inventoryMovements.createdAt))
       .limit(2);
-    const refs = moves.map((m) => m.ref!);
+    const refs = moves.map((m) => m.ref);
     expect(new Set(refs).size).toBe(2);
     expect(refs.every((r) => /^ADJ.*\d{6,}/.test(r))).toBe(true);
   });

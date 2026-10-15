@@ -10,6 +10,8 @@ import {
   type EtimsSalesItem,
 } from './client';
 
+import { has, required } from '@/lib/values';
+
 /** A transmission left `pending` longer than this is assumed dead and may be retried. */
 const STALE_PENDING_MS = 5 * 60_000;
 
@@ -52,7 +54,7 @@ export class EtimsTransmissionService {
       branchId: input.branchId,
     });
     if (config.mode !== 'etims') throw modeMismatch(config.source, 'TIMS');
-    return this.send(config, input);
+    return await this.send(config, input);
   }
 
   /**
@@ -79,7 +81,7 @@ export class EtimsTransmissionService {
         config.source,
       );
     }
-    return this.send(config, {
+    return await this.send(config, {
       ...input,
       branchId: input.original.branchId,
       receiptTypeCode: 'R',
@@ -138,7 +140,7 @@ export class EtimsTransmissionService {
 
   private buildRequest(input: TransmitEtimsInvoiceInput): EtimsInvoiceRequest {
     const receiptTypeCode = input.receiptTypeCode ?? 'S';
-    if (receiptTypeCode === 'R' && !input.traderOrgInvoiceNo) {
+    if (receiptTypeCode === 'R' && !has(input.traderOrgInvoiceNo)) {
       throw new Error('A credit note requires the original trader invoice number.');
     }
     if (input.lines.length === 0) throw new Error('An invoice needs at least one line.');
@@ -154,7 +156,7 @@ export class EtimsTransmissionService {
       currency: input.currency,
       exchangeRate: input.exchangeRate ?? 1,
       salesItems: input.lines,
-      ...(input.customerPin ? { customerPin: input.customerPin } : {}),
+      ...(has(input.customerPin) ? { customerPin: input.customerPin } : {}),
     };
   }
 
@@ -224,7 +226,7 @@ export class EtimsTransmissionService {
       .where(eq(kraTransmissions.id, row.id))
       .returning();
     // The order's own status is not touched here: the signing service is its only writer.
-    return updated!;
+    return required(updated, 'the updated transmission');
   }
 }
 

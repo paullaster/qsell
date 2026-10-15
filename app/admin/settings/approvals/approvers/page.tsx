@@ -1,10 +1,12 @@
-import { getLookupsAction, listProfilesAction } from '@/server/kernel/approvals/actions';
+import { groupsPageAction, peoplePageAction } from '@/server/kernel/approvals/actions';
 import { ApproversClient } from '@/components/admin/approvals/ApproversClient';
-import { ErrorNote } from '@/components/admin/approvals/ErrorNote';
+import { SettingsFrame } from '@/components/admin/settings/frame';
 
-export default async function AdminApproversPage() {
-  const [profiles, lookups] = await Promise.all([listProfilesAction(), getLookupsAction()]);
-  if (!profiles.ok) return <ErrorNote message={profiles.error} />;
-  if (!lookups.ok) return <ErrorNote message={lookups.error} />;
-  return <ApproversClient lookups={lookups.data} profiles={profiles.data} />;
+export default function AdminApproversPage() {
+  // Both lists start now; each shows when it arrives.
+  return (
+    <SettingsFrame label="approvers">
+      <ApproversClient peoplePromise={peoplePageAction({})} groupsPromise={groupsPageAction({})} />
+    </SettingsFrame>
+  );
 }

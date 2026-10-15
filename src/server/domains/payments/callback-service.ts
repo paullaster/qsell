@@ -9,9 +9,8 @@ import { type PaymentConfigRepository, type PaymentAttemptRepository } from './r
 import { decryptCredentials } from './crypto';
 import { classifyCallbackPayload } from './callback-status';
 import type { CallbackResult } from './port';
-import type { PaymentProviderCode } from './types';
 
-import { has } from '@/lib/has';
+import { has } from '@/lib/values';
 
 /**
  * Manual classification of a stored payment_callback_events dump.
@@ -93,10 +92,10 @@ export class PaymentCallbackService {
           callbackToken: event.callbackToken,
           headers: event.headers ?? {},
           body: event.rawBody ?? null,
-          rawBodyText: event.rawBody ? JSON.stringify(event.rawBody) : '',
+          rawBodyText: event.rawBody === undefined || event.rawBody === null ? '' : JSON.stringify(event.rawBody),
         },
         credentials,
-        config?.settings! ?? {},
+        config?.settings ?? {},
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Classification failed';

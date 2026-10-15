@@ -11,7 +11,7 @@ export interface TargetState {
   categoryIds: string[];
   brands: string[];
   productGroupIds: string[];
-  products: Array<{ id: string; label: string }>;
+  products: { id: string; label: string }[];
 }
 
 export const everything = (): TargetState => ({
@@ -161,7 +161,7 @@ export function Multi({
   empty,
 }: {
   legend: string;
-  options: Array<{ value: string; label: string }>;
+  options: { value: string; label: string }[];
   selected: string[];
   onChange: (v: string[]) => void;
   empty: string;

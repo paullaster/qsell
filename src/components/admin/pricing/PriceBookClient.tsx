@@ -75,7 +75,7 @@ export function PriceBookClient({ lookups }: { lookups: DiscountLookups }) {
     setBusy(true);
     const r = await exportPriceBookAction(ctx, query);
     setBusy(false);
-    if (!r.ok) return setMessage({ kind: 'error', text: r.error });
+    if (!r.ok) { setMessage({ kind: 'error', text: r.error }); return; }
     try {
       const url = URL.createObjectURL(new Blob([r.data.csv], { type: 'text/csv;charset=utf-8' }));
       const a = document.createElement('a');

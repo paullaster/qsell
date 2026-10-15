@@ -12,9 +12,11 @@ import {
   type TimsSettings,
 } from './types';
 
+import { has } from '@/lib/values';
+
 /** Shape shared by company and branch config rows. */
 export interface KraConfigRecord {
-  mode: KraMode | string;
+  mode: string;
   isEnabled: boolean;
   environment: KraEnvironment;
   apiBaseUrl: string | null;
@@ -78,7 +80,7 @@ export class KraConfigResolver {
   async resolve(target: KraResolveTarget): Promise<ResolvedKraConfig> {
     let companyId = target.companyId;
 
-    if (target.branchId) {
+    if (has(target.branchId)) {
       const branch = await this.branches.getById(target.branchId);
       if (!branch) {
         throw new KraConfigError('BRANCH_NOT_FOUND', `Branch ${target.branchId} not found.`);
@@ -124,11 +126,11 @@ export class KraConfigResolver {
     branchId?: string | null;
   }): Promise<ResolvedKraConfig> {
     if (target.source === 'branch') {
-      if (!target.branchId) {
+      if (!has(target.branchId)) {
         throw new KraConfigError('BRANCH_NOT_FOUND', 'A branch scope needs a branch.', 'branch');
       }
       const branch = await this.branches.getById(target.branchId);
-      if (!branch || branch.companyId !== target.companyId) {
+      if (branch?.companyId !== target.companyId) {
         throw new KraConfigError('BRANCH_NOT_FOUND', `Branch ${target.branchId} not found.`);
       }
       const record = await this.configs.getBranchConfig(branch.id);
@@ -162,7 +164,7 @@ export class KraConfigResolver {
    * are. Reads only the branch table; the caller decides which branches to ask about.
    */
   async inspectBranches(branchIds: string[]): Promise<Map<string, KraConfigInspection>> {
-    const records = branchIds.length ? await this.configs.getBranchConfigs(branchIds) : new Map();
+    const records = branchIds.length !== 0 ? await this.configs.getBranchConfigs(branchIds) : new Map<string, KraConfigRecord>();
     return new Map(
       branchIds.map((id) => [id, this.inspectRecord(records.get(id) ?? null, 'branch', id)]),
     );
@@ -177,7 +179,7 @@ export class KraConfigResolver {
     if (!record) {
       const reason =
         source === 'branch'
-          ? `Branch ${branchId} acts independently but has no KRA configuration.`
+          ? `Branch ${branchId ?? ''} acts independently but has no KRA configuration.`
           : 'No company-level KRA configuration exists.';
       return { ...base, mode: null, usable: false, reason };
     }
@@ -197,7 +199,7 @@ export class KraConfigResolver {
     source: KraConfigSource,
     branchId: string | null,
   ): ResolvedKraConfig {
-    const where = source === 'branch' ? `Branch ${branchId}` : 'Company';
+    const where = source === 'branch' ? `Branch ${branchId ?? ''}` : 'Company';
     if (!record.isEnabled) {
       throw new KraConfigError(
         'CONFIG_DISABLED',
@@ -216,7 +218,7 @@ export class KraConfigResolver {
 
     if (record.mode === 'etims') {
       const apiBaseUrl = record.apiBaseUrl?.trim().replace(/\/+$/, '');
-      if (!apiBaseUrl) {
+      if (!has(apiBaseUrl)) {
         throw new KraConfigError('CONFIG_INCOMPLETE', `${where} eTIMS API URL is missing.`, source);
       }
       return {
@@ -236,9 +238,9 @@ function readEtimsCredentials(
   where: string,
   source: KraConfigSource,
 ): EtimsCredentials {
-  let creds: Partial<EtimsCredentials> | null = null;
+  let creds: Partial<EtimsCredentials> | null;
   try {
-    creds = decryptCredentials<Partial<EtimsCredentials>>(record.credentialsEncrypted);
+    creds = decryptCredentials(record.credentialsEncrypted);
   } catch {
     throw new KraConfigError(
       'CONFIG_INCOMPLETE',
@@ -246,7 +248,7 @@ function readEtimsCredentials(
       source,
     );
   }
-  if (!creds?.username || !creds.password) {
+  if (!has(creds?.username) || !has(creds.password)) {
     throw new KraConfigError(
       'CONFIG_INCOMPLETE',
       `${where} eTIMS credentials are missing.`,
@@ -262,7 +264,7 @@ function readTimsSettings(
   source: KraConfigSource,
 ): TimsSettings {
   const { zfpLabServerUrl, connection, cuSerial } = record.settings as Partial<TimsSettings>;
-  if (!zfpLabServerUrl || !cuSerial || (connection !== 'tcp' && connection !== 'com')) {
+  if (!has(zfpLabServerUrl) || !has(cuSerial) || (connection !== 'tcp' && connection !== 'com')) {
     throw new KraConfigError(
       'CONFIG_INCOMPLETE',
       `${where} TIMS settings (ZFPLabServer URL, connection, CU serial) are incomplete.`,

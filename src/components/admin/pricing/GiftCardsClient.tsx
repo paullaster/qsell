@@ -2,7 +2,6 @@
 
 import { useEffect, useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { listPricingReasonsAction } from '@/server/domains/pricing/actions';
 import {
   blockGiftCardAction,
   issueGiftCardsAction,
@@ -99,7 +98,7 @@ export function GiftCardsClient({
       reason,
     );
     setBusy(false);
-    if (!r.ok) return setMessage({ kind: 'error', text: r.error });
+    if (!r.ok) { setMessage({ kind: 'error', text: r.error }); return; }
     setMade(r.data);
     setIssuing(false);
     setValue('');
@@ -123,7 +122,7 @@ export function GiftCardsClient({
     setBusy(true);
     const r = await blockGiftCardAction(c.id, c.status !== 'blocked', reason);
     setBusy(false);
-    if (!r.ok) return setMessage({ kind: 'error', text: r.error });
+    if (!r.ok) { setMessage({ kind: 'error', text: r.error }); return; }
     setReason({ code: '', text: '' });
     await view(c.code);
     await refresh();
@@ -245,7 +244,7 @@ export function GiftCardsClient({
               onChange={(e) => setNote(e.target.value)}
             />
           </div>
-          <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+          <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
           <div className="flex flex-wrap gap-2">
             <button
               type="submit"
@@ -317,7 +316,7 @@ export function GiftCardsClient({
           </p>
           {canManage ? (
             <div className="space-y-2 rounded-lg border border-line p-3">
-              <ReasonField value={reason} onChange={setReason} load={listPricingReasonsAction} />
+              <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
               <button
                 type="button"
                 className={buttonClass}
