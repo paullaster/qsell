@@ -11,6 +11,8 @@ import {
 } from '@/server/domains/finance/actions';
 import { Chip, Field, Message, PageHeader, buttonClass, cardClass, fieldClass, money, primaryClass, today, type Notice, attempt } from './ui';
 
+import { has } from '@/lib/has';
+
 type Detail = Extract<Awaited<ReturnType<typeof registerDetailAction>>, { ok: true }>['data'];
 type Chain = Extract<Awaited<ReturnType<typeof verifyChainAction>>, { ok: true }>['data'];
 
@@ -46,7 +48,7 @@ export function RegistersClient({ registers, canReverse }: { registers: Register
 
   const reverse = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!reversing) return;
+    if (!has(reversing)) return;
     setBusy(true);
     const res = await attempt(reverseRegisterAction(reversing, rev.date, { code: rev.code, text: rev.text }));
     setBusy(false);
@@ -83,7 +85,7 @@ export function RegistersClient({ registers, canReverse }: { registers: Register
         </div>
       ) : null}
 
-      {reversing ? (
+      {has(reversing) ? (
         <form onSubmit={reverse} className={`${cardClass} space-y-3`} aria-label="Reverse posting">
           <p className="text-sm font-semibold text-fg-strong">Reverse this posting</p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -139,7 +141,7 @@ export function RegistersClient({ registers, canReverse }: { registers: Register
                     </dl>
                     {detail.trail.length > 0 ? (
                       <ol className="space-y-1 border-l border-line pl-3 text-xs">
-                        {detail.trail.map((t, i) => <li key={i}><span className="text-fg-muted">{new Date(t.at).toLocaleString()}</span> {t.action} {t.reason ? `— ${t.reason}` : ''}</li>)}
+                        {detail.trail.map((t, i) => <li key={i}><span className="text-fg-muted">{new Date(t.at).toLocaleString()}</span> {t.action} {has(t.reason) ? `— ${t.reason}` : ''}</li>)}
                       </ol>
                     ) : null}
                     {canReverse && !r.isReversal && !r.reversed ? <button type="button" className={buttonClass} onClick={() => startReverse(r.id)}>Reverse…</button> : null}

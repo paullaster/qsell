@@ -3,6 +3,8 @@ import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { providerOperations, type ProviderOperationRow, type ProviderOperationStatus } from '@/server/db/drizzle/schema';
 import { redactDeep } from './redact';
 
+import { has } from '@/lib/has';
+
 export interface CreateOperation {
   companyId: string;
   providerId: string;
@@ -89,7 +91,7 @@ export class ProviderOperationService {
     return await this.db
       .select()
       .from(providerOperations)
-      .where(and(eq(providerOperations.subjectType, subjectType), eq(providerOperations.subjectId, subjectId), operation ? eq(providerOperations.operation, operation) : undefined))
+      .where(and(eq(providerOperations.subjectType, subjectType), eq(providerOperations.subjectId, subjectId), has(operation) ? eq(providerOperations.operation, operation) : undefined))
       .orderBy(asc(providerOperations.createdAt));
   }
 
@@ -118,7 +120,7 @@ export class ProviderOperationService {
         response: patch.response ? redactDeep(patch.response) : undefined,
         result: patch.result ? redactDeep(patch.result) : undefined,
         updatedAt: new Date(),
-        ...(terminal ? { completedAt: new Date(), nextAttemptAt: null } : {}),
+        ...(terminal === true ? { completedAt: new Date(), nextAttemptAt: null } : {}),
       })
       .where(eq(providerOperations.id, id))
       .returning();

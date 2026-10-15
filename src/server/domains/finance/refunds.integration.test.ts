@@ -2,10 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { and, eq, sql } from 'drizzle-orm';
 
+import { has } from '@/lib/has';
+
 /** Needs a Postgres built from the migrations:  TEST_DATABASE_URL=postgres://... pnpm test */
 const url = process.env.TEST_DATABASE_URL;
 
-describe.skipIf(!url)('refunds (database)', () => {
+describe.skipIf(!has(url))('refunds (database)', () => {
   type Db = import('@/server/db/drizzle/client').DrizzleDb;
   let db: Db;
   let schema: typeof import('@/server/db/drizzle/schema');

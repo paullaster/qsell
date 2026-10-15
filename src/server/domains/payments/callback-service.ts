@@ -11,6 +11,8 @@ import { classifyCallbackPayload } from './callback-status';
 import type { CallbackResult } from './port';
 import type { PaymentProviderCode } from './types';
 
+import { has } from '@/lib/has';
+
 /**
  * Manual classification of a stored payment_callback_events dump.
  *
@@ -58,7 +60,7 @@ export class PaymentCallbackService {
       event.providerCode,
       event.rawBody,
     );
-    if (verdict.rawStatus) {
+    if (has(verdict.rawStatus)) {
       const [updated] = await this.db
         .update(paymentCallbackEvents)
         .set({
@@ -71,7 +73,7 @@ export class PaymentCallbackService {
       return updated;
     }
 
-    const attempt = event.paymentAttemptId
+    const attempt = has(event.paymentAttemptId)
       ? await this.attempts.getById(event.paymentAttemptId)
       : null;
     if (!attempt) {

@@ -15,6 +15,8 @@ import type {
   CallbackOutcome,
 } from './types';
 
+import { has } from '@/lib/has';
+
 export class PaymentConfigRepository {
   constructor(private readonly db: DrizzleDb) {}
 
@@ -121,7 +123,7 @@ export class PaymentConfigRepository {
   ): Promise<PaymentProviderConfigRow> {
     const [row] = await this.db
       .update(paymentProviderConfigs)
-      .set({ ...patch, ...(patch.apiBaseUrl ? { apiBaseUrl: patch.apiBaseUrl.replace(/\/$/, '') } : {}), updatedAt: new Date() })
+      .set({ ...patch, ...(has(patch.apiBaseUrl) ? { apiBaseUrl: patch.apiBaseUrl.replace(/\/$/, '') } : {}), updatedAt: new Date() })
       .where(eq(paymentProviderConfigs.id, id))
       .returning();
     if (!row) throw new Error('That provider does not exist.');

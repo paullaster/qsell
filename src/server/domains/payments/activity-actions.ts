@@ -7,6 +7,8 @@ import { FinanceError } from '@/server/domains/finance/errors';
 import { DARAJA_OPERATIONS, validateOperationInput } from './daraja/catalog';
 import { OperationRefused, type DarajaOperationCode } from './daraja/operations';
 
+import { has } from '@/lib/has';
+
 const engine = () => getContainer().paymentEngine;
 const PAGE = '/admin/payments/activity';
 
@@ -32,7 +34,7 @@ export async function paymentActivityAction() {
 export async function paymentOperationsAction(before?: string) {
   return await run('payment_activity:read', { surface: 'payments/activity', action: 'operations' }, async (ctx) => {
     const rows = await engine().activity.operations(ctx.companyId, { before });
-    return rows.map((r) => ({ id: r.op.id, operation: r.op.operation, status: r.op.status, provider: r.provider, method: r.method, amount: r.op.amount, failureCode: r.op.failureCode, failureReason: r.op.failureReason, attempts: r.op.attempts, platformReference: r.op.platformReference, subject: r.op.subjectType ? r.op.subjectType : null, at: iso(r.op.createdAt), completedAt: iso(r.op.completedAt) }));
+    return rows.map((r) => ({ id: r.op.id, operation: r.op.operation, status: r.op.status, provider: r.provider, method: r.method, amount: r.op.amount, failureCode: r.op.failureCode, failureReason: r.op.failureReason, attempts: r.op.attempts, platformReference: r.op.platformReference, subject: has(r.op.subjectType) ? r.op.subjectType : null, at: iso(r.op.createdAt), completedAt: iso(r.op.completedAt) }));
   });
 }
 
@@ -95,7 +97,7 @@ export async function runProviderOperationAction(input: { providerId: string; op
   return await run('payment_operations:run', { surface: 'settings/payments', action: `operation_${input.operation}` }, async (ctx, userId) => {
     try {
       const info = DARAJA_OPERATIONS[input.operation];
-      if (!info || info.internal) throw new OperationRefused('NOT_A_FORM', `${input.operation} is not something to run by hand.`);
+      if (!info || info.internal === true) throw new OperationRefused('NOT_A_FORM', `${input.operation} is not something to run by hand.`);
       const checked = validateOperationInput(info, input.input);
       if (!checked.ok) throw new OperationRefused('INVALID_INPUT', checked.error);
       const { op } = await engine().daraja.start({ providerId: input.providerId, methodId: input.methodId ?? null, operation: input.operation, input: checked.input, requestedBy: userId, origin: ctx.origin });

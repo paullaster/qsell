@@ -7,6 +7,8 @@ import { periodTransition } from './domain/periods-status';
 import type { PeriodStatus } from './domain/types';
 import { FinanceError, type FinanceContext } from './errors';
 
+import { has } from '@/lib/has';
+
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
 export class FiscalService {
@@ -100,7 +102,7 @@ export class FiscalService {
           p.status === 'locked' ? 'A locked period can never be changed.' : `A period cannot go from ${p.status} to ${to}.`,
         );
       }
-      if (t.reasonRequired && !(reason ?? '').trim()) {
+      if (t.reasonRequired && !has((reason ?? '').trim())) {
         throw new FinanceError('REASON_REQUIRED', 'A reason is required for this change.');
       }
       await tx

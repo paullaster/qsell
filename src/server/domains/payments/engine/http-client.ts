@@ -3,6 +3,8 @@ import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { integrationAuditLog } from '@/server/db/drizzle/schema';
 import { redactDeep, redactHeaders, redactUrl } from './redact';
 
+import { has } from '@/lib/has';
+
 export interface HttpCallInput {
   companyId: string;
   providerId: string;
@@ -58,7 +60,7 @@ export async function loggedCall(
     const text = await response.text().catch(() => '');
     let json: Record<string, unknown> | null = null;
     try {
-      const parsed: unknown = text ? JSON.parse(text) : null;
+      const parsed: unknown = has(text) ? JSON.parse(text) : null;
       json = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : parsed === null ? null : { value: parsed };
     } catch {
       json = null;
@@ -85,7 +87,7 @@ export async function loggedCall(
       provider: input.provider,
       operation: input.label,
       requestPayload: input.body === undefined ? null : (redactDeep(input.body) as Record<string, unknown>),
-      responsePayload: res.json ? (redactDeep(res.json) as Record<string, unknown>) : res.text ? { text: res.text.slice(0, MAX_LOGGED_TEXT) } : null,
+      responsePayload: res.json ? (redactDeep(res.json) as Record<string, unknown>) : has(res.text) ? { text: res.text.slice(0, MAX_LOGGED_TEXT) } : null,
       requestHeaders: redactHeaders(input.headers ?? {}),
       httpMethod: input.method,
       url: redactUrl(input.url),

@@ -14,7 +14,7 @@ import {
   removeSection,
 } from './quote-layout';
 
-type L = { name: string; sectionId?: string | null };
+interface L { name: string; sectionId?: string | null }
 const l = (name: string, sectionId: string | null = null): L => ({ name, sectionId });
 const names = (lines: L[], slot: string | null) =>
   indexesIn(lines, slot).map((i) => lines[i]!.name);
@@ -192,14 +192,14 @@ describe('sections', () => {
 });
 
 describe('addCatalogueEntry', () => {
-  type Line = {
+  interface Line {
     productId: string;
     sectionId: string | null;
     quantity: number;
     discountPercent: number;
     unitPrice: number | null;
     priceMode: 'catalog' | 'manual';
-  };
+  }
   const make = (e: CatalogueEntry): Line => ({
     productId: e.productId,
     sectionId: e.sectionId,

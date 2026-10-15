@@ -1,5 +1,7 @@
 import { constants, createPublicKey, publicEncrypt } from 'node:crypto';
 
+import { has } from '@/lib/has';
+
 /** Daraja timestamps are East Africa Time, yyyyMMddHHmmss. */
 export function darajaTimestamp(now: Date): string {
   const parts = new Intl.DateTimeFormat('en-GB', {
@@ -37,7 +39,7 @@ export function securityCredential(initiatorPassword: string, certificatePem: st
 
 /** 07XX, 01XX, 7XX, +254… and 254… all become 2547XXXXXXXX / 2541XXXXXXXX. Null when it cannot be a Kenyan mobile number. */
 export function toMsisdn(raw: string | null | undefined): string | null {
-  if (!raw) return null;
+  if (!has(raw)) return null;
   let d = String(raw).replace(/[^0-9]/g, '');
   if (d.startsWith('0')) d = `254${d.slice(1)}`;
   else if (d.length === 9 && /^[17]/.test(d)) d = `254${d}`;
@@ -61,7 +63,7 @@ export function toCentsLoose(value: unknown): number | null {
   const frac = m[3] ?? '';
   if (/[1-9]/.test(frac.slice(2))) return null;
   const cents = Number(m[2]) * 100 + Number((`${frac  }00`).slice(0, 2));
-  return m[1] ? -cents : cents;
+  return has(m[1]) ? -cents : cents;
 }
 
 /** An M-Pesa receipt looks like NLJ7RT61SV: ten letters and digits. */

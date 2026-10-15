@@ -7,6 +7,8 @@ import { postingPermissions, run } from './action-runner';
 import { fromCents, toCents } from './domain/receivables';
 import type { PolicyInput } from './receivables/credit-policy-service';
 
+import { has } from '@/lib/has';
+
 const fin = () => getContainer().finance;
 const CUSTOMER = (id: string) => `/admin/finance/receivables/customer/${id}`;
 
@@ -42,7 +44,7 @@ export async function customerWalletAction(customerId: string) {
 
 export async function moveReceiptToWalletAction(receiptId: string, amount?: string) {
   return await run('wallet:move_receipt', { surface: 'finance/receipts/detail', action: 'move_to_wallet' }, async (ctx) => {
-    const out = await fin().wallets.moveReceiptToWallet(ctx, receiptId, { cents: amount ? toCents(amount) : undefined, permissions: await postingPermissions() });
+    const out = await fin().wallets.moveReceiptToWallet(ctx, receiptId, { cents: has(amount) ? toCents(amount) : undefined, permissions: await postingPermissions() });
     return { moved: fromCents(out.movedCents) };
   }, [`/admin/finance/receipts/${receiptId}`]);
 }
@@ -50,7 +52,7 @@ export async function moveReceiptToWalletAction(receiptId: string, amount?: stri
 export async function useWalletAction(customerId: string, currency: string, applications: { entryId: string; amount: string }[] | 'oldest_first', maxAmount?: string) {
   return await run('wallet:utilise', { surface: 'finance/customer-ledger', action: 'wallet_use' }, async (ctx) => {
     const planned = applications === 'oldest_first' ? 'oldest_first' : applications.map((a) => ({ entryId: a.entryId, amountCents: toCents(a.amount) }));
-    const out = await fin().wallets.utilise(ctx, { customerId, currency, applications: planned, maxCents: maxAmount ? toCents(maxAmount) : undefined });
+    const out = await fin().wallets.utilise(ctx, { customerId, currency, applications: planned, maxCents: has(maxAmount) ? toCents(maxAmount) : undefined });
     return { used: fromCents(out.usedCents) };
   }, [CUSTOMER(customerId)]);
 }

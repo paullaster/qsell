@@ -12,6 +12,8 @@ import { extractPaymentReference } from '../payment-reference';
 import type { InboundClaim, PlatformContext, VerificationOutcome, VerifyAttemptInput } from '../engine/types';
 import { toCentsLoose } from '../daraja/security';
 
+import { has } from '@/lib/has';
+
 export class PesapalV3Adapter implements PaymentPort {
   readonly code = 'pesapal_v3' as const;
   readonly capabilities = ['collect', 'status_query'] as const;
@@ -23,7 +25,7 @@ export class PesapalV3Adapter implements PaymentPort {
   ): Promise<ConnectionTestResult> {
     const creds = asPesapalCredentials(credentials);
     return await probeConnection('Pesapal', async () => {
-      if (!creds.consumerKey || !creds.consumerSecret) throw new Error('The consumer key and secret are not saved yet.');
+      if (!has(creds.consumerKey) || !has(creds.consumerSecret)) throw new Error('The consumer key and secret are not saved yet.');
       await this.getAccessToken(apiBaseUrl, creds);
     });
   }
@@ -42,7 +44,7 @@ export class PesapalV3Adapter implements PaymentPort {
       throw new Error(`Pesapal auth failed (${res.status}): ${await res.text()}`);
     }
     const data = (await res.json()) as { token?: string };
-    if (!data.token) throw new Error('Pesapal auth missing token');
+    if (!has(data.token)) throw new Error('Pesapal auth missing token');
     return data.token;
   }
 
@@ -53,7 +55,7 @@ export class PesapalV3Adapter implements PaymentPort {
     apiBaseUrl: string,
   ): Promise<InitiatePaymentResult> {
     const creds = asPesapalCredentials(credentials);
-    if (!creds.consumerKey || !creds.consumerSecret) {
+    if (!has(creds.consumerKey) || !has(creds.consumerSecret)) {
       return {
         status: 'failed',
         errorMessage: 'Pesapal credentials are incomplete. Configure them in admin.',
@@ -117,7 +119,7 @@ export class PesapalV3Adapter implements PaymentPort {
   parseCallback(body: unknown): InboundClaim | null {
     const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
     const tracking = String(b.OrderTrackingId ?? b.order_tracking_id ?? '');
-    if (!tracking) return null;
+    if (!has(tracking)) return null;
     return {
       kind: 'ipn',
       claimsSuccess: null,
@@ -143,14 +145,14 @@ export class PesapalV3Adapter implements PaymentPort {
     const creds = asPesapalCredentials(ctx.credentials);
     const base = ctx.provider.apiBaseUrl.replace(/\/$/, '');
     const tracking = input.externalReference;
-    if (!tracking) return { status: 'error', by: 'pesapal_status', reason: 'This payment has no Pesapal tracking id to ask about.', retryable: false };
+    if (!has(tracking)) return { status: 'error', by: 'pesapal_status', reason: 'This payment has no Pesapal tracking id to ask about.', retryable: false };
     const claimed = input.claim?.requestIds.orderTrackingId;
-    if (claimed && claimed !== tracking) {
+    if (has(claimed) && claimed !== tracking) {
       return { status: 'mismatch', by: 'cross_check', code: 'TRACKING_ID_MISMATCH', reason: `The notification names order ${claimed}, but this payment is ${tracking}.`, evidence: {} };
     }
     const tokenRes = await ctx.call({ label: 'oauth', provider: 'pesapal_v3', method: 'POST', url: `${base}/api/Auth/RequestToken`, body: { consumer_key: creds.consumerKey, consumer_secret: creds.consumerSecret }, timeoutMs: 15000 });
     const token = typeof tokenRes.json?.token === 'string' ? tokenRes.json.token : null;
-    if (!token) return { status: 'error', by: 'pesapal_status', reason: `Pesapal did not give a token (${tokenRes.reached ? tokenRes.status : tokenRes.networkError}).`, retryable: true };
+    if (!has(token)) return { status: 'error', by: 'pesapal_status', reason: `Pesapal did not give a token (${tokenRes.reached ? tokenRes.status : tokenRes.networkError}).`, retryable: true };
     const res = await ctx.call({ label: 'get_transaction_status', provider: 'pesapal_v3', method: 'GET', url: `${base}/api/Transactions/GetTransactionStatus?orderTrackingId=${encodeURIComponent(tracking)}`, headers: { Authorization: `Bearer ${token}` }, timeoutMs: 20000 });
     if (!res.reached || res.status >= 500 || res.status === 429) return { status: 'error', by: 'pesapal_status', reason: res.networkError ?? `Pesapal answered ${res.status}.`, retryable: true };
     const j = res.json ?? {};

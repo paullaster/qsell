@@ -6,6 +6,8 @@ import { loggedCall } from './http-client';
 import { newSecret } from './redact';
 import type { PlatformContext } from './types';
 
+import { has } from '@/lib/has';
+
 /**
  * Opens a provider for use: its credentials (never logged), its settings, and a way to call its
  * platform that records every call. The secret in the addresses a platform calls us back on is
@@ -38,7 +40,7 @@ export class PlatformContexts {
     const [provider] = await this.db.select().from(paymentProviderConfigs).where(eq(paymentProviderConfigs.id, providerId));
     if (!provider) throw new Error('That payment provider does not exist.');
     const creds = stringFields(decryptCredentials(provider.credentialsEncrypted));
-    if (creds.callbackSecret) return creds.callbackSecret;
+    if (has(creds.callbackSecret)) return creds.callbackSecret;
     const secret = newSecret();
     await this.db
       .update(paymentProviderConfigs)
@@ -53,7 +55,7 @@ export class PlatformContexts {
     if (!provider) return false;
     const creds = stringFields(decryptCredentials(provider.c));
     const known = creds.callbackSecret;
-    if (!known || !presented || presented.length !== known.length) return false;
+    if (!has(known) || !has(presented) || presented.length !== known.length) return false;
     const { timingSafeEqual } = await import('node:crypto');
     return timingSafeEqual(Buffer.from(presented), Buffer.from(known));
   }

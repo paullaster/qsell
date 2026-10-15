@@ -13,6 +13,8 @@ import { FinanceError } from './errors';
 import type { AccountInput } from './setup-service';
 import type { LineInput } from './journal-service';
 
+import { has } from '@/lib/has';
+
 const fin = () => getContainer().finance;
 const ROOT = '/admin/finance';
 
@@ -54,7 +56,7 @@ export async function applyTemplateAction(code: string, fiscalYearStart?: string
   return run(
     'gl_templates:apply',
     { surface: 'finance/setup', action: 'apply_template' },
-    (ctx) => fin().setup.applyTemplate(ctx, code, fiscalYearStart ? { fiscalYearStart } : {}),
+    (ctx) => fin().setup.applyTemplate(ctx, code, has(fiscalYearStart) ? { fiscalYearStart } : {}),
     [ROOT],
   );
 }
@@ -289,7 +291,7 @@ export async function getBatchAction(batchId: string) {
 export type BatchView = Extract<Awaited<ReturnType<typeof getBatchAction>>, { ok: true }>['data'];
 
 export async function saveJournalLineAction(batchId: string, input: LineInput, lineId?: string) {
-  return run('journals:edit_draft', { surface: 'finance/journals/batch', action: lineId ? 'edit_line' : 'add_line' }, (ctx) =>
+  return run('journals:edit_draft', { surface: 'finance/journals/batch', action: has(lineId) ? 'edit_line' : 'add_line' }, (ctx) =>
     fin().journals.saveLine(ctx, batchId, input, lineId),
   );
 }

@@ -19,6 +19,8 @@ import { engineSettings } from './settings';
 import type { ProviderTransactionStore } from './transaction-store';
 import type { PaymentVerificationService } from './verification-service';
 
+import { has } from '@/lib/has';
+
 export interface IngestInput {
   rawText: string;
   headers: Record<string, string>;
@@ -62,9 +64,9 @@ export class PaymentEngine {
   ) {}
 
   private parseBody(input: IngestInput, query?: Record<string, string>): unknown {
-    if (query && Object.keys(query).length > 0 && !input.rawText.trim()) return query;
+    if (query && Object.keys(query).length > 0 && !has(input.rawText.trim())) return query;
     try {
-      return input.rawText ? JSON.parse(input.rawText) : null;
+      return has(input.rawText) ? JSON.parse(input.rawText) : null;
     } catch {
       return null;
     }
@@ -73,9 +75,9 @@ export class PaymentEngine {
   /** A callback addressed to one payment we started (its address carries that payment's own secret). */
   async ingestAttemptCallback(input: IngestInput & { token?: string; trackingId?: string; query?: Record<string, string> }): Promise<IngestReply> {
     // Found by its secret address, or (for notifications sent to an address with no secret) by the platform's own id for it.
-    const [attempt] = input.token
+    const [attempt] = has(input.token)
       ? await this.db.select().from(paymentAttempts).where(eq(paymentAttempts.callbackToken, input.token))
-      : input.trackingId
+      : has(input.trackingId)
         ? await this.db.select().from(paymentAttempts).where(eq(paymentAttempts.externalReference, input.trackingId)).limit(1)
         : [];
     if (!attempt) return { httpStatus: 404, body: { ResultCode: 1, ResultDesc: 'Unknown callback address' } };
@@ -169,13 +171,13 @@ export class PaymentEngine {
       }
       case 'express': {
         const claim = parseB2bExpress(body);
-        const op = claim?.originatorId ? await this.ops.byOriginator(ctx.provider.id, claim.originatorId) : null;
+        const op = has(claim?.originatorId) ? await this.ops.byOriginator(ctx.provider.id, claim.originatorId) : null;
         if (!claim || !op || op.operation !== 'b2b_express') {
           await this.events.setState(event.id, 'unmatched', { failureCode: 'NO_OPERATION', failureReason: 'No B2B Express Checkout request of ours has this reference.' });
           return { httpStatus: 200, body: ACK };
         }
         if (!['succeeded', 'failed', 'cancelled', 'rejected'].includes(op.status)) {
-          if (claim.claimsSuccess && claim.platformReference && looksLikeReceipt(claim.platformReference)) {
+          if (claim.claimsSuccess === true && has(claim.platformReference) && looksLikeReceipt(claim.platformReference)) {
             await this.ops.update(op.id, { status: 'succeeded', platformReference: claim.platformReference, result: { callback: true, amountCents: claim.amountCents, confirmedBy: 'callback_only' } });
           } else if (claim.claimsSuccess === false) {
             await this.ops.update(op.id, { status: 'failed', failureCode: claim.failureCode ?? 'DECLINED', failureReason: claim.failureReason ?? 'The other business did not complete the payment.' });
@@ -197,7 +199,7 @@ export class PaymentEngine {
   /** A payout reported success on its callback: ask Safaricom for its own record of that transaction before counting it. */
   private async checkPayout(opId: string) {
     const op = await this.ops.get(opId);
-    if (!op || op.status !== 'accepted' || !op.platformReference) return;
+    if (!op || op.status !== 'accepted' || !has(op.platformReference)) return;
     try {
       await this.daraja.start({ providerId: op.providerId, methodId: op.methodId, operation: 'transaction_status', input: { transactionId: op.platformReference }, idempotencyKey: `payout-check:${op.id}`, subject: { type: 'provider_operation', id: op.id } });
     } catch (error) {
@@ -208,7 +210,7 @@ export class PaymentEngine {
   /** The check of a payout finished: it counts as paid only if Safaricom's record agrees on the transaction, status and amount. */
   private async settlePayout(opId: string) {
     const op = await this.ops.get(opId);
-    if (!op || op.status !== 'accepted' || !op.platformReference) return;
+    if (!op || op.status !== 'accepted' || !has(op.platformReference)) return;
     const [check] = await this.ops.bySubject('provider_operation', op.id, 'transaction_status');
     if (!check || ['created', 'queued', 'submitted', 'accepted', 'timed_out'].includes(check.status)) return;
     if (check.status !== 'succeeded') {
@@ -226,7 +228,7 @@ export class PaymentEngine {
 
   /** A status check finished: whoever was waiting for it can carry on. */
   private async followUp(subjectType: string | null, subjectId: string | null) {
-    if (!subjectType || !subjectId) return;
+    if (!has(subjectType) || !has(subjectId)) return;
     if (subjectType === 'provider_operation') await this.settlePayout(subjectId);
     if (subjectType === 'payment_attempt') await this.jobs.verifyAttempt(subjectId, 0);
     if (subjectType === 'provider_transaction') await this.jobs.verifyTransaction(subjectId, 0);
@@ -251,7 +253,7 @@ export class PaymentEngine {
         resent += 1;
       } else if (op.operation === 'stk_push' && ['accepted', 'submitted'].includes(op.status)) {
         // The outcome of a customer prompt is seen on the payment it belongs to, not on a result address.
-        const [attempt] = op.subjectId ? await this.db.select().from(paymentAttempts).where(eq(paymentAttempts.id, op.subjectId)) : [];
+        const [attempt] = has(op.subjectId) ? await this.db.select().from(paymentAttempts).where(eq(paymentAttempts.id, op.subjectId)) : [];
         if (attempt?.status === 'successful') await this.ops.update(op.id, { status: 'succeeded', platformReference: attempt.providerReference });
         else if (attempt && ['failed', 'cancelled', 'expired'].includes(attempt.status)) await this.ops.update(op.id, { status: 'failed', failureCode: 'PAYMENT_FAILED', failureReason: attempt.errorMessage ?? 'The customer did not complete the payment.' });
         else await this.ops.update(op.id, { nextAttemptAt: new Date(Date.now() + 10 * 60_000) });
@@ -263,7 +265,7 @@ export class PaymentEngine {
           await this.ops.update(op.id, { status: 'in_doubt', failureCode: 'NO_RESULT', failureReason: 'No answer arrived. It must be checked with the platform before anything is done again.', nextAttemptAt: null });
           await this.finished(op.id);
         }
-        if (query && op.subjectType) await this.followUp(op.subjectType, op.subjectId);
+        if (query && has(op.subjectType)) await this.followUp(op.subjectType, op.subjectId);
       }
     }
     const claimed = await this.c2b.sweepClaimed();
@@ -322,7 +324,7 @@ export class PaymentEngine {
     if (!tx) return { ok: false, error: 'That payment does not exist.' };
     if (tx.state !== 'review') return { ok: false, error: `Only a confirmed payment waiting to be placed can be placed; this one is ${tx.state}.` };
     if (!this.consumer) return { ok: false, error: 'Placing payments is not set up.' };
-    const [method] = tx.methodId ? await this.db.select().from(paymentMethods).where(eq(paymentMethods.id, tx.methodId)) : [];
+    const [method] = has(tx.methodId) ? await this.db.select().from(paymentMethods).where(eq(paymentMethods.id, tx.methodId)) : [];
     if (!method) return { ok: false, error: 'No payment method is set up for the shortcode this was paid to.' };
     try {
       const placed = await this.consumer.place(tx, method, input.customerId, { id: input.userId });

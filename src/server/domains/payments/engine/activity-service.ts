@@ -2,6 +2,8 @@ import { and, desc, eq, inArray, lt, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { paymentAttempts, paymentMethods, paymentProviderConfigs, providerEvents, providerOperations, providerTransactions } from '@/server/db/drizzle/schema';
 
+import { has } from '@/lib/has';
+
 /** What has happened on the payment platforms, for the people who watch over it. Read-only. */
 export class PaymentActivityService {
   constructor(private readonly db: DrizzleDb) {}
@@ -34,7 +36,7 @@ export class PaymentActivityService {
       .from(providerOperations)
       .innerJoin(paymentProviderConfigs, eq(paymentProviderConfigs.id, providerOperations.providerId))
       .leftJoin(paymentMethods, eq(paymentMethods.id, providerOperations.methodId))
-      .where(and(eq(providerOperations.companyId, companyId), f.providerId ? eq(providerOperations.providerId, f.providerId) : undefined, f.before ? lt(providerOperations.createdAt, new Date(f.before)) : undefined))
+      .where(and(eq(providerOperations.companyId, companyId), has(f.providerId) ? eq(providerOperations.providerId, f.providerId) : undefined, has(f.before) ? lt(providerOperations.createdAt, new Date(f.before)) : undefined))
       .orderBy(desc(providerOperations.createdAt))
       .limit(Math.min(f.limit ?? 50, 200));
     return rows;
@@ -45,7 +47,7 @@ export class PaymentActivityService {
       .select({ ev: providerEvents, provider: paymentProviderConfigs.displayName })
       .from(providerEvents)
       .innerJoin(paymentProviderConfigs, eq(paymentProviderConfigs.id, providerEvents.providerId))
-      .where(and(eq(providerEvents.companyId, companyId), f.state ? eq(providerEvents.state, f.state as never) : undefined, f.before ? lt(providerEvents.createdAt, new Date(f.before)) : undefined))
+      .where(and(eq(providerEvents.companyId, companyId), has(f.state) ? eq(providerEvents.state, f.state as never) : undefined, has(f.before) ? lt(providerEvents.createdAt, new Date(f.before)) : undefined))
       .orderBy(desc(providerEvents.createdAt))
       .limit(Math.min(f.limit ?? 50, 200));
   }
@@ -56,7 +58,7 @@ export class PaymentActivityService {
       .from(providerTransactions)
       .innerJoin(paymentProviderConfigs, eq(paymentProviderConfigs.id, providerTransactions.providerId))
       .leftJoin(paymentMethods, eq(paymentMethods.id, providerTransactions.methodId))
-      .where(and(eq(providerTransactions.companyId, companyId), f.state ? eq(providerTransactions.state, f.state as never) : undefined, f.before ? lt(providerTransactions.createdAt, new Date(f.before)) : undefined))
+      .where(and(eq(providerTransactions.companyId, companyId), has(f.state) ? eq(providerTransactions.state, f.state as never) : undefined, has(f.before) ? lt(providerTransactions.createdAt, new Date(f.before)) : undefined))
       .orderBy(desc(providerTransactions.createdAt))
       .limit(Math.min(f.limit ?? 50, 200));
   }

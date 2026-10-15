@@ -10,6 +10,8 @@ import {
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { FinanceError, type FinanceContext } from '../errors';
 
+import { has } from '@/lib/has';
+
 export interface BankAccountInput {
   code: string;
   name: string;
@@ -72,7 +74,7 @@ export class BankAccountService {
   }
 
   private validate(input: BankAccountInput) {
-    if (!input.code.trim() || !input.name.trim()) {
+    if (!has(input.code.trim()) || !has(input.name.trim())) {
       throw new FinanceError('INVALID', 'A bank account needs a code and a name.');
     }
     if (!/^[A-Z0-9][A-Z0-9_-]{0,19}$/.test(input.code.trim())) {
@@ -85,7 +87,7 @@ export class BankAccountService {
   async create(ctx: FinanceContext, input: BankAccountInput): Promise<BankAccountRow> {
     this.validate(input);
     return await this.db.transaction(async (tx) => {
-      if (input.feeGlAccountId) await this.checkGl(tx, ctx.companyId, input.feeGlAccountId, 'fee');
+      if (has(input.feeGlAccountId)) await this.checkGl(tx, ctx.companyId, input.feeGlAccountId, 'fee');
       const [dup] = await tx
         .select({ id: bankAccounts.id })
         .from(bankAccounts)
@@ -134,7 +136,7 @@ export class BankAccountService {
         .from(bankLedgerEntries)
         .where(eq(bankLedgerEntries.bankAccountId, id));
       const used = (moved?.n ?? 0) > 0;
-      if (used && input.currency && input.currency !== current.currency) {
+      if (used && has(input.currency) && input.currency !== current.currency) {
         throw new FinanceError('ACCOUNT_IN_USE', 'Money has moved through this account, so its currency cannot change.');
       }
       if (used && input.kind && input.kind !== current.kind) {
@@ -142,8 +144,8 @@ export class BankAccountService {
       }
       const next = { ...current, ...stripUndefined(input) };
       this.validate({ ...next, details: next.details });
-      if (input.feeGlAccountId) await this.checkGl(tx, ctx.companyId, input.feeGlAccountId, 'fee');
-      if (input.code && input.code !== current.code) {
+      if (has(input.feeGlAccountId)) await this.checkGl(tx, ctx.companyId, input.feeGlAccountId, 'fee');
+      if (has(input.code) && input.code !== current.code) {
         throw new FinanceError('CODE_FIXED', 'The code of a bank account does not change; block it and add a new one.');
       }
       const [row] = await tx
@@ -188,7 +190,7 @@ export class BankAccountService {
           subject: { type: 'bank_account', id },
           action: blocked ? 'finance.bank_account_blocked' : 'finance.bank_account_unblocked',
           actor: ctx.actor,
-          reason: reason ? { text: reason } : undefined,
+          reason: has(reason) ? { text: reason } : undefined,
           inputs: { origin: ctx.origin },
         },
         tx,

@@ -1,3 +1,5 @@
+
+import { has } from '@/lib/has';
 /**
  * The payment reference a provider assigns when money is captured.
  * This is not the checkout-request id we sent when the prompt was created.
@@ -41,7 +43,7 @@ export function metadataItemValue(items: MetadataItem[], name: string): string |
 function firstText(body: Record<string, unknown>, keys: string[]): string | null {
   for (const key of keys) {
     const value = body[key];
-    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (typeof value === 'string' && has(value.trim())) return value.trim();
     if (typeof value === 'number' && Number.isFinite(value)) return String(value);
   }
   return null;

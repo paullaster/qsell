@@ -1,3 +1,5 @@
+
+import { has } from '@/lib/has';
 /**
  * Receivables rules that need no database: money in whole cents, who a payment is applied to,
  * ageing, and whether a receipt satisfies its payment method. Customer ledger amounts are
@@ -205,11 +207,11 @@ export function checkReceiptAgainstMethod(
     issues.push({ code: 'METHOD_NOT_FOR_RECEIPTS', message: 'That payment method cannot be used to receive money from customers.' });
   }
   if (r.amountCents <= 0) issues.push({ code: 'AMOUNT_INVALID', message: 'The amount must be more than zero.' });
-  if (m.requiresReference && !(r.externalReference ?? '').trim()) {
+  if (m.requiresReference && !has((r.externalReference ?? '').trim())) {
     issues.push({ code: 'REFERENCE_REQUIRED', message: 'This payment method needs the payment reference (transaction code, slip or bank reference).' });
   }
   if (m.requiresCounterparty) {
-    const missing = CHEQUE_FIELDS.filter((f) => !(r.counterparty[f] ?? '').trim());
+    const missing = CHEQUE_FIELDS.filter((f) => !has((r.counterparty[f] ?? '').trim()));
     if (missing.length > 0) {
       issues.push({
         code: 'COUNTERPARTY_REQUIRED',

@@ -10,6 +10,8 @@ import {
 } from '@/server/domains/finance/actions';
 import { Field, Message, PageHeader, buttonClass, cardClass, fieldClass, primaryClass, today, type Notice, attempt } from './ui';
 
+import { has } from '@/lib/has';
+
 const GENERAL: [key: 'sales' | 'sales_returns' | 'sales_discount' | 'cogs' | 'inventory_adjustment', label: string][] = [
   ['sales', 'Sales'],
   ['sales_returns', 'Sales returns'],
@@ -135,7 +137,7 @@ export function PostingSetupClient({ view }: { view: PostingSetupView }) {
 
       <section aria-labelledby={`${uid}-gen`} className="space-y-3">
         <h3 id={`${uid}-gen`} className="text-sm font-bold text-fg-strong">Sales and cost accounts (business group × product group)</h3>
-        {editing ? (
+        {has(editing) ? (
           <form onSubmit={save} className={`${cardClass} space-y-4`} aria-label="Edit posting setup">
             {(() => {
               const row = view.general.find((g) => g.id === editing)!;

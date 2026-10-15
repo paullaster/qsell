@@ -1,5 +1,7 @@
 import type { CallbackOutcome, PaymentProviderCode } from './types';
 
+import { has } from '@/lib/has';
+
 export interface CallbackStatusVerdict {
   /**
    * The exact status value the provider sent in the callback payload, verbatim.
@@ -66,19 +68,19 @@ export function extractCallbackStatus(
       const code =
         body.Body?.stkCallback?.ResultCode ?? body.ResultCode ?? body.resultCode ?? body.statusCode;
       if (code != null) return String(code);
-      return typeof body.status === 'string' && body.status ? body.status : null;
+      return typeof body.status === 'string' && has(body.status) ? body.status : null;
     }
     case 'pesapal_v3': {
       const text = body.payment_status_description ?? body.status ?? body.OrderNotificationType;
       if (text == null) return null;
       const value = String(text);
-      return value ? value : null;
+      return has(value) ? value : null;
     }
     case 'jenga_hq': {
       const text = body.status ?? body.transactionStatus ?? body.state;
       if (text == null) return null;
       const value = String(text);
-      return value ? value : null;
+      return has(value) ? value : null;
     }
     default:
       return null;

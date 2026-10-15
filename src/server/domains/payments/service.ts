@@ -17,6 +17,8 @@ import { getContainer } from '@/server/di/container';
 import { InventoryReservationService } from '@/server/domains/inventory/reservation-service';
 import type { PaymentProvider } from '@/types/index';
 
+import { has } from '@/lib/has';
+
 function headersToRecord(headers: Headers): Record<string, string> {
   const out: Record<string, string> = {};
   headers.forEach((value, key) => {
@@ -44,14 +46,14 @@ export class PaymentService implements AttemptSettler {
   }
 
   async resolvePublicBaseUrl(branch: BranchRow): Promise<string> {
-    if (branch?.publicBaseUrl?.trim()) return branch.publicBaseUrl.replace(/\/$/, '');
+    if (has(branch?.publicBaseUrl?.trim())) return branch.publicBaseUrl.replace(/\/$/, '');
     const companies = await this.db
       .select()
       .from(companySettings)
       .where(eq(companySettings.id, branch.companyId))
       .limit(1);
     const companyUrl = companies[0]?.publicBaseUrl?.trim();
-    if (companyUrl) return companyUrl.replace(/\/$/, '');
+    if (has(companyUrl)) return companyUrl.replace(/\/$/, '');
     throw new Error(
       'Public base URL is not configured. Set it on the company or branch in Settings so payment callbacks can be built.',
     );
@@ -164,7 +166,7 @@ export class PaymentService implements AttemptSettler {
     description?: string;
   }) {
     const resolved = await this.resolveCheckout(params.branch, params.providerCode);
-    if (!resolved?.provider.isEnabled) {
+    if (resolved?.provider.isEnabled !== true) {
       throw new Error(`Payment provider ${params.providerCode} is not enabled for this branch`);
     }
     const config = resolved.provider;
@@ -251,7 +253,7 @@ export class PaymentService implements AttemptSettler {
       ...(status === 'failed' ? { status: 'failed' as const } : {}),
       paymentMethod: params.providerCode,
       // The finance method it goes through decides which bank account and G/L account it posts to.
-      ...(resolved.methodId ? { paymentMethodId: resolved.methodId } : {}),
+      ...(has(resolved.methodId) ? { paymentMethodId: resolved.methodId } : {}),
     });
 
     if (status === 'failed') {
@@ -317,7 +319,7 @@ export class PaymentService implements AttemptSettler {
       .where(and(eq(paymentAttempts.id, attemptId), ne(paymentAttempts.status, 'cancelled')));
     // A checkout id is not a receipt. The platform confirmed the payment, so the order is paid; the ledger credit
     // needs the platform's own transaction number and waits for it (the reconcile screen lists it) if none came.
-    const real = input.reference && !input.reference.startsWith('ws_CO_') ? input.reference : null;
+    const real = has(input.reference) && !input.reference.startsWith('ws_CO_') ? input.reference : null;
     const receiptProviders = attempt.providerCode === 'mpesa_daraja' || attempt.providerCode === 'kcb_buni';
     await this.orderRepo.update(attempt.orderId, {
       paymentStatus: 'paid',
@@ -327,7 +329,7 @@ export class PaymentService implements AttemptSettler {
     });
     await InventoryReservationService.fulfilOrder(attempt.orderId);
     await getContainer().customers.applyOrderPayment(attempt.orderId);
-    if (real) await getContainer().transactionReconcile.reconcileSuccessfulPaymentAttempt(attemptId);
+    if (has(real)) await getContainer().transactionReconcile.reconcileSuccessfulPaymentAttempt(attemptId);
     return { settled: true };
   }
 

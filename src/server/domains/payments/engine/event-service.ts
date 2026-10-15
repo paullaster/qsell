@@ -4,6 +4,8 @@ import { providerEvents, type ProviderEventRow, type ProviderEventState } from '
 import { bodyHash, ipAllowed, redactDeep, redactHeaders } from './redact';
 import type { EngineSettings } from './settings';
 
+import { has } from '@/lib/has';
+
 export interface RecordEvent {
   companyId: string;
   providerId: string;
@@ -37,7 +39,7 @@ export class ProviderEventService {
   async record(input: RecordEvent): Promise<{ event: ProviderEventRow; parsed: unknown }> {
     let parsed: unknown = null;
     try {
-      parsed = input.rawText ? JSON.parse(input.rawText) : null;
+      parsed = has(input.rawText) ? JSON.parse(input.rawText) : null;
     } catch {
       parsed = null;
     }

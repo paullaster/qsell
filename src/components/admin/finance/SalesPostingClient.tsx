@@ -11,6 +11,8 @@ import {
 } from '@/server/domains/finance/sales-actions';
 import { Chip, Field, Message, PageHeader, buttonClass, cardClass, fieldClass, money, primaryClass, type Notice, attempt } from './ui';
 
+import { has } from '@/lib/has';
+
 type View = Extract<Awaited<ReturnType<typeof salesPostingOverviewAction>>, { ok: true }>['data'];
 
 const KIND: Record<string, string> = {
@@ -63,7 +65,7 @@ export function SalesPostingClient({ view }: { view: View }) {
       <section className={`${cardClass} space-y-3`} aria-labelledby={`${uid}-st`}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 id={`${uid}-st`} className="text-sm font-bold text-fg-strong">Status</h3>
-          {view.goLive ? <Chip tone="green">Live since {view.goLive}</Chip> : <Chip tone="amber">Not live: sales do not reach the general ledger yet</Chip>}
+          {has(view.goLive) ? <Chip tone="green">Live since {view.goLive}</Chip> : <Chip tone="amber">Not live: sales do not reach the general ledger yet</Chip>}
         </div>
         <ul className="space-y-1.5" aria-label="Readiness">
           {view.checks.map((c) => (
@@ -83,13 +85,13 @@ export function SalesPostingClient({ view }: { view: View }) {
                 </select>
               </Field>
             </div>
-            <button type="submit" className={buttonClass} disabled={busy || !tax || tax === view.outputTaxAccountId}>Save tax account</button>
+            <button type="submit" className={buttonClass} disabled={busy || !has(tax) || tax === view.outputTaxAccountId}>Save tax account</button>
           </form>
         ) : null}
         <p className="text-xs text-fg-muted">The other accounts are edited on <Link className="text-indigo-600 hover:underline" href="/admin/finance/posting-setup">Posting setup</Link>.</p>
       </section>
 
-      {!view.goLive && view.can.goLive ? (
+      {!has(view.goLive) && view.can.goLive ? (
         <form onSubmit={live} className={`${cardClass} space-y-3`} aria-labelledby={`${uid}-gl`}>
           <h3 id={`${uid}-gl`} className="text-sm font-bold text-fg-strong">Switch sales on for the general ledger</h3>
           <p className="text-sm text-fg">
@@ -115,7 +117,7 @@ export function SalesPostingClient({ view }: { view: View }) {
             I understand this starts the books for sales from today and cannot be undone.
           </label>
           {blocking.length > 0 ? <p role="alert" className="text-sm text-red-700">Fix the items marked ✗ above first.</p> : null}
-          <button type="submit" className={primaryClass} disabled={busy || !offset || !confirm || blocking.length > 0}>Switch on</button>
+          <button type="submit" className={primaryClass} disabled={busy || !has(offset) || !confirm || blocking.length > 0}>Switch on</button>
         </form>
       ) : null}
 
@@ -137,7 +139,7 @@ export function SalesPostingClient({ view }: { view: View }) {
                     {view.can.retry ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void retry(r.id)} aria-label={`Retry ${KIND[r.kind] ?? r.kind} ${r.subjectId.slice(0, 18)}`}>Retry</button> : null}
                   </div>
                 </div>
-                {r.lastError ? <p className="mt-1 text-xs text-red-700">{r.lastError}</p> : null}
+                {has(r.lastError) ? <p className="mt-1 text-xs text-red-700">{r.lastError}</p> : null}
               </li>
             ))}
           </ul>

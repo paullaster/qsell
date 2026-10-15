@@ -16,7 +16,7 @@ export type Slot = string | null;
 const slotOf = (l: Placed): Slot => l.sectionId ?? null;
 
 /** The places, in the order they are shown: individual items first, then the sections. */
-export const slotOrder = (sections: Array<{ id: string }>): Slot[] => [
+export const slotOrder = (sections: { id: string }[]): Slot[] => [
   null,
   ...sections.map((s) => s.id),
 ];
@@ -75,7 +75,7 @@ export function placeOf(lines: Placed[], index: number): LinePlace {
  */
 export function nudgeLine<L extends Placed>(
   lines: L[],
-  sections: Array<{ id: string }>,
+  sections: { id: string }[],
   index: number,
   dir: -1 | 1,
 ): L[] {
@@ -93,7 +93,7 @@ export function nudgeLine<L extends Placed>(
 
 export function canNudgeLine(
   lines: Placed[],
-  sections: Array<{ id: string }>,
+  sections: { id: string }[],
   index: number,
   dir: -1 | 1,
 ): boolean {
@@ -221,7 +221,7 @@ export function addCatalogueEntry<L extends Stackable & { unitPrice?: number | n
 
 /** Where the last line for a product sits in a place, or -1. */
 export function lastIndexOfProduct(
-  lines: Array<Placed & { productId: string }>,
+  lines: (Placed & { productId: string })[],
   productId: string,
   slot: Slot,
 ): number {

@@ -1,3 +1,5 @@
+
+import { has } from '@/lib/has';
 /**
  * Product descriptions are stored as a single string.
  * Structured sections use Markdown AT2 headings:
@@ -13,11 +15,11 @@
  * Legacy plain text (no ## headings) is treated as one untitled body block.
  */
 
-export type ProductDescriptionSection = {
+export interface ProductDescriptionSection {
   id: string;
   heading: string;
   body: string;
-};
+}
 
 function newSectionId(): string {
   return `sec_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -36,7 +38,7 @@ export function createEmptyDescriptionSection(
 /** Parse a stored description into editable sections (fault-tolerant). */
 export function parseProductDescription(raw: string | null | undefined): ProductDescriptionSection[] {
   const text = typeof raw === 'string' ? raw.replace(/\r\n/g, '\n').trim() : '';
-  if (!text) {
+  if (!has(text)) {
     return [createEmptyDescriptionSection()];
   }
 
@@ -54,7 +56,7 @@ export function parseProductDescription(raw: string | null | undefined): Product
   const firstIndex = matches[0]!.index ?? 0;
   if (firstIndex > 0) {
     const intro = text.slice(0, firstIndex).trim();
-    if (intro) {
+    if (has(intro)) {
       sections.push(createEmptyDescriptionSection({ body: intro }));
     }
   }
@@ -78,10 +80,10 @@ export function serializeProductDescription(sections: ProductDescriptionSection[
   for (const section of sections) {
     const heading = section.heading.trim();
     const body = section.body.trim();
-    if (!heading && !body) continue;
+    if (!has(heading) && !has(body)) continue;
 
-    if (heading) {
-      parts.push(body ? `## ${heading}\n\n${body}` : `## ${heading}`);
+    if (has(heading)) {
+      parts.push(has(body) ? `## ${heading}\n\n${body}` : `## ${heading}`);
     } else {
       parts.push(body);
     }
@@ -96,7 +98,7 @@ export function productDescriptionPlainText(raw: string | null | undefined): str
     .map((s) => {
       const heading = s.heading.trim();
       const body = s.body.trim();
-      if (heading && body) return `${heading}: ${body}`;
+      if (has(heading) && has(body)) return `${heading}: ${body}`;
       return heading || body;
     })
     .filter(Boolean)

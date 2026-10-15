@@ -5,6 +5,8 @@ import { useId, useState } from 'react';
 import { glEntriesAction } from '@/server/domains/finance/actions';
 import { Field, Message, PageHeader, buttonClass, cardClass, fieldClass, isZeroAmount, money, primaryClass, type Notice, attempt } from './ui';
 
+import { has } from '@/lib/has';
+
 type Page = Extract<Awaited<ReturnType<typeof glEntriesAction>>, { ok: true }>['data'];
 type Row = Page['rows'][number];
 
@@ -19,10 +21,10 @@ export function EntriesClient({ initial }: { initial: Page }) {
 
   const query = (cursor?: { date: string; id: number }) =>
     attempt(glEntriesAction({
-      ...(filter.accountId ? { accountId: filter.accountId } : {}),
-      ...(filter.from ? { from: filter.from } : {}),
-      ...(filter.to ? { to: filter.to } : {}),
-      ...(filter.documentNo ? { documentNo: filter.documentNo.trim() } : {}),
+      ...(has(filter.accountId) ? { accountId: filter.accountId } : {}),
+      ...(has(filter.from) ? { from: filter.from } : {}),
+      ...(has(filter.to) ? { to: filter.to } : {}),
+      ...(has(filter.documentNo) ? { documentNo: filter.documentNo.trim() } : {}),
       ...(cursor ? { cursor } : {}),
     }));
 
@@ -92,7 +94,7 @@ export function EntriesClient({ initial }: { initial: Page }) {
               <tr key={r.id} className="hover:bg-hover">
                 <td className="whitespace-nowrap px-3 py-2 text-xs text-fg-muted">{r.postingDate}</td>
                 <td className="px-3 py-2 font-mono text-xs">{r.documentNo}</td>
-                <td className="px-3 py-2"><span className="font-mono text-xs">{r.accountNo}</span> {r.accountName}{r.description ? <span className="block text-xs text-fg-muted">{r.description}</span> : null}</td>
+                <td className="px-3 py-2"><span className="font-mono text-xs">{r.accountNo}</span> {r.accountName}{has(r.description) ? <span className="block text-xs text-fg-muted">{r.description}</span> : null}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{isZeroAmount(r.debit) ? '' : money(r.debit)}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{isZeroAmount(r.credit) ? '' : money(r.credit)}</td>
                 <td className="px-3 py-2 text-xs text-fg-muted">{r.currency}</td>

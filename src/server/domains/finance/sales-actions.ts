@@ -5,6 +5,8 @@ import { getContainer } from '@/server/di/container';
 import { run } from './action-runner';
 import { fromCents } from './domain/receivables';
 
+import { has } from '@/lib/has';
+
 const fin = () => getContainer().finance;
 const PATH = '/admin/finance/sales-posting';
 
@@ -67,6 +69,6 @@ export async function goLiveAction(offsetAccountId: string) {
 }
 
 export async function retrySalesPostingAction(id?: string) {
-  return await run('sales_posting:retry', { surface: 'finance/sales-posting', action: id ? 'retry_one' : 'retry_all' }, async (ctx) =>
+  return await run('sales_posting:retry', { surface: 'finance/sales-posting', action: has(id) ? 'retry_one' : 'retry_all' }, async (ctx) =>
     await fin().salesPosting.retry(ctx, id), [PATH]);
 }

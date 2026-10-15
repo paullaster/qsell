@@ -10,6 +10,8 @@ import type { PaymentMethodInput } from './payment-method-service';
 import type { AllocateMode, ReceiptInput, ReceiptListFilter } from './receipt-service';
 import { fromCents } from '../domain/receivables';
 
+import { has } from '@/lib/has';
+
 const fin = () => getContainer().finance;
 const ROOT = '/admin/finance';
 const BANK = `${ROOT}/bank-accounts`;
@@ -216,7 +218,7 @@ export async function receiptDetailAction(id: string) {
         narration: r.narration,
         source: r.source,
         postedAt: r.postedAt ? r.postedAt.toISOString() : null,
-        postedBy: r.postedBy ? (d.actors[r.postedBy] ?? r.postedBy) : null,
+        postedBy: has(r.postedBy) ? (d.actors[r.postedBy] ?? r.postedBy) : null,
         createdBy: d.actors[r.createdBy] ?? r.createdBy,
         createdAt: r.createdAt.toISOString(),
         registerId: r.registerId,
@@ -245,7 +247,7 @@ export async function receiptDetailAction(id: string) {
         toStatus: e.toStatus,
         reasonCode: e.reasonCode,
         reasonText: e.reasonText,
-        actorId: e.actorId ? (d.actors[e.actorId] ?? e.actorId) : null,
+        actorId: has(e.actorId) ? (d.actors[e.actorId] ?? e.actorId) : null,
         actorType: e.actorType,
         surface: (e.origin as { surface?: string }).surface ?? null,
         permission: (e.origin as { permissionUsed?: string }).permissionUsed ?? null,
@@ -279,7 +281,7 @@ export async function createReceiptAction(input: ReceiptInput, post?: { allocate
     'receipts:create',
     { surface: 'finance/receipts/new', action: post ? 'create_and_post' : 'create_draft' },
     async (ctx) => {
-      if (input.isDeposit && !(await canPermission('wallet:deposit'))) {
+      if (input.isDeposit === true && !(await canPermission('wallet:deposit'))) {
         throw new FinanceError('CANNOT_DEPOSIT', 'You may not record advance deposits.');
       }
       if (post && !(await canPermission('receipts:post'))) {

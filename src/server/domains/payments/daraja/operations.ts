@@ -12,6 +12,8 @@ import { darajaSettings, OPERATION_DEFAULTS } from './config';
 import { parseAsyncResult, receiptFromParams, resultParameters } from './parsers';
 import { darajaTimestamp, looksLikeReceipt, securityCredential, stkPassword, toMsisdn } from './security';
 
+import { has } from '@/lib/has';
+
 export { DARAJA_OPERATIONS, MONEY_OUT_OPERATIONS, validateOperationInput, type DarajaOperationCode, type OperationInfo, type FieldSpec } from './catalog';
 
 export interface StartOperation {
@@ -45,7 +47,7 @@ export function acceptance(operation: DarajaOperationCode, body: Record<string, 
       return ['1000', '1001'].includes(text('ResponseStatus')) ? { ok: true } : refused(text('ResponseStatus'), 'The registration was refused.');
     case 'pull_query':
       // 1000 = transactions, 1001 = none in the period; both are answers.
-      return !text('ResponseCode') || ['0', '1000', '1001'].includes(text('ResponseCode')) ? { ok: true } : refused(text('ResponseCode'), 'The query was refused.');
+      return !has(text('ResponseCode')) || ['0', '1000', '1001'].includes(text('ResponseCode')) ? { ok: true } : refused(text('ResponseCode'), 'The query was refused.');
     case 'b2b_express':
       return text('code') === '0' ? { ok: true } : refused(text('code'), text('status') || 'The prompt could not be sent.');
     case 'bill_optin':
@@ -57,7 +59,7 @@ export function acceptance(operation: DarajaOperationCode, body: Record<string, 
     case 'bill_acknowledge':
       return text('rescode') === '200' ? { ok: true } : { ok: false, code: text('rescode') || 'REFUSED', reason: text('resmsg') || text('Status_Message') || 'Bill Manager did not accept the request.' };
     case 'qr_generate':
-      return text('QRCode') ? { ok: true } : refused(text('ResponseCode'), 'No QR code came back.');
+      return has(text('QRCode')) ? { ok: true } : refused(text('ResponseCode'), 'No QR code came back.');
     default:
       return text('ResponseCode') === '0' ? { ok: true } : refused(text('ResponseCode'), 'Safaricom did not accept the request.');
   }
@@ -68,7 +70,7 @@ const ASYNC_WAIT_SECONDS = 600;
 
 /** The addresses Safaricom calls us on. The secret is the provider's; the words in the path avoid what Safaricom refuses. */
 export function callbackUrl(ctx: PlatformContext, secret: string, kind: 'c2b-confirm' | 'c2b-validate' | 'result' | 'timeout' | 'express' | 'bill' | 'pull'): string {
-  if (!ctx.publicBaseUrl) throw new OperationRefused('NO_PUBLIC_URL', "Set the company's public address first (Settings → Payments); Safaricom needs it to call back.");
+  if (!has(ctx.publicBaseUrl)) throw new OperationRefused('NO_PUBLIC_URL', "Set the company's public address first (Settings → Payments); Safaricom needs it to call back.");
   return `${ctx.publicBaseUrl}/api/hooks/pay/${ctx.provider.id}/${kind}/${secret}`;
 }
 
@@ -86,7 +88,7 @@ export class DarajaOperations {
   ) {}
 
   private async method(id: string | null | undefined): Promise<PaymentMethodRow | null> {
-    if (!id) return null;
+    if (!has(id)) return null;
     const [m] = await this.db.select().from(paymentMethods).where(eq(paymentMethods.id, id));
     return m ?? null;
   }
@@ -98,17 +100,17 @@ export class DarajaOperations {
     const ctx = await this.contexts.forProvider(input.providerId);
     if (ctx.provider.providerCode !== 'mpesa_daraja') throw new OperationRefused('WRONG_PROVIDER', 'That provider is not an M-Pesa (Daraja) connection.');
     const settings = darajaSettings(ctx.settings);
-    if (!(settings.operations[input.operation]?.enabled ?? OPERATION_DEFAULTS[input.operation])) {
+    if ((settings.operations[input.operation]?.enabled ?? OPERATION_DEFAULTS[input.operation]) !== true) {
       throw new OperationRefused('OPERATION_OFF', `${info.label} is switched off for this provider (Settings → Payments).`);
     }
-    if (info.sandboxOnly && ctx.provider.environment === 'production') throw new OperationRefused('SANDBOX_ONLY', `${info.label} only exists on Safaricom's testing environment.`);
+    if (info.sandboxOnly === true && ctx.provider.environment === 'production') throw new OperationRefused('SANDBOX_ONLY', `${info.label} only exists on Safaricom's testing environment.`);
     const amount = typeof input.input.amount === 'string' || typeof input.input.amount === 'number' ? String(input.input.amount) : null;
     const max = settings.operations[input.operation]?.maxAmount;
-    if (amount && max && Number(amount) > Number(max)) throw new OperationRefused('OVER_LIMIT', `${info.label} is limited to ${max} per request for this provider.`);
+    if (has(amount) && has(max) && Number(amount) > Number(max)) throw new OperationRefused('OVER_LIMIT', `${info.label} is limited to ${max} per request for this provider.`);
     if (info.moneyOut) throw new OperationRefused('USE_REQUEST', `${info.label} moves money out, so it is requested and approved first, not run directly.`);
     if (info.needsInitiator) this.initiator(ctx); // refuse now, in words, not after it is written down
     const method = await this.method(input.methodId);
-    if (input.methodId && (!method || method.providerId !== input.providerId)) throw new OperationRefused('METHOD_MISMATCH', 'That payment method does not go through this provider.');
+    if (has(input.methodId) && (!method || method.providerId !== input.providerId)) throw new OperationRefused('METHOD_MISMATCH', 'That payment method does not go through this provider.');
 
     const originatorId = randomUUID();
     const { op, created } = await this.ops.create({
@@ -135,7 +137,7 @@ export class DarajaOperations {
 
   private initiator(ctx: PlatformContext) {
     const c = ctx.credentials;
-    if (!c.initiatorName?.trim() || !c.initiatorPassword || !c.certificate?.trim()) {
+    if (!has(c.initiatorName?.trim()) || !has(c.initiatorPassword) || !has(c.certificate?.trim())) {
       throw new OperationRefused('NO_INITIATOR', "This needs the M-Pesa API operator's name and password and Safaricom's certificate. Save them on the provider (Settings → Payments).");
     }
     return { name: c.initiatorName.trim(), credential: securityCredential(c.initiatorPassword, c.certificate) };
@@ -229,9 +231,9 @@ export class DarajaOperations {
     const shortcode = String(input.shortcode ?? method?.channelNumber ?? creds.shortcode ?? '').trim();
     switch (op.operation as DarajaOperationCode) {
       case 'stk_push': {
-        if (!creds.shortcode?.trim() || !creds.passkey?.trim()) throw new OperationRefused('NO_CREDENTIALS', 'M-Pesa Express needs the business shortcode and passkey.');
+        if (!has(creds.shortcode?.trim()) || !has(creds.passkey?.trim())) throw new OperationRefused('NO_CREDENTIALS', 'M-Pesa Express needs the business shortcode and passkey.');
         const phone = toMsisdn(String(input.phone ?? ''));
-        if (!phone) throw new OperationRefused('PHONE_INVALID', 'The phone number is not a Kenyan mobile number.');
+        if (!has(phone)) throw new OperationRefused('PHONE_INVALID', 'The phone number is not a Kenyan mobile number.');
         const ts = darajaTimestamp(now);
         const amount = Math.max(1, Math.round(Number(input.amount)));
         return {
@@ -253,7 +255,7 @@ export class DarajaOperations {
         };
       }
       case 'stk_query': {
-        if (!creds.shortcode?.trim() || !creds.passkey?.trim()) throw new OperationRefused('NO_CREDENTIALS', 'Checking an STK Push needs the business shortcode and passkey.');
+        if (!has(creds.shortcode?.trim()) || !has(creds.passkey?.trim())) throw new OperationRefused('NO_CREDENTIALS', 'Checking an STK Push needs the business shortcode and passkey.');
         const ts = darajaTimestamp(now);
         return {
           path: '/mpesa/stkpushquery/v1/query',
@@ -261,7 +263,7 @@ export class DarajaOperations {
         };
       }
       case 'c2b_register_urls': {
-        if (!shortcode) throw new OperationRefused('NO_SHORTCODE', 'Choose the paybill or till to register.');
+        if (!has(shortcode)) throw new OperationRefused('NO_SHORTCODE', 'Choose the paybill or till to register.');
         const secret = await this.contexts.callbackSecret(ctx.provider.id);
         return {
           path: `/mpesa/c2b/${settings.c2b.apiVersion}/registerurl`,
@@ -302,7 +304,7 @@ export class DarajaOperations {
       case 'pull_register': {
         const secret = await this.contexts.callbackSecret(ctx.provider.id);
         const nominated = String(input.nominatedNumber ?? settings.pull.nominatedNumber ?? '').trim();
-        if (!shortcode || !nominated) throw new OperationRefused('PULL_INPUT', 'Registering for Pull Transactions needs the shortcode and the nominated phone number on the M-Pesa portal.');
+        if (!has(shortcode) || !has(nominated)) throw new OperationRefused('PULL_INPUT', 'Registering for Pull Transactions needs the shortcode and the nominated phone number on the M-Pesa portal.');
         return { path: '/pulltransactions/v1/register', body: { ShortCode: shortcode, RequestType: 'Pull', NominatedNumber: nominated, CallBackURL: callbackUrl(ctx, secret, 'pull') } };
       }
       case 'pull_query':
@@ -326,7 +328,7 @@ export class DarajaOperations {
         const init = this.initiator(ctx);
         const secret = await this.contexts.callbackSecret(ctx.provider.id);
         const phone = toMsisdn(String(input.phone ?? ''));
-        if (!phone) throw new OperationRefused('PHONE_INVALID', 'The phone number is not a Kenyan mobile number.');
+        if (!has(phone)) throw new OperationRefused('PHONE_INVALID', 'The phone number is not a Kenyan mobile number.');
         return {
           path: '/mpesa/b2c/v3/paymentrequest',
           body: { OriginatorConversationID: op.originatorId, InitiatorName: init.name, SecurityCredential: init.credential, CommandID: String(input.commandId ?? 'BusinessPayment'), Amount: String(input.amount), PartyA: shortcode, PartyB: phone, Remarks: String(input.remarks ?? 'Payment').slice(0, 100), QueueTimeOutURL: callbackUrl(ctx, secret, 'timeout'), ResultURL: callbackUrl(ctx, secret, 'result'), Occassion: String(input.occasion ?? '').slice(0, 100) },
@@ -365,7 +367,7 @@ export class DarajaOperations {
       }
       case 'b2b_express': {
         const secret = await this.contexts.callbackSecret(ctx.provider.id);
-        if (!shortcode) throw new OperationRefused('NO_SHORTCODE', 'Choose the paybill that is to be paid.');
+        if (!has(shortcode)) throw new OperationRefused('NO_SHORTCODE', 'Choose the paybill that is to be paid.');
         return { path: '/v1/ussdpush/get-msisdn', body: { primaryShortCode: String(input.primaryShortCode), receiverShortCode: shortcode, amount: String(input.amount), paymentRef: String(input.paymentRef).slice(0, 20), callbackUrl: callbackUrl(ctx, secret, 'express'), partnerName: String(input.partnerName).slice(0, 40), RequestRefID: op.originatorId } };
       }
       case 'bill_optin':
@@ -392,13 +394,13 @@ export class DarajaOperations {
   async completeFromResult(providerId: string, payload: unknown): Promise<{ matched: boolean; op?: ProviderOperationRow; reason?: string }> {
     const result = parseAsyncResult(payload);
     if (!result) return { matched: false, reason: 'The body is not a Daraja result.' };
-    const byOriginator = result.originatorId ? await this.ops.byOriginator(providerId, result.originatorId) : null;
-    const byConversation = !byOriginator && result.conversationId ? await this.ops.byConversation(providerId, result.conversationId) : null;
+    const byOriginator = has(result.originatorId) ? await this.ops.byOriginator(providerId, result.originatorId) : null;
+    const byConversation = !byOriginator && has(result.conversationId) ? await this.ops.byConversation(providerId, result.conversationId) : null;
     const op = byOriginator ?? byConversation;
     if (!op) return { matched: false, reason: 'No operation of ours has this originator or conversation id.' };
     if (['succeeded', 'failed', 'cancelled', 'rejected'].includes(op.status)) return { matched: true, op, reason: 'Already finished.' };
     // The conversation id sent back must be the one the platform gave us when it accepted the request.
-    if (op.conversationId && result.conversationId && op.conversationId !== result.conversationId) {
+    if (has(op.conversationId) && has(result.conversationId) && op.conversationId !== result.conversationId) {
       return { matched: false, reason: 'The conversation id does not match the one the platform gave for this request.' };
     }
     const ok = result.resultCode === '0';
@@ -428,7 +430,7 @@ export class DarajaOperations {
     const body = (payload ?? {}) as Record<string, unknown>;
     const result = parseAsyncResult(body);
     const originator = result?.originatorId ?? (typeof body.OriginatorConversationID === 'string' ? body.OriginatorConversationID : null);
-    const op = originator ? await this.ops.byOriginator(providerId, originator) : null;
+    const op = has(originator) ? await this.ops.byOriginator(providerId, originator) : null;
     if (!op) return { matched: false };
     if (['succeeded', 'failed', 'cancelled', 'rejected'].includes(op.status)) return { matched: true, op };
     await this.ops.update(op.id, { status: 'timed_out', failureCode: 'QUEUE_TIMEOUT', failureReason: 'The platform timed this request out before processing it. It has to be checked, not assumed.', nextAttemptAt: new Date(Date.now() + 120 * 1000) });

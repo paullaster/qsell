@@ -11,6 +11,8 @@ import {
 import { asJengaCredentials, type JengaHqCredentials } from '../types';
 import { extractPaymentReference } from '../payment-reference';
 
+import { has } from '@/lib/has';
+
 /**
  * Jenga HQ receive-money / checkout adapter.
  * Signature formula follows Jenga docs (SHA-256 RSA over concatenated fields).
@@ -25,8 +27,8 @@ export class JengaHqAdapter implements PaymentPort {
     apiBaseUrl: string,
   ): Promise<ConnectionTestResult> {
     const creds = asJengaCredentials(credentials);
-    return probeConnection('Jenga', async () => {
-      if (!creds.merchantCode || !creds.consumerSecret || !creds.apiKey) throw new Error('The merchant code, consumer secret and API key are not all saved yet.');
+    return await probeConnection('Jenga', async () => {
+      if (!has(creds.merchantCode) || !has(creds.consumerSecret) || !has(creds.apiKey)) throw new Error('The merchant code, consumer secret and API key are not all saved yet.');
       await this.authenticate(apiBaseUrl, creds);
     });
   }
@@ -56,7 +58,7 @@ export class JengaHqAdapter implements PaymentPort {
     }
     const data = (await res.json()) as { accessToken?: string; token?: string };
     const token = data.accessToken || data.token;
-    if (!token) throw new Error('Jenga auth missing access token');
+    if (!has(token)) throw new Error('Jenga auth missing access token');
     return token;
   }
 
@@ -67,7 +69,7 @@ export class JengaHqAdapter implements PaymentPort {
     apiBaseUrl: string,
   ): Promise<InitiatePaymentResult> {
     const creds = asJengaCredentials(credentials);
-    if (!creds.merchantCode || !creds.consumerSecret || !creds.apiKey || !creds.privateKeyPem) {
+    if (!has(creds.merchantCode) || !has(creds.consumerSecret) || !has(creds.apiKey) || !has(creds.privateKeyPem)) {
       return {
         status: 'failed',
         errorMessage: 'Jenga HQ credentials are incomplete. Configure them in admin.',
@@ -129,7 +131,7 @@ export class JengaHqAdapter implements PaymentPort {
             : undefined;
 
       return {
-        status: redirect ? 'awaiting_redirect' : 'pending',
+        status: has(redirect) ? 'awaiting_redirect' : 'pending',
         providerReference: String(raw.transactionId || raw.transactionReference || ref),
         externalReference: String(raw.reference || ref),
         redirectUrl: redirect,

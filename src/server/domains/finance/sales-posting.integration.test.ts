@@ -1,10 +1,12 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { and, eq, sql } from 'drizzle-orm';
 
+import { has } from '@/lib/has';
+
 /** Needs a Postgres built from the migrations:  TEST_DATABASE_URL=postgres://... pnpm test */
 const url = process.env.TEST_DATABASE_URL;
 
-describe.skipIf(!url)('sales posting (database)', () => {
+describe.skipIf(!has(url))('sales posting (database)', () => {
   type Db = import('@/server/db/drizzle/client').DrizzleDb;
   let db: Db;
   let schema: typeof import('@/server/db/drizzle/schema');
@@ -38,7 +40,7 @@ describe.skipIf(!url)('sales posting (database)', () => {
   const invoice = async (c: Awaited<ReturnType<typeof customer>>, ord: { id: string; number: string }, total: number) =>
     await master.postInvoice({ customer: c, orderId: ord.id, orderNumber: ord.number, amount: total, currency: 'KES' });
   const rows = async (kind?: string) =>
-    (await db.select().from(schema.financeSalesPostings).where(and(eq(schema.financeSalesPostings.companyId, companyId), kind ? eq(schema.financeSalesPostings.kind, kind as never) : undefined)));
+    (await db.select().from(schema.financeSalesPostings).where(and(eq(schema.financeSalesPostings.companyId, companyId), has(kind) ? eq(schema.financeSalesPostings.kind, kind as never) : undefined)));
   const glFor = async (registerId: string) => {
     const lines = await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, registerId));
     const no = new Map(Object.entries(acct).map(([n, id]) => [id, n]));

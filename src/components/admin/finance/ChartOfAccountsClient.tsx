@@ -21,6 +21,8 @@ import {
   primaryClass,
   type Notice, attempt } from './ui';
 
+import { has } from '@/lib/has';
+
 interface Can {
   createAccounts: boolean;
   editAccounts: boolean;
@@ -128,10 +130,10 @@ export function ChartOfAccountsClient({ accounts, can }: { accounts: AccountView
       totaling: draft.totaling.trim() === '' ? null : draft.totaling.trim(),
       indent: draft.indent,
     };
-    const res = draft.id ? await attempt(updateAccountAction(draft.id, input)) : await attempt(createAccountAction(input));
+    const res = has(draft.id) ? await attempt(updateAccountAction(draft.id, input)) : await attempt(createAccountAction(input));
     setBusy(false);
     if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
-    setNotice({ kind: 'ok', text: draft.id ? 'Account saved.' : 'Account created.' });
+    setNotice({ kind: 'ok', text: has(draft.id) ? 'Account saved.' : 'Account created.' });
     setDraft(null);
     router.refresh();
   };
@@ -172,7 +174,7 @@ export function ChartOfAccountsClient({ accounts, can }: { accounts: AccountView
       <Message notice={notice} />
 
       {draft ? (
-        <form onSubmit={save} className={`${cardClass} space-y-4`} aria-label={draft.id ? 'Edit account' : 'New account'}>
+        <form onSubmit={save} className={`${cardClass} space-y-4`} aria-label={has(draft.id) ? 'Edit account' : 'New account'}>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <Field id={`${uid}-no`} label="Account number">
               <input ref={firstField} id={`${uid}-no`} value={draft.no} onChange={(e) => set('no', e.target.value)} className={`${fieldClass} font-mono`} disabled={draft.used} required />
@@ -253,7 +255,7 @@ export function ChartOfAccountsClient({ accounts, can }: { accounts: AccountView
               </p>
               <Badges a={a} />
             </div>
-            {a.totaling ? <p className="mt-1 text-xs text-fg-muted">Adds up {a.totaling}</p> : null}
+            {has(a.totaling) ? <p className="mt-1 text-xs text-fg-muted">Adds up {a.totaling}</p> : null}
             <Actions a={a} can={can} busy={busy} onEdit={() => { setNotice(null); setDraft(toDraft(a)); }} onBlock={() => toggleBlock(a)} onDelete={() => remove(a)} />
           </li>
         ))}
@@ -276,7 +278,7 @@ export function ChartOfAccountsClient({ accounts, can }: { accounts: AccountView
                 <td className="px-3 py-2 font-mono text-xs text-fg-strong">{a.no}</td>
                 <td className={`px-3 py-2 ${a.type === 'posting' ? 'text-fg' : 'font-bold text-fg-strong'}`} style={{ paddingLeft: `${12 + Math.min(a.indent, 4) * 16}px` }}>
                   {a.name}
-                  {a.totaling ? <span className="ml-2 text-xs font-normal text-fg-muted">{a.totaling}</span> : null}
+                  {has(a.totaling) ? <span className="ml-2 text-xs font-normal text-fg-muted">{a.totaling}</span> : null}
                 </td>
                 <td className="px-3 py-2 text-xs text-fg-muted">{a.type === 'posting' ? (a.category ?? '').replace('_', ' ') : a.type.replace('_', '-')}</td>
                 <td className="px-3 py-2"><Badges a={a} /></td>

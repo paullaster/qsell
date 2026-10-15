@@ -11,6 +11,8 @@ import { delayForAge, engineSettings } from './settings';
 import type { ProviderTransactionStore } from './transaction-store';
 import type { InboundClaim, VerificationOutcome, VerifyAttemptInput } from './types';
 
+import { has } from '@/lib/has';
+
 /** What counting a verified payment means. The payment domain implements it; the engine only decides when. */
 export interface AttemptSettler {
   /** Has a verified transaction already been counted for this attempt? */
@@ -161,7 +163,7 @@ export class PaymentVerificationService {
       case 'pending': {
         if ((outcome.evidence as { needs?: string }).needs === 'transaction_status' && this.checks) {
           const evidence = outcome.evidence as { receipt?: string };
-          if (evidence.receipt) await this.checks.checkTransaction({ providerId, attemptId: attempt.id, receipt: evidence.receipt, shortcode: null });
+          if (has(evidence.receipt)) await this.checks.checkTransaction({ providerId, attemptId: attempt.id, receipt: evidence.receipt, shortcode: null });
         }
         return await this.again(attempt, event, settings, outcome.reason, 'pending');
       }

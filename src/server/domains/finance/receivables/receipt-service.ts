@@ -29,6 +29,8 @@ import type { CreditPolicyService } from './credit-policy-service';
 import type { CustomerLedgerService } from './customer-ledger-service';
 import type { WalletService } from './wallet-service';
 
+import { has } from '@/lib/has';
+
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 export interface ReceiptInput {
@@ -153,7 +155,7 @@ export class ReceiptService {
   async create(ctx: FinanceContext, input: ReceiptInput): Promise<{ id: string; number: string }> {
     const id = randomUUID();
     return await this.db.transaction(async (tx) => {
-      if (input.idempotencyKey) {
+      if (has(input.idempotencyKey)) {
         const [dup] = await tx
           .select({ id: customerReceipts.id, number: customerReceipts.number })
           .from(customerReceipts)
@@ -175,7 +177,7 @@ export class ReceiptService {
       if (!row) throw new FinanceError('METHOD_NOT_FOUND', 'Choose how the customer paid.');
       const { method, bank } = row;
       if (bank.blocked) throw new FinanceError('BANK_BLOCKED', `${bank.code} is blocked, so this method cannot take money.`);
-      if (method.branchId && input.branchId && input.branchId !== method.branchId) {
+      if (has(method.branchId) && has(input.branchId) && input.branchId !== method.branchId) {
         throw new FinanceError('METHOD_BRANCH', `${method.name} belongs to another branch than the one this receipt is for.`);
       }
       const branchId = input.branchId ?? method.branchId ?? null;
@@ -205,7 +207,7 @@ export class ReceiptService {
       let rate = '1';
       if (currency !== settings.baseCurrency) {
         rate = (input.rate ?? '').trim();
-        if (!rate || !(Number(rate) > 0)) {
+        if (!has(rate) || !(Number(rate) > 0)) {
           throw new FinanceError('RATE_REQUIRED', `Enter the exchange rate from ${currency} to ${settings.baseCurrency}.`);
         }
       }
@@ -215,13 +217,13 @@ export class ReceiptService {
       if (!DATE.test(paymentDate) || !DATE.test(postingDate)) throw new FinanceError('DATE_INVALID', 'Enter valid dates.');
       if (paymentDate > today) throw new FinanceError('DATE_FUTURE', 'The payment date cannot be in the future.');
 
-      if (input.isDeposit) {
+      if (input.isDeposit === true) {
         // An advance must have somewhere to go: refuse now, not at posting.
         const policy = await this.policies.forCustomer(tx, ctx.companyId, customer.id);
         if (!policy.walletEnabled) throw new FinanceError('WALLET_OFF', `The ${policy.label.toLowerCase()} is not switched on, so an advance deposit has nowhere to go (Finance → Wallet policy).`);
         if (!policy.allowDeposits) throw new FinanceError('DEPOSITS_OFF', `Advance deposits into the ${policy.label.toLowerCase()} are not allowed.`);
       }
-      if (reference) {
+      if (has(reference)) {
         const [dup] = await tx
           .select({ number: customerReceipts.number })
           .from(customerReceipts)
@@ -389,7 +391,7 @@ export class ReceiptService {
         documentNo: r.number,
         documentId: id,
         orderId: r.orderId,
-        description: `${method.name}${r.externalReference ? ` ${r.externalReference}` : ''}`,
+        description: `${method.name}${has(r.externalReference) ? ` ${r.externalReference}` : ''}`,
         amountCents: -cents,
         currency: r.currency,
         postingDate: r.postingDate,
@@ -460,7 +462,7 @@ export class ReceiptService {
         }
       }
       // Money paid beyond what is owed: into the wallet when the policy says so (an advance always).
-      const afterApply = ledgerEntryId ? await this.wallets.receiptUnappliedIn(tx, ledgerEntryId) : 0;
+      const afterApply = has(ledgerEntryId) ? await this.wallets.receiptUnappliedIn(tx, ledgerEntryId) : 0;
       if (afterApply > 0) {
         const policy = await this.policies.forCustomer(tx, ctx.companyId, customer.id, r.postingDate);
         if (r.isDeposit || (policy.walletEnabled && policy.overpaymentDefault === 'wallet')) {
@@ -496,7 +498,7 @@ export class ReceiptService {
   async apply(ctx: FinanceContext, id: string, applications: PlannedApplication[] | 'oldest_first') {
     return await this.db.transaction(async (tx) => {
       const r = await this.lock(tx, ctx, id);
-      if (r.status !== 'posted' || !r.ledgerEntryId) throw new FinanceError('NOT_POSTED', 'Only a posted receipt can be applied.');
+      if (r.status !== 'posted' || !has(r.ledgerEntryId)) throw new FinanceError('NOT_POSTED', 'Only a posted receipt can be applied.');
       if (r.chequeStatus === 'bounced') throw new FinanceError('CHEQUE_BOUNCED', 'This cheque bounced.');
       const res = await this.ledger.applyIn(tx, ctx, {
         customerId: r.customerId,
@@ -514,7 +516,7 @@ export class ReceiptService {
     const rs = await this.reasons.require(ctx.companyId, reason, 'receipt');
     return await this.db.transaction(async (tx) => {
       const r = await this.lock(tx, ctx, receiptId);
-      if (!r.ledgerEntryId) throw new FinanceError('NOT_POSTED', 'That receipt has not been posted.');
+      if (!has(r.ledgerEntryId)) throw new FinanceError('NOT_POSTED', 'That receipt has not been posted.');
       const [belongs] = await tx
         .select({ id: customerDetailedEntries.id })
         .from(customerDetailedEntries)
@@ -550,7 +552,7 @@ export class ReceiptService {
     r: CustomerReceiptRow,
     opts: { reasonCode: string; reasonText: string | null; postingDate: string; perms: PostingPermissions; unapplyFirst: boolean; chequeStatus?: 'bounced' },
   ) {
-    if (r.status !== 'posted' || !r.ledgerEntryId) throw new FinanceError('NOT_POSTED', 'Only a posted receipt can be reversed.');
+    if (r.status !== 'posted' || !has(r.ledgerEntryId)) throw new FinanceError('NOT_POSTED', 'Only a posted receipt can be reversed.');
     const active = await this.activeApplications(tx, r.ledgerEntryId);
     if (active.length > 0) {
       if (!opts.unapplyFirst) {
@@ -719,14 +721,14 @@ export class ReceiptService {
       const r = await this.requireCheque(tx, ctx, id, ['deposited']);
       const date = input.date ?? businessDate();
       const bankId = r.counterparty.depositBankAccountId;
-      if (!bankId) throw new FinanceError('CHEQUE_STATE', 'Record the deposit before clearing.');
+      if (!has(bankId)) throw new FinanceError('CHEQUE_STATE', 'Record the deposit before clearing.');
       // A cheque deposited before methods carried the G/L account only knows the bank account: use one of its methods.
       let depositMethodId = r.counterparty.depositMethodId;
-      if (!depositMethodId) {
+      if (!has(depositMethodId)) {
         const [any] = await tx.select({ id: paymentMethods.id }).from(paymentMethods).where(eq(paymentMethods.balancingBankAccountId, bankId)).orderBy(paymentMethods.sortOrder).limit(1);
         depositMethodId = any?.id;
       }
-      if (!depositMethodId) throw new FinanceError('CHEQUE_STATE', 'No payment method posts to the bank account this cheque was deposited into. Add one first.');
+      if (!has(depositMethodId)) throw new FinanceError('CHEQUE_STATE', 'No payment method posts to the bank account this cheque was deposited into. Add one first.');
       const [[dest], [transit], [destMethod], [transitMethod]] = await Promise.all([
         tx.select().from(bankAccounts).where(eq(bankAccounts.id, bankId)),
         tx.select().from(bankAccounts).where(eq(bankAccounts.id, r.bankAccountId)),
@@ -856,9 +858,9 @@ export class ReceiptService {
         and(
           eq(customerReceipts.companyId, companyId),
           f.status ? eq(customerReceipts.status, f.status) : undefined,
-          f.customerId ? eq(customerReceipts.customerId, f.customerId) : undefined,
-          f.before ? lt(customerReceipts.createdAt, new Date(f.before)) : undefined,
-          q
+          has(f.customerId) ? eq(customerReceipts.customerId, f.customerId) : undefined,
+          has(f.before) ? lt(customerReceipts.createdAt, new Date(f.before)) : undefined,
+          has(q)
             ? or(
                 ilike(customerReceipts.number, `%${q}%`),
                 ilike(customerReceipts.externalReference, `%${q}%`),
@@ -923,7 +925,7 @@ export class ReceiptService {
     const [events, attachments, applications, remaining] = await Promise.all([
       this.db.select().from(receiptEvents).where(eq(receiptEvents.receiptId, id)).orderBy(asc(receiptEvents.id)),
       this.attachments(companyId, id),
-      head.receipt.ledgerEntryId
+      has(head.receipt.ledgerEntryId)
         ? this.db.execute<{
             application_id: string; invoice_id: string; document_no: string; amount: string; at: string;
             undone: boolean; undone_by: string | null;
@@ -937,7 +939,7 @@ export class ReceiptService {
             WHERE d.ledger_entry_id = ${head.receipt.ledgerEntryId}::uuid AND d.entry_type = 'application'
             ORDER BY d.id`)
         : Promise.resolve([] as never[]),
-      head.receipt.ledgerEntryId
+      has(head.receipt.ledgerEntryId)
         ? this.db
             .select({ remaining: customerLedgerEntries.remainingAmount })
             .from(customerLedgerEntries)
@@ -949,12 +951,12 @@ export class ReceiptService {
     const actorIds = [...new Set([...events.map((e) => e.actorId), head.receipt.postedBy, head.receipt.createdBy])].filter(
       (x): x is string => typeof x === 'string' && /^[0-9a-f-]{36}$/i.test(x),
     );
-    const named = actorIds.length
+    const named = actorIds.length !== 0
       ? await this.db.select({ id: users.id, name: users.name, email: users.email }).from(users).where(inArray(users.id, actorIds))
       : [];
     const actors = Object.fromEntries(named.map((u) => [u.id, u.name || u.email]));
     const depositId = head.receipt.counterparty.depositBankAccountId;
-    const [deposit] = depositId
+    const [deposit] = has(depositId)
       ? await this.db.select({ code: bankAccounts.code, name: bankAccounts.name }).from(bankAccounts).where(eq(bankAccounts.id, depositId))
       : [];
     return {

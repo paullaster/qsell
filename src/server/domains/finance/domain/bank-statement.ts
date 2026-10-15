@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 
+import { has } from '@/lib/has';
+
 /** Reading bank statements and suggesting matches. No database; money is in whole cents. */
 
 export interface ParsedLine {
@@ -110,13 +112,13 @@ function iso(y: number, m: number, d: number): string | null {
 /** A date in the ways banks write it. Returns YYYY-MM-DD or null. Day-first unless told otherwise. */
 export function parseDate(raw: string, format: 'auto' | 'dmy' | 'mdy' | 'ymd' = 'auto'): string | null {
   const s = raw.trim();
-  if (!s) return null;
+  if (!has(s)) return null;
   let m = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[T\s].*)?$/.exec(s);
   if (m) return iso(+m[1], +m[2], +m[3]);
   m = /^(\d{1,2})[-/. ]([A-Za-z]{3})[A-Za-z]*[-/. ,]+(\d{2,4})(?:[T\s].*)?$/.exec(s);
   if (m) {
     const mo = MONTHS[m[2].toLowerCase()];
-    if (!mo) return null;
+    if (mo === null || mo === undefined || mo === 0) return null;
     const y = +m[3];
     return iso(y < 100 ? 2000 + y : y, mo, +m[1]);
   }
@@ -137,7 +139,7 @@ export function parseDate(raw: string, format: 'auto' | 'dmy' | 'mdy' | 'ymd' = 
 /** "1,234.50", "(120.00)", "KES 5,000", "300.00 DR", "-45" -> cents. null when it is not a number. */
 export function parseMoney(raw: string): number | null {
   let s = raw.trim();
-  if (!s) return null;
+  if (!has(s)) return null;
   let negative = false;
   if (/^\(.*\)$/.test(s)) {
     negative = true;
@@ -222,7 +224,7 @@ export function parseCsvStatement(text: string, m: CsvMapping): ParsedStatement 
   const idx = new Map(headerCells.map((h, i) => [norm(h), i] as const));
   const errors: ParsedStatement['errors'] = [];
   const col = (name: string | undefined, label: string, required = false): number | null => {
-    if (!name) {
+    if (!has(name)) {
       if (required) errors.push({ row: m.headerRow, message: `Choose the ${label} column.` });
       return null;
     }
@@ -241,7 +243,7 @@ export function parseCsvStatement(text: string, m: CsvMapping): ParsedStatement 
   const cIn = col(m.paidIn, 'money-in');
   const cOut = col(m.withdrawn, 'money-out');
   const cBal = col(m.balance, 'balance');
-  if (!m.amount && !m.paidIn && !m.withdrawn) errors.push({ row: m.headerRow, message: 'Choose the amount column, or the money-in and money-out columns.' });
+  if (!has(m.amount) && !has(m.paidIn) && !has(m.withdrawn)) errors.push({ row: m.headerRow, message: 'Choose the amount column, or the money-in and money-out columns.' });
   if (errors.length > 0) return finish([], [], errors, headerCells);
 
   const lines: ParsedLine[] = [];
@@ -274,11 +276,11 @@ export function parseCsvStatement(text: string, m: CsvMapping): ParsedStatement 
       skipped.push({ row: n, reason: 'no amount' });
       continue;
     }
-    if (!date && get(cDate) === '' && /total|balance|brought|carried|b\/f|c\/f|summary/i.test(cDesc.map((i) => get(i)).join(' '))) {
+    if (!has(date) && get(cDate) === '' && /total|balance|brought|carried|b\/f|c\/f|summary/i.test(cDesc.map((i) => get(i)).join(' '))) {
       skipped.push({ row: n, reason: 'a total or carried-forward row' });
       continue;
     }
-    if (!date) {
+    if (!has(date)) {
       errors.push({ row: n, message: `Row ${n}: the date "${get(cDate)}" could not be read, and the row has money in it.` });
       continue;
     }
@@ -328,7 +330,7 @@ export function parseMt940(text: string): ParsedStatement {
       const o = /^(\d{6})(\d{4})?(R?[CD])[A-Z]?([\d,]+)N([A-Z0-9]{3})([^/]*)(?:\/\/(.*))?/.exec(first);
       const date = o ? mtDate(o[1]) : null;
       const cents = o ? mtAmount(o[4]) : null;
-      if (!o || !date || cents === null) {
+      if (!o || !has(date) || cents === null) {
         errors.push({ row: i + 1, message: `Statement line ${i + 1} could not be read: ${first.slice(0, 60)}` });
         current = null;
         return;
@@ -423,5 +425,5 @@ export function centsOf(value: string): number {
   const frac = m[3] ?? '';
   if (/[1-9]/.test(frac.slice(2))) throw new Error(`"${value}" has more than 2 decimal places.`);
   const cents = Number(m[2]) * 100 + Number((`${frac  }00`).slice(0, 2));
-  return m[1] ? -cents : cents;
+  return has(m[1]) ? -cents : cents;
 }

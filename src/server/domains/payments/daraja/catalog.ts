@@ -1,3 +1,5 @@
+
+import { has } from '@/lib/has';
 /**
  * Everything Daraja can do, described once. The forms on screen, the checks on what is typed, the
  * settings (which operations are on, how much each may move) and the permissions are all generated
@@ -104,17 +106,17 @@ export function validateOperationInput(info: OperationInfo, raw: Record<string, 
     const v = raw[f.key];
     const text = (v === undefined || v === null ? '' : String(v).trim()) || f.defaultValue || '';
     if (text === '') {
-      if (f.required) return { ok: false, error: `${f.label} is required.` };
+      if (f.required === true) return { ok: false, error: `${f.label} is required.` };
       continue;
     }
-    if (f.maxLength && text.length > f.maxLength) return { ok: false, error: `${f.label} can be at most ${f.maxLength} characters.` };
-    if (f.minLength && text.length < f.minLength) return { ok: false, error: `${f.label} needs at least ${f.minLength} characters.` };
-    if (f.pattern && !new RegExp(f.pattern).test(text)) return { ok: false, error: `${f.label} must be ${f.patternHint ?? 'in the right form'}.` };
+    if (f.maxLength !== null && f.maxLength !== undefined && f.maxLength !== 0 && text.length > f.maxLength) return { ok: false, error: `${f.label} can be at most ${f.maxLength} characters.` };
+    if (f.minLength !== null && f.minLength !== undefined && f.minLength !== 0 && text.length < f.minLength) return { ok: false, error: `${f.label} needs at least ${f.minLength} characters.` };
+    if (has(f.pattern) && !new RegExp(f.pattern).test(text)) return { ok: false, error: `${f.label} must be ${f.patternHint ?? 'in the right form'}.` };
     if (f.type === 'number') {
       const n = Number(text);
       if (!Number.isFinite(n)) return { ok: false, error: `${f.label} must be a number.` };
       if (!/^\d+(\.\d{1,2})?$/.test(text)) return { ok: false, error: `${f.label} can have at most 2 decimal places.` };
-      if (f.whole && !/^\d+$/.test(text)) return { ok: false, error: `${f.label} must be a whole number of shillings.` };
+      if (f.whole === true && !/^\d+$/.test(text)) return { ok: false, error: `${f.label} must be a whole number of shillings.` };
       if (f.min !== undefined && n < f.min) return { ok: false, error: `${f.label} must be at least ${f.min}.` };
       if (f.max !== undefined && n > f.max) return { ok: false, error: `${f.label} must be at most ${f.max}.` };
       input[f.key] = text;

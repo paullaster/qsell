@@ -146,7 +146,7 @@ const darajaOperations = staticSource({
     const mayRun = await canPermission('payment_operations:run');
     const mayPay = await canPermission('payment_operations:request_payout');
     return Object.values(DARAJA_OPERATIONS)
-      .filter((o) => (Object.hasOwn(settings.operations, o.code) ? settings.operations[o.code].enabled : OPERATION_DEFAULTS[o.code]) && o.internal !== true && (o.moneyOut ? mayPay : mayRun))
+      .filter((o) => (Object.hasOwn(settings.operations, o.code) ? settings.operations[o.code].enabled : OPERATION_DEFAULTS[o.code]) && o.internal !== true && (o.moneyOut ? mayPay : mayRun) === true)
       .map((o) => ({ id: o.code, label: o.label, description: o.moneyOut ? 'Moves money out · needs approval' : null }));
   },
 });

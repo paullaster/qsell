@@ -1,3 +1,5 @@
+
+import { has } from '@/lib/has';
 /** Refund rules that need no database. Money is in whole cents. */
 
 export type RefundStatus = 'draft' | 'pending_approval' | 'approved' | 'paid' | 'rejected' | 'cancelled';
@@ -39,7 +41,7 @@ const REQUIRED: Record<string, { keys: string[]; labels: string[] }> = {
 /** What must be known to pay this way. Returns the problem in words, or null. */
 export function checkPayoutDetails(kind: string, d: Details): string | null {
   const need = REQUIRED[kind] ?? { keys: ['recipientName'], labels: ['who is being paid'] };
-  const missing = need.keys.map((k, i) => ((d[k] ?? '').trim() ? null : need.labels[i])).filter((x): x is string => x !== null);
+  const missing = need.keys.map((k, i) => (has((d[k] ?? '').trim()) ? null : need.labels[i])).filter((x): x is string => x !== null);
   if (missing.length > 0) return `Enter ${missing.join(', ')}.`;
   if (kind === 'mobile_money' && phoneKey(d.phone).length < 9) return 'The phone number looks too short.';
   return null;

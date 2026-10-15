@@ -9,6 +9,8 @@ import { FinanceError } from './errors';
 import type { RefundInput } from './receivables/refund-service';
 import type { RefundSource, RefundStatus } from '@/server/db/drizzle/schema';
 
+import { has } from '@/lib/has';
+
 const fin = () => getContainer().finance;
 const ROOT = '/admin/finance/refunds';
 
@@ -116,7 +118,7 @@ export async function refundDetailAction(id: string) {
     const media = getContainer().media;
     const attachments = await Promise.all(d.attachments.map(async (a) => ({ id: a.id, fileName: a.fileName, note: a.note, createdAt: a.createdAt.toISOString(), url: await media.deliveryUrlById(a.mediaAssetId).catch(() => null) })));
     const r = d.r;
-    const name = (x: string | null) => (x ? (d.actors[x] ?? x) : null);
+    const name = (x: string | null) => (has(x) ? (d.actors[x] ?? x) : null);
     return {
       id: r.id,
       number: r.number,

@@ -45,6 +45,8 @@ import type { CreditPolicyService } from './credit-policy-service';
 import type { CustomerLedgerService } from './customer-ledger-service';
 import type { WalletService } from './wallet-service';
 
+import { has } from '@/lib/has';
+
 export interface RefundInput {
   customerId: string;
   sourceKind: RefundSource;
@@ -142,7 +144,7 @@ export class RefundService {
       return { cents: toCents(w.balance), currency: w.currency, orderId: null, label: `Wallet (${w.currency})` };
     }
     const [r] = await tx.select().from(customerReceipts).where(and(eq(customerReceipts.companyId, companyId), eq(customerReceipts.id, sourceId), eq(customerReceipts.customerId, customerId)));
-    if (!r || r.status !== 'posted' || !r.ledgerEntryId) return null;
+    if (!r || r.status !== 'posted' || !has(r.ledgerEntryId)) return null;
     return { cents: await this.wallets.receiptUnappliedIn(tx, r.ledgerEntryId), currency: r.currency, orderId: r.orderId, label: `Receipt ${r.number}` };
   }
 
@@ -178,7 +180,7 @@ export class RefundService {
   async create(ctx: FinanceContext, input: RefundInput): Promise<{ id: string; number: string; detailsChanged: boolean }> {
     const rs = await this.reasons.require(ctx.companyId, { code: input.reasonCode, text: input.reasonText }, 'refund');
     return await this.db.transaction(async (tx) => {
-      if (input.idempotencyKey) {
+      if (has(input.idempotencyKey)) {
         const [dup] = await tx.select({ id: refundRequests.id, number: refundRequests.number, c: refundRequests.detailsChanged }).from(refundRequests).where(and(eq(refundRequests.companyId, ctx.companyId), eq(refundRequests.idempotencyKey, input.idempotencyKey)));
         if (dup) return { id: dup.id, number: dup.number, detailsChanged: dup.c };
       }
@@ -202,14 +204,14 @@ export class RefundService {
       if (cents > available) throw new FinanceError('OVER_OBLIGATION', `Only ${fromCents(available)} can still be refunded from ${open.label}.`);
 
       const [m] = await tx.select().from(paymentMethods).where(and(eq(paymentMethods.companyId, ctx.companyId), eq(paymentMethods.id, input.paymentMethodId)));
-      if (!m?.enabled) throw new FinanceError('METHOD_INVALID', 'Choose how the customer will be paid.');
+      if (m?.enabled !== true) throw new FinanceError('METHOD_INVALID', 'Choose how the customer will be paid.');
       if (!m.usableFor.includes('customer_refund') || m.refundDestination === 'none') throw new FinanceError('METHOD_NOT_FOR_REFUNDS', `${m.name} cannot be used to pay refunds.`);
-      if (m.refundDestination === 'automatic' && (m.kind !== 'mobile_money' || !m.providerId)) throw new FinanceError('METHOD_AUTOMATIC', `${m.name} pays out through its provider, which only works for mobile-money methods that go through M-Pesa; choose a method paid by hand.`);
+      if (m.refundDestination === 'automatic' && (m.kind !== 'mobile_money' || !has(m.providerId))) throw new FinanceError('METHOD_AUTOMATIC', `${m.name} pays out through its provider, which only works for mobile-money methods that go through M-Pesa; choose a method paid by hand.`);
       const details = Object.fromEntries(Object.entries(input.payoutDetails).filter(([, v]) => typeof v === 'string' && v.trim()).map(([k, v]) => [k, v.trim()]));
       const bad = checkPayoutDetails(m.kind, details);
-      if (bad) throw new FinanceError('PAYOUT_DETAILS', bad);
+      if (has(bad)) throw new FinanceError('PAYOUT_DETAILS', bad);
       const changed = destinationChanged(m.kind, details, customer.phone);
-      if (changed && !input.mayChangeDestination) {
+      if (changed && input.mayChangeDestination !== true) {
         throw new FinanceError('DESTINATION_CHANGED', 'That is not the phone number on this customer\'s record. Paying somewhere else needs the "change refund destination" permission.');
       }
 
@@ -417,13 +419,13 @@ export class RefundService {
         // Give back what was set aside.
         if (r.sourceKind === 'wallet') {
           await this.wallets.undoCashOutIn(tx, ctx, { customerId: r.customerId, currency: r.currency, cents, refundId: r.id, reason: rs });
-        } else if (r.ledgerEntryId) {
+        } else if (has(r.ledgerEntryId)) {
           await this.ledger.transferCreditIn(tx, ctx, r.ledgerEntryId, -cents, { postingDate: businessDate(), createdBy: ctx.actor.id, type: 'refund_transfer', reasonCode: rs.code, reasonText: rs.text });
           if (r.sourceKind === 'credit_note_excess') {
             await tx.insert(creditNoteResolutions).values({ companyId: ctx.companyId, creditNoteId: r.sourceId, kind: 'refund_undone', amount: fromCents(-cents), actorType: ctx.actor.type, actorId: ctx.actor.id, origin: ctx.origin, reasonCode: rs.code, reasonText: rs.text });
           }
         }
-        if (r.reserveRegisterId) {
+        if (has(r.reserveRegisterId)) {
           await this.engine.reverse({ companyId: ctx.companyId, registerId: r.reserveRegisterId, postingDate: businessDate(), reasonCode: rs.code, reasonText: rs.text, origin: ctx.origin, permissions: perms, tx });
         }
         await this.move(tx, r, 'cancelled');
@@ -456,9 +458,9 @@ export class RefundService {
         const live = await this.payoutOperations(tx, id, ['pending_approval', 'queued', 'submitted', 'accepted', 'timed_out', 'in_doubt']);
         if (live.length > 0) throw new FinanceError('PAYOUT_IN_PROGRESS', 'This refund is being paid through M-Pesa and that has not finished or been checked yet; it cannot also be recorded as paid by hand until it is settled (see Payment activity).');
       }
-      if (!input.automatic && r.approvedBy && r.approvedBy === ctx.actor.id) throw new FinanceError('SAME_PERSON', 'The person who approved a refund cannot be the one who records its payment.');
+      if (!input.automatic && has(r.approvedBy) && r.approvedBy === ctx.actor.id) throw new FinanceError('SAME_PERSON', 'The person who approved a refund cannot be the one who records its payment.');
       const reference = input.reference.trim();
-      if (!reference) throw new FinanceError('REFERENCE_REQUIRED', 'Enter the payment reference (M-Pesa code, bank reference, cheque number or receipt number).');
+      if (!has(reference)) throw new FinanceError('REFERENCE_REQUIRED', 'Enter the payment reference (M-Pesa code, bank reference, cheque number or receipt number).');
       if (!input.automatic && (await this.evidenceCount(tx, id)) === 0) throw new FinanceError('EVIDENCE_REQUIRED', 'Attach the evidence of payment first (a payment slip, bank confirmation, M-Pesa message or signed receipt).');
       const today = businessDate();
       const date = input.payoutDate ?? today;
@@ -514,7 +516,7 @@ export class RefundService {
 
       // "Refunded" only when the paid refunds against this order cover everything it was paid.
       let order: 'refunded' | 'partially_refunded' | 'none' = 'none';
-      if (r.orderId) {
+      if (has(r.orderId)) {
         const [o] = await tx.select().from(orders).where(eq(orders.id, r.orderId)).for('update');
         if (o && ['paid', 'reconciled', 'refunded', 'partially_refunded'].includes(o.paymentStatus)) {
           const [sum] = await tx.select({ n: sql<string>`COALESCE(SUM(${refundRequests.amount}), 0)` }).from(refundRequests).where(and(eq(refundRequests.orderId, r.orderId), eq(refundRequests.status, 'paid')));
@@ -542,12 +544,12 @@ export class RefundService {
     return await this.db.transaction(async (tx) => {
       const r = await this.lock(tx, ctx.companyId, id);
       if (r.status !== 'approved') throw new FinanceError('NOT_APPROVED', `Only an approved refund can be paid; this one is ${r.status.replace('_', ' ')}.`);
-      if (r.approvedBy && r.approvedBy === ctx.actor.id) throw new FinanceError('SAME_PERSON', 'The person who approved a refund cannot be the one who sends its payment.');
+      if (has(r.approvedBy) && r.approvedBy === ctx.actor.id) throw new FinanceError('SAME_PERSON', 'The person who approved a refund cannot be the one who sends its payment.');
       const [m] = await tx.select().from(paymentMethods).where(eq(paymentMethods.id, r.paymentMethodId));
-      if (!m || m.refundDestination !== 'automatic' || m.kind !== 'mobile_money' || !m.providerId) throw new FinanceError('NOT_AUTOMATIC', 'This refund\'s payment method is not set to pay out through M-Pesa.');
+      if (!m || m.refundDestination !== 'automatic' || m.kind !== 'mobile_money' || !has(m.providerId)) throw new FinanceError('NOT_AUTOMATIC', 'This refund\'s payment method is not set to pay out through M-Pesa.');
       if (!/^\d+$/.test(r.amount.split('.')[0]) || Number(r.amount) % 1 !== 0) throw new FinanceError('AMOUNT_NOT_WHOLE', 'M-Pesa pays whole shillings only; pay this refund by hand.');
       const phone = (r.payoutDetails).phone;
-      if (!phone) throw new FinanceError('PAYOUT_DETAILS', 'The refund has no phone number to pay.');
+      if (!has(phone)) throw new FinanceError('PAYOUT_DETAILS', 'The refund has no phone number to pay.');
       const live = await this.payoutOperations(tx, id, ['queued', 'submitted', 'accepted', 'timed_out', 'in_doubt', 'succeeded']);
       if (live.length > 0) throw new FinanceError('PAYOUT_IN_PROGRESS', 'A payment for this refund has already been sent or is waiting for a check. See Payment activity.');
       await this.event(tx, ctx, id, 'auto_payout_requested', 'approved', 'approved', { data: { methodId: m.id, amount: r.amount } });
@@ -559,11 +561,11 @@ export class RefundService {
 
   /** The payout through M-Pesa finished (told by the payment engine): record it, or say why not. */
   async onAutomaticPayoutFinished(op: { id: string; companyId: string; subjectId: string | null; status: string; platformReference: string | null; failureCode: string | null; failureReason: string | null }): Promise<void> {
-    if (!op.subjectId) return;
+    if (!has(op.subjectId)) return;
     const ctx: FinanceContext = { companyId: op.companyId, actor: { type: 'system', id: null }, origin: { surface: 'payments/engine', action: 'refund_auto_payout' } };
     const [r] = await this.db.select().from(refundRequests).where(eq(refundRequests.id, op.subjectId));
     if (!r || r.status !== 'approved') return;
-    if (op.status === 'succeeded' && op.platformReference) {
+    if (op.status === 'succeeded' && has(op.platformReference)) {
       try {
         await this.recordPayout(ctx, r.id, { paidFromMethodId: r.paymentMethodId, reference: op.platformReference, automatic: { operationId: op.id } });
       } catch (error) {
@@ -612,7 +614,7 @@ export class RefundService {
       .from(refundRequests)
       .innerJoin(customers, eq(customers.id, refundRequests.customerId))
       .innerJoin(paymentMethods, eq(paymentMethods.id, refundRequests.paymentMethodId))
-      .where(and(eq(refundRequests.companyId, companyId), f.status ? eq(refundRequests.status, f.status) : undefined, f.customerId ? eq(refundRequests.customerId, f.customerId) : undefined, f.before ? lt(refundRequests.createdAt, new Date(f.before)) : undefined, q ? or(ilike(refundRequests.number, `%${q}%`), ilike(customers.name, `%${q}%`), ilike(customers.number, `%${q}%`), ilike(refundRequests.payoutReference, `%${q}%`)) : undefined))
+      .where(and(eq(refundRequests.companyId, companyId), f.status ? eq(refundRequests.status, f.status) : undefined, has(f.customerId) ? eq(refundRequests.customerId, f.customerId) : undefined, has(f.before) ? lt(refundRequests.createdAt, new Date(f.before)) : undefined, has(q) ? or(ilike(refundRequests.number, `%${q}%`), ilike(customers.name, `%${q}%`), ilike(customers.number, `%${q}%`), ilike(refundRequests.payoutReference, `%${q}%`)) : undefined))
       .orderBy(desc(refundRequests.createdAt))
       .limit(limit + 1);
     const more = rows.length > limit;
@@ -634,7 +636,7 @@ export class RefundService {
       this.openOf(this.db, companyId, head.r.sourceKind, head.r.sourceId, head.r.customerId),
     ]);
     const ids = [...new Set([...events.map((e) => e.actorId), head.r.requestedBy, head.r.approvedBy, head.r.paidBy])].filter((x): x is string => typeof x === 'string' && /^[0-9a-f-]{36}$/i.test(x));
-    const named = ids.length ? await this.db.select({ id: users.id, name: users.name, email: users.email }).from(users).where(inArray(users.id, ids)) : [];
+    const named = ids.length !== 0 ? await this.db.select({ id: users.id, name: users.name, email: users.email }).from(users).where(inArray(users.id, ids)) : [];
     return { ...head, events, attachments, sourceLabel: source?.label ?? '', actors: Object.fromEntries(named.map((u) => [u.id, u.name || u.email])) };
   }
 

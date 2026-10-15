@@ -1,10 +1,12 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { and, eq, sql } from 'drizzle-orm';
 
+import { has } from '@/lib/has';
+
 /** Needs a Postgres built from the migrations:  TEST_DATABASE_URL=postgres://... pnpm test */
 const url = process.env.TEST_DATABASE_URL;
 
-describe.skipIf(!url)('core finance (database)', () => {
+describe.skipIf(!has(url))('core finance (database)', () => {
   type Db = import('@/server/db/drizzle/client').DrizzleDb;
   let db: Db;
   let schema: typeof import('@/server/db/drizzle/schema');

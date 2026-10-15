@@ -1,3 +1,5 @@
+
+import { has } from '@/lib/has';
 /** The reference the provider assigned when the payment succeeded. Not a checkout-request id. */
 export function shownPaymentReference(order: {
   paymentMethod?: string | null;
@@ -8,8 +10,8 @@ export function shownPaymentReference(order: {
   const stored = order.transactionReference?.trim() || '';
   const stk = order.paymentMethod === 'mpesa_daraja' || order.paymentMethod === 'kcb_buni';
   if (stk) {
-    if (receipt) return receipt;
-    if (stored && !stored.startsWith('ws_CO_')) return stored;
+    if (has(receipt)) return receipt;
+    if (has(stored) && !stored.startsWith('ws_CO_')) return stored;
     return null;
   }
   if (stored.startsWith('ws_CO_')) return receipt || null;

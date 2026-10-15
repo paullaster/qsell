@@ -10,6 +10,8 @@ import {
 import { asKcbBuniCredentials, type KcbBuniCredentials } from '../types';
 import { extractPaymentReference } from '../payment-reference';
 
+import { has } from '@/lib/has';
+
 function formatPhoneKe(phone: string): string {
   let clean = phone.replace(/[^0-9]/g, '');
   if (clean.startsWith('0')) clean = `254${clean.slice(1)}`;
@@ -28,7 +30,7 @@ export class KcbBuniAdapter implements PaymentPort {
   ): Promise<ConnectionTestResult> {
     const creds = asKcbBuniCredentials(credentials);
     return await probeConnection('KCB Buni', async () => {
-      if (!creds.consumerKey || !creds.consumerSecret) throw new Error('The consumer key and secret are not saved yet.');
+      if (!has(creds.consumerKey) || !has(creds.consumerSecret)) throw new Error('The consumer key and secret are not saved yet.');
       await this.getAccessToken(apiBaseUrl, creds);
     });
   }
@@ -48,7 +50,7 @@ export class KcbBuniAdapter implements PaymentPort {
       throw new Error(`KCB Buni token failed (${res.status}): ${await res.text()}`);
     }
     const data = (await res.json()) as { access_token?: string };
-    if (!data.access_token) throw new Error('KCB Buni token response missing access_token');
+    if (!has(data.access_token)) throw new Error('KCB Buni token response missing access_token');
     return data.access_token;
   }
 
@@ -59,7 +61,7 @@ export class KcbBuniAdapter implements PaymentPort {
     apiBaseUrl: string,
   ): Promise<InitiatePaymentResult> {
     const creds = asKcbBuniCredentials(credentials);
-    if (!creds.consumerKey || !creds.consumerSecret || !creds.orgShortCode) {
+    if (!has(creds.consumerKey) || !has(creds.consumerSecret) || !has(creds.orgShortCode)) {
       return {
         status: 'failed',
         errorMessage: 'KCB Buni credentials are incomplete. Configure them in admin.',

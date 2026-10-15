@@ -10,6 +10,8 @@ import { darajaSettings, OPERATION_DEFAULTS } from './config';
 import { OperationRefused } from './operations';
 import { randomUUID } from 'node:crypto';
 
+import { has } from '@/lib/has';
+
 export interface PayoutRequest {
   companyId: string;
   providerId: string;
@@ -43,20 +45,20 @@ export class DarajaDisbursements {
     if (ctx.provider.providerCode !== 'mpesa_daraja') throw new OperationRefused('WRONG_PROVIDER', 'That provider is not an M-Pesa (Daraja) connection.');
     const settings = darajaSettings(ctx.settings);
     const cfg = settings.operations[input.operation];
-    if (!(cfg?.enabled ?? OPERATION_DEFAULTS[input.operation])) throw new OperationRefused('OPERATION_OFF', `${info.label} is switched off for this provider (Settings → Payments).`);
+    if ((cfg?.enabled ?? OPERATION_DEFAULTS[input.operation]) !== true) throw new OperationRefused('OPERATION_OFF', `${info.label} is switched off for this provider (Settings → Payments).`);
     const checked = validateOperationInput(info, input.input);
     if (!checked.ok) throw new OperationRefused('INVALID_INPUT', checked.error);
     const amount = String(checked.input.amount ?? '');
-    if (!amount || Number(amount) <= 0) throw new OperationRefused('INVALID_INPUT', 'An amount is required.');
-    if (cfg?.maxAmount && Number(amount) > Number(cfg.maxAmount)) throw new OperationRefused('OVER_LIMIT', `${info.label} is limited to ${cfg.maxAmount} per request for this provider.`);
+    if (!has(amount) || Number(amount) <= 0) throw new OperationRefused('INVALID_INPUT', 'An amount is required.');
+    if (has(cfg?.maxAmount) && Number(amount) > Number(cfg.maxAmount)) throw new OperationRefused('OVER_LIMIT', `${info.label} is limited to ${cfg.maxAmount} per request for this provider.`);
     const c = ctx.credentials;
-    if (!c.initiatorName?.trim() || !c.initiatorPassword || !c.certificate?.trim()) {
+    if (!has(c.initiatorName?.trim()) || !has(c.initiatorPassword) || !has(c.certificate?.trim())) {
       throw new OperationRefused('NO_INITIATOR', "This needs the M-Pesa API operator's name and password and Safaricom's certificate. Save them on the provider (Settings → Payments).");
     }
-    if (!input.methodId) throw new OperationRefused('NO_METHOD', 'Choose the paybill or till the money is paid from.');
+    if (!has(input.methodId)) throw new OperationRefused('NO_METHOD', 'Choose the paybill or till the money is paid from.');
     const [method] = await this.db.select().from(paymentMethods).where(eq(paymentMethods.id, input.methodId));
     if (!method || method.providerId !== input.providerId) throw new OperationRefused('METHOD_MISMATCH', 'That payment method does not go through this provider.');
-    if (settings.dailyPayoutLimit) {
+    if (has(settings.dailyPayoutLimit)) {
       const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
       const [row] = await this.db
         .select({ total: sql<string>`coalesce(sum(${providerOperations.amount}), 0)` })
@@ -81,10 +83,10 @@ export class DarajaDisbursements {
         input: checked.input,
         requestedBy: input.requestedBy,
         origin: input.origin ?? {},
-        status: input.preApproved ? 'queued' : 'pending_approval',
-        ...(input.preApproved ? { expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) } : {}),
+        status: input.preApproved === true ? 'queued' : 'pending_approval',
+        ...(input.preApproved === true ? { expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) } : {}),
       });
-      if (input.preApproved) return { op, status: 'queued' as const };
+      if (input.preApproved === true) return { op, status: 'queued' as const };
       if (!created) return { op, status: op.status === 'queued' ? ('queued' as const) : ('pending_approval' as const) };
       const outcome = await getContainer().approvals.submit(
         {
@@ -142,7 +144,7 @@ export class DarajaDisbursements {
         const i = op.input;
         const info = DARAJA_OPERATIONS[op.operation as DarajaOperationCode];
         const to = [i.phone, i.partyB, i.prn, i.transactionId].find((v) => typeof v === 'string');
-        return { title: `${info?.label ?? op.operation}: KES ${Number(op.amount ?? 0).toLocaleString('en-KE', { minimumFractionDigits: 2 })}${to ? ` to ${String(to)}` : ''}`, lines: [typeof i.remarks === 'string' ? `Remarks: ${i.remarks}` : '', typeof i.accountReference === 'string' ? `Account: ${i.accountReference}` : ''].filter(Boolean) };
+        return { title: `${info?.label ?? op.operation}: KES ${Number(op.amount ?? 0).toLocaleString('en-KE', { minimumFractionDigits: 2 })}${has(to) ? ` to ${String(to)}` : ''}`, lines: [typeof i.remarks === 'string' ? `Remarks: ${i.remarks}` : '', typeof i.accountReference === 'string' ? `Account: ${i.accountReference}` : ''].filter(Boolean) };
       },
     };
   }

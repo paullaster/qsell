@@ -11,6 +11,8 @@ import { PAYMENT_PROVIDER_META, type PaymentProviderCode, type PaymentProviderEn
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { FinanceError, type FinanceContext } from './errors';
 
+import { has } from '@/lib/has';
+
 export interface ProviderView {
   id: string;
   providerCode: PaymentProviderCode | 'manual';
@@ -105,7 +107,7 @@ export class PaymentProviderService {
         hasCredentials: Boolean(row.credentialsEncrypted),
         maskedCredentials: masked,
         capabilities: manual ? [] : this.payments.capabilitiesOf(code),
-        callbackUrl: meta && publicBaseUrl ? `${publicBaseUrl.replace(/\/$/, '')}${meta.callbackPathPrefix}/<per-payment token>` : null,
+        callbackUrl: meta && has(publicBaseUrl) ? `${publicBaseUrl.replace(/\/$/, '')}${meta.callbackPathPrefix}/<per-payment token>` : null,
         lastTestAt: row.lastTestAt ? row.lastTestAt.toISOString() : null,
         lastTestOk: row.lastTestOk,
         lastTestMessage: row.lastTestMessage,
@@ -113,12 +115,12 @@ export class PaymentProviderService {
           ? {
               settings: dj,
               operations: Object.values(DARAJA_OPERATIONS).map((o) => ({ code: o.code, label: o.label, description: o.description, group: o.group, async: o.async, moneyOut: o.moneyOut, needsInitiator: o.needsInitiator, needsMethod: o.needsMethod, internal: Boolean(o.internal), sandboxOnly: Boolean(o.sandboxOnly), fields: o.fields, enabled: dj.operations[o.code]?.enabled ?? false, maxAmount: dj.operations[o.code]?.maxAmount ?? null })),
-              hasInitiator: Boolean(creds.initiatorName && creds.initiatorPassword && creds.certificate),
+              hasInitiator: Boolean(has(creds.initiatorName) && has(creds.initiatorPassword) && creds.certificate),
             }
           : null,
         methods: methods
           .filter((x) => x.m.providerId === row.id)
-          .map((x) => ({ id: x.m.id, name: x.m.name, kind: x.m.kind, enabled: x.m.enabled, branchName: x.branchName, channel: x.m.channelNumber ? `${x.m.channelKind ?? 'number'} ${x.m.channelNumber}` : null })),
+          .map((x) => ({ id: x.m.id, name: x.m.name, kind: x.m.kind, enabled: x.m.enabled, branchName: x.branchName, channel: has(x.m.channelNumber) ? `${x.m.channelKind ?? 'number'} ${x.m.channelNumber}` : null })),
       };
     });
   }
@@ -173,7 +175,7 @@ export class PaymentProviderService {
     const row = await this.load(ctx.companyId, id);
     this.notSystem(row);
     const cleaned: Record<string, string> = {};
-    for (const [k, v] of Object.entries(credentials)) if (typeof v === 'string' && v.trim() && !v.includes('•')) cleaned[k] = v.trim();
+    for (const [k, v] of Object.entries(credentials)) if (typeof v === 'string' && has(v.trim()) && !v.includes('•')) cleaned[k] = v.trim();
     if (Object.keys(cleaned).length === 0) throw new FinanceError('NOTHING_TO_SAVE', 'Enter at least one value to save.');
     const previous = decryptCredentials(row.credentialsEncrypted) ?? {};
     await this.configs.update(id, { credentialsEncrypted: encryptCredentials({ ...previous, ...cleaned }) });

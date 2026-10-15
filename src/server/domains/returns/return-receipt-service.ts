@@ -20,6 +20,8 @@ import { businessDate } from '@/server/kernel/numbering/business-date';
 import type { NumberSeriesService } from '@/server/kernel/numbering/service';
 import type { ReasonCodes } from '@/server/kernel/reason-codes/service';
 
+import { has } from '@/lib/has';
+
 export class ReturnError extends Error {
   constructor(
     readonly code: string,
@@ -161,7 +163,7 @@ export class ReturnReceiptService {
         }
         if (!CONDITIONS.includes(it.condition) || !DISPOSITIONS.includes(it.disposition)) throw new ReturnError('INVALID', 'Choose the condition and what was done with the goods.');
         const bad = checkDisposition(it.condition, it.disposition);
-        if (bad) throw new ReturnError('DISPOSITION_INVALID', `${line.description}: ${bad}`);
+        if (has(bad)) throw new ReturnError('DISPOSITION_INVALID', `${line.description}: ${bad}`);
         const toStock = it.disposition === 'return_to_stock';
         if (toStock) {
           await applyStockDelta(tx, {

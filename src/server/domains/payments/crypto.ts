@@ -2,6 +2,8 @@ import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'node:
 import { readFileSync } from 'node:fs';
 import type { EncryptedCredentialsBlob } from './types';
 
+import { has } from '@/lib/has';
+
 /**
  * The master data-encryption key seals every provider credential. It is one of the two things
  * that cannot live in the database (the other is the database URL), because it is what protects
@@ -36,10 +38,10 @@ function toKey(raw: string): Buffer {
 
 function readCurrentRaw(): string {
   const file = process.env.DATA_ENCRYPTION_KEY_FILE;
-  if (file) {
+  if (has(file)) {
     try {
       const fromFile = readFileSync(file, 'utf8').replace(/\r?\n$/, '');
-      if (fromFile) return fromFile;
+      if (has(fromFile)) return fromFile;
     } catch {
       throw new MissingEncryptionKeyError();
     }
@@ -53,17 +55,17 @@ export function currentKeyId(): string {
 
 function currentKey(): Buffer {
   const raw = readCurrentRaw();
-  if (!raw) throw new MissingEncryptionKeyError();
+  if (!has(raw)) throw new MissingEncryptionKeyError();
   return toKey(raw);
 }
 
 function oldKeys(): Map<string, Buffer> {
   const out = new Map<string, Buffer>();
   const json = process.env.DATA_ENCRYPTION_OLD_KEYS;
-  if (!json) return out;
+  if (!has(json)) return out;
   try {
     const parsed = JSON.parse(json) as Record<string, string>;
-    for (const [id, raw] of Object.entries(parsed)) if (raw) out.set(id, toKey(raw));
+    for (const [id, raw] of Object.entries(parsed)) if (has(raw)) out.set(id, toKey(raw));
   } catch {
     /* an unreadable list means no old keys; opening an old blob then fails loudly */
   }
@@ -98,7 +100,7 @@ export function decryptCredentials<T extends Record<string, unknown> = Record<st
 ): T | null {
   if (!blob || (blob.v !== 1 && blob.v !== 2)) return null;
   let key: Buffer;
-  if (blob.v === 2 && blob.kid && blob.kid !== currentKeyId()) {
+  if (blob.v === 2 && has(blob.kid) && blob.kid !== currentKeyId()) {
     const old = oldKeys().get(blob.kid);
     if (!old) {
       throw new Error(
@@ -110,7 +112,7 @@ export function decryptCredentials<T extends Record<string, unknown> = Record<st
     key = currentKey();
   }
   const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(blob.iv, 'base64'));
-  if (blob.v === 2 && blob.kid) decipher.setAAD(Buffer.from(blob.kid, 'utf8'));
+  if (blob.v === 2 && has(blob.kid)) decipher.setAAD(Buffer.from(blob.kid, 'utf8'));
   decipher.setAuthTag(Buffer.from(blob.tag, 'base64'));
   const plain = Buffer.concat([
     decipher.update(Buffer.from(blob.ciphertext, 'base64')),

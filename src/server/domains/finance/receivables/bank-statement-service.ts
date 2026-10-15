@@ -39,6 +39,8 @@ import { NO_SPECIAL_PERMISSIONS, type PostingEngine, type PostingPermissions, ty
 import { FinanceError, type FinanceContext } from '../errors';
 import type { ReceiptService } from './receipt-service';
 
+import { has } from '@/lib/has';
+
 export type StatementFormat = 'csv' | 'mt940';
 export const MAX_STATEMENT_BYTES = 10 * 1024 * 1024;
 const CHUNK = 2000;
@@ -203,7 +205,7 @@ export class BankStatementService {
           })),
         );
       }
-      if (input.saveFormat && input.format === 'csv' && input.mapping) {
+      if (input.saveFormat === true && input.format === 'csv' && input.mapping) {
         await tx
           .insert(bankStatementFormats)
           .values({ companyId: ctx.companyId, bankAccountId: account.id, kind: 'csv', mapping: input.mapping as unknown as Record<string, unknown>, updatedBy: ctx.actor.id ?? 'system' })
@@ -243,8 +245,8 @@ export class BankStatementService {
         and(
           eq(bankLedgerEntries.companyId, companyId),
           eq(bankLedgerEntries.bankAccountId, bankAccountId),
-          from ? sql`${bankLedgerEntries.postingDate} >= ${from}::date` : undefined,
-          to ? sql`${bankLedgerEntries.postingDate} <= ${to}::date` : undefined,
+          has(from) ? sql`${bankLedgerEntries.postingDate} >= ${from}::date` : undefined,
+          has(to) ? sql`${bankLedgerEntries.postingDate} <= ${to}::date` : undefined,
           sql`NOT EXISTS (SELECT 1 FROM bank_statement_matches m WHERE m.bank_entry_id = ${bankLedgerEntries.id} AND m.undone_at IS NULL)`,
         ),
       )
@@ -307,7 +309,7 @@ export class BankStatementService {
   /** Closes one line against one or more ledger entries whose amounts add up to it exactly. */
   private async applyMatchIn(tx: Tx, ctx: FinanceContext, lineId: number, entryIds: number[], rule: string) {
     const line = await this.lockLine(tx, ctx.companyId, lineId);
-    if (line.reconciliationId) throw new FinanceError('LINE_RECONCILED', 'This line is already part of a reconciliation.');
+    if (has(line.reconciliationId)) throw new FinanceError('LINE_RECONCILED', 'This line is already part of a reconciliation.');
     if (line.status === 'matched') throw new FinanceError('LINE_MATCHED', 'This line is already matched.');
     if (line.status === 'ignored') throw new FinanceError('LINE_IGNORED', 'This line was set aside. Bring it back first.');
     if (entryIds.length === 0) throw new FinanceError('NO_ENTRIES', 'Choose what this line matches.');
@@ -338,7 +340,7 @@ export class BankStatementService {
   /** Tells the refund or receipt that the bank has shown it (or no longer has). */
   private async noteDocuments(tx: Tx, ctx: FinanceContext, entries: { documentType: string; documentId: string | null; bankAccountId: string }[], event: 'bank_matched' | 'bank_unmatched', lineId: number) {
     for (const e of entries) {
-      if (!e.documentId) continue;
+      if (!has(e.documentId)) continue;
       if (e.documentType === 'refund') {
         await tx.update(refundRequests).set({ bankMatchedAt: event === 'bank_matched' ? new Date() : null }).where(eq(refundRequests.id, e.documentId));
         await tx.insert(refundEvents).values({ refundId: e.documentId, event, fromStatus: 'paid', toStatus: 'paid', data: { statementLine: lineId }, actorType: ctx.actor.type, actorId: ctx.actor.id, origin: ctx.origin });
@@ -356,7 +358,7 @@ export class BankStatementService {
     const rs = await this.reasons.require(ctx.companyId, reason, 'bank_statement');
     await this.db.transaction(async (tx) => {
       const line = await this.lockLine(tx, ctx.companyId, lineId);
-      if (line.reconciliationId) throw new FinanceError('LINE_RECONCILED', 'This line is part of a posted reconciliation. Reverse that reconciliation first.');
+      if (has(line.reconciliationId)) throw new FinanceError('LINE_RECONCILED', 'This line is part of a posted reconciliation. Reverse that reconciliation first.');
       if (line.status !== 'matched') throw new FinanceError('NOT_MATCHED', 'This line is not matched.');
       const active = await tx.select().from(bankStatementMatches).where(and(eq(bankStatementMatches.lineId, lineId), isNull(bankStatementMatches.undoneAt)));
       await tx.update(bankStatementMatches).set({ undoneAt: new Date(), undoneBy: ctx.actor.id, undoReasonCode: rs.code, undoReasonText: rs.text }).where(and(eq(bankStatementMatches.lineId, lineId), isNull(bankStatementMatches.undoneAt)));
@@ -372,7 +374,7 @@ export class BankStatementService {
     const rs = await this.reasons.require(ctx.companyId, reason, 'bank_statement');
     await this.db.transaction(async (tx) => {
       const line = await this.lockLine(tx, ctx.companyId, lineId);
-      if (line.reconciliationId) throw new FinanceError('LINE_RECONCILED', 'This line is part of a posted reconciliation.');
+      if (has(line.reconciliationId)) throw new FinanceError('LINE_RECONCILED', 'This line is part of a posted reconciliation.');
       if (line.status === 'matched') throw new FinanceError('LINE_MATCHED', 'Unmatch this line before setting it aside.');
       if (line.status === 'ignored') throw new FinanceError('LINE_IGNORED', 'This line is already set aside.');
       await tx.update(bankStatementLines).set({ status: 'ignored', ignoreReason: [rs.code, rs.text].filter(Boolean).join(': '), proposedEntryIds: [], matchRule: 'ignored' }).where(eq(bankStatementLines.id, lineId));
@@ -383,7 +385,7 @@ export class BankStatementService {
   async restoreLine(ctx: FinanceContext, lineId: number) {
     await this.db.transaction(async (tx) => {
       const line = await this.lockLine(tx, ctx.companyId, lineId);
-      if (line.reconciliationId) throw new FinanceError('LINE_RECONCILED', 'This line is part of a posted reconciliation.');
+      if (has(line.reconciliationId)) throw new FinanceError('LINE_RECONCILED', 'This line is part of a posted reconciliation.');
       if (line.status !== 'ignored') throw new FinanceError('NOT_IGNORED', 'This line was not set aside.');
       await tx.update(bankStatementLines).set({ status: 'unmatched', ignoreReason: null, matchRule: null }).where(eq(bankStatementLines.id, lineId));
       await this.decisions.record({ companyId: ctx.companyId, subject: { type: 'bank_statement_line', id: String(lineId) }, action: 'finance.statement_line_restored', actor: ctx.actor, from: 'ignored', to: 'unmatched', inputs: { origin: ctx.origin } }, tx);
@@ -405,7 +407,7 @@ export class BankStatementService {
   async createReceiptFromLine(ctx: FinanceContext, lineId: number, input: { customerId: string; paymentMethodId: string; allocate?: 'oldest_first' | 'none'; permissions?: PostingPermissions }) {
     const [line] = await this.db.select().from(bankStatementLines).where(and(eq(bankStatementLines.companyId, ctx.companyId), eq(bankStatementLines.id, lineId)));
     if (!line) throw new FinanceError('LINE_NOT_FOUND', 'That statement line does not exist.');
-    if (line.reconciliationId) throw new FinanceError('LINE_RECONCILED', 'This line is part of a posted reconciliation.');
+    if (has(line.reconciliationId)) throw new FinanceError('LINE_RECONCILED', 'This line is part of a posted reconciliation.');
     if (line.status === 'matched' || line.status === 'ignored') throw new FinanceError('LINE_CLOSED', `This line is already ${line.status}.`);
     if (centsOf(line.amount) <= 0) throw new FinanceError('NOT_A_DEPOSIT', 'Only money received can become a customer receipt.');
     const [method] = await this.db.select().from(paymentMethods).where(and(eq(paymentMethods.companyId, ctx.companyId), eq(paymentMethods.id, input.paymentMethodId)));
@@ -455,16 +457,16 @@ export class BankStatementService {
     const permissions = opts.permissions ?? NO_SPECIAL_PERMISSIONS;
     return await this.db.transaction(async (tx) => {
       const line = await this.lockLine(tx, ctx.companyId, lineId);
-      if (line.reconciliationId) throw new FinanceError('LINE_RECONCILED', 'This line is part of a posted reconciliation.');
+      if (has(line.reconciliationId)) throw new FinanceError('LINE_RECONCILED', 'This line is part of a posted reconciliation.');
       if (line.status === 'matched' || line.status === 'ignored') throw new FinanceError('LINE_CLOSED', `This line is already ${line.status}.`);
       const cents = -centsOf(line.amount);
       if (cents <= 0) throw new FinanceError('NOT_A_CHARGE', 'Only money taken out of the account can be recorded as a charge.');
       const account = await this.account(tx, ctx.companyId, line.bankAccountId);
-      if (!account.feeGlAccountId) throw new FinanceError('NO_FEE_ACCOUNT', `${account.code} has no fee account. Choose where its charges post (Finance → Bank accounts).`);
+      if (!has(account.feeGlAccountId)) throw new FinanceError('NO_FEE_ACCOUNT', `${account.code} has no fee account. Choose where its charges post (Finance → Bank accounts).`);
       const choices = await this.chargeGlChoices(ctx.companyId, account.id);
       if (choices.length === 0) throw new FinanceError('NO_METHOD', `No payment method pays into ${account.code}, so there is no G/L account to take the charge from. Add one under Settings → Payments.`);
-      const bankGl = opts.glAccountId ? choices.find((c) => c.glId === opts.glAccountId) : choices.length === 1 ? choices[0] : undefined;
-      if (!bankGl) throw new FinanceError('GL_CHOICE_NEEDED', opts.glAccountId ? 'That G/L account is not used by any payment method of this bank account.' : `Several G/L accounts are used for ${account.code}: choose the one this charge came out of.`);
+      const bankGl = has(opts.glAccountId) ? choices.find((c) => c.glId === opts.glAccountId) : choices.length === 1 ? choices[0] : undefined;
+      if (!bankGl) throw new FinanceError('GL_CHOICE_NEEDED', has(opts.glAccountId) ? 'That G/L account is not used by any payment method of this bank account.' : `Several G/L accounts are used for ${account.code}: choose the one this charge came out of.`);
       const date = line.lineDate;
       const issues = await this.engine.dateIssues(tx, ctx.companyId, date, permissions);
       if (issues.length > 0) throw new FinanceError(issues[0].code, issues.map((i) => i.message).join(' '));
@@ -528,7 +530,7 @@ export class BankStatementService {
     const lines = await this.db
       .select()
       .from(bankStatementLines)
-      .where(and(eq(bankStatementLines.companyId, companyId), eq(bankStatementLines.bankAccountId, bankAccountId), statusFilter, f.before ? gt(bankStatementLines.id, f.before) : undefined))
+      .where(and(eq(bankStatementLines.companyId, companyId), eq(bankStatementLines.bankAccountId, bankAccountId), statusFilter, f.before !== null && f.before !== undefined && f.before !== 0 ? gt(bankStatementLines.id, f.before) : undefined))
       .orderBy(asc(bankStatementLines.id))
       .limit(limit + 1);
     const more = lines.length > limit;
@@ -563,7 +565,7 @@ export class BankStatementService {
   /** Candidate entries for a manual match: open entries of this account, newest first. */
   async candidateEntries(companyId: string, bankAccountId: string, near?: { amount?: string; date?: string }) {
     const all = await this.openEntries(this.db, companyId, bankAccountId);
-    const withAmt = near?.amount ? all.filter((e) => e.amountCents === centsOf(near.amount!)) : all;
+    const withAmt = has(near?.amount) ? all.filter((e) => e.amountCents === centsOf(near.amount!)) : all;
     return (withAmt.length > 0 ? withAmt : all).slice(-100).reverse().map((e) => e.entry);
   }
 }

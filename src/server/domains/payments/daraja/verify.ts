@@ -4,6 +4,8 @@ import { parseAsyncResult } from './parsers';
 import { phoneFingerprint } from '../engine/redact';
 import { darajaTimestamp, looksLikeReceipt, stkPassword } from './security';
 
+import { has } from '@/lib/has';
+
 /**
  * Deciding whether a payment is real. A callback is only a claim. These checks compare the claim
  * with what we asked for, then ask Safaricom itself; only Safaricom's own answer, for the very request
@@ -15,20 +17,20 @@ export function crossCheckClaim(input: VerifyAttemptInput): { code: string; reas
   const c = input.claim;
   if (!c) return null;
   const ids = c.requestIds;
-  if (input.providerReference && ids.checkoutRequestId && ids.checkoutRequestId !== input.providerReference) {
+  if (has(input.providerReference) && has(ids.checkoutRequestId) && ids.checkoutRequestId !== input.providerReference) {
     return { code: 'CHECKOUT_ID_MISMATCH', reason: `The callback names checkout ${ids.checkoutRequestId}, but this payment was requested as ${input.providerReference}.` };
   }
-  if (input.externalReference && ids.merchantRequestId && ids.merchantRequestId !== input.externalReference) {
+  if (has(input.externalReference) && has(ids.merchantRequestId) && ids.merchantRequestId !== input.externalReference) {
     return { code: 'MERCHANT_ID_MISMATCH', reason: `The callback names merchant request ${ids.merchantRequestId}, but this payment was requested as ${input.externalReference}.` };
   }
-  if (c.claimsSuccess) {
+  if (c.claimsSuccess === true) {
     if (c.amountCents !== null && c.amountCents !== input.amountCents) {
       return { code: 'AMOUNT_MISMATCH', reason: `The callback says ${(c.amountCents / 100).toFixed(2)} was paid, but ${(input.amountCents / 100).toFixed(2)} was asked for.` };
     }
-    if (c.payerFingerprint && input.customerPhone && c.payerFingerprint !== phoneFingerprint(input.customerPhone)) {
+    if (has(c.payerFingerprint) && has(input.customerPhone) && c.payerFingerprint !== phoneFingerprint(input.customerPhone)) {
       return { code: 'PAYER_MISMATCH', reason: 'The callback says the payment came from a different phone number than the one the prompt was sent to.' };
     }
-    if (c.platformReference && !looksLikeReceipt(c.platformReference)) {
+    if (has(c.platformReference) && !looksLikeReceipt(c.platformReference)) {
       return { code: 'RECEIPT_FORMAT', reason: `"${c.platformReference}" does not look like an M-Pesa receipt number.` };
     }
   }
@@ -38,10 +40,10 @@ export function crossCheckClaim(input: VerifyAttemptInput): { code: string; reas
 export async function verifyStk(input: VerifyAttemptInput, ctx: PlatformContext): Promise<VerificationOutcome> {
   const contradiction = crossCheckClaim(input);
   if (contradiction) return { status: 'mismatch', by: 'cross_check', code: contradiction.code, reason: contradiction.reason, evidence: { claim: input.claim ? { requestIds: input.claim.requestIds, amountCents: input.claim.amountCents } : null } };
-  if (!input.providerReference) return { status: 'error', by: 'stk_query', reason: 'This payment has no checkout request id to ask about.', retryable: false };
+  if (!has(input.providerReference)) return { status: 'error', by: 'stk_query', reason: 'This payment has no checkout request id to ask about.', retryable: false };
   const client = new DarajaClient(ctx);
   const creds = client.credentials;
-  if (!creds.shortcode?.trim() || !creds.passkey?.trim()) return { status: 'error', by: 'stk_query', reason: 'Checking a payment needs the business shortcode and passkey on the provider.', retryable: false };
+  if (!has(creds.shortcode?.trim()) || !has(creds.passkey?.trim())) return { status: 'error', by: 'stk_query', reason: 'Checking a payment needs the business shortcode and passkey on the provider.', retryable: false };
   const ts = darajaTimestamp(ctx.now());
   const res = await client.request('stk_query', 'POST', '/mpesa/stkpushquery/v1/query', {
     BusinessShortCode: creds.shortcode.trim(),
@@ -87,7 +89,7 @@ export function readStatusAnswer(result: Record<string, unknown>): StatusAnswer 
   const parsed = parseAsyncResult({ Result: { ResultCode: (result as { resultCode?: unknown }).resultCode, ResultDesc: (result as { resultDesc?: unknown }).resultDesc, ResultParameters: { ResultParameter: Object.entries((result.params ?? {}) as Record<string, string>).map(([Key, Value]) => ({ Key, Value })) } } });
   if (!parsed) return null;
   const p = parsed.params;
-  const amount = p.Amount ? Math.round(Number(String(p.Amount).replace(/,/g, '')) * 100) : null;
+  const amount = has(p.Amount) ? Math.round(Number(String(p.Amount).replace(/,/g, '')) * 100) : null;
   return {
     ok: parsed.resultCode === '0' && /^completed$/i.test(p.TransactionStatus ?? 'completed'),
     receipt: p.ReceiptNo ?? null,
@@ -102,11 +104,11 @@ export function readStatusAnswer(result: Record<string, unknown>): StatusAnswer 
 /** Does a Transaction Status answer agree with the payment we are confirming? */
 export function statusAgrees(answer: StatusAnswer, expect: { receipt: string | null; amountCents: number; shortcode: string | null }): { ok: true } | { ok: false; code: string; reason: string } {
   if (!answer.ok) return { ok: false, code: 'STATUS_NOT_COMPLETED', reason: `The transaction status is "${answer.status || 'unknown'}" (${answer.resultDesc ?? answer.resultCode}).` };
-  if (expect.receipt && answer.receipt && answer.receipt !== expect.receipt) return { ok: false, code: 'STATUS_RECEIPT_MISMATCH', reason: `The status answer is for ${answer.receipt}, not ${expect.receipt}.` };
+  if (has(expect.receipt) && has(answer.receipt) && answer.receipt !== expect.receipt) return { ok: false, code: 'STATUS_RECEIPT_MISMATCH', reason: `The status answer is for ${answer.receipt}, not ${expect.receipt}.` };
   if (answer.amountCents !== null && answer.amountCents !== expect.amountCents) {
     return { ok: false, code: 'STATUS_AMOUNT_MISMATCH', reason: `The platform says ${(answer.amountCents / 100).toFixed(2)} was moved, not ${(expect.amountCents / 100).toFixed(2)}.` };
   }
-  if (expect.shortcode && answer.creditParty && !answer.creditParty.includes(expect.shortcode)) {
+  if (has(expect.shortcode) && has(answer.creditParty) && !answer.creditParty.includes(expect.shortcode)) {
     return { ok: false, code: 'STATUS_RECEIVER_MISMATCH', reason: `The platform says the money went to "${answer.creditParty}", not to shortcode ${expect.shortcode}.` };
   }
   return { ok: true };

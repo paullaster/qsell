@@ -1,3 +1,5 @@
+
+import { has } from '@/lib/has';
 /**
  * What a credit note does to the books, in whole cents: how much of it is tax, how much the
  * original invoice can still absorb, and how much is left over for someone to decide about.
@@ -41,7 +43,7 @@ export function creditNoteLines(
   const lines: CreditNoteLine[] = [];
   if (split.netCents > 0) lines.push({ accountId: accounts.salesReturns, debitCents: split.netCents, creditCents: 0, description: `Returns ${label}` });
   if (split.taxCents > 0) {
-    if (!accounts.outputTax) throw new CreditNoteShapeError('Tax was charged on the sale but no account is set for tax owed on sales.');
+    if (!has(accounts.outputTax)) throw new CreditNoteShapeError('Tax was charged on the sale but no account is set for tax owed on sales.');
     lines.push({ accountId: accounts.outputTax, debitCents: split.taxCents, creditCents: 0, description: `Tax on ${label}` });
   }
   lines.push({ accountId: accounts.receivables, debitCents: 0, creditCents: gross, description: `Credit note ${label}` });

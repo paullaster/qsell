@@ -5,6 +5,8 @@ import { getContainer } from '@/server/di/container';
 import { postingPermissions, run } from './action-runner';
 import { fromCents, toCents } from './domain/receivables';
 
+import { has } from '@/lib/has';
+
 const fin = () => getContainer().finance;
 const PATH = '/admin/finance/receivables/credit-note-excess';
 
@@ -42,7 +44,7 @@ export async function creditNoteOpenInvoicesAction(creditNoteId: string) {
 
 export async function creditNoteExcessToWalletAction(creditNoteId: string, amount?: string) {
   return await run('credit_notes:resolve_excess', { surface: 'finance/credit-note-excess', action: 'to_wallet' }, async (ctx) => {
-    await fin().creditNoteAccounting.resolveToWallet(ctx, creditNoteId, { cents: amount ? toCents(amount) : undefined, permissions: await postingPermissions() });
+    await fin().creditNoteAccounting.resolveToWallet(ctx, creditNoteId, { cents: has(amount) ? toCents(amount) : undefined, permissions: await postingPermissions() });
   }, [PATH]);
 }
 

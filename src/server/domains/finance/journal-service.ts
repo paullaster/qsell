@@ -8,6 +8,8 @@ import type { PostingRequest } from './domain/types';
 import { type PostingEngine, PostingError, type PostingPermissions, type PostingPreview } from './engine';
 import { FinanceError, type FinanceContext } from './errors';
 
+import { has } from '@/lib/has';
+
 export interface LineInput {
   postingDate: string;
   documentNo: string;
@@ -136,7 +138,7 @@ export class JournalService {
       dimensionSetId: input.dimensionSetId ?? null,
       updatedAt: new Date(),
     };
-    if (lineId) {
+    if (has(lineId)) {
       await this.db.update(journalLines).set(values).where(and(eq(journalLines.id, lineId), eq(journalLines.batchId, batchId)));
       return lineId;
     }

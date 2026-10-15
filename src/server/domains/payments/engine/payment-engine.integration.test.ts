@@ -2,6 +2,8 @@ import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { and, desc, eq, like, sql } from 'drizzle-orm';
 
+import { has } from '@/lib/has';
+
 /**
  * The payment engine against a stand-in for Safaricom (and Pesapal). A payment is counted only when the
  * platform itself confirms it; everything else is refused with a reason.   TEST_DATABASE_URL=postgres://... pnpm test
@@ -34,7 +36,7 @@ class FakePlatform {
   };
 }
 
-describe.skipIf(!url)('payment engine (database)', () => {
+describe.skipIf(!has(url))('payment engine (database)', () => {
   type Db = import('@/server/db/drizzle/client').DrizzleDb;
   let db: Db;
   let schema: typeof import('@/server/db/drizzle/schema');
@@ -60,11 +62,11 @@ describe.skipIf(!url)('payment engine (database)', () => {
     await db.update(schema.paymentMethods).set({ enabled: false }).where(and(eq(schema.paymentMethods.companyId, companyId), eq(schema.paymentMethods.branchId, branch.id)));
     const { id } = await fin.paymentProviders.create(ctx(), { providerCode: code, displayName: `${code} ${run} ${++seq}` });
     await fin.paymentProviders.setCredentials(ctx(), id, code === 'mpesa_daraja'
-      ? { consumerKey: 'ck', consumerSecret: 'cs', shortcode: '174379', passkey: 'pk-secret-value', ...(opts.initiator ? { initiatorName: 'apiuser', initiatorPassword: 'Init#Pass1', certificate } : {}) }
+      ? { consumerKey: 'ck', consumerSecret: 'cs', shortcode: '174379', passkey: 'pk-secret-value', ...(opts.initiator === true ? { initiatorName: 'apiuser', initiatorPassword: 'Init#Pass1', certificate } : {}) }
       : code === 'pesapal_v3'
         ? { consumerKey: 'ck', consumerSecret: 'cs' }
         : { merchantCode: 'm', consumerSecret: 's', apiKey: 'k', privateKeyPem: 'p' });
-    const settings = { ...(opts.settings ?? {}), ...(opts.autoAllocate ? { c2b: { autoAllocate: 'by_customer_number' } } : {}) };
+    const settings = { ...(opts.settings ?? {}), ...(opts.autoAllocate === true ? { c2b: { autoAllocate: 'by_customer_number' } } : {}) };
     await db.update(schema.paymentProviderConfigs).set({ isEnabled: true, lastTestOk: true, settings, apiBaseUrl: 'https://sandbox.safaricom.co.ke' }).where(eq(schema.paymentProviderConfigs.id, id));
     const accts = await fin.setup.listAccounts(companyId);
     const m = await fin.paymentMethods.create(ctx(), { code: `PE${run}${++seq}`, name: `Method ${seq}`, kind: 'mobile_money', balancingBankAccountId: bankId, providerId: id, glAccountId: glMobile, branchId: branch.id, channelKind: 'paybill', channelNumber: opts.channel ?? '174379', requiresReference: false });
@@ -783,7 +785,7 @@ describe.skipIf(!url)('payment engine (database)', () => {
       await engine.sweep();
       expect(b2cCalls().length).toBe(before + 1); // never sent twice
       expect((await engine.ops.get(r.op.id)).status).toBe('accepted');
-      const result = (receipt: string | null) => ({ Result: { ResultType: 0, ResultCode: 0, ResultDesc: 'The service request is processed successfully.', OriginatorConversationID: queued.originatorId, ConversationID: 'AG_CONV_1', TransactionID: receipt ?? '', ResultParameters: { ResultParameter: receipt ? [{ Key: 'TransactionReceipt', Value: receipt }, { Key: 'TransactionAmount', Value: 500 }] : [] } } });
+      const result = (receipt: string | null) => ({ Result: { ResultType: 0, ResultCode: 0, ResultDesc: 'The service request is processed successfully.', OriginatorConversationID: queued.originatorId, ConversationID: 'AG_CONV_1', TransactionID: receipt ?? '', ResultParameters: { ResultParameter: has(receipt) ? [{ Key: 'TransactionReceipt', Value: receipt }, { Key: 'TransactionAmount', Value: 500 }] : [] } } });
       // an answer for a conversation that is not the one Safaricom gave us is refused
       const forged = await engine.daraja.completeFromResult(p.providerId, { Result: { ...result('QWE1234567').Result, ConversationID: 'AG_OTHER' } });
       expect(forged.matched).toBe(false);

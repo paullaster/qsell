@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 
+import { has } from '@/lib/has';
+
 /**
  * A customer paying at checkout goes through the payment method of the order's branch: the
  * provider's credentials are used, and the order is pinned to the method so the books post to
@@ -9,7 +11,7 @@ import { eq, sql } from 'drizzle-orm';
  */
 const url = process.env.TEST_DATABASE_URL;
 
-describe.skipIf(!url)('checkout through payment methods (database)', () => {
+describe.skipIf(!has(url))('checkout through payment methods (database)', () => {
   type Db = import('@/server/db/drizzle/client').DrizzleDb;
   let db: Db;
   let schema: typeof import('@/server/db/drizzle/schema');

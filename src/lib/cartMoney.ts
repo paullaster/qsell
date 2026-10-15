@@ -2,6 +2,8 @@ import type { CurrencyConfig, PublicProduct } from '@/types/index';
 import { formatPriceWithCurrency } from '@/lib/currency';
 import { computeCheckoutTotals, type PricedLine } from '@/lib/checkoutPricing';
 
+import { has } from '@/lib/has';
+
 export function cartLine(product: PublicProduct, quantity: number): PricedLine {
   return {
     productId: product.id,
@@ -25,7 +27,7 @@ function rawLineTax(line: PricedLine): number {
   return gross * (line.taxRate / 100);
 }
 
-export type CartTaxRow = { key: string; label: string; amount: number };
+export interface CartTaxRow { key: string; label: string; amount: number }
 
 /** Tax rows labeled from each product's tax category. Amounts sum to the order tax. */
 export function cartTaxRows(items: { product: PublicProduct; quantity: number }[]): CartTaxRow[] {
@@ -36,7 +38,7 @@ export function cartTaxRows(items: { product: PublicProduct; quantity: number }[
     const line = cartLine(item.product, item.quantity);
     const name = item.product.taxCategoryName?.trim();
     const key = `${name ?? ''}|${line.taxRate}|${line.isTaxInclusive ? 'in' : 'ex'}`;
-    const label = name
+    const label = has(name)
       ? `${name} (${line.taxRate}%)`
       : line.taxRate > 0
         ? `Tax (${line.taxRate}%)`

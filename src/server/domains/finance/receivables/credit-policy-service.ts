@@ -7,6 +7,8 @@ import { fromCents, toCents } from '../domain/receivables';
 import { pickPolicy, type CreditPolicy, type PolicyRow } from '../domain/wallet';
 import { FinanceError, type FinanceContext } from '../errors';
 
+import { has } from '@/lib/has';
+
 type Reader = Pick<DrizzleDb, 'select'>;
 
 export interface PolicyInput {
@@ -73,7 +75,7 @@ export class CreditPolicyService {
   /** Saves a policy from today. A change made the same day replaces that day's row. */
   async save(ctx: FinanceContext, input: PolicyInput) {
     const label = input.label.trim();
-    if (!label || label.length > 40) throw new FinanceError('LABEL_INVALID', 'Give it a short name, such as Wallet or Store credit.');
+    if (!has(label) || label.length > 40) throw new FinanceError('LABEL_INVALID', 'Give it a short name, such as Wallet or Store credit.');
     let max: string | null = null;
     if (input.maxBalance !== null && input.maxBalance.trim() !== '') {
       try {
@@ -85,7 +87,7 @@ export class CreditPolicyService {
     }
     const today = businessDate();
     await this.db.transaction(async (tx) => {
-      if (input.groupCode) {
+      if (has(input.groupCode)) {
         const [g] = await tx.select({ id: customerPostingGroups.id }).from(customerPostingGroups).where(and(eq(customerPostingGroups.companyId, ctx.companyId), eq(customerPostingGroups.code, input.groupCode)));
         if (!g) throw new FinanceError('GROUP_NOT_FOUND', `Customer posting group ${input.groupCode} does not exist.`);
       }

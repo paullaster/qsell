@@ -18,6 +18,8 @@ import type { BranchRow, PaymentProviderConfigRow } from '@/server/db/drizzle/sc
 import { extractPaymentReference } from '@/server/domains/payments/payment-reference';
 import { amountDue } from '@/server/domains/orders/amount-due';
 
+import { has } from '@/lib/has';
+
 /** Which branches act independently decides what the KRA screens show, so they must refresh. */
 const KRA_SETTINGS_PATH = '/admin/settings/tax-compliance/kra-tims-etims';
 
@@ -36,7 +38,7 @@ export async function listBranchesAction(): Promise<BranchRow[]> {
   const { company, branch } = await ensureBranchContext();
   const { branches } = getContainer();
   const list = await branches.listByCompany(company.id);
-  return list.length ? list : [branch];
+  return list.length !== 0 ? list : [branch];
 }
 
 export async function createBranchAction(input: {
@@ -92,7 +94,7 @@ export async function updateCompanyPublicBaseUrlAction(url: string): Promise<voi
   const { companySettings } = getContainer();
   const cleaned = url.trim().replace(/\/$/, '');
   // Payment providers only call back over https; plain http is allowed for a machine's own address.
-  if (cleaned && !/^https:\/\//i.test(cleaned) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(cleaned)) {
+  if (has(cleaned) && !/^https:\/\//i.test(cleaned) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(cleaned)) {
     throw new Error('The public address must start with https:// (payment providers will not call back over plain http).');
   }
   await companySettings.update({

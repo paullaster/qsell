@@ -19,6 +19,8 @@ import {
 import type { Tx } from '../engine';
 import { FinanceError, type FinanceContext } from '../errors';
 
+import { has } from '@/lib/has';
+
 export type Writer = DrizzleDb | Tx;
 
 export interface NewLedgerEntry {
@@ -394,8 +396,8 @@ export class CustomerLedgerService {
 
   async statement(companyId: string, customerId: string, from: string | null, to: string | null) {
     const conds = [eq(customerLedgerEntries.companyId, companyId), eq(customerLedgerEntries.customerId, customerId)];
-    if (from) conds.push(gte(customerLedgerEntries.postingDate, from));
-    if (to) conds.push(lte(customerLedgerEntries.postingDate, to));
+    if (has(from)) conds.push(gte(customerLedgerEntries.postingDate, from));
+    if (has(to)) conds.push(lte(customerLedgerEntries.postingDate, to));
     const [lines, open] = await Promise.all([
       this.db
         .select()
@@ -446,7 +448,7 @@ export class CustomerLedgerService {
       .where(
         and(
           eq(customerLedgerEntries.companyId, companyId),
-          customerId ? eq(customerLedgerEntries.customerId, customerId) : undefined,
+          has(customerId) ? eq(customerLedgerEntries.customerId, customerId) : undefined,
           sql`${customerLedgerEntries.remainingAmount} <> 0`,
         ),
       );

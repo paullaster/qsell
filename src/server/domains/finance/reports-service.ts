@@ -11,6 +11,8 @@ import { formatAmount, parseAmount } from './domain/amount';
 import { compareAccountNo, totalBalance } from './domain/chart';
 import { GENESIS_HASH, registerHash } from './domain/hash';
 
+import { has } from '@/lib/has';
+
 export interface TrialBalanceRow {
   accountId: string;
   no: string;
@@ -86,7 +88,7 @@ export class FinanceReportsService {
       const isTotal = c.a.type === 'total' || c.a.type === 'end_total';
       const isPosting = c.a.type === 'posting';
       if (isPosting && c.opening === 0n && c.debit === 0n && c.credit === 0n) continue;
-      if (isTotal && c.a.totaling) {
+      if (isTotal && has(c.a.totaling)) {
         const net = totalBalance(c.a.totaling, balances);
         const [cd, cc] = sides(net);
         out.push({
@@ -116,11 +118,11 @@ export class FinanceReportsService {
   ) {
     const limit = Math.min(Math.max(f.limit ?? 50, 1), 200);
     const where: SQL[] = [eq(glEntries.companyId, companyId)];
-    if (f.accountId) where.push(eq(glEntries.accountId, f.accountId));
-    if (f.from) where.push(gte(glEntries.postingDate, f.from));
-    if (f.to) where.push(lte(glEntries.postingDate, f.to));
-    if (f.documentNo) where.push(eq(glEntries.documentNo, f.documentNo));
-    if (f.registerId) where.push(eq(glEntries.registerId, f.registerId));
+    if (has(f.accountId)) where.push(eq(glEntries.accountId, f.accountId));
+    if (has(f.from)) where.push(gte(glEntries.postingDate, f.from));
+    if (has(f.to)) where.push(lte(glEntries.postingDate, f.to));
+    if (has(f.documentNo)) where.push(eq(glEntries.documentNo, f.documentNo));
+    if (has(f.registerId)) where.push(eq(glEntries.registerId, f.registerId));
     if (f.cursor) {
       where.push(sql`(${glEntries.postingDate}, ${glEntries.id}) < (${f.cursor.date}::date, ${f.cursor.id}::bigint)`);
     }
