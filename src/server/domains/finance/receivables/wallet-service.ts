@@ -28,6 +28,8 @@ import type { SalesPostingService } from '../sales-posting-service';
 import type { CreditPolicyService } from './credit-policy-service';
 import type { CustomerLedgerService } from './customer-ledger-service';
 
+import { has } from '@/lib/has';
+
 type Reader = Pick<DrizzleDb, 'select'>;
 
 /**
@@ -101,7 +103,7 @@ export class WalletService {
       .update(customerWallets)
       .set({ balance: sql`${customerWallets.balance} + ${fromCents(p.cents)}::numeric`, updatedAt: new Date() })
       .where(eq(customerWallets.id, w.id));
-    return row!.id;
+    return row.id;
   }
 
   private async credit(
@@ -171,7 +173,7 @@ export class WalletService {
     if (issue) throw new FinanceError(issue.code, issue.message);
 
     const [s] = await tx.select().from(financeSettings).where(eq(financeSettings.companyId, ctx.companyId));
-    const live = Boolean(s?.salesGlGoLive) && p.postingDate >= s!.salesGlGoLive!;
+    const live = Boolean(s?.salesGlGoLive) && p.postingDate >= s.salesGlGoLive!;
     let registerId: string | null = null;
     if (live) {
       const [receivables, deposits] = await Promise.all([
@@ -189,7 +191,7 @@ export class WalletService {
         description: `${p.documentNo} to ${policy.label.toLowerCase()}`,
         currency: p.currency,
         rate: p.rate,
-        rateSource: p.currency === s!.baseCurrency ? 'base' : 'manual',
+        rateSource: p.currency === s.baseCurrency ? 'base' : 'manual',
         lines: [
           { accountId: receivables.accountId, debit: fromCents(p.cents), credit: '0', description: `${p.documentNo} moved to ${policy.label.toLowerCase()}`, sourceLedger: 'customer', sourceEntryId: p.customerId },
           { accountId: deposits.accountId, debit: '0', credit: fromCents(p.cents), description: `Customer deposits: ${p.documentNo}`, sourceLedger: 'wallet', sourceEntryId: p.customerId },
@@ -214,7 +216,7 @@ export class WalletService {
     r: CustomerReceiptRow,
     opts: { cents?: number; permissions?: PostingPermissions } = {},
   ): Promise<{ movedCents: number }> {
-    if (r.status !== 'posted' || !r.ledgerEntryId) throw new FinanceError('NOT_POSTED', 'Only a posted receipt can be moved to the wallet.');
+    if (r.status !== 'posted' || !has(r.ledgerEntryId)) throw new FinanceError('NOT_POSTED', 'Only a posted receipt can be moved to the wallet.');
     const unapplied = await this.receiptUnappliedIn(tx, r.ledgerEntryId);
     const cents = opts.cents ?? unapplied;
     if (cents <= 0 || cents > unapplied) throw new FinanceError('NOTHING_TO_MOVE', unapplied === 0 ? 'This receipt has nothing unapplied to move.' : `Only ${fromCents(unapplied)} is unapplied.`);
@@ -252,10 +254,10 @@ export class WalletService {
 
   /** Same, as its own action on a posted receipt. */
   async moveReceiptToWallet(ctx: FinanceContext, receiptId: string, opts: { cents?: number; permissions?: PostingPermissions } = {}) {
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const [r] = await tx.select().from(customerReceipts).where(and(eq(customerReceipts.companyId, ctx.companyId), eq(customerReceipts.id, receiptId))).for('update');
       if (!r) throw new FinanceError('NOT_FOUND', 'That receipt does not exist.');
-      return this.moveReceiptIn(tx, ctx, r, opts);
+      return await this.moveReceiptIn(tx, ctx, r, opts);
     });
   }
 
@@ -264,7 +266,7 @@ export class WalletService {
    * take back, and goes back onto the customer account so the reversal can close it.
    */
   async returnReceiptCreditIn(tx: Tx, ctx: FinanceContext, r: CustomerReceiptRow, reason: { code: string; text: string | null }): Promise<void> {
-    if (!r.ledgerEntryId) return;
+    if (!has(r.ledgerEntryId)) return;
     const [moved] = await tx
       .select({ t: sql<string>`COALESCE(SUM(${customerDetailedEntries.amount}), 0)` })
       .from(customerDetailedEntries)
@@ -379,7 +381,7 @@ export class WalletService {
     const rs = await this.reasons.require(ctx.companyId, reason, 'wallet');
     await this.db.transaction(async (tx) => {
       const [e] = await tx.select().from(walletEntries).where(and(eq(walletEntries.companyId, ctx.companyId), eq(walletEntries.id, walletEntryId)));
-      if (!e || e.entryType !== 'utilisation' || !e.ledgerEntryId) throw new FinanceError('NOT_FOUND', 'That is not a use of the wallet.');
+      if (!e || e.entryType !== 'utilisation' || !has(e.ledgerEntryId)) throw new FinanceError('NOT_FOUND', 'That is not a use of the wallet.');
       const wallet = await this.lockWallet(tx, ctx.companyId, e.customerId, e.currency);
       const [again] = await tx.select({ id: walletEntries.id }).from(walletEntries).where(and(eq(walletEntries.sourceType, 'wallet_entry'), eq(walletEntries.sourceId, String(walletEntryId)), eq(walletEntries.entryType, 'reversal')));
       if (again) throw new FinanceError('ALREADY_REVERSED', 'That use has already been undone.');
@@ -390,7 +392,7 @@ export class WalletService {
       await this.record(tx, ctx, wallet, { type: 'reversal', cents: -toCents(e.amount), sourceType: 'wallet_entry', sourceId: String(walletEntryId), ledgerEntryId: e.ledgerEntryId, postingDate: businessDate(), reason: rs });
       // The books: undo the posting if it was made, otherwise it never will be.
       const [post] = await tx.select().from(financeSalesPostings).where(and(eq(financeSalesPostings.companyId, ctx.companyId), eq(financeSalesPostings.kind, 'wallet_use'), eq(financeSalesPostings.subjectId, String(walletEntryId)))).for('update');
-      if (post?.status === 'posted' && post.registerId) {
+      if (post?.status === 'posted' && has(post.registerId)) {
         await this.engine.reverse({ companyId: ctx.companyId, registerId: post.registerId, postingDate: businessDate(), reasonCode: rs.code, reasonText: rs.text, origin: ctx.origin, permissions: perms, tx });
       } else if (post) {
         await tx.update(financeSalesPostings).set({ status: 'skipped' }).where(eq(financeSalesPostings.id, post.id));
@@ -449,7 +451,7 @@ export class WalletService {
       const w = await this.lockWallet(tx, ctx.companyId, customerId, currency);
       await tx.update(customerWallets).set({ status: frozen ? 'frozen' : 'active', updatedAt: new Date() }).where(eq(customerWallets.id, w.id));
       await this.decisions.record(
-        { companyId: ctx.companyId, subject: { type: 'customer_wallet', id: w.id }, action: frozen ? 'finance.wallet_frozen' : 'finance.wallet_unfrozen', actor: ctx.actor, reason: reason ? { text: reason } : undefined, inputs: { origin: ctx.origin } },
+        { companyId: ctx.companyId, subject: { type: 'customer_wallet', id: w.id }, action: frozen ? 'finance.wallet_frozen' : 'finance.wallet_unfrozen', actor: ctx.actor, reason: has(reason) ? { text: reason } : undefined, inputs: { origin: ctx.origin } },
         tx,
       );
     });
@@ -460,7 +462,7 @@ export class WalletService {
       this.db.select().from(customerWallets).where(and(eq(customerWallets.companyId, companyId), eq(customerWallets.customerId, customerId))),
       this.policies.forCustomer(this.db, companyId, customerId),
     ]);
-    const entries = wallets.length
+    const entries = wallets.length !== 0
       ? await this.db.select().from(walletEntries).where(and(eq(walletEntries.companyId, companyId), eq(walletEntries.customerId, customerId))).orderBy(desc(walletEntries.id)).limit(100)
       : [];
     return { wallets, entries, policy };

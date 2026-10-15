@@ -28,7 +28,7 @@ export function FinanceSetupCard({ templates, canApply }: { templates: TemplateO
     setNotice(null);
     const res = await attempt(applyTemplateAction(code, start));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     setNotice({ kind: 'ok', text: `Imported ${res.data.accounts} accounts. Base currency: ${res.data.baseCurrency}.` });
     router.refresh();
   };

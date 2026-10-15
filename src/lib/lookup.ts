@@ -18,6 +18,8 @@ export interface LookupOption {
   description?: string | null;
   /** A short tag beside the label, such as "Default". */
   badge?: string | null;
+  /** Facts about the option the screen needs once it is chosen (a currency, whether a reference is required...). Set by the server. */
+  meta?: Record<string, string>;
 }
 
 export interface LookupPage {

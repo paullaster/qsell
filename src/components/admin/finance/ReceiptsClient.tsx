@@ -1,56 +1,64 @@
 'use client';
 
 import Link from 'next/link';
-import { useId, useState } from 'react';
+import { use, useState } from 'react';
 import { listReceiptsAction } from '@/server/domains/finance/receivables/actions';
-import { Chip, Field, Message, PageHeader, buttonClass, cardClass, fieldClass, money, primaryClass, type Notice, attempt } from './ui';
+import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { CHEQUE_STATUS, RECEIPT_STATUS, statusInfo } from '@/lib/finance-statuses';
+import { listArgs } from '@/lib/finance-list-filters';
+import type { Choice } from '@/lib/payment-options';
+import { Chip, Field, LoadFailed, Message, PageHeader, buttonClass, cardClass, fieldClass, money, primaryClass, type Notice, attempt } from './ui';
 
 type Page = Extract<Awaited<ReturnType<typeof listReceiptsAction>>, { ok: true }>['data'];
 type Row = Page['rows'][number];
 
-export const RECEIPT_STATUS: Record<string, { label: string; tone: 'green' | 'amber' | 'red' | 'sky' | 'gray' }> = {
-  draft: { label: 'Draft', tone: 'amber' },
-  posted: { label: 'Posted', tone: 'green' },
-  reversed: { label: 'Reversed', tone: 'red' },
-  cancelled: { label: 'Cancelled', tone: 'gray' },
-};
-export const CHEQUE_STATUS: Record<string, { label: string; tone: 'green' | 'amber' | 'red' | 'sky' | 'gray' }> = {
-  received: { label: 'Cheque received', tone: 'sky' },
-  deposited: { label: 'Cheque deposited', tone: 'amber' },
-  cleared: { label: 'Cheque cleared', tone: 'green' },
-  bounced: { label: 'Cheque bounced', tone: 'red' },
-};
+export function ReceiptsClient({ initialPromise }: { initialPromise: ReturnType<typeof listReceiptsAction> }) {
+  const res = use(initialPromise);
+  return res.ok ? <ReceiptsView initial={res.data} /> : <LoadFailed error={res.error} />;
+}
 
-export function ReceiptsClient({ initial }: { initial: Page }) {
-  const uid = useId();
+function StatusChips({ row }: { row: Row }) {
+  const state = statusInfo(RECEIPT_STATUS, row.status);
+  const cheque = statusInfo(CHEQUE_STATUS, row.chequeStatus);
+  return (
+    <>
+      <Chip tone={state.tone}>{state.label}</Chip>
+      {row.chequeStatus !== null ? <Chip tone={cheque.tone}>{cheque.label}</Chip> : null}
+    </>
+  );
+}
+
+function ReceiptsView({ initial }: { initial: Page }) {
   const [rows, setRows] = useState<Row[]>(initial.rows);
   const [next, setNext] = useState(initial.nextBefore);
-  const [filter, setFilter] = useState({ status: '', q: '' });
+  const [status, setStatus] = useState<Choice | null>(null);
+  const [q, setQ] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
 
-  const query = (before?: string) =>
-    attempt(listReceiptsAction({
-      ...(filter.status ? { status: filter.status as Row['status'] } : {}),
-      ...(filter.q.trim() ? { q: filter.q.trim() } : {}),
-      ...(before ? { before } : {}),
-    }));
-  const apply = async (e: React.FormEvent) => {
+  const query = (before?: string) => attempt(listReceiptsAction(listArgs((status?.id ?? null) as Row['status'] | null, q, before)));
+  const apply = async (e: React.SyntheticEvent) => {
     e.preventDefault();
     setBusy(true);
     setNotice(null);
     const res = await query();
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) {
+      setNotice({ kind: 'error', text: res.error });
+      return;
+    }
     setRows(res.data.rows);
     setNext(res.data.nextBefore);
   };
   const more = async () => {
-    if (!next) return;
+    if (next === null) return;
     setBusy(true);
     const res = await query(next);
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) {
+      setNotice({ kind: 'error', text: res.error });
+      return;
+    }
     setRows((r) => [...r, ...res.data.rows]);
     setNext(res.data.nextBefore);
   };
@@ -62,16 +70,11 @@ export function ReceiptsClient({ initial }: { initial: Page }) {
         intro="Money received from customers: cash, bank, cheque, M-Pesa and other. A receipt is posted once, then applied to invoices; if it was wrong it is reversed with a reason, never edited."
         actions={initial.can.create ? <Link href="/admin/finance/receipts/new" className={primaryClass}>New receipt</Link> : null}
       />
-      <form onSubmit={apply} className={`${cardClass} grid grid-cols-1 gap-3 sm:grid-cols-3`} aria-label="Filter receipts">
-        <Field id={`${uid}-q`} label="Search" hint="Receipt number, reference, customer name or number.">
-          <input id={`${uid}-q`} type="search" value={filter.q} onChange={(e) => setFilter({ ...filter, q: e.target.value })} className={fieldClass} autoComplete="off" />
+      <form onSubmit={(e) => void apply(e)} className={`${cardClass} grid grid-cols-1 gap-3 sm:grid-cols-3`} aria-label="Filter receipts">
+        <Field id="receipts-q" label="Search" hint="Receipt number, reference, customer name or number.">
+          <input id="receipts-q" type="search" value={q} onChange={(e) => setQ(e.target.value)} className={fieldClass} autoComplete="off" />
         </Field>
-        <Field id={`${uid}-st`} label="Status">
-          <select id={`${uid}-st`} value={filter.status} onChange={(e) => setFilter({ ...filter, status: e.target.value })} className={fieldClass}>
-            <option value="">All</option>
-            {Object.entries(RECEIPT_STATUS).map(([v, s]) => <option key={v} value={v}>{s.label}</option>)}
-          </select>
-        </Field>
+        <ChoicePicker label="Status" source="receipt-statuses" choice={status} onChoice={setStatus} placeholder="All" />
         <div className="flex items-end"><button type="submit" className={buttonClass} disabled={busy}>Apply filter</button></div>
       </form>
       <Message notice={notice} />
@@ -90,8 +93,7 @@ export function ReceiptsClient({ initial }: { initial: Page }) {
                   </div>
                   <p className="mt-0.5 text-xs text-fg">{r.customerName}</p>
                   <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-fg-muted">
-                    <Chip tone={RECEIPT_STATUS[r.status]?.tone ?? 'gray'}>{RECEIPT_STATUS[r.status]?.label ?? r.status}</Chip>
-                    {r.chequeStatus ? <Chip tone={CHEQUE_STATUS[r.chequeStatus]?.tone ?? 'gray'}>{CHEQUE_STATUS[r.chequeStatus]?.label}</Chip> : null}
+                    <StatusChips row={r} />
                     <span>{r.methodName}</span><span>{r.paymentDate}</span>
                   </div>
                 </Link>
@@ -115,12 +117,7 @@ export function ReceiptsClient({ initial }: { initial: Page }) {
                     <td className="pr-3">{r.methodName}</td>
                     <td className="pr-3">{r.reference ?? '—'}</td>
                     <td className="pr-3 whitespace-nowrap">{r.paymentDate}</td>
-                    <td className="pr-3">
-                      <span className="flex flex-wrap gap-1">
-                        <Chip tone={RECEIPT_STATUS[r.status]?.tone ?? 'gray'}>{RECEIPT_STATUS[r.status]?.label ?? r.status}</Chip>
-                        {r.chequeStatus ? <Chip tone={CHEQUE_STATUS[r.chequeStatus]?.tone ?? 'gray'}>{CHEQUE_STATUS[r.chequeStatus]?.label}</Chip> : null}
-                      </span>
-                    </td>
+                    <td className="pr-3"><span className="flex flex-wrap gap-1"><StatusChips row={r} /></span></td>
                     <td className="text-right font-semibold tabular-nums">{r.currency} {money(r.amount)}</td>
                   </tr>
                 ))}
@@ -129,7 +126,7 @@ export function ReceiptsClient({ initial }: { initial: Page }) {
           </div>
         </>
       )}
-      {next ? <button type="button" className={buttonClass} onClick={more} disabled={busy}>Show older receipts</button> : null}
+      {next !== null ? <button type="button" className={buttonClass} onClick={() => void more()} disabled={busy}>Show older receipts</button> : null}
     </div>
   );
 }

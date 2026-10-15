@@ -1,5 +1,7 @@
 import { engineSettings, type EngineSettings } from '../engine/settings';
 
+import { has } from '@/lib/has';
+
 export type C2bValidation = 'accept_all' | 'known_reference' | 'reject_all';
 
 export interface DarajaSettings extends EngineSettings {
@@ -71,6 +73,6 @@ export function darajaSettings(raw: unknown): DarajaSettings {
     },
     operations,
     dailyPayoutLimit: typeof s.dailyPayoutLimit === 'string' && /^\d+(\.\d{1,2})?$/.test(s.dailyPayoutLimit) ? s.dailyPayoutLimit : null,
-    pull: { registered: pull.registered === true, nominatedNumber: typeof pull.nominatedNumber === 'string' && pull.nominatedNumber.trim() ? pull.nominatedNumber.trim() : null },
+    pull: { registered: pull.registered === true, nominatedNumber: typeof pull.nominatedNumber === 'string' && has(pull.nominatedNumber.trim()) ? pull.nominatedNumber.trim() : null },
   };
 }

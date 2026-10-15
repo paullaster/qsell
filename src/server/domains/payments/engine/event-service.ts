@@ -4,6 +4,8 @@ import { providerEvents, type ProviderEventRow, type ProviderEventState } from '
 import { bodyHash, ipAllowed, redactDeep, redactHeaders } from './redact';
 import type { EngineSettings } from './settings';
 
+import { has } from '@/lib/has';
+
 export interface RecordEvent {
   companyId: string;
   providerId: string;
@@ -37,7 +39,7 @@ export class ProviderEventService {
   async record(input: RecordEvent): Promise<{ event: ProviderEventRow; parsed: unknown }> {
     let parsed: unknown = null;
     try {
-      parsed = input.rawText ? JSON.parse(input.rawText) : null;
+      parsed = has(input.rawText) ? JSON.parse(input.rawText) : null;
     } catch {
       parsed = null;
     }
@@ -70,7 +72,7 @@ export class ProviderEventService {
         duplicateOf: dup?.id ?? null,
       })
       .returning();
-    return { event: event!, parsed };
+    return { event, parsed };
   }
 
   async setState(
@@ -100,6 +102,6 @@ export class ProviderEventService {
   }
 
   async forAttempt(attemptId: string) {
-    return this.db.select().from(providerEvents).where(eq(providerEvents.attemptId, attemptId)).orderBy(desc(providerEvents.createdAt));
+    return await this.db.select().from(providerEvents).where(eq(providerEvents.attemptId, attemptId)).orderBy(desc(providerEvents.createdAt));
   }
 }

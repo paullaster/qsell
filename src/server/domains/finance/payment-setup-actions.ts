@@ -14,20 +14,30 @@ const PAGE = '/admin/settings/payments';
  * create one (branches, bank accounts, G/L accounts).
  */
 export async function paymentSetupAction() {
-  return run('payment_providers:read', { surface: 'settings/payments', action: 'view' }, async (ctx) => {
+  return await run('payment_providers:read', { surface: 'settings/payments', action: 'view' }, async (ctx) => {
     const c = getContainer();
     const company = await c.companySettings.ensureSeeded();
-    await c.organizations.ensureDefaultOrgAndBranch(company.id, company.tradingName || company.legalName);
+    await c.organizations.ensureDefaultOrgAndBranch(company.id, company.tradingName === '' ? company.legalName : company.tradingName);
     const canMethods = await canPermission('payment_methods:read');
-    const [providers, banks, glAccounts, branchList, settings, methods] = await Promise.all([
+    const [providers, settings, methods] = await Promise.all([
       fin().paymentProviders.list(ctx.companyId, company.publicBaseUrl ?? null),
-      fin().bankAccounts.list(ctx.companyId),
-      fin().setup.listAccounts(ctx.companyId),
-      c.branches.listByCompany(company.id),
       fin().setup.getSettings(ctx.companyId),
       canMethods ? fin().paymentMethods.list(ctx.companyId) : Promise.resolve([]),
     ]);
+    // The last few requests made to each M-Pesa provider, for the panel under it (one small query each).
+    const canActivity = await canPermission('payment_activity:read');
+    const recentRequests = Object.fromEntries(
+      await Promise.all(
+        providers
+          .filter((p) => p.daraja !== null && canActivity)
+          .map(async (p) => {
+            const rows = await c.paymentEngine.activity.operations(ctx.companyId, { providerId: p.id, limit: 15 });
+            return [p.id, rows.map((r) => ({ id: r.op.id, operation: r.op.operation, status: r.op.status, failureReason: r.op.failureReason, at: r.op.createdAt.toISOString() }))] as const;
+          }),
+      ),
+    );
     return {
+      recentRequests,
       financeSetUp: settings !== null,
       publicBaseUrl: company.publicBaseUrl ?? null,
       providers: providers.map((p) => ({
@@ -59,15 +69,6 @@ export async function paymentSetupAction() {
         enabled: r.method.enabled,
         sortOrder: r.method.sortOrder,
       })),
-      branches: branchList.filter((b) => b.isActive).map((b) => ({ id: b.id, label: `${b.code} — ${b.name}` })),
-      banks: banks.filter((b) => !b.account.blocked).map((b) => ({ id: b.account.id, label: `${b.account.code} — ${b.account.name} (${b.account.currency})`, kind: b.account.kind })),
-      glChoices: glAccounts.filter((a) => a.type === 'posting' && !a.blocked && a.category === 'assets').map((a) => ({ id: a.id, label: `${a.no} ${a.name}` })),
-      services: [
-        { code: 'mpesa_daraja', label: 'M-Pesa (Daraja)' },
-        { code: 'pesapal_v3', label: 'Pesapal' },
-        { code: 'jenga_hq', label: 'Equity (Jenga)' },
-        { code: 'kcb_buni', label: 'KCB (Buni)' },
-      ] as { code: PaymentProviderCode; label: string }[],
       can: {
         createProvider: await canPermission('payment_providers:create'),
         editProvider: await canPermission('payment_providers:edit'),
@@ -90,28 +91,28 @@ export async function paymentSetupAction() {
 }
 
 export async function createProviderAction(input: { providerCode: PaymentProviderCode; displayName?: string; environment?: PaymentProviderEnvironment }) {
-  return run('payment_providers:create', { surface: 'settings/payments', action: 'create_provider' }, async (ctx) => fin().paymentProviders.create(ctx, input), [PAGE]);
+  return await run('payment_providers:create', { surface: 'settings/payments', action: 'create_provider' }, async (ctx) => await fin().paymentProviders.create(ctx, input), [PAGE]);
 }
 
 export async function saveProviderAction(input: { id: string; displayName?: string; environment?: PaymentProviderEnvironment; apiBaseUrl?: string }) {
-  return run('payment_providers:edit', { surface: 'settings/payments', action: 'save_provider' }, async (ctx) => {
+  return await run('payment_providers:edit', { surface: 'settings/payments', action: 'save_provider' }, async (ctx) => {
     const { id, ...rest } = input;
     await fin().paymentProviders.update(ctx, id, rest);
   }, [PAGE]);
 }
 
 export async function setProviderCredentialsAction(id: string, credentials: Record<string, string>) {
-  return run('payment_providers:set_credentials', { surface: 'settings/payments', action: 'set_credentials' }, async (ctx) => fin().paymentProviders.setCredentials(ctx, id, credentials), [PAGE]);
+  return await run('payment_providers:set_credentials', { surface: 'settings/payments', action: 'set_credentials' }, async (ctx) => await fin().paymentProviders.setCredentials(ctx, id, credentials), [PAGE]);
 }
 
 export async function setProviderEnabledAction(id: string, enabled: boolean) {
-  return run('payment_providers:enable', { surface: 'settings/payments', action: enabled ? 'enable_provider' : 'disable_provider' }, async (ctx) => fin().paymentProviders.setEnabled(ctx, id, enabled), [PAGE]);
+  return await run('payment_providers:enable', { surface: 'settings/payments', action: enabled ? 'enable_provider' : 'disable_provider' }, async (ctx) => await fin().paymentProviders.setEnabled(ctx, id, enabled), [PAGE]);
 }
 
 export async function testProviderAction(id: string) {
-  return run('payment_providers:test', { surface: 'settings/payments', action: 'test_connection' }, async (ctx) => fin().paymentProviders.test(ctx, id), [PAGE]);
+  return await run('payment_providers:test', { surface: 'settings/payments', action: 'test_connection' }, async (ctx) => await fin().paymentProviders.test(ctx, id), [PAGE]);
 }
 
 export async function deleteProviderAction(id: string) {
-  return run('payment_providers:delete', { surface: 'settings/payments', action: 'delete_provider' }, async (ctx) => fin().paymentProviders.delete(ctx, id), [PAGE]);
+  return await run('payment_providers:delete', { surface: 'settings/payments', action: 'delete_provider' }, async (ctx) => await fin().paymentProviders.delete(ctx, id), [PAGE]);
 }

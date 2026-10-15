@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useId, useState } from 'react';
+import { use, useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   creditNoteExcessApplyAction,
@@ -9,12 +9,18 @@ import {
   creditNoteOpenInvoicesAction,
   type creditNoteExcessWorklistAction,
 } from '@/server/domains/finance/credit-note-actions';
-import { Chip, Message, PageHeader, buttonClass, cardClass, money, primaryClass, type Notice, attempt } from './ui';
+import { plain } from '@/lib/finance-history';
+import { Chip, LoadFailed, Message, PageHeader, buttonClass, cardClass, money, primaryClass, type Notice, attempt } from './ui';
 
 type View = Extract<Awaited<ReturnType<typeof creditNoteExcessWorklistAction>>, { ok: true }>['data'];
 
 /** Credit notes whose customer is owed something the invoice could not absorb. Each needs a decision. */
-export function CreditNoteExcessClient({ view }: { view: View }) {
+export function CreditNoteExcessClient({ viewPromise }: { viewPromise: ReturnType<typeof creditNoteExcessWorklistAction> }) {
+  const res = use(viewPromise);
+  return res.ok ? <CreditNoteExcessView view={res.data} /> : <LoadFailed error={res.error} />;
+}
+
+function CreditNoteExcessView({ view }: { view: View }) {
   const uid = useId();
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
@@ -36,7 +42,10 @@ export function CreditNoteExcessClient({ view }: { view: View }) {
     setBusy(id);
     const res = await attempt(creditNoteOpenInvoicesAction(id));
     setBusy(null);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) {
+      setNotice({ kind: 'error', text: res.error });
+      return;
+    }
     setAsking({ id, invoices: res.data });
   };
   const apply = async (id: string) => {
@@ -52,15 +61,14 @@ export function CreditNoteExcessClient({ view }: { view: View }) {
         intro="A credit note can be bigger than what the customer still owes on the invoice (it was already paid, or paid at the sale). The difference is owed to them, and stays on this list until someone decides what to do with it."
       />
       <Message notice={notice} />
-      {view.rows.length === 0 ? (
-        <p className="text-sm text-fg-muted">Every credit note has been settled.</p>
-      ) : (
+      {view.rows.length === 0 ? <p className="text-sm text-fg-muted">Every credit note has been settled.</p> : null}
+      {view.rows.length > 0 ? (
         <ul className="space-y-3">
           {view.rows.map((r) => (
             <li key={r.creditNoteId} className={`${cardClass} space-y-3`}>
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="text-sm font-bold text-fg-strong">{r.creditNoteNo} <span className="font-normal text-fg-muted">· order {r.order} · {r.reason.replace(/_/g, ' ')}</span></p>
+                  <p className="text-sm font-bold text-fg-strong">{r.creditNoteNo} <span className="font-normal text-fg-muted">· order {r.order} · {plain(r.reason)}</span></p>
                   <p className="text-xs text-fg"><Link className="font-semibold text-indigo-600 hover:underline" href={`/admin/finance/receivables/customer/${r.customerId}`}>{r.customer}</Link> ({r.customerNumber})</p>
                 </div>
                 <div className="text-right">
@@ -80,19 +88,20 @@ export function CreditNoteExcessClient({ view }: { view: View }) {
               ) : null}
               {asking?.id === r.creditNoteId ? (
                 <div className="space-y-2 rounded-lg border border-line p-3" aria-live="polite" id={`${uid}-${r.creditNoteId}`}>
-                  {asking.invoices.length === 0 ? <p className="text-sm text-fg-muted">This customer has no unpaid invoices.</p> : (
+                  {asking.invoices.length === 0 ? <p className="text-sm text-fg-muted">This customer has no unpaid invoices.</p> : null}
+                  {asking.invoices.length > 0 ? (
                     <>
                       <p className="text-sm text-fg">It will be used on, oldest first:</p>
-                      <ul className="text-xs text-fg-muted">{asking.invoices.map((i) => <li key={i.entryId}>{i.documentNo} — owes {money(i.remaining)}{i.dueDate ? `, due ${i.dueDate}` : ''}</li>)}</ul>
+                      <ul className="text-xs text-fg-muted">{asking.invoices.map((i) => <li key={i.entryId}>{i.documentNo} — owes {money(i.remaining)}{i.dueDate === null ? '' : `, due ${i.dueDate}`}</li>)}</ul>
                       <div className="flex gap-2"><button type="button" className={primaryClass} disabled={busy !== null} onClick={() => void apply(r.creditNoteId)}>Use it</button><button type="button" className={buttonClass} onClick={() => setAsking(null)}>Cancel</button></div>
                     </>
-                  )}
+                  ) : null}
                 </div>
               ) : null}
             </li>
           ))}
         </ul>
-      )}
+      ) : null}
     </div>
   );
 }

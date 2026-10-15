@@ -1,77 +1,50 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { use, useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { saveCreditPolicyAction, type creditPolicyAction } from '@/server/domains/finance/wallet-actions';
-import { Chip, Field, Message, PageHeader, buttonClass, cardClass, fieldClass, primaryClass, type Notice, attempt } from './ui';
+import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { AUTO_APPLY_MODES, CREDIT_NOTE_MODES, OVERPAYMENT_MODES, choiceOf, describePolicy, inForce, policyInput, startingForm, type PolicyForm } from '@/lib/wallet-policy';
+import type { Choice } from '@/lib/payment-options';
+import { Chip, Field, LoadFailed, Message, PageHeader, buttonClass, cardClass, fieldClass, primaryClass, type Notice, attempt } from './ui';
 
 type View = Extract<Awaited<ReturnType<typeof creditPolicyAction>>, { ok: true }>['data'];
-type Row = View['rows'][number];
 
-interface FormState {
-  groupCode: string | null;
-  walletEnabled: boolean;
-  allowDeposits: boolean;
-  overpaymentDefault: 'wallet' | 'hold' | 'ask';
-  autoApply: 'never' | 'oldest_first';
-  creditNoteExcess: 'wallet' | 'ask';
-  refundsEnabled: boolean;
-  walletCashOut: boolean;
-  maxBalance: string;
-  label: string;
+export function WalletPolicyClient({ viewPromise }: { viewPromise: ReturnType<typeof creditPolicyAction> }) {
+  const res = use(viewPromise);
+  return res.ok ? <WalletPolicyView view={res.data} /> : <LoadFailed error={res.error} />;
 }
 
-const OVERPAY = { wallet: 'Put it in the wallet', hold: 'Leave it unapplied on the account', ask: 'Leave it unapplied until someone chooses' };
-
-/** The newest row of each scope, which is what is in force. */
-function inForce(rows: Row[]): Map<string, Row> {
-  const today = new Date().toISOString().slice(0, 10);
-  const m = new Map<string, Row>();
-  for (const r of [...rows].filter((x) => x.effectiveFrom <= today).sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))) m.set(r.groupCode ?? '', r);
-  return m;
-}
-
-export function WalletPolicyClient({ view }: { view: View }) {
+function WalletPolicyView({ view }: { view: View }) {
   const uid = useId();
   const router = useRouter();
-  const [form, setForm] = useState<FormState | null>(null);
+  const [form, setForm] = useState<PolicyForm | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
-  const current = inForce(view.rows);
+  const current = inForce(view.rows, view.today);
   const company = current.get('');
-  const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setForm((f) => (f ? { ...f, [k]: v } : f));
+  const set = <K extends keyof PolicyForm>(k: K, v: PolicyForm[K]) => setForm((f) => (f === null ? f : { ...f, [k]: v }));
+  const pick = (k: 'overpaymentDefault' | 'autoApply' | 'creditNoteExcess') => (c: Choice | null) => set(k, c?.id ?? '');
 
   const edit = (groupCode: string | null) => {
-    const r = current.get(groupCode ?? '') ?? company;
-    setForm({
-      groupCode,
-      walletEnabled: r?.walletEnabled ?? false,
-      allowDeposits: r?.allowDeposits ?? true,
-      overpaymentDefault: r?.overpaymentDefault ?? 'ask',
-      autoApply: r?.autoApply ?? 'never',
-      creditNoteExcess: r?.creditNoteExcess ?? 'ask',
-      refundsEnabled: r?.refundsEnabled ?? true,
-      walletCashOut: r?.walletCashOut ?? false,
-      maxBalance: r?.maxBalance ?? '',
-      label: company?.label ?? 'Wallet',
-    });
+    setForm(startingForm(groupCode, current.get(groupCode ?? ''), company));
     setNotice(null);
   };
 
-  const save = async (e: React.FormEvent) => {
+  const save = async (e: React.SyntheticEvent) => {
     e.preventDefault();
-    if (!form) return;
+    if (form === null) return;
     setBusy(true);
-    const res = await attempt(saveCreditPolicyAction({ ...form, maxBalance: form.maxBalance.trim() === '' ? null : form.maxBalance.trim() }));
+    const res = await attempt(saveCreditPolicyAction(policyInput(form)));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) {
+      setNotice({ kind: 'error', text: res.error });
+      return;
+    }
     setNotice({ kind: 'ok', text: 'Saved. It applies from today.' });
     setForm(null);
     router.refresh();
   };
-
-  const describe = (r: Row | undefined) =>
-    !r ? 'Not set: there is no wallet, and money paid beyond what is owed stays on the account.' : r.walletEnabled ? `On. Overpayments: ${OVERPAY[r.overpaymentDefault].toLowerCase()}. ${r.autoApply === 'oldest_first' ? 'Paid from automatically on credit invoices.' : 'Used only when someone chooses.'}${r.allowDeposits ? '' : ' No advance deposits.'}${r.maxBalance ? ` Holds at most ${r.maxBalance}.` : ''}` : 'Off.';
 
   return (
     <div className="max-w-4xl space-y-5">
@@ -84,9 +57,9 @@ export function WalletPolicyClient({ view }: { view: View }) {
       <section className={`${cardClass} space-y-2`} aria-labelledby={`${uid}-co`}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 id={`${uid}-co`} className="text-sm font-bold text-fg-strong">Whole business</h3>
-          {company?.walletEnabled ? <Chip tone="green">{company.label} on</Chip> : <Chip tone="gray">Off</Chip>}
+          {company?.walletEnabled === true ? <Chip tone="green">{company.label} on</Chip> : <Chip tone="gray">Off</Chip>}
         </div>
-        <p className="text-sm text-fg">{describe(company)}</p>
+        <p className="text-sm text-fg">{describePolicy(company)}</p>
         {view.canEdit ? <button type="button" className={buttonClass} onClick={() => edit(null)}>Change</button> : null}
       </section>
 
@@ -96,39 +69,25 @@ export function WalletPolicyClient({ view }: { view: View }) {
           <section key={g.code} className={`${cardClass} space-y-2`} aria-label={`Customer group ${g.code}`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-bold text-fg-strong"><span className="font-mono">{g.code}</span> {g.name}</h3>
-              {r ? <Chip tone="sky">Its own rules</Chip> : <Chip tone="gray">Follows the whole business</Chip>}
+              {r === undefined ? <Chip tone="gray">Follows the whole business</Chip> : <Chip tone="sky">Its own rules</Chip>}
             </div>
-            {r ? <p className="text-sm text-fg">{describe(r)}</p> : null}
-            {view.canEdit ? <button type="button" className={buttonClass} onClick={() => edit(g.code)} aria-label={`Change the rules for ${g.code}`}>{r ? 'Change' : 'Give it its own rules'}</button> : null}
+            {r === undefined ? null : <p className="text-sm text-fg">{describePolicy(r)}</p>}
+            {view.canEdit ? <button type="button" className={buttonClass} onClick={() => edit(g.code)} aria-label={`Change the rules for ${g.code}`}>{r === undefined ? 'Give it its own rules' : 'Change'}</button> : null}
           </section>
         );
       })}
 
-      {form ? (
-        <form onSubmit={save} className={`${cardClass} space-y-4`} aria-label={form.groupCode ? `Rules for ${form.groupCode}` : 'Rules for the whole business'}>
-          <h3 className="text-sm font-bold text-fg-strong">{form.groupCode ? `Rules for ${form.groupCode}` : 'Rules for the whole business'}</h3>
+      {form === null ? null : (
+        <form onSubmit={(e) => void save(e)} className={`${cardClass} space-y-4`} aria-label={form.groupCode === null ? 'Rules for the whole business' : `Rules for ${form.groupCode}`}>
+          <h3 className="text-sm font-bold text-fg-strong">{form.groupCode === null ? 'Rules for the whole business' : `Rules for ${form.groupCode}`}</h3>
           <label className="flex min-h-10 items-center gap-2 text-sm text-fg"><input type="checkbox" checked={form.walletEnabled} onChange={(e) => set('walletEnabled', e.target.checked)} className="h-4 w-4" /> Customers can hold credit with us</label>
           <label className="flex min-h-10 items-center gap-2 text-sm text-fg"><input type="checkbox" checked={form.allowDeposits} onChange={(e) => set('allowDeposits', e.target.checked)} className="h-4 w-4" disabled={!form.walletEnabled} /> Accept advance deposits (money paid before any invoice)</label>
           <label className="flex min-h-10 items-center gap-2 text-sm text-fg"><input type="checkbox" checked={form.refundsEnabled} onChange={(e) => set('refundsEnabled', e.target.checked)} className="h-4 w-4" /> Money may be paid back to customers (refunds). Off means everything owed to a customer stays as credit.</label>
           <label className="flex min-h-10 items-center gap-2 text-sm text-fg"><input type="checkbox" checked={form.walletCashOut} onChange={(e) => set('walletCashOut', e.target.checked)} className="h-4 w-4" disabled={!form.walletEnabled || !form.refundsEnabled} /> A customer may take what is in their wallet out as a refund</label>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field id={`${uid}-over`} label="Money paid beyond what is owed">
-              <select id={`${uid}-over`} value={form.overpaymentDefault} onChange={(e) => set('overpaymentDefault', e.target.value as FormState['overpaymentDefault'])} className={fieldClass} disabled={!form.walletEnabled}>
-                {Object.entries(OVERPAY).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-              </select>
-            </Field>
-            <Field id={`${uid}-auto`} label="On a new credit invoice">
-              <select id={`${uid}-auto`} value={form.autoApply} onChange={(e) => set('autoApply', e.target.value as FormState['autoApply'])} className={fieldClass} disabled={!form.walletEnabled}>
-                <option value="never">Use the wallet only when someone chooses</option>
-                <option value="oldest_first">Pay from the wallet automatically</option>
-              </select>
-            </Field>
-            <Field id={`${uid}-cn`} label="Credit note beyond what the invoice still owes">
-              <select id={`${uid}-cn`} value={form.creditNoteExcess} onChange={(e) => set('creditNoteExcess', e.target.value as FormState['creditNoteExcess'])} className={fieldClass} disabled={!form.walletEnabled}>
-                <option value="ask">Wait on a list until someone decides</option>
-                <option value="wallet">Put it in the wallet</option>
-              </select>
-            </Field>
+            <ChoicePicker label="Money paid beyond what is owed" source="wallet-overpayment-modes" choice={choiceOf(OVERPAYMENT_MODES, form.overpaymentDefault)} onChoice={pick('overpaymentDefault')} clearable={false} required disabled={!form.walletEnabled} />
+            <ChoicePicker label="On a new credit invoice" source="wallet-auto-apply-modes" choice={choiceOf(AUTO_APPLY_MODES, form.autoApply)} onChoice={pick('autoApply')} clearable={false} required disabled={!form.walletEnabled} />
+            <ChoicePicker label="Credit note beyond what the invoice still owes" source="wallet-credit-note-modes" choice={choiceOf(CREDIT_NOTE_MODES, form.creditNoteExcess)} onChoice={pick('creditNoteExcess')} clearable={false} required disabled={!form.walletEnabled} />
             <Field id={`${uid}-max`} label="Most a wallet may hold" hint="Leave empty for no limit.">
               <input id={`${uid}-max`} value={form.maxBalance} onChange={(e) => set('maxBalance', e.target.value)} className={fieldClass} inputMode="decimal" disabled={!form.walletEnabled} />
             </Field>
@@ -140,7 +99,7 @@ export function WalletPolicyClient({ view }: { view: View }) {
           </div>
           <div className="flex gap-2"><button type="submit" className={primaryClass} disabled={busy}>Save from today</button><button type="button" className={buttonClass} onClick={() => setForm(null)}>Cancel</button></div>
         </form>
-      ) : null}
+      )}
     </div>
   );
 }

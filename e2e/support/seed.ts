@@ -21,6 +21,7 @@ async function main(): Promise<void> {
   const quotes = new SalesQuoteService();
   if ((await quotes.listTemplates()).length > 0) {
     console.warn('e2e seed: already seeded');
+    await seedFinance();
     return;
   }
   await container.organizations.ensureDefaultOrgAndBranch(company.id, 'E2E Co');
@@ -162,7 +163,56 @@ async function main(): Promise<void> {
         .where(eq(schema.salesQuotes.id, quote.id));
     }
   }
+  await seedFinance();
   console.warn('e2e seed: done');
+}
+
+/**
+ * Finance for the receipt and refund screens: the chart of accounts, a bank, a cash method that can
+ * be refunded through, and one posted receipt with money left unapplied (so there is something to
+ * refund). Safe to run again.
+ */
+async function seedFinance(): Promise<void> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const schema = await import('@/server/db/drizzle/schema');
+  const { getContainer } = await import('@/server/di/container');
+  const container = getContainer();
+  const fin = container.finance;
+  const company = await container.companySettings.ensureSeeded();
+  const user = (await db.select().from(schema.users).limit(1)).at(0);
+  if (user === undefined) throw new Error('e2e seed: the admin was not created');
+  const ctx = { companyId: company.id, actor: { type: 'user' as const, id: user.id }, origin: { surface: 'e2e', action: 'seed' } };
+  await container.reasonCodes.ensureSystemReasons(company.id);
+  if ((await fin.setup.getSettings(company.id)) === null) {
+    await fin.setup.applyTemplate(ctx, 'kenya', { fiscalYearStart: '2026-01-01' });
+  }
+  const methods = await fin.paymentMethods.list(company.id);
+  if (methods.some((m) => m.method.code === 'E2ECASH')) return;
+  const bank = await fin.bankAccounts.create(ctx, { code: 'E2EBANK', name: 'E2E Bank', kind: 'bank', currency: 'KES' });
+  const accounts = await fin.setup.listAccounts(company.id);
+  const gl = accounts.find((a) => a.no === '1120');
+  const manual = (await fin.paymentMethods.providerChoices(company.id)).find((p) => p.isSystem);
+  if (gl === undefined || manual === undefined) throw new Error('e2e seed: the chart of accounts is incomplete');
+  const method = await fin.paymentMethods.create(ctx, {
+    code: 'E2ECASH',
+    name: 'E2E Cash',
+    kind: 'cash',
+    balancingBankAccountId: bank.id,
+    providerId: manual.id,
+    glAccountId: gl.id,
+    usableFor: ['customer_receipt', 'customer_refund'],
+    refundDestination: 'manual',
+  });
+  const alice = (await db.select().from(schema.customers).where(eq(schema.customers.number, 'E2E001'))).at(0);
+  if (alice === undefined) throw new Error('e2e seed: the customer was not created');
+  const receipt = await fin.receipts.create(ctx, {
+    customerId: alice.id,
+    paymentMethodId: method.id,
+    amount: '500.00',
+    paymentDate: new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' }),
+    externalReference: 'E2E-SEED-1',
+  });
+  await fin.receipts.post(ctx, receipt.id, { allocate: 'none' });
 }
 
 main().then(

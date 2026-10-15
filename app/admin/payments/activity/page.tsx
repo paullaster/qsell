@@ -1,9 +1,12 @@
+import { Suspense } from 'react';
 import { paymentActivityAction } from '@/server/domains/payments/activity-actions';
 import { PaymentActivityClient } from '@/components/admin/payments/PaymentActivityClient';
-import { LoadFailed } from '@/components/admin/finance/ui';
+import { PageSkeleton } from '@/components/admin/finance/ui';
 
-export default async function AdminPaymentActivityPage() {
-  const res = await paymentActivityAction();
-  if (!res.ok) return <LoadFailed error={res.error} />;
-  return <PaymentActivityClient initial={res.data} />;
+export default function AdminPaymentActivityPage() {
+  return (
+    <Suspense fallback={<PageSkeleton label="payment activity" />}>
+      <PaymentActivityClient initialPromise={paymentActivityAction()} />
+    </Suspense>
+  );
 }

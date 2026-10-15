@@ -25,6 +25,8 @@ import {
   today,
   type Notice, attempt } from './ui';
 
+import { has } from '@/lib/has';
+
 type Preview = Extract<Awaited<ReturnType<typeof previewBatchAction>>, { ok: true }>['data'];
 
 export function JournalEditorClient({ view }: { view: BatchView }) {
@@ -58,7 +60,7 @@ export function JournalEditorClient({ view }: { view: BatchView }) {
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     const account = accountByText.get(form.account);
-    if (!account) return setNotice({ kind: 'error', text: 'Pick an account from the list.' });
+    if (!account) { setNotice({ kind: 'error', text: 'Pick an account from the list.' }); return; }
     setBusy(true);
     setPreview(null);
     const res = await attempt(saveJournalLineAction(
@@ -67,7 +69,7 @@ export function JournalEditorClient({ view }: { view: BatchView }) {
       editId,
     ));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     setNotice(null);
     reset();
     router.refresh();
@@ -91,7 +93,7 @@ export function JournalEditorClient({ view }: { view: BatchView }) {
     setPreview(null);
     const res = await attempt(deleteJournalLineAction(view.batch.id, id));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     router.refresh();
   };
 
@@ -100,7 +102,7 @@ export function JournalEditorClient({ view }: { view: BatchView }) {
     setNotice(null);
     const res = await attempt(previewBatchAction(view.batch.id));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     setPreview(res.data);
     const bad = res.data.filter((p) => !p.ok).length;
     setNotice(bad === 0 ? { kind: 'ok', text: 'Everything in this batch can be posted.' } : { kind: 'error', text: `${bad} document${bad === 1 ? '' : 's'} cannot be posted yet.` });
@@ -112,7 +114,7 @@ export function JournalEditorClient({ view }: { view: BatchView }) {
     setNotice(null);
     const res = await attempt(postBatchAction(view.batch.id));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     router.push('/admin/finance/registers');
   };
 
@@ -125,7 +127,7 @@ export function JournalEditorClient({ view }: { view: BatchView }) {
       <Message notice={notice} />
 
       {view.can.edit ? (
-        <form onSubmit={save} className={`${cardClass} space-y-3`} aria-label={editId ? 'Edit line' : 'Add line'}>
+        <form onSubmit={save} className={`${cardClass} space-y-3`} aria-label={has(editId) ? 'Edit line' : 'Add line'}>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6">
             <Field id={`${uid}-date`} label="Posting date"><input id={`${uid}-date`} type="date" value={form.postingDate} onChange={(e) => setForm({ ...form, postingDate: e.target.value })} className={fieldClass} required /></Field>
             <Field id={`${uid}-doc`} label="Document no."><input id={`${uid}-doc`} value={form.documentNo} onChange={(e) => setForm({ ...form, documentNo: e.target.value })} className={`${fieldClass} font-mono`} required /></Field>
@@ -137,15 +139,15 @@ export function JournalEditorClient({ view }: { view: BatchView }) {
                 </datalist>
               </Field>
             </div>
-            <Field id={`${uid}-debit`} label="Debit"><input id={`${uid}-debit`} inputMode="decimal" value={form.debit} onChange={(e) => setForm({ ...form, debit: e.target.value, credit: e.target.value ? '' : form.credit })} className={`${fieldClass} text-right tabular-nums`} /></Field>
-            <Field id={`${uid}-credit`} label="Credit"><input id={`${uid}-credit`} inputMode="decimal" value={form.credit} onChange={(e) => setForm({ ...form, credit: e.target.value, debit: e.target.value ? '' : form.debit })} className={`${fieldClass} text-right tabular-nums`} /></Field>
+            <Field id={`${uid}-debit`} label="Debit"><input id={`${uid}-debit`} inputMode="decimal" value={form.debit} onChange={(e) => setForm({ ...form, debit: e.target.value, credit: has(e.target.value) ? '' : form.credit })} className={`${fieldClass} text-right tabular-nums`} /></Field>
+            <Field id={`${uid}-credit`} label="Credit"><input id={`${uid}-credit`} inputMode="decimal" value={form.credit} onChange={(e) => setForm({ ...form, credit: e.target.value, debit: has(e.target.value) ? '' : form.debit })} className={`${fieldClass} text-right tabular-nums`} /></Field>
             <div className="sm:col-span-2 lg:col-span-6">
               <Field id={`${uid}-desc`} label="Description"><input id={`${uid}-desc`} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className={fieldClass} /></Field>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <button type="submit" disabled={busy} className={primaryClass}>{editId ? 'Save line' : 'Add line'}</button>
-            {editId ? <button type="button" className={buttonClass} onClick={reset}>Cancel edit</button> : null}
+            <button type="submit" disabled={busy} className={primaryClass}>{has(editId) ? 'Save line' : 'Add line'}</button>
+            {has(editId) ? <button type="button" className={buttonClass} onClick={reset}>Cancel edit</button> : null}
           </div>
         </form>
       ) : null}
@@ -179,7 +181,7 @@ export function JournalEditorClient({ view }: { view: BatchView }) {
                   <tr key={l.id}>
                     <td className="whitespace-nowrap px-3 py-2 text-xs text-fg-muted">{l.postingDate}</td>
                     <td className="px-3 py-2"><span className="font-mono text-xs">{l.documentNo}</span> {balanced ? null : <Chip tone="amber">Out of balance</Chip>}</td>
-                    <td className="px-3 py-2"><span className="font-mono text-xs">{l.accountNo}</span> {l.accountName}{l.description ? <span className="block text-xs text-fg-muted">{l.description}</span> : null}</td>
+                    <td className="px-3 py-2"><span className="font-mono text-xs">{l.accountNo}</span> {l.accountName}{has(l.description) ? <span className="block text-xs text-fg-muted">{l.description}</span> : null}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{isZeroAmount(l.debit) ? '' : money(l.debit)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{isZeroAmount(l.credit) ? '' : money(l.credit)}</td>
                     <td className="px-3 py-2">
@@ -215,7 +217,7 @@ export function JournalEditorClient({ view }: { view: BatchView }) {
                 </ul>
               ) : (
                 <ul className="list-disc space-y-1 pl-5 text-xs text-red-700" role="alert">
-                  {p.issues.map((i, n) => <li key={n}>{i.line ? `Line ${i.line}: ` : ''}{i.message}</li>)}
+                  {p.issues.map((i, n) => <li key={n}>{i.line !== null && i.line !== undefined && i.line !== 0 ? `Line ${i.line}: ` : ''}{i.message}</li>)}
                 </ul>
               )}
             </div>

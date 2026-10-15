@@ -1,11 +1,12 @@
+import { refundStartAction } from '@/server/domains/finance/refund-actions';
 import { NewRefundClient } from '@/components/admin/finance/NewRefundClient';
-import { FinanceGate } from '@/components/admin/finance/gate';
+import { FinancePage } from '@/components/admin/finance/gate';
 
-export default async function AdminNewRefundPage({ searchParams }: { searchParams: Promise<{ customer?: string; source?: string }> }) {
-  const { customer, source } = await searchParams;
+export default function Page({ searchParams }: { searchParams: Promise<{ customer?: string; source?: string }> }) {
+  const start = searchParams.then(({ customer, source }) => refundStartAction(customer, source));
   return (
-    <FinanceGate>
-      {async () => <NewRefundClient customerId={customer} sourceKey={source} />}
-    </FinanceGate>
+    <FinancePage label="the refund form">
+      <NewRefundClient startPromise={start} />
+    </FinancePage>
   );
 }

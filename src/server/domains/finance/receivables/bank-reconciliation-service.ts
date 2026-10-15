@@ -8,6 +8,7 @@ import type { ReasonCodes } from '@/server/kernel/reason-codes/service';
 import { centsOf, reconciliationDifference } from '../domain/bank-statement';
 import { fromCents } from '../domain/receivables';
 import { FinanceError, type FinanceContext } from '../errors';
+import { trimToNull } from '@/lib/values';
 
 export interface ReconcileInput {
   bankAccountId: string;
@@ -90,7 +91,7 @@ export class BankReconciliationService {
   }
 
   async post(ctx: FinanceContext, input: ReconcileInput) {
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const [account] = await tx.select().from(bankAccounts).where(and(eq(bankAccounts.companyId, ctx.companyId), eq(bankAccounts.id, input.bankAccountId))).for('update');
       if (!account) throw new FinanceError('ACCOUNT_NOT_FOUND', 'That bank account does not exist.');
       if (!/^\d{4}-\d{2}-\d{2}$/.test(input.statementDate) || input.statementDate > businessDate()) throw new FinanceError('DATE_INVALID', 'The statement date cannot be in the future.');
@@ -139,7 +140,7 @@ export class BankReconciliationService {
         linesTotal: fromCents(sum.total),
         lineCount: lines.length,
         ignoredTotal: fromCents(ignored.reduce((n, l) => n + centsOf(l.amount), 0)),
-        notes: input.notes?.trim() || null,
+        notes: trimToNull(input.notes),
         postedBy: ctx.actor.id ?? 'system',
         origin: ctx.origin,
       });
@@ -166,6 +167,6 @@ export class BankReconciliationService {
   }
 
   async list(companyId: string, bankAccountId: string, limit = 20) {
-    return this.db.select().from(bankReconciliations).where(and(eq(bankReconciliations.companyId, companyId), eq(bankReconciliations.bankAccountId, bankAccountId))).orderBy(desc(bankReconciliations.statementDate), desc(bankReconciliations.postedAt)).limit(limit);
+    return await this.db.select().from(bankReconciliations).where(and(eq(bankReconciliations.companyId, companyId), eq(bankReconciliations.bankAccountId, bankAccountId))).orderBy(desc(bankReconciliations.statementDate), desc(bankReconciliations.postedAt)).limit(limit);
   }
 }

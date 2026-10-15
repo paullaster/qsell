@@ -1,30 +1,53 @@
 'use client';
 
 import Link from 'next/link';
-import { useId, useState } from 'react';
+import { Suspense, use, useId, useState } from 'react';
 import { customerStatementAction } from '@/server/domains/finance/receivables/actions';
-import { CustomerWalletPanel, type WalletView } from './CustomerWalletPanel';
-import { Chip, Field, Message, PageHeader, buttonClass, cardClass, fieldClass, money, primaryClass, type Notice, attempt } from './ui';
+import type { customerWalletAction } from '@/server/domains/finance/wallet-actions';
+import { CustomerWalletPanel } from './CustomerWalletPanel';
+import { Chip, Field, LoadFailed, Message, PageHeader, buttonClass, cardClass, fieldClass, money, primaryClass, type Notice, attempt } from './ui';
 
 type View = Extract<Awaited<ReturnType<typeof customerStatementAction>>, { ok: true }>['data'];
 
 const TYPE_LABEL: Record<string, string> = { invoice: 'Invoice', payment: 'Payment', credit_note: 'Credit note', refund: 'Refund' };
 
-export function CustomerStatementClient({ initial, canReceive, wallet }: { initial: View; canReceive: boolean; wallet: WalletView | null }) {
+interface Props {
+  statementPromise: ReturnType<typeof customerStatementAction>;
+  walletPromise: ReturnType<typeof customerWalletAction>;
+  canReceivePromise: Promise<boolean>;
+}
+
+export function CustomerStatementClient({ statementPromise, walletPromise, canReceivePromise }: Props) {
+  const statement = use(statementPromise);
+  const canReceive = use(canReceivePromise);
+  if (!statement.ok) return <LoadFailed error={statement.error} />;
+  return <CustomerStatementView initial={statement.data} canReceive={canReceive} walletPromise={walletPromise} />;
+}
+
+/** The wallet loads on its own, so the statement never waits for it. */
+function WalletSection({ customerId, walletPromise }: { customerId: string; walletPromise: ReturnType<typeof customerWalletAction> }) {
+  const wallet = use(walletPromise);
+  return wallet.ok ? <CustomerWalletPanel customerId={customerId} view={wallet.data} /> : null;
+}
+
+function CustomerStatementView({ initial, canReceive, walletPromise }: { initial: View; canReceive: boolean; walletPromise: ReturnType<typeof customerWalletAction> }) {
   const uid = useId();
   // The position (owed, ageing) always follows the page; only the list of entries is what a date range replaces.
   const [ranged, setRanged] = useState<View['lines'] | null>(null);
-  const view = ranged ? { ...initial, lines: ranged } : initial;
+  const view = ranged === null ? initial : { ...initial, lines: ranged };
   const [range, setRange] = useState({ from: '', to: '' });
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
 
-  const refresh = async (e: React.FormEvent) => {
+  const refresh = async (e: React.SyntheticEvent) => {
     e.preventDefault();
     setBusy(true);
-    const res = await attempt(customerStatementAction(view.customer.id, range.from || undefined, range.to || undefined));
+    const res = await attempt(customerStatementAction(view.customer.id, range.from === '' ? undefined : range.from, range.to === '' ? undefined : range.to));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) {
+      setNotice({ kind: 'error', text: res.error });
+      return;
+    }
     setNotice(null);
     setRanged(res.data.lines);
   };
@@ -33,7 +56,7 @@ export function CustomerStatementClient({ initial, canReceive, wallet }: { initi
   return (
     <div className="max-w-6xl space-y-5">
       <PageHeader
-        title={`${c.name}`}
+        title={c.name}
         intro={<span className="flex flex-wrap items-center gap-2">Customer {c.number} · <Chip tone={c.accountType === 'credit' ? 'sky' : 'gray'}>{c.accountType === 'credit' ? 'Credit account' : 'Cash customer'}</Chip>{c.blocked !== 'none' ? <Chip tone="red">Blocked: {c.blocked}</Chip> : null}</span>}
         actions={canReceive ? <Link className={primaryClass} href={`/admin/finance/receipts/new?customer=${encodeURIComponent(c.number)}`}>Record a receipt</Link> : null}
       />
@@ -45,7 +68,9 @@ export function CustomerStatementClient({ initial, canReceive, wallet }: { initi
         <div className={cardClass}><p className="text-xs text-fg-muted">Credit limit</p><p className="text-lg font-bold tabular-nums text-fg-strong">{c.accountType === 'credit' ? money(c.creditLimit) : '—'}</p></div>
       </section>
 
-      {wallet ? <CustomerWalletPanel customerId={c.id} view={wallet} /> : null}
+      <Suspense fallback={<p className="text-xs text-fg-muted" role="status">Loading the wallet…</p>}>
+        <WalletSection customerId={c.id} walletPromise={walletPromise} />
+      </Suspense>
 
       <section aria-labelledby={`${uid}-age`} className="space-y-2">
         <h3 id={`${uid}-age`} className="text-sm font-bold text-fg-strong">By age</h3>
@@ -81,7 +106,7 @@ export function CustomerStatementClient({ initial, canReceive, wallet }: { initi
                   <td className="py-1.5 pr-3 whitespace-nowrap">{l.date ?? ''}</td>
                   <td className="pr-3 whitespace-nowrap">
                     {TYPE_LABEL[l.type] ?? l.type}{' '}
-                    {l.type === 'payment' && l.documentId ? <Link className="font-semibold text-indigo-600 hover:underline" href={`/admin/finance/receipts/${l.documentId}`}>{l.documentNo}</Link> : <span className="font-semibold">{l.documentNo}</span>}
+                    {l.type === 'payment' && l.documentId !== null && l.documentId !== '' ? <Link className="font-semibold text-indigo-600 hover:underline" href={`/admin/finance/receipts/${l.documentId}`}>{l.documentNo}</Link> : <span className="font-semibold">{l.documentNo}</span>}
                   </td>
                   <td className="pr-3">{l.description}</td>
                   <td className="pr-3 whitespace-nowrap">{l.dueDate ?? ''}</td>

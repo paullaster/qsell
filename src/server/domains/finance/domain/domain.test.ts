@@ -139,22 +139,22 @@ describe('periods', () => {
     const p = generatePeriods('2026-01-01', 'monthly');
     expect(p).toHaveLength(12);
     expect(p[0]).toMatchObject({ startsOn: '2026-01-01', endsOn: '2026-01-31' });
-    expect(p[1]!.endsOn).toBe('2026-02-28');
-    expect(p[11]!.endsOn).toBe('2026-12-31');
+    expect(p[1].endsOn).toBe('2026-02-28');
+    expect(p[11].endsOn).toBe('2026-12-31');
     expect(checkPeriodsTile(p)).toEqual([]);
   });
   it('handles a July year and leap years', () => {
     const p = generatePeriods('2027-07-01', 'monthly');
-    expect(p[0]!.startsOn).toBe('2027-07-01');
-    expect(p[11]!.endsOn).toBe('2028-06-30');
-    expect(generatePeriods('2027-03-01', 'monthly')[11]!.endsOn).toBe('2028-02-29');
+    expect(p[0].startsOn).toBe('2027-07-01');
+    expect(p[11].endsOn).toBe('2028-06-30');
+    expect(generatePeriods('2027-03-01', 'monthly')[11].endsOn).toBe('2028-02-29');
   });
   it('week-based shapes also tile one year', () => {
     for (const shape of ['weeks_445', 'weeks_454', 'weeks_544', 'weeks_13x4'] as const) {
       const p = generatePeriods('2026-01-01', shape);
       expect(checkPeriodsTile(p)).toEqual([]);
-      expect(p[0]!.startsOn).toBe('2026-01-01');
-      expect(p[p.length - 1]!.endsOn).toBe('2026-12-31');
+      expect(p[0].startsOn).toBe('2026-01-01');
+      expect(p[p.length - 1].endsOn).toBe('2026-12-31');
     }
     expect(generatePeriods('2026-01-01', 'weeks_445')).toHaveLength(12);
     expect(generatePeriods('2026-01-01', 'weeks_13x4')).toHaveLength(13);
@@ -231,7 +231,7 @@ describe('register hash', () => {
     const h = registerHash(GENESIS_HASH, facts);
     expect(h).toBe(registerHash(GENESIS_HASH, facts));
     expect(h).not.toBe(registerHash(GENESIS_HASH, { ...facts, totalDebit: '11.0000' }));
-    expect(h).not.toBe(registerHash(GENESIS_HASH, { ...facts, lines: [facts.lines[1]!, facts.lines[0]!] }));
+    expect(h).not.toBe(registerHash(GENESIS_HASH, { ...facts, lines: [facts.lines[1], facts.lines[0]] }));
     expect(h).not.toBe(registerHash('f'.repeat(64), facts));
   });
   it('cannot be confused by moving text between fields', () => {

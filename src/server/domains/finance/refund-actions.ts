@@ -4,35 +4,40 @@ import { canPermission } from '@/server/domains/access-control/guard';
 import { getContainer } from '@/server/di/container';
 import { postingPermissions, run } from './action-runner';
 import { fromCents } from './domain/receivables';
+import { lastDays } from '@/lib/report-window';
 import { FinanceError } from './errors';
 import type { RefundInput } from './receivables/refund-service';
 import type { RefundSource, RefundStatus } from '@/server/db/drizzle/schema';
 
+import { has } from '@/lib/has';
+
 const fin = () => getContainer().finance;
 const ROOT = '/admin/finance/refunds';
 
-export async function searchCustomersForRefundAction(q: string) {
-  return run('refunds:create', { surface: 'finance/refunds/new', action: 'search_customers' }, async (ctx) => fin().receipts.searchCustomers(ctx.companyId, q));
-}
-
-export async function refundOptionsAction(customerId?: string) {
-  return run('refunds:create', { surface: 'finance/refunds/new', action: 'options' }, async (ctx) => {
-    const [methods, reasons] = await Promise.all([fin().paymentMethods.list(ctx.companyId), getContainer().reasonCodes.list(ctx.companyId)]);
-    const obligations = customerId ? await fin().refunds.obligations(ctx.companyId, customerId) : [];
+/**
+ * Where "New refund" starts: the customer and the thing to refund from when the page was opened
+ * from a customer or a receipt, and whether this person may pay to details other than the record's.
+ * The lists to choose from (customers, what is owed, methods, reasons) are searched on demand.
+ */
+export async function refundStartAction(customerId?: string, sourceKey?: string) {
+  return await run('refunds:create', { surface: 'finance/refunds/new', action: 'start' }, async (ctx) => {
+    const canChangeDestination = await canPermission('refunds:change_destination');
+    if (customerId === undefined) return { customer: null, source: null, canChangeDestination };
+    const [brief, obligations] = await Promise.all([
+      fin().refunds.customerBrief(ctx.companyId, customerId),
+      fin().refunds.obligations(ctx.companyId, customerId),
+    ]);
+    const chosen = sourceKey === undefined ? undefined : obligations.find((o) => `${o.kind}:${o.id}` === sourceKey);
     return {
-      methods: methods
-        .filter((m) => m.method.enabled && !m.bankBlocked && m.method.usableFor.includes('customer_refund') && m.method.refundDestination === 'manual')
-        .map((m) => ({ id: m.method.id, name: m.method.name, kind: m.method.kind })),
-      reasons: reasons.filter((r) => r.isActive).map((r) => ({ code: r.code, description: r.description, requiresComment: r.requiresComment })),
-      obligations: obligations.map((o) => ({ kind: o.kind, id: o.id, label: o.label, currency: o.currency, available: fromCents(o.availableCents) })),
-      customerName: customerId ? (await fin().refunds.customerName(ctx.companyId, customerId)) : null,
-      canChangeDestination: await canPermission('refunds:change_destination'),
+      customer: brief === null ? null : { id: customerId, label: brief.name, meta: { phone: brief.phone ?? '' } },
+      source: chosen === undefined ? null : { id: `${chosen.kind}:${chosen.id}`, label: chosen.label, meta: { kind: chosen.kind, sourceId: chosen.id, currency: chosen.currency, available: fromCents(chosen.availableCents) } },
+      canChangeDestination,
     };
   });
 }
 
 export async function createRefundAction(input: Omit<RefundInput, 'mayChangeDestination'>, submit = false) {
-  return run('refunds:create', { surface: 'finance/refunds/new', action: submit ? 'create_and_submit' : 'create_draft' }, async (ctx) => {
+  return await run('refunds:create', { surface: 'finance/refunds/new', action: submit ? 'create_and_submit' : 'create_draft' }, async (ctx) => {
     if (submit && !(await canPermission('refunds:submit'))) throw new FinanceError('CANNOT_SUBMIT', 'You may ask for refunds but not send them on. Save it as a draft instead.');
     const created = await fin().refunds.create(ctx, { ...input, mayChangeDestination: await canPermission('refunds:change_destination') });
     if (!submit) return { ...created, status: 'draft' as RefundStatus, submitError: null as string | null };
@@ -40,27 +45,27 @@ export async function createRefundAction(input: Omit<RefundInput, 'mayChangeDest
       const out = await fin().refunds.submit({ ...ctx, origin: { ...ctx.origin, permissionUsed: 'refunds:submit' } }, created.id);
       return { ...created, status: out.status, submitError: null as string | null };
     } catch (error) {
-      if (error instanceof FinanceError) return { ...created, status: 'draft' as RefundStatus, submitError: error.message as string | null };
+      if (error instanceof FinanceError) return { ...created, status: 'draft' as RefundStatus, submitError: error.message };
       throw error;
     }
   }, [ROOT]);
 }
 
 export async function submitRefundAction(id: string) {
-  return run('refunds:submit', { surface: 'finance/refunds/detail', action: 'submit' }, async (ctx) => fin().refunds.submit(ctx, id), [ROOT, `${ROOT}/${id}`]);
+  return await run('refunds:submit', { surface: 'finance/refunds/detail', action: 'submit' }, async (ctx) => await fin().refunds.submit(ctx, id), [ROOT, `${ROOT}/${id}`]);
 }
 
 export async function cancelRefundAction(id: string, reason: { code: string; text?: string }) {
-  return run('refunds:cancel', { surface: 'finance/refunds/detail', action: 'cancel' }, async (ctx) => fin().refunds.cancel(ctx, id, reason, await postingPermissions()), [ROOT, `${ROOT}/${id}`, '/admin/finance/receivables/credit-note-excess']);
+  return await run('refunds:cancel', { surface: 'finance/refunds/detail', action: 'cancel' }, async (ctx) => await fin().refunds.cancel(ctx, id, reason, await postingPermissions()), [ROOT, `${ROOT}/${id}`, '/admin/finance/receivables/credit-note-excess']);
 }
 
 export async function recordRefundPayoutAction(id: string, input: { paidFromMethodId: string; payoutDate?: string; reference: string }) {
-  return run('refunds:record_manual_payout', { surface: 'finance/refunds/detail', action: 'record_payout' }, async (ctx) => fin().refunds.recordPayout(ctx, id, { ...input, permissions: await postingPermissions() }), [ROOT, `${ROOT}/${id}`]);
+  return await run('refunds:record_manual_payout', { surface: 'finance/refunds/detail', action: 'record_payout' }, async (ctx) => await fin().refunds.recordPayout(ctx, id, { ...input, permissions: await postingPermissions() }), [ROOT, `${ROOT}/${id}`]);
 }
 
 /** Sends an approved refund to the customer's phone through M-Pesa. The refund's own approval is the approval for the money. */
 export async function payRefundThroughMpesaAction(id: string) {
-  return run('refunds:pay_automatic', { surface: 'finance/refunds/detail', action: 'pay_through_mpesa' }, async (ctx) => {
+  return await run('refunds:pay_automatic', { surface: 'finance/refunds/detail', action: 'pay_through_mpesa' }, async (ctx) => {
     const { getContainer } = await import('@/server/di/container');
     const c = getContainer();
     const plan = await c.finance.refunds.prepareAutomatic(ctx, id);
@@ -70,7 +75,7 @@ export async function payRefundThroughMpesaAction(id: string) {
         companyId: ctx.companyId, providerId: plan.providerId, methodId: plan.methodId, operation: 'b2c', preApproved: true,
         input: { phone: plan.phone, amount: plan.amount.split('.')[0], commandId: 'BusinessPayment', remarks: `Refund ${plan.number}`.slice(0, 100) },
         requestedBy: ctx.actor.id ?? 'system', subject: { type: 'refund', id }, idempotencyKey: `refund:${id}:payout:${plan.attempt}`,
-        origin: ctx.origin as unknown as Record<string, unknown>,
+        origin: ctx.origin,
       });
       return { operationId: r.op.id, status: r.status };
     } catch (error) {
@@ -81,7 +86,7 @@ export async function payRefundThroughMpesaAction(id: string) {
 }
 
 export async function listRefundsAction(filter: { status?: RefundStatus; q?: string; before?: string } = {}) {
-  return run('refunds:read', { surface: 'finance/refunds', action: 'list' }, async (ctx) => {
+  return await run('refunds:read', { surface: 'finance/refunds', action: 'list' }, async (ctx) => {
     const page = await fin().refunds.list(ctx.companyId, filter);
     return {
       nextBefore: page.nextBefore,
@@ -107,14 +112,13 @@ export async function listRefundsAction(filter: { status?: RefundStatus; q?: str
 }
 
 export async function refundDetailAction(id: string) {
-  return run('refunds:read', { surface: 'finance/refunds/detail', action: 'view' }, async (ctx) => {
+  return await run('refunds:read', { surface: 'finance/refunds/detail', action: 'view' }, async (ctx) => {
     const d = await fin().refunds.detail(ctx.companyId, id);
     if (!d) throw new FinanceError('NOT_FOUND', 'That refund does not exist.');
     const media = getContainer().media;
     const attachments = await Promise.all(d.attachments.map(async (a) => ({ id: a.id, fileName: a.fileName, note: a.note, createdAt: a.createdAt.toISOString(), url: await media.deliveryUrlById(a.mediaAssetId).catch(() => null) })));
-    const [methods, reasons] = await Promise.all([fin().paymentMethods.list(ctx.companyId), getContainer().reasonCodes.list(ctx.companyId)]);
     const r = d.r;
-    const name = (x: string | null) => (x ? (d.actors[x] ?? x) : null);
+    const name = (x: string | null) => (has(x) ? (d.actors[x] ?? x) : null);
     return {
       id: r.id,
       number: r.number,
@@ -139,8 +143,6 @@ export async function refundDetailAction(id: string) {
       payoutDate: r.payoutDate,
       attachments,
       events: d.events.map((e) => ({ id: String(e.id), event: e.event, from: e.fromStatus, to: e.toStatus, reasonCode: e.reasonCode, reasonText: e.reasonText, by: name(e.actorId) ?? e.actorType, surface: (e.origin as { surface?: string }).surface ?? null, permission: (e.origin as { permissionUsed?: string }).permissionUsed ?? null, at: e.createdAt.toISOString(), data: e.data })),
-      payFrom: methods.filter((m) => m.method.enabled && !m.bankBlocked && m.bankCurrency === r.currency && m.method.kind !== 'cheque').map((m) => ({ id: m.method.id, label: `${m.method.name} — ${m.bankCode}${m.branchName ? ` (${m.branchName})` : ''}` })),
-      reasons: reasons.filter((x) => x.isActive).map((x) => ({ code: x.code, description: x.description, requiresComment: x.requiresComment })),
       can: {
         submit: await canPermission('refunds:submit'),
         cancel: await canPermission('refunds:cancel'),
@@ -152,10 +154,14 @@ export async function refundDetailAction(id: string) {
   });
 }
 
-export async function refundReportAction(from: string, to: string) {
-  return run('refunds:read', { surface: 'finance/refunds/report', action: 'view' }, async (ctx) => {
+/** The refund report for a period; without one, the last 30 days. */
+export async function refundReportAction(period?: { from: string; to: string }) {
+  return await run('refunds:read', { surface: 'finance/refunds/report', action: 'view' }, async (ctx) => {
+    const { from, to } = period ?? lastDays(new Date(), 30);
     const [rep, recon] = await Promise.all([fin().refunds.report(ctx.companyId, from, to), fin().refunds.payableReconciliation(ctx.companyId)]);
     return {
+      from,
+      to,
       byStatus: rep.byStatus.map((x) => ({ status: x.status, count: x.n, total: x.total })),
       byReason: rep.byReason.map((x) => ({ reason: x.reason, count: x.n, total: x.total })),
       byMethod: rep.byMethod.map((x) => ({ method: x.method, count: x.n, total: x.total })),

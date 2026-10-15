@@ -49,7 +49,7 @@ export class ProviderTransactionStore {
       .select()
       .from(providerTransactions)
       .where(and(eq(providerTransactions.providerId, input.providerId), eq(providerTransactions.platformReference, input.platformReference)));
-    return { row: existing!, created: false, amountDiffers: Number(existing!.amount) !== Number(input.amount) };
+    return { row: existing, created: false, amountDiffers: Number(existing.amount) !== Number(input.amount) };
   }
 
   async byReference(providerId: string, platformReference: string) {

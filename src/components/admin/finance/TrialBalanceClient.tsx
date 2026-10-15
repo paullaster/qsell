@@ -20,7 +20,7 @@ export function TrialBalanceClient({ initial, from: f0, to: t0 }: { initial: Res
     setNotice(null);
     const res = await attempt(trialBalanceAction(from, to));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     setData(res.data);
   };
 

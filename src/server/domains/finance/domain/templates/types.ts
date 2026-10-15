@@ -1,4 +1,5 @@
 import type { AccountDraft } from '../chart';
+import type { PaymentMethodKind } from '@/server/db/drizzle/schema';
 
 export interface PostingGroupTemplate {
   code: string;
@@ -40,7 +41,7 @@ export interface ChartTemplate {
   paymentMethods: {
     code: string;
     name: string;
-    kind: import('@/server/db/drizzle/schema').PaymentMethodKind;
+    kind: PaymentMethodKind;
     bankAccount: string;
     requiresReference?: boolean;
     requiresEvidence?: boolean;

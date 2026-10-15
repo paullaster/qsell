@@ -26,7 +26,7 @@ export function JournalBatchesClient({
     setBusy(true);
     const res = await attempt(createBatchAction(code, name));
     setBusy(false);
-    if (!res.ok) return setNotice({ kind: 'error', text: res.error });
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
     router.push(`/admin/finance/journals/${res.data.id}`);
   };
 

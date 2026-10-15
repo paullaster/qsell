@@ -651,7 +651,7 @@ export function AdminOrders({ ordersPromise, companyPromise, onRefresh }: AdminO
 
               <OrderTenderPanel orderId={selectedOrder.id} onChanged={onRefresh} />
 
-              <OrderCreditNotesPanel orderId={selectedOrder.id} />
+              <OrderCreditNotesPanel key={selectedOrder.id} orderId={selectedOrder.id} />
             </div>
           </div>
         </div>

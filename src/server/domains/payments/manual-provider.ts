@@ -39,5 +39,5 @@ export async function ensureManualProvider(db: Db, companyId: string): Promise<P
     .from(paymentProviderConfigs)
     .where(and(eq(paymentProviderConfigs.companyId, companyId), eq(paymentProviderConfigs.providerCode, 'manual')))
     .limit(1);
-  return again!;
+  return again;
 }

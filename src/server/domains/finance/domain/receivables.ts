@@ -1,3 +1,5 @@
+
+import { has } from '@/lib/has';
 /**
  * Receivables rules that need no database: money in whole cents, who a payment is applied to,
  * ageing, and whether a receipt satisfies its payment method. Customer ledger amounts are
@@ -135,8 +137,8 @@ export function ageOpenItems(
   const edges = [...bounds].sort((a, b) => a - b);
   const buckets: AgeBucket[] = [{ label: 'Not yet due', fromDays: Number.NEGATIVE_INFINITY, toDays: 0, cents: 0, count: 0 }];
   for (let i = 0; i < edges.length; i++) {
-    const from = edges[i]! + 1;
-    const to = i + 1 < edges.length ? edges[i + 1]! : null;
+    const from = edges[i] + 1;
+    const to = i + 1 < edges.length ? edges[i + 1] : null;
     buckets.push({
       label: to === null ? `Over ${edges[i]} days` : `${from}–${to} days`,
       fromDays: from,
@@ -159,9 +161,9 @@ export function ageOpenItems(
     const daysPast = Math.floor((asOf.getTime() - due) / day);
     const bucket =
       daysPast <= 0
-        ? buckets[0]!
+        ? buckets[0]
         : buckets.slice(1).find((b) => daysPast >= b.fromDays && (b.toDays === null || daysPast <= b.toDays)) ??
-          buckets[buckets.length - 1]!;
+          buckets[buckets.length - 1];
     bucket.cents += it.remainingCents;
     bucket.count += 1;
   }
@@ -205,11 +207,11 @@ export function checkReceiptAgainstMethod(
     issues.push({ code: 'METHOD_NOT_FOR_RECEIPTS', message: 'That payment method cannot be used to receive money from customers.' });
   }
   if (r.amountCents <= 0) issues.push({ code: 'AMOUNT_INVALID', message: 'The amount must be more than zero.' });
-  if (m.requiresReference && !(r.externalReference ?? '').trim()) {
+  if (m.requiresReference && !has((r.externalReference ?? '').trim())) {
     issues.push({ code: 'REFERENCE_REQUIRED', message: 'This payment method needs the payment reference (transaction code, slip or bank reference).' });
   }
   if (m.requiresCounterparty) {
-    const missing = CHEQUE_FIELDS.filter((f) => !(r.counterparty[f] ?? '').trim());
+    const missing = CHEQUE_FIELDS.filter((f) => !has((r.counterparty[f] ?? '').trim()));
     if (missing.length > 0) {
       issues.push({
         code: 'COUNTERPARTY_REQUIRED',

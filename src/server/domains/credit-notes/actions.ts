@@ -9,6 +9,8 @@ import { PostingError } from '@/server/domains/finance/engine';
 import { FinanceError } from '@/server/domains/finance/errors';
 import type { CreditNoteReason } from './reasons';
 
+import { has } from '@/lib/has';
+
 /** `forbidden` lets the screen hide itself for people without the permission. */
 export type CreditNoteActionResult<T> =
   { ok: true; data: T } | { ok: false; error: string; forbidden?: true };
@@ -69,7 +71,7 @@ export async function issueOrderCreditNoteAction(input: {
     if (outcome.status === 'pending_approval') return outcome;
     // The orders page does not show credit notes (the panel loads its own), so it is not
     // revalidated: that would make this response wait for a full page re-render. Stock is.
-    if (input.restock) revalidatePath('/admin/inventory');
+    if (input.restock === true) revalidatePath('/admin/inventory');
     return { status: 'issued' as const, creditNote: toView(outcome.creditNote) };
   });
 }
@@ -94,7 +96,7 @@ export async function listOrderCreditNotesAction(
     const notes = await c.creditNotes.listForSource('order', orderId);
     const ids = notes.map((n) => n.id);
     const companyId = notes[0]?.companyId;
-    const [acc, returns] = companyId ? await Promise.all([c.finance.creditNoteAccounting.summaries(companyId, ids), c.returns.forCreditNotes(ids)]) : [new Map(), new Map()];
+    const [acc, returns] = has(companyId) ? await Promise.all([c.finance.creditNoteAccounting.summaries(companyId, ids), c.returns.forCreditNotes(ids)]) : [new Map(), new Map()];
     return notes.map((n) => {
       const a = acc.get(n.id);
       const r = returns.get(n.id);

@@ -16,6 +16,8 @@ import {
   tableSource,
   type LookupSource,
 } from './runner';
+import { PAYMENT_LOOKUP_SOURCES } from '@/server/domains/payments/lookup-sources';
+import { FINANCE_LOOKUP_SOURCES } from '@/server/domains/finance/lookup-sources';
 
 /** The non-empty strings joined with a dot, or null when there are none. */
 function joinText(parts: unknown[]): string | null {
@@ -188,6 +190,8 @@ const SOURCES: ReadonlyMap<string, LookupSource> = new Map(
     paymentMethods,
     quoteStatuses,
     templateStatuses,
+    ...PAYMENT_LOOKUP_SOURCES,
+    ...FINANCE_LOOKUP_SOURCES,
   ].map((source) => [source.key, source]),
 );
 

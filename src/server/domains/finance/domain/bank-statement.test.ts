@@ -68,24 +68,24 @@ describe('reading a CSV statement', () => {
     expect(r.lines.map((l) => l.lineNo)).toEqual([1, 2]);
   });
   it('refuses a row with money but an unreadable date or amount, and a missing column, instead of dropping it', () => {
-    expect(parseCsvStatement('d,t,a\nsoon,x,500.00', { headerRow: 1, date: 'd', description: ['t'], amount: 'a' }).errors[0]!.message).toMatch(/date "soon"/);
-    expect(parseCsvStatement('d,t,a\n02/10/2026,x,5oo', { headerRow: 1, date: 'd', description: ['t'], amount: 'a' }).errors[0]!.message).toMatch(/amount "5oo"/);
-    expect(parseCsvStatement('d,t,a\n02/10/2026,x,5', { headerRow: 1, date: 'when', description: ['t'], amount: 'a' }).errors[0]!.message).toMatch(/"when" is not in the file/);
-    expect(parseCsvStatement('d,t\n02/10/2026,x', { headerRow: 1, date: 'd', description: ['t'] }).errors[0]!.message).toMatch(/amount column/);
+    expect(parseCsvStatement('d,t,a\nsoon,x,500.00', { headerRow: 1, date: 'd', description: ['t'], amount: 'a' }).errors[0].message).toMatch(/date "soon"/);
+    expect(parseCsvStatement('d,t,a\n02/10/2026,x,5oo', { headerRow: 1, date: 'd', description: ['t'], amount: 'a' }).errors[0].message).toMatch(/amount "5oo"/);
+    expect(parseCsvStatement('d,t,a\n02/10/2026,x,5', { headerRow: 1, date: 'when', description: ['t'], amount: 'a' }).errors[0].message).toMatch(/"when" is not in the file/);
+    expect(parseCsvStatement('d,t\n02/10/2026,x', { headerRow: 1, date: 'd', description: ['t'] }).errors[0].message).toMatch(/amount column/);
   });
   it('reads an M-Pesa export', () => {
     const r = parseCsvStatement('Receipt No.,Completion Time,Details,Paid In,Withdrawn,Balance\nSJK1ABC2D3,2026-10-13 14:22:01,Funds received from 2547XXXXXXXX - JANE,1500.00,,6500.00\nSJK1ABC2D4,2026-10-13 15:00:00,Charge,,33.00,6467.00', MPESA_MAPPING);
     expect(r.errors).toEqual([]);
     expect(r.lines).toHaveLength(2);
     expect(r.lines[0]).toMatchObject({ reference: 'SJK1ABC2D3', amountCents: 150000, date: '2026-10-13' });
-    expect(r.lines[1]!.amountCents).toBe(-3300);
+    expect(r.lines[1].amountCents).toBe(-3300);
     expect(r.openingCents).toBe(500000);
   });
   it('gives identical real lines in one file different fingerprints, and the same line the same one again', () => {
     const l = { date: '2026-10-02', amountCents: 100, reference: null, description: 'Same' };
     const a = withHashes([l, l]);
-    expect(a[0]!.lineHash).not.toBe(a[1]!.lineHash);
-    expect(withHashes([l])[0]!.lineHash).toBe(a[0]!.lineHash);
+    expect(a[0].lineHash).not.toBe(a[1].lineHash);
+    expect(withHashes([l])[0].lineHash).toBe(a[0].lineHash);
   });
 });
 
@@ -94,7 +94,7 @@ describe('reading MT940', () => {
     const r = parseMt940(':20:STMT\n:25:0123\n:60F:C261001KES1000,00\n:61:2610020102C500,00NTRFPAY-1//BANKREF1\n:86:Transfer from Acme PAY-1\n:61:2610030103D20,00NCHGNONREF\n:86:Bank charge\n:62F:C261003KES1480,00\n');
     expect(r.errors).toEqual([]);
     expect(r.lines.map((l) => [l.date, l.amountCents, l.reference])).toEqual([['2026-10-02', 50000, 'BANKREF1'], ['2026-10-03', -2000, 'NONREF']]);
-    expect(r.lines[0]!.description).toBe('Transfer from Acme PAY-1');
+    expect(r.lines[0].description).toBe('Transfer from Acme PAY-1');
     expect(r.openingCents).toBe(100000);
     expect(r.closingCents).toBe(148000);
   });
@@ -111,7 +111,7 @@ describe('matching lines to ledger entries', () => {
     const s = suggestMatches([line(1, '2026-10-05', 700)], [entry(10, '2026-10-01', 700), entry(11, '2026-10-04', 700), entry(12, '2026-10-20', 700)]);
     expect(s).toEqual([{ lineId: 1, entryIds: [11], rule: 'amount_date', certainty: 'proposed' }]);
     const two = suggestMatches([line(1, '2026-10-05', 700)], [entry(10, '2026-10-03', 700), entry(11, '2026-10-04', 700)]);
-    expect(two[0]!.entryIds).toEqual([11, 10]);
+    expect(two[0].entryIds).toEqual([11, 10]);
   });
   it('a different amount never matches, and a certain match uses its entry only once', () => {
     expect(suggestMatches([line(1, '2026-10-05', 701, 'PAY-1')], [entry(10, '2026-10-05', 700, ['PAY-1'])])).toEqual([]);

@@ -4,20 +4,20 @@
  * Shipping is charged only when a caller passes an explicit fee — there is no built-in rate.
  */
 
-export type PricedLine = {
+export interface PricedLine {
   productId: string;
   quantity: number;
   unitPrice: number;
   taxRate: number; // percent
   isTaxInclusive: boolean;
-};
+}
 
-export type CheckoutTotals = {
+export interface CheckoutTotals {
   subtotal: number;
   tax: number;
   shippingFee: number;
   totalAmount: number;
-};
+}
 
 export function computeCheckoutTotals(
   lines: PricedLine[],

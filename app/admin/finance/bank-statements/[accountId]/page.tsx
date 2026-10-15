@@ -1,21 +1,12 @@
-import { notFound } from 'next/navigation';
 import { statementWorkbenchAction } from '@/server/domains/finance/bank-statement-actions';
 import { StatementWorkbenchClient } from '@/components/admin/finance/StatementWorkbenchClient';
-import { FinanceGate } from '@/components/admin/finance/gate';
-import { LoadFailed } from '@/components/admin/finance/ui';
+import { FinancePage } from '@/components/admin/finance/gate';
 
-export default async function AdminBankStatementAccountPage({ params }: { params: Promise<{ accountId: string }> }) {
-  const { accountId } = await params;
+export default function Page({ params }: { params: Promise<{ accountId: string }> }) {
+  const view = params.then(({ accountId }) => statementWorkbenchAction(accountId));
   return (
-    <FinanceGate>
-      {async () => {
-        const res = await statementWorkbenchAction(accountId);
-        if (!res.ok) {
-          if (res.code === 'ACCOUNT_NOT_FOUND') notFound();
-          return <LoadFailed error={res.error} />;
-        }
-        return <StatementWorkbenchClient view={res.data} />;
-      }}
-    </FinanceGate>
+    <FinancePage label="the statement">
+      <StatementWorkbenchClient viewPromise={view} />
+    </FinancePage>
   );
 }

@@ -2,19 +2,26 @@ import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { and, eq, sql } from 'drizzle-orm';
 
+import { has } from '@/lib/has';
+import { required } from '@/lib/values';
+import type { DrizzleDb } from '@/server/db/drizzle/client';
+import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
+import type { FinanceServices } from './index';
+import type { FinanceContext } from './errors';
+
 /** Needs a Postgres built from the migrations:  TEST_DATABASE_URL=postgres://... pnpm test */
 const url = process.env.TEST_DATABASE_URL;
 
-describe.skipIf(!url)('bank statements (database)', () => {
-  type Db = import('@/server/db/drizzle/client').DrizzleDb;
+describe.skipIf(!has(url))('bank statements (database)', () => {
+  type Db = DrizzleDb;
   let db: Db;
-  let schema: typeof import('@/server/db/drizzle/schema');
-  let fin: import('./index').FinanceServices;
+  let schema: typeof mod_server_db_drizzle_schema;
+  let fin: FinanceServices;
   let companyId: string;
   let glBank: string;
   let manualProvider: string;
   let glFee: string;
-  let ctx: import('./errors').FinanceContext;
+  let ctx: FinanceContext;
   const run = randomUUID().slice(0, 6).toUpperCase();
   let seq = 0;
   const origin = { surface: 'test', action: 'run' };
@@ -27,7 +34,7 @@ describe.skipIf(!url)('bank statements (database)', () => {
       await p;
       return 'OK';
     } catch (e) {
-      if (e && typeof e === 'object' && 'code' in e) return String((e as { code: unknown }).code);
+      if (e && typeof e === 'object' && 'code' in e) return String((e).code);
       return `OTHER:${(e as Error).message}`;
     }
   };
@@ -52,7 +59,7 @@ describe.skipIf(!url)('bank statements (database)', () => {
   async function customer(name = 'Stmt customer') {
     seq += 1;
     const [c] = await db.insert(schema.customers).values({ companyId, number: `SC${run}${seq}`, name: `${name} ${seq}`, phone: `0722${String(100000 + seq)}`, accountType: 'cash', creditLimit: '0' }).returning();
-    return c!;
+    return c;
   }
   /** A receipt that put `amount` into the account, quoting `ref`: a ledger entry we expect to see on the statement. */
   async function receipt(f: { account: { id: string }; method: { id: string } }, amount: string, on: string, ref: string | null) {
@@ -60,7 +67,7 @@ describe.skipIf(!url)('bank statements (database)', () => {
     const r = await fin.receipts.create(ctx, { customerId: c.id, paymentMethodId: f.method.id, amount, paymentDate: on, postingDate: on, externalReference: ref ?? `AUTO${seq}${Math.floor(Math.random() * 1e6)}` });
     await fin.receipts.post(ctx, r.id, { allocate: 'none' });
     const [e] = await db.select().from(schema.bankLedgerEntries).where(and(eq(schema.bankLedgerEntries.documentId, r.id), eq(schema.bankLedgerEntries.bankAccountId, f.account.id)));
-    return { ...r, entry: e!, customer: c };
+    return { ...r, entry: e, customer: c };
   }
   const lines = (accountId: string) => db.select().from(schema.bankStatementLines).where(eq(schema.bankStatementLines.bankAccountId, accountId)).orderBy(schema.bankStatementLines.id);
   const importCsv = (accountId: string, rows: [string, string, string, string, string, string][], name = `s${Math.random()}.csv`) =>
@@ -75,15 +82,15 @@ describe.skipIf(!url)('bank statements (database)', () => {
     const c = getContainer();
     fin = c.finance;
     const [company] = await db.insert(schema.companySettings).values({ legalName: 'ST', tradingName: 'ST', email: 'a@b.c', phone: '1', streetAddress: 's', city: 'c', countyOrState: 'x', postalCode: '1', kraPin: 'P' }).returning();
-    companyId = company!.id;
+    companyId = company.id;
     await c.reasonCodes.ensureSystemReasons(companyId);
     ctx = { companyId, actor: { type: 'user', id: 'tester' }, origin };
     await fin.setup.applyTemplate(ctx, 'kenya', { fiscalYearStart: '2026-01-01' });
     await fin.paymentMethods.seedStandard(ctx);
     const accts = await fin.setup.listAccounts(companyId);
-    glBank = accts.find((a) => a.no === '1120')!.id;
-    manualProvider = (await fin.paymentMethods.providerChoices(companyId)).find((p) => p.isSystem)!.id;
-    glFee = accts.find((a) => a.category === 'expense' && a.type === 'posting')!.id;
+    glBank = required(accts.find((a) => a.no === '1120')).id;
+    manualProvider = required((await fin.paymentMethods.providerChoices(companyId)).find((p) => p.isSystem)).id;
+    glFee = required(accts.find((a) => a.category === 'expense' && a.type === 'posting')).id;
   });
 
   describe('importing', () => {
@@ -127,7 +134,7 @@ describe.skipIf(!url)('bank statements (database)', () => {
       expect(await codeOf(importCsv(f.account.id, [['soon', 'x', '', '5.00', '', '']]))).toBe('STATEMENT_UNREADABLE');
       expect(await codeOf(importCsv(f.account.id, [[dmy(day(-30)), 'Future', 'F1', '5.00', '', '']]))).toBe('FUTURE_DATES');
       expect(await codeOf(fin.bankStatements.import(ctx, { bankAccountId: f.account.id, fileName: 'x.csv', text: 'a,b', format: 'csv' }))).toBe('MAPPING_REQUIRED');
-      const clearing = (await fin.bankAccounts.list(companyId)).find((b) => b.account.kind === 'clearing')!.account.id;
+      const clearing = required((await fin.bankAccounts.list(companyId)).find((b) => b.account.kind === 'clearing')).account.id;
       expect(await codeOf(importCsv(clearing, [[dmy(day(2)), 'x', 'X1', '5.00', '', '']]))).toBe('ACCOUNT_KIND');
       expect(await lines(f.account.id)).toHaveLength(0);
     });
@@ -160,10 +167,10 @@ describe.skipIf(!url)('bank statements (database)', () => {
       const [a, b] = await lines(f.account.id);
       expect(a).toMatchObject({ status: 'matched', matchRule: 'auto:reference' });
       expect(b).toMatchObject({ status: 'proposed', matchRule: 'amount_date', proposedEntryIds: [r2.entry.id] });
-      void r1;
+      r1;
       // a human confirms the suggestion
-      await fin.bankStatements.matchLine(ctx, b!.id, [r2.entry.id]);
-      expect((await lines(f.account.id))[1]!.status).toBe('matched');
+      await fin.bankStatements.matchLine(ctx, b.id, [r2.entry.id]);
+      expect((await lines(f.account.id))[1].status).toBe('matched');
     });
 
     it('amounts must add up exactly; a line can close several entries; an entry closes against one line only', async () => {
@@ -177,14 +184,14 @@ describe.skipIf(!url)('bank statements (database)', () => {
         [dmy(day(1)), 'Another', 'BD3', '999.00', '', '2348.00'],
       ]);
       const [bulk, other, another] = await lines(f.account.id);
-      expect(await codeOf(fin.bankStatements.matchLine(ctx, bulk!.id, [e1.entry.id]))).toBe('AMOUNT_MISMATCH');
-      await fin.bankStatements.matchLine(ctx, bulk!.id, [e1.entry.id, e2.entry.id]);
-      expect(await codeOf(fin.bankStatements.matchLine(ctx, bulk!.id, [e3.entry.id]))).toBe('LINE_MATCHED');
-      await fin.bankStatements.matchLine(ctx, other!.id, [e3.entry.id]);
-      expect(await codeOf(fin.bankStatements.matchLine(ctx, another!.id, [e3.entry.id]))).toBe('ENTRY_TAKEN');
+      expect(await codeOf(fin.bankStatements.matchLine(ctx, bulk.id, [e1.entry.id]))).toBe('AMOUNT_MISMATCH');
+      await fin.bankStatements.matchLine(ctx, bulk.id, [e1.entry.id, e2.entry.id]);
+      expect(await codeOf(fin.bankStatements.matchLine(ctx, bulk.id, [e3.entry.id]))).toBe('LINE_MATCHED');
+      await fin.bankStatements.matchLine(ctx, other.id, [e3.entry.id]);
+      expect(await codeOf(fin.bankStatements.matchLine(ctx, another.id, [e3.entry.id]))).toBe('ENTRY_TAKEN');
       const other2 = await fresh('other');
       const foreign = await receipt(other2, '999', day(2), null);
-      expect(await codeOf(fin.bankStatements.matchLine(ctx, another!.id, [foreign.entry.id]))).toBe('WRONG_ACCOUNT');
+      expect(await codeOf(fin.bankStatements.matchLine(ctx, another.id, [foreign.entry.id]))).toBe('WRONG_ACCOUNT');
     });
 
     it('two people matching the same entry at once: exactly one wins', async () => {
@@ -193,7 +200,7 @@ describe.skipIf(!url)('bank statements (database)', () => {
       await importCsv(f.account.id, [[dmy(day(2)), 'x', 'RC1', '321.00', '', '321.00'], [dmy(day(2)), 'y', 'RC2', '321.00', '', '642.00']]);
       const [l1, l2] = await lines(f.account.id);
       await db.update(schema.bankStatementLines).set({ status: 'unmatched', proposedEntryIds: [] }).where(eq(schema.bankStatementLines.bankAccountId, f.account.id));
-      const out = await Promise.all([codeOf(fin.bankStatements.matchLine(ctx, l1!.id, [e.entry.id])), codeOf(fin.bankStatements.matchLine(ctx, l2!.id, [e.entry.id]))]);
+      const out = await Promise.all([codeOf(fin.bankStatements.matchLine(ctx, l1.id, [e.entry.id])), codeOf(fin.bankStatements.matchLine(ctx, l2.id, [e.entry.id]))]);
       expect(out.sort()).toEqual(['ENTRY_TAKEN', 'OK']);
     });
 
@@ -202,28 +209,28 @@ describe.skipIf(!url)('bank statements (database)', () => {
       const e = await receipt(f, '88', day(2), 'UNDO12345');
       await importCsv(f.account.id, [[dmy(day(2)), 'UNDO12345', 'UNDO12345', '88.00', '', '88.00']]);
       const [l] = await lines(f.account.id);
-      expect(l!.status).toBe('matched');
-      expect(await codeOf(fin.bankStatements.unmatchLine(ctx, l!.id, { code: '' }))).toBe('REASON_REQUIRED');
-      await fin.bankStatements.unmatchLine(ctx, l!.id, { code: 'DATA_ENTRY_ERROR' });
-      expect((await lines(f.account.id))[0]!.status).toBe('unmatched');
-      const history = await db.select().from(schema.bankStatementMatches).where(eq(schema.bankStatementMatches.lineId, l!.id));
+      expect(l.status).toBe('matched');
+      expect(await codeOf(fin.bankStatements.unmatchLine(ctx, l.id, { code: '' }))).toBe('REASON_REQUIRED');
+      await fin.bankStatements.unmatchLine(ctx, l.id, { code: 'DATA_ENTRY_ERROR' });
+      expect((await lines(f.account.id))[0].status).toBe('unmatched');
+      const history = await db.select().from(schema.bankStatementMatches).where(eq(schema.bankStatementMatches.lineId, l.id));
       expect(history).toHaveLength(1);
-      expect(history[0]!.undoneAt).not.toBeNull();
-      await expect(db.delete(schema.bankStatementMatches).where(eq(schema.bankStatementMatches.lineId, l!.id))).rejects.toThrow();
-      await fin.bankStatements.matchLine(ctx, l!.id, [e.entry.id]);
-      expect((await lines(f.account.id))[0]!.status).toBe('matched');
+      expect(history[0].undoneAt).not.toBeNull();
+      await expect(db.delete(schema.bankStatementMatches).where(eq(schema.bankStatementMatches.lineId, l.id))).rejects.toThrow();
+      await fin.bankStatements.matchLine(ctx, l.id, [e.entry.id]);
+      expect((await lines(f.account.id))[0].status).toBe('matched');
     });
 
     it('set aside needs a reason, can be brought back, and only an unmatched line can be set aside', async () => {
       const f = await fresh('ignore');
       await importCsv(f.account.id, [[dmy(day(2)), 'Odd', 'ODD1', '5.00', '', '5.00']]);
       const [l] = await lines(f.account.id);
-      expect(await codeOf(fin.bankStatements.ignoreLine(ctx, l!.id, { code: '' }))).toBe('REASON_REQUIRED');
-      await fin.bankStatements.ignoreLine(ctx, l!.id, { code: 'OTHER', text: 'Test deposit by the bank' });
+      expect(await codeOf(fin.bankStatements.ignoreLine(ctx, l.id, { code: '' }))).toBe('REASON_REQUIRED');
+      await fin.bankStatements.ignoreLine(ctx, l.id, { code: 'OTHER', text: 'Test deposit by the bank' });
       expect((await lines(f.account.id))[0]).toMatchObject({ status: 'ignored', ignoreReason: 'OTHER: Test deposit by the bank' });
-      expect(await codeOf(fin.bankStatements.matchLine(ctx, l!.id, [1]))).toBe('LINE_IGNORED');
-      await fin.bankStatements.restoreLine(ctx, l!.id);
-      expect((await lines(f.account.id))[0]!.status).toBe('unmatched');
+      expect(await codeOf(fin.bankStatements.matchLine(ctx, l.id, [1]))).toBe('LINE_IGNORED');
+      await fin.bankStatements.restoreLine(ctx, l.id);
+      expect((await lines(f.account.id))[0].status).toBe('unmatched');
     });
   });
 
@@ -233,12 +240,12 @@ describe.skipIf(!url)('bank statements (database)', () => {
       const c = await customer('Depositor');
       await importCsv(f.account.id, [[dmy(day(1)), 'Paid by Depositor', 'DEP-77', '2500.00', '', '2500.00']]);
       const [l] = await lines(f.account.id);
-      const out = await fin.bankStatements.createReceiptFromLine(ctx, l!.id, { customerId: c.id, paymentMethodId: f.method.id, allocate: 'none' });
+      const out = await fin.bankStatements.createReceiptFromLine(ctx, l.id, { customerId: c.id, paymentMethodId: f.method.id, allocate: 'none' });
       expect((await lines(f.account.id))[0]).toMatchObject({ status: 'matched', matchRule: 'created_receipt' });
       const [rc] = await db.select().from(schema.customerReceipts).where(eq(schema.customerReceipts.id, out.receiptId));
       expect(rc).toMatchObject({ status: 'posted', amount: '2500.00', externalReference: 'DEP-77', source: 'bank_statement', paymentDate: day(1) });
-      expect(await codeOf(fin.bankStatements.createReceiptFromLine(ctx, l!.id, { customerId: c.id, paymentMethodId: f.method.id }))).toBe('LINE_CLOSED');
-      expect(await db.select().from(schema.customerReceipts).where(eq(schema.customerReceipts.sourceRef, `statement_line:${l!.id}`))).toHaveLength(1);
+      expect(await codeOf(fin.bankStatements.createReceiptFromLine(ctx, l.id, { customerId: c.id, paymentMethodId: f.method.id }))).toBe('LINE_CLOSED');
+      expect(await db.select().from(schema.customerReceipts).where(eq(schema.customerReceipts.sourceRef, `statement_line:${l.id}`))).toHaveLength(1);
     });
 
     it('money out cannot become a receipt, and a method of another account is refused', async () => {
@@ -247,16 +254,16 @@ describe.skipIf(!url)('bank statements (database)', () => {
       const c = await customer();
       await importCsv(f.account.id, [[dmy(day(1)), 'Out', 'OUT1', '', '40.00', ''], [dmy(day(1)), 'In', 'IN1', '41.00', '', '']]);
       const [out, inn] = await lines(f.account.id);
-      expect(await codeOf(fin.bankStatements.createReceiptFromLine(ctx, out!.id, { customerId: c.id, paymentMethodId: f.method.id }))).toBe('NOT_A_DEPOSIT');
-      expect(await codeOf(fin.bankStatements.createReceiptFromLine(ctx, inn!.id, { customerId: c.id, paymentMethodId: g.method.id }))).toBe('METHOD_ACCOUNT');
+      expect(await codeOf(fin.bankStatements.createReceiptFromLine(ctx, out.id, { customerId: c.id, paymentMethodId: f.method.id }))).toBe('NOT_A_DEPOSIT');
+      expect(await codeOf(fin.bankStatements.createReceiptFromLine(ctx, inn.id, { customerId: c.id, paymentMethodId: g.method.id }))).toBe('METHOD_ACCOUNT');
     });
 
     it('a bank charge is recorded against the fee account and the line closes; deposits are not charges', async () => {
       const f = await fresh('charge');
       await importCsv(f.account.id, [[dmy(day(1)), 'SMS alert fee', 'FEE1', '', '33.00', ''], [dmy(day(1)), 'Dep', 'D1', '9.00', '', '']]);
       const [fee, dep] = await lines(f.account.id);
-      expect(await codeOf(fin.bankStatements.recordChargeFromLine(ctx, dep!.id))).toBe('NOT_A_CHARGE');
-      const r = await fin.bankStatements.recordChargeFromLine(ctx, fee!.id);
+      expect(await codeOf(fin.bankStatements.recordChargeFromLine(ctx, dep.id))).toBe('NOT_A_CHARGE');
+      const r = await fin.bankStatements.recordChargeFromLine(ctx, fee.id);
       expect(r.number).toMatch(/^BCH-/);
       expect((await lines(f.account.id))[0]).toMatchObject({ status: 'matched', matchRule: 'recorded_charge' });
       const [e] = await db.select().from(schema.bankLedgerEntries).where(and(eq(schema.bankLedgerEntries.bankAccountId, f.account.id), eq(schema.bankLedgerEntries.documentType, 'bank_charge')));
@@ -264,7 +271,7 @@ describe.skipIf(!url)('bank statements (database)', () => {
       await db.update(schema.bankAccounts).set({ feeGlAccountId: null }).where(eq(schema.bankAccounts.id, f.account.id));
       await importCsv(f.account.id, [[dmy(day(1)), 'Another fee', 'FEE2', '', '5.00', '']], 'fee2.csv');
       const [, , fee2] = await lines(f.account.id);
-      expect(await codeOf(fin.bankStatements.recordChargeFromLine(ctx, fee2!.id))).toBe('NO_FEE_ACCOUNT');
+      expect(await codeOf(fin.bankStatements.recordChargeFromLine(ctx, fee2.id))).toBe('NO_FEE_ACCOUNT');
     });
   });
 
@@ -276,7 +283,7 @@ describe.skipIf(!url)('bank statements (database)', () => {
       const base = { bankAccountId: f.account.id, statementDate: day(2), statementBalance: '1040.00', openingBalance: '0' };
       expect(await codeOf(fin.bankReconciliation.post(ctx, base))).toBe('LINES_OPEN');
       const [, mystery] = await lines(f.account.id);
-      await fin.bankStatements.ignoreLine(ctx, mystery!.id, { code: 'OTHER', text: 'bank error, reversed next week' });
+      await fin.bankStatements.ignoreLine(ctx, mystery.id, { code: 'OTHER', text: 'bank error, reversed next week' });
       expect(await codeOf(fin.bankReconciliation.post(ctx, { ...base, openingBalance: undefined }))).toBe('OPENING_REQUIRED');
       const wrong = await fin.bankReconciliation.post(ctx, { ...base, statementBalance: '1030.00' }).catch((e: Error & { code?: string }) => e);
       expect((wrong as { code: string }).code).toBe('DIFFERENCE');
@@ -292,12 +299,12 @@ describe.skipIf(!url)('bank statements (database)', () => {
       const first = await fin.bankReconciliation.post(ctx, { bankAccountId: f.account.id, statementDate: day(4), statementBalance: '1000.00', openingBalance: '0' });
       expect(first.lines).toBe(1);
       const [l1, l2] = await lines(f.account.id);
-      expect(l1!.reconciliationId).toBe(first.id);
-      expect(l2!.reconciliationId).toBeNull();
+      expect(l1.reconciliationId).toBe(first.id);
+      expect(l2.reconciliationId).toBeNull();
       // a closed line cannot be touched, even straight in the database
-      expect(await dbError(db.update(schema.bankStatementLines).set({ status: 'unmatched' }).where(eq(schema.bankStatementLines.id, l1!.id)))).toMatch(/reconciled/);
-      expect(await codeOf(fin.bankStatements.unmatchLine(ctx, l1!.id, { code: 'DATA_ENTRY_ERROR' }))).toBe('LINE_RECONCILED');
-      expect(await codeOf(fin.bankStatements.ignoreLine(ctx, l1!.id, { code: 'OTHER', text: 'x' }))).toBe('LINE_RECONCILED');
+      expect(await dbError(db.update(schema.bankStatementLines).set({ status: 'unmatched' }).where(eq(schema.bankStatementLines.id, l1.id)))).toMatch(/reconciled/);
+      expect(await codeOf(fin.bankStatements.unmatchLine(ctx, l1.id, { code: 'DATA_ENTRY_ERROR' }))).toBe('LINE_RECONCILED');
+      expect(await codeOf(fin.bankStatements.ignoreLine(ctx, l1.id, { code: 'OTHER', text: 'x' }))).toBe('LINE_RECONCILED');
       // the next one starts from the last statement balance, no opening needed
       expect(await codeOf(fin.bankReconciliation.post(ctx, { bankAccountId: f.account.id, statementDate: day(5), statementBalance: '1000.00' }))).toBe('BEFORE_PREVIOUS');
       expect((await fin.bankReconciliation.preview(companyId, f.account.id, day(2))).previous).toMatchObject({ balance: '1000.0000' });
@@ -305,14 +312,14 @@ describe.skipIf(!url)('bank statements (database)', () => {
       expect(await codeOf(fin.bankReconciliation.post(ctx, { bankAccountId: f.account.id, statementDate: day(2), statementBalance: '1500.00' }))).toBe('NO_LINES');
       expect(await codeOf(fin.bankReconciliation.reverse(ctx, first.id, { code: 'DATA_ENTRY_ERROR' }))).toBe('NOT_LATEST');
       await fin.bankReconciliation.reverse(ctx, second.id, { code: 'DATA_ENTRY_ERROR' });
-      expect((await lines(f.account.id))[1]!.reconciliationId).toBeNull();
+      expect((await lines(f.account.id))[1].reconciliationId).toBeNull();
       expect(await codeOf(fin.bankReconciliation.reverse(ctx, second.id, { code: 'DATA_ENTRY_ERROR' }))).toBe('ALREADY_REVERSED');
       await expect(db.update(schema.bankReconciliations).set({ statementBalance: '1.00' }).where(eq(schema.bankReconciliations.id, first.id))).rejects.toThrow();
       await expect(db.delete(schema.bankReconciliations).where(eq(schema.bankReconciliations.id, first.id))).rejects.toThrow();
       const [num] = await db.select().from(schema.bankReconciliations).where(eq(schema.bankReconciliations.id, first.id));
-      expect(num!.number).toMatch(/^BRC-/);
-      await expect(db.update(schema.bankStatementLines).set({ amount: '1' }).where(eq(schema.bankStatementLines.id, l2!.id))).rejects.toThrow();
-      await expect(db.delete(schema.bankStatementLines).where(eq(schema.bankStatementLines.id, l2!.id))).rejects.toThrow();
+      expect(num.number).toMatch(/^BRC-/);
+      await expect(db.update(schema.bankStatementLines).set({ amount: '1' }).where(eq(schema.bankStatementLines.id, l2.id))).rejects.toThrow();
+      await expect(db.delete(schema.bankStatementLines).where(eq(schema.bankStatementLines.id, l2.id))).rejects.toThrow();
       await expect(db.update(schema.bankStatementImports).set({ fileName: 'x' }).where(eq(schema.bankStatementImports.bankAccountId, f.account.id))).rejects.toThrow();
     });
 
@@ -323,7 +330,7 @@ describe.skipIf(!url)('bank statements (database)', () => {
       await importCsv(f.account.id, [[dmy(day(3)), 'REC3AAAAA', 'REC3AAAAA', '600.00', '', '600.00']]);
       const p = await fin.bankReconciliation.preview(companyId, f.account.id, day(1));
       expect(p).toMatchObject({ bookBalance: '1000.0000', outstandingNet: '400.0000', outstandingCount: 1, lineCount: 1, blockingCount: 0, suggestedStatementBalance: '600.0000', needsOpening: true });
-      const o = (await fin.bankStatements.overview(companyId)).find((r) => r.id === f.account.id)!;
+      const o = required((await fin.bankStatements.overview(companyId)).find((r) => r.id === f.account.id));
       expect(o).toMatchObject({ unmatched: 0, outstanding: 1, matched_open: 1 });
     });
   });
@@ -340,33 +347,33 @@ describe.skipIf(!url)('bank statements (database)', () => {
       const [entry] = await db.insert(schema.bankLedgerEntries).values({ companyId, bankAccountId: f.account.id, postingDate: day(2), glAccountId: glBank, documentType: 'refund', documentNo: `RFD-ST-${run}`, documentId: refundId, description: 'Refund', amount: '-580', currency: 'KES' }).returning();
       const imp = await importCsv(f.account.id, [[dmy(day(1)), 'Paid out RFDPAY777 to customer', 'RFDPAY777', '', '580.00', '']]);
       expect(imp.autoMatched).toBe(1);
-      const seen = async () => (await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, refundId)))[0]!.bankMatchedAt;
+      const seen = async () => (await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, refundId)))[0].bankMatchedAt;
       expect(await seen()).not.toBeNull();
       const [l] = await lines(f.account.id);
-      await fin.bankStatements.unmatchLine(ctx, l!.id, { code: 'DATA_ENTRY_ERROR' });
+      await fin.bankStatements.unmatchLine(ctx, l.id, { code: 'DATA_ENTRY_ERROR' });
       expect(await seen()).toBeNull();
       const ev = await db.select().from(schema.refundEvents).where(eq(schema.refundEvents.refundId, refundId));
       expect(ev.map((x) => x.event)).toEqual(['bank_matched', 'bank_unmatched']);
-      void entry;
+      entry;
     });
   });
 
   describe('once the books are live', () => {
     it('a charge from a statement line posts to the general ledger and the reconciliation still agrees', async () => {
-      await fin.salesPosting.goLive(ctx, { offsetAccountId: (await fin.setup.listAccounts(companyId)).find((a) => a.no === '3100')!.id });
+      await fin.salesPosting.goLive(ctx, { offsetAccountId: required((await fin.setup.listAccounts(companyId)).find((a) => a.no === '3100')).id });
       const f = await fresh('live');
       await importCsv(f.account.id, [[dmy(day(0)), 'Monthly ledger fee', 'LF1', '', '150.00', '']]);
       const [l] = await lines(f.account.id);
-      const out = await fin.bankStatements.recordChargeFromLine(ctx, l!.id);
+      const out = await fin.bankStatements.recordChargeFromLine(ctx, l.id);
       expect(out.gl).toBe(true);
       const [e] = await db.select().from(schema.bankLedgerEntries).where(and(eq(schema.bankLedgerEntries.bankAccountId, f.account.id), eq(schema.bankLedgerEntries.documentType, 'bank_charge')));
-      expect(e!.registerId).not.toBeNull();
-      const gl = await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, e!.registerId!));
+      expect(e.registerId).not.toBeNull();
+      const gl = await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, required(e.registerId)));
       expect(gl.reduce((n, x) => n + Number(x.debit), 0)).toBe(150);
       expect(gl.reduce((n, x) => n + Number(x.credit), 0)).toBe(150);
       expect(gl.find((x) => x.accountId === glFee && Number(x.debit) === 150)).toBeTruthy();
       expect((await fin.salesPosting.reconciliation(companyId)).rows.map((r) => r.diffCents)).toEqual([0]);
-      void sql;
+      sql;
     });
   });
 });

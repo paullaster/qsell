@@ -2,6 +2,8 @@ import type { MpesaDarajaCredentials } from '../types';
 import type { HttpCallResult } from '../engine/http-client';
 import type { PlatformContext } from '../engine/types';
 
+import { has } from '@/lib/has';
+
 /** Access tokens last about an hour; a new token invalidates the previous one, so one is shared per app. */
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();
 const EXPIRY_BUFFER_MS = 60_000;
@@ -29,15 +31,15 @@ export function darajaFailure(res: HttpCallResult): DarajaFailure | null {
   const j = res.json ?? {};
   const errorCode = typeof j.errorCode === 'string' ? j.errorCode : null;
   const errorMessage = typeof j.errorMessage === 'string' ? j.errorMessage : null;
-  if (res.status >= 200 && res.status < 300 && !errorCode) return null;
+  if (res.status >= 200 && res.status < 300 && !has(errorCode)) return null;
   const code = errorCode ?? (typeof j.ResponseCode === 'string' ? j.ResponseCode : `HTTP_${res.status}`);
-  const message = errorMessage ?? (typeof j.ResponseDescription === 'string' ? j.ResponseDescription : `Safaricom answered ${res.status}${res.text.trim() ? `: ${res.text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240)}` : ' with an empty body'}`);
+  const message = errorMessage ?? (typeof j.ResponseDescription === 'string' ? j.ResponseDescription : `Safaricom answered ${res.status}${has(res.text.trim()) ? `: ${res.text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240)}` : ' with an empty body'}`);
   return {
     code,
     message,
     retryable: res.status >= 500 || res.status === 429 || BUSY.has(code),
     duplicate: code === '500.002.1001',
-    tokenRejected: TOKEN_REJECTED.has(code) || (res.status === 401 && !errorCode),
+    tokenRejected: TOKEN_REJECTED.has(code) || (res.status === 401 && !has(errorCode)),
   };
 }
 
@@ -57,7 +59,7 @@ export function standaloneContext(credentials: Record<string, unknown>, apiBaseU
         const text = await response.text().catch(() => '');
         let json: Record<string, unknown> | null = null;
         try {
-          const p: unknown = text ? JSON.parse(text) : null;
+          const p: unknown = has(text) ? JSON.parse(text) : null;
           json = p && typeof p === 'object' && !Array.isArray(p) ? (p as Record<string, unknown>) : null;
         } catch {
           json = null;
@@ -92,7 +94,7 @@ export class DarajaClient {
   async token(force = false): Promise<{ token: string } | { error: DarajaFailure }> {
     const key = (this.credentials.consumerKey ?? '').trim();
     const secret = (this.credentials.consumerSecret ?? '').trim();
-    if (!key || !secret) return { error: { code: 'NO_CREDENTIALS', message: 'The consumer key and secret are not saved yet.', retryable: false, duplicate: false, tokenRejected: false } };
+    if (!has(key) || !has(secret)) return { error: { code: 'NO_CREDENTIALS', message: 'The consumer key and secret are not saved yet.', retryable: false, duplicate: false, tokenRejected: false } };
     const cached = tokenCache.get(this.cacheKey());
     if (!force && cached && cached.expiresAt > Date.now()) return { token: cached.token };
     const res = await this.ctx.call({
@@ -105,9 +107,9 @@ export class DarajaClient {
     });
     const failure = darajaFailure(res);
     const access = typeof res.json?.access_token === 'string' ? res.json.access_token : null;
-    if (failure || !access) {
+    if (failure || !has(access)) {
       tokenCache.delete(this.cacheKey());
-      const blocked = res.reached && !res.text.trim();
+      const blocked = res.reached && !has(res.text.trim());
       return {
         error: failure ?? {
           code: 'NO_TOKEN',
@@ -127,7 +129,7 @@ export class DarajaClient {
   /** An authenticated call. If Safaricom refuses the token, one fresh token is fetched and the call repeated once. */
   async request(label: string, method: 'GET' | 'POST', path: string, body: unknown, opts: { operationId?: string | null; timeoutMs?: number } = {}): Promise<HttpCallResult> {
     const send = async (token: string) =>
-      this.ctx.call({
+      await this.ctx.call({
         label,
         provider: 'mpesa_daraja',
         method,
@@ -140,10 +142,10 @@ export class DarajaClient {
     const first = await this.token();
     if ('error' in first) return this.failedBeforeSending(first.error);
     const res = await send(first.token);
-    if (darajaFailure(res)?.tokenRejected) {
+    if ((darajaFailure(res)?.tokenRejected) === true) {
       const second = await this.token(true);
       if ('error' in second) return this.failedBeforeSending(second.error);
-      return send(second.token);
+      return await send(second.token);
     }
     return res;
   }

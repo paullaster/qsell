@@ -10,6 +10,7 @@ import { darajaTimestamp, looksLikeReceipt, securityCredential, stkPassword, toC
 import { pullRecords } from './c2b';
 import { crossCheckClaim, readStatusAnswer, statusAgrees } from './verify';
 import type { VerifyAttemptInput } from '../engine/types';
+import { required } from '@/lib/values';
 
 describe('what may be logged', () => {
   it('hides secrets and masks phone numbers, wherever they sit', () => {
@@ -103,7 +104,7 @@ const meta = (amount: number, phone: number | string, receipt = 'NLJ7RT61SV') =>
 
 describe('reading what Safaricom sends', () => {
   it('reads a successful STK callback, keeping the payer only as a fingerprint', () => {
-    const c = parseStkCallback(stk(0, meta(100, 254712345678)))!;
+    const c = required(parseStkCallback(stk(0, meta(100, 254712345678))));
     expect(c).toMatchObject({ kind: 'stk_callback', claimsSuccess: true, platformReference: 'NLJ7RT61SV', amountCents: 10000, requestIds: { checkoutRequestId: 'ws_CO_1', merchantRequestId: 'M-1' } });
     expect(c.payerFingerprint).toBe(phoneFingerprint('0712345678'));
     expect(JSON.stringify(c)).not.toContain('254712345678');
@@ -115,13 +116,13 @@ describe('reading what Safaricom sends', () => {
     expect(parseStkCallback(null)).toBeNull();
   });
   it('reads C2B payments and masked numbers', () => {
-    const c = parseC2b('c2b_confirmation', { TransactionType: 'Pay Bill', TransID: 'RKTQDM7W6S', TransTime: '20260113123045', TransAmount: '10.00', BusinessShortCode: '600638', BillRefNumber: 'C0001', MSISDN: '2547 ***** 126', FirstName: 'Jane', LastName: 'Doe' })!;
+    const c = required(parseC2b('c2b_confirmation', { TransactionType: 'Pay Bill', TransID: 'RKTQDM7W6S', TransTime: '20260113123045', TransAmount: '10.00', BusinessShortCode: '600638', BillRefNumber: 'C0001', MSISDN: '2547 ***** 126', FirstName: 'Jane', LastName: 'Doe' }));
     expect(c).toMatchObject({ platformReference: 'RKTQDM7W6S', amountCents: 1000, shortcode: '600638', accountReference: 'C0001', claimsSuccess: true, payerFingerprint: null });
     expect(c.extra.name).toBe('Jane Doe');
     expect(parseC2b('c2b_validation', {})).toBeNull();
   });
   it('reads the final answer of an asynchronous request, and the receipt wherever it is named', () => {
-    const r = parseAsyncResult({ Result: { ResultType: 0, ResultCode: 0, ResultDesc: 'ok', OriginatorConversationID: 'o', ConversationID: 'c', TransactionID: 'T1', ResultParameters: { ResultParameter: [{ Key: 'ReceiptNo', Value: 'MBN31H462N' }, { Key: 'Amount', Value: 300 }] }, ReferenceData: { ReferenceItem: { Key: 'QueueTimeoutURL', Value: 'u' } } } })!;
+    const r = required(parseAsyncResult({ Result: { ResultType: 0, ResultCode: 0, ResultDesc: 'ok', OriginatorConversationID: 'o', ConversationID: 'c', TransactionID: 'T1', ResultParameters: { ResultParameter: [{ Key: 'ReceiptNo', Value: 'MBN31H462N' }, { Key: 'Amount', Value: 300 }] }, ReferenceData: { ReferenceItem: { Key: 'QueueTimeoutURL', Value: 'u' } } } }));
     expect(r).toMatchObject({ resultCode: '0', originatorId: 'o', conversationId: 'c', transactionId: 'T1', params: { ReceiptNo: 'MBN31H462N', Amount: '300' }, references: { QueueTimeoutURL: 'u' } });
     expect(parseAsyncResult({})).toBeNull();
     expect(parseDarajaTime('20260113123045')?.toISOString()).toBe('2026-01-13T09:30:45.000Z');
@@ -170,7 +171,7 @@ const input = (over: Partial<VerifyAttemptInput> = {}): VerifyAttemptInput => ({
 });
 
 describe('a callback must agree with what we asked for', () => {
-  const claim = (over = {}) => ({ ...parseStkCallback(stk(0, meta(100, 254712345678)))!, ...over });
+  const claim = (over = {}) => ({ ...required(parseStkCallback(stk(0, meta(100, 254712345678)))), ...over });
   it('passes when everything agrees, and when there is no callback yet', () => {
     expect(crossCheckClaim(input({ claim: claim() }))).toBeNull();
     expect(crossCheckClaim(input())).toBeNull();
@@ -183,7 +184,7 @@ describe('a callback must agree with what we asked for', () => {
     expect(crossCheckClaim(input({ claim: claim({ platformReference: 'abc' }) }))?.code).toBe('RECEIPT_FORMAT');
   });
   it('does not hold a failed callback to the amount and payer rules', () => {
-    const failed = parseStkCallback(stk(1032))!;
+    const failed = required(parseStkCallback(stk(1032)));
     expect(crossCheckClaim(input({ claim: failed }))).toBeNull();
   });
 });
@@ -191,7 +192,7 @@ describe('a callback must agree with what we asked for', () => {
 describe("Safaricom's own record of a transaction", () => {
   const result = { resultCode: '0', resultDesc: 'ok', params: { ReceiptNo: 'NLJ7RT61SV', Amount: '100', TransactionStatus: 'Completed', CreditPartyName: '600638 - Acme Ltd' } };
   it('reads a status answer and checks it against the payment', () => {
-    const answer = readStatusAnswer(result)!;
+    const answer = required(readStatusAnswer(result));
     expect(answer).toMatchObject({ ok: true, receipt: 'NLJ7RT61SV', amountCents: 10000, creditParty: '600638 - Acme Ltd' });
     expect(statusAgrees(answer, { receipt: 'NLJ7RT61SV', amountCents: 10000, shortcode: '600638' })).toEqual({ ok: true });
     expect(statusAgrees(answer, { receipt: 'OTHER00001', amountCents: 10000, shortcode: '600638' })).toMatchObject({ ok: false, code: 'STATUS_RECEIPT_MISMATCH' });
@@ -199,9 +200,9 @@ describe("Safaricom's own record of a transaction", () => {
     expect(statusAgrees(answer, { receipt: 'NLJ7RT61SV', amountCents: 10000, shortcode: '999999' })).toMatchObject({ ok: false, code: 'STATUS_RECEIVER_MISMATCH' });
   });
   it('does not accept a status that is not completed', () => {
-    const answer = readStatusAnswer({ ...result, params: { ...result.params, TransactionStatus: 'Cancelled' } })!;
+    const answer = required(readStatusAnswer({ ...result, params: { ...result.params, TransactionStatus: 'Cancelled' } }));
     expect(statusAgrees(answer, { receipt: null, amountCents: 10000, shortcode: null })).toMatchObject({ ok: false, code: 'STATUS_NOT_COMPLETED' });
-    const failed = readStatusAnswer({ resultCode: '2001', resultDesc: 'The initiator information is invalid.', params: {} })!;
+    const failed = required(readStatusAnswer({ resultCode: '2001', resultDesc: 'The initiator information is invalid.', params: {} }));
     expect(failed.ok).toBe(false);
   });
 });

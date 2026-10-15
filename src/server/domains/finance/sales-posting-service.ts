@@ -32,6 +32,8 @@ import type { PostingEngine, Tx } from './engine';
 import { FinanceError, type FinanceContext } from './errors';
 import type { PostingSetupService } from './posting-setup-service';
 
+import { has } from '@/lib/has';
+
 type Writer = DrizzleDb | Tx;
 
 const MAX_BACKOFF_MINUTES = 60;
@@ -151,7 +153,7 @@ export class SalesPostingService {
   }
 
   private async groupFor(w: Writer, customerId: string | null, fallback: string): Promise<string> {
-    if (!customerId) return fallback;
+    if (!has(customerId)) return fallback;
     const [c] = await w.select({ g: customers.postingGroupCode }).from(customers).where(eq(customers.id, customerId));
     return c?.g ?? fallback;
   }
@@ -166,7 +168,7 @@ export class SalesPostingService {
     const sales = await this.setup.resolveGeneral(companyId, s.defaultBusinessGroup, s.defaultProductGroup, 'sales', date);
     const serviceCharge =
       figures.shippingCents > 0 ? (await this.setup.resolveCustomer(companyId, group, 'service_charge')).accountId : null;
-    if (figures.taxCents > 0 && !s.outputTaxAccountId) {
+    if (figures.taxCents > 0 && !has(s.outputTaxAccountId)) {
       throw new Error('Tax was charged, but the account for tax owed on sales is not set (Finance → Sales posting).');
     }
     return { sales: sales.accountId, outputTax: s.outputTaxAccountId, serviceCharge };
@@ -218,9 +220,9 @@ export class SalesPostingService {
   private async postRow(tx: Tx, row: FinanceSalesPostingRow): Promise<string | null> {
     const s = await this.settings(tx, row.companyId);
     const live = s.salesGlGoLive !== null && row.eventDate >= s.salesGlGoLive;
-    if (row.kind === 'rebate_credit') return this.postRebate(tx, row, s);
-    if (row.kind === 'credit_payment') return this.postCreditPayment(tx, row, s);
-    if (row.kind === 'wallet_use') return this.postWalletUse(tx, row, s);
+    if (row.kind === 'rebate_credit') return await this.postRebate(tx, row, s);
+    if (row.kind === 'credit_payment') return await this.postCreditPayment(tx, row, s);
+    if (row.kind === 'wallet_use') return await this.postWalletUse(tx, row, s);
     const [order] = await tx.select().from(orders).where(eq(orders.id, row.subjectId));
     if (!order) throw new Error(`Order ${row.subjectId} no longer exists.`);
     if (order.currency.toUpperCase() !== s.baseCurrency) {
@@ -236,7 +238,7 @@ export class SalesPostingService {
       if (!live) return null;
       const accounts = await this.saleAccounts(row.companyId, s, group, row.eventDate, figures);
       const receivables = (await this.setup.resolveCustomer(row.companyId, group, 'receivables')).accountId;
-      return this.submit(tx, row, s, {
+      return await this.submit(tx, row, s, {
         documentType: 'sales_invoice',
         documentNo: label,
         description: `Credit invoice ${label}`,
@@ -250,7 +252,7 @@ export class SalesPostingService {
     const settled = await this.settle(tx, row, s, order, figures.totalCents, group, 'cash_sale', live);
     if (!live) return null;
     const accounts = await this.saleAccounts(row.companyId, s, group, row.eventDate, figures);
-    return this.submit(tx, row, s, {
+    return await this.submit(tx, row, s, {
       documentType: 'cash_sale',
       documentNo: label,
       description: `Cash sale ${label}`,
@@ -301,10 +303,10 @@ export class SalesPostingService {
           .where(
             and(
               eq(paymentMethods.companyId, row.companyId),
-              order.paymentMethodId
+              has(order.paymentMethodId)
                 ? eq(paymentMethods.id, order.paymentMethodId)
                 : sql`(${paymentMethods.legacyCodes} ? ${order.paymentMethod} OR ${paymentProviderConfigs.providerCode} = ${order.paymentMethod})`,
-              !order.paymentMethodId && branchOnly ? sql`(${paymentMethods.branchId} IS NULL OR ${paymentMethods.branchId} = ${order.branchId}::uuid)` : undefined,
+              !has(order.paymentMethodId) && branchOnly ? sql`(${paymentMethods.branchId} IS NULL OR ${paymentMethods.branchId} = ${order.branchId}::uuid)` : undefined,
             ),
           )
           // The order's own branch first, then every branch, then (so an old order still posts) any branch.
@@ -344,7 +346,7 @@ export class SalesPostingService {
   /** A credit customer's invoice paid through a gateway or tender: money in, debt out. */
   private async postCreditPayment(tx: Tx, row: FinanceSalesPostingRow, s: Awaited<ReturnType<SalesPostingService['settings']>>): Promise<string | null> {
     const [entry] = await tx.select().from(customerLedgerEntries).where(eq(customerLedgerEntries.id, row.subjectId));
-    if (!entry || !entry.orderId) throw new Error('The payment no longer exists.');
+    if (!has(entry?.orderId)) throw new Error('The payment no longer exists.');
     const [order] = await tx.select().from(orders).where(eq(orders.id, entry.orderId));
     if (!order) throw new Error(`Order ${entry.orderId} no longer exists.`);
     if (order.currency.toUpperCase() !== s.baseCurrency) {
@@ -360,7 +362,7 @@ export class SalesPostingService {
       ...settled.map((x) => ({ accountId: x.accountId, debitCents: x.cents, creditCents: 0, description: x.description })),
       { accountId: receivables, debitCents: 0, creditCents: cents, description: `Payment ${entry.documentNo}`, sourceLedger: 'customer', sourceEntryId: entry.customerId },
     ];
-    return this.submit(tx, row, s, {
+    return await this.submit(tx, row, s, {
       documentType: 'customer_payment',
       documentNo: entry.documentNo,
       description: `Payment for ${order.orderNumber}`,
@@ -385,7 +387,7 @@ export class SalesPostingService {
       this.setup.resolveCustomer(row.companyId, group, 'receivables'),
     ]);
     const cents = -toCents(e.amount);
-    return this.submit(tx, row, s, {
+    return await this.submit(tx, row, s, {
       documentType: 'wallet_use',
       documentNo: `WAL-${e.id}`,
       description: `Wallet used (${group})`,
@@ -406,7 +408,7 @@ export class SalesPostingService {
     const group = await this.groupFor(tx, entry.customerId, s.defaultCustomerGroup);
     const expense = (await this.setup.resolveCustomer(row.companyId, group, 'rebate_expense')).accountId;
     const receivables = (await this.setup.resolveCustomer(row.companyId, group, 'receivables')).accountId;
-    return this.submit(tx, row, s, {
+    return await this.submit(tx, row, s, {
       documentType: 'rebate_credit',
       documentNo: entry.documentNo,
       description: entry.description ?? `Rebate ${entry.documentNo}`,
@@ -428,7 +430,7 @@ export class SalesPostingService {
   }
 
   async list(companyId: string, status: 'open' | 'posted' = 'open', limit = 100) {
-    return this.db
+    return await this.db
       .select()
       .from(financeSalesPostings)
       .where(
@@ -449,7 +451,7 @@ export class SalesPostingService {
       .where(
         and(
           eq(financeSalesPostings.companyId, ctx.companyId),
-          id ? eq(financeSalesPostings.id, id) : eq(financeSalesPostings.status, 'failed'),
+          has(id) ? eq(financeSalesPostings.id, id) : eq(financeSalesPostings.status, 'failed'),
           inArray(financeSalesPostings.status, ['pending', 'failed']),
         ),
       );
@@ -460,7 +462,7 @@ export class SalesPostingService {
       actor: ctx.actor,
       inputs: { origin: ctx.origin },
     });
-    return this.processDue(500);
+    return await this.processDue(500);
   }
 
   /** Is everything in place for sales to post? Each check names what to fix. */
@@ -479,7 +481,7 @@ export class SalesPostingService {
       .from(accountingPeriods)
       .where(and(eq(accountingPeriods.companyId, companyId), sql`${accountingPeriods.startsOn} <= ${today}::date AND ${accountingPeriods.endsOn} >= ${today}::date`));
     add('period', 'Today falls in an open accounting period', period?.status === 'open', period ? `The period is ${period.status}.` : 'No fiscal period covers today. Create the fiscal year.');
-    const [tax] = s.outputTaxAccountId
+    const [tax] = has(s.outputTaxAccountId)
       ? await this.db.select({ no: glAccounts.no, name: glAccounts.name }).from(glAccounts).where(eq(glAccounts.id, s.outputTaxAccountId))
       : [];
     add('tax', 'An account is set for tax owed on sales', Boolean(tax), tax ? `${tax.no} ${tax.name}` : 'Choose it below.');
@@ -552,10 +554,10 @@ export class SalesPostingService {
     if (blocking.length > 0) {
       throw new FinanceError('NOT_READY', `Not ready: ${blocking.map((b) => b.label).join('; ')}.`);
     }
-    return this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const [s] = await tx.select().from(financeSettings).where(eq(financeSettings.companyId, ctx.companyId)).for('update');
       if (!s) throw new FinanceError('FINANCE_NOT_SET_UP', 'Finance has not been set up yet.');
-      if (s.salesGlGoLive) throw new FinanceError('ALREADY_LIVE', `Sales have posted to the general ledger since ${s.salesGlGoLive}.`);
+      if (has(s.salesGlGoLive)) throw new FinanceError('ALREADY_LIVE', `Sales have posted to the general ledger since ${s.salesGlGoLive}.`);
       const [offset] = await tx.select().from(glAccounts).where(and(eq(glAccounts.companyId, ctx.companyId), eq(glAccounts.id, input.offsetAccountId)));
       if (!offset || offset.type !== 'posting' || offset.blocked) throw new FinanceError('OFFSET_INVALID', 'Choose a postable equity account for the opening balance.');
       if (offset.category !== 'equity') throw new FinanceError('OFFSET_INVALID', `${offset.no} ${offset.name} is not an equity account.`);
@@ -685,7 +687,7 @@ export class SalesPostingService {
     const opening = new Map((await this.openingFigures(companyId)).map((f) => [f.group, f]));
     const byAccount = new Map<string, { no: string; name: string; subLedger: number; groups: string[]; foreign: number; accountId: string }>();
     for (const g of groups) {
-      if (!g.account_id) continue;
+      if (!has(g.account_id)) continue;
       const cur = byAccount.get(g.account_id) ?? { no: g.no!, name: g.name!, subLedger: 0, groups: [], foreign: 0, accountId: g.account_id };
       cur.subLedger += opening.get(g.code)?.netCents ?? 0;
       cur.foreign += opening.get(g.code)?.foreignEntries ?? 0;
@@ -734,7 +736,7 @@ export class SalesPostingService {
     const sets = Object.entries(accounts).filter(([k]) => k in columns);
     if (sets.length === 0) return;
     const ids = sets.map(([, v]) => v).filter((v): v is string => Boolean(v));
-    if (ids.length) {
+    if (ids.length !== 0) {
       const found = await this.db.select({ id: glAccounts.id, type: glAccounts.type, blocked: glAccounts.blocked }).from(glAccounts).where(and(eq(glAccounts.companyId, ctx.companyId), inArray(glAccounts.id, ids)));
       if (found.length !== new Set(ids).size || found.some((a) => a.type !== 'posting' || a.blocked)) {
         throw new FinanceError('ACCOUNT_INVALID', 'Every account must exist, be postable and not be blocked.');
@@ -742,7 +744,7 @@ export class SalesPostingService {
     }
     await this.db.transaction(async (tx) => {
       const res = await tx.execute(sql`
-        UPDATE customer_posting_groups SET ${sql.join(sets.map(([k, v]) => sql`${sql.raw(columns[k]!)} = ${v ?? null}::uuid`), sql`, `)}
+        UPDATE customer_posting_groups SET ${sql.join(sets.map(([k, v]) => sql`${sql.raw(columns[k])} = ${v ?? null}::uuid`), sql`, `)}
         WHERE company_id = ${ctx.companyId}::uuid AND code = ${code} RETURNING id`);
       if ([...res].length === 0) throw new FinanceError('NOT_FOUND', `Customer posting group ${code} does not exist.`);
       await this.decisions.record(

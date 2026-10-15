@@ -55,7 +55,7 @@ interface TableSourceConfig {
   scope: (input: SourceInput) => SQL[];
   toOption: (row: Record<string, unknown>) => LookupOption;
   /** Extra columns to read for `toOption`, by name. */
-  select: Record<string, AnyPgColumn>;
+  select: Record<string, AnyPgColumn | SQL>;
 }
 
 /**

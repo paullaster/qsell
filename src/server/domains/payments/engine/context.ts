@@ -1,10 +1,12 @@
 import { eq } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { companySettings, paymentProviderConfigs } from '@/server/db/drizzle/schema';
-import { decryptCredentials, encryptCredentials } from '../crypto';
+import { decryptCredentials, encryptCredentials, stringFields } from '../crypto';
 import { loggedCall } from './http-client';
 import { newSecret } from './redact';
 import type { PlatformContext } from './types';
+
+import { has } from '@/lib/has';
 
 /**
  * Opens a provider for use: its credentials (never logged), its settings, and a way to call its
@@ -20,13 +22,13 @@ export class PlatformContexts {
   async forProvider(providerId: string): Promise<PlatformContext> {
     const [provider] = await this.db.select().from(paymentProviderConfigs).where(eq(paymentProviderConfigs.id, providerId));
     if (!provider) throw new Error('That payment provider does not exist.');
-    const credentials = (decryptCredentials(provider.credentialsEncrypted) ?? {}) as Record<string, string>;
+    const credentials = stringFields(decryptCredentials(provider.credentialsEncrypted));
     const [company] = await this.db.select({ url: companySettings.publicBaseUrl }).from(companySettings).where(eq(companySettings.id, provider.companyId));
     return {
       companyId: provider.companyId,
       provider,
       credentials,
-      settings: (provider.settings ?? {}) as Record<string, unknown>,
+      settings: (provider.settings ?? {}),
       call: (input) => loggedCall(this.db, { ...input, companyId: provider.companyId, providerId: provider.id }, this.fetchImpl),
       publicBaseUrl: company?.url?.replace(/\/$/, '') ?? null,
       now: () => new Date(),
@@ -37,8 +39,8 @@ export class PlatformContexts {
   async callbackSecret(providerId: string): Promise<string> {
     const [provider] = await this.db.select().from(paymentProviderConfigs).where(eq(paymentProviderConfigs.id, providerId));
     if (!provider) throw new Error('That payment provider does not exist.');
-    const creds = (decryptCredentials(provider.credentialsEncrypted) ?? {}) as Record<string, string>;
-    if (creds.callbackSecret) return creds.callbackSecret;
+    const creds = stringFields(decryptCredentials(provider.credentialsEncrypted));
+    if (has(creds.callbackSecret)) return creds.callbackSecret;
     const secret = newSecret();
     await this.db
       .update(paymentProviderConfigs)
@@ -51,9 +53,9 @@ export class PlatformContexts {
   async checkSecret(providerId: string, presented: string): Promise<boolean> {
     const [provider] = await this.db.select({ c: paymentProviderConfigs.credentialsEncrypted }).from(paymentProviderConfigs).where(eq(paymentProviderConfigs.id, providerId));
     if (!provider) return false;
-    const creds = (decryptCredentials(provider.c) ?? {}) as Record<string, string>;
+    const creds = stringFields(decryptCredentials(provider.c));
     const known = creds.callbackSecret;
-    if (!known || !presented || presented.length !== known.length) return false;
+    if (!has(known) || !has(presented) || presented.length !== known.length) return false;
     const { timingSafeEqual } = await import('node:crypto');
     return timingSafeEqual(Buffer.from(presented), Buffer.from(known));
   }

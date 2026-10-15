@@ -1,5 +1,7 @@
 import type { AccountCategory, AccountType, NormalBalance } from './types';
 
+import { has } from '@/lib/has';
+
 export interface AccountDraft {
   no: string;
   name: string;
@@ -63,7 +65,7 @@ export function validateChart(accounts: AccountDraft[]): ChartIssue[] {
     if ((a.type === 'total' || a.type === 'end_total') && (a.totaling ?? '') === '') {
       issues.push({ no: a.no, message: `Total account ${a.no} needs a range to add up.` });
     }
-    if (a.totaling && !isValidTotaling(a.totaling)) {
+    if (has(a.totaling) && !isValidTotaling(a.totaling)) {
       issues.push({ no: a.no, message: `Account ${a.no}: "${a.totaling}" is not a valid range.` });
     }
     if (a.type === 'posting' && a.category === null) {

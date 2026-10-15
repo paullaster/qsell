@@ -1,5 +1,7 @@
 import { fromCents } from './receivables';
 
+import { has } from '@/lib/has';
+
 /** An order's money, in whole cents. Goods + tax + shipping = total, always. */
 export interface SaleFigures {
   totalCents: number;
@@ -42,11 +44,11 @@ export function saleCredits(f: SaleFigures, a: SaleAccounts, label: string): Pla
   const lines: PlannedLine[] = [];
   if (salesCents > 0) lines.push({ accountId: a.sales, debitCents: 0, creditCents: salesCents, description: `Sales ${label}` });
   if (taxCents > 0) {
-    if (!a.outputTax) throw new SaleShapeError('Tax was charged but no account is set for tax owed on sales.');
+    if (!has(a.outputTax)) throw new SaleShapeError('Tax was charged but no account is set for tax owed on sales.');
     lines.push({ accountId: a.outputTax, debitCents: 0, creditCents: taxCents, description: `Tax on ${label}` });
   }
   if (shippingCents > 0) {
-    if (!a.serviceCharge) throw new SaleShapeError('Shipping was charged but the customer posting group has no service-charge account.');
+    if (!has(a.serviceCharge)) throw new SaleShapeError('Shipping was charged but the customer posting group has no service-charge account.');
     lines.push({ accountId: a.serviceCharge, debitCents: 0, creditCents: shippingCents, description: `Shipping on ${label}` });
   }
   return lines;

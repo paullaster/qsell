@@ -1,5 +1,8 @@
 import { constants, createPublicKey, publicEncrypt } from 'node:crypto';
 
+import { has } from '@/lib/has';
+import { readText } from '@/lib/values';
+
 /** Daraja timestamps are East Africa Time, yyyyMMddHHmmss. */
 export function darajaTimestamp(now: Date): string {
   const parts = new Intl.DateTimeFormat('en-GB', {
@@ -37,7 +40,7 @@ export function securityCredential(initiatorPassword: string, certificatePem: st
 
 /** 07XX, 01XX, 7XX, +254… and 254… all become 2547XXXXXXXX / 2541XXXXXXXX. Null when it cannot be a Kenyan mobile number. */
 export function toMsisdn(raw: string | null | undefined): string | null {
-  if (!raw) return null;
+  if (!has(raw)) return null;
   let d = String(raw).replace(/[^0-9]/g, '');
   if (d.startsWith('0')) d = `254${d.slice(1)}`;
   else if (d.length === 9 && /^[17]/.test(d)) d = `254${d}`;
@@ -55,14 +58,14 @@ export function samePhone(a: string | null | undefined, b: string | null | undef
 /** "71", 71, "71.0", "1,000.50" -> cents. Null for anything that is not a plain amount. */
 export function toCentsLoose(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
-  const text = String(value).trim().replace(/,/g, '');
+  const text = readText(value).trim().replace(/,/g, '');
   const m = /^(-?)(\d+)(?:\.(\d*))?$/.exec(text);
   if (!m) return null;
   const frac = m[3] ?? '';
   if (/[1-9]/.test(frac.slice(2))) return null;
-  const cents = Number(m[2]) * 100 + Number((frac + '00').slice(0, 2));
-  return m[1] ? -cents : cents;
+  const cents = Number(m[2]) * 100 + Number((`${frac  }00`).slice(0, 2));
+  return has(m[1]) ? -cents : cents;
 }
 
 /** An M-Pesa receipt looks like NLJ7RT61SV: ten letters and digits. */
-export const looksLikeReceipt = (s: string | null | undefined) => !!s && /^[A-Z0-9]{10}$/.test(s);
+export const looksLikeReceipt = (s: string | null | undefined): boolean => typeof s === 'string' && /^[A-Z0-9]{10}$/.test(s);
