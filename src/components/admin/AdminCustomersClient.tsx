@@ -15,6 +15,7 @@ import {
   saveCustomerProfileAction,
   saveTradeCustomerAction,
 } from '@/server/domains/customers/master-actions';
+import { accountTypeOf, blockOf } from '@/lib/customer-forms';
 import { CatalogCreateShortcut, mergeById } from '@/components/admin/catalog-shortcuts';
 import {
   CUSTOMER_SHORTCUT_CREATED,
@@ -38,8 +39,6 @@ interface Setup {
   fields: SetupField[];
 }
 
-type AccountType = 'cash' | 'credit';
-type Block = 'none' | 'ship' | 'invoice' | 'all';
 
 function money(value: string | number | null | undefined): string {
   const n = typeof value === 'number' ? value : Number(value ?? 0);
@@ -169,10 +168,10 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
       countyOrState: '',
       postalCode: '',
       country: '',
-      accountType: 'cash',
+      accountType: accountTypeOf('cash'),
       creditLimit: '0',
       paymentTermDays: '0',
-      blocked: 'none',
+      blocked: blockOf('none'),
       transmitInvoicesToKra: true,
       buyerKraPin: '',
       notes: '',
@@ -188,7 +187,7 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
       code: '',
       name: '',
       description: '',
-      accountType: 'cash',
+      accountType: accountTypeOf('cash'),
       creditLimit: '0',
       paymentTermDays: '0',
       transmitInvoicesToKra: true,
@@ -310,10 +309,10 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
       countyOrState: row.countyOrState ?? '',
       postalCode: row.postalCode ?? '',
       country: row.country ?? '',
-      accountType: row.accountType === 'credit' ? 'credit' : 'cash',
+      accountType: accountTypeOf(row.accountType),
       creditLimit: String(row.creditLimit),
       paymentTermDays: String(row.paymentTermDays),
-      blocked: (row.blocked) || 'none',
+      blocked: blockOf(row.blocked),
       transmitInvoicesToKra: row.transmitInvoicesToKra,
       buyerKraPin: row.buyerKraPin ?? '',
       notes: row.notes ?? '',
@@ -428,7 +427,7 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
       code: row.code,
       name: row.name,
       description: row.description ?? '',
-      accountType: row.accountType === 'credit' ? 'credit' : 'cash',
+      accountType: accountTypeOf(row.accountType),
       creditLimit: String(row.creditLimit),
       paymentTermDays: String(row.paymentTermDays),
       transmitInvoicesToKra: row.transmitInvoicesToKra,
@@ -625,7 +624,7 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
                     className={`${fieldClass} mt-1`}
                     value={customerForm.accountType}
                     onChange={(e) => {
-                      const accountType = e.target.value as AccountType;
+                      const accountType = accountTypeOf(e.target.value);
                       setCustomerForm((f) => ({
                         ...f,
                         accountType,
@@ -670,7 +669,7 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
                     className={`${fieldClass} mt-1`}
                     value={customerForm.blocked}
                     onChange={(e) =>
-                      setCustomerForm((f) => ({ ...f, blocked: e.target.value }))
+                      setCustomerForm((f) => ({ ...f, blocked: blockOf(e.target.value) }))
                     }
                   >
                     <option value="none">None</option>
@@ -896,7 +895,7 @@ export function AdminCustomersClient({ setupPromise }: { setupPromise: Promise<S
                     className={`${fieldClass} mt-1`}
                     value={profileForm.accountType}
                     onChange={(e) => {
-                      const accountType = e.target.value as AccountType;
+                      const accountType = accountTypeOf(e.target.value);
                       setProfileForm((f) => ({
                         ...f,
                         accountType,

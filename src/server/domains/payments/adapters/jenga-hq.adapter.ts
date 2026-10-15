@@ -10,16 +10,26 @@ import {
 } from '../port';
 import { asJengaCredentials, type JengaHqCredentials } from '../types';
 import { extractPaymentReference } from '../payment-reference';
+import type { InboundClaim, PlatformContext, VerificationOutcome, VerifyAttemptInput } from '../engine/types';
+import { judgeAnswer, stateOf, unusableAnswer, type PlatformAnswer } from './status-judge';
 
-import { asRecord, firstFilled, has, orElse, readText } from '@/lib/values';
+import { toCentsLoose } from '../daraja/security';
+
+import { asRecord, emptyToNull, firstFilled, has, orElse, readText } from '@/lib/values';
 
 /**
  * Jenga HQ receive-money / checkout adapter.
  * Signature formula follows Jenga docs (SHA-256 RSA over concatenated fields).
  */
+function jengaReason(paid: boolean, failed: boolean, state: string, j: Record<string, unknown>): string {
+  if (paid) return 'Paid.';
+  if (failed) return readText(j.message, j.responseMessage, 'Jenga reports the payment did not go through.');
+  return `Jenga reports "${state}".`;
+}
+
 export class JengaHqAdapter implements PaymentPort {
   readonly code = 'jenga_hq' as const;
-  readonly capabilities = ['collect'] as const;
+  readonly capabilities = ['collect', 'status_query'] as const;
 
   async testConnection(
     credentials: Record<string, unknown>,
@@ -138,6 +148,77 @@ export class JengaHqAdapter implements PaymentPort {
         errorMessage: err instanceof Error ? err.message : 'Jenga initiate failed',
       };
     }
+  }
+
+  /** The reference Jenga was given for a payment: the order number without anything but letters and digits. */
+  static referenceFor(orderNumber: string): string {
+    return orderNumber.replace(/[^A-Za-z0-9]/g, '').slice(0, 20);
+  }
+
+  /** A callback only points at the payment; it is never believed. */
+  parseCallback(body: unknown): InboundClaim | null {
+    const b = asRecord(body);
+    const reference = readText(b.reference, b.orderReference, b.transactionReference, b.transactionId, '');
+    if (!has(reference)) return null;
+    const status = readText(b.status, b.transactionStatus, b.state, '').toLowerCase();
+    const succeeded = status.includes('success') || status.includes('completed') || status === '0';
+    const failed = status.includes('fail') || status.includes('error');
+    const cents = toCentsLoose(b.amount);
+    return {
+      kind: 'callback',
+      claimsSuccess: succeeded || (failed ? false : null),
+      platformReference: emptyToNull(readText(b.transactionId, b.transactionReference, '')),
+      conversationId: null,
+      originatorId: null,
+      requestIds: { reference },
+      amountCents: cents,
+      currency: orElse(readText(b.currency), 'KES'),
+      payerFingerprint: null,
+      payerMasked: null,
+      shortcode: null,
+      accountReference: reference,
+      occurredAt: null,
+      failureCode: null,
+      failureReason: failed ? readText(b.message, b.responseMessage, status) : null,
+      extra: {},
+    };
+  }
+
+  /** Jenga's own record of the payment, asked for by the reference we gave it: state, amount, currency, reference. */
+  async verifyAttempt(input: VerifyAttemptInput, ctx: PlatformContext): Promise<VerificationOutcome> {
+    const by = 'jenga_status';
+    const creds = asJengaCredentials(ctx.credentials);
+    if (!has(creds.merchantCode) || !has(creds.consumerSecret) || !has(creds.apiKey)) {
+      return { status: 'error', by, reason: 'The Jenga credentials are incomplete, so the payment cannot be checked.', retryable: false };
+    }
+    const base = ctx.provider.apiBaseUrl.replace(/\/$/, '');
+    const ref = JengaHqAdapter.referenceFor(input.orderNumber);
+    const claimed = input.claim?.requestIds.reference;
+    if (has(claimed) && claimed !== ref && claimed !== input.providerReference && claimed !== input.externalReference) {
+      return { status: 'mismatch', by: 'cross_check', code: 'REFERENCE_MISMATCH', reason: `The notification names ${claimed}, but this payment is ${ref}.`, evidence: {} };
+    }
+    const auth = await ctx.call({ label: 'oauth', provider: 'jenga_hq', method: 'POST', url: `${base}/authentication/api/v3/authenticate/merchant`, headers: { 'Api-Key': creds.apiKey }, body: { merchantCode: creds.merchantCode, consumerSecret: creds.consumerSecret }, timeoutMs: 15000 });
+    const token = readText(auth.json?.accessToken, auth.json?.token, '');
+    if (!has(token)) return { status: 'error', by, reason: `Jenga did not give a token (${auth.reached ? String(auth.status) : (auth.networkError ?? 'no answer')}).`, retryable: true };
+    const template = typeof ctx.settings.statusPath === 'string' ? ctx.settings.statusPath : '/v3-apis/transaction-api/v3.0/payments/{ref}';
+    const res = await ctx.call({ label: 'get_transaction_status', provider: 'jenga_hq', method: 'GET', url: `${base}${template.replace('{ref}', encodeURIComponent(ref))}`, headers: { Authorization: `Bearer ${token}` }, timeoutMs: 20000 });
+    const unusable = unusableAnswer(by, 'Jenga', res);
+    if (unusable) return unusable;
+    const j = asRecord(res.json?.data ?? res.json);
+    const state = readText(j.status, j.transactionStatus, j.state, '').toLowerCase();
+    if (!has(state)) return { status: 'error', by, reason: 'Jenga\'s answer had no payment status.', retryable: true };
+    const paid = state.includes('success') || state.includes('completed') || state === '0';
+    const failed = state.includes('fail') || state.includes('error') || state.includes('declin') || state.includes('cancel') || state.includes('revers');
+    const answer: PlatformAnswer = {
+      state: stateOf(paid, failed),
+      reference: emptyToNull(readText(j.transactionId, j.transactionReference, j.bankReference, '')),
+      amount: j.amount,
+      currency: emptyToNull(readText(j.currency, '')),
+      orderReference: emptyToNull(readText(j.reference, j.orderReference, '')),
+      reason: jengaReason(paid, failed, state, j),
+      evidence: { jenga: { status: state, reference: j.reference ?? null, transactionId: j.transactionId ?? null, amount: j.amount ?? null, currency: j.currency ?? null } },
+    };
+    return judgeAnswer(by, answer, input, [ref, input.orderNumber]);
   }
 
   handleCallback(input: CallbackInput): Promise<CallbackResult> {

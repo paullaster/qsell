@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { and, asc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, asc, eq, ilike, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   approvalEntries,
@@ -26,12 +26,12 @@ import {
   type ApproverDirectory,
   type StepEntryRecord,
 } from './domain/resolve';
-import { triggerByCode } from './domain/triggers';
+import { triggerByCode, TRIGGERS } from './domain/triggers';
 import type { StepDefinition, WorkflowDefinition } from './domain/types';
 
 import { has, required, trimToNull } from '@/lib/values';
-import { decodeCursor } from '@/server/domains/lookups/request';
-import { pageOf, PAGE_SIZE, type PageInput } from '@/server/domains/settings/paging';
+import { decodeCursor, escapeLike } from '@/server/domains/lookups/request';
+import { pageOf, PAGE_SIZE, searchText, type PageInput } from '@/server/domains/settings/paging';
 
 export type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
@@ -750,6 +750,84 @@ export class ApprovalEngine {
       .where(and(eq(approvalEntries.approverUserId, userId), eq(approvalEntries.status, 'open')))
       .orderBy(asc(approvalEntries.createdAt))
       .limit(limit);
+  }
+
+  /**
+   * One page of what waits on this person, oldest first. The text matches the document or the situation's
+   * name; `overdueOnly` keeps entries past their due time. The cursor keeps the time to the microsecond.
+   */
+  async inboxPage(userId: string, input: PageInput & { overdueOnly?: boolean }) {
+    const decoded = typeof input.cursor === 'string' && input.cursor !== '' ? decodeCursor(input.cursor) : null;
+    const text = searchText(input);
+    const pattern = `%${escapeLike(text)}%`;
+    const triggers = text === '' ? [] : TRIGGERS.filter((t) => t.label.toLowerCase().includes(text.toLowerCase())).map((t) => t.code);
+    const matches = text === ''
+      ? undefined
+      : or(ilike(approvalRequests.documentId, pattern), triggers.length > 0 ? inArray(approvalRequests.trigger, triggers) : undefined);
+    const stamp = sql<string>`to_char(${approvalEntries.createdAt} at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+    const found = await this.db
+      .select({
+        entryId: approvalEntries.id,
+        requestId: approvalRequests.id,
+        documentKind: approvalRequests.documentKind,
+        documentId: approvalRequests.documentId,
+        trigger: approvalRequests.trigger,
+        amount: approvalRequests.amount,
+        requestedBy: approvalRequests.requestedBy,
+        step: approvalEntries.stepSequence,
+        onBehalfOfUserId: approvalEntries.onBehalfOfUserId,
+        dueAt: approvalEntries.dueAt,
+        replacesEntryId: approvalEntries.replacesEntryId,
+        waitingSince: approvalEntries.createdAt,
+        stamp,
+      })
+      .from(approvalEntries)
+      .innerJoin(approvalRequests, eq(approvalRequests.id, approvalEntries.requestId))
+      .where(
+        and(
+          eq(approvalEntries.approverUserId, userId),
+          eq(approvalEntries.status, 'open'),
+          input.overdueOnly === true ? sql`${approvalEntries.dueAt} is not null and ${approvalEntries.dueAt} < now()` : undefined,
+          matches,
+          decoded === null ? undefined : sql`(${approvalEntries.createdAt}, ${approvalEntries.id}) > (${decoded.k}::timestamptz, ${decoded.id}::uuid)`,
+        ),
+      )
+      .orderBy(asc(approvalEntries.createdAt), asc(approvalEntries.id))
+      .limit(PAGE_SIZE + 1);
+    return pageOf(found, PAGE_SIZE, (r) => ({ k: r.stamp, id: r.entryId }));
+  }
+
+  /** How many approvals wait on this person, and how many of them are overdue. */
+  async inboxCounts(userId: string): Promise<{ waiting: number; overdue: number }> {
+    const [row] = await this.db
+      .select({
+        waiting: sql<number>`count(*)::int`,
+        overdue: sql<number>`count(*) filter (where ${approvalEntries.dueAt} is not null and ${approvalEntries.dueAt} < now())::int`,
+      })
+      .from(approvalEntries)
+      .where(and(eq(approvalEntries.approverUserId, userId), eq(approvalEntries.status, 'open')));
+    return { waiting: row?.waiting ?? 0, overdue: row?.overdue ?? 0 };
+  }
+
+  /** One page of what this person has sent for approval, newest first, narrowed by status. */
+  async requestsPage(companyId: string, userId: string, input: PageInput & { status?: 'pending' | 'rejected' | 'approved' }) {
+    const decoded = typeof input.cursor === 'string' && input.cursor !== '' ? decodeCursor(input.cursor) : null;
+    const stamp = sql<string>`to_char(${approvalRequests.createdAt} at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+    const found = await this.db
+      .select({ request: approvalRequests, stamp })
+      .from(approvalRequests)
+      .where(
+        and(
+          eq(approvalRequests.companyId, companyId),
+          eq(approvalRequests.requestedBy, userId),
+          input.status === undefined ? undefined : eq(approvalRequests.status, input.status),
+          decoded === null ? undefined : sql`(${approvalRequests.createdAt}, ${approvalRequests.id}) < (${decoded.k}::timestamptz, ${decoded.id}::uuid)`,
+        ),
+      )
+      .orderBy(sql`${approvalRequests.createdAt} desc`, sql`${approvalRequests.id} desc`)
+      .limit(PAGE_SIZE + 1);
+    const page = pageOf(found, PAGE_SIZE, (r) => ({ k: r.stamp, id: r.request.id }));
+    return { rows: await this.withOpenEntries(page.rows.map((r) => r.request)), nextCursor: page.nextCursor };
   }
 
   /** What is going on with one document: its requests, entries and the reasons behind them. */

@@ -1,13 +1,15 @@
 'use client';
 
-import { useId, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { use, useId, useState } from 'react';
 import {
   cancelRequestAction,
+  myRequestsPageAction,
   reopenRequestAction,
   type MyRequest,
 } from '@/server/kernel/approvals/actions';
 import { DOCUMENT_KIND_LABELS } from '@/server/kernel/approvals/domain/triggers';
+import { usePagedList } from '@/components/ui/usePagedList';
+import { attempt, LoadFailed } from '@/components/ui/screen-kit';
 import {
   EmptyState,
   Notice,
@@ -30,11 +32,23 @@ const FILTERS = [
   ['approved', 'Approved'],
 ] as const;
 
-export function MyRequestsClient({ requests }: { requests: MyRequest[] }) {
-  const router = useRouter();
+type FirstPage = Extract<Awaited<ReturnType<typeof myRequestsPageAction>>, { ok: true }>;
+
+export function MyRequestsClient({ firstPage }: { firstPage: ReturnType<typeof myRequestsPageAction> }) {
+  const first = use(firstPage);
+  if (!first.ok) return <LoadFailed error={first.error} />;
+  return <MyRequests first={first} />;
+}
+
+function MyRequests({ first }: { first: FirstPage }) {
   const [filter, setFilter] = useState<(typeof FILTERS)[number][0]>('all');
   const [message, setMessage] = useState<Message>(null);
-  const shown = requests.filter((r) => filter === 'all' || r.status === filter);
+
+  const list = usePagedList<MyRequest, { status: string }>({
+    load: (filters, cursor) => myRequestsPageAction({ status: filters.status, cursor }),
+    filters: { status: filter },
+    initialPage: first,
+  });
 
   return (
     <div className="max-w-4xl space-y-5">
@@ -59,24 +73,41 @@ export function MyRequestsClient({ requests }: { requests: MyRequest[] }) {
 
       <Notice message={message} />
 
-      {shown.length === 0 ? (
-        <EmptyState title="No requests here">
-          Documents that need approval appear here after you submit them.
-        </EmptyState>
-      ) : (
-        <ul className="space-y-3">
-          {shown.map((r) => (
+      {list.phase === 'error' ? (
+        <p role="alert" className="text-sm text-red-700">
+          {list.error}{' '}
+          <button type="button" className={buttonClass} onClick={list.retry}>
+            Try again
+          </button>
+        </p>
+      ) : null}
+      {list.phase === 'loading' ? (
+        <p role="status" className="text-sm text-fg-muted">
+          Loading…
+        </p>
+      ) : null}
+      {list.phase === 'idle' && list.rows.length === 0 ? (
+        <EmptyState title="No requests here">Documents that need approval appear here after you submit them.</EmptyState>
+      ) : null}
+      {list.rows.length > 0 ? (
+        <ul className="space-y-3" aria-label="Your requests">
+          {list.rows.map((r) => (
             <li key={r.requestId}>
               <RequestCard
                 request={r}
                 onDone={(text) => {
                   setMessage({ kind: 'ok', text });
-                  router.refresh();
+                  list.reload();
                 }}
               />
             </li>
           ))}
         </ul>
+      ) : null}
+      {list.cursor === null ? null : (
+        <button type="button" className={buttonClass} onClick={list.loadMore} disabled={list.phase === 'more'}>
+          {list.phase === 'more' ? 'Loading…' : 'Show more requests'}
+        </button>
       )}
     </div>
   );
@@ -99,10 +130,11 @@ function RequestCard({
     e.preventDefault();
     setBusy(true);
     setError(null);
-    const res =
+    const res = await attempt(
       action === 'withdraw'
-        ? await cancelRequestAction(r.submissionId, reason)
-        : await reopenRequestAction(r.documentKind, r.documentId, reason);
+        ? cancelRequestAction(r.submissionId, reason)
+        : reopenRequestAction(r.documentKind, r.documentId, reason),
+    );
     setBusy(false);
     if (!res.ok) { setError({ kind: 'error', text: res.error }); return; }
     setAction(null);

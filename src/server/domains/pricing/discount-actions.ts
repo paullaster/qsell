@@ -30,6 +30,7 @@ import type { RuleIssue } from './domain/rules';
 import { CHANNELS, SALES_TYPES, type Scopes } from './domain/types';
 import type { PricingResult } from './actions';
 import type { PricedItem } from './discount-service';
+import { isMalformedId, NO_SUCH_RECORD } from '@/server/domains/settings/errors';
 
 type Reason = { code: string; text?: string };
 
@@ -56,6 +57,7 @@ async function run<T>(
     if (error instanceof PricingConfigError)
       return { ok: false, error: error.message, code: error.code, issues: error.issues };
     if (error instanceof ReasonError) return { ok: false, error: error.message, code: error.code };
+    if (isMalformedId(error)) return NO_SUCH_RECORD;
     console.error('[discounts]', error);
     return { ok: false, error: 'Something went wrong. Please try again.' };
   }

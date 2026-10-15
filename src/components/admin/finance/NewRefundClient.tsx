@@ -8,6 +8,7 @@ import { payoutFields, refundInput, refundProblem, refundRoute, startingDetails,
 import { needsComment } from '@/lib/receipt-detail';
 import { metaValue } from '@/lib/receipt-form';
 import type { Choice } from '@/lib/payment-options';
+import { useCustomerCreated } from '@/components/admin/customer-created';
 import { Field, LoadFailed, Message, PageHeader, cardClass, buttonClass, fieldClass, primaryClass, type Notice, attempt } from './ui';
 
 type Start = Extract<Awaited<ReturnType<typeof refundStartAction>>, { ok: true }>['data'];
@@ -50,6 +51,7 @@ function NewRefundView({ start }: { start: Start }) {
     setAmount('');
     setDetails(startingDetails(metaValue(c?.meta, 'phone')));
   };
+  useCustomerCreated(chooseCustomer);
   const chooseSource = (c: Choice | null) => {
     setSource(c);
     if (c !== null && amount === '') setAmount(metaValue(c.meta, 'available'));
@@ -78,7 +80,7 @@ function NewRefundView({ start }: { start: Start }) {
       <PageHeader title="New refund" intro="Pay a customer back from something they are owed. The amount can never be more than what is left." />
       <Message notice={notice} />
       <form className={`${cardClass} space-y-4`} aria-label="New refund" onSubmit={(e) => { e.preventDefault(); void save(true); }}>
-        <ChoicePicker label="Customer" source="refund-customers" choice={customer} onChoice={chooseCustomer} clearable={false} required placeholder="Name, number or phone" listHref="/admin/customers" listLabel="View all customers" />
+        <ChoicePicker label="Customer" source="refund-customers" choice={customer} onChoice={chooseCustomer} clearable={false} required placeholder="Name, number or phone" listHref="/admin/customers" listLabel="View all customers" createHref="/admin/customers/new" createLabel="+ Create a customer" />
         {customer !== null ? (
           <>
             <ChoicePicker label="Refund from" source="refund-sources" filters={{ customer: customer.id }} choice={source} onChoice={chooseSource} clearable={false} required placeholder="What is the customer owed?" emptyMessage="This customer is owed nothing that can be refunded." />

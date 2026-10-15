@@ -1,14 +1,19 @@
 'use client';
 
-import { useCallback, useEffect, useId, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { use, useCallback, useEffect, useId, useState } from 'react';
 import {
   approveEntryAction,
-  getRequestDetailAction, rejectEntryAction,
+  getRequestDetailAction,
+  inboxCountsAction,
+  inboxPageAction,
+  rejectEntryAction,
   type InboxItem,
   type RequestDetail,
 } from '@/server/kernel/approvals/actions';
 import { DOCUMENT_KIND_LABELS } from '@/server/kernel/approvals/domain/triggers';
+import { usePagedList } from '@/components/ui/usePagedList';
+import { useDebouncedValue } from '@/components/ui/useDebouncedValue';
+import { attempt, LoadFailed } from '@/components/ui/screen-kit';
 import { ReasonField, type ReasonValue } from '../settings/numbering/ReasonField';
 import {
   Chip,
@@ -30,33 +35,47 @@ import {
 
 import { has, orElse } from '@/lib/values';
 
-export function ApprovalInboxClient({ items: initial }: { items: InboxItem[] }) {
+type FirstPage = Extract<Awaited<ReturnType<typeof inboxPageAction>>, { ok: true }>;
+type Counts = Extract<Awaited<ReturnType<typeof inboxCountsAction>>, { ok: true }>['data'];
+
+interface Props {
+  firstPage: ReturnType<typeof inboxPageAction>;
+  counts: ReturnType<typeof inboxCountsAction>;
+}
+
+export function ApprovalInboxClient({ firstPage, counts }: Props) {
+  const first = use(firstPage);
+  const total = use(counts);
+  if (!first.ok) return <LoadFailed error={first.error} />;
+  if (!total.ok) return <LoadFailed error={total.error} />;
+  return <Inbox first={first} initialCounts={total.data} />;
+}
+
+function Inbox({ first, initialCounts }: { first: FirstPage; initialCounts: Counts }) {
   const uid = useId();
-  const router = useRouter();
-  const [items, setItems] = useState(initial);
   const [search, setSearch] = useState('');
   const [overdueOnly, setOverdueOnly] = useState(false);
+  const [counts, setCounts] = useState(initialCounts);
   const [open, setOpen] = useState<string | null>(null);
   const [message, setMessage] = useState<Message>(null);
+  const query = useDebouncedValue(search.trim());
 
-  const shown = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return items.filter(
-      (i) =>
-        (!overdueOnly || i.overdue) &&
-        (q === '' ||
-          `${i.documentId} ${i.requestedByName} ${i.triggerLabel}`.toLowerCase().includes(q)),
-    );
-  }, [items, search, overdueOnly]);
+  const list = usePagedList<InboxItem, { query: string; overdueOnly: boolean }>({
+    load: (filters, cursor) => inboxPageAction({ query: filters.query, overdueOnly: filters.overdueOnly, cursor }),
+    filters: { query, overdueOnly },
+    initialPage: first,
+  });
 
   const done = useCallback(
-    (entryId: string, text: string) => {
-      setItems((list) => list.filter((i) => i.entryId !== entryId));
+    (_entryId: string, text: string) => {
       setOpen(null);
       setMessage({ kind: 'ok', text });
-      router.refresh();
+      list.reload();
+      void attempt(inboxCountsAction()).then((fresh) => {
+        if (fresh.ok) setCounts(fresh.data);
+      });
     },
-    [router],
+    [list],
   );
 
   return (
@@ -76,35 +95,44 @@ export function ApprovalInboxClient({ items: initial }: { items: InboxItem[] }) 
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Document, requester or type"
+            placeholder="Document or type"
             className={fieldClass}
+            autoComplete="off"
           />
         </div>
         <label className="flex min-h-10 cursor-pointer items-center gap-2 text-sm text-fg">
-          <input
-            type="checkbox"
-            checked={overdueOnly}
-            onChange={(e) => setOverdueOnly(e.target.checked)}
-            className="size-4"
-          />
+          <input type="checkbox" checked={overdueOnly} onChange={(e) => setOverdueOnly(e.target.checked)} className="size-4" />
           Overdue only
         </label>
         <p className="ml-auto text-xs text-fg-muted" aria-live="polite">
-          {shown.length} of {items.length} shown
+          {counts.waiting} waiting · {counts.overdue} overdue
         </p>
       </div>
 
       <Notice message={message} />
 
-      {items.length === 0 ? (
+      {list.phase === 'error' ? (
+        <p role="alert" className="text-sm text-red-700">
+          {list.error}{' '}
+          <button type="button" className={buttonClass} onClick={list.retry}>
+            Try again
+          </button>
+        </p>
+      ) : null}
+      {list.phase === 'loading' ? (
+        <p role="status" className="text-sm text-fg-muted">
+          Loading…
+        </p>
+      ) : null}
+      {list.phase === 'idle' && list.rows.length === 0 && query === '' && !overdueOnly ? (
         <EmptyState title="Nothing is waiting on you">
           New requests appear here as soon as someone submits something you are asked to approve.
         </EmptyState>
       ) : null}
-      {items.length > 0 && shown.length === 0 ? <EmptyState title="No requests match your search" /> : null}
-      {shown.length > 0 ? (
-        <ul className="space-y-3">
-          {shown.map((item) => (
+      {list.phase === 'idle' && list.rows.length === 0 && (query !== '' || overdueOnly) ? <EmptyState title="No requests match" /> : null}
+      {list.rows.length > 0 ? (
+        <ul className="space-y-3" aria-label="Requests waiting on you">
+          {list.rows.map((item) => (
             <li key={item.entryId}>
               <InboxCard
                 item={item}
@@ -116,6 +144,11 @@ export function ApprovalInboxClient({ items: initial }: { items: InboxItem[] }) 
           ))}
         </ul>
       ) : null}
+      {list.cursor === null ? null : (
+        <button type="button" className={buttonClass} onClick={list.loadMore} disabled={list.phase === 'more'}>
+          {list.phase === 'more' ? 'Loading…' : 'Show more requests'}
+        </button>
+      )}
     </div>
   );
 }

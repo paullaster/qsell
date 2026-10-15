@@ -10,6 +10,7 @@ import { ReasonError } from '@/server/kernel/reason-codes/service';
 import { ReturnError, type ConfirmItem, type ReturnActor } from './return-receipt-service';
 import { injectedDelay } from '@/server/domains/finance/action-runner';
 import { suggestedDisposition } from '@/server/domains/finance/domain/credit-note-accounting';
+import { isMalformedId, NO_SUCH_RECORD } from '@/server/domains/settings/errors';
 
 export type ReturnResult<T> = { ok: true; data: T } | { ok: false; error: string; code?: string; forbidden?: true };
 
@@ -28,6 +29,7 @@ async function run<T>(permission: PermissionKey, origin: { surface: string; acti
   } catch (error: unknown) {
     if (error instanceof AccessDeniedError) return { ok: false, error: 'You do not have permission to do that.', forbidden: true };
     if (error instanceof ReturnError || error instanceof ReasonError) return { ok: false, error: error.message, code: error.code };
+    if (isMalformedId(error)) return NO_SUCH_RECORD;
     console.error('[returns]', error);
     return { ok: false, error: 'Something went wrong. Please try again.' };
   }

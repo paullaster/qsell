@@ -2,6 +2,7 @@ import { dimensionValuesPageAction, getDimensionAction } from '@/server/domains/
 import { canPermission } from '@/server/domains/access-control/guard';
 import { AdminDimensionValuesClient } from '@/components/admin/settings/AdminDimensionValuesClient';
 import { SettingsFrame } from '@/components/admin/settings/frame';
+import { MissingAs404 } from '@/components/ui/missing-record';
 
 export default function AdminDimensionValuesPage({ params }: { params: Promise<{ id: string }> }) {
   // Nothing is awaited here: the dimension, its first page of values and the permission start at once.
@@ -10,7 +11,9 @@ export default function AdminDimensionValuesPage({ params }: { params: Promise<{
   const canManage = canPermission('dimensions:manage');
   return (
     <SettingsFrame label="dimension values">
-      <AdminDimensionValuesClient dimensionPromise={dimension} firstPage={firstPage} canManage={canManage} />
+      <MissingAs404 result={dimension}>
+        <AdminDimensionValuesClient dimensionPromise={dimension} firstPage={firstPage} canManage={canManage} />
+      </MissingAs404>
     </SettingsFrame>
   );
 }

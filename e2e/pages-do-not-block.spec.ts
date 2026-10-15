@@ -27,6 +27,12 @@ const screens: [string, string, RegExp, string | RegExp][] = [
   ['eTIMS items', '/admin/settings/tax-compliance/kra-tims-etims/items', /Loading eTIMS items/, 'eTIMS items'],
   ['signing log', '/admin/settings/tax-compliance/kra-tims-etims/signing-log', /Loading the signing log/, 'Signing log'],
   ['tax classification', '/admin/settings/tax-compliance/kra-tims-etims/classification', /Loading tax classification/, 'Tax & compliance management'],
+  ['approvals inbox', '/admin/approvals/inbox', /Loading your approvals/, 'Approvals waiting on you'],
+  ['my approval requests', '/admin/approvals/requests', /Loading your requests/, 'My requests'],
+  ['company profile', '/admin/company/profile', /Loading the company profile/, 'Company profile'],
+  ['company appearance', '/admin/company/appearance', /Loading the appearance settings/, 'Appearance'],
+  ['company modules', '/admin/company/modules', /Loading the module names/, 'Module names'],
+  ['company support', '/admin/company/support', /Loading the support settings/, 'Customer support'],
   ['payment settings', '/admin/settings/payments', /Loading payment settings/, 'Payments'],
 ];
 
@@ -41,14 +47,17 @@ for (const [name, url, skeleton, heading] of screens) {
     await page.goto(url);
     await expect(title).toBeVisible({ timeout: 60_000 });
     const baseline = Date.now() - timed;
-    await context.addCookies([{ name: 'e2e-delay', value: String(DELAY), url: E2E_URL }]);
+    // The wait has to be longer than the screen's own first draw on this machine, or the loading state could never be told
+    // apart from the data arriving.
+    const delay = Math.max(DELAY, baseline + 1500);
+    await context.addCookies([{ name: 'e2e-delay', value: String(delay), url: E2E_URL }]);
     const started = Date.now();
     await page.goto(url, { waitUntil: 'commit' });
-    await expect(page.getByRole('status').filter({ hasText: skeleton })).toBeVisible({ timeout: DELAY - 500 });
-    expect(Date.now() - started).toBeLessThan(DELAY);
-    await expect(title).toBeVisible({ timeout: baseline + DELAY * 2 + 5000 });
+    await expect(page.getByRole('status').filter({ hasText: skeleton })).toBeVisible({ timeout: delay - 500 });
+    expect(Date.now() - started).toBeLessThan(delay);
+    await expect(title).toBeVisible({ timeout: baseline + delay * 2 + 5000 });
     // Side by side the delays overlap: the screen takes its usual time plus about one delay. Waits one after the other
     // would add a second delay on top.
-    expect(Date.now() - started).toBeLessThan(baseline + DELAY * 1.7);
+    expect(Date.now() - started).toBeLessThan(baseline + delay * 1.7);
   });
 }

@@ -1,141 +1,151 @@
 'use server';
 
-import { requirePermission } from '@/server/domains/access-control/guard';
-
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { revalidatePath } from 'next/cache';
 import { getContainer } from '@/server/di/container';
 import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
+import { runSetting } from '@/server/domains/settings/action-runner';
+import { SettingsError } from '@/server/domains/settings/errors';
+import { getAdminNav } from '@/config/admin-nav';
+import { flattenModuleLabelOptions, resolveCompanyUiConfig, resolveSupportConfig, type CompanySupportConfig, type CompanyUiConfig } from '@/config/company-ui';
 import {
-  resolveCompanyUiConfig,
-  resolveSupportConfig,
-  toCompanyUiConfigRaw,
-  type CompanySupportConfig,
-  type CompanyUiConfig,
-  type CompanyUiConfigRaw,
-} from '@/config/company-ui';
+  appearancePayload,
+  moduleLabelsPayload,
+  profileFormFrom,
+  profilePayload,
+  type AppearanceForm,
+  type ProfileForm,
+  type ProfileView,
+} from '@/lib/company-forms';
+import { detectLogoKind, MAX_LOGO_BYTES } from '@/lib/logo-file';
+import { toPublicCompany, type PublicCompany } from '@/lib/company-view';
 
-function revalidateCompanySurfaces() {
-  revalidatePath('/');
-  revalidatePath('/admin');
-  revalidatePath('/admin/company');
-  revalidatePath('/admin/company/profile');
-  revalidatePath('/admin/company/appearance');
-  revalidatePath('/admin/company/modules');
-  revalidatePath('/admin/company/support');
-  revalidatePath('/admin/orders');
-}
+const PAGES = ['/', '/admin', '/admin/company', '/admin/company/profile', '/admin/company/appearance', '/admin/company/modules', '/admin/company/support', '/admin/orders'];
 
-export async function getCompanySettingsAction(): Promise<CompanySettingsRow> {
-  const { companySettings } = getContainer();
-  return companySettings.ensureSeeded();
+/**
+ * What the storefront and the admin shell may know about the company. Bank details are left out:
+ * this answers anyone, so it only holds what is already printed on invoices and shown to customers.
+ */
+export async function getCompanySettingsAction(): Promise<PublicCompany> {
+  return toPublicCompany(await getContainer().companySettings.ensureSeeded());
 }
 
 /** Resolved UI config with defaults — safe for storefront/admin consumers. */
 export async function getCompanyUiConfigAction(): Promise<CompanyUiConfig> {
-  const row = await getCompanySettingsAction();
+  const row = await getContainer().companySettings.ensureSeeded();
   return resolveCompanyUiConfig(row.uiConfig);
 }
 
-export async function updateCompanySettingsAction(
-  updates: Partial<{
-    legalName: string;
-    tradingName: string;
-    email: string;
-    phone: string;
-    tel: string | null;
-    website: string | null;
-    streetAddress: string;
-    city: string;
-    countyOrState: string;
-    postalCode: string;
-    country: string;
-    locationLabel: string | null;
-    tagline: string | null;
-    kraPin: string;
-    vatNumber: string | null;
-    registrationNumber: string | null;
-    bankName: string | null;
-    bankAccountName: string | null;
-    bankAccountNumber: string | null;
-    bankBranch: string | null;
-    invoiceFooterNote: string | null;
-    invoicePrefix: string;
-    logoUrl: string | null;
-    primaryColor: string;
-    accentColor: string;
-    uiConfig: CompanyUiConfigRaw;
-  }>,
-): Promise<CompanySettingsRow> {
-  await requirePermission('company:manage');
-  const { companySettings } = getContainer();
-  const payload = { ...updates };
-  if (updates.uiConfig !== undefined) {
-    // Persist only the sanitized/resolved shape so bad client data cannot accumulate.
-    // Support content is owned by updateCompanySupportAction: keep what is stored so a stale
-    // Appearance/Modules form can never overwrite it.
-    const current = await companySettings.ensureSeeded();
-    payload.uiConfig = {
-      ...toCompanyUiConfigRaw(resolveCompanyUiConfig(updates.uiConfig)),
-      support: resolveCompanyUiConfig(current.uiConfig).support,
-    };
-  }
-  const updated = await companySettings.update(payload);
-  revalidateCompanySurfaces();
-  return updated;
+const knownModuleIds = (): string[] => flattenModuleLabelOptions(getAdminNav()).map((m) => m.id);
+
+// ── Reading, for the people who manage the company ───────────────────────
+
+export async function companyProfileAction() {
+  return runSetting('company:manage', async (): Promise<ProfileView> => profileFormFrom(await getContainer().companySettings.ensureSeeded()));
 }
 
-/** Replace the storefront help & support content (name, channels, guarantees, FAQs). */
-export async function updateCompanySupportAction(
-  support: Partial<CompanySupportConfig>,
-): Promise<CompanySettingsRow> {
-  await requirePermission('company:manage');
-  const { companySettings } = getContainer();
-  const updated = await companySettings.setUiConfigSection(
-    'support',
-    resolveSupportConfig(support),
+export async function companyAppearanceAction() {
+  return runSetting('company:manage', async (): Promise<AppearanceForm> => {
+    const row = await getContainer().companySettings.ensureSeeded();
+    return { primaryColor: row.primaryColor, accentColor: row.accentColor, desktopColumns: resolveCompanyUiConfig(row.uiConfig).productGrid.desktopColumns };
+  });
+}
+
+export async function companyModulesAction() {
+  return runSetting('company:manage', async (): Promise<Record<string, string>> => {
+    const row = await getContainer().companySettings.ensureSeeded();
+    return resolveCompanyUiConfig(row.uiConfig).moduleLabels;
+  });
+}
+
+export async function companySupportAction() {
+  return runSetting('company:manage', async (): Promise<CompanySupportConfig> => {
+    const row = await getContainer().companySettings.ensureSeeded();
+    return resolveCompanyUiConfig(row.uiConfig).support;
+  });
+}
+
+// ── Saving ───────────────────────────────────────────────────────────────
+
+/** Saves the profile. The form is checked again here: what the browser sent is never trusted. */
+export async function saveCompanyProfileAction(form: ProfileForm) {
+  return runSetting(
+    'company:manage',
+    async (): Promise<ProfileView> => {
+      const checked = profilePayload(form);
+      if (!checked.ok) throw new SettingsError(checked.error);
+      return profileFormFrom(await getContainer().companySettings.update(checked.payload));
+    },
+    { paths: PAGES },
   );
-  revalidateCompanySurfaces();
-  return updated;
 }
 
-const ALLOWED_LOGO_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml']);
-const MAX_LOGO_BYTES = 2 * 1024 * 1024;
+/** Saves the colours and the product density. Only these two parts of the stored look change. */
+export async function saveCompanyAppearanceAction(form: AppearanceForm) {
+  return runSetting(
+    'company:manage',
+    async (): Promise<AppearanceForm> => {
+      const checked = appearancePayload(form);
+      if (!checked.ok) throw new SettingsError(checked.error);
+      const { companySettings } = getContainer();
+      await companySettings.update({ primaryColor: checked.payload.primaryColor, accentColor: checked.payload.accentColor });
+      await companySettings.setUiConfigSection('productGrid', { desktopColumns: checked.payload.desktopColumns });
+      return checked.payload;
+    },
+    { paths: PAGES },
+  );
+}
 
-export async function uploadCompanyLogoAction(formData: FormData): Promise<CompanySettingsRow> {
-  await requirePermission('company:manage');
-  const file = formData.get('logo');
-  if (!(file instanceof File) || file.size === 0) {
-    throw new Error('Please choose a logo image to upload');
-  }
-  if (!ALLOWED_LOGO_TYPES.has(file.type)) {
-    throw new Error('Logo must be PNG, JPEG, WebP, or SVG');
-  }
-  if (file.size > MAX_LOGO_BYTES) {
-    throw new Error('Logo must be 2MB or smaller');
-  }
+/** Saves the module names: only the modules that exist, only the one part of the stored look. */
+export async function saveCompanyModulesAction(labels: Record<string, string>) {
+  return runSetting(
+    'company:manage',
+    async (): Promise<Record<string, string>> => {
+      const checked = moduleLabelsPayload(labels, knownModuleIds());
+      if (!checked.ok) throw new SettingsError(checked.error);
+      await getContainer().companySettings.setUiConfigSection('moduleLabels', checked.payload);
+      return checked.payload;
+    },
+    { paths: PAGES },
+  );
+}
 
-  const ext =
-    file.type === 'image/png'
-      ? 'png'
-      : file.type === 'image/webp'
-        ? 'webp'
-        : file.type === 'image/svg+xml'
-          ? 'svg'
-          : 'jpg';
+/** Replaces the storefront help & support content; rows without a value are dropped by the sanitiser. */
+export async function saveCompanySupportAction(support: Partial<CompanySupportConfig>) {
+  return runSetting(
+    'company:manage',
+    async (): Promise<CompanySupportConfig> => {
+      const clean = resolveSupportConfig(support);
+      const updated = await getContainer().companySettings.setUiConfigSection('support', clean);
+      return resolveCompanyUiConfig(updated.uiConfig).support;
+    },
+    { paths: PAGES },
+  );
+}
 
-  const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'company');
-  await mkdir(uploadDir, { recursive: true });
-  const filename = `logo-${Date.now()}-${randomUUID()}.${ext}`;
-  const absolutePath = path.join(uploadDir, filename);
-  const buffer = Buffer.from(await file.arrayBuffer());
-  await writeFile(absolutePath, buffer);
-
-  const logoUrl = `/api/company/logo/${filename}`;
-  const { companySettings } = getContainer();
-  const updated = await companySettings.update({ logoUrl });
-  revalidateCompanySurfaces();
-  return updated;
+/**
+ * Stores a new logo. What the file is comes from its own bytes, not from its name or the type the
+ * browser reported; a picture that could run anything is refused.
+ */
+export async function uploadCompanyLogoAction(formData: FormData) {
+  return runSetting(
+    'company:manage',
+    async (): Promise<{ logoUrl: string }> => {
+      const file = formData.get('logo');
+      if (!(file instanceof File) || file.size === 0) throw new SettingsError('Choose a logo image to upload.');
+      if (file.size > MAX_LOGO_BYTES) throw new SettingsError('The logo must be 2 MB or smaller.');
+      const buffer = Buffer.from(await file.arrayBuffer());
+      const kind = detectLogoKind(buffer);
+      if (kind === null) throw new SettingsError('The logo must be a PNG, JPEG, WebP or plain SVG picture.');
+      const dir = path.join(process.cwd(), 'public', 'uploads', 'company');
+      await mkdir(dir, { recursive: true });
+      const filename = `logo-${String(Date.now())}-${randomUUID()}.${kind}`;
+      await writeFile(path.join(dir, filename), buffer);
+      const logoUrl = `/api/company/logo/${filename}`;
+      const updated: CompanySettingsRow = await getContainer().companySettings.update({ logoUrl });
+      return { logoUrl: updated.logoUrl ?? logoUrl };
+    },
+    { paths: PAGES },
+  );
 }
