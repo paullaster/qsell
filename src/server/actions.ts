@@ -136,7 +136,6 @@ export {
   deleteTradeCustomerAction,
   receiveCustomerPaymentAction,
   lookupCheckoutCustomerAction,
-  customerSetupAction,
 } from '@/server/domains/customers/master-actions';
 
 export { listCustomersAction as fetchAllCustomersAction } from '@/server/domains/customers/actions';

@@ -19,6 +19,7 @@ import {
   postPaymentLedgerCreditAction,
 } from '@/server/domains/transactions/reconcile-actions';
 import { classifyCallbackEventAction } from '@/server/domains/payments/classify-actions';
+import { has } from '@/lib/values';
 
 const amountFormat = new Intl.NumberFormat('en-KE', {
   minimumFractionDigits: 2,
@@ -49,7 +50,7 @@ function PrimaryButton({
   return (
     <button
       type="button"
-      disabled={disabled || pending}
+      disabled={disabled === true || pending}
       onClick={onClick}
       className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
     >
@@ -135,7 +136,7 @@ export function AdminTransactionReconcile({
         </p>
       </div>
 
-      {error ? (
+      {has(error) ? (
         <div className="rounded-lg border border-red-800 bg-red-50 px-3 py-2 text-xs text-red-800">
           {error}
         </div>
@@ -174,24 +175,24 @@ export function AdminTransactionReconcile({
           <p className="px-4 py-6 text-sm text-fg-subtle">All sales are posted. Nothing to do.</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-left text-sm text-fg">
-              <thead className="bg-surface text-[10px] tracking-wider text-fg-subtle uppercase">
-                <tr>
-                  <th className="px-4 py-2.5">Order</th>
-                  <th className="px-4 py-2.5">Customer</th>
-                  <th className="px-4 py-2.5">Payment</th>
-                  <th className="px-4 py-2.5 text-right">Amount</th>
-                  <th className="px-4 py-2.5 text-right">Action</th>
+            <table role="table" className="block md:table w-full text-left text-sm text-fg">
+              <thead role="rowgroup" className="hidden md:table-header-group bg-surface text-[10px] tracking-wider text-fg-subtle uppercase">
+                <tr role="row" className="block md:table-row">
+                  <th role="columnheader" className="px-4 py-2.5">Order</th>
+                  <th role="columnheader" className="px-4 py-2.5">Customer</th>
+                  <th role="columnheader" className="px-4 py-2.5">Payment</th>
+                  <th role="columnheader" className="px-4 py-2.5 text-right">Amount</th>
+                  <th role="columnheader" className="px-4 py-2.5 text-right">Action</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody role="rowgroup" className="block md:table-row-group">
                 {debits.map((row) => (
-                  <tr key={row.orderId} className={rowClass}>
-                    <td className="px-4 py-3 whitespace-nowrap">
+                  <tr role="row" key={row.orderId} className={`block md:table-row ${rowClass}`}>
+                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 whitespace-nowrap" data-label="Order">
                       <span className="font-medium text-fg-strong">{row.orderNumber}</span>
                     </td>
-                    <td className="px-4 py-3 text-fg-muted">{row.customerName}</td>
-                    <td className="px-4 py-3">
+                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 text-fg-muted" data-label="Customer">{row.customerName}</td>
+                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3" data-label="Payment">
                       <span
                         className={
                           row.paymentStatus === 'paid'
@@ -201,16 +202,16 @@ export function AdminTransactionReconcile({
                       >
                         {row.paymentStatus}
                       </span>
-                      {row.paymentMethod ? (
+                      {has(row.paymentMethod) ? (
                         <span className="ml-1.5 text-[10px] text-fg-subtle">
                           {row.paymentMethod}
                         </span>
                       ) : null}
                     </td>
-                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 md:text-right whitespace-nowrap" data-label="Amount">
                       {row.currency} {money(row.amount)}
                     </td>
-                    <td className="px-4 py-3 text-right">
+                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 md:text-right" data-label="Action">
                       <PrimaryButton
                         label="Post debit"
                         pendingLabel="Posting…"
@@ -242,20 +243,20 @@ export function AdminTransactionReconcile({
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-left text-sm text-fg">
-              <thead className="bg-surface text-[10px] tracking-wider text-fg-subtle uppercase">
-                <tr>
-                  <th className="px-4 py-2.5">Source</th>
-                  <th className="px-4 py-2.5">Document / Ref</th>
-                  <th className="px-4 py-2.5">Customer</th>
-                  <th className="px-4 py-2.5 text-right">Amount</th>
-                  <th className="px-4 py-2.5 text-right">Action</th>
+            <table role="table" className="block md:table w-full text-left text-sm text-fg">
+              <thead role="rowgroup" className="hidden md:table-header-group bg-surface text-[10px] tracking-wider text-fg-subtle uppercase">
+                <tr role="row" className="block md:table-row">
+                  <th role="columnheader" className="px-4 py-2.5">Source</th>
+                  <th role="columnheader" className="px-4 py-2.5">Document / Ref</th>
+                  <th role="columnheader" className="px-4 py-2.5">Customer</th>
+                  <th role="columnheader" className="px-4 py-2.5 text-right">Amount</th>
+                  <th role="columnheader" className="px-4 py-2.5 text-right">Action</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody role="rowgroup" className="block md:table-row-group">
                 {credits.map((row) => (
-                  <tr key={row.key} className={rowClass}>
-                    <td className="px-4 py-3 whitespace-nowrap">
+                  <tr role="row" key={row.key} className={`block md:table-row ${rowClass}`}>
+                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 whitespace-nowrap" data-label="Source">
                       <span
                         className={
                           row.source === 'gateway_attempt'
@@ -266,17 +267,17 @@ export function AdminTransactionReconcile({
                         {row.source === 'gateway_attempt' ? pia(row.provider) : 'Customer'}
                       </span>
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
+                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 whitespace-nowrap" data-label="Document / Ref">
                       <div className="font-medium text-fg-strong">{row.documentNo}</div>
-                      {row.orderNumber ? (
+                      {has(row.orderNumber) ? (
                         <div className="text-[10px] text-fg-subtle">{row.orderNumber}</div>
                       ) : null}
                     </td>
-                    <td className="px-4 py-3 text-fg-muted">{row.customerName || '—'}</td>
-                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 text-fg-muted" data-label="Customer">{has(row.customerName) ? row.customerName : '—'}</td>
+                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 md:text-right whitespace-nowrap" data-label="Amount">
                       {row.currency} {money(row.amount)}
                     </td>
-                    <td className="px-4 py-3 text-right">
+                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 md:text-right" data-label="Action">
                       <PrimaryButton
                         label="Post credit"
                         pendingLabel="Posting…"
@@ -309,40 +310,40 @@ export function AdminTransactionReconcile({
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[820px] text-left text-sm text-fg">
-              <thead className="bg-surface text-[10px] tracking-wider text-fg-subtle uppercase">
-                <tr>
-                  <th className="px-4 py-2.5">Received</th>
-                  <th className="px-4 py-2.5">Provider</th>
-                  <th className="px-4 py-2.5">Token</th>
-                  <th className="px-4 py-2.5">Provider status</th>
-                  <th className="px-4 py-2.5">Outcome</th>
-                  <th className="px-4 py-2.5">Payload</th>
-                  <th className="px-4 py-2.5 text-right">Action</th>
+            <table role="table" className="block md:table w-full text-left text-sm text-fg">
+              <thead role="rowgroup" className="hidden md:table-header-group bg-surface text-[10px] tracking-wider text-fg-subtle uppercase">
+                <tr role="row" className="block md:table-row">
+                  <th role="columnheader" className="px-4 py-2.5">Received</th>
+                  <th role="columnheader" className="px-4 py-2.5">Provider</th>
+                  <th role="columnheader" className="px-4 py-2.5">Token</th>
+                  <th role="columnheader" className="px-4 py-2.5">Provider status</th>
+                  <th role="columnheader" className="px-4 py-2.5">Outcome</th>
+                  <th role="columnheader" className="px-4 py-2.5">Payload</th>
+                  <th role="columnheader" className="px-4 py-2.5 text-right">Action</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody role="rowgroup" className="block md:table-row-group">
                 {callbacks.map((row) => (
-                  <tr key={row.id} className={rowClass}>
-                    <td className="px-4 py-3 whitespace-nowrap text-fg-muted">
+                  <tr role="row" key={row.id} className={`block md:table-row ${rowClass}`}>
+                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 whitespace-nowrap text-fg-muted" data-label="Received">
                       {new Date(row.createdAt).toLocaleString('en-GB', {
                         dateStyle: 'medium',
                         timeStyle: 'short',
                       })}
                     </td>
-                    <td className="px-4 py-3 font-mono text-[11px] text-indigo-300">
+                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 font-mono text-[11px] text-indigo-300" data-label="Provider">
                       {row.providerCode}
                     </td>
-                    <td className="px-4 py-3 font-mono text-[11px] text-fg-subtle">
+                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 font-mono text-[11px] text-fg-subtle" data-label="Token">
                       {row.callbackToken.slice(0, 8)}…
                     </td>
-                    <td className="px-4 py-3 font-mono text-[11px] text-fg-strong">
+                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 font-mono text-[11px] text-fg-strong" data-label="Provider status">
                       {row.processingStatus}
                     </td>
-                    <td className="px-4 py-3">
+                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3" data-label="Outcome">
                       <OutcomeBadge outcome={row.outcome} />
                     </td>
-                    <td className="max-w-[260px] px-4 py-3">
+                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell max-w-[260px] px-4 py-3" data-label="Payload">
                       <details className="text-fg-subtle">
                         <summary className="cursor-pointer text-[11px] text-fg-subtle hover:text-fg">
                           View payload
@@ -351,11 +352,11 @@ export function AdminTransactionReconcile({
                           {JSON.stringify(row.rawBody, null, 2)}
                         </pre>
                       </details>
-                      {row.processingError ? (
+                      {has(row.processingError) ? (
                         <p className="mt-1 text-[10px] text-red-600">{row.processingError}</p>
                       ) : null}
                     </td>
-                    <td className="px-4 py-3 text-right">
+                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 md:text-right" data-label="Action">
                       <PrimaryButton
                         label="Classify"
                         pendingLabel="Classifying…"
@@ -374,19 +375,19 @@ export function AdminTransactionReconcile({
   );
 }
 
+const OUTCOME_CLASS: Record<string, string> = {
+  successful: 'rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700',
+  failed: 'rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-700',
+  pending: 'rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700',
+  other: 'rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700',
+};
+
 function OutcomeBadge({ outcome }: { outcome: string }) {
-  const className =
-    outcome === 'successful'
-      ? 'rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700'
-      : outcome === 'failed'
-        ? 'rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-700'
-        : outcome === 'pending'
-          ? 'rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700'
-          : 'rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700';
+  const className = OUTCOME_CLASS[outcome] ?? OUTCOME_CLASS.other;
   return <span className={className}>{outcome}</span>;
 }
 
 function pia(value: string | null): string {
-  if (!value) return 'Gateway';
+  if (!has(value)) return 'Gateway';
   return value.replace('_', ' ');
 }

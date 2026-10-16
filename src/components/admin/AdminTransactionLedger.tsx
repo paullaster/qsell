@@ -1,4 +1,5 @@
 import type { TransactionLedgerLine } from '@/server/domains/transactions/ledger-service';
+import { has } from '@/lib/values';
 
 const amountFormat = new Intl.NumberFormat('en-KE', {
   minimumFractionDigits: 2,
@@ -21,6 +22,9 @@ function documentLabel(documentType: string): string {
   if (documentType === 'payment') return 'Payment';
   return documentType;
 }
+
+/** The payment's own reference on a credit; a debit has none. */
+const creditReference = (line: TransactionLedgerLine): string => (line.direction === 'credit' && has(line.transactionReference) ? line.transactionReference : '—');
 
 export function AdminTransactionLedger({ lines }: { lines: TransactionLedgerLine[] }) {
   const totals = new Map<string, { debit: number; credit: number }>();
@@ -49,63 +53,63 @@ export function AdminTransactionLedger({ lines }: { lines: TransactionLedgerLine
         </p>
       ) : (
         <div className="max-h-[min(70vh,56rem)] overflow-auto rounded-xl border border-line">
-          <table className="w-full min-w-[760px] border-collapse text-left text-sm text-fg">
-            <thead className="sticky top-0 z-10 bg-surface text-xs tracking-wide text-fg-subtle uppercase shadow-[0_1px_0_0_rgb(39_39_42)]">
-              <tr>
-                <th className="px-4 py-3 font-medium">Posted</th>
-                <th className="px-4 py-3 font-medium">Document</th>
-                <th className="px-4 py-3 font-medium">Number</th>
-                <th className="px-4 py-3 font-medium">Reference</th>
-                <th className="px-4 py-3 font-medium">Customer</th>
-                <th className="px-4 py-3 font-medium">Description</th>
-                <th className="px-4 py-3 text-right font-medium">Debit</th>
-                <th className="px-4 py-3 text-right font-medium">Credit</th>
+          <table role="table" className="block md:table w-full border-collapse text-left text-sm text-fg">
+            <thead role="rowgroup" className="hidden md:table-header-group sticky top-0 z-10 bg-surface text-xs tracking-wide text-fg-subtle uppercase shadow-[0_1px_0_0_rgb(39_39_42)]">
+              <tr role="row" className="block md:table-row">
+                <th role="columnheader" className="px-4 py-3 font-medium">Posted</th>
+                <th role="columnheader" className="px-4 py-3 font-medium">Document</th>
+                <th role="columnheader" className="px-4 py-3 font-medium">Number</th>
+                <th role="columnheader" className="px-4 py-3 font-medium">Reference</th>
+                <th role="columnheader" className="px-4 py-3 font-medium">Customer</th>
+                <th role="columnheader" className="px-4 py-3 font-medium">Description</th>
+                <th role="columnheader" className="px-4 py-3 text-right font-medium">Debit</th>
+                <th role="columnheader" className="px-4 py-3 text-right font-medium">Credit</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody role="rowgroup" className="block md:table-row-group">
               {lines.map((line) => (
-                <tr key={line.id} className="border-t border-line">
-                  <td className="px-4 py-3 whitespace-nowrap text-fg-muted">
+                <tr role="row" key={line.id} className="block md:table-row border-t border-line">
+                  <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 whitespace-nowrap text-fg-muted" data-label="Posted">
                     {postedFormat.format(line.postedAt)}
                   </td>
-                  <td className="px-4 py-3">{documentLabel(line.documentType)}</td>
-                  <td className="px-4 py-3 font-medium text-fg-strong">{line.documentNo}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-fg-strong">
-                    {line.direction === 'credit' ? line.transactionReference || '—' : '—'}
+                  <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3" data-label="Document">{documentLabel(line.documentType)}</td>
+                  <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 font-medium text-fg-strong" data-label="Number">{line.documentNo}</td>
+                  <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 font-mono text-xs text-fg-strong" data-label="Reference">
+                    {creditReference(line)}
                   </td>
-                  <td className="px-4 py-3">
-                    {line.customerNumber ? (
+                  <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3" data-label="Customer">
+                    {has(line.customerNumber) ? (
                       <span>
                         <span className="text-fg-subtle">{line.customerNumber}</span>
-                        {line.customerName ? ` ${line.customerName}` : ''}
+                        {has(line.customerName) ? ` ${line.customerName}` : ''}
                       </span>
                     ) : (
                       '—'
                     )}
                   </td>
-                  <td className="px-4 py-3 text-fg-muted">{line.description || '—'}</td>
-                  <td className="px-4 py-3 text-right whitespace-nowrap tabular-nums">
+                  <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 text-fg-muted" data-label="Description">{has(line.description) ? line.description : '—'}</td>
+                  <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 md:text-right whitespace-nowrap tabular-nums" data-label="Debit">
                     {line.direction === 'debit' ? money(line.amount) : '—'}
                   </td>
-                  <td className="px-4 py-3 text-right whitespace-nowrap tabular-nums">
+                  <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 md:text-right whitespace-nowrap tabular-nums" data-label="Credit">
                     {line.direction === 'credit' ? money(line.amount) : '—'}
                   </td>
                 </tr>
               ))}
             </tbody>
-            <tfoot className="sticky bottom-0 z-10 bg-surface shadow-[0_-1px_0_0_rgb(63_63_70)]">
+            <tfoot role="rowgroup" className="block md:table-footer-group sticky bottom-0 z-10 bg-surface shadow-[0_-1px_0_0_rgb(63_63_70)]">
               {totalRows.map(([currency, total]) => (
-                <tr key={currency} className="border-t border-line-strong">
-                  <td
+                <tr role="row" key={currency} className="block md:table-row border-t border-line-strong">
+                  <td role="cell"
                     colSpan={6}
-                    className="px-4 py-3 text-xs font-semibold tracking-wide text-fg-muted uppercase"
+                    className="block md:table-cell px-4 py-3 text-xs font-semibold tracking-wide text-fg-muted uppercase"
                   >
                     Total · {currency}
                   </td>
-                  <td className="px-4 py-3 text-right text-sm font-semibold whitespace-nowrap text-amber-800 tabular-nums">
+                  <td role="cell" className="block md:table-cell px-4 py-3 md:text-right text-sm font-semibold whitespace-nowrap text-amber-800 tabular-nums">
                     {money(total.debit)}
                   </td>
-                  <td className="px-4 py-3 text-right text-sm font-semibold whitespace-nowrap text-emerald-800 tabular-nums">
+                  <td role="cell" className="block md:table-cell px-4 py-3 md:text-right text-sm font-semibold whitespace-nowrap text-emerald-800 tabular-nums">
                     {money(total.credit)}
                   </td>
                 </tr>

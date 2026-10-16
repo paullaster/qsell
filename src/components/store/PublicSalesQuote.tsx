@@ -2,10 +2,12 @@
 
 import { useState } from 'react';
 import { CheckCircle2, LoaderCircle } from 'lucide-react';
-import { respondToPublicSalesQuoteAction } from '@/server/domains/quotes/actions';
+import { keyed } from '@/lib/keyed';
+import { respondToPublicSalesQuoteAction, type getPublicSalesQuoteAction } from '@/server/domains/quotes/actions';
+import { has } from '@/lib/values';
 
 type SharedQuote = NonNullable<
-  Awaited<ReturnType<typeof import('@/server/domains/quotes/actions').getPublicSalesQuoteAction>>
+  Awaited<ReturnType<typeof getPublicSalesQuoteAction>>
 >;
 
 export function PublicSalesQuote({ token, quote }: { token: string; quote: SharedQuote }) {
@@ -18,7 +20,7 @@ export function PublicSalesQuote({ token, quote }: { token: string; quote: Share
       setBusy(true);
       setError(null);
       const status = await respondToPublicSalesQuoteAction(token, accepted);
-      setResponse(status as 'accepted' | 'rejected');
+      setResponse(status);
     } catch (err) {
       setError(
         err instanceof Error
@@ -46,7 +48,7 @@ export function PublicSalesQuote({ token, quote }: { token: string; quote: Share
           )}
         </header>
         <section className="p-6 sm:p-8">
-          {response ? (
+          {response !== null ? (
             <div
               className="rounded-xl border border-emerald-200 bg-emerald-50 p-5 text-emerald-900"
               role="status"
@@ -62,29 +64,28 @@ export function PublicSalesQuote({ token, quote }: { token: string; quote: Share
           ) : (
             <>
               <div className="overflow-x-auto rounded-xl border border-line">
-                <table className="w-full min-w-[520px] text-left text-sm">
-                  <thead className="bg-surface-raised text-xs text-fg-muted">
-                    <tr>
-                      <th className="p-3">Description</th>
-                      <th className="p-3 text-right">Qty</th>
-                      <th className="p-3 text-right">Unit price</th>
-                      <th className="p-3 text-right">Amount</th>
+                <table role="table" className="block md:table w-full text-left text-sm">
+                  <thead role="rowgroup" className="hidden md:table-header-group bg-surface-raised text-xs text-fg-muted">
+                    <tr role="row" className="block md:table-row">
+                      <th role="columnheader" className="p-3">Description</th>
+                      <th role="columnheader" className="p-3 text-right">Qty</th>
+                      <th role="columnheader" className="p-3 text-right">Unit price</th>
+                      <th role="columnheader" className="p-3 text-right">Amount</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-line">
-                    {quote.lines
-                      .filter((line) => !line.sectionId)
-                      .map((line, index) => (
-                        <tr key={`item-${line.sku}-${index}`}>
-                          <td className="p-3">
+                  <tbody role="rowgroup" className="block md:table-row-group divide-y divide-line">
+                    {keyed(quote.lines.filter((line) => !has(line.sectionId)), (l) => l.sku)
+                      .map(({ item: line, key }) => (
+                        <tr role="row" key={key} className="block md:table-row">
+                          <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3" data-label="Description">
                             <div className="font-medium text-fg-strong">{line.description}</div>
                             <div className="text-xs text-fg-muted">{line.sku}</div>
                           </td>
-                          <td className="p-3 text-right">{Number(line.quantity)}</td>
-                          <td className="p-3 text-right">
+                          <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right" data-label="Qty">{Number(line.quantity)}</td>
+                          <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right" data-label="Unit price">
                             {quote.currency} {Number(line.unitPrice).toFixed(2)}
                           </td>
-                          <td className="p-3 text-right font-medium">
+                          <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right font-medium" data-label="Amount">
                             {quote.currency} {Number(line.lineAmount).toFixed(2)}
                           </td>
                         </tr>
@@ -98,12 +99,12 @@ export function PublicSalesQuote({ token, quote }: { token: string; quote: Share
                         0,
                       );
                       return [
-                        <tr key={`section-${section.id}`} className="bg-surface-raised">
-                          <td colSpan={4} className="p-3">
+                        <tr role="row" key={`section-${section.id}`} className="block md:table-row bg-surface-raised">
+                          <td role="cell" colSpan={4} className="block md:table-cell p-3">
                             <div className="flex justify-between gap-3">
                               <div>
                                 <strong className="text-fg-strong">{section.title}</strong>
-                                {section.description && (
+                                {has(section.description) && (
                                   <p className="text-xs text-fg-muted">{section.description}</p>
                                 )}
                               </div>
@@ -113,17 +114,17 @@ export function PublicSalesQuote({ token, quote }: { token: string; quote: Share
                             </div>
                           </td>
                         </tr>,
-                        ...(section.showLines === true ? sectionLines : []).map((line, index) => (
-                          <tr key={`${section.id}-${line.sku}-${index}`}>
-                            <td className="p-3 pl-8">
+                        ...keyed(section.showLines ? sectionLines : [], (l) => `${section.id}-${l.sku}`).map(({ item: line, key }) => (
+                          <tr role="row" key={key} className="block md:table-row">
+                            <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 pl-8" data-label="Description">
                               <div className="font-medium text-fg-strong">{line.description}</div>
                               <div className="text-xs text-fg-muted">{line.sku}</div>
                             </td>
-                            <td className="p-3 text-right">{Number(line.quantity)}</td>
-                            <td className="p-3 text-right">
+                            <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right" data-label="Qty">{Number(line.quantity)}</td>
+                            <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right" data-label="Unit price">
                               {quote.currency} {Number(line.unitPrice).toFixed(2)}
                             </td>
-                            <td className="p-3 text-right font-medium">
+                            <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right font-medium" data-label="Amount">
                               {quote.currency} {Number(line.lineAmount).toFixed(2)}
                             </td>
                           </tr>
@@ -144,7 +145,7 @@ export function PublicSalesQuote({ token, quote }: { token: string; quote: Share
                   </dd>
                 </div>
               </dl>
-              {quote.publicNotes && (
+              {has(quote.publicNotes) && (
                 <p className="mt-6 rounded-lg bg-surface-raised p-4 text-sm whitespace-pre-wrap text-fg">
                   {quote.publicNotes}
                 </p>
@@ -166,7 +167,7 @@ export function PublicSalesQuote({ token, quote }: { token: string; quote: Share
                   </p>
                 </div>
               )}
-              {quote.paymentDetails && (
+              {has(quote.paymentDetails) && (
                 <div className="mt-5 rounded-xl border border-line p-4">
                   <h2 className="text-sm font-semibold text-fg-strong">Payment details</h2>
                   <p className="mt-1 text-sm whitespace-pre-wrap text-fg-muted">
@@ -174,7 +175,7 @@ export function PublicSalesQuote({ token, quote }: { token: string; quote: Share
                   </p>
                 </div>
               )}
-              {quote.paymentTerms && (
+              {has(quote.paymentTerms) && (
                 <div className="mt-4 rounded-xl border border-line p-4">
                   <h2 className="text-sm font-semibold text-fg-strong">Payment terms</h2>
                   <p className="mt-1 text-sm whitespace-pre-wrap text-fg-muted">
@@ -182,7 +183,7 @@ export function PublicSalesQuote({ token, quote }: { token: string; quote: Share
                   </p>
                 </div>
               )}
-              {quote.termsAndConditions && (
+              {has(quote.termsAndConditions) && (
                 <div className="mt-4 rounded-xl border border-line p-4">
                   <h2 className="text-sm font-semibold text-fg-strong">Terms and conditions</h2>
                   <p className="mt-1 text-sm whitespace-pre-wrap text-fg-muted">
@@ -190,7 +191,7 @@ export function PublicSalesQuote({ token, quote }: { token: string; quote: Share
                   </p>
                 </div>
               )}
-              {error && (
+              {has(error) && (
                 <p
                   className="mt-4 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800"
                   role="alert"
@@ -221,7 +222,7 @@ export function PublicSalesQuote({ token, quote }: { token: string; quote: Share
         </section>
         <footer className="border-t border-line px-6 py-4 text-center text-xs text-fg-subtle">
           Questions? Contact {quote.company.email}
-          {quote.company.phone ? ` · ${quote.company.phone}` : ''}
+          {has(quote.company.phone) ? ` · ${quote.company.phone}` : ''}
         </footer>
       </article>
     </main>

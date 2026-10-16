@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { afterCursor, matching, pageOf, PAGE_SIZE, searchText, type PageInput } from '@/server/domains/settings/paging';
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
@@ -56,6 +57,12 @@ export class CustomerMasterService {
     private readonly dimensionSets: DimensionSetService,
     private readonly ledger: TransactionLedgerService,
   ) {}
+
+  /** One profile of this company, or null. */
+  async getProfile(companyId: string, id: string): Promise<CustomerProfileRow | null> {
+    const [row] = await this.db.select().from(customerProfiles).where(and(eq(customerProfiles.id, id), eq(customerProfiles.companyId, companyId))).limit(1);
+    return row ?? null;
+  }
 
   async listProfiles(companyId: string): Promise<CustomerProfileRow[]> {
     return await this.db
@@ -127,6 +134,30 @@ export class CustomerMasterService {
       .from(customers)
       .where(eq(customers.companyId, companyId))
       .orderBy(desc(customers.createdAt));
+  }
+
+  /** One page of customers by name, narrowed by text (name, number, email, phone, tax PIN), 25 at a time. */
+  async pageCustomers(companyId: string, input: PageInput): Promise<{ rows: CustomerRow[]; nextCursor: string | null }> {
+    const text = searchText(input);
+    const rows = await this.db
+      .select()
+      .from(customers)
+      .where(and(eq(customers.companyId, companyId), matching(text, [customers.name, customers.number, customers.email, customers.phone, customers.buyerKraPin]), afterCursor(input.cursor, customers.name, customers.id)))
+      .orderBy(asc(customers.name), asc(customers.id))
+      .limit(PAGE_SIZE + 1);
+    return pageOf(rows, PAGE_SIZE, (r) => ({ k: r.name, id: r.id }));
+  }
+
+  /** One page of profiles by code, narrowed by text, 25 at a time. */
+  async pageProfiles(companyId: string, input: PageInput): Promise<{ rows: CustomerProfileRow[]; nextCursor: string | null }> {
+    const text = searchText(input);
+    const rows = await this.db
+      .select()
+      .from(customerProfiles)
+      .where(and(eq(customerProfiles.companyId, companyId), matching(text, [customerProfiles.code, customerProfiles.name]), afterCursor(input.cursor, customerProfiles.code, customerProfiles.id)))
+      .orderBy(asc(customerProfiles.code), asc(customerProfiles.id))
+      .limit(PAGE_SIZE + 1);
+    return pageOf(rows, PAGE_SIZE, (r) => ({ k: r.code, id: r.id }));
   }
 
   async getCustomer(
