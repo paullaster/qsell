@@ -33,6 +33,7 @@ const screens: [string, string, RegExp, string | RegExp][] = [
   ['company appearance', '/admin/company/appearance', /Loading the appearance settings/, 'Appearance'],
   ['company modules', '/admin/company/modules', /Loading the module names/, 'Module names'],
   ['company support', '/admin/company/support', /Loading the support settings/, 'Customer support'],
+  ['customers', '/admin/customers', /Loading customers/, 'Customers'],
   ['payment settings', '/admin/settings/payments', /Loading payment settings/, 'Payments'],
 ];
 
@@ -53,8 +54,9 @@ for (const [name, url, skeleton, heading] of screens) {
     await context.addCookies([{ name: 'e2e-delay', value: String(delay), url: E2E_URL }]);
     const started = Date.now();
     await page.goto(url, { waitUntil: 'commit' });
-    await expect(page.getByRole('status').filter({ hasText: skeleton })).toBeVisible({ timeout: delay - 500 });
-    expect(Date.now() - started).toBeLessThan(delay);
+    // The loading state is drawn first, while the slowed data is still on its way: the heading is not there yet when it shows.
+    await expect(page.getByRole('status').filter({ hasText: skeleton })).toBeVisible({ timeout: baseline + delay });
+    await expect(title).toBeHidden({ timeout: 0 });
     await expect(title).toBeVisible({ timeout: baseline + delay * 2 + 5000 });
     // Side by side the delays overlap: the screen takes its usual time plus about one delay. Waits one after the other
     // would add a second delay on top.

@@ -116,18 +116,18 @@ export function QuoteDetails({
           </div>
         )}
         <section className="overflow-x-auto rounded-xl border border-line">
-          <table className="w-full min-w-[600px] text-left text-sm">
-            <thead className="bg-surface text-xs text-fg-muted">
-              <tr>
-                <th className="p-3">Item</th>
-                <th className="p-3 text-right">Qty</th>
-                <th className="p-3 text-right">Price</th>
-                <th className="p-3 text-right">Cost (internal)</th>
-                <th className="p-3 text-right">Margin (internal)</th>
-                <th className="p-3 text-right">Total</th>
+          <table role="table" className="block md:table w-full text-left text-sm">
+            <thead role="rowgroup" className="hidden md:table-header-group bg-surface text-xs text-fg-muted">
+              <tr role="row" className="block md:table-row">
+                <th role="columnheader" className="p-3">Item</th>
+                <th role="columnheader" className="p-3 text-right">Qty</th>
+                <th role="columnheader" className="p-3 text-right">Price</th>
+                <th role="columnheader" className="p-3 text-right">Cost (internal)</th>
+                <th role="columnheader" className="p-3 text-right">Margin (internal)</th>
+                <th role="columnheader" className="p-3 text-right">Total</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-line">
+            <tbody role="rowgroup" className="block md:table-row-group divide-y divide-line">
               {quote.lines
                 .filter((line) => line.sectionId === null)
                 .map((line) => {
@@ -135,22 +135,22 @@ export function QuoteDetails({
                   const profit = revenue - Number(line.costAmount);
                   const margin = revenue > 0 ? (profit / revenue) * 100 : 0;
                   return (
-                    <tr key={line.id}>
-                      <td className="p-3">
+                    <tr role="row" key={line.id} className="block md:table-row">
+                      <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3" data-label="Item">
                         <div className="font-medium text-fg-strong">{line.description}</div>
                         <div className="text-xs text-fg-muted">
                           {line.sku} · tax {Number(line.taxRate)}%
                         </div>
                       </td>
-                      <td className="p-3 text-right">{Number(line.quantity)}</td>
-                      <td className="p-3 text-right">
+                      <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right" data-label="Qty">{Number(line.quantity)}</td>
+                      <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right" data-label="Price">
                         {money(Number(line.unitPrice), quote.currency)}
                       </td>
-                      <td className="p-3 text-right text-fg-muted">
+                      <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right text-fg-muted" data-label="Cost (internal)">
                         {money(Number(line.costAmount), quote.currency)}
                       </td>
-                      <td className="p-3 text-right font-semibold">{margin.toFixed(1)}%</td>
-                      <td className="p-3 text-right font-semibold text-fg-strong">
+                      <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right font-semibold" data-label="Margin (internal)">{margin.toFixed(1)}%</td>
+                      <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right font-semibold text-fg-strong" data-label="Total">
                         {money(Number(line.lineAmount), quote.currency)}
                       </td>
                     </tr>
@@ -163,8 +163,8 @@ export function QuoteDetails({
                   0,
                 );
                 return [
-                  <tr key={`section-${section.id}`} className="bg-surface-raised">
-                    <td colSpan={6} className="p-3">
+                  <tr role="row" key={`section-${section.id}`} className="block md:table-row bg-surface-raised">
+                    <td role="cell" colSpan={6} className="block md:table-cell p-3">
                       <div className="flex items-center justify-between gap-3">
                         <div>
                           <strong className="text-fg-strong">{section.title}</strong>
@@ -183,26 +183,26 @@ export function QuoteDetails({
                     const profit = revenue - Number(line.costAmount);
                     const margin = revenue > 0 ? (profit / revenue) * 100 : 0;
                     return (
-                      <tr key={line.id}>
-                        <td className="p-3">
+                      <tr role="row" key={line.id} className="block md:table-row">
+                        <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3" data-label="Item">
                           <div className="font-medium text-fg-strong">{line.description}</div>
                           <div className="text-xs text-fg-muted">
                             {line.sku} · tax {Number(line.taxRate)}%
                           </div>
                         </td>
-                        <td className="p-3 text-right">{Number(line.quantity)}</td>
-                        <td className="p-3 text-right">
+                        <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right" data-label="Qty">{Number(line.quantity)}</td>
+                        <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right" data-label="Price">
                           {money(Number(line.unitPrice), quote.currency)}
                         </td>
-                        <td className="p-3 text-right text-fg-muted">
+                        <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right text-fg-muted" data-label="Cost (internal)">
                           {money(Number(line.costAmount), quote.currency)}
                         </td>
-                        <td
-                          className={`p-3 text-right font-semibold ${margin < Number(quote.minimumMarginPercent) ? 'text-red-700' : 'text-emerald-700'}`}
-                        >
+                        <td role="cell"
+                          className={`before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right font-semibold ${margin < Number(quote.minimumMarginPercent) ? 'text-red-700' : 'text-emerald-700'}`}
+                         data-label="Margin (internal)">
                           {margin.toFixed(1)}%
                         </td>
-                        <td className="p-3 text-right font-semibold text-fg-strong">
+                        <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right font-semibold text-fg-strong" data-label="Total">
                           {money(Number(line.lineAmount), quote.currency)}
                         </td>
                       </tr>

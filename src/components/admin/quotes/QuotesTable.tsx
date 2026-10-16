@@ -173,23 +173,24 @@ export function QuotesTable({
         </p>
       )}
 
-      <div className={`overflow-x-auto ${pending ? 'opacity-60' : ''}`}>
-        <table className="w-full min-w-[850px] text-left text-sm">
-          <thead className="bg-surface text-xs text-fg-muted">
-            <tr>
-              <th className="px-4 py-3">Quote</th>
-              <th className="px-4 py-3">Customer</th>
-              <th className="px-4 py-3 text-right">Total</th>
-              <th className="px-4 py-3 text-right">Gross margin</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Valid until</th>
-              <th className="px-4 py-3 text-right">Actions</th>
+      {/* A phone shows each quote as a card (the table's rows are stacked), so nothing needs sideways scrolling; the roles keep it a table for screen readers. */}
+      <div className={pending ? 'opacity-60' : ''}>
+        <table role="table" className="block w-full text-left text-sm md:table">
+          <thead role="rowgroup" className="hidden bg-surface text-xs text-fg-muted md:table-header-group">
+            <tr role="row">
+              <th role="columnheader" className="px-4 py-3">Quote</th>
+              <th role="columnheader" className="px-4 py-3">Customer</th>
+              <th role="columnheader" className="px-4 py-3 text-right">Total</th>
+              <th role="columnheader" className="px-4 py-3 text-right">Gross margin</th>
+              <th role="columnheader" className="px-4 py-3">Status</th>
+              <th role="columnheader" className="px-4 py-3">Valid until</th>
+              <th role="columnheader" className="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-line">
+          <tbody role="rowgroup" className="block divide-y divide-line md:table-row-group">
             {rows.length === 0 ? (
-              <tr>
-                <td colSpan={7} className="px-4 py-12 text-center text-fg-muted">
+              <tr role="row" className="block md:table-row">
+                <td role="cell" colSpan={7} className="block px-4 py-12 text-center text-fg-muted md:table-cell">
                   {filtered
                     ? 'No quotes match those filters.'
                     : 'No quotes yet. Create a quote to start the sales workflow.'}
@@ -252,8 +253,8 @@ function QuoteRow({
   const floorMiss = missesMarginFloor(quote);
   const hasEmail = quote.customerEmail !== null && quote.customerEmail !== '';
   return (
-    <tr className="hover:bg-hover/60">
-      <td className="px-4 py-3">
+    <tr role="row" className="block px-1 py-3 hover:bg-hover/60 md:table-row md:p-0">
+      <td role="cell" className="block px-4 py-1.5 md:table-cell md:py-3">
         <button
           type="button"
           onClick={() => handlers.view(quote)}
@@ -266,7 +267,7 @@ function QuoteRow({
           {new Date(quote.createdAt).toLocaleDateString()}
         </div>
       </td>
-      <td className="px-4 py-3">
+      <td role="cell" className="block px-4 py-1.5 md:table-cell md:py-3">
         <div className="font-medium text-fg-strong">{quote.customerName}</div>
         <div className="text-xs text-fg-muted">
           {hasEmail ? quote.customerEmail : (quote.customerReference ?? '—')}
@@ -278,10 +279,12 @@ function QuoteRow({
           </span>
         )}
       </td>
-      <td className="px-4 py-3 text-right font-mono font-semibold text-fg-strong">
+      <td role="cell" className="block px-4 py-1.5 md:table-cell md:py-3 md:text-right font-mono font-semibold text-fg-strong">
+        <span className="mr-2 font-sans text-xs font-normal text-fg-muted md:hidden">Total</span>
         {money(Number(quote.totalAmount), quote.currency)}
       </td>
-      <td className="px-4 py-3 text-right">
+      <td role="cell" className="block px-4 py-1.5 md:table-cell md:py-3 md:text-right">
+        <span className="mr-2 text-xs text-fg-muted md:hidden">Gross margin</span>
         <span
           className={`font-mono font-semibold ${floorMiss ? 'text-red-700' : 'text-emerald-700'}`}
         >
@@ -291,7 +294,7 @@ function QuoteRow({
           {money(Number(quote.grossProfit), quote.currency)}
         </div>
       </td>
-      <td className="px-4 py-3">
+      <td role="cell" className="block px-4 py-1.5 md:table-cell md:py-3">
         <span
           className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${TONES[badge.tone]}`}
         >
@@ -300,11 +303,12 @@ function QuoteRow({
         </span>
         {note !== null && <p className="mt-1 text-xs text-fg-muted">{note}</p>}
       </td>
-      <td className="px-4 py-3 text-xs text-fg-muted">
+      <td role="cell" className="block px-4 py-1.5 md:table-cell md:py-3 text-xs text-fg-muted">
+        <span className="mr-1 md:hidden">Valid until</span>
         {quote.validUntil === null ? 'No expiry' : new Date(quote.validUntil).toLocaleDateString()}
       </td>
-      <td className="px-4 py-3">
-        <div className="flex justify-end gap-1">
+      <td role="cell" className="block px-4 py-1.5 md:table-cell md:py-3">
+        <div className="flex flex-wrap gap-1 md:justify-end">
           <button
             type="button"
             title={`View ${quote.quoteNumber}`}

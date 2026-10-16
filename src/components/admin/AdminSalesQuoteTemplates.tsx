@@ -241,31 +241,31 @@ export function AdminSalesQuoteTemplates({
         </header>
         <ListFilters noun="templates" onChange={setFilters} />
         <div className={`overflow-x-auto ${list.phase === 'loading' ? 'opacity-60' : ''}`}>
-          <table
-            className="w-full min-w-[800px] text-left text-sm"
+          <table role="table"
+            className="block md:table w-full text-left text-sm"
             aria-busy={list.phase === 'loading'}
           >
-            <thead className="bg-surface text-xs text-fg-muted">
-              <tr>
-                <th className="px-4 py-3">Template</th>
-                <th className="px-4 py-3">Default customer</th>
-                <th className="px-4 py-3 text-right">Items</th>
-                <th className="px-4 py-3 text-right">Used</th>
-                <th className="px-4 py-3">State</th>
-                <th className="px-4 py-3 text-right">Actions</th>
+            <thead role="rowgroup" className="hidden md:table-header-group bg-surface text-xs text-fg-muted">
+              <tr role="row" className="block md:table-row">
+                <th role="columnheader" className="px-4 py-3">Template</th>
+                <th role="columnheader" className="px-4 py-3">Default customer</th>
+                <th role="columnheader" className="px-4 py-3 text-right">Items</th>
+                <th role="columnheader" className="px-4 py-3 text-right">Used</th>
+                <th role="columnheader" className="px-4 py-3">State</th>
+                <th role="columnheader" className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-line">
+            <tbody role="rowgroup" className="block md:table-row-group divide-y divide-line">
               {list.rows.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="p-12 text-center text-fg-muted">
+                <tr role="row" className="block md:table-row">
+                  <td role="cell" colSpan={6} className="block md:table-cell p-12 text-center text-fg-muted">
                     {emptyText}
                   </td>
                 </tr>
               ) : (
                 list.rows.map((template) => (
-                  <tr key={template.id} className="hover:bg-hover/50">
-                    <td className="px-4 py-3">
+                  <tr role="row" key={template.id} className="block md:table-row hover:bg-hover/50">
+                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3" data-label="Template">
                       <button
                         type="button"
                         onClick={() => void openEditor(template)}
@@ -280,12 +280,12 @@ export function AdminSalesQuoteTemplates({
                         </p>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-fg-muted">
+                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 text-fg-muted" data-label="Default customer">
                       {template.customerName ?? 'Any customer'}
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums">{template.lineCount}</td>
-                    <td className="px-4 py-3 text-right tabular-nums">{template.usageCount}</td>
-                    <td className="px-4 py-3">
+                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 md:text-right tabular-nums" data-label="Items">{template.lineCount}</td>
+                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 md:text-right tabular-nums" data-label="Used">{template.usageCount}</td>
+                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3" data-label="State">
                       <span
                         className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${template.status === 'active' ? 'bg-emerald-100 text-emerald-800' : 'bg-surface-sunken text-fg-muted'}`}
                       >
@@ -295,7 +295,7 @@ export function AdminSalesQuoteTemplates({
                         {templateStateLabel(template)}
                       </span>
                     </td>
-                    <td className="px-4 py-3">
+                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3" data-label="Actions">
                       <div className="flex justify-end gap-1">
                         {template.status === 'active' && canUpdate && !template.isDefault && (
                           <button
