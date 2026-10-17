@@ -25,3 +25,6 @@ session-ses_f3fe.md
 
 # Local media adapter uploads
 /storage/
+
+# Per-installation parameter files (no secrets, but host details)
+deploy/instances/*.env

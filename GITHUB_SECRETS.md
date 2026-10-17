@@ -1,5 +1,9 @@
 # GitHub Actions: release builds and deployment targets
 
+> The step-by-step flow, including a script that creates a target's Environment from
+> a config file, is in [DEPLOYMENT.md](./DEPLOYMENT.md). This page is the reference
+> for what each variable and secret means.
+
 ## Release build pipeline
 
 The `Release build pipeline` validates pull requests into `release`. A push/merge
