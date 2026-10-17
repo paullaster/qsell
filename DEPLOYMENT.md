@@ -1,158 +1,328 @@
-# Production deployment
+# Deployment runbook
 
-## Multi-installation model
+This document takes you from "a blank Ubuntu server" to "a running, TLS-secured
+installation", and then through every later release. Nothing here is tied to one
+server: every host-specific value lives in a single **instance config file**, and
+the scripts and GitHub workflows read it.
 
-- A push/merge to `release` validates source and publishes one immutable app,
-  worker, and migrator image set. It **does not deploy anywhere**.
-- Production deploys are started explicitly with GitHub Actions →
-  **Deploy release to instance**. Choose the target GitHub Environment and the
-  successful release SHA to deploy.
-- Each installation has a separate database, Compose project, secrets, uploads,
-  media volume, hostname, and local Caddy port. Deploying one target leaves the
-  others running their current image and database schema.
-- Images are shared across installations; runtime configuration is not.
-- Keep each instance on one application version at a time. The target’s
-  migrator updates only that target’s own Postgres service before its app/worker
-  containers are replaced.
+- [1. How it works](#1-how-it-works)
+- [2. The parameter sheet](#2-the-parameter-sheet)
+- [3. One-time repository setup](#3-one-time-repository-setup)
+- [4. New server: step by step](#4-new-server-step-by-step)
+- [5. Releasing](#5-releasing)
+- [6. Operations](#6-operations)
+- [7. Troubleshooting](#7-troubleshooting)
+- [8. Image uploads (media storage)](#8-image-uploads-media-storage)
 
-The original production server remains the existing `production` installation.
-Keep its GitHub Environment name and set `COMPOSE_PROJECT_NAME=qsell` to preserve
-the existing containers and volumes. A new installation gets a separate GitHub
-Environment and must use a fresh project name, for example
-`qsell-new-baremetal`, plus its own PostgreSQL database/secret.
+## 1. How it works
 
-## Provision a bare-metal host
+```
+ you ──PR/merge──▶ release branch ──▶ "Release build pipeline"
+                                        validate (typecheck, tests, build)
+                                        publish immutable GHCR images:
+                                          sha-<commit> · worker-<commit> · migrator-<commit>
+                                        (deploys NOTHING)
 
-1. Create a dedicated SSH deploy account and install its public key. The setup
-   script adds the account to the Docker group; Docker access is root-equivalent.
-2. As root, run `sudo ./scripts/setup-server.sh`. It installs Docker Engine and
-   Compose/Buildx, creates `/opt/qsell`, and opens ports 22, 80, and 443.
-3. For each installation on this host, create a separate directory, e.g.
-   `/opt/qsell/instances/new-shop`, with `.env.runtime` and
-   `secrets/postgres_password` (both mode `600`). The deployment account must
-   own the directory and be able to run Docker Compose there.
-4. Set `DATABASE_URL` to the installation’s own Compose service, e.g.
-   `postgresql://qsell:<URL-ENCODED-PASSWORD>@db:5432/qsell`, and put the same
-   password in that instance’s secret file. Never point two production
-   installations at the same database.
-5. Create a GitHub Actions Environment for each instance. Configure the
-   instance-specific variables and secrets in
-   [GITHUB_SECRETS.md](./GITHUB_SECRETS.md).
-6. Point the instance’s DNS name at this host, configure its TLS virtual host
-   in Nginx, and include the generated instance snippet described below.
-   Assign an unused loopback port to every instance sharing a host.
-
-Nginx owns public ports 80/443 and TLS. Each Compose Caddy service binds only to
-`127.0.0.1:$EDGE_HTTP_PORT`; Nginx forwards that hostname to its matching port.
-After the first deployment of an instance, include the generated file inside
-that hostname’s HTTPS server block, for example:
-
-```nginx
-include /opt/qsell/instances/new-shop/deploy/nginx/new-shop.conf;
+ you ──run manually──▶ "Deploy release to instance" (pick Environment, SHA optional)
+                          │ SSH (per-Environment key, pinned host key)
+                          ▼
+   ┌────────────────────── one server, one installation ──────────────────────┐
+   │ Internet ─▶ Cloudflare (optional) ─▶ Nginx :80/:443 (TLS, host-owned)    │
+   │              ─▶ Caddy 127.0.0.1:$EDGE_HTTP_PORT ─▶ app :3069             │
+   │ Docker Compose project $COMPOSE_PROJECT_NAME:                            │
+   │   db (Postgres 18) · app (Next.js) · worker (Graphile) · caddy · migrate │
+   │ Files: $DEPLOY_PATH/.env.runtime  secrets/postgres_password             │
+   └───────────────────────────────────────────────────────────────────────────┘
 ```
 
-Hosts set up before per-instance snippets include
-`<DEPLOY_PATH>/deploy/nginx/omnicommerce-locations.conf`. Deploys keep that file
-refreshed from the template, so such hosts keep working; switch the include to
-`<instance-id>.conf` when convenient.
+Principles:
 
-Keep the hostname’s existing ACME and TLS directives unchanged, then run
-`sudo nginx -t && sudo systemctl reload nginx`. Cloudflare should use **Full
-(strict)** when enabled. Use different `EDGE_HTTP_PORT` values for multiple
-installations on one server.
+- **Build once, deploy many.** Images are shared; runtime configuration is not.
+- **Nothing deploys by itself.** A merge publishes images. A person picks which
+  installation gets which release.
+- **Isolation.** Each installation has its own database, secrets, volumes, domain,
+  Compose project and loopback port. Deploying one never touches another. Never
+  point two installations at one database.
+- **Secrets stay on the host.** `.env.runtime` and the Postgres password are
+  created on the server and never pass through GitHub. GitHub holds only what is
+  needed to reach and pull: an SSH key, the pinned host key and a read-only
+  registry token.
+- **Safe rollouts.** Order is: validate → pull → migrate → replace → health check.
+  A failed migration stops before anything is replaced; a failed health check
+  rolls app, worker and Caddy back to the previous images.
 
-## Build and selectively deploy
+## 2. The parameter sheet
 
-1. Open a pull request into `release`. CI installs the locked dependencies,
-   migrates its disposable test database, typechecks, runs `pnpm test` (including
-   the database integration tests), runs `pnpm media:verify`, and builds the
-   application. Lint is not gated yet.
-2. Merge to `release`. The build pipeline publishes immutable images tagged
-   `sha-<commit>`, `worker-<commit>`, and `migrator-<commit>`.
-3. After that build succeeds, open GitHub Actions → **Deploy release to
-   instance**. Select a configured instance Environment. Leave the SHA empty to deploy the
-   newest successful release build, or enter a full 40-character commit SHA to
-   deploy or roll back to a specific one. The workflow verifies that the SHA has a successful
-   release build, checks that target’s configuration, migrates that target’s
-   database, deploys its app and worker, and verifies its HTTPS health endpoint.
-4. Repeat the manual deploy for any other targets you choose. No other
-   installation is changed unless selected.
+Everything that differs per server is one of these. Copy
+`deploy/instance.env.example` to `deploy/instances/<INSTANCE_ID>.env` (git-ignored)
+and fill it in. All scripts accept `--config <file>`, and any value can instead be
+passed as an environment variable (which wins over the file).
 
-GitHub only lists a `workflow_dispatch` workflow in the Actions UI when the file
-exists on the **default branch** (`main`). Merge `deploy-instance.yml` into
-`main` as well as `release`, then run it with branch `release` selected (the job
-refuses any other ref).
+| Parameter              | Required | Default                           | Meaning / rules                                                                                     |
+| ---------------------- | -------- | --------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `INSTANCE_ID`          | yes      | –                                 | Lowercase letters, digits, hyphens (max 40). Becomes the GitHub Environment and Nginx snippet name. |
+| `PUBLIC_DOMAIN`        | yes      | –                                 | Bare hostname (`shop.example.com`). No `https://`, slash or port.                                   |
+| `DEPLOY_HOST`          | yes\*    | –                                 | IP/DNS GitHub Actions SSHs to. \*GitHub step only.                                                  |
+| `DEPLOY_USER`          | yes\*    | –                                 | Account that owns the instance dir and runs Docker (`setup-server.sh` creates it as `APP_USER`).    |
+| `APP_DIR`              | no       | `/opt/qsell`                      | Root for all installations on the host.                                                             |
+| `DEPLOY_PATH`          | no       | `$APP_DIR/instances/$INSTANCE_ID` | Absolute path; letters, digits, `/ _ -` only. Its folder name need not equal `INSTANCE_ID`.         |
+| `COMPOSE_PROJECT_NAME` | no       | `qsell-$INSTANCE_ID`              | Namespaces containers/volumes. Unique per installation on a host. **Never change on a live one.**   |
+| `EDGE_HTTP_PORT`       | no       | `8080`                            | Loopback port for Caddy (1024–65535). Unique per installation on a host.                            |
+| `ADMIN_EMAIL`          | yes      | –                                 | Initial super-admin login.                                                                          |
+| `MEDIA_DRIVER`         | no       | `local`                           | `local` or `cloudinary` (see [section 8](#8-image-uploads-media-storage)).                          |
+| `CERT_EMAIL`           | yes      | –                                 | Let's Encrypt expiry notices.                                                                       |
+| `GITHUB_REPO`          | yes\*    | –                                 | `owner/name` of the repository.                                                                     |
+| `GHCR_USERNAME`        | yes\*    | –                                 | GitHub user whose token can read the private images.                                                |
+| `SSH_KEY_FILE`         | yes\*    | –                                 | Path (on your machine) of the passphrase-less deploy key for this installation.                     |
 
-On a failed health check the deploy **rolls the app, worker and Caddy back** to
-the previously deployed image set (`.env.deploy.previous`). A failed migration
-stops before anything is replaced. The database schema is never rolled back, so
-write migrations to be backward-compatible with the previous release: add
-columns/tables first, and drop or rename them in a later release. Replacing the
-single app container still causes a brief interruption.
+Where each value ends up:
 
-The first deploy of a new instance generates its Nginx snippet, so the final
-HTTPS check only warns (rather than fails) until Nginx includes it.
+| GitHub Environment **variable**                  | From                         |
+| ------------------------------------------------ | ---------------------------- |
+| `DEPLOY_HOST` `DEPLOY_USER`                      | same names                   |
+| `DEPLOY_PATH`                                    | same name (derived if unset) |
+| `COMPOSE_PROJECT_NAME`                           | same name (derived if unset) |
+| `PUBLIC_DOMAIN` `EDGE_HTTP_PORT` `GHCR_USERNAME` | same names                   |
 
-Set repository variable `SERVER_ACTION_ALLOWED_ORIGINS` to the comma-separated
-list of all installed public domains before building a release; Server Action
-origin allowlists are embedded in the shared build image.
+| GitHub Environment **secret** | Source                                                        |
+| ----------------------------- | ------------------------------------------------------------- |
+| `DEPLOY_SSH_PRIVATE_KEY`      | contents of `SSH_KEY_FILE`                                    |
+| `DEPLOY_KNOWN_HOSTS`          | `ssh-keyscan -t ed25519 $DEPLOY_HOST` (fingerprint confirmed) |
+| `GHCR_READ_TOKEN`             | fine-grained token with read access to the package            |
 
-Deploy logs are available under GitHub Actions → **Deploy release to instance**.
-On a host, use the selected instance path and project name:
+On the server, per installation: `$DEPLOY_PATH/.env.runtime` (app configuration and
+secrets) and `$DEPLOY_PATH/secrets/postgres_password`, both mode `600`.
+
+## 3. One-time repository setup
+
+Done once per repository, not per server.
+
+1. Merge `.github/workflows/ci-cd.yml` **and** `deploy-instance.yml` into `release`
+   _and_ `main`. GitHub lists a manually-run workflow only when it exists on the
+   default branch (`main`); the deploy job itself refuses to run from any ref but
+   `release`.
+2. Repository **variable** `SERVER_ACTION_ALLOWED_ORIGINS`: comma-separated list of
+   **every** installation's domain. It is compiled into the shared image, so add a
+   new domain here and publish a fresh release build _before_ deploying to it.
+   Optional: `NEXT_PUBLIC_SENTRY_DSN`; secret `SENTRY_AUTH_TOKEN` for source maps.
+3. Create a fine-grained GitHub token with read access to the repository's
+   package (GHCR). Keep it ready for `GHCR_READ_TOKEN`.
+4. Install the GitHub CLI (`gh`) on your machine and run `gh auth login` as someone
+   with admin rights on the repository.
+
+## 4. New server: step by step
+
+Variables below are shown as `$NAME`; they all come from your config file. Phases
+marked **laptop** run on your machine, **root** / **deploy** on the server.
+
+### Phase A — DNS (laptop)
+
+Create an `A` record for `$PUBLIC_DOMAIN` pointing to the server's public IP. With
+Cloudflare, leave the record **DNS only** (grey cloud) until the certificate is
+issued, then proxy it and set SSL mode to **Full (strict)**.
+
+### Phase B — Deploy key (laptop)
 
 ```sh
-cd /opt/qsell/instances/new-shop
-docker compose --env-file .env.deploy -f compose.production.yaml ps
-docker compose --env-file .env.deploy -f compose.production.yaml logs -f app worker
+scripts/configure-github-environment.sh --config deploy/instances/<id>.env \
+  --generate-key --dry-run
 ```
 
-## GitHub target configuration
+This creates `$SSH_KEY_FILE` (ed25519, no passphrase — `webfactory/ssh-agent`
+cannot use passphrase-protected keys) and prints its **public** half. Do not reuse
+your personal key.
 
-Use a GitHub Environment named for each installation (keep the existing
-`production` Environment; add names such as `new-shop` for new instances).
-Environment protection rules can
-require a reviewer for higher-risk targets. The workflow refuses to deploy if
-the named environment is not fully configured.
-
-Each target has its own runtime secrets and local database. If Cloudinary is
-used, share the account if desired but assign a distinct `CLOUDINARY_FOLDER`
-per installation. With local media storage, Docker volume names are isolated by
-the Compose project name.
-
-## Operations
-
-Create and test encrypted off-host database backups before accepting production
-traffic. `scripts/backup-instance.sh <deploy-path>` dumps Postgres and the local
-media volume, prunes after `BACKUP_KEEP_DAYS` (default 14), and rsyncs to
-`BACKUP_REMOTE` when set. Schedule it per instance, e.g. in the deploy user's
-crontab (the script is copied with the repo; run it from a checkout or copy it
-to the host):
+### Phase C — Bootstrap the host (root, on the server)
 
 ```sh
-15 2 * * * BACKUP_REMOTE=backup@backup-host:/srv/qsell/new-shop/ /opt/qsell/scripts/backup-instance.sh /opt/qsell/instances/new-shop >> /opt/qsell/backup.log 2>&1
+git clone https://github.com/$GITHUB_REPO /tmp/qsell && cd /tmp/qsell
+sudo APP_USER=$DEPLOY_USER APP_DIR=$APP_DIR \
+     SSH_PUBLIC_KEY='ssh-ed25519 AAAA… qsell-actions-<id>' \
+     ./scripts/setup-server.sh
 ```
 
-A basic manual logical backup is:
+Installs Docker Engine + Compose/Buildx (log rotation, live-restore), creates the
+deploy account with a **locked password** (so `ssh-copy-id` cannot work — hence
+`SSH_PUBLIC_KEY`), creates `$APP_DIR/instances`, and opens UFW for 22/80/443.
+Supports Ubuntu 22.04, 24.04 and 26.04. Docker group membership is root-equivalent:
+restrict the account to trusted operators. Log in again so the group applies, and
+reboot if Ubuntu reports a pending kernel update.
+
+Check: `ssh -i $SSH_KEY_FILE $DEPLOY_USER@$DEPLOY_HOST 'id -un && docker ps'`.
+
+### Phase D — Create the instance (deploy user, on the server)
+
+Copy your config file to the server (it holds no secrets), then:
 
 ```sh
-cd /opt/qsell/instances/new-shop
-docker compose --env-file .env.deploy -f compose.production.yaml exec -T db \
-  pg_dump -U qsell -d qsell | gzip > "$HOME/new-shop-$(date -u +%F-%H%M).sql.gz"
+cd /tmp/qsell
+scripts/provision-instance.sh --config /path/to/<id>.env
 ```
 
-Store backups away from this host and regularly test a restore. PostgreSQL 18
-uses `/var/lib/postgresql` as its volume root; do not reuse an older major
-version's data volume without a planned `pg_upgrade` or dump/restore.
+Creates `$DEPLOY_PATH` and `secrets/`, generates a random Postgres password and all
+application secrets, and writes `.env.runtime` (mode `600`). It prompts for the admin
+password (or generates one and shows it once). It will **not overwrite** an existing
+`.env.runtime` or password — regenerating the DB password after the volume exists
+would lock the app out of its own database.
 
-The worker has a container healthcheck (`scripts/worker-healthcheck.mjs`) that
-confirms it can reach Postgres and that Graphile Worker's tables exist.
+- Extra settings (SMTP, payment providers, Cloudinary…): put `KEY=VALUE` lines in a
+  file and pass `EXTRA_ENV_FILE=…`, or edit `.env.runtime` afterwards.
+- **Back up** `DATA_ENCRYPTION_KEY` / `PAYMENT_DATA_KEY` somewhere safe; losing them
+  makes encrypted data unreadable.
 
-Each installation is an independent single-host Compose stack. It is not a
-multi-host cluster or a horizontally scaled app. Tune `APP_MEMORY_LIMIT`,
-`POSTGRES_MEMORY_LIMIT`, `WORKER_MEMORY_LIMIT`, CPU settings, database pool size,
-and worker concurrency for the host that runs that particular installation.
+### Phase E — Nginx and TLS (root, on the server)
 
-## Image uploads (media storage)
+```sh
+sudo scripts/setup-nginx-site.sh --config /path/to/<id>.env
+```
+
+Installs Nginx + certbot, obtains the certificate through the port-80 webroot
+challenge, writes `/etc/nginx/sites-available/$INSTANCE_ID`, enables it and reloads.
+Until the first deploy, `/` answers `503`. Preview without changing anything:
+`--dry-run`. Certificates renew automatically (`certbot.timer`).
+
+### Phase F — GitHub Environment (laptop)
+
+```sh
+scripts/configure-github-environment.sh --config deploy/instances/<id>.env
+```
+
+Creates the Environment named `$INSTANCE_ID`, sets the seven variables and three
+secrets from [section 2](#2-the-parameter-sheet), shows the host-key fingerprint and
+asks you to confirm it matches the server (`ssh-keygen -lf
+/etc/ssh/ssh_host_ed25519_key.pub`) before trusting it, and prompts (hidden) for the
+registry token. Add reviewers to the Environment for higher-risk targets. Remember
+[section 3](#3-one-time-repository-setup) step 2: the new domain must be in
+`SERVER_ACTION_ALLOWED_ORIGINS` and a release must have been built **after** adding it.
+
+### Phase G — First deploy
+
+GitHub → Actions → **Deploy release to instance** → _Run workflow_ on branch
+`release`, Environment `$INSTANCE_ID`, SHA empty (= newest successful release build).
+
+The workflow: validates the Environment → resolves the release → SSHes in → refuses
+unless `.env.runtime` and the Postgres password exist and `DATABASE_URL` uses host
+`db` → validates media settings → pulls images → runs migrations → starts the stack →
+writes `$DEPLOY_PATH/deploy/nginx/$INSTANCE_ID.conf` → waits for a healthy `/api/health`
+→ checks `media.uploadsReady`. The final HTTPS check only **warns** on this first run,
+because Nginx does not include the snippet yet.
+
+### Phase H — Switch the site on (root, on the server)
+
+```sh
+sudo scripts/setup-nginx-site.sh --config /path/to/<id>.env --no-cert
+```
+
+Re-running detects the generated snippet, replaces the `503` placeholder with the
+include, validates (`nginx -t`) and reloads.
+
+### Phase I — Go-live checklist
+
+- [ ] `curl -s https://$PUBLIC_DOMAIN/api/health` → `"status":"healthy"`, `uploadsReady:true`
+- [ ] Log in at `/admin` as `$ADMIN_EMAIL`; change the initial password
+- [ ] Upload a product image (and, for Cloudinary, check the deploy's media step was green)
+- [ ] Cloudflare proxy on, SSL **Full (strict)** (if used)
+- [ ] Backups scheduled and a restore tested ([6.4](#64-backups))
+- [ ] `sudo reboot` once if a kernel update was pending; confirm the stack returns
+
+## 5. Releasing
+
+1. Open a pull request into `release`. CI installs locked dependencies, migrates a
+   disposable database, typechecks, runs `pnpm test` (including database integration
+   tests), `pnpm media:verify`, and a production build. Lint is not gated yet.
+2. Merge. `Release build pipeline` publishes the three images for that commit.
+3. Run **Deploy release to instance** for each installation you want to update.
+   Leave the SHA empty for the newest build, or paste a full 40-character SHA to
+   deploy or roll back to a specific one (it must have a successful build).
+
+Safety behaviour: a failed migration stops before anything is replaced. A failed
+health check **rolls back** app, worker and Caddy to the previous image set
+(`.env.deploy.previous`). **The database schema is never rolled back**, so migrations
+must be backward-compatible with the previous release (add columns/tables first;
+drop or rename in a later release). Replacing the app container causes a brief
+interruption. One deploy per Environment runs at a time.
+
+## 6. Operations
+
+All commands run on the server in `$DEPLOY_PATH`:
+
+```sh
+alias dc='docker compose --env-file .env.deploy -f compose.production.yaml'
+```
+
+### 6.1 Status and logs
+
+```sh
+dc ps                    # app/worker/db/caddy and health
+dc logs -f app worker
+```
+
+### 6.2 Roll back by hand
+
+Run the deploy workflow with the previous good SHA (preferred). Emergency, on the
+host: `cp .env.deploy.previous .env.deploy && dc up -d`.
+
+### 6.3 Change configuration
+
+Edit `.env.runtime` (keep mode `600`), then `dc up -d app worker`. Never edit
+`COMPOSE_PROJECT_NAME`, the database password or `DATABASE_URL` on a live instance.
+
+### 6.4 Backups
+
+`scripts/backup-instance.sh $DEPLOY_PATH` dumps Postgres and the local media volume,
+prunes after `BACKUP_KEEP_DAYS` (default 14) and rsyncs to `BACKUP_REMOTE` when set.
+Copy it to the host once (`install -D scripts/backup-instance.sh $APP_DIR/scripts/backup-instance.sh`),
+then schedule it per instance, e.g. in the deploy user's crontab:
+
+```sh
+15 2 * * * BACKUP_REMOTE=backup@backup-host:/srv/qsell/<id>/ $APP_DIR/scripts/backup-instance.sh $DEPLOY_PATH >> $APP_DIR/backup.log 2>&1
+```
+
+Keep backups off the host and test a restore regularly. PostgreSQL 18 uses
+`/var/lib/postgresql` as its volume root; do not reuse an older major version's data
+volume without a planned `pg_upgrade` or dump/restore.
+
+### 6.5 Add a domain, move, or decommission
+
+- **Add a hostname:** add it to `SERVER_ACTION_ALLOWED_ORIGINS`, publish a new
+  release, extend the Nginx `server_name`/certificate, redeploy.
+- **Second installation on the same host:** a new config file with a new
+  `INSTANCE_ID`, `PUBLIC_DOMAIN` and a **different `EDGE_HTTP_PORT`**; repeat phases
+  A, B, D–I (skip C).
+- **Decommission:** `dc down -v` (deletes that installation's data — back up first),
+  remove its directory, Nginx site, certificate (`certbot delete`) and GitHub
+  Environment.
+
+### 6.6 Capacity
+
+Each installation is an independent single-host Compose stack — not a cluster.
+Tune `APP_MEMORY_LIMIT`, `POSTGRES_MEMORY_LIMIT`, `WORKER_MEMORY_LIMIT`, the CPU
+settings, DB pool size and `WORKER_CONCURRENCY` for the host. The worker has a
+container healthcheck (`scripts/worker-healthcheck.mjs`).
+
+## 7. Troubleshooting
+
+| Symptom (workflow / server output)                             | Cause and fix                                                                                                                     |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `Set this environment's PUBLIC_DOMAIN Actions variable`        | Must be an Environment **variable** (not a secret) on the right Environment, bare hostname. Same for the other six variables.     |
+| `Invalid instance id`                                          | `INSTANCE_ID` allows only `a-z 0-9 -` (no underscore). The folder name may differ; the Environment may not.                       |
+| `Unknown MEDIA_DRIVER '…'`                                     | Typo in `.env.runtime` (`cloudinary`/`local` only). Nothing was deployed.                                                         |
+| `MEDIA_DRIVER=cloudinary but … missing Cloudinary credentials` | Add `CLOUDINARY_URL` (or all three parts) to `.env.runtime`.                                                                      |
+| `No successful Release build pipeline exists for …`            | SHA wasn't built on `release` (PR or failed publish). Leave SHA empty or pick one from a green run.                               |
+| Workflow not listed in the Actions UI                          | `deploy-instance.yml` isn't on `main` yet ([section 3](#3-one-time-repository-setup)).                                            |
+| `Missing …/.env.runtime` / `postgres_password`                 | Run `provision-instance.sh` first (phase D) and check `DEPLOY_PATH` matches.                                                      |
+| `DATABASE_URL must address … host db`                          | `.env.runtime` must use `@db:5432`. Never share a database between installations.                                                 |
+| SSH `Permission denied (publickey)`                            | Public key not in `~$DEPLOY_USER/.ssh/authorized_keys` (the account has no password; use `SSH_PUBLIC_KEY` in phase C).            |
+| Host key / `known_hosts` error                                 | `DEPLOY_KNOWN_HOSTS` must be for the same name/IP as `DEPLOY_HOST`; re-run phase F.                                               |
+| `denied` pulling images                                        | `GHCR_READ_TOKEN`/`GHCR_USERNAME` wrong or token lacks package read access.                                                       |
+| Health check fails, stack rolled back                          | `dc logs app` (bad env value, DB, migration). Fix and redeploy. First deploys have nothing to roll back to.                       |
+| `Failed server action` / origin errors in the browser          | Domain missing from `SERVER_ACTION_ALLOWED_ORIGINS` at **build** time. Add it, publish a new release, redeploy.                   |
+| HTTPS check warns "Nginx does not include …"                   | Expected on the first deploy: run phase H.                                                                                        |
+| `certbot` fails                                                | DNS not pointing here, port 80 blocked, or Cloudflare proxy on during issuance.                                                   |
+| `nginx -t` fails after phase H                                 | Run `setup-nginx-site.sh --dry-run`, compare with `/etc/nginx/sites-available/<id>`; fix and re-run.                              |
+| Run is red after a healthy deploy                              | Look at the _last_ failing step: the media smoke test (Cloudinary credentials) is deliberately last and non-blocking for traffic. |
+
+## 8. Image uploads (media storage)
 
 Product images can be uploaded (not just linked). Storage is a pluggable
 provider chosen by `MEDIA_DRIVER` in that installation's `DEPLOY_PATH/.env.runtime`:
@@ -194,7 +364,7 @@ CLOUDINARY_URL=cloudinary://API_KEY:API_SECRET@CLOUD_NAME
 # CLOUDINARY_API_KEY=
 # CLOUDINARY_API_SECRET=
 # Optional: distinct root folder for this installation
-# CLOUDINARY_FOLDER=new-shop
+# CLOUDINARY_FOLDER=<instance-id>
 ```
 
 These are secrets; they live only on the host, like the rest of `.env.runtime`.
@@ -206,7 +376,7 @@ from wherever they were stored.
 ### Operating it
 
 ```sh
-cd /opt/qsell/instances/new-shop
+cd $DEPLOY_PATH
 # Check the configured provider end to end (uploads and removes two test images)
 docker compose --env-file .env.deploy -f compose.production.yaml run --rm -T --no-deps worker pnpm media:check
 # Run the cleanup sweep now instead of waiting for the nightly job
