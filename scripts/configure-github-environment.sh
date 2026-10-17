@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # Create/update the GitHub Environment for ONE instance from its config file.
 # Run on your own machine (needs the `gh` CLI, logged in with repo admin rights):
-#   scripts/configure-github-environment.sh --config deploy/instances/new-shop.env [--generate-key] [--yes] [--dry-run]
+#   scripts/configure-github-environment.sh --config deploy/instances/new-shop.env --key-only
+#   scripts/configure-github-environment.sh --config deploy/instances/new-shop.env [--yes] [--dry-run]
+#
+# --key-only      create the deploy key (if missing), print its PUBLIC half, and stop.
+#                 Needs no network access and changes nothing on GitHub.
+# --generate-key  like above, but then continue with the GitHub configuration.
 #
 # required: INSTANCE_ID PUBLIC_DOMAIN DEPLOY_HOST DEPLOY_USER GITHUB_REPO GHCR_USERNAME SSH_KEY_FILE
 # optional: APP_DIR DEPLOY_PATH COMPOSE_PROJECT_NAME EDGE_HTTP_PORT
@@ -15,13 +20,31 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$here/lib/instance-config.sh"
 
 parse_common_args "$@"
-GENERATE_KEY=0; ASSUME_YES=0; DRY_RUN=0
+GENERATE_KEY=0; KEY_ONLY=0; ASSUME_YES=0; DRY_RUN=0
 for a in "${REST_ARGS[@]}"; do
   case "$a" in
-    --generate-key) GENERATE_KEY=1 ;; --yes) ASSUME_YES=1 ;; --dry-run) DRY_RUN=1 ;;
+    --generate-key) GENERATE_KEY=1 ;; --key-only) KEY_ONLY=1; GENERATE_KEY=1 ;; --yes) ASSUME_YES=1 ;; --dry-run) DRY_RUN=1 ;;
     *) die "Unknown argument: $a" ;;
   esac
 done
+
+if ((KEY_ONLY)); then
+  require_vars INSTANCE_ID SSH_KEY_FILE
+  key="${SSH_KEY_FILE/#\~/$HOME}"
+  if [[ -f "$key" ]]; then
+    echo "Key already exists: $key (not overwritten)."
+  else
+    ssh-keygen -t ed25519 -a 100 -N '' -C "qsell-actions-$INSTANCE_ID" -f "$key"
+  fi
+  echo
+  echo "PUBLIC key — give this to the server (SSH_PUBLIC_KEY='...' for scripts/setup-server.sh,"
+  echo "or append it to ~<deploy user>/.ssh/authorized_keys):"
+  echo
+  cat "$key.pub"
+  echo
+  echo "Keep the private file ($key) on this machine; phase F uploads it to GitHub."
+  exit 0
+fi
 
 require_vars INSTANCE_ID PUBLIC_DOMAIN DEPLOY_HOST DEPLOY_USER GITHUB_REPO GHCR_USERNAME SSH_KEY_FILE
 derive_defaults

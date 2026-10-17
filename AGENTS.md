@@ -7,3 +7,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
 
 <!-- END:nextjs-agent-rules -->
+
+## Project rules (read first)
+
+The permanent, non-negotiable rules for this project (pinned versions, architecture, Autocomplete instead of `<select>`, non-blocking pages, the full test pyramid, ESLint, git and database safety, **no attribution lines in commits or PRs**) are in [`docs/PROJECT_RULES.md`](docs/PROJECT_RULES.md). Every agent and contributor must follow them.
