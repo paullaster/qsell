@@ -42,7 +42,8 @@ export type AdminNavIconName =
   | 'UserCog'
   | 'Fingerprint'
   | 'LifeBuoy'
-  | 'Activity';
+  | 'Activity'
+  | 'FolderKanban';
 
 export interface AdminNavItem {
   /** Stable unique id across the whole tree */

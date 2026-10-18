@@ -91,6 +91,21 @@ export class DarajaC2b {
     private readonly consumer: C2bConsumer | null,
   ) {}
 
+  /** Told when a confirmed payment has been put on someone (by the rules, or by a person): Bill Manager invoices follow it. */
+  onPlaced: ((tx: ProviderTransactionRow) => Promise<void>) | null = null;
+
+  /** Calls the placed-hook with the transaction as it now stands. A problem there never undoes the payment. */
+  async notePlaced(txId: string): Promise<void> {
+    if (this.onPlaced === null) return;
+    const row = await this.txs.get(txId);
+    if (row?.state !== 'consumed') return;
+    try {
+      await this.onPlaced(row);
+    } catch (error) {
+      console.error('[payments] the placed-payment follow-up failed', error instanceof Error ? error.message : error);
+    }
+  }
+
   /** The method (shortcode, branch, bank account, G/L account) a payment to this shortcode belongs to. */
   private async methodFor(providerId: string, shortcode: string | null): Promise<PaymentMethodRow | null> {
     if (!has(shortcode)) return null;
@@ -171,6 +186,58 @@ export class DarajaC2b {
     if (created) await this.jobs.verifyTransaction(row.id, 2);
   }
 
+  /**
+   * Bill Manager says an invoice was paid. The notice is a claim like any other: the payment is written down under its M-Pesa
+   * code (once, whichever way it was announced first), checked with Safaricom, and only then put on the customer. A payment we
+   * already know from the paybill's own confirmation is not counted a second time.
+   */
+  async billNoticed(event: ProviderEventRow, claim: InboundClaim | null, providerId: string): Promise<void> {
+    await this.claimAnnounced(event, claim, providerId, 'bill', 'The notice has no transaction id or amount.');
+  }
+
+  /** The other business's payment to us through B2B Express Checkout, claimed under its M-Pesa code and then checked. */
+  async expressPaid(event: ProviderEventRow, claim: InboundClaim | null, providerId: string, methodId: string | null): Promise<void> {
+    await this.claimAnnounced(event, claim, providerId, 'b2b_express', 'The callback has no transaction id or amount.', methodId);
+  }
+
+  private async claimAnnounced(event: ProviderEventRow, claim: InboundClaim | null, providerId: string, kind: 'bill' | 'b2b_express', unreadable: string, methodId: string | null = null): Promise<void> {
+    if (!has(claim?.platformReference) || claim.amountCents === null) {
+      await this.events.setState(event.id, 'mismatch', { failureCode: 'UNREADABLE', failureReason: unreadable });
+      return;
+    }
+    if (!looksLikeReceipt(claim.platformReference)) {
+      await this.events.setState(event.id, 'mismatch', { failureCode: 'RECEIPT_FORMAT', failureReason: `"${claim.platformReference}" does not look like an M-Pesa transaction id.` });
+      return;
+    }
+    const ctx = await this.contexts.forProvider(providerId);
+    const method = has(methodId) ? ((await this.db.select().from(paymentMethods).where(eq(paymentMethods.id, methodId)))[0] ?? null) : await this.methodFor(providerId, claim.shortcode);
+    const creds = ctx.credentials as { shortcode?: string };
+    const shortcode = claim.shortcode ?? method?.channelNumber ?? creds.shortcode ?? null;
+    if (!method && shortcode !== creds.shortcode) {
+      await this.events.setState(event.id, 'mismatch', { failureCode: 'UNKNOWN_SHORTCODE', failureReason: `${shortcode ?? 'No shortcode'} is not one of this provider's paybills or tills.` });
+      return;
+    }
+    const { row, created, amountDiffers } = await this.txs.claim({
+      companyId: ctx.companyId,
+      providerId,
+      methodId: method?.id ?? null,
+      kind,
+      platformReference: claim.platformReference,
+      amount: (claim.amountCents / 100).toFixed(2),
+      payerMasked: claim.payerMasked,
+      payerHash: claim.payerFingerprint,
+      shortcode,
+      accountReference: claim.accountReference,
+      occurredAt: claim.occurredAt,
+    });
+    if (amountDiffers) {
+      await this.events.setState(event.id, 'mismatch', { failureCode: 'REFERENCE_REUSED', failureReason: `Transaction ${claim.platformReference} was already recorded for a different amount.`, platformReference: claim.platformReference });
+      return;
+    }
+    await this.events.setState(event.id, created ? 'awaiting_verification' : 'ignored', { platformReference: claim.platformReference, amount: (claim.amountCents / 100).toFixed(2), failureCode: created ? null : 'DUPLICATE', failureReason: created ? null : 'This transaction was already announced; nothing was counted twice.' });
+    if (created) await this.jobs.verifyTransaction(row.id, 2);
+  }
+
   /** Asks Safaricom about a claimed payment and, if it agrees, counts it. Safe to run repeatedly. */
   async verify(txId: string): Promise<{ state: string; reason?: string }> {
     const tx = await this.txs.get(txId);
@@ -237,6 +304,7 @@ export class DarajaC2b {
     }
     if (placed) {
       await this.txs.consume(tx.id, placed.type, placed.id);
+      await this.notePlaced(tx.id);
       return { state: 'consumed' };
     }
     await this.txs.setState(tx.id, 'review', { verifiedBy: by });
@@ -305,7 +373,7 @@ export class DarajaC2b {
     const stale = await this.db
       .select({ id: providerTransactions.id })
       .from(providerTransactions)
-      .where(and(eq(providerTransactions.state, 'claimed'), inArray(providerTransactions.kind, ['c2b', 'bill']), lt(providerTransactions.updatedAt, new Date(Date.now() - 60_000))))
+      .where(and(eq(providerTransactions.state, 'claimed'), inArray(providerTransactions.kind, ['c2b', 'bill', 'b2b_express']), lt(providerTransactions.updatedAt, new Date(Date.now() - 60_000))))
       .limit(limit);
     for (const s of stale) await this.jobs.verifyTransaction(s.id, 0);
     return stale.length;

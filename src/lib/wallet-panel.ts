@@ -11,10 +11,19 @@ export const ENTRY_TYPE: Record<string, string> = {
   tender: 'Paid an order',
   credit_note: 'Credit note excess kept',
   cash_out: 'Paid out as a refund',
+  adjustment: 'Adjusted by the business',
+  expiry: 'Lapsed unused',
   reversal: 'Put back',
 };
 
 export const entryLabel = (type: string): string => (Object.hasOwn(ENTRY_TYPE, type) ? ENTRY_TYPE[type] : type);
+
+/** What a wallet in another currency is carried at in the books, in words. Null for a wallet in the books' currency. */
+export function carriedWords(currency: string, rate: string | null, worth: string): string | null {
+  if (rate === null) return null;
+  const trimmed = rate.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+  return `Booked at ${trimmed} for each ${currency}, so worth ${worth} in the books.`;
+}
 
 export interface WalletEntry {
   id: number;

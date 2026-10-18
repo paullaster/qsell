@@ -183,8 +183,8 @@ export async function postingSetupAction() {
     const ov = await fin().postingSetup.overview(ctx.companyId);
     // Only the accounts the setup names are looked up; the rest are searched for when one is chosen.
     const named = new Set<string>();
-    for (const g of ov.general) for (const id of [g.salesAccountId, g.salesReturnsAccountId, g.salesDiscountAccountId, g.cogsAccountId, g.inventoryAdjustmentAccountId]) if (id !== null) named.add(id);
-    for (const c of ov.customer) for (const id of [c.receivablesAccountId, c.customerDepositsAccountId, c.refundsPayableAccountId, c.paymentDiscountAccountId, c.writeOffAccountId, c.roundingAccountId, c.fxGainAccountId, c.fxLossAccountId, c.serviceChargeAccountId, c.rebateExpenseAccountId, c.giftCardLiabilityAccountId, c.loyaltyProvisionAccountId]) if (id !== null) named.add(id);
+    for (const g of ov.general) for (const id of [g.salesAccountId, g.salesReturnsAccountId, g.salesDiscountAccountId, g.cogsAccountId, g.inventoryAdjustmentAccountId, g.inventoryAccountId, g.inventoryClearingAccountId]) if (id !== null) named.add(id);
+    for (const c of ov.customer) for (const id of [c.receivablesAccountId, c.customerDepositsAccountId, c.refundsPayableAccountId, c.paymentDiscountAccountId, c.writeOffAccountId, c.roundingAccountId, c.fxGainAccountId, c.fxLossAccountId, c.serviceChargeAccountId, c.rebateExpenseAccountId, c.giftCardLiabilityAccountId, c.loyaltyProvisionAccountId, c.creditForfeitAccountId, c.creditAdjustmentAccountId]) if (id !== null) named.add(id);
     const accountLabels = await fin().setup.accountLabels(ctx.companyId, [...named]);
     return {
       business: ov.business.map((b) => ({ id: b.id, code: b.code, name: b.name })),
@@ -201,6 +201,8 @@ export async function postingSetupAction() {
           sales_discount: g.salesDiscountAccountId,
           cogs: g.cogsAccountId,
           inventory_adjustment: g.inventoryAdjustmentAccountId,
+          inventory: g.inventoryAccountId,
+          inventory_clearing: g.inventoryClearingAccountId,
         },
       })),
       customer: ov.customer.map((c) => {
@@ -217,6 +219,8 @@ export async function postingSetupAction() {
             rebate_expense: c.rebateExpenseAccountId,
             gift_card_liability: c.giftCardLiabilityAccountId,
             loyalty_provision: c.loyaltyProvisionAccountId,
+            credit_forfeit: c.creditForfeitAccountId,
+            credit_adjustment: c.creditAdjustmentAccountId,
         };
         return { id: c.id, code: c.code, name: c.name, accounts };
       }),

@@ -35,6 +35,7 @@ export const SYSTEM_REASON_CODES: {
     description: 'Following an audit or review finding',
     requiresComment: true,
   },
+  { code: 'CREDIT_LAPSED', description: 'Customer credit nobody used lapsed under the expiry policy' },
   { code: 'OTHER', description: 'Other (explain in the comment)', requiresComment: true },
 ];
 

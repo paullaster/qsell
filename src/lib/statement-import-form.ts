@@ -25,6 +25,11 @@ export const DATE_FORMATS = [
 
 export type AmountMode = 'single' | 'split';
 
+/** What the file turned out to be. Only a CSV (or a workbook turned into one) needs columns chosen. */
+export type FileFormat = 'csv' | 'mt940' | 'camt053';
+
+export const isFileFormat = (v: string): v is FileFormat => v === 'csv' || v === 'mt940' || v === 'camt053';
+
 /** The mapping to start from: what was saved for the account if it still fits the file, else the suggestion, else blank. */
 export function startingMapping(saved: CsvMapping | null, suggested: CsvMapping | null, headers: readonly string[]): CsvMapping {
   if (saved !== null && saved.date !== '' && headers.includes(saved.date)) return saved;
@@ -42,8 +47,8 @@ export function cleanMapping(map: CsvMapping, mode: AmountMode): CsvMapping {
 const has = (v: string | undefined): boolean => v !== undefined && v !== '';
 
 /** True when enough columns are chosen to check the file. */
-export function mappingReady(format: 'csv' | 'mt940', map: CsvMapping, mode: AmountMode): boolean {
-  if (format === 'mt940') return true;
+export function mappingReady(format: FileFormat, map: CsvMapping, mode: AmountMode): boolean {
+  if (format !== 'csv') return true;
   if (!has(map.date) || map.description.length === 0) return false;
   return mode === 'single' ? has(map.amount) : has(map.paidIn) || has(map.withdrawn);
 }
@@ -54,7 +59,7 @@ export const withDescription = (map: CsvMapping, index: 0 | 1, value: string): C
   return { ...map, description: next.filter((d) => d !== '') };
 };
 
-export const importFields = (format: 'csv' | 'mt940', map: CsvMapping, mode: AmountMode, save: boolean): Record<string, string> => ({
+export const importFields = (format: FileFormat, map: CsvMapping, mode: AmountMode, save: boolean): Record<string, string> => ({
   format,
   mapping: JSON.stringify(cleanMapping(map, mode)),
   headerRow: String(map.headerRow),

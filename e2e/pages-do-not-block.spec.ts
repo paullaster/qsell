@@ -34,6 +34,13 @@ const screens: [string, string, RegExp, string | RegExp][] = [
   ['company modules', '/admin/company/modules', /Loading the module names/, 'Module names'],
   ['company support', '/admin/company/support', /Loading the support settings/, 'Customer support'],
   ['customers', '/admin/customers', /Loading customers/, 'Customers'],
+  ['exchange rates', '/admin/finance/exchange-rates', /Loading exchange rates/, 'Exchange rates'],
+  ['stock in the books', '/admin/finance/inventory-posting', /Loading stock in the books/, 'Stock in the books'],
+  ['bank payment files', '/admin/finance/refunds/files', /Loading bank payment files/, 'Bank payment files'],
+  ['projects', '/admin/projects', /Loading projects/, 'Projects'],
+  ['new project', '/admin/projects/new', /Loading the new project/, 'New project'],
+  ['credit adjustments', '/admin/finance/receivables/credit-adjustments', /Loading credit adjustments/, 'Customer credit adjustments'],
+  ['new credit adjustment', '/admin/finance/receivables/credit-adjustments/new', /Loading the credit adjustment form/, 'Change a customer\'s credit'],
   ['payment settings', '/admin/settings/payments', /Loading payment settings/, 'Payments'],
 ];
 

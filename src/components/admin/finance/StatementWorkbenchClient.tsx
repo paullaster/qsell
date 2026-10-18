@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { use, useState } from 'react';
 import {
+  bankFeedStatusAction,
+  bankMatchRulesAction,
   candidateEntriesAction,
   chargeFromStatementLineAction,
   ignoreStatementLineAction,
@@ -20,6 +22,7 @@ import { has } from '@/lib/finance-history';
 import type { Choice } from '@/lib/payment-options';
 import { ReconcilePanel } from './ReconcilePanel';
 import { StatementImportPanel } from './StatementImportPanel';
+import { StatementSettingsPanel, type SettingsLoads } from './StatementSettingsPanel';
 import { CustomerReceiptPanel, FindEntriesPanel, ReasonPanel, type CandidateEntry } from './StatementLinePanels';
 import { Chip, LoadFailed, Message, PageHeader, buttonClass, cardClass, dangerClass, money, primaryClass, type Notice, attempt } from './ui';
 
@@ -39,6 +42,7 @@ function StatementWorkbench({ initial }: { initial: WorkbenchView }) {
   const [filter, setFilter] = useState<Filter>('open');
   const [panel, setPanel] = useState<Panel>(null);
   const [importing, setImporting] = useState(false);
+  const [settings, setSettings] = useState<SettingsLoads | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
   const [candidates, setCandidates] = useState<CandidateEntry[] | null>(null);
@@ -167,11 +171,13 @@ function StatementWorkbench({ initial }: { initial: WorkbenchView }) {
           <div className="flex flex-wrap gap-2">
             <Link href="/admin/finance/bank-statements" className={buttonClass}>All accounts</Link>
             {view.can.match ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void autoMatch()}>Match automatically</button> : null}
+            <button type="button" className={buttonClass} aria-expanded={settings !== null} onClick={() => setSettings(settings === null ? { rules: bankMatchRulesAction(acc.id), feed: bankFeedStatusAction(acc.id) } : null)}>Rules and feed</button>
             {view.can.import ? <button type="button" className={primaryClass} aria-expanded={importing} onClick={() => setImporting(!importing)}>Import a statement</button> : null}
           </div>
         }
       />
       <Message notice={notice} />
+      {settings !== null ? <StatementSettingsPanel bankAccountId={acc.id} loads={settings} onClose={() => setSettings(null)} /> : null}
       {importing ? <StatementImportPanel bankAccountId={acc.id} onClose={() => { setImporting(false); void reload(); }} /> : null}
 
       <div role="group" aria-label="Show lines" className="flex flex-wrap gap-2">

@@ -46,7 +46,7 @@ function RefundsView({ initial, report }: { initial: Page; report: Report | null
       <PageHeader
         title="Refunds"
         intro="Money paid back to customers. Each one comes out of something the customer is owed, is approved when a workflow says so, and is paid with evidence by someone other than the approver."
-        actions={initial.can.create ? <Link href="/admin/finance/refunds/new" className={primaryClass}>New refund</Link> : null}
+        actions={<><Link href="/admin/finance/refunds/files" className={buttonClass}>Bank payment files</Link>{initial.can.create ? <Link href="/admin/finance/refunds/new" className={primaryClass}>New refund</Link> : null}</>}
       />
       <Message notice={notice} />
 

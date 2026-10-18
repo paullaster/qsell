@@ -1,6 +1,6 @@
 import { eq, sql, type SQL } from 'drizzle-orm';
 import { bankAccounts, customers, glAccounts, paymentMethods, reasonCodes } from '@/server/db/drizzle/schema';
-import { CHEQUE_STATUS, RECEIPT_STATUS, REFUND_STATUS, statusChoices } from '@/lib/finance-statuses';
+import { ADJUSTMENT_STATUS, CHEQUE_STATUS, RECEIPT_STATUS, REFUND_FILE_STATUS, REFUND_STATUS, statusChoices } from '@/lib/finance-statuses';
 import { METHOD_KINDS, labelOf } from '@/lib/payment-options';
 import { AUTO_APPLY_MODES, CREDIT_NOTE_MODES, OVERPAYMENT_MODES } from '@/lib/wallet-policy';
 import { CONDITIONS, DISPOSITIONS } from '@/lib/return-form';
@@ -11,6 +11,7 @@ import { getContainer } from '@/server/di/container';
 import { ACCOUNT_CATEGORIES, ACCOUNT_TYPES, CALENDAR_SHAPES, DIMENSION_RULES, NORMAL_BALANCES } from '@/lib/gl-options';
 import { BANK_KINDS } from '@/lib/bank-account-form';
 import { DATE_FORMATS } from '@/lib/statement-import-form';
+import { CERTAINTY_CHOICES, SUGGEST_CHOICES } from '@/lib/bank-match-form';
 import { acceptFilters, LookupFilterError, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
 
 const ALLOCATION_CHOICES = [
@@ -52,7 +53,7 @@ const bankCurrency = sql<string>`(select ${bankAccounts.currency} from ${bankAcc
 const bankLabel = sql<string>`(select ${bankAccounts.code} || ' — ' || ${bankAccounts.name} from ${bankAccounts} where ${bankAccounts.id} = ${paymentMethods.balancingBankAccountId})`;
 const bankOpen = sql`exists (select 1 from ${bankAccounts} where ${bankAccounts.id} = ${paymentMethods.balancingBankAccountId} and ${bankAccounts.blocked} = false)`;
 
-const methodSource = (key: string, permission: 'receipts:create' | 'refunds:create', usedFor: 'customer_receipt' | 'customer_refund', manualRefundOnly: boolean) =>
+const methodSource = (key: string, permission: PermissionKey, usedFor: 'customer_receipt' | 'customer_refund', manualRefundOnly: boolean) =>
   tableSource({
     key,
     permission,
@@ -134,6 +135,31 @@ const refundSources = staticSource({
   },
 });
 
+/** What a customer is owed that can be given up (an excess on a credit note, an unapplied receipt); the customer is the one filter. */
+const adjustmentSources = staticSource({
+  key: 'adjustment-sources',
+  permission: 'credit_adjustments:request',
+  async items({ companyId, filters }) {
+    const { customer = '', ...rest } = filters;
+    if (Object.keys(rest).length > 0 || !UUID.test(customer)) throw new LookupFilterError('Choose the customer first.');
+    const rows = await getContainer().finance.refunds.obligations(companyId, customer);
+    return rows
+      .filter((o) => o.kind === 'credit_note_excess' || o.kind === 'receipt_unapplied')
+      .map((o) => ({
+        id: `${o.kind}:${o.id}`,
+        label: o.label,
+        description: `${o.currency} ${(o.availableCents / 100).toFixed(2)} left`,
+        meta: { kind: o.kind, sourceId: o.id, currency: o.currency, available: (o.availableCents / 100).toFixed(2) },
+      }));
+  },
+});
+
+const ADJUSTMENT_KINDS = [
+  { id: 'waive_excess', label: 'Give up credit the customer is owed' },
+  { id: 'wallet_increase', label: 'Add to the customer\'s wallet' },
+  { id: 'wallet_decrease', label: 'Take off the customer\'s wallet' },
+] as const;
+
 /** Banks (as payment methods) a received cheque can be deposited into. */
 const chequeDepositMethods = tableSource({
   key: 'cheque-deposit-methods',
@@ -154,27 +180,48 @@ const chequeDepositMethods = tableSource({
   toOption: (row) => ({ id: text(row.id), label: `${text(row.label)} — ${text(row.bank)}`, description: null, badge: null, meta: { currency: text(row.currency) } }),
 });
 
-/** Methods a refund can be paid out through by hand: open, in the refund's currency, not cheques. */
-const refundPayoutMethods = tableSource({
-  key: 'refund-payout-methods',
-  permission: 'refunds:record_manual_payout',
+/** Methods money can be paid out through, or come back into, by hand: open, in one currency, not cheques. */
+const payoutMethods = (key: string, permission: PermissionKey) =>
+  tableSource({
+    key,
+    permission,
+    table: paymentMethods,
+    id: paymentMethods.id,
+    label: paymentMethods.name,
+    searchColumns: [paymentMethods.name, paymentMethods.code],
+    select: { bank: bankLabel },
+    scope: ({ companyId, filters }) => {
+      const { currency = '', ...rest } = filters;
+      if (Object.keys(rest).length > 0 || !/^[A-Z]{3}$/.test(currency)) throw new LookupFilterError('Unsupported filter.');
+      return [
+        eq(paymentMethods.companyId, companyId),
+        eq(paymentMethods.enabled, true),
+        sql`${paymentMethods.kind} <> 'cheque'`,
+        bankOpen,
+        sql`${bankCurrency} = ${currency}`,
+      ];
+    },
+    toOption: (row) => ({ id: text(row.id), label: `${text(row.label)} — ${text(row.bank)}`, description: null, badge: null }),
+  });
+
+/** Methods that pay out of a real bank account (not cash, not mobile money): what a bank payment file is paid from. */
+const refundFileMethods = tableSource({
+  key: 'refund-file-methods',
+  permission: 'refund_files:generate',
   table: paymentMethods,
   id: paymentMethods.id,
   label: paymentMethods.name,
   searchColumns: [paymentMethods.name, paymentMethods.code],
-  select: { bank: bankLabel },
+  select: { bank: bankLabel, currency: bankCurrency },
   scope: ({ companyId, filters }) => {
-    const { currency = '', ...rest } = filters;
-    if (Object.keys(rest).length > 0 || !/^[A-Z]{3}$/.test(currency)) throw new LookupFilterError('Unsupported filter.');
+    acceptFilters(filters, {});
     return [
       eq(paymentMethods.companyId, companyId),
       eq(paymentMethods.enabled, true),
-      sql`${paymentMethods.kind} <> 'cheque'`,
-      bankOpen,
-      sql`${bankCurrency} = ${currency}`,
+      sql`exists (select 1 from ${bankAccounts} where ${bankAccounts.id} = ${paymentMethods.balancingBankAccountId} and ${bankAccounts.kind} = 'bank' and ${bankAccounts.blocked} = false)`,
     ];
   },
-  toOption: (row) => ({ id: text(row.id), label: `${text(row.label)} — ${text(row.bank)}`, description: null, badge: null }),
+  toOption: (row) => ({ id: text(row.id), label: `${text(row.label)} — ${text(row.bank)}`, description: null, badge: null, meta: { currency: text(row.currency) } }),
 });
 
 const fixedChoices = (key: string, permission: PermissionKey, list: readonly { id: string; label: string }[]) =>
@@ -187,7 +234,7 @@ const fixedChoices = (key: string, permission: PermissionKey, list: readonly { i
     },
   });
 
-const fixedStatuses = (key: string, permission: 'receipts:read' | 'refunds:read', table: Parameters<typeof statusChoices>[0]) =>
+const fixedStatuses = (key: string, permission: PermissionKey, table: Parameters<typeof statusChoices>[0]) =>
   staticSource({
     key,
     permission,
@@ -290,13 +337,16 @@ export const FINANCE_LOOKUP_SOURCES: readonly LookupSource[] = [
   reasons('statement-reasons', 'bank_statements:read'),
   fixedChoices('bank-account-kinds', 'bank_accounts:read', BANK_KINDS),
   fixedChoices('statement-allocation-modes', 'bank_statements:create_receipt', ALLOCATION_CHOICES),
+  fixedChoices('match-certainty-modes', 'bank_statements:read', CERTAINTY_CHOICES),
+  fixedChoices('match-suggest-modes', 'bank_statements:read', SUGGEST_CHOICES),
   fixedChoices('statement-date-formats', 'bank_statements:import', DATE_FORMATS),
   methodSource('receipt-methods', 'receipts:create', 'customer_receipt', false),
   methodSource('refund-methods', 'refunds:create', 'customer_refund', true),
   reasons('receipt-reasons', 'receipts:read'),
   reasons('refund-reasons', 'refunds:read'),
   chequeDepositMethods,
-  refundPayoutMethods,
+  payoutMethods('refund-payout-methods', 'refunds:record_manual_payout'),
+  payoutMethods('refund-return-methods', 'refunds:record_return'),
   fixedChoices('allocation-modes', 'receipts:read', ALLOCATION_CHOICES),
   reasons('wallet-reasons', 'wallet:read'),
   reasons('return-close-reasons', 'return_receipts:read'),
@@ -307,6 +357,22 @@ export const FINANCE_LOOKUP_SOURCES: readonly LookupSource[] = [
   fixedChoices('return-dispositions', 'return_receipts:read', DISPOSITIONS),
   fixedChoices('credit-note-reasons', 'credit_notes:create', CREDIT_NOTE_REASONS.map((id) => ({ id, label: reasonLabel(id) }))),
   refundSources,
+  adjustmentSources,
+  refundFileMethods,
+  customerSource('adjustment-customers', 'credit_adjustments:request'),
+  reasons('adjustment-reasons', 'credit_adjustments:request'),
+  reasons('refund-return-reasons', 'refunds:record_return'),
+  reasons('refund-file-reasons', 'refund_files:cancel'),
+  methodSource('gift-card-methods', 'pricing:manage', 'customer_receipt', false),
+  methodSource('refund-replacement-methods', 'refunds:record_return', 'customer_refund', true),
+  fixedChoices('fx-currencies', 'exchange_rates:read', [
+    ['USD', 'US dollar'], ['EUR', 'Euro'], ['GBP', 'Pound sterling'], ['UGX', 'Ugandan shilling'], ['TZS', 'Tanzanian shilling'], ['RWF', 'Rwandan franc'],
+    ['ZAR', 'South African rand'], ['AED', 'UAE dirham'], ['CNY', 'Chinese yuan'], ['INR', 'Indian rupee'], ['JPY', 'Japanese yen'], ['CAD', 'Canadian dollar'], ['AUD', 'Australian dollar'], ['CHF', 'Swiss franc'],
+  ].map(([id = '', name = '']) => ({ id, label: `${id} · ${name}` }))),
+  fixedChoices('adjustment-kinds', 'credit_adjustments:request', ADJUSTMENT_KINDS),
+  fixedChoices('refund-file-formats', 'refund_files:generate', [{ id: 'csv', label: 'CSV (opens in Excel; most banks\' upload tools)' }, { id: 'pain001', label: 'ISO 20022 XML (pain.001)' }]),
+  fixedStatuses('adjustment-statuses', 'credit_adjustments:read', ADJUSTMENT_STATUS),
+  fixedStatuses('refund-file-statuses', 'refund_files:read', REFUND_FILE_STATUS),
   fixedStatuses('receipt-statuses', 'receipts:read', RECEIPT_STATUS),
   fixedStatuses('cheque-statuses', 'receipts:read', CHEQUE_STATUS),
   fixedStatuses('refund-statuses', 'refunds:read', REFUND_STATUS),

@@ -5,10 +5,10 @@ import { useRouter } from 'next/navigation';
 import { savedStatementFormatAction, searchStatementColumnsAction } from '@/server/domains/finance/bank-statement-actions';
 import { Autocomplete } from '@/components/ui/autocomplete/Autocomplete';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
-import { BLANK_MAPPING, DATE_FORMATS, importFields, importedMessage, lineLabel, mappingReady, startingAmountMode, startingMapping, withDescription, withKeys, type AmountMode, type CsvMapping } from '@/lib/statement-import-form';
+import { BLANK_MAPPING, DATE_FORMATS, importFields, isFileFormat, importedMessage, lineLabel, mappingReady, startingAmountMode, startingMapping, withDescription, withKeys, type AmountMode, type CsvMapping, type FileFormat } from '@/lib/statement-import-form';
 import { Message, buttonClass, cardClass, money, primaryClass, type Notice, attempt } from './ui';
 
-interface Inspect { headers: string[]; sample: string[][]; suggested: CsvMapping | null; mt940: boolean }
+interface Inspect { headers: string[]; sample: string[][]; suggested: CsvMapping | null; fixed: boolean; fileFormat: string; source: string }
 interface Preview {
   errors: { row: number; message: string }[];
   errorCount: number;
@@ -49,7 +49,7 @@ export function StatementImportPanel({ bankAccountId, onClose }: { bankAccountId
   const fileRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [info, setInfo] = useState<Inspect | null>(null);
-  const [format, setFormat] = useState<'csv' | 'mt940'>('csv');
+  const [format, setFormat] = useState<FileFormat>('csv');
   const [map, setMap] = useState<CsvMapping>(BLANK_MAPPING);
   const [amountMode, setAmountMode] = useState<AmountMode>('split');
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -69,8 +69,8 @@ export function StatementImportPanel({ bankAccountId, onClose }: { bankAccountId
       return;
     }
     setInfo(res.data);
-    if (res.data.mt940) {
-      setFormat('mt940');
+    if (res.data.fixed && isFileFormat(res.data.fileFormat)) {
+      setFormat(res.data.fileFormat);
       return;
     }
     setFormat('csv');
@@ -143,8 +143,8 @@ export function StatementImportPanel({ bankAccountId, onClose }: { bankAccountId
       </div>
       <Message notice={notice} />
       <div>
-        <label htmlFor={`${uid}-file`} className="text-xs font-semibold text-fg-muted">Statement file (CSV saved from Excel, an M-Pesa export, or MT940; up to 10 MB)</label>
-        <input id={`${uid}-file`} ref={fileRef} type="file" accept=".csv,.txt,.sta,.mt940,text/csv,text/plain" disabled={busy} className="mt-1 block min-h-10 text-sm" onChange={(e) => { const f = e.target.files?.[0]; if (f) void choose(f); }} />
+        <label htmlFor={`${uid}-file`} className="text-xs font-semibold text-fg-muted">Statement file (Excel, CSV, an M-Pesa export, MT940 or camt.053 XML; up to 10 MB)</label>
+        <input id={`${uid}-file`} ref={fileRef} type="file" accept=".csv,.txt,.sta,.mt940,.xml,.xlsx,text/csv,text/plain,text/xml,application/xml,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={busy} className="mt-1 block min-h-10 text-sm" onChange={(e) => { const f = e.target.files?.[0]; if (f) void choose(f); }} />
       </div>
 
       {info !== null && format === 'csv' ? (
@@ -181,7 +181,8 @@ export function StatementImportPanel({ bankAccountId, onClose }: { bankAccountId
           <label className="flex min-h-10 items-center gap-2 text-sm"><input type="checkbox" checked={save} onChange={(e) => setSave(e.target.checked)} /> Remember these columns for this account</label>
         </fieldset>
       ) : null}
-      {info !== null && format === 'mt940' ? <p className="text-sm text-fg-muted">This is an MT940 file: no columns to choose.</p> : null}
+      {info !== null && format !== 'csv' ? <p className="text-sm text-fg-muted">This is {info.source}: no columns to choose.</p> : null}
+      {info !== null && format === 'csv' && info.source.startsWith('an Excel') ? <p className="text-sm text-fg-muted">This is {info.source}. Choose the columns below as for a CSV.</p> : null}
 
       {info === null ? null : <div className="flex flex-wrap gap-2"><button type="button" className={buttonClass} disabled={busy || !ready} onClick={() => void check()}>Check the file</button></div>}
 

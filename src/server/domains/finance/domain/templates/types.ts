@@ -28,6 +28,8 @@ export interface ChartTemplate {
     salesDiscount: string;
     cogs: string;
     inventoryAdjustment: string;
+    inventory: string;
+    inventoryClearing: string;
   }[];
   /** Standard money containers, each pointing at an account number in this chart. */
   bankAccounts: {
@@ -68,6 +70,8 @@ export interface ChartTemplate {
     rebateExpense: string;
     giftCardLiability: string;
     loyaltyProvision: string;
+    creditForfeit: string;
+    creditAdjustment: string;
   }[];
   /** Where tax charged on sales is owed. */
   outputTaxAccount: string;

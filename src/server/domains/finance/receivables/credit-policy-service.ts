@@ -4,7 +4,7 @@ import { customerCreditPolicies, customerPostingGroups, customers, financeSettin
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import { fromCents, toCents } from '../domain/receivables';
-import { pickPolicy, type CreditPolicy, type PolicyRow } from '../domain/wallet';
+import { checkExpiry, pickPolicy, type CreditPolicy, type PolicyRow } from '../domain/wallet';
 import { FinanceError, type FinanceContext } from '../errors';
 
 import { has } from '@/lib/values';
@@ -21,6 +21,8 @@ export interface PolicyInput {
   refundsEnabled: boolean;
   walletCashOut: boolean;
   maxBalance: string | null;
+  expiryDays?: number | null;
+  expiryNoticeDays?: number;
   label: string;
 }
 
@@ -43,6 +45,8 @@ export class CreditPolicyService {
       refundsEnabled: r.refundsEnabled,
       walletCashOut: r.walletCashOut,
       maxCents: r.maxBalance === null ? null : toCents(r.maxBalance),
+      expiryDays: r.expiryDays,
+      expiryNoticeDays: r.expiryNoticeDays,
       label: r.label,
     };
   }
@@ -85,6 +89,10 @@ export class CreditPolicyService {
         throw new FinanceError('LIMIT_INVALID', 'The most a wallet may hold must be an amount above zero.');
       }
     }
+    const expiryDays = input.expiryDays ?? null;
+    const expiryNoticeDays = input.expiryNoticeDays ?? 30;
+    const expiryProblem = checkExpiry(expiryDays, expiryNoticeDays);
+    if (expiryProblem !== null) throw new FinanceError('EXPIRY_INVALID', expiryProblem);
     const today = businessDate();
     await this.db.transaction(async (tx) => {
       if (has(input.groupCode)) {
@@ -100,6 +108,8 @@ export class CreditPolicyService {
         refundsEnabled: input.refundsEnabled,
         walletCashOut: input.walletCashOut,
         maxBalance: max,
+        expiryDays,
+        expiryNoticeDays,
         label,
         createdBy: ctx.actor.id ?? 'system',
       };
@@ -123,7 +133,7 @@ export class CreditPolicyService {
           action: 'finance.credit_policy_saved',
           actor: ctx.actor,
           inputs: { origin: ctx.origin },
-          outcome: { effectiveFrom: today, walletEnabled: input.walletEnabled, allowDeposits: input.allowDeposits, overpaymentDefault: input.overpaymentDefault, autoApply: input.autoApply, creditNoteExcess: input.creditNoteExcess, refundsEnabled: input.refundsEnabled, walletCashOut: input.walletCashOut, maxBalance: max, label },
+          outcome: { effectiveFrom: today, walletEnabled: input.walletEnabled, allowDeposits: input.allowDeposits, overpaymentDefault: input.overpaymentDefault, autoApply: input.autoApply, creditNoteExcess: input.creditNoteExcess, refundsEnabled: input.refundsEnabled, walletCashOut: input.walletCashOut, maxBalance: max, expiryDays, expiryNoticeDays, label },
         },
         tx,
       );

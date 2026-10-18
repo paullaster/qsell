@@ -25,6 +25,11 @@ test.describe('phone layout of the lists', () => {
   for (const [url, heading] of [
     ['/admin/transactions/ledger', /ledger/i],
     ['/admin/transactions/reconcile', /reconcil/i],
+    ['/admin/finance/exchange-rates', /exchange rates/i],
+    ['/admin/finance/inventory-posting', /stock in the books/i],
+    ['/admin/finance/refunds/files', /bank payment files/i],
+    ['/admin/finance/receivables/credit-adjustments', /credit adjustments/i],
+    ['/admin/payments/bills', /bill manager/i],
   ] as const) {
     test(`${url} needs no sideways scrolling`, async ({ page }) => {
       await gotoAdmin(page, url, heading);

@@ -85,6 +85,35 @@ export async function payRefundThroughMpesaAction(id: string) {
   }, [ROOT, `${ROOT}/${id}`]);
 }
 
+/** Money from a paid refund came back: record it, and start a replacement refund to details that work. */
+export async function recordRefundReturnAction(id: string, input: { amount?: string; returnedOn?: string; reference: string; receivedIntoMethodId: string; reasonCode: string; reasonText?: string; replacement: { paymentMethodId: string; payoutDetails: Record<string, string> } }) {
+  return await run('refunds:record_return', { surface: 'finance/refunds/detail', action: 'record_return' }, async (ctx) => {
+    return await fin().refunds.recordReturn(ctx, id, { ...input, mayChangeDestination: await canPermission('refunds:change_destination'), permissions: await postingPermissions() });
+  }, [ROOT, `${ROOT}/${id}`]);
+}
+
+/** A payout that could not be confirmed: ask Safaricom again about its receipt. */
+export async function recheckRefundPayoutAction(id: string) {
+  return await run('refunds:resolve_payout', { surface: 'finance/refunds/detail', action: 'recheck_payout' }, async (ctx) => {
+    const held = await fin().refunds.doubtfulPayout(ctx.companyId, id);
+    const out = await getContainer().paymentEngine.recheckPayout(held.id);
+    if (!out.ok) throw new FinanceError('RECHECK_REFUSED', out.error);
+    await fin().refunds.noteEvent(ctx, id, 'payout_rechecked', { operation: held.id, receipt: held.reference });
+    return { operationId: held.id };
+  }, [ROOT, `${ROOT}/${id}`]);
+}
+
+/** A payout that could not be confirmed, closed by a person who looked at the statement. */
+export async function closeRefundPayoutAction(id: string, input: { moneyLeft: boolean; reason: string }) {
+  return await run('refunds:resolve_payout', { surface: 'finance/refunds/detail', action: 'close_payout' }, async (ctx) => {
+    const held = await fin().refunds.doubtfulPayout(ctx.companyId, id);
+    const out = await getContainer().paymentEngine.closeDoubtfulPayout({ opId: held.id, userId: ctx.actor.id ?? 'system', reason: input.reason, moneyLeft: input.moneyLeft });
+    if (!out.ok) throw new FinanceError('CLOSE_REFUSED', out.error);
+    await fin().refunds.noteEvent(ctx, id, input.moneyLeft ? 'payout_closed_money_left' : 'payout_closed_not_paid', { operation: held.id }, { text: input.reason.trim() });
+    return { moneyLeft: input.moneyLeft };
+  }, [ROOT, `${ROOT}/${id}`]);
+}
+
 export async function listRefundsAction(filter: { status?: RefundStatus; q?: string; before?: string } = {}) {
   return await run('refunds:read', { surface: 'finance/refunds', action: 'list' }, async (ctx) => {
     const page = await fin().refunds.list(ctx.companyId, filter);
@@ -116,6 +145,13 @@ export async function refundDetailAction(id: string) {
     const d = await fin().refunds.detail(ctx.companyId, id);
     if (!d) throw new FinanceError('NOT_FOUND', 'That refund does not exist.');
     const media = getContainer().media;
+    const payouts = await fin().refunds.payoutAttempts(ctx.companyId, id);
+    const [returns, replaces, returnable, inFile] = await Promise.all([
+      fin().refunds.returnsOf(ctx.companyId, id),
+      d.r.sourceKind === 'returned_payout' ? fin().refunds.replacedNumber(ctx.companyId, d.r.sourceId) : Promise.resolve(null),
+      d.r.status === 'paid' ? fin().refunds.returnableCents(ctx.companyId, id, d.r.amount) : Promise.resolve(0),
+      d.r.status === 'approved' ? fin().refunds.liveFile(ctx.companyId, id) : Promise.resolve(null),
+    ]);
     const attachments = await Promise.all(d.attachments.map(async (a) => ({ id: a.id, fileName: a.fileName, note: a.note, createdAt: a.createdAt.toISOString(), url: await media.deliveryUrlById(a.mediaAssetId).catch(() => null) })));
     const r = d.r;
     const name = (x: string | null) => (has(x) ? (d.actors[x] ?? x) : null);
@@ -142,12 +178,20 @@ export async function refundDetailAction(id: string) {
       payoutReference: r.payoutReference,
       payoutDate: r.payoutDate,
       attachments,
+      returns: returns.map((x) => ({ id: x.id, amount: x.amount, reference: x.reference, on: x.returnedOn, replacementId: x.replacementRefundId })),
+      returnable: fromCents(returnable),
+      inFile: inFile === null ? null : { id: inFile.fileId, number: inFile.number },
+      replacesNumber: replaces,
+      payouts: payouts.map((p) => ({ id: p.id, status: p.status, reference: p.reference, failure: p.failureReason, at: p.createdAt.toISOString() })),
       events: d.events.map((e) => ({ id: String(e.id), event: e.event, from: e.fromStatus, to: e.toStatus, reasonCode: e.reasonCode, reasonText: e.reasonText, by: name(e.actorId) ?? e.actorType, surface: (e.origin as { surface?: string }).surface ?? null, permission: (e.origin as { permissionUsed?: string }).permissionUsed ?? null, at: e.createdAt.toISOString(), data: e.data })),
       can: {
         submit: await canPermission('refunds:submit'),
         cancel: await canPermission('refunds:cancel'),
         pay: await canPermission('refunds:record_manual_payout'),
         payAutomatic: await canPermission('refunds:pay_automatic'),
+        resolvePayout: await canPermission('refunds:resolve_payout'),
+        recordReturn: await canPermission('refunds:record_return'),
+        changeDestination: await canPermission('refunds:change_destination'),
         attach: await canPermission('refunds:upload_evidence'),
       },
     };

@@ -17,7 +17,7 @@ it. The template is `deploy/instance.env.example`; real copies are git-ignored.
 
 | Step                                                      | Script                                                               | Where it runs              |
 | --------------------------------------------------------- | -------------------------------------------------------------------- | -------------------------- |
-| Create the deploy key                                     | `configure-github-environment.sh --generate-key`                     | your laptop                |
+| Create the deploy key                                     | `configure-github-environment.sh --key-only`                         | your laptop                |
 | Bootstrap the host                                        | `setup-server.sh` (takes `APP_USER`, `APP_DIR` and `SSH_PUBLIC_KEY`) | server, as root            |
 | Create the instance directory, secrets and `.env.runtime` | `provision-instance.sh`                                              | server, as the deploy user |
 | Nginx, certificate and vhost                              | `setup-nginx-site.sh`                                                | server, as root            |

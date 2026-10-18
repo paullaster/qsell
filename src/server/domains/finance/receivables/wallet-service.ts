@@ -20,13 +20,16 @@ import type { ReasonCodes } from '@/server/kernel/reason-codes/service';
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import { fromCents, planOldestFirst, toCents, type PlannedApplication } from '../domain/receivables';
 import type { PostingRequest } from '../domain/types';
-import { autoApplyAmount, checkCredit, checkDebit, } from '../domain/wallet';
+import { formatAmount, parseAmount } from '../domain/amount';
+import { baseValue } from '../domain/fx';
+import { autoApplyAmount, averageRate, checkCredit, checkDebit } from '../domain/wallet';
 import { NO_SPECIAL_PERMISSIONS, type PostingEngine, type PostingPermissions, type Tx } from '../engine';
 import { FinanceError, type FinanceContext } from '../errors';
 import type { PostingSetupService } from '../posting-setup-service';
 import type { SalesPostingService } from '../sales-posting-service';
 import type { CreditPolicyService } from './credit-policy-service';
 import type { CustomerLedgerService } from './customer-ledger-service';
+import type { FxService } from '../fx-service';
 
 import { has } from '@/lib/values';
 
@@ -47,6 +50,7 @@ export class WalletService {
     private readonly salesPosting: SalesPostingService,
     private readonly setup: PostingSetupService,
     private readonly reasons: ReasonCodes,
+    private readonly fx: FxService,
   ) {}
 
   // ── the wallet row ───────────────────────────────────────────────────────
@@ -63,6 +67,23 @@ export class WalletService {
     return w;
   }
 
+  /**
+   * What a movement is worth in the books' currency, and at which rate. Money in is carried at the rate it came in at; money
+   * out leaves at the wallet's average rate, so what the business owes stays what it booked; an undo restores what it undid.
+   */
+  private async carry(tx: Tx, w: CustomerWalletRow, cents: number, date: string, rate: string | undefined, restore: { rate: string; baseScaled: bigint } | undefined): Promise<{ rate: string; base: bigint }> {
+    const [s] = await tx.select({ base: financeSettings.baseCurrency }).from(financeSettings).where(eq(financeSettings.companyId, w.companyId));
+    if (s === undefined || w.currency.toUpperCase() === s.base.toUpperCase()) return { rate: '1', base: BigInt(cents) * 100n };
+    if (restore !== undefined) return { rate: restore.rate, base: restore.baseScaled };
+    if (cents > 0) {
+      const r = rate ?? (await this.fx.requireRate(tx, w.companyId, w.currency, date));
+      return { rate: r, base: baseValue(fromCents(cents), r) };
+    }
+    const average = averageRate(toCents(w.balance), parseAmount(w.baseValue));
+    if (average === null) throw new FinanceError('WALLET_NOT_VALUED', `The ${w.currency} wallet has no value in the books to take money out at.`);
+    return { rate: average, base: -baseValue(fromCents(-cents), average) };
+  }
+
   private async record(
     tx: Tx,
     ctx: FinanceContext,
@@ -76,8 +97,13 @@ export class WalletService {
       postingDate: string;
       registerId?: string | null;
       reason?: { code?: string | null; text?: string | null };
+      /** The rate money coming in is carried at (a receipt's own); the rate of the day when not given. */
+      rate?: string;
+      /** Undoing an earlier movement: exactly what it was worth, so the books and the wallet stay equal. */
+      restore?: { rate: string; baseScaled: bigint };
     },
   ): Promise<number> {
+    const carry = await this.carry(tx, w, p.cents, p.postingDate, p.rate, p.restore);
     const [row] = await tx
       .insert(walletEntries)
       .values({
@@ -93,6 +119,8 @@ export class WalletService {
         reasonCode: p.reason?.code ?? null,
         reasonText: p.reason?.text ?? null,
         registerId: p.registerId ?? null,
+        rate: carry.rate,
+        baseAmount: formatAmount(carry.base),
         postingDate: p.postingDate,
         actorType: ctx.actor.type,
         actorId: ctx.actor.id,
@@ -101,7 +129,7 @@ export class WalletService {
       .returning({ id: walletEntries.id });
     await tx
       .update(customerWallets)
-      .set({ balance: sql`${customerWallets.balance} + ${fromCents(p.cents)}::numeric`, updatedAt: new Date() })
+      .set({ balance: sql`${customerWallets.balance} + ${fromCents(p.cents)}::numeric`, baseValue: sql`${customerWallets.baseValue} + ${formatAmount(carry.base)}::numeric`, updatedAt: new Date() })
       .where(eq(customerWallets.id, w.id));
     return row.id;
   }
@@ -206,7 +234,7 @@ export class WalletService {
       registerId = (await this.engine.post(req, p.permissions ?? NO_SPECIAL_PERMISSIONS, tx)).registerId;
     }
     await this.ledger.transferCreditIn(tx, ctx, p.ledgerEntryId, p.cents, { postingDate: p.postingDate, createdBy: ctx.actor.id, registerId });
-    const entryId = await this.record(tx, ctx, w, { type: p.type, cents: p.cents, sourceType: p.sourceType, sourceId: p.sourceId, ledgerEntryId: p.ledgerEntryId, postingDate: p.postingDate, registerId });
+    const entryId = await this.record(tx, ctx, w, { type: p.type, cents: p.cents, sourceType: p.sourceType, sourceId: p.sourceId, ledgerEntryId: p.ledgerEntryId, postingDate: p.postingDate, registerId, rate: p.rate });
     return { entryId, registerId, live };
   }
 
@@ -280,7 +308,11 @@ export class WalletService {
     if (issue) {
       throw new FinanceError('WALLET_USED', `${fromCents(cents)} of this receipt went to the ${policy.label.toLowerCase()} and only ${fromCents(toCents(wallet.balance))} is left in it, so the customer has already used it. Reverse that use first.`);
     }
-    await this.record(tx, ctx, wallet, { type: 'reversal', cents: -cents, sourceType: 'customer_receipt', sourceId: r.id, ledgerEntryId: r.ledgerEntryId, postingDate: businessDate(), reason });
+    // What those cents were worth when they went in: the same share of what the receipt put into the wallet.
+    const [put] = await tx.select({ cents: sql<string>`COALESCE(SUM(${walletEntries.amount}), 0)`, base: sql<string>`COALESCE(SUM(${walletEntries.baseAmount}), 0)` }).from(walletEntries).where(and(eq(walletEntries.ledgerEntryId, r.ledgerEntryId), eq(walletEntries.walletId, wallet.id), sql`${walletEntries.amount} > 0`));
+    const putCents = toCents(put?.cents ?? '0');
+    const share = putCents > 0 ? (parseAmount(put?.base ?? '0') * BigInt(cents)) / BigInt(putCents) : 0n;
+    await this.record(tx, ctx, wallet, { type: 'reversal', cents: -cents, sourceType: 'customer_receipt', sourceId: r.id, ledgerEntryId: r.ledgerEntryId, postingDate: businessDate(), reason, restore: { rate: r.rate, baseScaled: -share } });
     await this.ledger.transferCreditIn(tx, ctx, r.ledgerEntryId, -cents, { postingDate: businessDate(), createdBy: ctx.actor.id, reasonCode: reason.code, reasonText: reason.text });
   }
 
@@ -390,7 +422,7 @@ export class WalletService {
         await this.ledger.unapplyIn(tx, ctx, { applicationId, reasonCode: rs.code, reasonText: rs.text, postingDate: businessDate(), createdBy: ctx.actor.id });
       }
       await this.ledger.closeCreditIn(tx, ctx, e.ledgerEntryId, { postingDate: businessDate(), reasonCode: rs.code, reasonText: rs.text, createdBy: ctx.actor.id });
-      await this.record(tx, ctx, wallet, { type: 'reversal', cents: -toCents(e.amount), sourceType: 'wallet_entry', sourceId: String(walletEntryId), ledgerEntryId: e.ledgerEntryId, postingDate: businessDate(), reason: rs });
+      await this.record(tx, ctx, wallet, { type: 'reversal', cents: -toCents(e.amount), sourceType: 'wallet_entry', sourceId: String(walletEntryId), ledgerEntryId: e.ledgerEntryId, postingDate: businessDate(), reason: rs, restore: { rate: e.rate, baseScaled: -parseAmount(e.baseAmount) } });
       // The books: undo the posting if it was made, otherwise it never will be.
       const [post] = await tx.select().from(financeSalesPostings).where(and(eq(financeSalesPostings.companyId, ctx.companyId), eq(financeSalesPostings.kind, 'wallet_use'), eq(financeSalesPostings.subjectId, String(walletEntryId)))).for('update');
       if (post?.status === 'posted' && has(post.registerId)) {
@@ -427,7 +459,7 @@ export class WalletService {
       if (done) continue;
       const w = await this.lockWallet(tx, e.companyId, e.customerId, e.currency);
       const ctx: FinanceContext = { companyId: e.companyId, actor: { type: 'system', id: 'order-cancel' }, origin: { surface: 'sales/orders', action: 'cancel' } };
-      await this.record(tx, ctx, w, { type: 'reversal', cents: -toCents(e.amount), sourceType: 'order_cancel', sourceId: orderId, postingDate: businessDate() });
+      await this.record(tx, ctx, w, { type: 'reversal', cents: -toCents(e.amount), sourceType: 'order_cancel', sourceId: orderId, postingDate: businessDate(), restore: { rate: e.rate, baseScaled: -parseAmount(e.baseAmount) } });
       back += -toCents(e.amount);
     }
     return back;
@@ -439,10 +471,40 @@ export class WalletService {
     return entryId;
   }
 
+  /**
+   * A person (or the lapse of a dormant balance) changes what the wallet holds without any money moving: more in as goodwill
+   * or a correction, less out as a correction, a write-off or a lapse. The books are posted by the caller, in the same transaction.
+   */
+  async adjustIn(
+    tx: Tx,
+    ctx: FinanceContext,
+    p: { customerId: string; currency: string; cents: number; type: 'adjustment' | 'expiry'; sourceId: string; postingDate: string; reason: { code?: string | null; text?: string | null } },
+  ): Promise<{ entryId: number; walletId: string; rate: string }> {
+    if (p.cents === 0) throw new FinanceError('AMOUNT_INVALID', 'The amount must be more than zero.');
+    const w = await this.lockWallet(tx, ctx.companyId, p.customerId, p.currency);
+    const balance = toCents(w.balance);
+    if (p.cents > 0) {
+      const policy = await this.policies.forCustomer(tx, ctx.companyId, p.customerId, p.postingDate);
+      const issue = checkCredit(policy, { status: w.status, balanceCents: balance }, p.cents, 'overpayment');
+      if (issue) throw new FinanceError(issue.code, issue.message);
+    } else if (-p.cents > balance) {
+      throw new FinanceError('WALLET_INSUFFICIENT', `Only ${fromCents(balance)} is in the wallet.`);
+    }
+    const entryId = await this.record(tx, ctx, w, { type: p.type, cents: p.cents, sourceType: 'credit_adjustment', sourceId: p.sourceId, postingDate: p.postingDate, reason: p.reason });
+    return { entryId, walletId: w.id, rate: await this.entryRate(tx, entryId) };
+  }
+
+  /** The rate a wallet movement was carried at. */
+  async entryRate(tx: Reader, entryId: number): Promise<string> {
+    const [e] = await tx.select({ rate: walletEntries.rate }).from(walletEntries).where(eq(walletEntries.id, entryId));
+    return e?.rate ?? '1';
+  }
+
   /** The refund did not go ahead: the money goes back into the wallet. */
   async undoCashOutIn(tx: Tx, ctx: FinanceContext, p: { customerId: string; currency: string; cents: number; refundId: string; reason: { code?: string | null; text?: string | null } }): Promise<void> {
     const w = await this.lockWallet(tx, ctx.companyId, p.customerId, p.currency);
-    await this.record(tx, ctx, w, { type: 'reversal', cents: p.cents, sourceType: 'refund_cancel', sourceId: p.refundId, postingDate: businessDate(), reason: p.reason });
+    const [took] = await tx.select().from(walletEntries).where(and(eq(walletEntries.walletId, w.id), eq(walletEntries.sourceType, 'refund'), eq(walletEntries.sourceId, p.refundId), eq(walletEntries.entryType, 'cash_out')));
+    await this.record(tx, ctx, w, { type: 'reversal', cents: p.cents, sourceType: 'refund_cancel', sourceId: p.refundId, postingDate: businessDate(), reason: p.reason, ...(took === undefined ? {} : { restore: { rate: took.rate, baseScaled: -parseAmount(took.baseAmount) } }) });
   }
 
   // ── freeze, read ─────────────────────────────────────────────────────────
@@ -486,27 +548,38 @@ export class WalletService {
     return { totals: [...totals], top };
   }
 
-  /** The customer-deposits account in the books against the wallets, per account (base currency). */
+  /**
+   * The customer-deposits account in the books against the wallets, per account: what each wallet is worth in the books'
+   * currency (a foreign wallet at the rate it was carried at), plus what a standing revaluation has added to it.
+   */
   async reconciliation(companyId: string) {
     const [s] = await this.db.select().from(financeSettings).where(eq(financeSettings.companyId, companyId));
     if (!s) return [];
-    const rows = await this.db.execute<{ account_id: string; no: string; name: string; sub: string }>(sql`
-      SELECT g.customer_deposits_account_id AS account_id, a.no, a.name,
-             COALESCE(SUM(w.balance), 0)::text AS sub
-      FROM customer_posting_groups g
-      JOIN gl_accounts a ON a.id = g.customer_deposits_account_id
-      LEFT JOIN customers c ON COALESCE(c.posting_group_code, ${s.defaultCustomerGroup}) = g.code AND c.company_id = g.company_id
-      LEFT JOIN customer_wallets w ON w.customer_id = c.id AND w.currency = ${s.baseCurrency}
-      WHERE g.company_id = ${companyId}::uuid
-      GROUP BY g.customer_deposits_account_id, a.no, a.name`);
-    const out = [];
+    const [rows, standing] = await Promise.all([
+      this.db.execute<{ code: string; account_id: string; no: string; name: string; sub: string }>(sql`
+        SELECT g.code, g.customer_deposits_account_id AS account_id, a.no, a.name,
+               COALESCE(SUM(CASE WHEN upper(w.currency) = upper(${s.baseCurrency}) THEN w.balance ELSE w.base_value END), 0)::text AS sub
+        FROM customer_posting_groups g
+        JOIN gl_accounts a ON a.id = g.customer_deposits_account_id
+        LEFT JOIN customers c ON COALESCE(c.posting_group_code, ${s.defaultCustomerGroup}) = g.code AND c.company_id = g.company_id
+        LEFT JOIN customer_wallets w ON w.customer_id = c.id
+        WHERE g.company_id = ${companyId}::uuid
+        GROUP BY g.code, g.customer_deposits_account_id, a.no, a.name`),
+      this.fx.outstandingWalletByGroup(this.db, companyId),
+    ]);
+    const byAccount = new Map<string, { no: string; name: string; subCents: number }>();
     for (const r of rows) {
+      const cur = byAccount.get(r.account_id) ?? { no: r.no, name: r.name, subCents: 0 };
+      cur.subCents += toCents(Number(r.sub).toFixed(2)) + Math.round(Number(standing.get(r.code) ?? 0n) / 100);
+      byAccount.set(r.account_id, cur);
+    }
+    const out = [];
+    for (const [accountId, a] of byAccount) {
       const [bal] = await this.db.execute<{ net: string }>(sql`
         SELECT COALESCE(SUM(base_credit - base_debit), 0)::text AS net FROM gl_account_balances
-        WHERE company_id = ${companyId}::uuid AND account_id = ${r.account_id}::uuid`);
+        WHERE company_id = ${companyId}::uuid AND account_id = ${accountId}::uuid`);
       const gl = toCents(Number(bal?.net ?? 0).toFixed(2));
-      const sub = toCents(r.sub);
-      out.push({ accountNo: r.no, accountName: r.name, glCents: gl, walletsCents: sub, diffCents: gl - sub });
+      out.push({ accountNo: a.no, accountName: a.name, glCents: gl, walletsCents: a.subCents, diffCents: gl - a.subCents });
     }
     return out;
   }

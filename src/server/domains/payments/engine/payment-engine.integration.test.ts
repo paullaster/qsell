@@ -924,25 +924,46 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       expect((await engine.ops.get(r.op.id)).status).not.toBe('succeeded');
     });
 
-    it('B2B Express Checkout: a failure is recorded, a success is recorded as the other business\'s word and credits nothing', async () => {
-      const p = await provider({ initiator: true, settings: { operations: { b2b_express: { enabled: true } } } });
+    it('B2B Express Checkout: a failure is recorded; a success is only a claim, claimed under its M-Pesa code, and credited once Safaricom confirms it', async () => {
+      const p = await provider({ initiator: true, autoAllocate: true, channel: '600638', settings: { operations: { b2b_express: { enabled: true } } } });
+      const number = `E${run}${++seq}`;
+      const [cust] = await db.insert(schema.customers).values({ companyId, number, name: `Express ${number}`, phone: '0711000222', accountType: 'cash', creditLimit: '0' }).returning();
       fake.on('/oauth/v1/generate', () => ({ json: { access_token: 'tok', expires_in: '3599' } }));
       fake.on('/v1/ussdpush/get-msisdn', (b) => ({ json: { code: '0', status: 'USSD Initiated Successfully', requestRefID: b.RequestRefID } }));
-      const start = async () => (await engine.daraja.start({ providerId: p.providerId, methodId: p.methodId, operation: 'b2b_express', input: { primaryShortCode: '555550', amount: '70', paymentRef: 'INV-9', partnerName: 'Shop' } })).op;
+      fake.on('/mpesa/transactionstatus/v1/query', () => ({ json: { OriginatorConversationID: 'x', ConversationID: 'AG_EXP', ResponseCode: '0', ResponseDescription: 'Accept the service request successfully.' } }));
+      const start = async (ref: string) => (await engine.daraja.start({ providerId: p.providerId, methodId: p.methodId, operation: 'b2b_express', input: { primaryShortCode: '555550', amount: '70', paymentRef: ref, partnerName: 'Shop' } })).op;
       const hook = async (op: { originatorId: string | null }, body: Record<string, unknown>) => {
         const sentBody = required(fake.calls.filter((x) => x.path === '/v1/ussdpush/get-msisdn').at(-1)).body as { callbackUrl: string };
         const token = required(sentBody.callbackUrl.split('/').pop());
         return await engine.ingestHook({ providerId: p.providerId, kind: 'express', secret: token, rawText: JSON.stringify({ requestId: op.originatorId, ...body }), headers: {}, sourceIp: '196.201.214.200', https: true } as never);
       };
-      const bad = await start();
+      const bad = await start('INV-8');
       expect((await hook(bad, { resultCode: '4001', resultDesc: 'Declined', status: 'FAILED' })).httpStatus).toBe(200);
       expect(await engine.ops.get(bad.id)).toMatchObject({ status: 'failed', failureCode: '4001' });
-      const good = await start();
-      await hook(good, { resultCode: '0', status: 'SUCCESS', transactionId: 'NLJ7RT61SV', amount: '70' });
-      expect(await engine.ops.get(good.id)).toMatchObject({ status: 'succeeded', platformReference: 'NLJ7RT61SV' });
-      const ev = await db.select().from(schema.providerEvents).where(eq(schema.providerEvents.operationId, good.id));
-      expect(ev[0]).toMatchObject({ state: 'unverified', failureCode: 'CALLBACK_ONLY' });
-      expect(await db.select().from(schema.providerTransactions).where(eq(schema.providerTransactions.platformReference, 'NLJ7RT61SV'))).toHaveLength(0);
+      expect(await db.select().from(schema.providerTransactions).where(eq(schema.providerTransactions.accountReference, 'INV-8'))).toHaveLength(0);
+
+      const good = await start(number);
+      const receipt = rc();
+      await hook(good, { resultCode: '0', status: 'SUCCESS', transactionId: receipt, amount: '70', paymentReference: number });
+      expect(await engine.ops.get(good.id)).toMatchObject({ status: 'succeeded', platformReference: receipt });
+      // claimed, not credited: nobody has asked Safaricom
+      let tx = (await db.select().from(schema.providerTransactions).where(eq(schema.providerTransactions.platformReference, receipt)))[0];
+      expect(tx).toMatchObject({ kind: 'b2b_express', state: 'claimed', amount: '70.0000', accountReference: number, methodId: p.methodId, shortcode: '600638' });
+      expect(await db.select().from(schema.customerReceipts).where(eq(schema.customerReceipts.externalReference, receipt))).toHaveLength(0);
+      const ev = await db.select().from(schema.providerEvents).where(eq(schema.providerEvents.platformReference, receipt));
+      expect(ev[0]).toMatchObject({ state: 'awaiting_verification' });
+      // the same callback again counts nothing twice
+      await hook(good, { resultCode: '0', status: 'SUCCESS', transactionId: receipt, amount: '70', paymentReference: number });
+      expect(await db.select().from(schema.providerTransactions).where(eq(schema.providerTransactions.platformReference, receipt))).toHaveLength(1);
+      // Safaricom confirms it: it lands on the customer
+      expect((await engine.c2b.verify(tx.id)).state).toBe('waiting');
+      const check = (await engine.ops.bySubject('provider_transaction', tx.id, 'transaction_status'))[0];
+      const secret = await engine.contexts.callbackSecret(p.providerId);
+      await engine.ingestHook({ providerId: p.providerId, kind: 'result', secret, rawText: JSON.stringify({ Result: { ResultType: 0, ResultCode: 0, ResultDesc: 'ok', OriginatorConversationID: check.originatorId, ConversationID: 'AG_EXP', ResultParameters: { ResultParameter: [{ Key: 'ReceiptNo', Value: receipt }, { Key: 'Amount', Value: 70 }, { Key: 'TransactionStatus', Value: 'Completed' }, { Key: 'CreditPartyName', Value: '600638 - Acme' }] } } }), headers: {}, sourceIp: null, https: true, method: 'POST' });
+      expect((await engine.c2b.verify(tx.id)).state).toBe('consumed');
+      tx = (await db.select().from(schema.providerTransactions).where(eq(schema.providerTransactions.platformReference, receipt)))[0];
+      const [rec] = await db.select().from(schema.customerReceipts).where(eq(schema.customerReceipts.id, required(tx.consumedId)));
+      expect(rec).toMatchObject({ customerId: cust.id, status: 'posted', amount: '70.00', externalReference: receipt });
     });
 
     it('a payout counts as paid only when Safaricom\'s own record of the transaction agrees', async () => {
@@ -969,6 +990,48 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       };
       expect(await run('500', 'PAYOK00001', 500)).toMatchObject({ status: 'succeeded', platformReference: 'PAYOK00001' });
       expect(await run('600', 'PAYBAD0001', 6)).toMatchObject({ status: 'in_doubt', failureCode: 'STATUS_AMOUNT_MISMATCH' });
+    });
+
+    it('a payout left in doubt can be checked again with Safaricom, or closed by a person who looked at the statement', async () => {
+      const p = await provider({ initiator: true, settings: { operations: { b2c: { enabled: true } } } });
+      const { c } = await payoutWorkflow();
+      fake.on('/oauth/v1/generate', () => ({ json: { access_token: 'tok', expires_in: '3599' } }));
+      fake.on('/mpesa/b2c/v3/paymentrequest', (b) => ({ json: { ConversationID: `AG_${readText(b.Amount)}`, OriginatorConversationID: b.OriginatorConversationID, ResponseCode: '0', ResponseDescription: 'Accept the service request successfully.' } }));
+      fake.on('/mpesa/transactionstatus/v1/query', () => ({ json: { ConversationID: 'AG_ST', OriginatorConversationID: 'x', ResponseCode: '0', ResponseDescription: 'Accept the service request successfully.' } }));
+      const secret = () => required((required(fake.calls.filter((x) => x.path === '/mpesa/b2c/v3/paymentrequest').at(-1)).body as { ResultURL: string }).ResultURL.split('/').pop());
+      const hook = (body: unknown) => engine.ingestHook({ providerId: p.providerId, kind: 'result', secret: secret(), rawText: JSON.stringify(body), headers: {}, sourceIp: null, https: true, method: 'POST' });
+      const statusResult = (check: { originatorId: string | null; conversationId: string | null }, receipt: string, amount: number) =>
+        ({ Result: { ResultType: 0, ResultCode: 0, ResultDesc: 'ok', OriginatorConversationID: check.originatorId, ConversationID: check.conversationId, ResultParameters: { ResultParameter: [{ Key: 'ReceiptNo', Value: receipt }, { Key: 'Amount', Value: amount }, { Key: 'TransactionStatus', Value: 'Completed' }] } } });
+      // a payout whose record disagrees on the amount is held in doubt
+      const r = await ask(p, { input: { phone: '0712345678', amount: '700', commandId: 'BusinessPayment', remarks: 'Doubt' } });
+      await approveAll(c, r.op.id);
+      await engine.sweep();
+      const op = await engine.ops.get(r.op.id);
+      await hook({ Result: { ResultType: 0, ResultCode: 0, ResultDesc: 'ok', OriginatorConversationID: op.originatorId, ConversationID: op.conversationId, TransactionID: 'DOUBT00001', ResultParameters: { ResultParameter: [{ Key: 'TransactionReceipt', Value: 'DOUBT00001' }] } } });
+      const [first] = await engine.ops.bySubject('provider_operation', op.id, 'transaction_status');
+      await hook(statusResult(first, 'DOUBT00001', 7));
+      expect(await engine.ops.get(op.id)).toMatchObject({ status: 'in_doubt', failureCode: 'STATUS_AMOUNT_MISMATCH' });
+      // asking again is a new question; this time Safaricom's record agrees
+      expect(await engine.recheckPayout(op.id)).toEqual({ ok: true });
+      const checks = await engine.ops.bySubject('provider_operation', op.id, 'transaction_status');
+      expect(checks).toHaveLength(2);
+      await hook(statusResult(required(checks.at(-1)), 'DOUBT00001', 700));
+      expect(await engine.ops.get(op.id)).toMatchObject({ status: 'succeeded', platformReference: 'DOUBT00001' });
+      // a paid payout cannot be rechecked or closed
+      expect(await engine.recheckPayout(op.id)).toMatchObject({ ok: false });
+      expect(await engine.closeDoubtfulPayout({ opId: op.id, userId: 'u', reason: 'the statement shows nothing at all', moneyLeft: false })).toMatchObject({ ok: false });
+
+      // a payout that never got a receipt cannot be looked up: a person closes it, and the closing is kept with their name
+      const silent = await ask(p, { input: { phone: '0712345678', amount: '710', commandId: 'BusinessPayment', remarks: 'Silent' } });
+      await approveAll(c, silent.op.id);
+      await engine.sweep();
+      await db.update(schema.providerOperations).set({ status: 'in_doubt', failureCode: 'NO_RESULT', failureReason: 'No answer arrived.' }).where(eq(schema.providerOperations.id, silent.op.id));
+      expect(await engine.recheckPayout(silent.op.id)).toMatchObject({ ok: false });
+      expect(await engine.closeDoubtfulPayout({ opId: silent.op.id, userId: 'u1', reason: 'too short', moneyLeft: false })).toMatchObject({ ok: false });
+      expect(await engine.closeDoubtfulPayout({ opId: silent.op.id, userId: 'u1', reason: 'the statement shows no debit for 710', moneyLeft: false })).toEqual({ ok: true });
+      const closed = await engine.ops.get(silent.op.id);
+      expect(closed).toMatchObject({ status: 'failed', failureCode: 'CLOSED_NOT_PAID' });
+      expect(closed.result).toMatchObject({ closedBy: 'u1', moneyLeft: false });
     });
 
     it('a rejected payout is never sent', async () => {
@@ -1008,6 +1071,183 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       fake.on('/v1/billmanager-invoice/single-invoicing', answer('400'));
       const refused = (await run('bill_invoice', { ...inv, externalReference: 'INV-3' })).op;
       expect(refused).toMatchObject({ status: 'failed', failureCode: '400' });
+    });
+  });
+
+  describe('Bill Manager invoices, followed to the receipt', () => {
+    const hook = (p: { providerId: string }, kind: 'c2b-confirm' | 'result' | 'bill', body: unknown, secret: string) =>
+      engine.ingestHook({ providerId: p.providerId, kind, secret, rawText: JSON.stringify(body), headers: {}, sourceIp: '196.201.214.200', https: true, method: 'POST' });
+    const c2bBody = (id: string, ref: string, amount: string) => ({ TransactionType: 'Pay Bill', TransID: id, TransTime: '20260113123045', TransAmount: amount, BusinessShortCode: '600638', BillRefNumber: ref, InvoiceNumber: '', OrgAccountBalance: '9999.00', ThirdPartyTransID: '', MSISDN: '2547 ***** 126', FirstName: 'Jane', MiddleName: '', LastName: 'Doe' });
+    const billBody = (id: string, ref: string, amount: string) => ({ transactionId: id, paidAmount: amount, msisdn: '2547 ***** 126', dateCreated: '2026-01-13', accountReference: ref, shortCode: '600638' });
+    const txOf = async (ref: string) => (await db.select().from(schema.providerTransactions).where(eq(schema.providerTransactions.platformReference, ref)))[0];
+    const invoice = (reference: string, accountReference: string, amount: string, dueDate = '2026-10-31') => ({ reference, accountReference, billedName: 'Jane Doe', phone: '0712345678', invoiceName: 'Rent', period: 'October 2026', amount, dueDate });
+    const invoiceRow = async (providerId: string, reference: string) => (await db.select().from(schema.billInvoices).where(and(eq(schema.billInvoices.providerId, providerId), eq(schema.billInvoices.reference, reference))))[0];
+
+    /** A payment announced by the paybill, checked by Safaricom, and put on the customer. */
+    async function paid(p: { providerId: string }, secret: string, ref: string, amount: string, via: 'c2b-confirm' | 'bill' = 'c2b-confirm') {
+      const id = rc();
+      await hook(p, via, via === 'bill' ? billBody(id, ref, amount) : c2bBody(id, ref, amount), secret);
+      const tx = await txOf(id);
+      fake.on('/mpesa/transactionstatus/v1/query', () => ({ json: { OriginatorConversationID: 'x', ConversationID: `AG_${id}`, ResponseCode: '0', ResponseDescription: 'Accept the service request successfully.' } }));
+      await engine.c2b.verify(tx.id);
+      const check = (await engine.ops.bySubject('provider_transaction', tx.id, 'transaction_status'))[0];
+      await hook(p, 'result', { Result: { ResultType: 0, ResultCode: 0, ResultDesc: 'ok', OriginatorConversationID: check.originatorId, ConversationID: `AG_${id}`, ResultParameters: { ResultParameter: [{ Key: 'ReceiptNo', Value: id }, { Key: 'Amount', Value: Number(amount) }, { Key: 'TransactionStatus', Value: 'Completed' }, { Key: 'CreditPartyName', Value: '600638 - Acme' }] } } }, secret);
+      await engine.c2b.verify(tx.id);
+      return { id, tx: await txOf(id) };
+    }
+    const ack = () => fake.calls.filter((c) => c.path === '/v1/billmanager-invoice/reconciliation');
+
+    it('an invoice is written down when asked for, becomes sent, is paid by a confirmed payment to its account number, and Bill Manager is told', async () => {
+      const p = await provider({ channel: '600638', initiator: true, autoAllocate: true });
+      const number = `B${run}${++seq}`;
+      await db.insert(schema.customers).values({ companyId, number, name: `Biller ${number}`, phone: '0711000333', accountType: 'cash', creditLimit: '0' });
+      fake.on('/oauth/v1/generate', () => ({ json: { access_token: 'tok', expires_in: '3599' } }));
+      fake.on('/v1/billmanager-invoice/reconciliation', () => ({ json: { rescode: '200', resmsg: 'Success', Status_Message: '' } }));
+      const a = invoice(`INV-A-${number}`, number, '250.00', '2026-10-20');
+      const b = invoice(`INV-B-${number}`, number, '400.00', '2026-10-31');
+      await engine.bills.record({ companyId, providerId: p.providerId, methodId: p.methodId, requestedBy: 'tester', invoices: [a, b] });
+      expect((await invoiceRow(p.providerId, a.reference)).status).toBe('requested');
+      expect(await engine.bills.existing(p.providerId, [a.reference, 'NOPE'])).toEqual(new Map([[a.reference, 'requested']]));
+      await engine.bills.sent(p.providerId, [a.reference, b.reference], { id: null, status: 'succeeded', failureReason: null });
+      const sent = await invoiceRow(p.providerId, a.reference);
+      expect(sent).toMatchObject({ status: 'sent', paidAmount: '0.00' });
+      expect(sent.phoneMasked).toContain('•');
+      expect(typeof sent.customerId).toBe('string');
+      const secret = await engine.contexts.callbackSecret(p.providerId);
+
+      // 250 is exactly invoice A: it is paid, the customer's receipt exists, and Bill Manager is told
+      const first = await paid(p, secret, number, '250.00');
+      expect(first.tx).toMatchObject({ state: 'consumed', consumedType: 'customer_receipt' });
+      expect(await invoiceRow(p.providerId, a.reference)).toMatchObject({ status: 'paid', paidAmount: '250.00', lastTransactionId: first.tx.id });
+      expect((await invoiceRow(p.providerId, a.reference)).acknowledgedAt).not.toBeNull();
+      expect(await invoiceRow(p.providerId, b.reference)).toMatchObject({ status: 'sent', paidAmount: '0.00' });
+      expect(ack()).toHaveLength(1);
+      expect(ack()[0].body).toMatchObject({ transactionId: first.id, externalReference: a.reference, accountReference: number, paidAmount: '250.00' });
+
+      // telling the engine again changes nothing and tells Bill Manager nothing more
+      await engine.bills.paymentPlaced(first.tx);
+      expect(await invoiceRow(p.providerId, a.reference)).toMatchObject({ status: 'paid', paidAmount: '250.00' });
+      expect(ack()).toHaveLength(1);
+
+      // a smaller payment part pays the next one; the rest pays it off
+      await paid(p, secret, number, '100.00');
+      expect(await invoiceRow(p.providerId, b.reference)).toMatchObject({ status: 'part_paid', paidAmount: '100.00' });
+      await paid(p, secret, number, '300.00');
+      expect(await invoiceRow(p.providerId, b.reference)).toMatchObject({ status: 'paid', paidAmount: '400.00' });
+      expect(ack()).toHaveLength(3);
+
+      // paid ones cannot be cancelled, and nothing else is touched by the refusal
+      const c = await engine.bills.cancellable(p.providerId, [a.reference, b.reference, 'UNKNOWN-1']);
+      expect(c.refused.map((r) => r.reference)).toEqual([a.reference, b.reference]);
+      expect(c.ok).toEqual(['UNKNOWN-1']);
+    });
+
+    it('a payment to an account number with no open invoice settles none; a payment of the wrong size settles the oldest', async () => {
+      const p = await provider({ channel: '600638', initiator: true, autoAllocate: true });
+      const number = `N${run}${++seq}`;
+      await db.insert(schema.customers).values({ companyId, number, name: `Nobody ${number}`, phone: '0711000444', accountType: 'cash', creditLimit: '0' });
+      fake.on('/oauth/v1/generate', () => ({ json: { access_token: 'tok', expires_in: '3599' } }));
+      fake.on('/v1/billmanager-invoice/reconciliation', () => ({ json: { rescode: '200', resmsg: 'Success', Status_Message: '' } }));
+      const secret = await engine.contexts.callbackSecret(p.providerId);
+      const none = await paid(p, secret, number, '80.00');
+      expect(none.tx.state).toBe('consumed');
+      expect(await db.select().from(schema.billInvoices).where(eq(schema.billInvoices.providerId, p.providerId))).toHaveLength(0);
+      const old = invoice(`OLD-${number}`, number, '500.00', '2026-09-01');
+      const young = invoice(`YNG-${number}`, number, '600.00', '2026-12-01');
+      await engine.bills.record({ companyId, providerId: p.providerId, methodId: p.methodId, requestedBy: 'tester', invoices: [young, old] });
+      await engine.bills.sent(p.providerId, [old.reference, young.reference], { id: null, status: 'succeeded', failureReason: null });
+      await paid(p, secret, number, '120.00');
+      expect(await invoiceRow(p.providerId, old.reference)).toMatchObject({ status: 'part_paid', paidAmount: '120.00' });
+      expect(await invoiceRow(p.providerId, young.reference)).toMatchObject({ status: 'sent' });
+      expect((await engine.bills.overdue(companyId, '2026-10-17')).map((i) => i.reference)).toContain(old.reference);
+    });
+
+    it('a failed acknowledgement does not undo the payment, and says why on the invoice', async () => {
+      const p = await provider({ channel: '600638', initiator: true, autoAllocate: true });
+      const number = `K${run}${++seq}`;
+      await db.insert(schema.customers).values({ companyId, number, name: `Ack ${number}`, phone: '0711000555', accountType: 'cash', creditLimit: '0' });
+      fake.on('/oauth/v1/generate', () => ({ json: { access_token: 'tok', expires_in: '3599' } }));
+      fake.on('/v1/billmanager-invoice/reconciliation', () => ({ json: { rescode: '500', resmsg: 'Bill Manager is not set up for this paybill', Status_Message: '' } }));
+      const inv = invoice(`ACK-${number}`, number, '90.00');
+      await engine.bills.record({ companyId, providerId: p.providerId, methodId: p.methodId, requestedBy: 'tester', invoices: [inv] });
+      await engine.bills.sent(p.providerId, [inv.reference], { id: null, status: 'succeeded', failureReason: null });
+      const secret = await engine.contexts.callbackSecret(p.providerId);
+      const out = await paid(p, secret, number, '90.00');
+      expect(out.tx.state).toBe('consumed');
+      expect(await invoiceRow(p.providerId, inv.reference)).toMatchObject({ status: 'paid', acknowledgedAt: null });
+      expect((await invoiceRow(p.providerId, inv.reference)).ackError).toContain('not set up');
+    });
+
+    it('a Bill Manager notice is a claim: checked with Safaricom first, and counted once with the paybill\'s own announcement', async () => {
+      const p = await provider({ channel: '600638', initiator: true, autoAllocate: true });
+      const number = `M${run}${++seq}`;
+      await db.insert(schema.customers).values({ companyId, number, name: `Notice ${number}`, phone: '0711000666', accountType: 'cash', creditLimit: '0' });
+      fake.on('/oauth/v1/generate', () => ({ json: { access_token: 'tok', expires_in: '3599' } }));
+      fake.on('/v1/billmanager-invoice/reconciliation', () => ({ json: { rescode: '200', resmsg: 'Success', Status_Message: '' } }));
+      const inv = invoice(`NTC-${number}`, number, '55.00');
+      await engine.bills.record({ companyId, providerId: p.providerId, methodId: p.methodId, requestedBy: 'tester', invoices: [inv] });
+      await engine.bills.sent(p.providerId, [inv.reference], { id: null, status: 'succeeded', failureReason: null });
+      const secret = await engine.contexts.callbackSecret(p.providerId);
+      const id = rc();
+      await hook(p, 'bill', billBody(id, number, '55.00'), secret);
+      let tx = await txOf(id);
+      expect(tx).toMatchObject({ kind: 'bill', state: 'claimed', amount: '55.0000', accountReference: number });
+      // nothing is credited from the notice alone
+      expect(await db.select().from(schema.customerReceipts).where(eq(schema.customerReceipts.externalReference, id))).toHaveLength(0);
+      expect(await invoiceRow(p.providerId, inv.reference)).toMatchObject({ status: 'sent' });
+      // the paybill announces the same payment: it is the same transaction, counted once
+      await hook(p, 'c2b-confirm', c2bBody(id, number, '55.00'), secret);
+      expect(await db.select().from(schema.providerTransactions).where(eq(schema.providerTransactions.platformReference, id))).toHaveLength(1);
+      fake.on('/mpesa/transactionstatus/v1/query', () => ({ json: { OriginatorConversationID: 'x', ConversationID: `AG_${id}`, ResponseCode: '0', ResponseDescription: 'Accept the service request successfully.' } }));
+      await engine.c2b.verify(tx.id);
+      const check = (await engine.ops.bySubject('provider_transaction', tx.id, 'transaction_status'))[0];
+      await hook(p, 'result', { Result: { ResultType: 0, ResultCode: 0, ResultDesc: 'ok', OriginatorConversationID: check.originatorId, ConversationID: `AG_${id}`, ResultParameters: { ResultParameter: [{ Key: 'ReceiptNo', Value: id }, { Key: 'Amount', Value: 55 }, { Key: 'TransactionStatus', Value: 'Completed' }, { Key: 'CreditPartyName', Value: '600638 - Acme' }] } } }, secret);
+      await engine.c2b.verify(tx.id);
+      tx = await txOf(id);
+      expect(tx).toMatchObject({ state: 'consumed', consumedType: 'customer_receipt' });
+      expect(await invoiceRow(p.providerId, inv.reference)).toMatchObject({ status: 'paid', paidAmount: '55.00' });
+      expect(await db.select().from(schema.customerReceipts).where(eq(schema.customerReceipts.externalReference, id))).toHaveLength(1);
+      // a notice that is not a payment is only kept
+      const odd = await hook(p, 'bill', { something: 'else' }, secret);
+      expect(odd.httpStatus).toBe(200);
+    });
+
+    it('a repeated invoice number is refused unless the first was refused; a refused one is made again', async () => {
+      const p = await provider({ channel: '600638' });
+      const inv = invoice(`DUP-${run}${++seq}`, 'ACC1', '10.00');
+      await engine.bills.record({ companyId, providerId: p.providerId, methodId: p.methodId, requestedBy: 'tester', invoices: [inv] });
+      await engine.bills.sent(p.providerId, [inv.reference], { id: null, status: 'failed', failureReason: 'Invalid phone number' });
+      expect(await invoiceRow(p.providerId, inv.reference)).toMatchObject({ status: 'failed', failureReason: 'Invalid phone number' });
+      await engine.bills.record({ companyId, providerId: p.providerId, methodId: p.methodId, requestedBy: 'tester', invoices: [inv] });
+      expect(await invoiceRow(p.providerId, inv.reference)).toMatchObject({ status: 'requested', failureReason: null });
+      await engine.bills.sent(p.providerId, [inv.reference], { id: null, status: 'succeeded', failureReason: null });
+      // sent now: a second try to record it leaves it alone
+      await engine.bills.record({ companyId, providerId: p.providerId, methodId: p.methodId, requestedBy: 'tester', invoices: [{ ...inv, amount: '99.00' }] });
+      expect(await invoiceRow(p.providerId, inv.reference)).toMatchObject({ status: 'sent', amount: '10.00' });
+      fake.on('/oauth/v1/generate', () => ({ json: { access_token: 'tok', expires_in: '3599' } }));
+      fake.on('/v1/billmanager-invoice/cancel-single-invoice', () => ({ json: { rescode: '200', resmsg: 'Success', Status_Message: '' } }));
+      const { op } = await engine.daraja.start({ providerId: p.providerId, methodId: p.methodId, operation: 'bill_cancel', input: { externalReference: inv.reference } });
+      expect(await engine.bills.cancelled(p.providerId, [inv.reference], op)).toBe(1);
+      expect((await invoiceRow(p.providerId, inv.reference)).status).toBe('cancelled');
+      // kept for ever
+      await expect(db.delete(schema.billInvoices).where(eq(schema.billInvoices.providerId, p.providerId))).rejects.toThrow();
+      await expect(db.update(schema.billInvoices).set({ amount: '1.00' }).where(eq(schema.billInvoices.providerId, p.providerId))).rejects.toThrow();
+    });
+
+    it('lists invoices a page at a time, by state or by a word in the number, name or account', async () => {
+      const p = await provider({ channel: '600638' });
+      const word = `PG${run}${++seq}`;
+      await engine.bills.record({ companyId, providerId: p.providerId, methodId: p.methodId, requestedBy: 'tester', invoices: [1, 2, 3].map((n) => invoice(`${word}-${String(n)}`, `AC${String(n)}`, '5.00')) });
+      await engine.bills.sent(p.providerId, [`${word}-1`, `${word}-2`], { id: null, status: 'succeeded', failureReason: null });
+      const first = await engine.bills.list(companyId, { q: word, limit: 2 });
+      expect(first.rows).toHaveLength(2);
+      expect(first.nextBefore).not.toBeNull();
+      const rest = await engine.bills.list(companyId, { q: word, limit: 2, before: first.nextBefore ?? undefined });
+      expect(rest.rows).toHaveLength(1);
+      expect((await engine.bills.list(companyId, { q: word, status: 'sent' })).rows).toHaveLength(2);
+      expect((await engine.bills.list(companyId, { q: '%' })).rows.every((r) => r.reference.includes('%'))).toBe(true);
+      expect((await engine.bills.counts(companyId)).sent).toBeGreaterThanOrEqual(2);
+      expect(await engine.bills.list(randomUUID(), { q: word })).toMatchObject({ rows: [] });
     });
   });
 

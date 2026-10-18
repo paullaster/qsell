@@ -143,3 +143,47 @@ export async function searchStatementColumnsAction(input: { headers: string[]; q
   const cursor = typeof input.cursor === 'string' ? input.cursor : null;
   return { ok: true, data: pageHeaders(headers, query, cursor, Number.isFinite(input.limit) ? input.limit : 20) };
 }
+
+/** How lines on this account's statement are matched, and which rules are in force (its own, the company's, or the standard ones). */
+export async function bankMatchRulesAction(bankAccountId: string) {
+  return await run('bank_statements:read', { surface: 'finance/bank-statements/account', action: 'rules' }, async (ctx) => {
+    const { rules, scope } = await fin().bankStatements.rulesFor(ctx.companyId, bankAccountId);
+    return { rules, scope, canEdit: await canPermission('bank_match_rules:edit') };
+  });
+}
+
+/** Saves the rules for one account, or (with no account) for every account that has none of its own, and matches again. */
+export async function saveBankMatchRulesAction(bankAccountId: string | null, rules: Record<string, unknown>) {
+  return await run('bank_match_rules:edit', { surface: 'finance/bank-statements/account', action: 'save_rules' }, async (ctx) => {
+    const saved = await fin().bankStatements.saveRules(ctx, bankAccountId, rules);
+    const matched = bankAccountId === null ? null : await fin().bankStatements.autoMatch(ctx, bankAccountId);
+    return { rules: saved, matched };
+  }, [ROOT, ...(bankAccountId === null ? [] : [`${ROOT}/${bankAccountId}`])]);
+}
+
+export async function bankFeedStatusAction(bankAccountId: string) {
+  return await run('bank_feeds:read', { surface: 'finance/bank-statements/account', action: 'feed' }, async (ctx) => {
+    const status = await fin().bankFeeds.status(ctx.companyId, bankAccountId);
+    return { status: status === null ? null : { ...status, createdAt: status.createdAt.toISOString(), rotatedAt: status.rotatedAt?.toISOString() ?? null, lastReceivedAt: status.lastReceivedAt?.toISOString() ?? null }, canManage: await canPermission('bank_feeds:manage') };
+  });
+}
+
+/** Makes the feed, or gives it a new secret (the old address stops working). The address is shown this once. */
+export async function enableBankFeedAction(bankAccountId: string) {
+  return await run('bank_feeds:manage', { surface: 'finance/bank-statements/account', action: 'enable_feed' }, async (ctx) => {
+    const { secret } = await fin().bankFeeds.enable(ctx, bankAccountId);
+    const company = await getContainer().companySettings.ensureSeeded();
+    const h = await (await import('next/headers')).headers();
+    const host = h.get('x-forwarded-host') ?? h.get('host') ?? '';
+    const proto = h.get('x-forwarded-proto') ?? (host.startsWith('localhost') || host.startsWith('127.') ? 'http' : 'https');
+    const base = (company.publicBaseUrl ?? '').replace(/\/+$/, '') !== '' ? (company.publicBaseUrl ?? '').replace(/\/+$/, '') : `${proto}://${host}`;
+    return { address: `${base}/api/hooks/bank-feed/${bankAccountId}/${secret}` };
+  }, [`${ROOT}/${bankAccountId}`]);
+}
+
+export async function disableBankFeedAction(bankAccountId: string) {
+  return await run('bank_feeds:manage', { surface: 'finance/bank-statements/account', action: 'disable_feed' }, async (ctx) => {
+    await fin().bankFeeds.disable(ctx, bankAccountId);
+    return { ok: true };
+  }, [`${ROOT}/${bankAccountId}`]);
+}

@@ -111,14 +111,13 @@ export function validatePosting(req: PostingRequest, policy: PostingPolicy): Val
 
   const sameRate = req.currency === policy.baseCurrency;
   let rateOk = true;
-  try {
-    if (!sameRate && isZero(parseAmount(req.rate))) {
-      rateOk = false;
-      fail('RATE_MISSING', `No exchange rate for ${req.currency}.`);
-    }
-  } catch {
+  // A rate has up to 8 decimals (a wallet's average rate does); amounts have 4.
+  if (!sameRate && !/^\d{1,15}(\.\d{1,8})?$/.test(req.rate)) {
     rateOk = false;
     fail('RATE_INVALID', `The exchange rate "${req.rate}" is not a number.`);
+  } else if (!sameRate && !/[1-9]/.test(req.rate)) {
+    rateOk = false;
+    fail('RATE_MISSING', `No exchange rate for ${req.currency}.`);
   }
   const rate = sameRate ? '1' : req.rate;
 

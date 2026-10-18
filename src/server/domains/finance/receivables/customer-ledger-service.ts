@@ -5,6 +5,8 @@ import {
   customerDetailedEntries,
   customerLedgerEntries,
   customers,
+  financeSalesPostings,
+  financeSettings,
   type CustomerLedgerEntryRow,
 } from '@/server/db/drizzle/schema';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
@@ -95,6 +97,19 @@ export class CustomerLedgerService {
       .orderBy(asc(customerLedgerEntries.id))
       .for('update');
     return new Map(rows.map((r) => [r.id, r]));
+  }
+
+  /**
+   * A payment applied to (or taken back from) an invoice in a foreign currency may have been at a different rate from the
+   * invoice: the difference is the business's gain or loss, posted to the books shortly after by the sales-posting queue.
+   * Nothing is queued before the books are live, or for the books' own currency.
+   */
+  private async queueFx(tx: Tx, companyId: string, kind: 'fx_application' | 'fx_unapplication', subjectId: string, date: string, currency: string | null): Promise<void> {
+    if (currency === null) return;
+    const [s] = await tx.select({ base: financeSettings.baseCurrency, live: financeSettings.salesGlGoLive }).from(financeSettings).where(eq(financeSettings.companyId, companyId));
+    if (s === undefined) return;
+    if (s.live === null || currency.toUpperCase() === s.base) return;
+    await tx.insert(financeSalesPostings).values({ companyId, kind, subjectId, eventDate: date < s.live ? s.live : date }).onConflictDoNothing({ target: [financeSalesPostings.companyId, financeSalesPostings.kind, financeSalesPostings.subjectId] });
   }
 
   /** Moves `remaining_amount` by the given signed cents, per entry, in one statement. */
@@ -223,6 +238,7 @@ export class CustomerLedgerService {
     deltas.set(input.creditEntryId, total);
     await this.shiftRemaining(tx, deltas);
     await this.moveBalance(tx, input.customerId, -total);
+    await this.queueFx(tx, ctx.companyId, 'fx_application', applicationId, input.postingDate, credit.currency);
 
     await this.decisions.record(
       {
@@ -290,6 +306,8 @@ export class CustomerLedgerService {
     }
     await this.shiftRemaining(tx, deltas);
     await this.moveBalance(tx, original[0].customerId, restoredToInvoices);
+    const [first] = await tx.select({ currency: customerLedgerEntries.currency }).from(customerLedgerEntries).where(eq(customerLedgerEntries.id, original[0].ledgerEntryId));
+    await this.queueFx(tx, ctx.companyId, 'fx_unapplication', newApplication, input.postingDate, first?.currency ?? null);
     await this.decisions.record(
       {
         companyId: ctx.companyId,
@@ -344,7 +362,7 @@ export class CustomerLedgerService {
     ctx: FinanceContext,
     entryId: string,
     cents: number,
-    p: { postingDate: string; createdBy: string | null; registerId?: string | null; reasonCode?: string | null; reasonText?: string | null; type?: 'wallet_transfer' | 'refund_transfer' },
+    p: { postingDate: string; createdBy: string | null; registerId?: string | null; reasonCode?: string | null; reasonText?: string | null; type?: 'wallet_transfer' | 'refund_transfer' | 'write_off' },
   ): Promise<void> {
     const locked = await this.lockEntries(tx, [entryId]);
     const e = locked.get(entryId);

@@ -12,13 +12,14 @@ const PATH = '/admin/finance/sales-posting';
 
 export async function salesPostingOverviewAction() {
   return await run('sales_posting:read', { surface: 'finance/sales-posting', action: 'view' }, async (ctx) => {
-    const [settings, checks, backlog, open, recon, openingFigures] = await Promise.all([
+    const [settings, checks, backlog, open, recon, openingFigures, liabilities] = await Promise.all([
       fin().setup.getSettings(ctx.companyId),
       fin().salesPosting.readiness(ctx.companyId),
       fin().salesPosting.backlog(ctx.companyId),
       fin().salesPosting.list(ctx.companyId, 'open'),
       fin().salesPosting.reconciliation(ctx.companyId),
       fin().salesPosting.openingFigures(ctx.companyId),
+      fin().salesPosting.liabilityReconciliation(ctx.companyId),
     ]);
     const taxId = settings?.outputTaxAccountId ?? null;
     const taxLabel = taxId === null ? null : ((await fin().setup.accountLabels(ctx.companyId, [taxId]))[taxId] ?? null);
@@ -47,6 +48,7 @@ export async function salesPostingOverviewAction() {
         diff: fromCents(r.diffCents),
         foreignEntries: r.foreignEntries,
       })),
+      liabilities: liabilities.map((l) => ({ label: l.label, accountNo: l.accountNo, accountName: l.accountName, gl: fromCents(l.glCents), owed: fromCents(l.subLedgerCents), diff: fromCents(l.diffCents) })),
       opening: openingFigures.filter((f) => f.netCents !== 0).map((f) => ({ group: f.group, amount: fromCents(f.netCents), foreignEntries: f.foreignEntries })),
       can: {
         setTax: await canPermission('finance_settings:edit'),

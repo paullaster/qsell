@@ -723,3 +723,55 @@ This replaces the provider/method/bank-account split described in §7.0 and buil
 * **Bill Manager screen.** `/admin/payments/bills`: send up to 1,000 invoices (one per line) as a bulk request, cancel invoices, and follow requests. Sign-up stays under Settings → Payments → Run an operation.
 * Operation forms are validated against the catalog before anything is written down.
 * **Still unproven.** Safaricom's sandbox has not been used: reading the stored sandbox credentials from a script was blocked by the permission check, so the live exercise has to be run from Settings → Payments (test connection, QR, STK) or after explicit permission.
+
+## 28. The remaining finance items, built (2026-10-17)
+
+Everything in this section is in the working tree, uncommitted, behind migrations 0053–0058. Each item has unit, integration, API and e2e coverage unless noted under "Not done".
+
+### Refunds
+
+- **Payouts in doubt.** A B2C payout whose outcome Safaricom has not confirmed is checked again (a numbered check, `payout-check:<op>:<n>`) by a person who holds `refunds:resolve_payout`, or closed as *not paid* (the refund returns to approved) or *money left* (the refund is kept as paid and flagged). Closing never guesses: it records who decided and why, and a payout that Safaricom later reports as paid is reconciled by the next check.
+- **Returned payouts.** `recordReturn` takes money back that a bank or M-Pesa returned. It either re-issues to another destination (a new refund that points at the old one) or keeps it as customer credit in the wallet. Net refunded for an order subtracts returns.
+- **Waiving a refund.** An excess on a credit note, or an unapplied receipt, can be given up through a credit adjustment (below); it posts to a forfeit account and needs a second person.
+- **Bank payment files.** `refund_files`: CSV or ISO 20022 pain.001 for refunds paid by bank transfer. Three different people make, approve and confirm a file; a refund inside a live file cannot be paid by hand. Cells that start with `= + - @` are neutralised in CSV. The download is a permissioned route and is logged.
+
+### Wallet and credit adjustments
+
+`credit_adjustments` (CAJ) with kinds `waive_excess`, `wallet_increase`, `wallet_decrease`, `wallet_expiry`. A request goes through the approval engine (`credit_adjustment.requested`) or, with no workflow, to a second person. Applying posts to the credit-forfeit (4430) or credit-adjustment (6320) account and moves the wallet in the same transaction. Expiry is a policy (`expiry_days`, `expiry_notice_days`): the daily `wallet-expiry` job lapses credit nobody used, once for each last use, and the wallets report lists what is about to lapse.
+
+### Inventory and cost of sales
+
+Stock is in the general ledger at cost. Triggers on `inventory_movements` and on changes of `products.cost_price` write `finance_inventory_events`; the `finance-post-inventory` job posts them (stock in, cost of sales, returns, adjustments, revaluation). Stock received but not yet invoiced goes to `2130`. Go-live locks `products`, brings in the opening stock against an equity account, and then the "books against the shelves" reconciliation must show no difference that the waiting events do not explain.
+
+### Gift cards and loyalty points
+
+Issuing a card posts a liability against either money in (sold: a payment method is required) or a cost (complimentary). Points given are a cost and a provision at their value; reversals and expiry release it. The card code never reaches the books. Go-live brings in what is owed on the day, and the sales-posting screen reconciles each liability with its sub-ledger.
+
+### Foreign currency
+
+- **Rates.** `exchange_rates`: one per currency per day, set by hand, at most 14 days ahead. A day that has passed cannot be set, changed or removed (trigger), and a rate that a posting has used cannot be changed either (`RATE_IN_USE`).
+- **Sales and credit notes** are posted in their own currency at the rate of the day (the books convert). No rate for the day: the event waits and says which rate is missing; it posts once the rate is set. Cash received in a foreign currency goes to a bank account that holds that currency.
+- **Exchange differences.** Applying a payment to an invoice queues `fx_application`; undoing queues `fx_unapplication`. The posting is `amount × (payment's rate − invoice's rate)` as an exchange gain or loss by customer posting group.
+- **Revaluation.** `fx_revaluations`: once a day, balances still open are brought to today's rate; the posting is undone the next day by the hourly `fx-reverse-revaluations` job, so only real differences stay.
+- **Reconciliation** values foreign balances at the rate each is carried at, plus revaluations still standing; entries whose currency has no rate yet are left out rather than breaking the screen.
+- **Wallets, gift cards, refunds, credit adjustments and statement charges in a foreign currency (2026-10-18).**
+  - *The idea:* a liability held in a foreign currency is carried at a rate, money leaves it at that same rate, and a difference only appears when the money meets something booked at another rate.
+  - *Wallets* (`customer_wallets.base_value`, `wallet_entries.rate` / `base_amount`): money in is carried at the receipt's rate (or the day's rate for goodwill); money out leaves at the wallet's average rate (`averageRate`, 8 decimals); an undo restores exactly what it undid. Using a wallet to pay an invoice posts in the foreign currency at that average rate and the credit entry carries it like a receipt, so the difference to the invoice's rate is booked when the payment is applied (`fx_application`). Paying an order at the till takes the liability off at the day's rate; the gap to what the books carried is booked in its own entry (`…:tender-fx`).
+  - *Gift cards* carry the rate of the day they were issued (`gift_cards.rate`); every posting for the card (issue, write-off, expiry, paying an order) uses it. A card pays only an order in its own currency. Cards and wallets are revalued with the receivables.
+  - *Refunds* are booked at the rate their source is carried at (`refund_requests.rate`, fixed once set aside): set-aside and payout use the same rate, so payable leaves the books at what it came in at. Money that came back from a bank in a foreign currency is booked (Dr bank, Cr refunds payable) at the refund's own rate, and the replacement refund keeps that rate; cancelling the replacement keeps the money as the customer's credit, carried at that rate too.
+  - *Credit adjustments* post at the rate of what is adjusted (a receipt's, a wallet's average). *Statement charges* post at the day's rate on an account that holds the currency.
+  - *Go-live* values foreign wallets, cards and approved refunds at the rate of that day and keeps it as their carrying value. Reconciliations compare the books with each wallet's `base_value`, each card's balance × rate, and each refund's amount × rate, plus revaluations still standing.
+  - *Loyalty points* are worth money in the books' currency. On an order in another currency, what is left to pay is converted at the day's rate, the points that cover it are taken back to the order's currency (rounded down, never more than is due), and the points' worth in the books' currency is kept on the tender (`order_tenders.base_amount`, migration 0063). When the sale is posted at another day's rate the provision leaves at what the points were worth and the difference is an exchange gain or loss. Points earned on such an order count the order's value in the books' currency; no rate for the day means no points earned and none can be spent.
+  - *Screens:* gift cards can be issued in another currency (picker) and are listed with their currency; a customer's wallet shows the rate a foreign wallet is carried at.
+
+### Bank statements
+
+CSV, MT940, **CAMT.053** and **xlsx** files; the kind is read from the file, never from the browser. XML is parsed by a small parser that refuses DOCTYPE and entities; xlsx is read with zip-bomb and size guards. **Matching rules** per bank account (`bank_match_rules`): amount tolerance, date window, certainty mode, and phone and name evidence. **Bank feed** (`bank_feeds`): a bank pushes lines to `/api/hooks/bank-feed/<account>/<secret>`; the secret is stored hashed, compared in constant time, and every failure answers 404.
+
+### Payments
+
+The bulk Bill Manager screen and the automatic B2C payout existed already. Added: per-invoice state (`bill_invoices`: requested, sent, failed, part paid, paid, cancelled); a Bill Manager notice or B2B Express notice is a claim that Safaricom's own record must confirm, and only then is it applied to the oldest unpaid invoice of that account number (`bill_invoice_payments` makes this happen once per transaction); the customer is acknowledged once; Bill and Express notices are credited like any verified payment.
+
+### Not done, on purpose
+
+Gift cards past the date set on them lose what is left once a day (`expire-gift-cards`, 04:32): one `adjust` row writes the balance off and the books move it from the gift-card liability to forfeit income; a card with no date never expires. Jenga and KCB statement *pull* adapters are not built (only the generic push feed). The Safaricom sandbox has not been exercised from here. The development database has not had migrations 0043–0062 applied. Evidence uploads need media storage to be configured.

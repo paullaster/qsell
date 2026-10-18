@@ -105,6 +105,16 @@ export const DOCUMENT_KINDS = {
     fiscal: false,
     suggested: { code: 'RFD', prefix: 'RFD-{YY}-', digits: 8, reset: 'yearly', blockSize: 20 },
   },
+  credit_adjustment: {
+    label: 'Credit adjustment',
+    fiscal: false,
+    suggested: { code: 'CAJ', prefix: 'CAJ-{YY}-', digits: 8, reset: 'yearly', blockSize: 20 },
+  },
+  refund_file: {
+    label: 'Refund payment file',
+    fiscal: false,
+    suggested: { code: 'RPF', prefix: 'RPF-{YY}-', digits: 6, reset: 'yearly', blockSize: 5 },
+  },
   return_receipt: {
     label: 'Return receipt',
     fiscal: false,
@@ -159,6 +169,11 @@ export const DOCUMENT_KINDS = {
     label: 'Stock count',
     fiscal: false,
     suggested: { code: 'CNT', prefix: 'CNT-{YY}-', digits: 8, reset: 'yearly', blockSize: 20 },
+  },
+  project: {
+    label: 'Project',
+    fiscal: false,
+    suggested: { code: 'PRJ', prefix: 'PRJ-{YYYY}-', digits: 8, reset: 'yearly', blockSize: 20 },
   },
 } as const satisfies Record<string, DocumentKindDef>;
 
