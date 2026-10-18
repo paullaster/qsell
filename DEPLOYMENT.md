@@ -124,13 +124,18 @@ issued, then proxy it and set SSL mode to **Full (strict)**.
 ### Phase B — Deploy key (laptop)
 
 ```sh
-scripts/configure-github-environment.sh --config deploy/instances/<id>.env \
-  --generate-key --dry-run
+scripts/configure-github-environment.sh --config deploy/instances/<id>.env --key-only
 ```
 
 This creates `$SSH_KEY_FILE` (ed25519, no passphrase — `webfactory/ssh-agent`
-cannot use passphrase-protected keys) and prints its **public** half. Do not reuse
-your personal key.
+cannot use passphrase-protected keys), never overwrites an existing one, and prints
+its **public** half: one line starting `ssh-ed25519 AAAA…`. Do not reuse your
+personal key.
+
+**What to do with the output:** copy that whole line. You paste it into phase C as
+`SSH_PUBLIC_KEY='…'`, which authorises the key on the server. Keep the private file
+on your machine; phase F uploads it to GitHub for you. Nothing else is needed, and
+nothing has been sent to the server or GitHub yet.
 
 ### Phase C — Bootstrap the host (root, on the server)
 
