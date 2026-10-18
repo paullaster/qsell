@@ -309,10 +309,10 @@ describe.skipIf(!url)('pricing insights (database)', () => {
   describe('what is owed to customers', () => {
     it('adds up rebates earned, points and gift cards', async () => {
       const before = await c.insights.liabilities(companyId);
-      await c.giftCards.issue(companyId, { value: 250, count: 2 }, actor, reason);
+      await c.giftCards.issue(companyId, { funding: { kind: 'complimentary' }, value: 250, count: 2 }, actor, reason);
       await c.giftCards.issue(
         companyId,
-        { value: 100, expiresAt: new Date(Date.now() + 86400_000) },
+        { funding: { kind: 'complimentary' }, value: 100, expiresAt: new Date(Date.now() + 86400_000) },
         actor,
         reason,
       );

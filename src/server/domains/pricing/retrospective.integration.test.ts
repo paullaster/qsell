@@ -818,7 +818,7 @@ describe.skipIf(!url)('rebates, loyalty, gift cards and tenders (database)', () 
     it('are issued with unique readable codes, a ledger entry and a decision', async () => {
       const cards = await c.giftCards.issue(
         companyId,
-        { value: 500, count: 3, note: 'Promo' },
+        { funding: { kind: 'complimentary' }, value: 500, count: 3, note: 'Promo' },
         actor,
         reason,
       );
@@ -839,24 +839,24 @@ describe.skipIf(!url)('rebates, loyalty, gift cards and tenders (database)', () 
     });
 
     it('refuses silly values, and a past expiry', async () => {
-      await expect(c.giftCards.issue(companyId, { value: 0 }, actor, reason)).rejects.toMatchObject(
+      await expect(c.giftCards.issue(companyId, { funding: { kind: 'complimentary' }, value: 0 }, actor, reason)).rejects.toMatchObject(
         { code: 'INVALID' },
       );
       await expect(
         c.giftCards.issue(
           companyId,
-          { value: 10, expiresAt: new Date('2020-01-01') },
+          { funding: { kind: 'complimentary' }, value: 10, expiresAt: new Date('2020-01-01') },
           actor,
           reason,
         ),
       ).rejects.toMatchObject({ code: 'INVALID' });
       await expect(
-        c.giftCards.issue(companyId, { value: 10, count: 9999 }, actor, reason),
+        c.giftCards.issue(companyId, { funding: { kind: 'complimentary' }, value: 10, count: 9999 }, actor, reason),
       ).rejects.toMatchObject({ code: 'INVALID' });
     });
 
     it('two orders spending one card at once cannot both get the money', async () => {
-      const [card] = await c.giftCards.issue(companyId, { value: 100 }, actor, reason);
+      const [card] = await c.giftCards.issue(companyId, { funding: { kind: 'complimentary' }, value: 100 }, actor, reason);
       const attempt = (orderId: string) =>
         db
           .transaction((tx) =>
@@ -878,7 +878,7 @@ describe.skipIf(!url)('rebates, loyalty, gift cards and tenders (database)', () 
     });
 
     it('a blocked, expired or empty card cannot be used, and says why', async () => {
-      const [blocked] = await c.giftCards.issue(companyId, { value: 100 }, actor, reason);
+      const [blocked] = await c.giftCards.issue(companyId, { funding: { kind: 'complimentary' }, value: 100 }, actor, reason);
       await c.giftCards.setBlocked(companyId, blocked!.id, true, actor, reason);
       await expect(
         db.transaction((tx) =>
@@ -902,7 +902,7 @@ describe.skipIf(!url)('rebates, loyalty, gift cards and tenders (database)', () 
         }),
       );
 
-      const [old] = await c.giftCards.issue(companyId, { value: 100 }, actor, reason);
+      const [old] = await c.giftCards.issue(companyId, { funding: { kind: 'complimentary' }, value: 100 }, actor, reason);
       await db
         .update(schema.giftCards)
         .set({ expiresAt: new Date(Date.now() - 1000) })
@@ -934,7 +934,7 @@ describe.skipIf(!url)('rebates, loyalty, gift cards and tenders (database)', () 
     it('lists and searches', async () => {
       const [card] = await c.giftCards.issue(
         companyId,
-        { value: 25, note: `find-${randomUUID().slice(0, 6)}` },
+        { funding: { kind: 'complimentary' }, value: 25, note: `find-${randomUUID().slice(0, 6)}` },
         actor,
         reason,
       );
@@ -970,7 +970,7 @@ describe.skipIf(!url)('rebates, loyalty, gift cards and tenders (database)', () 
       const cust = await customer();
       const prod = await product({ price: '1000', stockQuantity: 50 });
       const res = await order(cust.email!, [[prod, 1]]);
-      const [card] = await c.giftCards.issue(companyId, { value: 300 }, actor, reason);
+      const [card] = await c.giftCards.issue(companyId, { funding: { kind: 'complimentary' }, value: 300 }, actor, reason);
       const out = await c.tenders.apply(
         companyId,
         res.order!.id,
@@ -994,7 +994,7 @@ describe.skipIf(!url)('rebates, loyalty, gift cards and tenders (database)', () 
       const prod = await product({ price: '200', stockQuantity: 10 });
       const res = await order(cust.email!, [[prod, 2]]);
       expect((await prodRow(prod)).reservedQuantity).toBe(2);
-      const [card] = await c.giftCards.issue(companyId, { value: 1000 }, actor, reason);
+      const [card] = await c.giftCards.issue(companyId, { funding: { kind: 'complimentary' }, value: 1000 }, actor, reason);
       const out = await c.tenders.apply(
         companyId,
         res.order!.id,
@@ -1026,7 +1026,7 @@ describe.skipIf(!url)('rebates, loyalty, gift cards and tenders (database)', () 
       await c.loyalty.adjust(companyId, cust.id, 1000, 'seed', actor, reason);
       const prod = await product({ price: '1000' });
       const res = await order(cust.email!, [[prod, 1]]);
-      const [card] = await c.giftCards.issue(companyId, { value: 400 }, actor, reason);
+      const [card] = await c.giftCards.issue(companyId, { funding: { kind: 'complimentary' }, value: 400 }, actor, reason);
       const out = await c.tenders.apply(
         companyId,
         res.order!.id,
@@ -1048,7 +1048,7 @@ describe.skipIf(!url)('rebates, loyalty, gift cards and tenders (database)', () 
       await c.loyalty.adjust(companyId, cust.id, 400, 'seed', actor, reason);
       const prod = await product({ price: '1000' });
       const res = await order(cust.email!, [[prod, 1]]);
-      const [card] = await c.giftCards.issue(companyId, { value: 300 }, actor, reason);
+      const [card] = await c.giftCards.issue(companyId, { funding: { kind: 'complimentary' }, value: 300 }, actor, reason);
       await c.tenders.apply(
         companyId,
         res.order!.id,
@@ -1069,7 +1069,7 @@ describe.skipIf(!url)('rebates, loyalty, gift cards and tenders (database)', () 
       const cust = await customer();
       const prod = await product({ price: '100' });
       const res = await order(cust.email!, [[prod, 1]]);
-      const [card] = await c.giftCards.issue(companyId, { value: 500 }, actor, reason);
+      const [card] = await c.giftCards.issue(companyId, { funding: { kind: 'complimentary' }, value: 500 }, actor, reason);
       await c.tenders.apply(companyId, res.order!.id, { giftCards: [{ code: card!.code }] }, staff);
       await expect(
         c.tenders.apply(companyId, res.order!.id, { giftCards: [{ code: card!.code }] }, staff),
@@ -1095,7 +1095,7 @@ describe.skipIf(!url)('rebates, loyalty, gift cards and tenders (database)', () 
       const cust = await customer();
       const prod = await product({ price: '100' });
       const res = await order(cust.email!, [[prod, 1]]);
-      const [good] = await c.giftCards.issue(companyId, { value: 30 }, actor, reason);
+      const [good] = await c.giftCards.issue(companyId, { funding: { kind: 'complimentary' }, value: 30 }, actor, reason);
       // The second card does not exist: the first card's spend must roll back with it.
       await expect(
         c.tenders.apply(
@@ -1117,7 +1117,7 @@ describe.skipIf(!url)('rebates, loyalty, gift cards and tenders (database)', () 
       const b = await order(cust.email!, [[prod, 1]]);
       expect(a.order, 'first order was not created').toBeDefined();
       expect(b.order, 'second order was not created').toBeDefined();
-      const [card] = await c.giftCards.issue(companyId, { value: 100 }, actor, reason);
+      const [card] = await c.giftCards.issue(companyId, { funding: { kind: 'complimentary' }, value: 100 }, actor, reason);
       const results = await Promise.allSettled([
         c.tenders.apply(companyId, a.order!.id, { giftCards: [{ code: card!.code }] }, staff),
         c.tenders.apply(companyId, b.order!.id, { giftCards: [{ code: card!.code }] }, staff),
