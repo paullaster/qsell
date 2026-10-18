@@ -5,7 +5,7 @@ import type { C2bConsumer, DarajaC2b } from '../daraja/c2b';
 import type { PaymentService } from '../service';
 import type { DarajaOperations } from '../daraja/operations';
 import type { DarajaDisbursements } from '../daraja/disbursements';
-import { parseB2bExpress, parseC2b } from '../daraja/parsers';
+import { parseB2bExpress, parseBillPayment, parseC2b } from '../daraja/parsers';
 import { looksLikeReceipt } from '../daraja/security';
 import { DARAJA_OPERATIONS, type DarajaOperationCode } from '../daraja/catalog';
 import { readStatusAnswer, statusAgrees } from '../daraja/verify';
@@ -20,6 +20,7 @@ import type { PaymentVerificationService } from './verification-service';
 
 import { has, orElse } from '@/lib/values';
 import type { PaymentActivityService } from './activity-service';
+import type { BillInvoiceService } from './bill-invoice-service';
 
 export interface IngestInput {
   rawText: string;
@@ -58,6 +59,8 @@ function c2bClaimKind(kind: string): 'c2b_validation' | 'c2b_confirmation' | nul
 export class PaymentEngine {
   /** Read-only views for the people watching over payments. */
   activity!: PaymentActivityService;
+  /** Invoices sent through Bill Manager, followed to the receipt. */
+  bills!: BillInvoiceService;
 
   constructor(
     readonly db: DrizzleDb,
@@ -194,20 +197,31 @@ export class PaymentEngine {
         if (!['succeeded', 'failed', 'cancelled', 'rejected'].includes(op.status)) {
           if (claim.claimsSuccess === true && has(claim.platformReference) && looksLikeReceipt(claim.platformReference)) {
             await this.ops.update(op.id, { status: 'succeeded', platformReference: claim.platformReference, result: { callback: true, amountCents: claim.amountCents, confirmedBy: 'callback_only' } });
+            // The other business's word is only a claim: the payment is written down under its M-Pesa code, checked with
+            // Safaricom, and put on a customer only after that.
+            await this.c2b.expressPaid(event, claim, ctx.provider.id, op.methodId);
+            return { httpStatus: 200, body: ACK };
           } else if (claim.claimsSuccess === false) {
             await this.ops.update(op.id, { status: 'failed', failureCode: claim.failureCode ?? 'DECLINED', failureReason: claim.failureReason ?? 'The other business did not complete the payment.' });
           } else {
             await this.ops.update(op.id, { status: 'in_doubt', failureCode: 'UNCLEAR', failureReason: 'The callback did not say clearly whether it was paid. Check the M-Pesa statement.', nextAttemptAt: null });
           }
         }
-        // Nothing is credited from this notice; it is the other business's word and is kept as such.
-        await this.events.setState(event.id, 'unverified', { operationId: op.id, failureCode: 'CALLBACK_ONLY', failureReason: 'Reported by the callback only. Nothing is credited from it.' });
+        // A payment that was not clearly made is never credited; the callback is kept as it came.
+        await this.events.setState(event.id, 'unverified', { operationId: op.id, failureCode: 'CALLBACK_ONLY', failureReason: 'The callback did not clearly say the payment was made, so nothing is credited from it.' });
         return { httpStatus: 200, body: ACK };
       }
-      case 'bill':
+      case 'bill': {
+        // A Bill Manager payment notice is a claim like any other: written down under its M-Pesa code, checked with Safaricom,
+        // then put on the customer. The same payment announced by the paybill itself is counted once.
+        const paid = parseBillPayment(body);
+        if (paid) await this.c2b.billNoticed(event, paid, ctx.provider.id);
+        else await this.events.setState(event.id, 'unverified', { failureCode: 'NOT_A_PAYMENT', failureReason: 'This Bill Manager notice is not a payment notice, so it is kept as a record.' });
+        return { httpStatus: 200, body: ACK };
+      }
       case 'pull':
-        // A Bill Manager payment notice or a Pull notice is kept for the record. The money itself is credited through the paybill's own confirmed payment, never from this notice.
-        await this.events.setState(event.id, 'unverified', { failureCode: 'RECORD_ONLY', failureReason: `${input.kind} notifications are kept as a record; nothing is credited from them.` });
+        // A Pull notice is kept for the record; payments are found by asking Safaricom, never taken from the notice.
+        await this.events.setState(event.id, 'unverified', { failureCode: 'RECORD_ONLY', failureReason: 'Pull notifications are kept as a record; nothing is credited from them.' });
         return { httpStatus: 200, body: ACK };
     }
   }
@@ -217,7 +231,9 @@ export class PaymentEngine {
     const op = await this.ops.get(opId);
     if (op?.status !== 'accepted' || !has(op.platformReference)) return;
     try {
-      await this.daraja.start({ providerId: op.providerId, methodId: op.methodId, operation: 'transaction_status', input: { transactionId: op.platformReference }, idempotencyKey: `payout-check:${op.id}`, subject: { type: 'provider_operation', id: op.id } });
+      // Each check is its own request, so asking again after a doubt is a new question, not the old answer.
+      const asked = (await this.ops.bySubject('provider_operation', op.id, 'transaction_status')).length;
+      await this.daraja.start({ providerId: op.providerId, methodId: op.methodId, operation: 'transaction_status', input: { transactionId: op.platformReference }, idempotencyKey: `payout-check:${op.id}:${String(asked + 1)}`, subject: { type: 'provider_operation', id: op.id } });
     } catch (error) {
       await this.ops.update(op.id, { status: 'in_doubt', failureCode: 'CHECK_NOT_RUN', failureReason: `The payout was reported as done, but it could not be checked with Safaricom (${error instanceof Error ? error.message : 'unknown error'}). Check the M-Pesa statement.`, nextAttemptAt: null });
     }
@@ -227,7 +243,7 @@ export class PaymentEngine {
   private async settlePayout(opId: string) {
     const op = await this.ops.get(opId);
     if (op?.status !== 'accepted' || !has(op.platformReference)) return;
-    const [check] = await this.ops.bySubject('provider_operation', op.id, 'transaction_status');
+    const check = (await this.ops.bySubject('provider_operation', op.id, 'transaction_status')).at(-1);
     if (!check || ['created', 'queued', 'submitted', 'accepted', 'timed_out'].includes(check.status)) return;
     if (check.status !== 'succeeded') {
       await this.ops.update(op.id, { status: 'in_doubt', failureCode: 'CHECK_FAILED', failureReason: `Safaricom's record of the payout could not be read (${check.failureReason ?? check.status}). Check the M-Pesa statement before doing anything else.`, nextAttemptAt: null });
@@ -291,6 +307,39 @@ export class PaymentEngine {
 
   // ── what a person may do when the engine cannot decide ──────────────────
 
+  /**
+   * A payout left in doubt that Safaricom gave a receipt for: ask Safaricom again about that transaction. If its own record
+   * agrees on the transaction, status and amount the payout counts as paid; otherwise it stays in doubt with the reason.
+   */
+  async recheckPayout(opId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    const op = await this.ops.get(opId);
+    if (!op || !DARAJA_OPERATIONS[op.operation as DarajaOperationCode].moneyOut) return { ok: false, error: 'That is not a payout.' };
+    if (!['in_doubt', 'timed_out'].includes(op.status)) return { ok: false, error: `Only a payout that is in doubt can be checked again; this one is ${op.status.replace('_', ' ')}.` };
+    if (!has(op.platformReference)) return { ok: false, error: 'Safaricom never gave a transaction number for this payout, so there is nothing to look up. Check the M-Pesa statement and close the attempt with what you find.' };
+    await this.ops.update(op.id, { status: 'accepted', failureCode: null, failureReason: null });
+    await this.checkPayout(op.id);
+    return { ok: true };
+  }
+
+  /**
+   * A person closes a payout that could not be confirmed, after looking at the M-Pesa statement. If the money did leave, the
+   * refund is then recorded by hand with the statement's receipt; if it did not, the refund can be sent again. Kept with their name.
+   */
+  async closeDoubtfulPayout(input: { opId: string; userId: string; reason: string; moneyLeft: boolean }): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (input.reason.trim().length < 10) return { ok: false, error: 'Say what you found on the statement (at least a sentence): this is kept with your name.' };
+    const op = await this.ops.get(input.opId);
+    if (!op || !DARAJA_OPERATIONS[op.operation as DarajaOperationCode].moneyOut) return { ok: false, error: 'That is not a payout.' };
+    if (!['in_doubt', 'timed_out'].includes(op.status)) return { ok: false, error: `Only a payout that is in doubt can be closed; this one is ${op.status.replace('_', ' ')}.` };
+    await this.ops.update(op.id, {
+      status: 'failed',
+      failureCode: input.moneyLeft ? 'CLOSED_MONEY_LEFT' : 'CLOSED_NOT_PAID',
+      failureReason: `Closed by a person who checked the statement: ${input.reason.trim()}`,
+      result: { ...op.result, closedBy: input.userId, moneyLeft: input.moneyLeft, closedReason: input.reason.trim() },
+    });
+    await this.finished(op.id);
+    return { ok: true };
+  }
+
   /** Re-run the check for a payment right now. */
   async recheck(attemptId: string) {
     await this.jobs.verifyAttempt(attemptId, 0);
@@ -345,6 +394,7 @@ export class PaymentEngine {
     try {
       const placed = await this.consumer.place(tx, method, input.customerId, { id: input.userId });
       await this.txs.consume(tx.id, placed.type, placed.id);
+      await this.c2b.notePlaced(tx.id);
       return { ok: true, ...placed };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : 'It could not be placed.' };

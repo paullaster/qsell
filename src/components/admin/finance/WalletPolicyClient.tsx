@@ -91,6 +91,12 @@ function WalletPolicyView({ view }: { view: View }) {
             <Field id={`${uid}-max`} label="Most a wallet may hold" hint="Leave empty for no limit.">
               <input id={`${uid}-max`} value={form.maxBalance} onChange={(e) => set('maxBalance', e.target.value)} className={fieldClass} inputMode="decimal" disabled={!form.walletEnabled} />
             </Field>
+            <Field id={`${uid}-exp`} label="Credit lapses after (days unused)" hint="Leave empty for credit that never lapses. A balance nobody has touched for this long becomes income.">
+              <input id={`${uid}-exp`} value={form.expiryDays} onChange={(e) => set('expiryDays', e.target.value)} className={fieldClass} inputMode="numeric" disabled={!form.walletEnabled} />
+            </Field>
+            <Field id={`${uid}-notice`} label="Warn this many days before" hint="Balances about to lapse are listed on the wallets page.">
+              <input id={`${uid}-notice`} value={form.expiryNoticeDays} onChange={(e) => set('expiryNoticeDays', e.target.value)} className={fieldClass} inputMode="numeric" disabled={!form.walletEnabled || form.expiryDays.trim() === ''} />
+            </Field>
             {form.groupCode === null ? (
               <Field id={`${uid}-label`} label="What customers see it called" hint="For example Wallet, Account credit or Store credit.">
                 <input id={`${uid}-label`} value={form.label} onChange={(e) => set('label', e.target.value)} className={fieldClass} maxLength={40} required />

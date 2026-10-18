@@ -84,6 +84,7 @@ function CreditNoteExcessView({ view }: { view: View }) {
                   ) : <Chip tone="amber">The {wl} is off (Wallet policy)</Chip>}
                   <button type="button" className={buttonClass} disabled={busy !== null} onClick={() => void askInvoices(r.creditNoteId)} aria-expanded={asking?.id === r.creditNoteId}>Use on the customer&apos;s other invoices</button>
                   <Link href={`/admin/finance/refunds/new?customer=${r.customerId}&source=credit_note_excess:${r.creditNoteId}`} className={buttonClass}>Refund to the customer</Link>
+                  {view.can.giveUp ? <Link href={`/admin/finance/receivables/credit-adjustments/new?customer=${r.customerId}&source=credit_note_excess:${r.creditNoteId}`} className={buttonClass}>Give it up…</Link> : null}
                 </div>
               ) : null}
               {asking?.id === r.creditNoteId ? (

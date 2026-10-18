@@ -1,13 +1,16 @@
 'use client';
 
 import { use, useId, useState } from 'react';
-import { billsOverviewAction, cancelInvoicesAction, sendInvoicesAction } from '@/server/domains/payments/bill-actions';
+import { has } from '@/lib/values';
+import { billsOverviewAction, cancelInvoicesAction, listBillInvoicesAction, sendInvoicesAction } from '@/server/domains/payments/bill-actions';
+import { billStatus, invoiceNote, isOverdue, stillDue } from '@/lib/bill-invoices';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import type { Choice } from '@/lib/payment-options';
 import { billRequestLabel, shortReason, when, words } from '@/lib/payment-activity-format';
-import { Chip, Field, LoadFailed, Message, PageHeader, cardClass, fieldClass, primaryClass, buttonClass, type Notice, attempt } from '../finance/ui';
+import { Chip, Field, LoadFailed, Message, PageHeader, cardClass, fieldClass, money, primaryClass, buttonClass, today, type Notice, attempt } from '../finance/ui';
 
 type Data = Extract<Awaited<ReturnType<typeof billsOverviewAction>>, { ok: true }>['data'];
+type InvoicePage = Extract<Awaited<ReturnType<typeof listBillInvoicesAction>>, { ok: true }>['data'];
 const TONE: Record<string, 'green' | 'amber' | 'red' | 'sky' | 'gray'> = { succeeded: 'green', accepted: 'sky', submitted: 'sky', queued: 'amber', failed: 'red', in_doubt: 'red', timed_out: 'amber' };
 
 /** Send, cancel and follow M-Pesa Bill Manager invoices for a paybill. */
@@ -81,9 +84,10 @@ function BillsView({ initial }: { initial: Data }) {
           ) : null}
         </>
       )}
+      <InvoiceList counts={data.counts} />
       <section className={cardClass} aria-label="Recent requests">
         <h2 className="text-sm font-bold text-fg-strong">Recent requests</h2>
-        <p className="text-xs text-fg-muted">{data.notices} payment notice{data.notices === 1 ? '' : 's'} received from Bill Manager (kept as a record; customers&apos; payments are credited through the paybill&apos;s own confirmed payments).</p>
+        <p className="text-xs text-fg-muted">{data.notices} payment notice{data.notices === 1 ? '' : 's'} received from Bill Manager. A notice is a claim: the payment is credited only after Safaricom itself confirms it.</p>
         {data.recent.length === 0 ? <p className="py-3 text-sm text-fg-muted">Nothing sent yet.</p> : (
           <ul className="divide-y divide-line text-sm">
             {data.recent.map((o) => (
@@ -96,5 +100,66 @@ function BillsView({ initial }: { initial: Data }) {
         )}
       </section>
     </div>
+  );
+}
+
+/** Every invoice sent, one page at a time, with what became of it: sent, paid, part paid, refused, cancelled. */
+function InvoiceList({ counts }: { counts: Record<string, number> }) {
+  const [status, setStatus] = useState<Choice | null>(null);
+  const [q, setQ] = useState('');
+  const [page, setPage] = useState<InvoicePage | null>(null);
+  const [rows, setRows] = useState<InvoicePage['rows']>([]);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<Notice>(null);
+  const day = today();
+
+  const load = async (more: boolean) => {
+    setBusy(true);
+    setNotice(null);
+    const query = q.trim();
+    const res = await attempt(listBillInvoicesAction({ status: (status?.id ?? undefined) as never, q: query === '' ? undefined : query, before: more ? (page?.nextBefore ?? undefined) : undefined }));
+    setBusy(false);
+    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
+    setPage(res.data);
+    setRows(more ? [...rows, ...res.data.rows] : res.data.rows);
+  };
+  const total = Object.values(counts).reduce((n, c) => n + c, 0);
+
+  return (
+    <section className={`${cardClass} space-y-3`} aria-label="Invoices">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-bold text-fg-strong">Invoices ({total})</h2>
+        <p className="text-xs text-fg-muted">{counts.sent ?? 0} waiting for payment · {counts.part_paid ?? 0} part paid · {counts.paid ?? 0} paid · {counts.failed ?? 0} refused</p>
+      </div>
+      <Message notice={notice} />
+      <form className="flex flex-wrap items-end gap-2" role="search" onSubmit={(e) => { e.preventDefault(); void load(false); }}>
+        <div className="min-w-48"><ChoicePicker label="State" source="bill-invoice-statuses" choice={status} onChoice={setStatus} placeholder="All" /></div>
+        <label className="min-w-40 flex-1 text-xs font-semibold text-fg-muted">Search
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Invoice, customer or account number" className={`${fieldClass} mt-1 block w-full`} autoComplete="off" />
+        </label>
+        <button type="submit" className={buttonClass} disabled={busy}>Show</button>
+      </form>
+      {page === null ? <p className="text-sm text-fg-muted">Choose Show to list the invoices.</p> : null}
+      {page !== null && rows.length === 0 ? <p className="text-sm text-fg-muted">No invoices match.</p> : null}
+      {page !== null && rows.length > 0 ? (
+        <ul className="divide-y divide-line text-sm">
+          {rows.map((i) => {
+            const s = billStatus(i.status);
+            const note = invoiceNote(i);
+            return (
+              <li key={i.id} className="space-y-1 py-2">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <p className="min-w-0 break-words font-semibold text-fg-strong">{i.reference} <span className="font-normal text-fg-muted">· {i.billedName} · account {i.accountReference}</span></p>
+                  <span className="flex items-center gap-2">{isOverdue(i, day) ? <Chip tone="red">Overdue</Chip> : null}<Chip tone={s.tone}>{s.label}</Chip></span>
+                </div>
+                <p className="text-xs text-fg-muted">{money(i.amount)} · due {i.dueDate}{Number(i.paidAmount) > 0 ? ` · paid ${money(i.paidAmount)}${i.status === 'paid' ? '' : `, ${money(stillDue(i.amount, i.paidAmount))} to go`}` : ''} · {i.invoiceName}</p>
+                {note === null ? null : <p className="break-words text-xs text-amber-700">{note}</p>}
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      {has(page?.nextBefore) ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void load(true)}>Show more</button> : null}
+    </section>
   );
 }

@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 
+import { DEFAULT_RULES, nameScore, phoneKeysIn, type MatchRules } from './bank-match';
+
 import { emptyToNull, firstNonZero, has, nth, orElse, required, trimToNull } from '@/lib/values';
 
 /** Reading bank statements and suggesting matches. No database; money is in whole cents. */
@@ -133,6 +135,12 @@ export function parseDate(raw: string, format: 'auto' | 'dmy' | 'mdy' | 'ymd' = 
   }
   m = /^(\d{4})(\d{2})(\d{2})$/.exec(s);
   if (m) return iso(Number(m[1]), Number(m[2]), Number(m[3]));
+  // A date typed into Excel is stored as the number of days since 30 December 1899 (1954 to 2119 as five digits).
+  m = /^(\d{5})(?:\.\d+)?$/.exec(s);
+  if (m && Number(m[1]) >= 20000 && Number(m[1]) <= 80000) {
+    const d = new Date(Date.UTC(1899, 11, 30) + Number(m[1]) * 86_400_000);
+    return iso(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate());
+  }
   return null;
 }
 
@@ -188,7 +196,7 @@ export function withHashes<T extends { date: string; amountCents: number; refere
   });
 }
 
-function finish(lines: ParsedLine[], skipped: ParsedStatement['skipped'], errors: ParsedStatement['errors'], headers: string[]): ParsedStatement {
+export function finish(lines: ParsedLine[], skipped: ParsedStatement['skipped'], errors: ParsedStatement['errors'], headers: string[]): ParsedStatement {
   let ordered = lines;
   // Newest-first files are put in the order things happened.
   if (ordered.length > 1 && ordered[0].date > ordered[ordered.length - 1].date) ordered = [...ordered].reverse();
@@ -359,6 +367,8 @@ export interface LineForMatch {
   amountCents: number;
   description: string;
   reference: string | null;
+  /** The other party the bank names, when it names one. */
+  counterparty?: string | null;
 }
 export interface EntryForMatch {
   id: number;
@@ -366,12 +376,19 @@ export interface EntryForMatch {
   amountCents: number;
   /** Words the bank might quote back: document number, the payer's reference, the payout reference. */
   refs: string[];
+  /** The customer's phone number(s), as their last nine digits. */
+  phones?: string[];
+  /** The customer's name(s). */
+  names?: string[];
 }
 export interface Suggestion {
   lineId: number;
   entryIds: number[];
-  /** `reference` = the bank quoted the document's own reference; `amount_date` = same amount, close in time. */
-  rule: 'reference' | 'amount_date';
+  /**
+   * `reference` = the bank quoted the document's own reference; `phone` = the line carries the customer's phone number;
+   * `name` = the payer's name resembles the customer's; `amount_date` = same amount, close in time.
+   */
+  rule: 'reference' | 'phone' | 'name' | 'amount_date';
   /** matched: safe to apply by itself. proposed: a person confirms. */
   certainty: 'matched' | 'proposed';
 }
@@ -383,34 +400,59 @@ export function daysBetween(a: string, b: string): number {
 }
 
 /**
- * For each line, the ledger entry it most likely closes. Same amount is always required.
- * 1. The line quotes the document's reference and exactly one entry fits: matched.
- * 2. Otherwise same amount within `windowDays`: proposed (all candidates, nearest first).
+ * For each line, the ledger entry it most likely closes, by the rules in force (see `bank-match.ts`). With the standard rules:
+ * 1. The line quotes the document's reference, the amount is exactly the same and exactly one entry fits: matched.
+ * 2. Otherwise same amount within three days: proposed (all candidates, nearest first).
+ * Phone numbers and names can be switched on; they only ever close a line by themselves for a phone number a person said to trust.
  * An entry is used by at most one certain match.
  */
-export function suggestMatches(lines: LineForMatch[], entries: EntryForMatch[], opts: { windowDays?: number; maxProposals?: number } = {}): Suggestion[] {
-  const windowDays = opts.windowDays ?? 3;
-  const maxProposals = opts.maxProposals ?? 5;
-  const byAmount = new Map<number, EntryForMatch[]>();
-  for (const e of entries) byAmount.set(e.amountCents, [...(byAmount.get(e.amountCents) ?? []), e]);
+export function suggestMatches(lines: LineForMatch[], entries: EntryForMatch[], opts: { windowDays?: number; maxProposals?: number; rules?: MatchRules } = {}): Suggestion[] {
+  const rules: MatchRules = { ...(opts.rules ?? DEFAULT_RULES), ...(opts.windowDays === undefined ? {} : { dateWindowDays: opts.windowDays }), ...(opts.maxProposals === undefined ? {} : { maxProposals: opts.maxProposals }) };
   const used = new Set<number>();
   const out: Suggestion[] = [];
   const ordered = [...lines].sort((a, b) => firstNonZero(a.date.localeCompare(b.date), a.id - b.id));
   for (const line of ordered) {
-    const pool = (byAmount.get(line.amountCents) ?? []).filter((e) => !used.has(e.id));
+    const pool = entries.filter((e) => !used.has(e.id) && Math.abs(e.amountCents - line.amountCents) <= rules.amountToleranceCents);
     if (pool.length === 0) continue;
+    const exact = (e: EntryForMatch) => e.amountCents === line.amountCents;
+    const text = `${line.reference ?? ''} ${line.description} ${line.counterparty ?? ''}`;
     const hay = normRef(`${line.reference ?? ''} ${line.description}`);
-    const hits = pool.filter((e) => e.refs.some((r) => normRef(r).length >= 5 && hay.includes(normRef(r))));
-    if (hits.length === 1) {
-      used.add(hits[0].id);
-      out.push({ lineId: line.id, entryIds: [hits[0].id], rule: 'reference', certainty: 'matched' });
+    const nearness = (e: EntryForMatch) => daysBetween(e.date, line.date);
+    const byNearness = (list: EntryForMatch[]) => [...list].sort((a, b) => firstNonZero(nearness(a) - nearness(b), a.id - b.id));
+
+    const refHits = rules.reference === 'off' ? [] : pool.filter((e) => e.refs.some((r) => normRef(r).length >= rules.minRefLength && hay.includes(normRef(r))));
+    if (rules.reference === 'auto' && refHits.length === 1 && exact(refHits[0])) {
+      used.add(refHits[0].id);
+      out.push({ lineId: line.id, entryIds: [refHits[0].id], rule: 'reference', certainty: 'matched' });
       continue;
     }
-    const near = (hits.length > 1 ? hits : pool)
-      .filter((e) => daysBetween(e.date, line.date) <= windowDays)
-      .sort((a, b) => firstNonZero(daysBetween(a.date, line.date) - daysBetween(b.date, line.date), a.id - b.id))
-      .slice(0, maxProposals);
-    if (near.length > 0) out.push({ lineId: line.id, entryIds: near.map((e) => e.id), rule: hits.length > 1 ? 'reference' : 'amount_date', certainty: 'proposed' });
+    const lineKeys = rules.phone === 'off' ? [] : phoneKeysIn(text);
+    const phoneHits = lineKeys.length === 0 ? [] : pool.filter((e) => (e.phones ?? []).some((p) => lineKeys.includes(p)));
+    if (rules.phone === 'auto' && phoneHits.length === 1 && exact(phoneHits[0])) {
+      used.add(phoneHits[0].id);
+      out.push({ lineId: line.id, entryIds: [phoneHits[0].id], rule: 'phone', certainty: 'matched' });
+      continue;
+    }
+    const who = `${line.counterparty ?? ''} ${line.description}`;
+    const nameHits = rules.name === 'off' ? [] : pool.filter((e) => (e.names ?? []).some((n) => nameScore(n, who) >= rules.nameMinScore || nameScore(n, line.counterparty ?? '') >= rules.nameMinScore));
+    const inWindow = pool.filter((e) => nearness(e) <= rules.dateWindowDays);
+
+    // The strongest evidence first; each entry once.
+    const ranked: { e: EntryForMatch; rule: Suggestion['rule'] }[] = [];
+    const seen = new Set<number>();
+    const add = (list: EntryForMatch[], rule: Suggestion['rule']) => {
+      for (const e of byNearness(list)) {
+        if (seen.has(e.id)) continue;
+        seen.add(e.id);
+        ranked.push({ e, rule });
+      }
+    };
+    add(refHits.filter((e) => nearness(e) <= Math.max(rules.dateWindowDays, 30)), 'reference');
+    add(phoneHits, 'phone');
+    add(nameHits.filter((e) => nearness(e) <= Math.max(rules.dateWindowDays, 30)), 'name');
+    add(inWindow.filter((e) => exact(e) || rules.amountToleranceCents > 0), 'amount_date');
+    const top = ranked.slice(0, rules.maxProposals);
+    if (top.length > 0) out.push({ lineId: line.id, entryIds: top.map((t) => t.e.id), rule: top[0].rule, certainty: 'proposed' });
   }
   return out;
 }

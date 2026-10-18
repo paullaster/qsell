@@ -4,7 +4,9 @@ export type GeneralPurpose =
   | 'sales_returns'
   | 'sales_discount'
   | 'cogs'
-  | 'inventory_adjustment';
+  | 'inventory_adjustment'
+  | 'inventory'
+  | 'inventory_clearing';
 
 export type CustomerPurpose =
   | 'receivables'
@@ -18,7 +20,9 @@ export type CustomerPurpose =
   | 'service_charge'
   | 'rebate_expense'
   | 'gift_card_liability'
-  | 'loyalty_provision';
+  | 'loyalty_provision'
+  | 'credit_forfeit'
+  | 'credit_adjustment';
 
 export interface GeneralSetupRow {
   id: string;

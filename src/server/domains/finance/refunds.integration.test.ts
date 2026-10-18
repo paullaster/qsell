@@ -281,6 +281,133 @@ describe.skipIf(!has(url))('refunds (database)', () => {
     });
   });
 
+  describe('a payout that could not be confirmed', () => {
+    it('is found for the refund, kept in its history, and nothing else is offered while it is not held', async () => {
+      const o = await owed();
+      const { id: providerId } = await fin.paymentProviders.create(ctx, { providerCode: 'mpesa_daraja', displayName: `RF doubt ${run}` });
+      const r = await request(o.customer.id, 'credit_note_excess', o.cn.id, '120');
+      expect(await codeOf(fin.refunds.doubtfulPayout(companyId, r.id))).toBe('NOT_APPROVED');
+      await fin.refunds.submit(ctx, r.id);
+      expect(await codeOf(fin.refunds.doubtfulPayout(companyId, r.id))).toBe('NO_DOUBT');
+      expect(await fin.refunds.payoutAttempts(companyId, r.id)).toEqual([]);
+      const [op] = await db.insert(schema.providerOperations).values({ companyId, providerId, methodId: methodId.CASH, operation: 'b2c', status: 'in_doubt', idempotencyKey: `refund:${r.id}:payout:1`, subjectType: 'refund', subjectId: r.id, amount: '120', input: {}, platformReference: 'DBT0000001', failureCode: 'STATUS_AMOUNT_MISMATCH', failureReason: 'differs' }).returning();
+      expect(await fin.refunds.doubtfulPayout(companyId, r.id)).toEqual({ id: op.id, status: 'in_doubt', reference: 'DBT0000001' });
+      expect(await fin.refunds.payoutAttempts(companyId, r.id)).toMatchObject([{ id: op.id, status: 'in_doubt', reference: 'DBT0000001' }]);
+      // another company cannot see it
+      expect(await codeOf(fin.refunds.doubtfulPayout(randomUUID(), r.id))).toBe('NOT_FOUND');
+      await fin.refunds.noteEvent(ctx, r.id, 'payout_closed_not_paid', { operation: op.id }, { text: 'the statement shows no debit' });
+      const events = await db.select().from(schema.refundEvents).where(eq(schema.refundEvents.refundId, r.id)).orderBy(schema.refundEvents.id);
+      expect(events.at(-1)).toMatchObject({ event: 'payout_closed_not_paid', reasonText: 'the statement shows no debit' });
+      // the payment by hand is still held back until the attempt is settled
+      expect(await codeOf(payOut(r.id))).toBe('PAYOUT_IN_PROGRESS');
+      await db.update(schema.providerOperations).set({ status: 'failed', failureCode: 'CLOSED_NOT_PAID' }).where(eq(schema.providerOperations.id, op.id));
+      await payOut(r.id);
+      expect(await status(r.id)).toBe('paid');
+    });
+  });
+
+  describe('a paid refund whose money came back', () => {
+    /** A refund of `amount` paid out by cash on a fresh order; the order is paid in full at the sale. */
+    async function paidRefund(amount = '580') {
+      const o = await owed();
+      const r = await request(o.customer.id, 'credit_note_excess', o.cn.id, amount);
+      await fin.refunds.submit(ctx, r.id);
+      await payOut(r.id);
+      return { o, r };
+    }
+    const comeBack = (id: string, o: Record<string, unknown> = {}, by = ctx) =>
+      fin.refunds.recordReturn(by, id, { reference: `BNK-${++seq}`, receivedIntoMethodId: methodId.BANK_TRANSFER, reasonCode: 'DATA_ENTRY_ERROR', replacement: { paymentMethodId: methodId.CASH, payoutDetails: { recipientName: 'Customer' } }, mayChangeDestination: false, ...o } as never);
+    const orderState = async (id: string) => (await db.select().from(schema.orders).where(eq(schema.orders.id, id)))[0].paymentStatus;
+
+    it('is recorded once, in full or in parts, never for more than was paid, and starts a replacement refund to be approved again', async () => {
+      const { o, r } = await paidRefund();
+      expect(await orderState(o.orderId)).toBe('refunded');
+      expect(await codeOf(comeBack(r.id, { amount: '580.01' }))).toBe('OVER_RETURN');
+      expect(await codeOf(comeBack(r.id, { amount: '0' }))).toBe('AMOUNT_INVALID');
+      expect(await codeOf(comeBack(r.id, { reference: '  ' }))).toBe('REFERENCE_REQUIRED');
+      expect(await codeOf(comeBack(r.id, { returnedOn: '2999-01-01' }))).toBe('DATE_INVALID');
+      expect(await codeOf(comeBack(r.id, { replacement: { paymentMethodId: methodId.BANK_TRANSFER, payoutDetails: {} } }))).toBe('PAYOUT_DETAILS');
+
+      const part = await comeBack(r.id, { amount: '180', reference: 'BNK-PART' });
+      expect(await codeOf(comeBack(r.id, { amount: '1', reference: 'BNK-PART' }))).toBe('ALREADY_RECORDED');
+      // it was paid, and stays paid; the books of the bank take the money back in
+      expect(await status(r.id)).toBe('paid');
+      const bank = await db.select().from(schema.bankLedgerEntries).where(eq(schema.bankLedgerEntries.documentId, r.id));
+      expect(bank.map((b) => [b.documentType, Number(b.amount)]).sort()).toEqual([['refund', -580], ['refund_return', 180]]);
+      // the order is no longer fully refunded
+      expect(await orderState(o.orderId)).toBe('partially_refunded');
+      const [replacement] = await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, part.replacementId));
+      expect(replacement).toMatchObject({ status: 'draft', sourceKind: 'returned_payout', sourceId: part.returnId, amount: '180.00', orderId: o.orderId });
+      expect(await codeOf(comeBack(r.id, { amount: '401' }))).toBe('OVER_RETURN');
+      await comeBack(r.id, { amount: '400', reference: 'BNK-REST' });
+      expect(await codeOf(comeBack(r.id, { amount: '1' }))).toBe('ALL_RETURNED');
+      const events = await db.select().from(schema.refundEvents).where(eq(schema.refundEvents.refundId, r.id));
+      expect(events.filter((e) => e.event === 'payout_returned')).toHaveLength(2);
+    });
+
+    it('only a paid refund can come back', async () => {
+      const o = await owed();
+      const r = await request(o.customer.id, 'credit_note_excess', o.cn.id, '100');
+      expect(await codeOf(comeBack(r.id))).toBe('NOT_PAID');
+      await fin.refunds.submit(ctx, r.id);
+      expect(await codeOf(comeBack(r.id))).toBe('NOT_PAID');
+    });
+
+    it('the replacement goes through approval like any refund, moves nothing off the customer\'s account again, and when paid the order is refunded again', async () => {
+      const { o, r } = await paidRefund();
+      const back = await comeBack(r.id);
+      expect(await orderState(o.orderId)).toBe('partially_refunded');
+      const sub = await fin.refunds.submit(ctx, back.replacementId);
+      expect(sub.status).toBe('approved');
+      // the credit note has nothing left to give: the replacement drew on the returned money, not on it
+      expect(await cnOpen(o.cn.id)).toBe(0);
+      await payOut(back.replacementId, reqCtx);
+      expect(await status(back.replacementId)).toBe('paid');
+      expect(await orderState(o.orderId)).toBe('refunded');
+      // the returned money is spent: it cannot be returned twice or claimed again
+      expect(await codeOf(request(o.customer.id, 'credit_note_excess', o.cn.id, '1'))).toBe('OVER_OBLIGATION');
+      expect(await fin.customerLedger.drift(companyId)).toEqual([]);
+    });
+
+    it('a replacement that is cancelled leaves the money with the customer as credit on their account', async () => {
+      const { o, r } = await paidRefund('200');
+      const back = await comeBack(r.id);
+      await fin.refunds.submit(ctx, back.replacementId);
+      await fin.refunds.cancel(ctx, back.replacementId, { code: 'CUSTOMER_REQUEST' });
+      expect(await status(back.replacementId)).toBe('cancelled');
+      const open = await fin.customerLedger.openItems(companyId, o.customer.id);
+      expect(open.map((e) => [e.documentType, e.remainingAmount])).toContainEqual(['refund', '-200.00']);
+      expect(await fin.customerLedger.drift(companyId)).toEqual([]);
+      // and a draft replacement cancelled before approval does the same
+      const { o: o2, r: r2 } = await paidRefund('120');
+      const back2 = await comeBack(r2.id);
+      await fin.refunds.cancel(ctx, back2.replacementId, { code: 'CUSTOMER_REQUEST' });
+      expect((await fin.customerLedger.openItems(companyId, o2.customer.id)).map((e) => [e.documentType, e.remainingAmount])).toContainEqual(['refund', '-120.00']);
+    });
+
+    it('a replacement to someone else\'s phone needs the permission to change where money goes', async () => {
+      const { r } = await paidRefund('100');
+      const bad = { paymentMethodId: methodId.MPESA, payoutDetails: { phone: '0799000111' } };
+      expect(await codeOf(comeBack(r.id, { replacement: bad }))).toBe('DESTINATION_CHANGED');
+      const ok = await comeBack(r.id, { replacement: bad, mayChangeDestination: true });
+      const [rep] = await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, ok.replacementId));
+      expect(rep.detailsChanged).toBe(true);
+    });
+
+    it('cannot be asked for as a new refund from outside', async () => {
+      const { o, r } = await paidRefund('100');
+      const back = await comeBack(r.id);
+      expect(await codeOf(request(o.customer.id, 'returned_payout' as never, back.returnId, '100'))).toBe('SOURCE_INVALID');
+    });
+
+    it('is kept for ever: a return cannot be changed or deleted', async () => {
+      const { r } = await paidRefund('50');
+      const back = await comeBack(r.id);
+      await expect(db.delete(schema.refundReturns).where(eq(schema.refundReturns.id, back.returnId))).rejects.toThrow();
+      await expect(db.update(schema.refundReturns).set({ amount: '1.00' }).where(eq(schema.refundReturns.id, back.returnId))).rejects.toThrow();
+    });
+  });
+
   describe('with an approval workflow', () => {
     beforeAll(async () => {
       await workflow('refund.payout', boss);
@@ -370,6 +497,49 @@ describe.skipIf(!has(url))('refunds (database)', () => {
       expect((await fin.salesPosting.reconciliation(companyId)).rows.map((x) => x.diffCents)).toEqual([0]);
     });
 
+    it('a refund in dollars is set aside and paid at the rate the money came in at, and the books and the customer account agree', async () => {
+      const tag = randomUUID().slice(0, 5);
+      const bank = (await db.insert(schema.bankAccounts).values({ companyId, code: `USD${tag}`, name: `Dollar bank ${tag}`, kind: 'bank', currency: 'USD', createdBy: 'test' }).returning())[0];
+      const gl = (await db.insert(schema.glAccounts).values({ companyId, no: `19${tag}`, name: `Dollar bank ${tag}`, type: 'posting', category: 'assets', normalBalance: 'debit' }).returning())[0];
+      const [any] = await db.select({ providerId: schema.paymentMethods.providerId }).from(schema.paymentMethods).where(eq(schema.paymentMethods.companyId, companyId)).limit(1);
+      const usd = (await db.insert(schema.paymentMethods).values({ companyId, providerId: any.providerId, code: `USD${tag}`, name: `Dollars ${tag}`, kind: 'cash', balancingBankAccountId: bank.id, glAccountId: gl.id, usableFor: ['customer_receipt', 'customer_refund'], refundDestination: 'manual', createdBy: 'test' }).returning())[0];
+      await fin.fx.setRate(ctx, { currency: 'USD', effectiveOn: today, rate: '128' });
+      seq += 1;
+      const [cust] = await db.insert(schema.customers).values({ companyId, number: `RU${run}${seq}`, name: `Dollar customer ${seq}`, phone: `0711${String(200000 + seq)}`, accountType: 'credit', creditLimit: '0' }).returning();
+      const rc = await fin.receipts.create(ctx, { customerId: cust.id, paymentMethodId: usd.id, amount: '100', paymentDate: today, currency: 'USD', rate: '129' });
+      await fin.receipts.post(ctx, rc.id, { allocate: 'none' });
+      const r = await request(cust.id, 'receipt_unapplied', rc.id, '40', { paymentMethodId: usd.id });
+      await fin.refunds.submit(ctx, r.id);
+      const [a] = await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, r.id));
+      expect(Number(a.rate)).toBe(129);
+      const baseLines = async (registerId: string) => {
+        const no = new Map(Object.entries(acct).map(([n, id]) => [id, n]));
+        return (await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, registerId))).map((l) => [no.get(l.accountId) ?? 'usd bank', Number(l.baseDebit), Number(l.baseCredit)]).sort();
+      };
+      // 40 dollars at 129 are 5,160 shillings
+      expect(await baseLines(required(a.reserveRegisterId))).toEqual([['1210', 5160, 0], ['2220', 0, 5160]]);
+      expect((await fin.refunds.payableReconciliation(companyId)).map((x) => x.diffCents)).toEqual([0]);
+      await payOut(r.id, ctx, usd.id);
+      const [paid] = await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, r.id));
+      expect(paid.status).toBe('paid');
+      expect(await baseLines(required(paid.payoutRegisterId))).toEqual([['2220', 5160, 0], ['usd bank', 0, 5160]]);
+      expect((await fin.refunds.payableReconciliation(companyId)).map((x) => x.diffCents)).toEqual([0]);
+      expect((await fin.salesPosting.reconciliation(companyId)).rows.map((x) => x.diffCents)).toEqual([0]);
+      // the dollars come back: owed again at the same rate, and cancelling the replacement keeps them as the customer's credit
+      const back = await fin.refunds.recordReturn(ctx, r.id, { reference: `GL-${++seq}`, receivedIntoMethodId: usd.id, reasonCode: 'DATA_ENTRY_ERROR', replacement: { paymentMethodId: usd.id, payoutDetails: { recipientName: 'C' } } });
+      const [ret] = await db.select().from(schema.refundReturns).where(eq(schema.refundReturns.id, back.returnId));
+      expect(await baseLines(required(ret.registerId))).toEqual([['2220', 0, 5160], ['usd bank', 5160, 0]]);
+      const [rep] = await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, back.replacementId));
+      expect(Number(rep.rate)).toBe(129);
+      expect((await fin.refunds.payableReconciliation(companyId)).map((x) => x.diffCents)).toEqual([0]);
+      await fin.refunds.submit(ctx, back.replacementId);
+      await fin.refunds.cancel(ctx, back.replacementId, { code: 'CUSTOMER_REQUEST' });
+      expect((await fin.refunds.payableReconciliation(companyId)).map((x) => x.diffCents)).toEqual([0]);
+      expect((await fin.salesPosting.reconciliation(companyId)).rows.map((x) => x.diffCents)).toEqual([0]);
+      // the rate of a refund that is in the books cannot be changed
+      await expect(db.update(schema.refundRequests).set({ rate: '1' }).where(eq(schema.refundRequests.id, r.id))).rejects.toThrow();
+    });
+
     it('cancelling an approved refund reverses what was set aside in the books too', async () => {
       const o = await owed();
       const r = await request(o.customer.id, 'credit_note_excess', o.cn.id, '580');
@@ -377,6 +547,38 @@ describe.skipIf(!has(url))('refunds (database)', () => {
       await fin.refunds.cancel(ctx, r.id, { code: 'DATA_ENTRY_ERROR' });
       expect((await fin.refunds.payableReconciliation(companyId)).map((x) => x.diffCents)).toEqual([0]);
       expect((await fin.salesPosting.reconciliation(companyId)).rows.map((x) => x.diffCents)).toEqual([0]);
+    });
+
+    it('money that came back is owed again (Dr bank, Cr refunds payable) and the replacement pays it off; cancelling it keeps it as the customer\'s credit', async () => {
+      const o = await owed();
+      await fin.salesPosting.processDue();
+      const r = await request(o.customer.id, 'credit_note_excess', o.cn.id, '580');
+      await fin.refunds.submit(ctx, r.id);
+      await payOut(r.id);
+      const back = await fin.refunds.recordReturn(ctx, r.id, { reference: `GL-${++seq}`, receivedIntoMethodId: methodId.BANK_TRANSFER, reasonCode: 'DATA_ENTRY_ERROR', replacement: { paymentMethodId: methodId.CASH, payoutDetails: { recipientName: 'C' } } });
+      const [ret] = await db.select().from(schema.refundReturns).where(eq(schema.refundReturns.id, back.returnId));
+      expect(await glOf(required(ret.registerId))).toEqual([['1120', 580, 0], ['2220', 0, 580]]);
+      expect((await fin.refunds.payableReconciliation(companyId)).map((x) => x.diffCents)).toEqual([0]);
+      // approving the replacement books nothing more: the money is already owed
+      await fin.refunds.submit(ctx, back.replacementId);
+      const [rep] = await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, back.replacementId));
+      expect(rep.reserveRegisterId).toBeNull();
+      expect((await fin.refunds.payableReconciliation(companyId)).map((x) => x.diffCents)).toEqual([0]);
+      await payOut(back.replacementId, reqCtx);
+      expect((await fin.refunds.payableReconciliation(companyId)).map((x) => x.diffCents)).toEqual([0]);
+      expect((await fin.salesPosting.reconciliation(companyId)).rows.map((x) => x.diffCents)).toEqual([0]);
+
+      const o2 = await owed();
+      await fin.salesPosting.processDue();
+      const r2 = await request(o2.customer.id, 'credit_note_excess', o2.cn.id, '580');
+      await fin.refunds.submit(ctx, r2.id);
+      await payOut(r2.id);
+      const back2 = await fin.refunds.recordReturn(ctx, r2.id, { reference: `GL-${++seq}`, receivedIntoMethodId: methodId.BANK_TRANSFER, reasonCode: 'DATA_ENTRY_ERROR', replacement: { paymentMethodId: methodId.CASH, payoutDetails: { recipientName: 'C' } } });
+      await fin.refunds.submit(ctx, back2.replacementId);
+      await fin.refunds.cancel(ctx, back2.replacementId, { code: 'CUSTOMER_REQUEST' });
+      expect((await fin.refunds.payableReconciliation(companyId)).map((x) => x.diffCents)).toEqual([0]);
+      expect((await fin.salesPosting.reconciliation(companyId)).rows.map((x) => x.diffCents)).toEqual([0]);
+      expect(await fin.customerLedger.drift(companyId)).toEqual([]);
     });
 
     it('a wallet paid out debits customer deposits; everything still agrees', async () => {

@@ -325,6 +325,112 @@ describe.skipIf(!has(url))('customer wallet (database)', () => {
       expect((await fin.wallets.reconciliation(companyId))[0].diffCents).toBe(0);
     });
 
+    it('a wallet in dollars is worth what it was booked for: use pays at that rate, the gap to the invoice shows when it is applied, and revaluing is undone next day', async () => {
+      const bank = (await db.insert(schema.bankAccounts).values({ companyId, code: `USD${run}`, name: `Dollar bank ${run}`, kind: 'bank', currency: 'USD', createdBy: 'test' }).returning())[0];
+      const gl = (await db.insert(schema.glAccounts).values({ companyId, no: `19${run}`, name: `Dollar bank ${run}`, type: 'posting', category: 'assets', normalBalance: 'debit' }).returning())[0];
+      const [anyMethod] = await db.select({ providerId: schema.paymentMethods.providerId }).from(schema.paymentMethods).where(eq(schema.paymentMethods.companyId, companyId)).limit(1);
+      const method = (await db.insert(schema.paymentMethods).values({ companyId, providerId: anyMethod.providerId, code: `USD${run}`, name: `Dollars ${run}`, kind: 'bank_transfer', balancingBankAccountId: bank.id, glAccountId: gl.id, usableFor: ['customer_receipt'], createdBy: 'test' }).returning())[0];
+      await fin.fx.setRate(ctx, { currency: 'USD', effectiveOn: today, rate: '128' });
+      const c = await customer();
+      const deposit = async (amount: string, rate: string) => {
+        const r = await fin.receipts.create(ctx, { customerId: c.id, paymentMethodId: method.id, amount, paymentDate: today, isDeposit: true, currency: 'USD', rate });
+        await fin.receipts.post(ctx, r.id, { allocate: 'none' });
+      };
+      await deposit('100', '129');
+      await deposit('50', '132');
+      const held = (await db.select().from(schema.customerWallets).where(and(eq(schema.customerWallets.customerId, c.id), eq(schema.customerWallets.currency, 'USD'))))[0];
+      // 100 at 129 and 50 at 132 are worth 19,500 shillings: 130 each
+      expect([held.balance, Number(held.baseValue)]).toEqual(['150.00', 19500]);
+      expect(await glNet('2210')).toBeGreaterThan(0);
+      const recon = async () => (await fin.wallets.reconciliation(companyId)).map((r) => r.diffCents);
+      expect(await recon()).toEqual([0]);
+
+      // an invoice of 60 dollars, booked at the day's 128
+      const inv = await fin.customerLedger.addEntry(db, { companyId, customerId: c.id, documentType: 'invoice', documentNo: `USD-INV-${run}`, amountCents: 6000, currency: 'USD', postingDate: today, dueDate: new Date(`${today}T00:00:00Z`) });
+      const out = await fin.wallets.utilise(ctx, { customerId: c.id, currency: 'USD', applications: 'oldest_first' });
+      expect(out.usedCents).toBe(6000);
+      const [used] = await db.select().from(schema.walletEntries).where(eq(schema.walletEntries.id, out.walletEntryId));
+      expect([Number(used.rate), Number(used.baseAmount)]).toEqual([130, -7800]);
+      expect(await remaining(inv)).toBe('0.00');
+      await fin.salesPosting.processDue();
+      const [post] = await db.select().from(schema.financeSalesPostings).where(and(eq(schema.financeSalesPostings.kind, 'wallet_use'), eq(schema.financeSalesPostings.subjectId, String(out.walletEntryId))));
+      expect(post.status).toBe('posted');
+      const no = new Map(Object.entries(acct).map(([n, id]) => [id, n]));
+      const linesOf = async (registerId: string) => (await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, registerId))).map((l) => [no.get(l.accountId), Number(l.baseDebit), Number(l.baseCredit)]).sort();
+      expect(await linesOf(required(post.registerId))).toEqual([['1210', 0, 7800], ['2210', 7800, 0]]);
+      // the wallet was worth 130 a dollar and the invoice 128: 60 dollars is 120 shillings of gain
+      const fxRows = await db.select().from(schema.financeSalesPostings).where(and(eq(schema.financeSalesPostings.companyId, companyId), eq(schema.financeSalesPostings.kind, 'fx_application')));
+      const gain = required(fxRows.find((r) => r.status === 'posted'));
+      expect(await linesOf(required(gain.registerId))).toEqual([['1210', 120, 0], ['4410', 0, 120]]);
+      expect(await recon()).toEqual([0]);
+
+      // today's rate is 128, so 90 dollars owed to the customer are worth 180 less than they were booked for
+      const rev = await fin.fx.revalue(ctx);
+      expect(rev.netCents).toBeGreaterThan(0);
+      const [row] = await db.select().from(schema.fxRevaluations).where(eq(schema.fxRevaluations.companyId, companyId));
+      expect(Object.keys(row.groups).some((k) => k.startsWith('wallet:'))).toBe(true);
+      expect(await recon()).toEqual([0]);
+      const later = new Date(Date.parse(`${today}T12:00:00+03:00`) + 86_400_000);
+      expect(await fin.fx.reverseDue(later)).toBe(1);
+      expect(await recon()).toEqual([0]);
+
+      await fin.wallets.reverseUtilisation(ctx, out.walletEntryId, { code: 'DATA_ENTRY_ERROR' });
+      const back = (await db.select().from(schema.customerWallets).where(and(eq(schema.customerWallets.customerId, c.id), eq(schema.customerWallets.currency, 'USD'))))[0];
+      expect([back.balance, Number(back.baseValue)]).toEqual(['150.00', 19500]);
+      expect(await remaining(inv)).toBe('60.00');
+      expect(await recon()).toEqual([0]);
+    });
+
+    it('a dollar wallet pays a dollar order at the till; the liability leaves at what it was booked for and the rest is an exchange difference', async () => {
+      const [dollars] = await db.select().from(schema.paymentMethods).where(and(eq(schema.paymentMethods.companyId, companyId), sql`${schema.paymentMethods.name} LIKE 'Dollars %'`));
+      const c = await customer();
+      const r = await fin.receipts.create(ctx, { customerId: c.id, paymentMethodId: dollars.id, amount: '100', paymentDate: today, isDeposit: true, currency: 'USD', rate: '129' });
+      await fin.receipts.post(ctx, r.id, { allocate: 'none' });
+      const deposits = async () => {
+        const [row] = await db.execute<{ n: string }>(sql`SELECT COALESCE(SUM(base_credit - base_debit),0)::text n FROM gl_account_balances WHERE company_id=${companyId}::uuid AND account_id=${acct['2210']}::uuid`);
+        return Number(row.n);
+      };
+      const before = await deposits(); // includes the 12,900 just put in
+      const id = `wd_${run}_${++seq}`;
+      await db.execute(sql`INSERT INTO orders (id, order_number, user_id, customer_name, customer_email, customer_phone, shipping_address, subtotal, tax, shipping_fee, total_amount, currency, payment_method, trade_customer_id) VALUES (${id}, ${`WD-${run}-${seq}`}, 'u', 'n', 'e@x.io', '1', '{"street":"s","city":"c","countyOrState":"x","country":"k"}'::jsonb, 100, 0, 0, 100, 'USD', 'mpesa_daraja', ${c.id}::uuid)`);
+      await container.tenders.apply(companyId, id, { wallet: 'all' }, { type: 'user', id: 'tester' });
+      const held = (await db.select().from(schema.customerWallets).where(and(eq(schema.customerWallets.customerId, c.id), eq(schema.customerWallets.currency, 'USD'))))[0];
+      expect([held.balance, Number(held.baseValue)]).toEqual(['0.00', 0]);
+      await db.update(schema.customers).set({ accountType: 'cash' }).where(eq(schema.customers.id, c.id));
+      const [cust] = await db.select().from(schema.customers).where(eq(schema.customers.id, c.id));
+      await master.postInvoice({ customer: cust, orderId: id, orderNumber: `WD-${run}-${seq}`, amount: 100, currency: 'USD' });
+      await db.execute(sql`UPDATE orders SET payment_status='paid', transaction_reference='TENDER-USD' WHERE id = ${id}`);
+      await master.applyOrderPayment(id);
+      await fin.salesPosting.processDue();
+      const [row] = await db.select().from(schema.financeSalesPostings).where(and(eq(schema.financeSalesPostings.kind, 'cash_sale'), eq(schema.financeSalesPostings.subjectId, id)));
+      expect(row).toMatchObject({ status: 'posted' });
+      // the sale is at today's 128: 12,800; the wallet was booked at 12,900, so 100 shillings of it is a gain
+      const [fxReg] = await db.select().from(schema.ledgerRegisters).where(and(eq(schema.ledgerRegisters.companyId, companyId), eq(schema.ledgerRegisters.idempotencyKey, `sales:cash_sale:${id}:tender-fx`)));
+      const no = new Map(Object.entries(acct).map(([n, aid]) => [aid, n]));
+      const fxLines = (await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, fxReg.id))).map((l) => [no.get(l.accountId), Number(l.baseDebit), Number(l.baseCredit)]).sort();
+      expect(fxLines).toEqual([['2210', 100, 0], ['4410', 0, 100]]);
+      expect(await deposits()).toBe(before - 12900);
+      expect((await fin.wallets.reconciliation(companyId)).map((x) => x.diffCents)).toEqual([0]);
+    });
+
+    it('a cancelled dollar order gives the wallet back its dollars at the rate they left at, and the wallet still agrees with the books', async () => {
+      const [dollars] = await db.select().from(schema.paymentMethods).where(and(eq(schema.paymentMethods.companyId, companyId), sql`${schema.paymentMethods.name} LIKE 'Dollars %'`));
+      const c = await customer();
+      const r = await fin.receipts.create(ctx, { customerId: c.id, paymentMethodId: dollars.id, amount: '50', paymentDate: today, isDeposit: true, currency: 'USD', rate: '129' });
+      await fin.receipts.post(ctx, r.id, { allocate: 'none' });
+      const held = async () => (await db.select().from(schema.customerWallets).where(and(eq(schema.customerWallets.customerId, c.id), eq(schema.customerWallets.currency, 'USD'))))[0];
+      const before = await held();
+      const id = `wc_${run}_${++seq}`;
+      await db.execute(sql`INSERT INTO orders (id, order_number, user_id, customer_name, customer_email, customer_phone, shipping_address, subtotal, tax, shipping_fee, total_amount, currency, payment_method, trade_customer_id) VALUES (${id}, ${`WC-${run}-${seq}`}, 'u', 'n', 'e@x.io', '1', '{"street":"s","city":"c","countyOrState":"x","country":"k"}'::jsonb, 20, 0, 0, 20, 'USD', 'mpesa_daraja', ${c.id}::uuid)`);
+      await container.tenders.apply(companyId, id, { wallet: 'all' }, { type: 'user', id: 'tester' });
+      expect((await held()).balance).toBe('30.00');
+      await db.transaction((tx) => container.tenders.reverseOrder(tx, id));
+      await db.transaction((tx) => container.tenders.reverseOrder(tx, id));
+      const after = await held();
+      expect([after.balance, Number(after.baseValue)]).toEqual([before.balance, Number(before.baseValue)]);
+      expect((await fin.wallets.reconciliation(companyId)).map((x) => x.diffCents)).toEqual([0]);
+    });
+
     it('nothing drifts and the books balance', async () => {
       expect(await fin.customerLedger.drift(companyId)).toEqual([]);
       const r = await fin.maintenance.checkIntegrity(companyId);

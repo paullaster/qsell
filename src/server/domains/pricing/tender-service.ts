@@ -1,3 +1,4 @@
+import { has } from '@/lib/values';
 import { and, eq, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { giftCards, orderTenders, orders } from '@/server/db/drizzle/schema';
@@ -15,7 +16,7 @@ import type { WalletService } from '@/server/domains/finance/receivables/wallet-
 const money = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
 export interface TenderInput {
-  giftCards?: Array<{ code: string; amount?: number }>;
+  giftCards?: { code: string; amount?: number }[];
   /** Points to spend, or 'all' for as many as can be used. */
   loyaltyPoints?: number | 'all';
   /** Pay from the customer's wallet: an amount, or 'all' that can be used. */
@@ -23,7 +24,7 @@ export interface TenderInput {
 }
 
 export interface TenderResult {
-  applied: Array<{ kind: 'gift_card' | 'loyalty_points' | 'wallet'; label: string; amount: number; points?: number }>;
+  applied: { kind: 'gift_card' | 'loyalty_points' | 'wallet'; label: string; amount: number; points?: number }[];
   tendered: number;
   due: number;
   paid: boolean;
@@ -89,13 +90,14 @@ export class OrderTenderService {
       const actorId = actor.id;
 
       if (input.loyaltyPoints != null) {
-        if (!order.tradeCustomerId)
+        if (!has(order.tradeCustomerId))
           throw new PricingConfigError('INVALID', 'Points belong to a customer account, and this order has none.');
         const r = await this.loyalty.redeem(tx, {
           companyId,
           customerId: order.tradeCustomerId,
           orderId,
           due,
+          currency: order.currency,
           points: input.loyaltyPoints === 'all' ? undefined : input.loyaltyPoints,
           actor: actorId,
         });
@@ -105,6 +107,7 @@ export class OrderTenderService {
           reference: order.tradeCustomerId,
           amount: r.value.toFixed(2),
           points: r.points,
+          baseAmount: r.rate === '1' ? null : r.base.toFixed(4),
           actor: actorId,
         });
         applied.push({ kind: 'loyalty_points', label: `${r.points} points`, amount: r.value, points: r.points });
@@ -112,9 +115,9 @@ export class OrderTenderService {
       }
 
       if (input.wallet != null) {
-        if (!order.tradeCustomerId)
+        if (!has(order.tradeCustomerId))
           throw new PricingConfigError('INVALID', 'A wallet belongs to a customer account, and this order has none.');
-        const want = input.wallet === 'all' ? due : money(Number(input.wallet));
+        const want = input.wallet === 'all' ? due : money(input.wallet);
         if (!(want > 0)) throw new PricingConfigError('INVALID', 'Enter an amount above zero.');
         try {
           const cents = await this.wallets().tenderIn(tx, {
@@ -151,6 +154,8 @@ export class OrderTenderService {
           )
           .limit(1);
         if (!card) throw new PricingConfigError('NOT_FOUND', `Gift card ${c.code} is not valid.`);
+        if (card.currency.toUpperCase() !== order.currency.toUpperCase())
+          throw new PricingConfigError('INVALID', `Gift card ${c.code} is worth ${card.currency.toUpperCase()}, and this order is in ${order.currency.toUpperCase()}.`);
         if (c.amount != null && !(c.amount > 0))
           throw new PricingConfigError('INVALID', 'Enter an amount above zero.');
         const want = giftCardApplies(Number(card.balance), due);
@@ -215,7 +220,7 @@ export class OrderTenderService {
         warning = 'The order is paid, but stock or the customer account could not be updated. Check it.';
       }
     }
-    return { ...out, ...(warning ? { warning } : {}) };
+    return { ...out, ...(has(warning) ? { warning } : {}) };
   }
 
   /** Gives back everything a cancelled order had earned, spent or counted. Each part is idempotent. */

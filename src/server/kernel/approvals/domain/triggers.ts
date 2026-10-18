@@ -102,6 +102,18 @@ export const TRIGGERS: TriggerDefinition[] = [
     ],
   },
   {
+    code: 'credit_adjustment.requested',
+    module: 'finance',
+    documentKind: 'credit_adjustment',
+    label: 'Customer credit given up, added or taken off',
+    fields: [
+      ...common,
+      { path: 'kind', label: 'What it does (waive_excess, wallet_increase, wallet_decrease)', type: 'text' },
+      { path: 'reasonCode', label: 'Reason', type: 'text' },
+      { path: 'customer.id', label: 'Customer', type: 'text' },
+    ],
+  },
+  {
     code: 'provider.disbursement',
     module: 'finance',
     documentKind: 'provider_operation',

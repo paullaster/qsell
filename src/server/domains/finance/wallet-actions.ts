@@ -5,6 +5,9 @@ import { canPermission } from '@/server/domains/access-control/guard';
 import { getContainer } from '@/server/di/container';
 import { postingPermissions, run } from './action-runner';
 import { fromCents, toCents } from './domain/receivables';
+import { formatAmount, parseAmount } from './domain/amount';
+import { averageRate } from './domain/wallet';
+import { carriedWords } from '@/lib/wallet-panel';
 import type { PolicyInput } from './receivables/credit-policy-service';
 
 import { has } from '@/lib/values';
@@ -19,7 +22,7 @@ export async function customerWalletAction(customerId: string) {
       label: data.policy.label,
       walletEnabled: data.policy.walletEnabled,
       autoApply: data.policy.autoApply,
-      wallets: data.wallets.map((w) => ({ id: w.id, currency: w.currency, status: w.status, balance: w.balance })),
+      wallets: data.wallets.map((w) => ({ id: w.id, currency: w.currency, status: w.status, balance: w.balance, carried: carriedWords(w.currency, averageRate(toCents(w.balance), parseAmount(w.baseValue)), formatAmount(parseAmount(w.baseValue))) })),
       entries: data.entries.map((e) => ({
         id: e.id,
         type: e.entryType,
@@ -37,6 +40,7 @@ export async function customerWalletAction(customerId: string) {
         utilise: await canPermission('wallet:utilise'),
         reverse: await canPermission('wallet:reverse_use'),
         freeze: await canPermission('wallet:freeze'),
+        adjust: await canPermission('credit_adjustments:request'),
       },
     };
   });
@@ -71,13 +75,15 @@ export async function freezeWalletAction(customerId: string, currency: string, f
 
 export async function walletReportAction() {
   return await run('wallet:read', { surface: 'finance/wallets', action: 'view' }, async (ctx) => {
-    const [report, recon, policy] = await Promise.all([fin().wallets.report(ctx.companyId), fin().wallets.reconciliation(ctx.companyId), fin().creditPolicy.companyPolicy(getContainer().db, ctx.companyId)]);
+    const [report, recon, policy, expiring] = await Promise.all([fin().wallets.report(ctx.companyId), fin().wallets.reconciliation(ctx.companyId), fin().creditPolicy.companyPolicy(getContainer().db, ctx.companyId), fin().creditAdjustments.expiringSoon(ctx.companyId, new Date(), 20)]);
     return {
       label: policy.label,
       walletEnabled: policy.walletEnabled,
       totals: report.totals.map((t) => ({ currency: t.currency, total: t.total, holders: t.holders })),
       top: report.top.map((r) => ({ customerId: r.w.customerId, name: r.name, number: r.number, currency: r.w.currency, balance: r.w.balance, status: r.w.status })),
       reconciliation: recon.map((r) => ({ accountNo: r.accountNo, accountName: r.accountName, gl: fromCents(r.glCents), wallets: fromCents(r.walletsCents), diff: fromCents(r.diffCents) })),
+      expiring: expiring.map((e) => ({ customerId: e.customerId, name: e.customer, number: e.number, currency: e.currency, balance: e.balance, lastTouched: e.lastTouched, state: e.state, expiryDays: e.expiryDays })),
+      canAdjust: await canPermission('credit_adjustments:read'),
     };
   });
 }
@@ -99,6 +105,8 @@ export async function creditPolicyAction() {
         refundsEnabled: r.refundsEnabled,
         walletCashOut: r.walletCashOut,
         maxBalance: r.maxBalance,
+        expiryDays: r.expiryDays,
+        expiryNoticeDays: r.expiryNoticeDays,
         label: r.label,
       })),
       canEdit: await canPermission('customer_credit_policy:edit'),

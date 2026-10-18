@@ -119,9 +119,9 @@ const tradeCustomers = tableSource({
   }),
 });
 
-const enabledCurrencies = tableSource({
-  key: 'currencies',
-  permission: 'quotes:read',
+const enabledCurrenciesFor = (key: string, permission: 'quotes:read' | 'pricing:read') => tableSource({
+  key,
+  permission,
   table: currencies,
   id: currencies.code,
   label: currencies.code,
@@ -140,6 +140,9 @@ const enabledCurrencies = tableSource({
 });
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const enabledCurrencies = enabledCurrenciesFor('currencies', 'quotes:read');
+const pricingCurrencies = enabledCurrenciesFor('pricing-currencies', 'pricing:read');
+
 
 /** How a quote can be paid. "On account" is offered only when the quote's customer has credit. */
 const paymentMethods = staticSource({
@@ -196,6 +199,7 @@ const SOURCES: ReadonlyMap<string, LookupSource> = new Map(
     tradeCustomers,
     enabledCurrencies,
     paymentMethods,
+    pricingCurrencies,
     quoteStatuses,
     templateStatuses,
     ...PAYMENT_LOOKUP_SOURCES,

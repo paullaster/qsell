@@ -1,5 +1,6 @@
 'use client';
 
+import { has } from '@/lib/values';
 import { useEffect, useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
@@ -24,6 +25,9 @@ import {
   type Message,
 } from '../approvals/shared';
 import { CustomerLookup, type PickedCustomer } from './CustomerLookup';
+import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { FUNDING_CHOICES, fundingInput, fundingProblem, type FundingKind } from '@/lib/gift-card-funding';
+import type { Choice } from '@/lib/payment-options';
 import { money } from './DiscountsClient';
 
 const KIND: Record<string, string> = {
@@ -36,7 +40,7 @@ const KIND: Record<string, string> = {
 function cardChip(c: GiftCardView) {
   if (c.status === 'blocked') return <Chip tone="red">Blocked</Chip>;
   if (!c.usable)
-    return <Chip tone="grey">{c.unusableReason?.includes('expired') ? 'Expired' : 'Used up'}</Chip>;
+    return <Chip tone="grey">{c.unusableReason?.includes('expired') === true ? 'Expired' : 'Used up'}</Chip>;
   return <Chip tone="green">Usable</Chip>;
 }
 
@@ -58,17 +62,20 @@ export function GiftCardsClient({
 
   // Issue form
   const [value, setValue] = useState('');
+  const [currency, setCurrency] = useState<Choice | null>(null);
   const [count, setCount] = useState('1');
   const [expires, setExpires] = useState('');
   const [customer, setCustomer] = useState<PickedCustomer | null>(null);
   const [note, setNote] = useState('');
   const [reason, setReason] = useState<ReasonValue>({ code: '', text: '' });
+  const [funding, setFunding] = useState<FundingKind | null>(null);
+  const [fundingMethod, setFundingMethod] = useState<Choice | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let live = true;
     const t = setTimeout(() => {
-      void listGiftCardsAction(search || undefined).then((r) => {
+      void listGiftCardsAction(has(search) ? search : undefined).then((r) => {
         if (live && r.ok) setCards(r.data);
       });
     }, 300);
@@ -79,21 +86,25 @@ export function GiftCardsClient({
   }, [search]);
 
   const refresh = async () => {
-    const r = await listGiftCardsAction(search || undefined);
+    const r = await listGiftCardsAction(has(search) ? search : undefined);
     if (r.ok) setCards(r.data);
   };
 
-  const issue = async (e: React.FormEvent) => {
+  const issue = async (e: React.SyntheticEvent) => {
     e.preventDefault();
+    const fundingIssue = fundingProblem(funding, fundingMethod?.id ?? null);
+    if (fundingIssue !== null) { setMessage({ kind: 'error', text: fundingIssue }); return; }
     setBusy(true);
     setMessage(null);
     const r = await issueGiftCardsAction(
       {
+        funding: fundingInput(funding, fundingMethod?.id ?? null),
         value: Number(value),
-        count: Math.trunc(Number(count)) || 1,
-        expiresAt: expires ? new Date(`${expires}T23:59:59`).toISOString() : null,
+        currency: currency?.id,
+        count: Number.isFinite(Number(count)) && Math.trunc(Number(count)) !== 0 ? Math.trunc(Number(count)) : 1,
+        expiresAt: has(expires) ? new Date(`${expires}T23:59:59`).toISOString() : null,
         customerId: customer?.id ?? null,
-        note: note || null,
+        note: has(note) ? note : null,
       },
       reason,
     );
@@ -102,10 +113,13 @@ export function GiftCardsClient({
     setMade(r.data);
     setIssuing(false);
     setValue('');
+    setCurrency(null);
     setCount('1');
     setExpires('');
     setCustomer(null);
     setNote('');
+    setFunding(null);
+    setFundingMethod(null);
     setReason({ code: '', text: '' });
     await refresh();
     router.refresh();
@@ -167,7 +181,7 @@ export function GiftCardsClient({
           <ul className="grid grid-cols-1 gap-1 font-mono text-sm sm:grid-cols-2">
             {made.map((c) => (
               <li key={c.id}>
-                {c.code} <span className="text-fg-muted">{money(c.initialValue)}</span>
+                {c.code} <span className="text-fg-muted">{c.currency} {money(c.initialValue)}</span>
               </li>
             ))}
           </ul>
@@ -188,7 +202,7 @@ export function GiftCardsClient({
 
       {issuing ? (
         <form onSubmit={issue} className={`${cardClass} space-y-4`} aria-label="Issue gift cards">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <label htmlFor={`${uid}-v`} className={labelClass}>
                 Value of each card
@@ -203,6 +217,10 @@ export function GiftCardsClient({
                 onChange={(e) => setValue(e.target.value)}
                 required
               />
+            </div>
+            <div>
+              <ChoicePicker label="Currency" source="pricing-currencies" choice={currency} onChoice={setCurrency} placeholder="Books' currency" />
+              <p className="mt-1 text-xs text-fg-muted">A card in another currency pays orders in that currency only.</p>
             </div>
             <div>
               <label htmlFor={`${uid}-n`} className={labelClass}>
@@ -244,12 +262,24 @@ export function GiftCardsClient({
               onChange={(e) => setNote(e.target.value)}
             />
           </div>
+          <fieldset className="space-y-2">
+            <legend className={labelClass}>How were the cards paid for?</legend>
+            {FUNDING_CHOICES.map((c) => (
+              <label key={c.id} className="flex min-h-10 cursor-pointer items-start gap-2 text-sm text-fg">
+                <input type="radio" name={`${uid}-funding`} className="mt-1" checked={funding === c.id} onChange={() => setFunding(c.id)} />
+                <span><span className="font-semibold">{c.label}</span> <span className="text-fg-muted">— {c.hint}</span></span>
+              </label>
+            ))}
+            {funding === 'sold' ? (
+              <ChoicePicker label="Money came in through" source="gift-card-methods" choice={fundingMethod} onChoice={setFundingMethod} clearable={false} required placeholder="Cash, M-Pesa, bank…" />
+            ) : null}
+          </fieldset>
           <ReasonField value={reason} onChange={setReason} source="pricing-reasons" />
           <div className="flex flex-wrap gap-2">
             <button
               type="submit"
               className={primaryButtonClass}
-              disabled={busy || !reason.code || !value}
+              disabled={busy || !has(reason.code) || !has(value) || funding === null}
             >
               {busy ? 'Issuing…' : 'Issue'}
             </button>
@@ -285,12 +315,12 @@ export function GiftCardsClient({
                   <span className="font-mono text-sm font-semibold text-fg-strong">{c.code}</span>{' '}
                   {cardChip(c)}
                   <p className="text-xs text-fg-muted">
-                    {money(c.balance)} left of {money(c.initialValue)}
-                    {c.expiresAt
+                    {c.currency} {money(c.balance)} left of {money(c.initialValue)}
+                    {has(c.expiresAt)
                       ? ` · expires ${new Date(c.expiresAt).toLocaleDateString('en-KE')}`
                       : ''}
-                    {c.customerName ? ` · ${c.customerName}` : ''}
-                    {c.note ? ` · ${c.note}` : ''}
+                    {has(c.customerName) ? ` · ${c.customerName}` : ''}
+                    {has(c.note) ? ` · ${c.note}` : ''}
                   </p>
                 </div>
                 <button type="button" className={buttonClass} onClick={() => void view(c.code)}>
@@ -311,7 +341,7 @@ export function GiftCardsClient({
             </button>
           </div>
           <p className="text-sm text-fg">
-            {money(open.balance)} left of {money(open.initialValue)}.{' '}
+            {open.currency} {money(open.balance)} left of {money(open.initialValue)}.{' '}
             {open.unusableReason ?? 'It can be used.'}
           </p>
           {canManage ? (
@@ -320,7 +350,7 @@ export function GiftCardsClient({
               <button
                 type="button"
                 className={buttonClass}
-                disabled={busy || !reason.code}
+                disabled={busy || !has(reason.code)}
                 onClick={() => void toggle(open)}
               >
                 {open.status === 'blocked' ? 'Unblock this card' : 'Block this card'}

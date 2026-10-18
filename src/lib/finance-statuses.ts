@@ -31,6 +31,27 @@ export const REFUND_STATUS: Record<string, StatusInfo> = {
   cancelled: { label: 'Cancelled', tone: 'gray' },
 };
 
+export const ADJUSTMENT_STATUS: Record<string, StatusInfo> = {
+  requested: { label: 'Waiting for a decision', tone: 'amber' },
+  pending_approval: { label: 'Waiting for approval', tone: 'amber' },
+  applied: { label: 'Done', tone: 'green' },
+  rejected: { label: 'Turned down', tone: 'red' },
+  cancelled: { label: 'Cancelled', tone: 'gray' },
+};
+
+export const ADJUSTMENT_KIND: Record<string, StatusInfo> = {
+  waive_excess: { label: 'Credit given up', tone: 'sky' },
+  wallet_increase: { label: 'Added to wallet', tone: 'green' },
+  wallet_decrease: { label: 'Taken off wallet', tone: 'amber' },
+  wallet_expiry: { label: 'Balance lapsed', tone: 'gray' },
+};
+
+export const REFUND_FILE_STATUS: Record<string, StatusInfo> = {
+  generated: { label: 'Made, not yet paid', tone: 'sky' },
+  confirmed: { label: 'Paid by the bank', tone: 'green' },
+  cancelled: { label: 'Cancelled', tone: 'gray' },
+};
+
 const UNKNOWN: StatusInfo = { label: '', tone: 'gray' };
 
 /** The label and colour of a state; an unknown state shows as itself, in grey. */

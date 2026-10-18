@@ -185,18 +185,6 @@ describe.skipIf(!has(url))('sales posting (database)', () => {
     expect(await reconcile()).toEqual([0]);
   });
 
-  it('a foreign-currency sale waits with a clear reason instead of posting a wrong amount', async () => {
-    const c = await customer('credit');
-    const o = await order(c, { total: 100, currency: 'USD' });
-    await master.postInvoice({ customer: c, orderId: o.id, orderNumber: o.number, amount: 100, currency: 'USD' });
-    await fin.salesPosting.processDue();
-    const r = required((await rows('invoice')).find((x) => x.subjectId === o.id));
-    expect(r.status).toBe('failed');
-    expect(r.lastError).toMatch(/foreign currency/);
-    // the receivables reconciliation says what it left out
-    expect((await fin.salesPosting.reconciliation(companyId)).rows[0].foreignEntries).toBeGreaterThan(0);
-  });
-
   it('a rebate credited to a customer costs the business and reduces the debt, in the books too', async () => {
     const c = await customer('credit');
     const o = await order(c, { total: 4000 });
@@ -232,10 +220,159 @@ describe.skipIf(!has(url))('sales posting (database)', () => {
     expect(await reconcile()).toEqual([0]);
   });
 
+  describe('foreign currency', () => {
+    const tomorrow = new Date(Date.parse(`${today}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+    let invoiceOrder: { id: string; number: string };
+    let customerId: string;
+    let credit = '';
+
+    it('a sale waits, saying which rate is missing, and posts at the rate of the day once it is set', async () => {
+      const c = await customer('credit');
+      customerId = c.id;
+      invoiceOrder = await order(c, { total: 100, currency: 'USD' });
+      await master.postInvoice({ customer: c, orderId: invoiceOrder.id, orderNumber: invoiceOrder.number, amount: 100, currency: 'USD' });
+      await fin.salesPosting.processDue();
+      const waiting = required((await rows('invoice')).find((x) => x.subjectId === invoiceOrder.id));
+      expect(waiting.status).toBe('failed');
+      expect(waiting.lastError).toMatch(/no exchange rate for USD/i);
+      // the screens still work while a rate is missing
+      expect((await fin.salesPosting.reconciliation(companyId)).rows.length).toBeGreaterThan(0);
+
+      await fin.fx.setRate(ctx, { currency: 'usd', effectiveOn: today, rate: '129' });
+      expect((await fin.salesPosting.retry(ctx, waiting.id)).posted).toBeGreaterThanOrEqual(1);
+      const posted = required((await rows('invoice')).find((x) => x.subjectId === invoiceOrder.id));
+      expect(posted.status).toBe('posted');
+      const [reg] = await db.select().from(schema.ledgerRegisters).where(eq(schema.ledgerRegisters.id, required(posted.registerId)));
+      expect(reg).toMatchObject({ currency: 'USD' });
+      expect(Number(reg.rate)).toBe(129);
+      expect(Number(reg.baseTotalDebit)).toBe(12900);
+      expect(await reconcile()).toEqual([0]);
+    });
+
+    it('a rate that postings used cannot be changed or removed, and a past day cannot be set', async () => {
+      expect(await fin.fx.setRate(ctx, { currency: 'USD', effectiveOn: today, rate: '131' }).catch((e: unknown) => (isRecord(e) ? e.code : undefined))).toBe('RATE_IN_USE');
+      const [row] = await db.select().from(schema.exchangeRates).where(and(eq(schema.exchangeRates.companyId, companyId), eq(schema.exchangeRates.currency, 'USD')));
+      expect(await fin.fx.removeRate(ctx, row.id).catch((e: unknown) => (isRecord(e) ? e.code : undefined))).toBe('RATE_IN_USE');
+      expect(await fin.fx.setRate(ctx, { currency: 'USD', effectiveOn: '2020-01-01', rate: '100' }).catch((e: unknown) => (isRecord(e) ? e.code : undefined))).toBe('DATE_PAST');
+      expect(await fin.fx.setRate(ctx, { currency: 'KES', effectiveOn: tomorrow, rate: '1' }).catch((e: unknown) => (isRecord(e) ? e.code : undefined))).toBe('CURRENCY_IS_BASE');
+      expect(await fin.fx.setRate(ctx, { currency: 'USD', effectiveOn: tomorrow, rate: '1,5' }).catch((e: unknown) => (isRecord(e) ? e.code : undefined))).toBe('RATE_INVALID');
+      // a day that has passed is also held by the database
+      const [old] = await db.insert(schema.exchangeRates).values({ companyId, currency: 'EUR', effectiveOn: '2020-01-01', rate: '100', createdBy: 'tester' }).returning();
+      await expect(db.update(schema.exchangeRates).set({ rate: '1' }).where(eq(schema.exchangeRates.id, old.id))).rejects.toThrow();
+      await expect(db.delete(schema.exchangeRates).where(eq(schema.exchangeRates.id, old.id))).rejects.toThrow();
+    });
+
+    it('a payment at a stronger rate than the invoice is a gain, and taking it back undoes the gain', async () => {
+      await fin.fx.setRate(ctx, { currency: 'USD', effectiveOn: tomorrow, rate: '131' });
+      const [inv] = await db.select().from(schema.customerLedgerEntries).where(eq(schema.customerLedgerEntries.orderId, invoiceOrder.id));
+      credit = await fin.customerLedger.addEntry(db, { companyId, customerId, documentType: 'payment', documentNo: `PAY-${run}`, amountCents: -6000, currency: 'USD', postingDate: tomorrow });
+      await db.transaction((tx) => fin.customerLedger.applyIn(tx, ctx, { customerId, creditEntryId: credit, applications: [{ entryId: inv.id, amountCents: 6000 }], postingDate: today, createdBy: null }));
+      await fin.salesPosting.processDue();
+      const [gain] = await rows('fx_application');
+      expect(gain.status).toBe('posted');
+      // 60 USD settled at 131 against 129: the business is 120 shillings better off
+      expect(await glFor(required(gain.registerId))).toEqual([['1210', 120, 0], ['4410', 0, 120]]);
+      const [apps] = await db.select({ id: schema.customerDetailedEntries.applicationId }).from(schema.customerDetailedEntries).where(and(eq(schema.customerDetailedEntries.entryType, 'application'), eq(schema.customerDetailedEntries.ledgerEntryId, credit))).limit(1);
+      await db.transaction((tx) => fin.customerLedger.unapplyIn(tx, ctx, { applicationId: required(apps.id), postingDate: today, reasonCode: 'DATA_ENTRY_ERROR', createdBy: null }));
+      await fin.salesPosting.processDue();
+      const [undone] = await rows('fx_unapplication');
+      expect(undone.status).toBe('posted');
+      expect(await glFor(required(undone.registerId))).toEqual([['1210', 0, 120], ['6700', 120, 0]]); // booked as a loss of the same size: net effect on profit is nil
+    });
+
+    it('a dollar order paid with a dollar gift card takes the liability off at what the card was booked for, and the rest is an exchange difference', async () => {
+      const { getContainer } = await import('@/server/di/container');
+      const cardLiability = async () => {
+        const [r] = await db.execute<{ n: string }>(sql`SELECT COALESCE(SUM(base_credit - base_debit),0)::text n FROM gl_account_balances WHERE company_id=${companyId}::uuid AND account_id=${acct['2230']}::uuid`);
+        return Number(r.n);
+      };
+      const before = await cardLiability();
+      // a card worth 100 dollars, given free at today's 129
+      const [card] = await getContainer().giftCards.issue(companyId, { value: 100, currency: 'USD', funding: { kind: 'complimentary' } }, { type: 'user', id: 'tester' }, { code: 'DATA_ENTRY_ERROR' });
+      expect(Number((await db.select().from(schema.giftCards).where(eq(schema.giftCards.id, card.id)))[0].rate)).toBe(129);
+      await fin.salesPosting.processDue();
+      expect(await cardLiability()).toBe(before + 12900);
+
+      // it pays a 100 dollar order in full; the sale is booked at tomorrow's 131
+      const c = await customer('cash');
+      const o = await order(c, { total: 100, currency: 'USD', tendered: 100 });
+      await master.postInvoice({ customer: c, orderId: o.id, orderNumber: o.number, amount: 100, currency: 'USD' });
+      await db.insert(schema.orderTenders).values({ orderId: o.id, kind: 'gift_card', reference: card.id, amount: '100.00', actor: 't' });
+      await db.update(schema.giftCards).set({ balance: '0.00' }).where(eq(schema.giftCards.id, card.id));
+      await db.execute(sql`UPDATE orders SET transaction_reference = 'GCUSD1', payment_status = 'paid' WHERE id = ${o.id}`);
+      await master.applyOrderPayment(o.id);
+      await db.execute(sql`UPDATE finance_sales_postings SET event_date = ${tomorrow}::date WHERE company_id = ${companyId}::uuid AND subject_id = ${o.id} AND kind = 'cash_sale'`);
+      await fin.salesPosting.processDue();
+      const sale = required((await rows('cash_sale')).find((r) => r.subjectId === o.id));
+      expect(sale.status).toBe('posted');
+      const base = async (registerId: string) => {
+        const no = new Map(Object.entries(acct).map(([n, id]) => [id, n]));
+        return (await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, registerId))).map((l) => [no.get(l.accountId), Number(l.baseDebit), Number(l.baseCredit)]).sort();
+      };
+      expect(await base(required(sale.registerId))).toEqual([['2230', 13100, 0], ['4100', 0, 13100]]);
+      // 100 dollars were booked at 129 and the sale took 131: 200 shillings too much off the liability, a loss
+      const [fxReg] = await db.select().from(schema.ledgerRegisters).where(and(eq(schema.ledgerRegisters.companyId, companyId), eq(schema.ledgerRegisters.idempotencyKey, `sales:cash_sale:${o.id}:tender-fx`)));
+      expect(await base(fxReg.id)).toEqual([['2230', 0, 200], ['6700', 200, 0]]);
+      expect(await cardLiability()).toBe(before);
+      // a card still worth something is revalued with the rest (here pretending it was issued at 125)
+      const [left] = await getContainer().giftCards.issue(companyId, { value: 10, currency: 'USD', funding: { kind: 'complimentary' } }, { type: 'user', id: 'tester' }, { code: 'DATA_ENTRY_ERROR' });
+      await fin.salesPosting.processDue();
+      await db.update(schema.giftCards).set({ rate: '125' }).where(eq(schema.giftCards.id, left.id));
+    });
+
+    it('points pay a dollar order at the day\'s rate, never more than is due, and the sale\'s rate difference is an exchange difference', async () => {
+      const { getContainer } = await import('@/server/di/container');
+      const k = getContainer();
+      const actor = { type: 'user' as const, id: 'tester' };
+      await k.loyalty.saveProgram(companyId, { name: 'Dollar points', status: 'active', config: { pointsPer100: 1, pointValue: 1, minRedeemPoints: 1, maxRedeemPercent: 100, expiryMonths: 12, tiers: [] } }, actor, { code: 'DATA_ENTRY_ERROR' });
+      const c = await customer('cash');
+      await k.loyalty.adjust(companyId, c.id, 10000, 'welcome', actor, { code: 'DATA_ENTRY_ERROR' });
+      await fin.salesPosting.processDue();
+      const noRate = await order(c, { total: 50, currency: 'GBP' });
+      await expect(k.tenders.apply(companyId, noRate.id, { loyaltyPoints: 'all' }, actor)).rejects.toThrow(/no exchange rate/i);
+      const o = await order(c, { total: 50, currency: 'USD' });
+      // 6,450 points are 6,450 shillings: 50 dollars at today's 129, no more
+      const res = await k.tenders.apply(companyId, o.id, { loyaltyPoints: 'all' }, actor);
+      expect(res).toMatchObject({ tendered: 50, due: 0, paid: true });
+      const [tender] = await db.select().from(schema.orderTenders).where(eq(schema.orderTenders.orderId, o.id));
+      expect([tender.points, Number(tender.baseAmount)]).toEqual([6450, 6450]);
+      await master.postInvoice({ customer: c, orderId: o.id, orderNumber: o.number, amount: 50, currency: 'USD' });
+      await master.applyOrderPayment(o.id);
+      await db.execute(sql`UPDATE finance_sales_postings SET event_date = ${tomorrow}::date WHERE company_id = ${companyId}::uuid AND subject_id = ${o.id} AND kind = 'cash_sale'`);
+      await fin.salesPosting.processDue();
+      const sale = required((await rows('cash_sale')).find((r) => r.subjectId === o.id));
+      expect(sale.status).toBe('posted');
+      const base = async (registerId: string) => {
+        const no = new Map(Object.entries(acct).map(([n, id]) => [id, n]));
+        return (await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, registerId))).map((l) => [no.get(l.accountId), Number(l.baseDebit), Number(l.baseCredit)]).sort();
+      };
+      // the sale is at tomorrow's 131 (6,550) and the points were worth 6,450: 100 shillings too much off the provision
+      expect(await base(required(sale.registerId))).toEqual([['2240', 6550, 0], ['4100', 0, 6550]]);
+      const [fxReg] = await db.select().from(schema.ledgerRegisters).where(and(eq(schema.ledgerRegisters.companyId, companyId), eq(schema.ledgerRegisters.idempotencyKey, `sales:cash_sale:${o.id}:tender-fx`)));
+      expect(await base(fxReg.id)).toEqual([['2240', 0, 100], ['6700', 100, 0]]);
+    });
+
+    it('revaluing brings the receivable to the day\'s rate once, and is undone the next day', async () => {
+      const first = await fin.fx.revalue(ctx);
+      expect(first.groups).toBeGreaterThan(0);
+      expect(await fin.fx.revalue(ctx).catch((e: unknown) => (isRecord(e) ? e.code : undefined))).toBe('ALREADY_DONE');
+      const [rev] = await db.select().from(schema.fxRevaluations).where(eq(schema.fxRevaluations.companyId, companyId));
+      expect(rev.reversedAt).toBeNull();
+      expect(Object.keys(rev.groups).some((k) => k.startsWith('giftcards:'))).toBe(true);
+      // nothing to undo on the day itself
+      expect(await fin.fx.reverseDue(new Date())).toBe(0);
+      const later = new Date(Date.parse(`${today}T12:00:00+03:00`) + 86_400_000);
+      expect(await fin.fx.reverseDue(later)).toBe(1);
+      expect(await fin.fx.reverseDue(later)).toBe(0);
+      const [done] = await db.select().from(schema.fxRevaluations).where(eq(schema.fxRevaluations.id, rev.id));
+      expect(done.reversedAt).not.toBeNull();
+      await expect(db.delete(schema.fxRevaluations).where(eq(schema.fxRevaluations.id, rev.id))).rejects.toThrow();
+    });
+  });
+
   it('every queued event is accounted for: nothing stuck, books balanced, history intact', async () => {
-    // (the foreign-currency invoice is the one event that is meant to still be waiting)
     const waiting = (await rows()).filter((r) => r.status !== 'posted');
-    expect(waiting.map((r) => r.kind)).toEqual(['invoice']);
+    expect(waiting).toEqual([]);
     expect((await fin.maintenance.checkIntegrity(companyId)).balanceDrift).toBe(0);
     expect(await fin.customerLedger.drift(companyId)).toEqual([]);
   });

@@ -31,6 +31,8 @@ const GENERAL_COLUMNS: Record<GeneralPurpose, keyof typeof generalPostingSetup.$
   sales_discount: 'salesDiscountAccountId',
   cogs: 'cogsAccountId',
   inventory_adjustment: 'inventoryAdjustmentAccountId',
+  inventory: 'inventoryAccountId',
+  inventory_clearing: 'inventoryClearingAccountId',
 };
 
 export class PostingSetupService {
@@ -146,6 +148,8 @@ export class PostingSetupService {
         sales_discount: r.salesDiscountAccountId,
         cogs: r.cogsAccountId,
         inventory_adjustment: r.inventoryAdjustmentAccountId,
+        inventory: r.inventoryAccountId,
+        inventory_clearing: r.inventoryClearingAccountId,
       },
     }));
   }
@@ -172,6 +176,8 @@ export class PostingSetupService {
         rebate_expense: r.rebateExpenseAccountId,
         gift_card_liability: r.giftCardLiabilityAccountId,
         loyalty_provision: r.loyaltyProvisionAccountId,
+        credit_forfeit: r.creditForfeitAccountId,
+        credit_adjustment: r.creditAdjustmentAccountId,
       },
     }));
     return resolveCustomer(groups, group, purpose);

@@ -15,6 +15,10 @@ export interface CreditPolicy {
   /** May a wallet be paid out as a refund? */
   walletCashOut: boolean;
   maxCents: number | null;
+  /** A balance nobody has touched for this many days lapses (null = never). */
+  expiryDays: number | null;
+  /** How many days before it lapses it is shown as about to. */
+  expiryNoticeDays: number;
   /** What customers see it called: Wallet, Account credit, Store credit. */
   label: string;
 }
@@ -29,6 +33,8 @@ export const DEFAULT_POLICY: CreditPolicy = {
   refundsEnabled: true,
   walletCashOut: false,
   maxCents: null,
+  expiryDays: null,
+  expiryNoticeDays: 30,
   label: 'Wallet',
 };
 
@@ -94,4 +100,43 @@ export function checkDebit(
 export function autoApplyAmount(policy: CreditPolicy, walletCents: number, invoiceOpenCents: number): number {
   if (!policy.walletEnabled || policy.autoApply === 'never') return 0;
   return Math.max(0, Math.min(walletCents, invoiceOpenCents));
+}
+
+const DAY_MS = 86_400_000;
+
+export type ExpiryState = 'never' | 'ok' | 'soon' | 'lapsed';
+
+/** The day a balance last touched on `lastTouched` lapses, as a date; null when balances do not lapse. */
+export function lapseDate(lastTouched: Date, expiryDays: number | null): string | null {
+  if (expiryDays === null) return null;
+  return new Date(lastTouched.getTime() + expiryDays * DAY_MS).toISOString().slice(0, 10);
+}
+
+/** Whether a balance has lapsed, is about to, or is safe; `now` is passed in so the answer is repeatable. */
+export function expiryState(lastTouched: Date, now: Date, policy: Pick<CreditPolicy, 'expiryDays' | 'expiryNoticeDays'>): ExpiryState {
+  if (policy.expiryDays === null) return 'never';
+  const idleDays = (now.getTime() - lastTouched.getTime()) / DAY_MS;
+  if (idleDays >= policy.expiryDays) return 'lapsed';
+  return idleDays >= policy.expiryDays - policy.expiryNoticeDays ? 'soon' : 'ok';
+}
+
+/** Checks the expiry settings as typed: whole days, a notice shorter than the expiry. */
+export function checkExpiry(expiryDays: number | null, noticeDays: number): string | null {
+  if (expiryDays !== null && (!Number.isInteger(expiryDays) || expiryDays < 30 || expiryDays > 3650)) return 'A balance can lapse after 30 to 3,650 days without use.';
+  if (!Number.isInteger(noticeDays) || noticeDays < 0 || noticeDays > 365) return 'The warning period must be 0 to 365 days.';
+  if (expiryDays !== null && noticeDays >= expiryDays) return 'The warning period must be shorter than the time before a balance lapses.';
+  return null;
+}
+
+/**
+ * The rate a foreign wallet is carried at: what it is worth in the books' currency per unit it holds, to 8 decimals. Money
+ * leaves the wallet at this rate, so what the business owed stays equal to what it booked. An empty wallet has no rate.
+ */
+export function averageRate(balanceCents: number, baseValue: bigint): string | null {
+  if (balanceCents <= 0 || baseValue <= 0n) return null;
+  // base is in 1/10000 units, the balance in 1/100 units, the rate in 1/100000000 units.
+  const scaled = (baseValue * 1_000_000n * 2n + BigInt(balanceCents)) / (BigInt(balanceCents) * 2n);
+  const whole = scaled / 100_000_000n;
+  const frac = (scaled % 100_000_000n).toString().padStart(8, '0');
+  return `${whole.toString()}.${frac}`;
 }

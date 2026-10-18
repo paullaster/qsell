@@ -22,6 +22,7 @@ async function main(): Promise<void> {
   if ((await quotes.listTemplates()).length > 0) {
     console.warn('e2e seed: already seeded');
     await seedFinance();
+    await seedRefundExtras();
     await seedApprovals();
     return;
   }
@@ -165,6 +166,7 @@ async function main(): Promise<void> {
     }
   }
   await seedFinance();
+  await seedRefundExtras();
   await seedApprovals();
   console.warn('e2e seed: done');
 }

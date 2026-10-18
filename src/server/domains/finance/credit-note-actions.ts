@@ -31,7 +31,7 @@ export async function creditNoteExcessWorklistAction() {
         open: fromCents(r.openCents),
         issuedAt: r.issuedAt.toISOString(),
       })),
-      can: { resolve: await canPermission('credit_notes:resolve_excess') },
+      can: { resolve: await canPermission('credit_notes:resolve_excess'), giveUp: await canPermission('credit_adjustments:request') },
     };
   });
 }

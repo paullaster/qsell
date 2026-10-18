@@ -1,9 +1,12 @@
+import { has, trimToNull } from '@/lib/values';
 import { randomInt } from 'node:crypto';
 import { and, desc, eq, ilike, or, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { customers, giftCardLedger, giftCards, type GiftCardRow } from '@/server/db/drizzle/schema';
+import { customers, financeSettings, giftCardLedger, giftCards, paymentMethods, type GiftCardRow } from '@/server/db/drizzle/schema';
 import type { Tx } from '@/server/kernel/approvals/engine';
 import type { Actor } from '@/server/kernel/context';
+import type { FxService } from '@/server/domains/finance/fx-service';
+import { businessDate } from '@/server/kernel/numbering/business-date';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { ReasonCodes, ReasonInput } from '@/server/kernel/reason-codes/service';
 import { PricingConfigError } from './config-service';
@@ -30,7 +33,7 @@ export interface GiftCardView {
 }
 
 export interface GiftCardDetail extends GiftCardView {
-  ledger: Array<{
+  ledger: {
     id: string;
     kind: string;
     amount: number;
@@ -38,7 +41,7 @@ export interface GiftCardDetail extends GiftCardView {
     note: string | null;
     actor: string;
     createdAt: string;
-  }>;
+  }[];
 }
 
 /**
@@ -50,19 +53,18 @@ export class GiftCardService {
     private readonly db: DrizzleDb,
     private readonly decisions: DecisionLog,
     private readonly reasons: ReasonCodes,
+    private readonly fx: FxService,
   ) {}
 
   private view(r: GiftCardRow, customerName: string | null = null, now = new Date()): GiftCardView {
     const expired = r.expiresAt != null && r.expiresAt <= now;
     const empty = Number(r.balance) <= 0;
-    const unusableReason =
-      r.status === 'blocked'
-        ? 'This card is blocked.'
-        : expired
-          ? 'This card has expired.'
-          : empty
-            ? 'This card has no balance left.'
-            : null;
+    const reasons: [boolean, string][] = [
+      [r.status === 'blocked', 'This card is blocked.'],
+      [expired, 'This card has expired.'],
+      [empty, 'This card has no balance left.'],
+    ];
+    const unusableReason = reasons.find(([applies]) => applies)?.[1] ?? null;
     return {
       id: r.id,
       code: r.code,
@@ -89,7 +91,7 @@ export class GiftCardService {
       .where(
         and(
           eq(giftCards.companyId, companyId),
-          s
+          has(s)
             ? or(
                 ilike(giftCards.code, `%${normaliseGiftCardCode(s).replace(/[%_]/g, '')}%`),
                 ilike(giftCards.note, `%${s.replace(/[%_]/g, '')}%`),
@@ -144,6 +146,11 @@ export class GiftCardService {
       customerId?: string | null;
       note?: string | null;
       currency?: string;
+      /**
+       * How the cards came to exist: bought with money (through this payment method) or given free. Needed once the
+       * business's books are live, because each card is money owed to its holder and the books must say where it came from.
+       */
+      funding?: { kind: 'sold'; paymentMethodId: string } | { kind: 'complimentary' };
     },
     actor: { type: 'user'; id: string },
     reason: Why,
@@ -155,8 +162,8 @@ export class GiftCardService {
       expiresAt: input.expiresAt ?? null,
       count,
     });
-    if (issues.length) throw new PricingConfigError('INVALID', issues[0]!.message, issues);
-    if (input.customerId) {
+    if (issues.length > 0) throw new PricingConfigError('INVALID', issues[0]?.message ?? 'The card is not valid.', issues);
+    if (has(input.customerId)) {
       const [c] = await this.db
         .select({ id: customers.id })
         .from(customers)
@@ -165,7 +172,26 @@ export class GiftCardService {
       if (!c) throw new PricingConfigError('NOT_FOUND', 'That customer does not exist.');
     }
     const value = money(input.value);
-    return this.db.transaction(async (tx) => {
+    const [books] = await this.db.select({ live: financeSettings.salesGlGoLive, base: financeSettings.baseCurrency }).from(financeSettings).where(eq(financeSettings.companyId, companyId));
+    // A card in another currency is carried at what that currency is worth the day it is issued.
+    const currency = (has(input.currency) ? input.currency : (books?.base ?? 'KES')).toUpperCase();
+    let rate = '1';
+    if (books !== undefined && currency !== books.base.toUpperCase()) {
+      const found = await this.fx.rateOn(this.db, companyId, currency, businessDate());
+      if (found === null) throw new PricingConfigError('INVALID', `There is no exchange rate for ${currency} yet. Set it under Finance → Exchange rates before issuing cards in ${currency}.`);
+      rate = found;
+    }
+    if (books?.live != null && input.funding == null) {
+      throw new PricingConfigError('INVALID', 'Say how these cards were paid for: sold for money, or given free.');
+    }
+    if (input.funding?.kind === 'sold') {
+      const [method] = await this.db
+        .select({ id: paymentMethods.id })
+        .from(paymentMethods)
+        .where(and(eq(paymentMethods.id, input.funding.paymentMethodId), eq(paymentMethods.companyId, companyId), eq(paymentMethods.enabled, true)));
+      if (!method) throw new PricingConfigError('NOT_FOUND', 'Choose the payment method the money for the cards came in through.');
+    }
+    return await this.db.transaction(async (tx) => {
       const out: GiftCardRow[] = [];
       for (let i = 0; i < count; i++) {
         // A clash of two random 80-bit codes will not happen; retry anyway rather than fail a batch.
@@ -178,11 +204,14 @@ export class GiftCardService {
               code,
               initialValue: value.toFixed(2),
               balance: value.toFixed(2),
-              currency: input.currency ?? 'KES',
+              currency,
+              rate,
               expiresAt: input.expiresAt ?? null,
               customerId: input.customerId ?? null,
-              note: input.note?.trim() || null,
+              note: trimToNull(input.note),
               issuedBy: actor.id,
+              fundedBy: input.funding?.kind ?? 'unspecified',
+              fundingMethodId: input.funding?.kind === 'sold' ? input.funding.paymentMethodId : null,
             })
             .onConflictDoNothing()
             .returning();
@@ -289,6 +318,45 @@ export class GiftCardService {
       actor: input.actor,
     });
     return { cardId: card.id, amount };
+  }
+
+  /**
+   * Cards past the date that was set on them lose what is left: the balance is written off with one `adjust` row, which the
+   * database queues for the books (value owed becomes income). Safe to run again and again: a card with nothing left is not
+   * picked, and one card failing never stops the rest.
+   */
+  async expireDue(now: Date, limit = 200): Promise<{ expired: number; failed: number }> {
+    const due = await this.db
+      .select({ id: giftCards.id })
+      .from(giftCards)
+      .where(and(sql`${giftCards.expiresAt} <= ${now.toISOString()}`, sql`${giftCards.balance} > 0`))
+      .orderBy(giftCards.expiresAt)
+      .limit(limit);
+    let expired = 0;
+    let failed = 0;
+    for (const { id } of due) {
+      try {
+        const done = await this.db.transaction(async (tx) => {
+          const [card] = await tx.select().from(giftCards).where(eq(giftCards.id, id)).for('update');
+          if (card?.expiresAt == null || card.expiresAt > now || !(Number(card.balance) > 0)) return false;
+          await tx.update(giftCards).set({ balance: '0.00' }).where(eq(giftCards.id, id));
+          await tx.insert(giftCardLedger).values({
+            cardId: id,
+            kind: 'adjust',
+            amount: (-Number(card.balance)).toFixed(2),
+            reasonCode: 'GIFT_CARD_EXPIRED',
+            note: `Expired on ${card.expiresAt.toISOString().slice(0, 10)}.`,
+            actor: 'gift-card-expiry',
+          });
+          return true;
+        });
+        if (done) expired += 1;
+      } catch (error) {
+        failed += 1;
+        console.error('[gift card] an expired card could not be written off', id, error instanceof Error ? error.message : error);
+      }
+    }
+    return { expired, failed };
   }
 
   /** Gives back what an order spent from cards, once per card. */

@@ -1,0 +1,1 @@
+ALTER TABLE "order_tenders" ADD COLUMN "base_amount" numeric(18, 4);

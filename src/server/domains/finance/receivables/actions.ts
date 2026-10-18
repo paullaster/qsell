@@ -262,6 +262,7 @@ export async function receiptDetailAction(id: string) {
         unapply: await canPermission('receipts:unapply'),
         reverse: await canPermission('receipts:reverse'),
         attach: await canPermission('receipts:attach_evidence'),
+        giveUpCredit: await canPermission('credit_adjustments:request'),
         deposit: await canPermission('cheques:deposit'),
         clear: await canPermission('cheques:clear'),
         bounce: await canPermission('cheques:bounce'),

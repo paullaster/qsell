@@ -165,6 +165,15 @@ const darajaFieldOptions = staticSource({
   },
 });
 
+const BILL_STATUS_CHOICES = [
+  { id: 'sent', label: 'Sent, not paid' },
+  { id: 'part_paid', label: 'Part paid' },
+  { id: 'paid', label: 'Paid' },
+  { id: 'requested', label: 'Being sent' },
+  { id: 'failed', label: 'Refused' },
+  { id: 'cancelled', label: 'Cancelled' },
+] as const;
+
 export const PAYMENT_LOOKUP_SOURCES: readonly LookupSource[] = [
   fixed('provider-environments', 'payment_providers:read', PROVIDER_ENVIRONMENTS),
   fixed('payment-services', 'payment_providers:read', PAYMENT_SERVICES),
@@ -175,6 +184,7 @@ export const PAYMENT_LOOKUP_SOURCES: readonly LookupSource[] = [
   fixed('payment-method-kinds', 'payment_methods:read', METHOD_KINDS),
   fixed('payment-channel-kinds', 'payment_methods:read', CHANNEL_KINDS),
   fixed('refund-payout-modes', 'payment_methods:read', MANUAL_OR_AUTOMATIC_REFUND),
+  fixed('bill-invoice-statuses', 'payment_activity:read', BILL_STATUS_CHOICES),
   fixed('payment-event-states', 'payment_activity:read', stateChoices(EVENT_STATES)),
   fixed('payment-transaction-states', 'payment_activity:read', stateChoices(TRANSACTION_STATES)),
   branchesSource,

@@ -4,11 +4,13 @@ import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   bankAccounts,
   bankLedgerEntries,
+  bankMatchRules,
   bankStatementFormats,
   bankStatementImports,
   bankStatementLines,
   bankStatementMatches,
   customerReceipts,
+  customers,
   financeSettings,
   glAccounts,
   paymentMethods,
@@ -37,11 +39,15 @@ import { fromCents } from '../domain/receivables';
 import type { PostingRequest } from '../domain/types';
 import { NO_SPECIAL_PERMISSIONS, type PostingEngine, type PostingPermissions, type Tx } from '../engine';
 import { FinanceError, type FinanceContext } from '../errors';
+import type { FxService } from '../fx-service';
 import type { ReceiptService } from './receipt-service';
+import type { StatementFormat } from '../domain/statement-file';
+import { parseCamt053 } from '../domain/bank-statement-camt';
+import { DEFAULT_RULES, checkRules, phoneKeyOf, type MatchRules } from '../domain/bank-match';
 
 import { has, orElse } from '@/lib/values';
 
-export type StatementFormat = 'csv' | 'mt940';
+export type { StatementFormat } from '../domain/statement-file';
 export const MAX_STATEMENT_BYTES = 10 * 1024 * 1024;
 const CHUNK = 2000;
 /** Same amount within this many days is worth suggesting. */
@@ -74,6 +80,7 @@ export class BankStatementService {
     private readonly receipts: ReceiptService,
     private readonly numbering: NumberSeriesService,
     private readonly reasons: ReasonCodes,
+    private readonly fx: FxService,
   ) {}
 
   // ── helpers ──────────────────────────────────────────────────────────────
@@ -115,6 +122,7 @@ export class BankStatementService {
   private parse(text: string, format: StatementFormat, mapping?: CsvMapping): ParsedStatement {
     if (Buffer.byteLength(text) > MAX_STATEMENT_BYTES) throw new FinanceError('FILE_TOO_LARGE', 'That file is larger than 10 MB. Split it by month.');
     if (format === 'mt940') return parseMt940(text);
+    if (format === 'camt053') return parseCamt053(text);
     if (!mapping) throw new FinanceError('MAPPING_REQUIRED', 'Say which column is which before importing this file.');
     return parseCsvStatement(text, mapping);
   }
@@ -155,12 +163,27 @@ export class BankStatementService {
     const [dupFile] = await this.db.select({ id: bankStatementImports.id, at: bankStatementImports.createdAt }).from(bankStatementImports).where(and(eq(bankStatementImports.bankAccountId, account.id), eq(bankStatementImports.fileHash, fileHash)));
     if (dupFile) throw new FinanceError('ALREADY_IMPORTED', `This exact file was already imported on ${dupFile.at.toISOString().slice(0, 10)}.`);
     const parsed = this.parse(input.text, input.format, input.mapping);
+    return await this.importParsed(ctx, account, parsed, { fileName: input.fileName, fileHash, format: input.format, mapping: input.mapping, saveFormat: input.saveFormat });
+  }
+
+  /**
+   * Keeps statement lines that have already been read, whatever they were read from (a file, a bank's push). A line already
+   * kept from another delivery is left out; a delivery with any unreadable line is refused whole.
+   */
+  async importParsed(
+    ctx: FinanceContext,
+    account: BankAccountRow,
+    parsed: ParsedStatement,
+    meta: { fileName: string; fileHash: string; format: string; mapping?: CsvMapping; saveFormat?: boolean },
+  ) {
+    const input = { ...meta, bankAccountId: account.id };
     if (parsed.errors.length > 0) {
       throw new FinanceError('STATEMENT_UNREADABLE', `The file was not imported. ${parsed.errors.slice(0, 3).map((e) => e.message).join(' ')}${parsed.errors.length > 3 ? ` (and ${parsed.errors.length - 3} more)` : ''}`);
     }
     const horizon = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10);
     const future = parsed.lines.find((l) => l.date > horizon);
     if (future) throw new FinanceError('FUTURE_DATES', `Line ${future.lineNo} is dated ${future.date}, in the future. If the dates are month-first, choose that format and try again.`);
+    const fileHash = meta.fileHash;
     const hashed = withHashes(parsed.lines);
 
     const result = await this.db.transaction(async (tx) => {
@@ -235,6 +258,36 @@ export class BankStatementService {
 
   // ── matching ─────────────────────────────────────────────────────────────
 
+  // ── matching rules ───────────────────────────────────────────────────────
+
+  /** The rules for an account: its own if it has them, else the company's, else the standard ones. */
+  async rulesFor(companyId: string, bankAccountId: string | null): Promise<{ rules: MatchRules; scope: 'account' | 'company' | 'standard' }> {
+    const rows = await this.db.select().from(bankMatchRules).where(eq(bankMatchRules.companyId, companyId));
+    const read = (raw: Record<string, unknown> | undefined): MatchRules | null => {
+      if (raw === undefined) return null;
+      const checked = checkRules(raw);
+      return checked.ok ? checked.rules : null;
+    };
+    const own = bankAccountId === null ? null : read(rows.find((r) => r.bankAccountId === bankAccountId)?.rules);
+    if (own !== null) return { rules: own, scope: 'account' };
+    const shared = read(rows.find((r) => r.bankAccountId === null)?.rules);
+    return shared === null ? { rules: DEFAULT_RULES, scope: 'standard' } : { rules: shared, scope: 'company' };
+  }
+
+  /** Saves the rules for one account, or (with no account) for every account that has none of its own. Matching runs again after. */
+  async saveRules(ctx: FinanceContext, bankAccountId: string | null, raw: Record<string, unknown>): Promise<MatchRules> {
+    const checked = checkRules(raw);
+    if (!checked.ok) throw new FinanceError('RULES_INVALID', checked.error);
+    if (bankAccountId !== null) await this.statementAccount(ctx.companyId, bankAccountId);
+    await this.db.transaction(async (tx) => {
+      const [same] = await tx.select({ id: bankMatchRules.id }).from(bankMatchRules).where(and(eq(bankMatchRules.companyId, ctx.companyId), bankAccountId === null ? isNull(bankMatchRules.bankAccountId) : eq(bankMatchRules.bankAccountId, bankAccountId))).for('update');
+      if (same) await tx.update(bankMatchRules).set({ rules: checked.rules as unknown as Record<string, unknown>, updatedBy: ctx.actor.id ?? 'system', updatedAt: new Date() }).where(eq(bankMatchRules.id, same.id));
+      else await tx.insert(bankMatchRules).values({ companyId: ctx.companyId, bankAccountId, rules: checked.rules as unknown as Record<string, unknown>, updatedBy: ctx.actor.id ?? 'system' });
+      await this.decisions.record({ companyId: ctx.companyId, subject: { type: 'bank_match_rules', id: bankAccountId ?? ctx.companyId }, action: 'finance.bank_match_rules_saved', actor: ctx.actor, inputs: { origin: ctx.origin }, outcome: { ...checked.rules } }, tx);
+    });
+    return checked.rules;
+  }
+
   /** Ledger entries not yet closed against any line, with the words the bank might quote back. */
   private async openEntries(db: Pick<DrizzleDb, 'select'>, companyId: string, bankAccountId: string, from?: string, to?: string) {
     const rows = await db
@@ -242,10 +295,13 @@ export class BankStatementService {
         e: bankLedgerEntries,
         extRef: customerReceipts.externalReference,
         payoutRef: refundRequests.payoutReference,
+        customerName: customers.name,
+        customerPhone: customers.phone,
       })
       .from(bankLedgerEntries)
       .leftJoin(customerReceipts, and(eq(customerReceipts.id, bankLedgerEntries.documentId), eq(bankLedgerEntries.documentType, 'customer_receipt')))
       .leftJoin(refundRequests, and(eq(refundRequests.id, bankLedgerEntries.documentId), eq(bankLedgerEntries.documentType, 'refund')))
+      .leftJoin(customers, eq(customers.id, sql`coalesce(${customerReceipts.customerId}, ${refundRequests.customerId})`))
       .where(
         and(
           eq(bankLedgerEntries.companyId, companyId),
@@ -262,6 +318,8 @@ export class BankStatementService {
       date: r.e.postingDate,
       amountCents: centsOf(r.e.amount),
       refs: [r.e.documentNo, r.extRef, r.payoutRef].filter((x): x is string => Boolean(x)),
+      phones: [phoneKeyOf(r.customerPhone)].filter((x): x is string => x !== null),
+      names: [r.customerName].filter((x): x is string => has(x)),
       entry: r.e,
     }));
   }
@@ -278,12 +336,14 @@ export class BankStatementService {
       .orderBy(asc(bankStatementLines.lineDate), asc(bankStatementLines.id))
       .limit(max);
     if (lines.length === 0) return { autoMatched: 0, proposed: 0 };
+    const { rules } = await this.rulesFor(ctx.companyId, bankAccountId);
     const pad = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
-    const entries = await this.openEntries(this.db, ctx.companyId, bankAccountId, pad(lines[0].lineDate, -(WINDOW_DAYS + 30)), pad(lines[lines.length - 1].lineDate, WINDOW_DAYS + 30));
+    const reach = Math.max(rules.dateWindowDays, WINDOW_DAYS) + 30;
+    const entries = await this.openEntries(this.db, ctx.companyId, bankAccountId, pad(lines[0].lineDate, -reach), pad(lines[lines.length - 1].lineDate, reach));
     const suggestions = suggestMatches(
-      lines.map((l) => ({ id: l.id, date: l.lineDate, amountCents: centsOf(l.amount), description: l.description, reference: l.reference })),
-      entries.map((e) => ({ id: e.id, date: e.date, amountCents: e.amountCents, refs: e.refs })),
-      { windowDays: WINDOW_DAYS },
+      lines.map((l) => ({ id: l.id, date: l.lineDate, amountCents: centsOf(l.amount), description: l.description, reference: l.reference, counterparty: l.counterparty })),
+      entries.map((e) => ({ id: e.id, date: e.date, amountCents: e.amountCents, refs: e.refs, phones: e.phones, names: e.names })),
+      { rules },
     );
     let autoMatched = 0;
     let proposed = 0;
@@ -480,7 +540,9 @@ export class BankStatementService {
       const { number } = await this.numbering.assign('bank_charge', { companyId: ctx.companyId, branchId: undefined, date: businessDate(), document: { kind: 'bank_charge', id }, actor: ctx.actor }, tx);
       let registerId: string | null = null;
       if (live) {
-        if (account.currency !== s.baseCurrency) throw new FinanceError('FOREIGN_CURRENCY', `Charges in ${account.currency} are not posted to the general ledger yet.`);
+        // A charge in another currency is booked at the rate of the day it was taken.
+        const foreign = account.currency.toUpperCase() !== s.baseCurrency;
+        const rate = foreign ? await this.fx.requireRate(tx, ctx.companyId, account.currency, date) : '1';
         const req: PostingRequest = {
           companyId: ctx.companyId,
           idempotencyKey: `bank_charge:${line.id}`,
@@ -488,9 +550,9 @@ export class BankStatementService {
           documentType: 'bank_charge',
           documentNo: number,
           description: `Bank charge ${line.description}`.slice(0, 200),
-          currency: s.baseCurrency,
-          rate: '1',
-          rateSource: 'base',
+          currency: foreign ? account.currency.toUpperCase() : s.baseCurrency,
+          rate,
+          rateSource: foreign ? 'manual' : 'base',
           lines: [
             { accountId: account.feeGlAccountId, debit: fromCents(cents), credit: '0', description: line.description.slice(0, 200) },
             { accountId: bankGl.glId, debit: '0', credit: fromCents(cents), description: `Charge ${number}`, sourceLedger: 'bank', sourceEntryId: account.id },

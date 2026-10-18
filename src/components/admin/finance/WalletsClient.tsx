@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { use } from 'react';
 import type { walletReportAction } from '@/server/domains/finance/wallet-actions';
-import { Chip, LoadFailed, PageHeader, cardClass, money } from './ui';
+import { Chip, LoadFailed, PageHeader, buttonClass, cardClass, money } from './ui';
 
 type View = Extract<Awaited<ReturnType<typeof walletReportAction>>, { ok: true }>['data'];
 
@@ -16,7 +16,7 @@ function WalletsView({ view }: { view: View }) {
   const lc = view.label.toLowerCase();
   return (
     <div className="max-w-5xl space-y-5">
-      <PageHeader title={`${view.label} liability`} intro="What the business owes customers who hold credit. It is a liability, not money you can spend: it comes off when the customer pays an invoice or an order with it." />
+      <PageHeader title={`${view.label} liability`} intro="What the business owes customers who hold credit. It is a liability, not money you can spend: it comes off when the customer pays an invoice or an order with it." actions={view.canAdjust ? <Link href="/admin/finance/receivables/credit-adjustments" className={buttonClass}>Credit adjustments</Link> : null} />
       {view.walletEnabled ? null : <p className="text-sm text-amber-700">The {lc} is switched off. Existing balances can still be used. See Finance → Wallet policy.</p>}
       <section aria-label="Totals" className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {view.totals.length === 0 ? <div className={cardClass}><p className="text-xs text-fg-muted">Owed to customers</p><p className="text-lg font-bold text-fg-strong">0.00</p></div> : null}
@@ -28,6 +28,20 @@ function WalletsView({ view }: { view: View }) {
           </div>
         ))}
       </section>
+
+      {view.expiring.length > 0 ? (
+        <section className="space-y-2" aria-labelledby="wallet-expiring">
+          <h3 id="wallet-expiring" className="text-sm font-bold text-fg-strong">About to lapse, or lapsed and waiting for tonight&apos;s run</h3>
+          <ul className="space-y-2">
+            {view.expiring.map((e) => (
+              <li key={`${e.customerId}-${e.currency}`} className={`${cardClass} flex flex-wrap items-center justify-between gap-2`}>
+                <p className="min-w-0 text-sm"><Link className="font-semibold text-indigo-600 hover:underline" href={`/admin/finance/receivables/customer/${e.customerId}`}>{e.name}</Link> <span className="text-fg-muted">{e.number} · last used {new Date(e.lastTouched).toLocaleDateString()} · lapses after {e.expiryDays} days</span></p>
+                <span className="flex items-center gap-2"><span className="font-semibold tabular-nums">{e.currency} {money(e.balance)}</span>{e.state === 'lapsed' ? <Chip tone="red">Lapses tonight</Chip> : <Chip tone="amber">Soon</Chip>}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <section className="space-y-2" aria-labelledby="wallet-books">
         <h3 id="wallet-books" className="text-sm font-bold text-fg-strong">The books against the {lc}s</h3>

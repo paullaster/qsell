@@ -21,6 +21,7 @@ import type { PostingSetupService } from '../posting-setup-service';
 import type { CreditPolicyService } from './credit-policy-service';
 import type { CustomerLedgerService } from './customer-ledger-service';
 import type { WalletService } from './wallet-service';
+import type { FxService } from '../fx-service';
 
 /**
  * What a credit note does to the customer's account and the books. It is recorded in the same
@@ -37,6 +38,7 @@ export class CreditNoteAccountingService {
     private readonly wallets: WalletService,
     private readonly policies: CreditPolicyService,
     private readonly setup: PostingSetupService,
+    private readonly fx: FxService,
   ) {}
 
   /** What is still open on a credit note's excess. */
@@ -93,9 +95,9 @@ export class CreditNoteAccountingService {
     const live = goLive !== null && date >= goLive;
     let registerId: string | null = null;
     if (live) {
-      if (currency.toUpperCase() !== s.baseCurrency) {
-        throw new FinanceError('FOREIGN_CURRENCY', `This order is in ${currency}; credit notes in a foreign currency are not posted to the general ledger yet.`);
-      }
+      // In another currency it is booked at the day's rate; what that differs from the invoice's rate by shows as an exchange difference when the credit is applied.
+      const isForeign = currency.toUpperCase() !== s.baseCurrency;
+      const rate = isForeign ? await this.fx.requireRate(tx, cn.companyId, currency, date) : '1';
       const group = (await this.policies.forCustomer(tx, cn.companyId, inv.customerId, date)).groupCode;
       const [returns, receivables] = await Promise.all([
         this.setup.resolveGeneral(cn.companyId, s.defaultBusinessGroup, s.defaultProductGroup, 'sales_returns', date),
@@ -111,9 +113,9 @@ export class CreditNoteAccountingService {
         documentType: 'credit_note',
         documentNo: cn.creditNoteNo,
         description: `Credit note ${cn.creditNoteNo} for ${order.orderNumber}`,
-        currency: s.baseCurrency,
-        rate: '1',
-        rateSource: 'base',
+        currency: isForeign ? currency.toUpperCase() : s.baseCurrency,
+        rate,
+        rateSource: isForeign ? 'manual' : 'base',
         lines: lines.map((l) => ({ accountId: l.accountId, debit: fromCents(l.debitCents), credit: fromCents(l.creditCents), description: l.description, sourceLedger: l.creditCents > 0 ? 'customer' : null, sourceEntryId: l.creditCents > 0 ? inv.customerId : null })),
         chainKey: order.branchId ?? 'general',
         branchId: order.branchId,

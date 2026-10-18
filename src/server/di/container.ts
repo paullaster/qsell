@@ -195,11 +195,11 @@ async function legacyPrefix(companyId: string, kind: string): Promise<string | n
     .from(companySettings)
     .where(eq(companySettings.id, companyId))
     .limit(1);
-  const base = row?.prefix
-    ?.trim()
+  const base = row.prefix
+    .trim()
     .replace(/[^A-Za-z0-9]/g, '')
     .slice(0, 6);
-  return base ? `${base}-{BRANCH}-{YY}-` : null;
+  return base !== '' ? `${base}-{BRANCH}-{YY}-` : null;
 }
 
 /**
@@ -306,8 +306,8 @@ export function getContainer(): AppContainer {
   const discounts = new DiscountService(drizzleDb, pricing, priceGuard);
   const kits = new KitService(drizzleDb);
   const rebates = new RebateService(drizzleDb, priceGuard, pricing);
-  const loyalty = new LoyaltyService(drizzleDb, decisionLog, reasonCodes);
-  const giftCards = new GiftCardService(drizzleDb, decisionLog, reasonCodes);
+  const loyalty = new LoyaltyService(drizzleDb, decisionLog, reasonCodes, finance.fx);
+  const giftCards = new GiftCardService(drizzleDb, decisionLog, reasonCodes, finance.fx);
   const insights = new InsightsService(drizzleDb, priceGuard);
   const pricingConfig = new PricingConfigService(
     drizzleDb,

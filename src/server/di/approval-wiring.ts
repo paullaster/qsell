@@ -10,6 +10,7 @@ import {
 } from '@/server/domains/pricing/approval';
 import { quoteApprovalHandler } from '@/server/domains/quotes/approval';
 import { refundApprovalHandler } from '@/server/domains/finance/refund-approval';
+import { creditAdjustmentApprovalHandler } from '@/server/domains/finance/credit-adjustment-approval';
 import type { CreditNoteReason } from '@/server/domains/credit-notes/reasons';
 import type { StockOp } from '@/server/domains/inventory/service';
 
@@ -30,12 +31,13 @@ export function registerApprovalHandlers(engine: ApprovalEngine, gate: ParkedAct
   engine.registerDocument('discount_rule', discountRuleApprovalHandler(drizzleDb));
   engine.registerDocument('rebate_settlement', rebateSettlementApprovalHandler(drizzleDb));
   engine.registerDocument('refund', refundApprovalHandler(drizzleDb));
+  engine.registerDocument('credit_adjustment', creditAdjustmentApprovalHandler(drizzleDb));
   engine.registerDocument('provider_operation', {
-    onReleased: async (id, tx) => (await payouts()).handler().onReleased(id, tx),
-    onRejected: async (id, tx, info) => (await payouts()).handler().onRejected(id, tx, info),
-    onReopened: async (id, tx) => (await payouts()).handler().onReopened(id, tx),
-    onCanceled: async (id, tx) => (await payouts()).handler().onCanceled!(id, tx),
-    describe: async (id) => (await payouts()).handler().describe!(id),
+    onReleased: async (id, tx) => await (await payouts()).handler().onReleased(id, tx),
+    onRejected: async (id, tx, info) => await (await payouts()).handler().onRejected(id, tx, info),
+    onReopened: async (id, tx) => await (await payouts()).handler().onReopened(id, tx),
+    onCanceled: async (id, tx) => await (await payouts()).handler().onCanceled?.(id, tx),
+    describe: async (id) => (await (await payouts()).handler().describe?.(id)) ?? null,
   });
 
   gate.attach('price_list_change', priceChangeExecutors());
