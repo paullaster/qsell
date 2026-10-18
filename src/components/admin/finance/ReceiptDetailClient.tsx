@@ -185,6 +185,7 @@ function ReceiptDetailView({ view, postingFailed }: { view: View; postingFailed?
           </button>
         ) : null}
         {r.status === 'posted' && Number(view.unapplied) > 0 ? <Link href={`/admin/finance/refunds/new?customer=${view.customer.id}&source=receipt_unapplied:${r.id}`} className={buttonClass}>Refund the unapplied {money(view.unapplied)}</Link> : null}
+        {r.status === 'posted' && Number(view.unapplied) > 0 && view.can.giveUpCredit ? <Link href={`/admin/finance/receivables/credit-adjustments/new?customer=${view.customer.id}&source=receipt_unapplied:${r.id}`} className={buttonClass}>Give up the unapplied {money(view.unapplied)}</Link> : null}
         {r.status === 'posted' && r.chequeStatus === 'received' && view.can.deposit ? <button type="button" className={buttonClass} disabled={busy} onClick={() => setPanel('deposit')}>Record deposit</button> : null}
         {r.status === 'posted' && r.chequeStatus === 'deposited' && view.can.clear ? (
           <button type="button" className={buttonClass} disabled={busy} onClick={async () => { setBusy(true); finish(await attempt(clearChequeAction(r.id)), 'Cheque marked as cleared.'); }}>Mark cleared</button>

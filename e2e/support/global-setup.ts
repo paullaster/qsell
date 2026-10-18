@@ -12,7 +12,8 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
   execFileSync('pnpm', ['exec', 'drizzle-kit', 'migrate'], { env, stdio: 'inherit' });
   execFileSync('pnpm', ['exec', 'tsx', 'e2e/support/seed.ts'], { env, stdio: 'inherit' });
 
-  const api = await request.newContext({ baseURL: E2E_URL });
+  // The first compile of the sign-in route can take longer than the default 30 seconds.
+  const api = await request.newContext({ baseURL: E2E_URL, timeout: 300_000 });
   const csrf = (await (await api.get('/api/auth/csrf')).json()) as { csrfToken: string };
   const response = await api.post('/api/auth/callback/credentials', {
     form: {

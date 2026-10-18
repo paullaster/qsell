@@ -6,7 +6,7 @@ import { anythingLeft, creditEstimate, chosenLines, creditNoteRequest, noteMissi
 
 const row = (over: Partial<PolicyRow> = {}): PolicyRow => ({
   groupCode: null, effectiveFrom: '2026-01-01', walletEnabled: true, allowDeposits: true, overpaymentDefault: 'wallet', autoApply: 'never', creditNoteExcess: 'ask',
-  refundsEnabled: true, walletCashOut: false, maxBalance: null, label: 'Wallet', ...over,
+  refundsEnabled: true, walletCashOut: false, maxBalance: null, expiryDays: null, expiryNoticeDays: 30, label: 'Wallet', ...over,
 });
 
 describe('wallet policy', () => {
@@ -31,12 +31,24 @@ describe('wallet policy', () => {
     expect(policyInput({ ...startingForm(null, company, company), maxBalance: ' ' }).maxBalance).toBeNull();
     expect(AUTO_APPLY_MODES).toHaveLength(2);
   });
+
+  it('shows when credit lapses, starts the form with the days, and sends them as numbers (or none)', () => {
+    expect(describePolicy(row({ expiryDays: 365 }))).toContain('Credit not used for 365 days lapses.');
+    expect(describePolicy(row())).not.toContain('lapses');
+    expect(startingForm(null, row({ expiryDays: 180, expiryNoticeDays: 14 }), undefined)).toMatchObject({ expiryDays: '180', expiryNoticeDays: '14' });
+    expect(startingForm(null, undefined, undefined)).toMatchObject({ expiryDays: '', expiryNoticeDays: '30' });
+    const form = startingForm(null, row({ expiryDays: 180, expiryNoticeDays: 14 }), undefined);
+    expect(policyInput(form)).toMatchObject({ expiryDays: 180, expiryNoticeDays: 14 });
+    expect(policyInput({ ...form, expiryDays: ' ', expiryNoticeDays: '' })).toMatchObject({ expiryDays: null, expiryNoticeDays: 30 });
+  });
 });
 
 describe('wallet panel', () => {
   it('labels movements and lets a use be undone once', () => {
     expect(entryLabel('deposit')).toBe('Advance deposit');
     expect(entryLabel('odd')).toBe('odd');
+    expect(entryLabel('adjustment')).toBe('Adjusted by the business');
+    expect(entryLabel('expiry')).toBe('Lapsed unused');
     const use = { id: 7, type: 'utilisation', sourceType: null, sourceId: null };
     const back = { id: 8, type: 'reversal', sourceType: 'wallet_entry', sourceId: '7' };
     expect(canUndoUse([use], use, true)).toBe(true);

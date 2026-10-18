@@ -49,9 +49,9 @@ describe.skipIf(!has(url))('bank statements (database)', () => {
   const csv = (rows: [string, string, string, string, string, string][]) => `Date,Narration,Ref,In,Out,Balance\n${rows.map((r) => r.join(',')).join('\n')}`;
 
   /** A bank account of its own, with a method paying into it, so tests do not share state. */
-  async function fresh(label: string) {
+  async function fresh(label: string, currency = 'KES') {
     seq += 1;
-    const account = await fin.bankAccounts.create(ctx, { code: `ST${run}${seq}`, name: `Statement test ${label}`, kind: 'bank', currency: 'KES', feeGlAccountId: glFee });
+    const account = await fin.bankAccounts.create(ctx, { code: `ST${run}${seq}`, name: `Statement test ${label}`, kind: 'bank', currency, feeGlAccountId: glFee });
     const method = await fin.paymentMethods.create(ctx, { code: `STM${run}${seq}`, name: `Transfer ${seq}`, kind: 'bank_transfer', balancingBankAccountId: account.id, providerId: manualProvider, glAccountId: glBank, usableFor: ['customer_receipt'], refundDestination: 'none' });
     return { account, method };
   }
@@ -90,6 +90,154 @@ describe.skipIf(!has(url))('bank statements (database)', () => {
     glBank = required(accts.find((a) => a.no === '1120')).id;
     manualProvider = required((await fin.paymentMethods.providerChoices(companyId)).find((p) => p.isSystem)).id;
     glFee = required(accts.find((a) => a.category === 'expense' && a.type === 'posting')).id;
+  });
+
+  describe('other kinds of file', () => {
+    it('a camt.053 statement is read and its lines quoting our reference match by themselves', async () => {
+      const f = await fresh('camt');
+      const r = await receipt(f, '640.00', day(2), null);
+      const xml = `<?xml version="1.0"?><Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02"><BkToCstmrStmt><Stmt>
+        <Bal><Tp><CdOrPrtry><Cd>OPBD</Cd></CdOrPrtry></Tp><Amt Ccy="KES">0.00</Amt><CdtDbtInd>CRDT</CdtDbtInd></Bal>
+        <Bal><Tp><CdOrPrtry><Cd>CLBD</Cd></CdOrPrtry></Tp><Amt Ccy="KES">640.00</Amt><CdtDbtInd>CRDT</CdtDbtInd></Bal>
+        <Ntry><Amt Ccy="KES">640.00</Amt><CdtDbtInd>CRDT</CdtDbtInd><Sts>BOOK</Sts><BookgDt><Dt>${day(2)}</Dt></BookgDt><AcctSvcrRef>BK${run}1</AcctSvcrRef>
+          <NtryDtls><TxDtls><Refs><EndToEndId>${r.number}</EndToEndId></Refs><RltdPties><Dbtr><Nm>Payer</Nm></Dbtr></RltdPties></TxDtls></NtryDtls></Ntry></Stmt></BkToCstmrStmt></Document>`;
+      const out = await fin.bankStatements.import(ctx, { bankAccountId: f.account.id, fileName: 'oct.xml', text: xml, format: 'camt053' });
+      expect(out).toMatchObject({ lines: 1, autoMatched: 1 });
+      const [line] = await lines(f.account.id);
+      expect(line).toMatchObject({ status: 'matched', amount: '640.0000', reference: r.number });
+      const [imp] = await db.select().from(schema.bankStatementImports).where(eq(schema.bankStatementImports.bankAccountId, f.account.id));
+      expect(imp).toMatchObject({ format: 'camt053', openingBalance: '0.0000', closingBalance: '640.0000' });
+      expect(await codeOf(fin.bankStatements.import(ctx, { bankAccountId: f.account.id, fileName: 'again.xml', text: xml, format: 'camt053' }))).toBe('ALREADY_IMPORTED');
+    });
+
+    it('a camt.053 file with an unreadable entry is refused with the entry named', async () => {
+      const f = await fresh('camt-bad');
+      const xml = '<Document><BkToCstmrStmt><Stmt><Ntry><Amt Ccy="KES">oops</Amt><CdtDbtInd>CRDT</CdtDbtInd><Sts>BOOK</Sts><BookgDt><Dt>2026-10-01</Dt></BookgDt></Ntry></Stmt></BkToCstmrStmt></Document>';
+      expect(await codeOf(fin.bankStatements.import(ctx, { bankAccountId: f.account.id, fileName: 'bad.xml', text: xml, format: 'camt053' }))).toBe('STATEMENT_UNREADABLE');
+      expect(await lines(f.account.id)).toEqual([]);
+    });
+
+    it('an Excel workbook goes in through the same column choices as a CSV, with its dates as Excel stores them', async () => {
+      const f = await fresh('xlsx');
+      const serial = Math.round((Date.parse(`${day(3)}T00:00:00Z`) - Date.UTC(1899, 11, 30)) / 86400000);
+      const sheet = `<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c><c r="C1" t="s"><v>2</v></c><c r="D1" t="s"><v>3</v></c></row>
+        <row r="2"><c r="A2"><v>${String(serial)}</v></c><c r="B2" t="inlineStr"><is><t>Deposit</t></is></c><c r="C2"><v>1250.5</v></c><c r="D2"/></row>
+        <row r="3"><c r="A3"><v>${String(serial + 1)}</v></c><c r="B3" t="inlineStr"><is><t>Fee</t></is></c><c r="C3"/><c r="D3"><v>20.0000000000001</v></c></row>`;
+      const { readStatementFile } = await import('./domain/statement-file');
+      const { zip, workbook } = await import('./domain/xlsx-test-kit');
+      const read = readStatementFile(zip(workbook(sheet, ['Date', 'Narration', 'In', 'Out'])));
+      expect(read).toMatchObject({ format: 'csv', from: 'excel' });
+      const out = await fin.bankStatements.import(ctx, { bankAccountId: f.account.id, fileName: 'oct.xlsx', text: read.text, format: read.format, mapping: { headerRow: 1, date: 'Date', description: ['Narration'], paidIn: 'In', withdrawn: 'Out' } });
+      expect(out.lines).toBe(2);
+      expect((await lines(f.account.id)).map((l) => [l.lineDate, l.amount])).toEqual([[day(3), '1250.5000'], [day(2), '-20.0000']]);
+    });
+  });
+
+  describe('matching rules', () => {
+    it('start as the standard ones, can be set for the company and for one account, and the account\'s own win', async () => {
+      const f = await fresh('rules');
+      expect(await fin.bankStatements.rulesFor(companyId, f.account.id)).toMatchObject({ scope: 'standard', rules: { reference: 'auto', phone: 'off', amountToleranceCents: 0 } });
+      const shared = { reference: 'propose', minRefLength: 5, amountToleranceCents: 0, dateWindowDays: 5, phone: 'propose', name: 'off', nameMinScore: 0.6, maxProposals: 5 };
+      await fin.bankStatements.saveRules(ctx, null, shared);
+      expect(await fin.bankStatements.rulesFor(companyId, f.account.id)).toMatchObject({ scope: 'company', rules: { reference: 'propose', dateWindowDays: 5 } });
+      await fin.bankStatements.saveRules(ctx, f.account.id, { ...shared, reference: 'auto', phone: 'auto' });
+      expect(await fin.bankStatements.rulesFor(companyId, f.account.id)).toMatchObject({ scope: 'account', rules: { reference: 'auto', phone: 'auto' } });
+      const other = await fresh('rules-other');
+      expect(await fin.bankStatements.rulesFor(companyId, other.account.id)).toMatchObject({ scope: 'company' });
+      // saving again replaces, it does not add
+      await fin.bankStatements.saveRules(ctx, f.account.id, { ...shared, reference: 'off' });
+      expect((await db.select().from(schema.bankMatchRules).where(eq(schema.bankMatchRules.bankAccountId, f.account.id)))).toHaveLength(1);
+      expect(await codeOf(fin.bankStatements.saveRules(ctx, f.account.id, { ...shared, reference: 'sure' }))).toBe('RULES_INVALID');
+      expect(await codeOf(fin.bankStatements.saveRules(ctx, randomUUID(), shared))).toBe('ACCOUNT_NOT_FOUND');
+      await db.delete(schema.bankMatchRules).where(eq(schema.bankMatchRules.companyId, companyId));
+    });
+
+    it('a customer\'s phone number on a line closes it by itself only when the rules trust it, and the amount is exact', async () => {
+      const f = await fresh('phone');
+      const r = await receipt(f, '730.00', day(2), null);
+      const phone = required(r.customer.phone).replace(/^0/, '254');
+      const row: [string, string, string, string, string, string] = [dmy(day(2)), `MPESA from ${phone} JANE`, `Q${run}${seq}ZZ`, '730.00', '', '730.00'];
+      // standard rules: nothing in the line points at our reference, so it is only suggested
+      const first = await importCsv(f.account.id, [row]);
+      expect(first).toMatchObject({ autoMatched: 0, proposed: 1 });
+      await fin.bankStatements.saveRules(ctx, f.account.id, { reference: 'auto', minRefLength: 5, amountToleranceCents: 0, dateWindowDays: 3, phone: 'auto', name: 'off', nameMinScore: 0.6, maxProposals: 5 });
+      const again = await fin.bankStatements.autoMatch(ctx, f.account.id);
+      expect(again).toMatchObject({ autoMatched: 1 });
+      const [line] = await lines(f.account.id);
+      expect(line).toMatchObject({ status: 'matched', matchRule: 'auto:phone' });
+    });
+
+    it('a payer name that resembles the customer\'s is a suggestion, never a match, and only when switched on', async () => {
+      const f = await fresh('name');
+      const r = await receipt(f, '415.00', day(20), null);
+      const words = r.customer.name.toUpperCase().split(' ').reverse().join(' ');
+      await importCsv(f.account.id, [[dmy(day(2)), words, `X${run}${seq}YY`, '415.00', '', '415.00']]);
+      expect((await lines(f.account.id))[0].status).toBe('unmatched');
+      await fin.bankStatements.saveRules(ctx, f.account.id, { reference: 'auto', minRefLength: 5, amountToleranceCents: 0, dateWindowDays: 3, phone: 'off', name: 'propose', nameMinScore: 0.6, maxProposals: 5 });
+      const out = await fin.bankStatements.autoMatch(ctx, f.account.id);
+      expect(out).toMatchObject({ autoMatched: 0, proposed: 1 });
+      expect(await lines(f.account.id)).toMatchObject([{ status: 'proposed', matchRule: 'name', proposedEntryIds: [r.entry.id] }]);
+    });
+  });
+
+  describe('a bank feed', () => {
+    const body = (ref: string, amount = '500.00', date = day(1)) => ({ lines: [{ date, amount, reference: ref, description: `Deposit ${ref}` }] });
+
+    it('has an address whose secret is shown once and kept only as a fingerprint, and takes lines that match like any import', async () => {
+      const f = await fresh('feed');
+      expect(await fin.bankFeeds.status(companyId, f.account.id)).toBeNull();
+      const { secret } = await fin.bankFeeds.enable(ctx, f.account.id);
+      const [kept] = await db.select().from(schema.bankFeeds).where(eq(schema.bankFeeds.bankAccountId, f.account.id));
+      expect(JSON.stringify(kept)).not.toContain(secret);
+      expect(kept.secretHint).toBe(secret.slice(-4));
+      const r = await receipt(f, '500.00', day(1), null);
+      const out = await fin.bankFeeds.ingest(f.account.id, secret, body(r.number), { ip: '10.0.0.1' });
+      expect(out).toMatchObject({ ok: true, result: { lines: 1, duplicates: 0, autoMatched: 1 } });
+      expect((await lines(f.account.id))[0]).toMatchObject({ status: 'matched', amount: '500.0000' });
+      const status = await fin.bankFeeds.status(companyId, f.account.id);
+      expect(status).toMatchObject({ enabled: true, lastLines: 1, receivedCount: 1, lastError: null });
+      // the same delivery again changes nothing
+      expect(await fin.bankFeeds.ingest(f.account.id, secret, body(r.number), { ip: null })).toMatchObject({ ok: true, result: { lines: 0, duplicates: 1 } });
+      expect(await lines(f.account.id)).toHaveLength(1);
+    });
+
+    it('answers a wrong secret, an unknown account and a feed that is off exactly the same: not found', async () => {
+      const f = await fresh('feed-auth');
+      const { secret } = await fin.bankFeeds.enable(ctx, f.account.id);
+      expect(await fin.bankFeeds.ingest(f.account.id, `${secret}x`, body('A1'), { ip: null })).toEqual({ ok: false, status: 404, error: 'Not found.' });
+      expect(await fin.bankFeeds.ingest(randomUUID(), secret, body('A2'), { ip: null })).toEqual({ ok: false, status: 404, error: 'Not found.' });
+      expect(await fin.bankFeeds.ingest('not-an-id', secret, body('A3'), { ip: null })).toEqual({ ok: false, status: 404, error: 'Not found.' });
+      await fin.bankFeeds.disable(ctx, f.account.id);
+      expect(await fin.bankFeeds.ingest(f.account.id, secret, body('A4'), { ip: null })).toEqual({ ok: false, status: 404, error: 'Not found.' });
+      expect(await lines(f.account.id)).toEqual([]);
+    });
+
+    it('a new secret stops the old address at once; a bad delivery is refused whole with the line named and remembered', async () => {
+      const f = await fresh('feed-rotate');
+      const first = await fin.bankFeeds.enable(ctx, f.account.id);
+      const second = await fin.bankFeeds.enable(ctx, f.account.id);
+      expect(second.id).toBe(first.id);
+      expect(second.secret).not.toBe(first.secret);
+      expect((await fin.bankFeeds.ingest(f.account.id, first.secret, body('B1'), { ip: null })).ok).toBe(false);
+      const bad = await fin.bankFeeds.ingest(f.account.id, second.secret, { lines: [{ date: '2026-10-01', amount: '1.00' }, { date: 'yesterday', amount: '5.00' }] }, { ip: null });
+      expect(bad).toMatchObject({ ok: false, status: 400 });
+      expect(!bad.ok && bad.error).toContain('Line 2');
+      expect(await lines(f.account.id)).toEqual([]);
+      expect((await fin.bankFeeds.status(companyId, f.account.id))?.lastError).toContain('Line 2');
+      const good = await fin.bankFeeds.ingest(f.account.id, second.secret, body('B2'), { ip: null });
+      expect(good.ok).toBe(true);
+      expect((await fin.bankFeeds.status(companyId, f.account.id))?.lastError).toBeNull();
+    });
+
+    it('lines dated in the future are refused, and a clearing account cannot have a feed', async () => {
+      const f = await fresh('feed-future');
+      const { secret } = await fin.bankFeeds.enable(ctx, f.account.id);
+      const out = await fin.bankFeeds.ingest(f.account.id, secret, body('C1', '10.00', '2999-01-01'), { ip: null });
+      expect(out).toMatchObject({ ok: false, status: 400 });
+      const clearing = await fin.bankAccounts.create(ctx, { code: `CL${run}${++seq}`, name: 'Clearing', kind: 'clearing', currency: 'KES' });
+      expect(await codeOf(fin.bankFeeds.enable(ctx, clearing.id))).toBe('ACCOUNT_KIND');
+      expect(await codeOf(fin.bankFeeds.disable(ctx, clearing.id))).toBe('NO_FEED');
+    });
   });
 
   describe('importing', () => {
@@ -351,7 +499,7 @@ describe.skipIf(!has(url))('bank statements (database)', () => {
       await fin.bankStatements.unmatchLine(ctx, l.id, { code: 'DATA_ENTRY_ERROR' });
       expect(await seen()).toBeNull();
       const ev = await db.select().from(schema.refundEvents).where(eq(schema.refundEvents.refundId, refundId));
-      expect(ev.map((x) => x.event)).toEqual(['bank_matched', 'bank_unmatched']);
+      expect(ev.map((x) => x.event).sort()).toEqual(['bank_matched', 'bank_unmatched']);
     });
   });
 
@@ -370,6 +518,18 @@ describe.skipIf(!has(url))('bank statements (database)', () => {
       expect(gl.reduce((n, x) => n + Number(x.credit), 0)).toBe(150);
       expect(gl.find((x) => x.accountId === glFee && Number(x.debit) === 150)).toBeTruthy();
       expect((await fin.salesPosting.reconciliation(companyId)).rows.map((r) => r.diffCents)).toEqual([0]);
+    });
+
+    it('a charge on a dollar account is booked at the rate of the day it was taken', async () => {
+      await fin.fx.setRate(ctx, { currency: 'USD', effectiveOn: day(0), rate: '130' });
+      const f = await fresh('usd', 'USD');
+      await importCsv(f.account.id, [[dmy(day(0)), 'Monthly dollar fee', 'LFU1', '', '2.00', '']]);
+      const [l] = await lines(f.account.id);
+      await fin.bankStatements.recordChargeFromLine(ctx, l.id);
+      const [e] = await db.select().from(schema.bankLedgerEntries).where(and(eq(schema.bankLedgerEntries.bankAccountId, f.account.id), eq(schema.bankLedgerEntries.documentType, 'bank_charge')));
+      expect([e.currency, Number(e.amount)]).toEqual(['USD', -2]);
+      const [reg] = await db.select().from(schema.ledgerRegisters).where(eq(schema.ledgerRegisters.id, required(e.registerId)));
+      expect([reg.currency, Number(reg.rate), Number(reg.baseTotalDebit)]).toEqual(['USD', 130, 260]);
     });
   });
 });

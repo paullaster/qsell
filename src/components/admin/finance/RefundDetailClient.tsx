@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { use, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { cancelRefundAction, recordRefundPayoutAction, payRefundThroughMpesaAction, submitRefundAction, type refundDetailAction } from '@/server/domains/finance/refund-actions';
+import { RefundPayoutPanel } from './RefundPayoutPanel';
+import { RefundReturnPanel } from './RefundReturnPanel';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { REFUND_STATUS, statusInfo } from '@/lib/finance-statuses';
 import { needsComment } from '@/lib/receipt-detail';
@@ -81,7 +83,7 @@ function RefundDetailView({ view }: { view: View }) {
       <div className="flex flex-wrap gap-2">
         {s === 'draft' && view.can.submit ? <button type="button" className={primaryClass} disabled={busy} onClick={() => void submit()}>Send on</button> : null}
         {s === 'approved' && view.method.automatic && view.can.payAutomatic ? <button type="button" className={primaryClass} disabled={busy} onClick={() => void sendMpesa()}>Pay through M-Pesa</button> : null}
-        {s === 'approved' && view.can.pay ? <button type="button" className={primaryClass} disabled={busy} aria-expanded={panel === 'pay'} onClick={() => setPanel('pay')}>Record payment</button> : null}
+        {s === 'approved' && view.can.pay && view.inFile === null ? <button type="button" className={primaryClass} disabled={busy} aria-expanded={panel === 'pay'} onClick={() => setPanel('pay')}>Record payment</button> : null}
         {canCancel ? <button type="button" className={dangerClass} disabled={busy} aria-expanded={panel === 'cancel'} onClick={() => setPanel('cancel')}>Cancel refund</button> : null}
       </div>
 
@@ -107,6 +109,11 @@ function RefundDetailView({ view }: { view: View }) {
           </div>
         ) : null}
       </section>
+
+      <RefundPayoutPanel id={view.id} payouts={view.payouts} canResolve={view.can.resolvePayout} />
+      {has(view.replacesNumber) ? <p className="rounded-lg border border-line bg-surface-sunken p-3 text-sm text-fg" role="note">This replaces refund {view.replacesNumber}, whose payment came back. The money is already set aside; it needs approving and paying to details that work.</p> : null}
+      {view.inFile !== null ? <p className="rounded-lg border border-sky-500/30 bg-sky-500/10 p-3 text-sm text-fg" role="note">This refund is waiting in bank payment file <Link className="font-semibold text-indigo-600 hover:underline" href={`/admin/finance/refunds/files/${view.inFile.id}`}>{view.inFile.number}</Link>. It is recorded as paid when the bank confirms the file.</p> : null}
+      <RefundReturnPanel id={view.id} currency={view.currency} returnable={view.returnable} returns={view.returns} customerPhone={view.customer.phone} canRecord={view.can.recordReturn} canChangeDestination={view.can.changeDestination} />
 
       {panel === 'pay' ? (
         <form onSubmit={(e) => void pay(e)} className={`${cardClass} space-y-3`}>

@@ -6,8 +6,10 @@ import {
   bankAccounts,
   bankLedgerEntries,
   creditNoteAccounting,
+  creditAdjustments,
   creditNoteResolutions,
   creditNotes,
+  customerLedgerEntries,
   customerReceipts,
   customerWallets,
   customers,
@@ -18,6 +20,9 @@ import {
   providerOperations,
   refundEvents,
   refundRequests,
+  refundPaymentFileItems,
+  refundPaymentFiles,
+  refundReturns,
   users,
   type RefundRequestRow,
   type RefundSource,
@@ -38,6 +43,7 @@ import {
   refundedState,
 } from '../domain/refund';
 import type { PostingRequest } from '../domain/types';
+import type { FxService } from '../fx-service';
 import { NO_SPECIAL_PERMISSIONS, type PostingEngine, type PostingPermissions, type Tx } from '../engine';
 import { FinanceError, type FinanceContext } from '../errors';
 import type { PostingSetupService } from '../posting-setup-service';
@@ -59,6 +65,16 @@ export interface RefundInput {
   idempotencyKey?: string | null;
   /** Whether the person asking may send money somewhere other than the customer's own details. */
   mayChangeDestination?: boolean;
+}
+
+export interface PayoutInput {
+  paidFromMethodId: string;
+  payoutDate?: string;
+  reference: string;
+  permissions?: PostingPermissions;
+  automatic?: { operationId: string };
+  /** The evidence was attached to something that covers this refund (a payment file the bank confirmed). */
+  evidenceSatisfied?: boolean;
 }
 
 export interface Obligation {
@@ -91,6 +107,7 @@ export class RefundService {
     private readonly setup: PostingSetupService,
     private readonly numbering: NumberSeriesService,
     private readonly reasons: ReasonCodes,
+    private readonly fx: FxService,
   ) {
     this.legacyLedger = new TransactionLedgerService(db);
   }
@@ -123,20 +140,30 @@ export class RefundService {
     await tx.update(refundRequests).set({ status: to, updatedAt: new Date(), ...patch }).where(eq(refundRequests.id, r.id));
   }
 
-  private async glLive(tx: Tx, companyId: string, date: string) {
+  async glLive(tx: Tx, companyId: string, date: string) {
     const [s] = await tx.select().from(financeSettings).where(eq(financeSettings.companyId, companyId));
     if (!s) throw new FinanceError('FINANCE_NOT_SET_UP', 'Finance has not been set up yet.');
     return { s, live: s.salesGlGoLive !== null && date >= s.salesGlGoLive };
   }
 
   /** What is owed from one source right now, before refunds still waiting are taken off. */
-  private async openOf(tx: Pick<DrizzleDb, 'select'>, companyId: string, kind: RefundSource, sourceId: string, customerId: string): Promise<{ cents: number; currency: string; orderId: string | null; label: string } | null> {
+  async openOf(tx: Pick<DrizzleDb, 'select'>, companyId: string, kind: RefundSource, sourceId: string, customerId: string): Promise<{ cents: number; currency: string; orderId: string | null; label: string } | null> {
     if (kind === 'credit_note_excess') {
       const [a] = await tx.select().from(creditNoteAccounting).where(and(eq(creditNoteAccounting.companyId, companyId), eq(creditNoteAccounting.creditNoteId, sourceId), eq(creditNoteAccounting.customerId, customerId)));
       if (!a) return null;
       const [cn] = await tx.select().from(creditNotes).where(eq(creditNotes.id, sourceId));
       const [res] = await tx.select({ n: sql<string>`COALESCE(SUM(${creditNoteResolutions.amount}), 0)` }).from(creditNoteResolutions).where(eq(creditNoteResolutions.creditNoteId, sourceId));
       return { cents: toCents(a.excess) - toCents(res?.n ?? '0'), currency: a.currency, orderId: cn?.sourceKind === 'order' ? cn.sourceId : null, label: `Credit note ${cn?.creditNoteNo ?? ''}` };
+    }
+    if (kind === 'returned_payout') {
+      const [ret] = await tx.select().from(refundReturns).where(and(eq(refundReturns.companyId, companyId), eq(refundReturns.id, sourceId)));
+      if (!ret) return null;
+      const [[orig], [used]] = await Promise.all([
+        tx.select({ customerId: refundRequests.customerId, orderId: refundRequests.orderId }).from(refundRequests).where(eq(refundRequests.id, ret.refundId)),
+        tx.select({ n: sql<string>`COALESCE(SUM(${refundRequests.amount}), 0)` }).from(refundRequests).where(and(eq(refundRequests.sourceKind, 'returned_payout'), eq(refundRequests.sourceId, sourceId), inArray(refundRequests.status, ['approved', 'paid']))),
+      ]);
+      if (orig?.customerId !== customerId) return null;
+      return { cents: toCents(ret.amount) - toCents(used?.n ?? '0'), currency: ret.currency, orderId: orig.orderId, label: `Returned payout ${ret.reference}` };
     }
     if (kind === 'wallet') {
       const [w] = await tx.select().from(customerWallets).where(and(eq(customerWallets.companyId, companyId), eq(customerWallets.id, sourceId), eq(customerWallets.customerId, customerId)));
@@ -148,9 +175,13 @@ export class RefundService {
     return { cents: await this.wallets.receiptUnappliedIn(tx, r.ledgerEntryId), currency: r.currency, orderId: r.orderId, label: `Receipt ${r.number}` };
   }
 
-  private async committedIn(tx: Pick<DrizzleDb, 'select'>, kind: RefundSource, sourceId: string, exceptId?: string): Promise<number> {
-    const rows = await tx.select({ id: refundRequests.id, a: refundRequests.amount }).from(refundRequests).where(and(eq(refundRequests.sourceKind, kind), eq(refundRequests.sourceId, sourceId), inArray(refundRequests.status, ACTIVE_BEFORE_RESERVE)));
-    return rows.filter((r) => r.id !== exceptId).reduce((n, r) => n + toCents(r.a), 0);
+  /** What is already spoken for on a source: refunds not yet approved, and credit adjustments waiting for a decision. */
+  async committedIn(tx: Pick<DrizzleDb, 'select'>, kind: RefundSource, sourceId: string, exceptId?: string): Promise<number> {
+    const [rows, waiting] = await Promise.all([
+      tx.select({ id: refundRequests.id, a: refundRequests.amount }).from(refundRequests).where(and(eq(refundRequests.sourceKind, kind), eq(refundRequests.sourceId, sourceId), inArray(refundRequests.status, ACTIVE_BEFORE_RESERVE))),
+      tx.select({ a: creditAdjustments.amount }).from(creditAdjustments).where(and(eq(creditAdjustments.sourceKind, kind), eq(creditAdjustments.sourceId, sourceId), inArray(creditAdjustments.status, ['requested', 'pending_approval']), exceptId === undefined ? undefined : sql`${creditAdjustments.id} <> ${exceptId}::uuid`)),
+    ]);
+    return rows.filter((r) => r.id !== exceptId).reduce((n, r) => n + toCents(r.a), 0) + waiting.reduce((n, r) => n + toCents(r.a), 0);
   }
 
   // ── what can be refunded ─────────────────────────────────────────────────
@@ -179,6 +210,7 @@ export class RefundService {
 
   async create(ctx: FinanceContext, input: RefundInput): Promise<{ id: string; number: string; detailsChanged: boolean }> {
     const rs = await this.reasons.require(ctx.companyId, { code: input.reasonCode, text: input.reasonText }, 'refund');
+    if (input.sourceKind === 'returned_payout') throw new FinanceError('SOURCE_INVALID', 'Money that came back is paid again from the refund it came back from, not asked for here.');
     return await this.db.transaction(async (tx) => {
       if (has(input.idempotencyKey)) {
         const [dup] = await tx.select({ id: refundRequests.id, number: refundRequests.number, c: refundRequests.detailsChanged }).from(refundRequests).where(and(eq(refundRequests.companyId, ctx.companyId), eq(refundRequests.idempotencyKey, input.idempotencyKey)));
@@ -309,7 +341,10 @@ export class RefundService {
 
     let ledgerEntryId: string | null = null;
     let walletEntryId: number | null = null;
-    if (r.sourceKind === 'credit_note_excess') {
+    const returned = r.sourceKind === 'returned_payout';
+    if (returned) {
+      // The returned money is already in refunds payable (booked when it came back); nothing moves off the customer's account.
+    } else if (r.sourceKind === 'credit_note_excess') {
       const [a] = await tx.select().from(creditNoteAccounting).where(eq(creditNoteAccounting.creditNoteId, r.sourceId)).for('update');
       ledgerEntryId = a.ledgerEntryId;
       await this.ledger.transferCreditIn(tx, ctx, a.ledgerEntryId, cents, { postingDate: date, createdBy: ctx.actor.id, type: 'refund_transfer', reasonCode: r.reasonCode });
@@ -322,9 +357,23 @@ export class RefundService {
       walletEntryId = await this.wallets.cashOutIn(tx, ctx, { customerId: r.customerId, currency: r.currency, cents, refundId: r.id, postingDate: date });
     }
 
+    // In another currency the refund is booked at the rate its source is carried at (a receipt's own, a wallet's average), all
+    // the way to the payout, so what is owed to the customer leaves the books at what it was booked for.
+    let rate = returned ? r.rate : '1';
+    if (!returned && r.currency.toUpperCase() !== s.baseCurrency) {
+      if (walletEntryId !== null) {
+        rate = await this.wallets.entryRate(tx, walletEntryId);
+      } else {
+        const [entry] = await tx.select({ id: customerLedgerEntries.id, currency: customerLedgerEntries.currency, postingDate: customerLedgerEntries.postingDate }).from(customerLedgerEntries).where(eq(customerLedgerEntries.id, required(ledgerEntryId, 'the ledger entry')));
+        rate = (await this.fx.carryingRates(tx, ctx.companyId, [{ id: entry.id, currency: orElse(entry.currency, r.currency), postingDate: orElse(entry.postingDate, date) }])).get(entry.id) ?? '1';
+      }
+    }
+    const foreign = r.currency.toUpperCase() !== s.baseCurrency;
     let registerId: string | null = null;
-    if (live) {
-      if (r.currency.toUpperCase() !== s.baseCurrency) throw new FinanceError('FOREIGN_CURRENCY', `Refunds in ${r.currency} are not posted to the general ledger yet.`);
+    if (returned) {
+      const [ret] = await tx.select({ registerId: refundReturns.registerId }).from(refundReturns).where(eq(refundReturns.id, r.sourceId));
+      registerId = ret?.registerId ?? null;
+    } else if (live) {
       const [from, payable] = await Promise.all([
         this.setup.resolveCustomer(ctx.companyId, policy.groupCode, r.sourceKind === 'wallet' ? 'customer_deposits' : 'receivables'),
         this.setup.resolveCustomer(ctx.companyId, policy.groupCode, 'refunds_payable'),
@@ -338,9 +387,9 @@ export class RefundService {
         documentType: 'refund_approved',
         documentNo: r.number,
         description: `Refund ${r.number} approved`,
-        currency: s.baseCurrency,
-        rate: '1',
-        rateSource: 'base',
+        currency: foreign ? r.currency.toUpperCase() : s.baseCurrency,
+        rate: foreign ? rate : '1',
+        rateSource: foreign ? 'manual' : 'base',
         lines: [
           { accountId: from.accountId, debit: fromCents(cents), credit: '0', description: `${open.label} set aside for refund ${r.number}`, sourceLedger: r.sourceKind === 'wallet' ? 'wallet' : 'customer', sourceEntryId: r.customerId },
           { accountId: payable.accountId, debit: '0', credit: fromCents(cents), description: `Refund ${r.number} to pay` },
@@ -353,7 +402,7 @@ export class RefundService {
       };
       registerId = (await this.engine.post(req, { canPostSoftClosed: true, canPostControlAccounts: true }, tx)).registerId;
     }
-    await this.move(tx, r, 'approved', { approvedBy, approvedAt: new Date(), ledgerEntryId, walletEntryId, reserveRegisterId: registerId });
+    await this.move(tx, r, 'approved', { approvedBy, approvedAt: new Date(), ledgerEntryId, walletEntryId, reserveRegisterId: returned ? null : registerId, rate });
     await this.event(tx, ctx, id, 'approved', r.status, 'approved', { data: { approvedBy: approvedBy ?? 'no approval needed', gl: live, registerId } });
     await this.decisions.record({ companyId: ctx.companyId, subject: { type: 'refund', id }, action: 'finance.refund_approved', actor: ctx.actor, from: r.status, to: 'approved', inputs: { origin: ctx.origin, approvedBy }, outcome: { amount: fromCents(cents), gl: live } }, tx);
   }
@@ -409,6 +458,8 @@ export class RefundService {
       if (r.status === 'paid') throw new FinanceError('ALREADY_PAID', 'This refund has been paid. A payout cannot be cancelled; if the customer returns the money, record it as a receipt.');
       if (r.status === 'cancelled') throw new FinanceError('ALREADY_CANCELLED', 'This refund is already cancelled.');
       if (r.status === 'rejected') throw new FinanceError('NOT_ACTIVE', 'This refund was rejected.');
+      const inFile = await this.liveFileOf(tx, id);
+      if (inFile) throw new FinanceError('IN_PAYMENT_FILE', `This refund is in bank payment file ${inFile.number}. Cancel that file first (if the bank has not paid it).`);
       const cents = toCents(r.amount);
       if (r.status === 'pending_approval') {
         const [req] = await tx.select({ sub: approvalRequests.submissionId }).from(approvalRequests).where(and(eq(approvalRequests.documentKind, 'refund'), eq(approvalRequests.documentId, id), eq(approvalRequests.status, 'pending'))).limit(1);
@@ -432,8 +483,189 @@ export class RefundService {
       } else {
         await this.move(tx, r, 'cancelled');
       }
+      // Money that came back from a bank has nowhere to return to: it stays with the customer as credit on their account.
+      if (r.sourceKind === 'returned_payout') await this.keepReturnedAsCreditIn(tx, ctx, r, rs);
       await this.event(tx, ctx, id, 'cancelled', r.status, 'cancelled', { reason: rs });
       await this.decisions.record({ companyId: ctx.companyId, subject: { type: 'refund', id }, action: 'finance.refund_cancelled', actor: ctx.actor, from: r.status, to: 'cancelled', reason: rs, inputs: { origin: ctx.origin } }, tx);
+    });
+  }
+
+  /** A replacement refund that will not be paid: the money the bank sent back becomes the customer's credit again. */
+  private async keepReturnedAsCreditIn(tx: Tx, ctx: FinanceContext, r: RefundRequestRow, rs: { code: string; text: string | null }): Promise<void> {
+    const cents = toCents(r.amount);
+    const date = businessDate();
+    const { s, live } = await this.glLive(tx, ctx.companyId, date);
+    const policy = await this.policies.forCustomer(tx, ctx.companyId, r.customerId, date);
+    let registerId: string | null = null;
+    if (live) {
+      const foreign = r.currency.toUpperCase() !== s.baseCurrency;
+      const [payable, receivables] = await Promise.all([
+        this.setup.resolveCustomer(ctx.companyId, policy.groupCode, 'refunds_payable'),
+        this.setup.resolveCustomer(ctx.companyId, policy.groupCode, 'receivables'),
+      ]).catch((e: unknown) => {
+        throw new FinanceError('POSTING_SETUP_MISSING', e instanceof Error ? e.message : 'Posting setup is incomplete.');
+      });
+      const req: PostingRequest = {
+        companyId: ctx.companyId,
+        idempotencyKey: `refund:${r.id}:keep-as-credit`,
+        postingDate: date,
+        documentType: 'refund_returned_credit',
+        documentNo: r.number,
+        description: `Refund ${r.number} cancelled: returned money kept as credit`,
+        currency: foreign ? r.currency.toUpperCase() : s.baseCurrency,
+        rate: foreign ? r.rate : '1',
+        rateSource: foreign ? 'manual' : 'base',
+        lines: [
+          { accountId: payable.accountId, debit: fromCents(cents), credit: '0', description: `Refund ${r.number} no longer to be paid` },
+          { accountId: receivables.accountId, debit: '0', credit: fromCents(cents), description: `Credit kept for the customer (${r.number})`, sourceLedger: 'customer', sourceEntryId: r.customerId },
+        ],
+        chainKey: r.branchId ?? 'general',
+        branchId: r.branchId,
+        origin: ctx.origin,
+        source: { type: 'refund', id: r.id },
+        postedBy: 'engine',
+      };
+      registerId = (await this.engine.post(req, { canPostSoftClosed: true, canPostControlAccounts: true }, tx)).registerId;
+    }
+    await this.ledger.addEntry(tx, { companyId: ctx.companyId, customerId: r.customerId, orderId: r.orderId, documentType: 'refund', documentNo: r.number, description: `Returned refund ${r.number} kept as credit (${rs.code})`, amountCents: -cents, currency: r.currency, postingDate: date, registerId, createdBy: ctx.actor.id });
+  }
+
+  // ── a paid refund that came back ─────────────────────────────────────────
+
+  private async returnableIn(db: Pick<DrizzleDb, 'select'>, refundId: string, amount: string): Promise<number> {
+    const [back] = await db.select({ n: sql<string>`COALESCE(SUM(${refundReturns.amount}), 0)` }).from(refundReturns).where(eq(refundReturns.refundId, refundId));
+    return toCents(amount) - toCents(back?.n ?? '0');
+  }
+
+  /** What of a paid refund has not come back yet, in cents. */
+  async returnableCents(companyId: string, refundId: string, amount: string): Promise<number> {
+    const [own] = await this.db.select({ id: refundRequests.id }).from(refundRequests).where(and(eq(refundRequests.companyId, companyId), eq(refundRequests.id, refundId)));
+    return own ? await this.returnableIn(this.db, refundId, amount) : 0;
+  }
+
+  /** The times money from this refund came back, oldest first. */
+  async returnsOf(companyId: string, refundId: string) {
+    return await this.db.select().from(refundReturns).where(and(eq(refundReturns.companyId, companyId), eq(refundReturns.refundId, refundId))).orderBy(asc(refundReturns.createdAt));
+  }
+
+  /** For a replacement refund: the number of the refund whose payout came back. */
+  async replacedNumber(companyId: string, returnId: string): Promise<string | null> {
+    const [row] = await this.db.select({ n: refundRequests.number }).from(refundReturns).innerJoin(refundRequests, eq(refundRequests.id, refundReturns.refundId)).where(and(eq(refundReturns.companyId, companyId), eq(refundReturns.id, returnId)));
+    return row?.n ?? null;
+  }
+
+  /**
+   * The bank or M-Pesa sent money back after a refund was paid (a wrong account, a closed number). The customer is owed it
+   * again: the books take the money in and owe it (Dr bank, Cr refunds payable), the order stops counting as fully refunded,
+   * and a replacement refund is made for it, to be approved and paid to details that work. The first payout stays as it was.
+   */
+  async recordReturn(
+    ctx: FinanceContext,
+    id: string,
+    input: { amount?: string; returnedOn?: string; reference: string; receivedIntoMethodId: string; reasonCode: string; reasonText?: string | null; replacement: { paymentMethodId: string; payoutDetails: Record<string, string> }; mayChangeDestination?: boolean; permissions?: PostingPermissions },
+  ): Promise<{ returnId: string; replacementId: string; replacementNumber: string }> {
+    const perms = input.permissions ?? NO_SPECIAL_PERMISSIONS;
+    const rs = await this.reasons.require(ctx.companyId, { code: input.reasonCode, text: input.reasonText }, 'refund');
+    return await this.db.transaction(async (tx) => {
+      const r = await this.lock(tx, ctx.companyId, id);
+      if (r.status !== 'paid') throw new FinanceError('NOT_PAID', `Only a refund that was paid can come back; this one is ${r.status.replace('_', ' ')}.`);
+      const reference = input.reference.trim();
+      if (!has(reference)) throw new FinanceError('REFERENCE_REQUIRED', 'Enter the reference the bank or M-Pesa gave for the money coming back.');
+      const returnable = await this.returnableIn(tx, id, r.amount);
+      if (returnable <= 0) throw new FinanceError('ALL_RETURNED', 'All of this refund has already been recorded as coming back.');
+      let cents = returnable;
+      if (has(input.amount)) {
+        try {
+          cents = toCents(input.amount);
+        } catch {
+          throw new FinanceError('AMOUNT_INVALID', 'The amount must be a number with at most 2 decimal places.');
+        }
+      }
+      if (cents <= 0) throw new FinanceError('AMOUNT_INVALID', 'The amount must be more than zero.');
+      if (cents > returnable) throw new FinanceError('OVER_RETURN', `Only ${fromCents(returnable)} of this refund can still come back.`);
+
+      const today = businessDate();
+      const date = input.returnedOn ?? today;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > today) throw new FinanceError('DATE_INVALID', 'The date it came back cannot be in the future.');
+      if (r.payoutDate !== null && date < r.payoutDate) throw new FinanceError('DATE_INVALID', 'The money cannot have come back before the refund was paid.');
+      const [into] = await tx
+        .select({ method: paymentMethods, bank: bankAccounts })
+        .from(paymentMethods)
+        .innerJoin(bankAccounts, eq(bankAccounts.id, paymentMethods.balancingBankAccountId))
+        .where(and(eq(paymentMethods.companyId, ctx.companyId), eq(paymentMethods.id, input.receivedIntoMethodId)));
+      if (!into || into.bank.blocked || !into.method.enabled || into.bank.kind === 'clearing') throw new FinanceError('BANK_INVALID', 'Choose the payment method the money came back into.');
+      if (into.bank.currency !== r.currency) throw new FinanceError('CURRENCY_MISMATCH', `${into.bank.code} holds ${into.bank.currency}; this refund is in ${r.currency}.`);
+      const [again] = await tx.select({ id: refundReturns.id }).from(refundReturns).where(and(eq(refundReturns.companyId, ctx.companyId), eq(refundReturns.receivedIntoMethodId, into.method.id), eq(refundReturns.reference, reference)));
+      if (again) throw new FinanceError('ALREADY_RECORDED', `${reference} has already been recorded as money that came back.`);
+      const issues = await this.engine.dateIssues(tx, ctx.companyId, date, perms);
+      if (issues.length > 0) throw new FinanceError(issues[0].code, issues.map((i) => i.message).join(' '));
+
+      // The new way to pay it must work: a method that can refund, with its details, and no quiet redirect to someone else's phone.
+      const [m] = await tx.select().from(paymentMethods).where(and(eq(paymentMethods.companyId, ctx.companyId), eq(paymentMethods.id, input.replacement.paymentMethodId)));
+      if (m?.enabled !== true) throw new FinanceError('METHOD_INVALID', 'Choose how the customer will be paid this time.');
+      if (!m.usableFor.includes('customer_refund') || m.refundDestination === 'none') throw new FinanceError('METHOD_NOT_FOR_REFUNDS', `${m.name} cannot be used to pay refunds.`);
+      if (m.refundDestination === 'automatic' && (m.kind !== 'mobile_money' || !has(m.providerId))) throw new FinanceError('METHOD_AUTOMATIC', `${m.name} pays out through its provider, which only works for mobile-money methods that go through M-Pesa; choose a method paid by hand.`);
+      const details = filledStrings(input.replacement.payoutDetails);
+      const bad = checkPayoutDetails(m.kind, details);
+      if (has(bad)) throw new FinanceError('PAYOUT_DETAILS', bad);
+      const [customer] = await tx.select().from(customers).where(eq(customers.id, r.customerId));
+      const changed = destinationChanged(m.kind, details, customer?.phone);
+      if (changed && input.mayChangeDestination !== true) throw new FinanceError('DESTINATION_CHANGED', 'That is not the phone number on this customer\'s record. Paying somewhere else needs the "change refund destination" permission.');
+
+      const { s, live } = await this.glLive(tx, ctx.companyId, date);
+      const policy = await this.policies.forCustomer(tx, ctx.companyId, r.customerId, date);
+      let registerId: string | null = null;
+      if (live) {
+        const foreign = r.currency.toUpperCase() !== s.baseCurrency;
+        const payable = await this.setup.resolveCustomer(ctx.companyId, policy.groupCode, 'refunds_payable').catch((e: unknown) => {
+          throw new FinanceError('POSTING_SETUP_MISSING', e instanceof Error ? e.message : 'Posting setup is incomplete.');
+        });
+        const req: PostingRequest = {
+          companyId: ctx.companyId,
+          idempotencyKey: `refund:${r.id}:return:${into.method.id}:${reference}`,
+          postingDate: date,
+          documentType: 'refund_returned',
+          documentNo: r.number,
+          description: `Refund ${r.number} came back (${reference})`,
+          currency: foreign ? r.currency.toUpperCase() : s.baseCurrency,
+          rate: foreign ? r.rate : '1',
+          rateSource: foreign ? 'manual' : 'base',
+          lines: [
+            { accountId: into.method.glAccountId, debit: fromCents(cents), credit: '0', description: `Refund ${r.number} returned ${reference}`, sourceLedger: 'bank', sourceEntryId: into.bank.id },
+            { accountId: payable.accountId, debit: '0', credit: fromCents(cents), description: `Refund ${r.number} to pay again`, sourceLedger: 'customer', sourceEntryId: r.customerId },
+          ],
+          chainKey: r.branchId ?? 'general',
+          branchId: r.branchId,
+          origin: ctx.origin,
+          source: { type: 'refund', id: r.id },
+          postedBy: 'engine',
+        };
+        registerId = (await this.engine.post(req, perms, tx)).registerId;
+      }
+      const returnId = crypto.randomUUID();
+      const replacementId = crypto.randomUUID();
+      // The replacement is made first so the return, which is never edited afterwards, can name it.
+      const { number } = await this.numbering.assign('refund', { companyId: ctx.companyId, branchId: undefined, date: businessDate(), document: { kind: 'refund', id: replacementId }, actor: ctx.actor }, tx);
+      await tx.insert(refundRequests).values({
+        id: replacementId, companyId: ctx.companyId, number, customerId: r.customerId, sourceKind: 'returned_payout', sourceId: returnId, orderId: r.orderId, currency: r.currency, rate: r.rate, amount: fromCents(cents),
+        reasonCode: rs.code, reasonText: rs.text, paymentMethodId: m.id, payoutDetails: details, detailsChanged: changed, branchId: r.branchId, requestedBy: ctx.actor.id ?? 'system',
+      });
+      await tx.insert(refundReturns).values({ id: returnId, companyId: ctx.companyId, refundId: r.id, replacementRefundId: replacementId, amount: fromCents(cents), currency: r.currency, returnedOn: date, reference, reasonCode: rs.code, reasonText: rs.text, receivedIntoMethodId: into.method.id, registerId, recordedBy: ctx.actor.id ?? 'system' });
+      await tx.insert(bankLedgerEntries).values({ companyId: ctx.companyId, bankAccountId: into.bank.id, glAccountId: into.method.glAccountId, postingDate: date, documentType: 'refund_return', documentNo: r.number, documentId: r.id, description: `Refund ${r.number} came back ${reference}`, amount: fromCents(cents), currency: r.currency, registerId, createdBy: ctx.actor.id });
+      await this.legacyLedger.post({ companyId: ctx.companyId, customerId: r.customerId, orderId: r.orderId, documentType: 'refund', documentNo: r.number, description: 'Refund came back', direction: 'credit', amount: cents / 100, currency: r.currency, transactionReference: reference, idempotencyKey: `refund-return:${returnId}` }, tx);
+      await this.event(tx, ctx, replacementId, 'created', null, 'draft', { reason: rs, data: { amount: fromCents(cents), source: `Returned payout ${reference}`, replaces: r.number } });
+      await this.event(tx, ctx, id, 'payout_returned', 'paid', 'paid', { reason: rs, data: { amount: fromCents(cents), reference, date, replacement: number, gl: live, registerId } });
+      await this.decisions.record({ companyId: ctx.companyId, subject: { type: 'refund', id }, action: 'finance.refund_payout_returned', actor: ctx.actor, reason: rs, inputs: { origin: ctx.origin, reference, bank: into.bank.code }, outcome: { amount: fromCents(cents), replacement: number, gl: live } }, tx);
+
+      // An order that was "refunded" is not, any more, until the replacement is paid.
+      if (has(r.orderId)) {
+        const [o] = await tx.select().from(orders).where(eq(orders.id, r.orderId)).for('update');
+        if (o?.paymentStatus === 'refunded' && refundedState(toCents(o.totalAmount), await this.netRefundedForOrder(tx, r.orderId)) !== 'refunded') {
+          await tx.update(orders).set({ paymentStatus: 'partially_refunded', updatedAt: new Date() }).where(eq(orders.id, o.id));
+          await this.event(tx, ctx, id, 'order_payment_state', null, null, { data: { order: o.orderNumber, state: 'partially_refunded' } });
+        }
+      }
+      return { returnId, replacementId, replacementNumber: number };
     });
   }
 
@@ -449,85 +681,100 @@ export class RefundService {
    * confirmation, an M-Pesa message, a signed receipt), a reference, and a person other than the
    * one who approved it.
    */
-  async recordPayout(ctx: FinanceContext, id: string, input: { paidFromMethodId: string; payoutDate?: string; reference: string; permissions?: PostingPermissions; automatic?: { operationId: string } }) {
+  async recordPayout(ctx: FinanceContext, id: string, input: PayoutInput) {
+    return await this.db.transaction(async (tx) => await this.recordPayoutIn(tx, ctx, id, input));
+  }
+
+  /** The same, inside a transaction the caller owns (a payment file confirms many refunds in one). */
+  async recordPayoutIn(tx: Tx, ctx: FinanceContext, id: string, input: PayoutInput) {
     const perms = input.permissions ?? NO_SPECIAL_PERMISSIONS;
-    return await this.db.transaction(async (tx) => {
-      const r = await this.lock(tx, ctx.companyId, id);
-      if (r.status !== 'approved') throw new FinanceError('NOT_APPROVED', `Only an approved refund can be paid; this one is ${r.status.replace('_', ' ')}.`);
-      if (!input.automatic) {
-        const live = await this.payoutOperations(tx, id, ['pending_approval', 'queued', 'submitted', 'accepted', 'timed_out', 'in_doubt']);
-        if (live.length > 0) throw new FinanceError('PAYOUT_IN_PROGRESS', 'This refund is being paid through M-Pesa and that has not finished or been checked yet; it cannot also be recorded as paid by hand until it is settled (see Payment activity).');
-      }
-      if (!input.automatic && has(r.approvedBy) && r.approvedBy === ctx.actor.id) throw new FinanceError('SAME_PERSON', 'The person who approved a refund cannot be the one who records its payment.');
-      const reference = input.reference.trim();
-      if (!has(reference)) throw new FinanceError('REFERENCE_REQUIRED', 'Enter the payment reference (M-Pesa code, bank reference, cheque number or receipt number).');
-      if (!input.automatic && (await this.evidenceCount(tx, id)) === 0) throw new FinanceError('EVIDENCE_REQUIRED', 'Attach the evidence of payment first (a payment slip, bank confirmation, M-Pesa message or signed receipt).');
-      const today = businessDate();
-      const date = input.payoutDate ?? today;
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > today) throw new FinanceError('DATE_INVALID', 'The payout date cannot be in the future.');
-      // The money leaves through a payment method: its bank account is where it came from, its G/L account is what the books credit.
-      const [from] = await tx
-        .select({ method: paymentMethods, bank: bankAccounts })
-        .from(paymentMethods)
-        .innerJoin(bankAccounts, eq(bankAccounts.id, paymentMethods.balancingBankAccountId))
-        .where(and(eq(paymentMethods.companyId, ctx.companyId), eq(paymentMethods.id, input.paidFromMethodId)));
-      const bank = from?.bank;
-      const fromMethod = from?.method;
-      if (!bank || !fromMethod || bank.blocked || !fromMethod.enabled) throw new FinanceError('BANK_INVALID', 'Choose the payment method the money was paid out through.');
-      if (bank.kind === 'clearing') throw new FinanceError('BANK_INVALID', 'Money is paid from a bank, cash or mobile-money account, not a clearing account.');
-      if (bank.currency !== r.currency) throw new FinanceError('CURRENCY_MISMATCH', `${bank.code} holds ${bank.currency}; this refund is in ${r.currency}.`);
-      const issues = await this.engine.dateIssues(tx, ctx.companyId, date, perms);
-      if (issues.length > 0) throw new FinanceError(issues[0].code, issues.map((i) => i.message).join(' '));
-      const cents = toCents(r.amount);
-      const { s, live } = await this.glLive(tx, ctx.companyId, date);
-      const policy = await this.policies.forCustomer(tx, ctx.companyId, r.customerId, date);
+    const r = await this.lock(tx, ctx.companyId, id);
+    if (r.status !== 'approved') throw new FinanceError('NOT_APPROVED', `Only an approved refund can be paid; this one is ${r.status.replace('_', ' ')}.`);
+    if (!input.automatic) {
+      const live = await this.payoutOperations(tx, id, ['pending_approval', 'queued', 'submitted', 'accepted', 'timed_out', 'in_doubt']);
+      if (live.length > 0) throw new FinanceError('PAYOUT_IN_PROGRESS', 'This refund is being paid through M-Pesa and that has not finished or been checked yet; it cannot also be recorded as paid by hand until it is settled (see Payment activity).');
+    }
+    if (!input.automatic && has(r.approvedBy) && r.approvedBy === ctx.actor.id) throw new FinanceError('SAME_PERSON', 'The person who approved a refund cannot be the one who records its payment.');
+    if (input.evidenceSatisfied !== true) {
+      const inFile = await this.liveFileOf(tx, id);
+      if (inFile) throw new FinanceError('IN_PAYMENT_FILE', `This refund is in bank payment file ${inFile.number}; it is recorded as paid when that file is confirmed (or cancel the file first).`);
+    }
+    const reference = input.reference.trim();
+    if (!has(reference)) throw new FinanceError('REFERENCE_REQUIRED', 'Enter the payment reference (M-Pesa code, bank reference, cheque number or receipt number).');
+    if (!input.automatic && input.evidenceSatisfied !== true && (await this.evidenceCount(tx, id)) === 0) throw new FinanceError('EVIDENCE_REQUIRED', 'Attach the evidence of payment first (a payment slip, bank confirmation, M-Pesa message or signed receipt).');
+    const today = businessDate();
+    const date = input.payoutDate ?? today;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > today) throw new FinanceError('DATE_INVALID', 'The payout date cannot be in the future.');
+    // The money leaves through a payment method: its bank account is where it came from, its G/L account is what the books credit.
+    const [from] = await tx
+      .select({ method: paymentMethods, bank: bankAccounts })
+      .from(paymentMethods)
+      .innerJoin(bankAccounts, eq(bankAccounts.id, paymentMethods.balancingBankAccountId))
+      .where(and(eq(paymentMethods.companyId, ctx.companyId), eq(paymentMethods.id, input.paidFromMethodId)));
+    const bank = from?.bank;
+    const fromMethod = from?.method;
+    if (!bank || !fromMethod || bank.blocked || !fromMethod.enabled) throw new FinanceError('BANK_INVALID', 'Choose the payment method the money was paid out through.');
+    if (bank.kind === 'clearing') throw new FinanceError('BANK_INVALID', 'Money is paid from a bank, cash or mobile-money account, not a clearing account.');
+    if (bank.currency !== r.currency) throw new FinanceError('CURRENCY_MISMATCH', `${bank.code} holds ${bank.currency}; this refund is in ${r.currency}.`);
+    const issues = await this.engine.dateIssues(tx, ctx.companyId, date, perms);
+    if (issues.length > 0) throw new FinanceError(issues[0].code, issues.map((i) => i.message).join(' '));
+    const cents = toCents(r.amount);
+    const { s, live } = await this.glLive(tx, ctx.companyId, date);
+    const policy = await this.policies.forCustomer(tx, ctx.companyId, r.customerId, date);
 
-      let registerId: string | null = null;
-      if (live) {
-        const payable = await this.setup.resolveCustomer(ctx.companyId, policy.groupCode, 'refunds_payable').catch((e: unknown) => {
-          throw new FinanceError('POSTING_SETUP_MISSING', e instanceof Error ? e.message : 'Posting setup is incomplete.');
-        });
-        const req: PostingRequest = {
-          companyId: ctx.companyId,
-          idempotencyKey: `refund:${r.id}:pay`,
-          postingDate: date,
-          documentType: 'refund_paid',
-          documentNo: r.number,
-          description: `Refund ${r.number} paid (${reference})`,
-          currency: s.baseCurrency,
-          rate: '1',
-          rateSource: 'base',
-          lines: [
-            { accountId: payable.accountId, debit: fromCents(cents), credit: '0', description: `Refund ${r.number} paid`, sourceLedger: 'customer', sourceEntryId: r.customerId },
-            { accountId: fromMethod.glAccountId, debit: '0', credit: fromCents(cents), description: `Refund ${r.number} ${reference}`, sourceLedger: 'bank', sourceEntryId: bank.id },
-          ],
-          chainKey: r.branchId ?? 'general',
-          branchId: r.branchId,
-          origin: ctx.origin,
-          source: { type: 'refund', id: r.id },
-          postedBy: 'engine',
-        };
-        registerId = (await this.engine.post(req, perms, tx)).registerId;
-      }
-      await tx.insert(bankLedgerEntries).values({ companyId: ctx.companyId, bankAccountId: bank.id, glAccountId: fromMethod.glAccountId, postingDate: date, documentType: 'refund', documentNo: r.number, documentId: r.id, description: `Refund ${r.number} ${reference}`, amount: fromCents(-cents), currency: r.currency, registerId, createdBy: ctx.actor.id });
-      await this.legacyLedger.post({ companyId: ctx.companyId, customerId: r.customerId, orderId: r.orderId, documentType: 'refund', documentNo: r.number, description: 'Refund paid', direction: 'debit', amount: cents / 100, currency: r.currency, transactionReference: reference, idempotencyKey: `refund:${r.id}` }, tx);
-      await this.move(tx, r, 'paid', { paidFromBankAccountId: bank.id, paidFromMethodId: fromMethod.id, payoutReference: reference, payoutDate: date, paidBy: ctx.actor.id, paidAt: new Date(), payoutRegisterId: registerId });
-      await this.event(tx, ctx, id, 'paid', 'approved', 'paid', { data: { bank: bank.code, reference, date, gl: live, registerId } });
+    let registerId: string | null = null;
+    if (live) {
+      const payable = await this.setup.resolveCustomer(ctx.companyId, policy.groupCode, 'refunds_payable').catch((e: unknown) => {
+        throw new FinanceError('POSTING_SETUP_MISSING', e instanceof Error ? e.message : 'Posting setup is incomplete.');
+      });
+      const req: PostingRequest = {
+        companyId: ctx.companyId,
+        idempotencyKey: `refund:${r.id}:pay`,
+        postingDate: date,
+        documentType: 'refund_paid',
+        documentNo: r.number,
+        description: `Refund ${r.number} paid (${reference})`,
+        currency: r.currency.toUpperCase() === s.baseCurrency ? s.baseCurrency : r.currency.toUpperCase(),
+        rate: r.currency.toUpperCase() === s.baseCurrency ? '1' : r.rate,
+        rateSource: r.currency.toUpperCase() === s.baseCurrency ? 'base' : 'manual',
+        lines: [
+          { accountId: payable.accountId, debit: fromCents(cents), credit: '0', description: `Refund ${r.number} paid`, sourceLedger: 'customer', sourceEntryId: r.customerId },
+          { accountId: fromMethod.glAccountId, debit: '0', credit: fromCents(cents), description: `Refund ${r.number} ${reference}`, sourceLedger: 'bank', sourceEntryId: bank.id },
+        ],
+        chainKey: r.branchId ?? 'general',
+        branchId: r.branchId,
+        origin: ctx.origin,
+        source: { type: 'refund', id: r.id },
+        postedBy: 'engine',
+      };
+      registerId = (await this.engine.post(req, perms, tx)).registerId;
+    }
+    await tx.insert(bankLedgerEntries).values({ companyId: ctx.companyId, bankAccountId: bank.id, glAccountId: fromMethod.glAccountId, postingDate: date, documentType: 'refund', documentNo: r.number, documentId: r.id, description: `Refund ${r.number} ${reference}`, amount: fromCents(-cents), currency: r.currency, registerId, createdBy: ctx.actor.id });
+    await this.legacyLedger.post({ companyId: ctx.companyId, customerId: r.customerId, orderId: r.orderId, documentType: 'refund', documentNo: r.number, description: 'Refund paid', direction: 'debit', amount: cents / 100, currency: r.currency, transactionReference: reference, idempotencyKey: `refund:${r.id}` }, tx);
+    await this.move(tx, r, 'paid', { paidFromBankAccountId: bank.id, paidFromMethodId: fromMethod.id, payoutReference: reference, payoutDate: date, paidBy: ctx.actor.id, paidAt: new Date(), payoutRegisterId: registerId });
+    await this.event(tx, ctx, id, 'paid', 'approved', 'paid', { data: { bank: bank.code, reference, date, gl: live, registerId } });
 
-      // "Refunded" only when the paid refunds against this order cover everything it was paid.
-      let order: 'refunded' | 'partially_refunded' | 'none' = 'none';
-      if (has(r.orderId)) {
-        const [o] = await tx.select().from(orders).where(eq(orders.id, r.orderId)).for('update');
-        if (o && ['paid', 'reconciled', 'refunded', 'partially_refunded'].includes(o.paymentStatus)) {
-          const [sum] = await tx.select({ n: sql<string>`COALESCE(SUM(${refundRequests.amount}), 0)` }).from(refundRequests).where(and(eq(refundRequests.orderId, r.orderId), eq(refundRequests.status, 'paid')));
-          order = refundedState(toCents(o.totalAmount), toCents(sum?.n ?? '0'));
-          if (order === 'refunded') await tx.update(orders).set({ paymentStatus: 'refunded', updatedAt: new Date() }).where(eq(orders.id, o.id));
-          await this.event(tx, ctx, id, 'order_payment_state', null, null, { data: { order: o.orderNumber, state: order } });
-        }
+    // "Refunded" only when the paid refunds against this order cover everything it was paid.
+    let order: 'refunded' | 'partially_refunded' | 'none' = 'none';
+    if (has(r.orderId)) {
+      const [o] = await tx.select().from(orders).where(eq(orders.id, r.orderId)).for('update');
+      if (o && ['paid', 'reconciled', 'refunded', 'partially_refunded'].includes(o.paymentStatus)) {
+        order = refundedState(toCents(o.totalAmount), await this.netRefundedForOrder(tx, r.orderId));
+        if (order === 'refunded') await tx.update(orders).set({ paymentStatus: 'refunded', updatedAt: new Date() }).where(eq(orders.id, o.id));
+        await this.event(tx, ctx, id, 'order_payment_state', null, null, { data: { order: o.orderNumber, state: order } });
       }
-      await this.decisions.record({ companyId: ctx.companyId, subject: { type: 'refund', id }, action: 'finance.refund_paid', actor: ctx.actor, from: 'approved', to: 'paid', inputs: { origin: ctx.origin, reference, bank: bank.code }, outcome: { amount: fromCents(cents), gl: live, order } }, tx);
-      return { number: r.number, order, gl: live };
-    });
+    }
+    await this.decisions.record({ companyId: ctx.companyId, subject: { type: 'refund', id }, action: 'finance.refund_paid', actor: ctx.actor, from: 'approved', to: 'paid', inputs: { origin: ctx.origin, reference, bank: bank.code }, outcome: { amount: fromCents(cents), gl: live, order } }, tx);
+    return { number: r.number, order, gl: live };
+  }
+
+  /** What has really reached the customer for an order: paid refunds, less money the bank or M-Pesa sent back. */
+  async netRefundedForOrder(tx: Pick<DrizzleDb, 'select'>, orderId: string): Promise<number> {
+    const [paid, back] = await Promise.all([
+      tx.select({ n: sql<string>`COALESCE(SUM(${refundRequests.amount}), 0)` }).from(refundRequests).where(and(eq(refundRequests.orderId, orderId), eq(refundRequests.status, 'paid'))),
+      tx.select({ n: sql<string>`COALESCE(SUM(${refundReturns.amount}), 0)` }).from(refundReturns).innerJoin(refundRequests, eq(refundRequests.id, refundReturns.refundId)).where(eq(refundRequests.orderId, orderId)),
+    ]);
+    return toCents(paid[0]?.n ?? '0') - toCents(back[0]?.n ?? '0');
   }
 
   // ── automatic payout through the provider ───────────────────────────────
@@ -578,6 +825,59 @@ export class RefundService {
     }
     await this.db.transaction(async (tx) => {
       await this.event(tx, ctx, r.id, 'auto_payout_not_paid', 'approved', 'approved', { data: { operation: op.id, status: op.status, code: op.failureCode, reason: op.failureReason } });
+    });
+  }
+
+  // ── payouts that could not be confirmed ──────────────────────────────────
+
+  /** Every attempt to pay this refund through the provider, newest first. */
+  async payoutAttempts(companyId: string, id: string) {
+    return await this.db
+      .select({ id: providerOperations.id, status: providerOperations.status, reference: providerOperations.platformReference, failureCode: providerOperations.failureCode, failureReason: providerOperations.failureReason, createdAt: providerOperations.createdAt, requestedBy: providerOperations.requestedBy })
+      .from(providerOperations)
+      .where(and(eq(providerOperations.companyId, companyId), eq(providerOperations.subjectType, 'refund'), eq(providerOperations.subjectId, id)))
+      .orderBy(desc(providerOperations.createdAt))
+      .limit(20);
+  }
+
+  /** The payout held for a person to look at, if this refund has one. */
+  async doubtfulPayout(companyId: string, id: string): Promise<{ id: string; status: string; reference: string | null }> {
+    const [r] = await this.db.select({ status: refundRequests.status }).from(refundRequests).where(and(eq(refundRequests.companyId, companyId), eq(refundRequests.id, id)));
+    if (!r) throw new FinanceError('NOT_FOUND', 'That refund does not exist.');
+    if (r.status !== 'approved') throw new FinanceError('NOT_APPROVED', `Only an approved refund has a payout to look at; this one is ${r.status.replace('_', ' ')}.`);
+    const held = (await this.payoutAttempts(companyId, id)).find((a) => a.status === 'in_doubt' || a.status === 'timed_out');
+    if (!held) throw new FinanceError('NO_DOUBT', 'No payment for this refund is waiting to be checked.');
+    return { id: held.id, status: held.status, reference: held.reference };
+  }
+
+  /** The same inside a transaction the caller owns (a payment file touches many refunds at once). */
+  async noteEventIn(tx: Tx, ctx: FinanceContext, id: string, event: string, data: Record<string, unknown>, reason?: { text?: string | null }): Promise<void> {
+    const r = await this.lock(tx, ctx.companyId, id);
+    await this.event(tx, ctx, id, event, r.status, r.status, { data, reason });
+  }
+
+  /** A refund waiting in a payment file cannot be paid, changed or cancelled by anything else. */
+  async liveFileOf(db: Pick<DrizzleDb, 'select'>, refundId: string): Promise<{ fileId: string; number: string } | null> {
+    const [row] = await db
+      .select({ fileId: refundPaymentFileItems.fileId, number: refundPaymentFiles.number })
+      .from(refundPaymentFileItems)
+      .innerJoin(refundPaymentFiles, eq(refundPaymentFiles.id, refundPaymentFileItems.fileId))
+      .where(and(eq(refundPaymentFileItems.refundId, refundId), eq(refundPaymentFileItems.state, 'in_file')));
+    return row ?? null;
+  }
+
+  /** The bank payment file a refund of this company is waiting in, if any. */
+  async liveFile(companyId: string, refundId: string): Promise<{ fileId: string; number: string } | null> {
+    const [own] = await this.db.select({ id: refundRequests.id }).from(refundRequests).where(and(eq(refundRequests.companyId, companyId), eq(refundRequests.id, refundId)));
+    return own ? await this.liveFileOf(this.db, refundId) : null;
+  }
+
+  /** Writes one line in the refund's history for something done to its payment elsewhere. */
+  async noteEvent(ctx: FinanceContext, id: string, event: string, data: Record<string, unknown>, reason?: { text?: string | null }): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      const r = await this.lock(tx, ctx.companyId, id);
+      await this.event(tx, ctx, id, event, r.status, r.status, { data, reason });
+      await this.decisions.record({ companyId: ctx.companyId, subject: { type: 'refund', id }, action: `finance.refund_${event}`, actor: ctx.actor, reason, inputs: { origin: ctx.origin, ...data } }, tx);
     });
   }
 
@@ -663,7 +963,7 @@ export class RefundService {
     if (!st) return [];
     const rows = await this.db.execute<{ account_id: string; no: string; name: string; owed: string }>(sql`
       SELECT g.refunds_payable_account_id AS account_id, a.no, a.name,
-             COALESCE(SUM(r.amount) FILTER (WHERE r.status = 'approved' AND r.currency = ${st.baseCurrency}), 0)::text AS owed
+             COALESCE(SUM(r.amount * r.rate::numeric) FILTER (WHERE (r.status = 'approved' OR (r.source_kind = 'returned_payout' AND r.status IN ('draft', 'pending_approval')))), 0)::text AS owed
       FROM customer_posting_groups g
       JOIN gl_accounts a ON a.id = g.refunds_payable_account_id
       LEFT JOIN customers c ON COALESCE(c.posting_group_code, ${st.defaultCustomerGroup}) = g.code AND c.company_id = g.company_id
@@ -674,7 +974,7 @@ export class RefundService {
     for (const r of rows) {
       const [bal] = await this.db.execute<{ net: string }>(sql`SELECT COALESCE(SUM(base_credit - base_debit), 0)::text AS net FROM gl_account_balances WHERE company_id = ${companyId}::uuid AND account_id = ${r.account_id}::uuid`);
       const gl = toCents(Number(bal?.net ?? 0).toFixed(2));
-      const owed = toCents(r.owed);
+      const owed = toCents(Number(r.owed).toFixed(2));
       out.push({ accountNo: r.no, accountName: r.name, glCents: gl, owedCents: owed, diffCents: gl - owed });
     }
     return out;

@@ -20,3 +20,16 @@ export function businessDate(
     day: '2-digit',
   }).format(now);
 }
+
+/** A stored instant written in the business timezone, so a screen can show it without reading the clock. */
+export function formatBusinessTime(instant: Date, timeZone: string = DEFAULT_BUSINESS_TIMEZONE): string {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(instant);
+}

@@ -13,6 +13,8 @@ export interface PolicyRow {
   refundsEnabled: boolean;
   walletCashOut: boolean;
   maxBalance: string | null;
+  expiryDays: number | null;
+  expiryNoticeDays: number;
   label: string;
 }
 
@@ -51,7 +53,8 @@ export function describePolicy(r: PolicyRow | undefined): string {
   const auto = r.autoApply === 'oldest_first' ? 'Paid from automatically on credit invoices.' : 'Used only when someone chooses.';
   const deposits = r.allowDeposits ? '' : ' No advance deposits.';
   const max = r.maxBalance === null || r.maxBalance === '' ? '' : ` Holds at most ${r.maxBalance}.`;
-  return `On. Overpayments: ${overpay}. ${auto}${deposits}${max}`;
+  const lapse = r.expiryDays === null ? '' : ` Credit not used for ${String(r.expiryDays)} days lapses.`;
+  return `On. Overpayments: ${overpay}. ${auto}${deposits}${max}${lapse}`;
 }
 
 export interface PolicyForm {
@@ -64,6 +67,9 @@ export interface PolicyForm {
   refundsEnabled: boolean;
   walletCashOut: boolean;
   maxBalance: string;
+  /** Days of no use before a balance lapses; empty means never. */
+  expiryDays: string;
+  expiryNoticeDays: string;
   label: string;
 }
 
@@ -80,14 +86,19 @@ export function startingForm(groupCode: string | null, own: PolicyRow | undefine
     refundsEnabled: r?.refundsEnabled ?? true,
     walletCashOut: r?.walletCashOut ?? false,
     maxBalance: r?.maxBalance ?? '',
+    expiryDays: r?.expiryDays === null || r?.expiryDays === undefined ? '' : String(r.expiryDays),
+    expiryNoticeDays: String(r?.expiryNoticeDays ?? 30),
     label: company?.label ?? 'Wallet',
   };
 }
 
 export function policyInput(form: PolicyForm) {
   const max = form.maxBalance.trim();
+  const days = form.expiryDays.trim();
   return {
     ...form,
+    expiryDays: days === '' ? null : Number(days),
+    expiryNoticeDays: form.expiryNoticeDays.trim() === '' ? 30 : Number(form.expiryNoticeDays),
     overpaymentDefault: form.overpaymentDefault as PolicyRow['overpaymentDefault'],
     autoApply: form.autoApply as PolicyRow['autoApply'],
     creditNoteExcess: form.creditNoteExcess as PolicyRow['creditNoteExcess'],

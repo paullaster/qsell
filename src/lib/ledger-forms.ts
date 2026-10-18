@@ -123,6 +123,8 @@ export const GENERAL_PURPOSES: readonly (readonly [string, string])[] = [
   ['sales_discount', 'Sales discounts'],
   ['cogs', 'Cost of sales'],
   ['inventory_adjustment', 'Inventory adjustments'],
+  ['inventory', 'Inventory (stock at cost)'],
+  ['inventory_clearing', 'Stock received, not yet invoiced'],
 ];
 
 export const CUSTOMER_PURPOSES: readonly (readonly [string, string])[] = [
@@ -138,6 +140,8 @@ export const CUSTOMER_PURPOSES: readonly (readonly [string, string])[] = [
   ['rebate_expense', 'Rebates given (cost)'],
   ['gift_card_liability', 'Gift cards (owed to holders)'],
   ['loyalty_provision', 'Loyalty points (owed)'],
+  ['credit_forfeit', 'Forfeited customer credit (income)'],
+  ['credit_adjustment', 'Customer goodwill and credit adjustments (cost)'],
 ];
 
 export interface GeneralRow {
@@ -230,6 +234,12 @@ export const SALES_KIND: Record<string, string> = {
   cash_sale: 'Cash sale',
   credit_payment: 'Payment of a credit order',
   rebate_credit: 'Rebate',
+  wallet_use: 'Wallet used on invoices',
+  gift_card_issue: 'Gift card issued',
+  gift_card_adjust: 'Gift card balance changed',
+  loyalty_change: 'Loyalty points changed',
+  fx_application: 'Exchange difference on a payment',
+  fx_unapplication: 'Exchange difference undone',
 };
 
 export const salesKind = (kind: string): string => (Object.hasOwn(SALES_KIND, kind) ? SALES_KIND[kind] : kind);

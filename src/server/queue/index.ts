@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { run, TaskList } from 'graphile-worker';
+import { run, type TaskList } from 'graphile-worker';
 import { tasks } from './tasks';
 import { getWorkerUtils } from './worker';
 
@@ -22,7 +22,11 @@ export async function startWorker(): Promise<void> {
       '47 3 * * * expire-loyalty-points',
       // Sales reach the ledger within a minute; failures retry with a growing delay.
       '* * * * * finance-post-sales',
+      '* * * * * finance-post-inventory',
       '7 3 * * * finance-ensure-partitions',
+      '12 4 * * * wallet-expiry',
+      '20 * * * * fx-reverse-revaluations',
+      '32 4 * * * expire-gift-cards',
       '57 3 * * * finance-integrity-check',
       '2 4 * * * reseal-provider-credentials',
       // Approvals are time-sensitive, so this one runs every five minutes.
@@ -34,14 +38,11 @@ export async function startWorker(): Promise<void> {
   });
 
   // Graceful shutdown
-  process.on('SIGINT', async () => {
-    await runner.stop();
-    process.exit(0);
-  });
-  process.on('SIGTERM', async () => {
-    await runner.stop();
-    process.exit(0);
-  });
+  const shutdown = () => {
+    void runner.stop().then(() => process.exit(0));
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 }
 
 /**
@@ -69,7 +70,7 @@ async function releaseImportLocksFromDeadWorkers(): Promise<void> {
 
 /** Helper to run worker as a standalone script. */
 if (require.main === module) {
-  startWorker().catch((err) => {
+  startWorker().catch((err: unknown) => {
     console.error('Worker failed:', err);
     process.exit(1);
   });

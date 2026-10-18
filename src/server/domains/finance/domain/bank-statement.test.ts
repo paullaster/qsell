@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_RULES, type MatchRules } from './bank-match';
 import {
   MPESA_MAPPING,
   parseCsv,
@@ -9,6 +10,8 @@ import {
   reconciliationDifference,
   suggestMatches,
   withHashes,
+  type EntryForMatch,
+  type LineForMatch,
 } from './bank-statement';
 
 describe('reading dates and amounts', () => {
@@ -17,6 +20,11 @@ describe('reading dates and amounts', () => {
     expect(parseDate('13/10/2026')).toBe('2026-10-13');
     expect(parseDate('13-10-26')).toBe('2026-10-13');
     expect(parseDate('13 Oct 2026')).toBe('2026-10-13');
+    // a date typed into Excel is a count of days
+    expect(parseDate('46312')).toBe('2026-10-17');
+    expect(parseDate('46312.5416667')).toBe('2026-10-17');
+    expect(parseDate('12345')).toBeNull();
+    expect(parseDate('99999')).toBeNull();
     expect(parseDate('13-Oct-2026 14:22:01')).toBe('2026-10-13');
     expect(parseDate('2026-10-13 14:22:01')).toBe('2026-10-13');
     expect(parseDate('10/13/2026', 'mdy')).toBe('2026-10-13');
@@ -133,5 +141,49 @@ describe('the reconciliation sum', () => {
   it('opening plus the lines closed equals the statement, or says by how much not', () => {
     expect(reconciliationDifference(100000, [50000, -2000], 148000)).toEqual({ total: 48000, expected: 148000, difference: 0 });
     expect(reconciliationDifference(100000, [50000], 148000).difference).toBe(-2000);
+  });
+});
+
+describe('matching by the rules in force', () => {
+  const line = (o: Partial<LineForMatch> = {}): LineForMatch => ({ id: 1, date: '2026-10-10', amountCents: 50000, description: 'MPESA from 254722123456 JANE WANJIRU', reference: 'QWE123XYZ', ...o });
+  const entry = (o: Partial<EntryForMatch> = {}): EntryForMatch => ({ id: 10, date: '2026-10-09', amountCents: 50000, refs: ['PAY-26-00000001'], phones: ['722123456'], names: ['Jane Wanjiru'], ...o });
+  const rules = (o: Partial<MatchRules> = {}): MatchRules => ({ ...DEFAULT_RULES, ...o });
+
+  it('with the standard rules a phone number and a name change nothing', () => {
+    expect(suggestMatches([line()], [entry()])).toEqual([{ lineId: 1, entryIds: [10], rule: 'amount_date', certainty: 'proposed' }]);
+  });
+
+  it('a phone number the customer owns can be suggested, or trusted to close the line, when the rules say so', () => {
+    const far = entry({ date: '2026-09-01' });
+    expect(suggestMatches([line()], [far], { rules: rules({ phone: 'propose' }) })).toEqual([{ lineId: 1, entryIds: [10], rule: 'phone', certainty: 'proposed' }]);
+    expect(suggestMatches([line()], [far], { rules: rules({ phone: 'auto' }) })).toEqual([{ lineId: 1, entryIds: [10], rule: 'phone', certainty: 'matched' }]);
+    // never by itself when two customers share the number, or the amount is not exact
+    expect(suggestMatches([line()], [far, entry({ id: 11, date: '2026-09-02' })], { rules: rules({ phone: 'auto' }) })[0].certainty).toBe('proposed');
+    expect(suggestMatches([line({ amountCents: 50010 })], [far], { rules: rules({ phone: 'auto', amountToleranceCents: 50 }) })[0].certainty).toBe('proposed');
+    expect(suggestMatches([line({ description: 'MPESA from 254799000111' })], [far], { rules: rules({ phone: 'auto' }) })).toEqual([]);
+  });
+
+  it('a payer name that resembles the customer is only ever a suggestion', () => {
+    const out = suggestMatches([line({ description: 'Transfer', counterparty: 'WANJIRU JANE' })], [entry({ date: '2026-09-20', phones: [] })], { rules: rules({ name: 'propose', dateWindowDays: 0 }) });
+    expect(out).toEqual([{ lineId: 1, entryIds: [10], rule: 'name', certainty: 'proposed' }]);
+    expect(suggestMatches([line({ description: 'Transfer', counterparty: 'Bob Otieno' })], [entry({ date: '2026-09-20' })], { rules: rules({ name: 'propose', dateWindowDays: 0 }) })).toEqual([]);
+  });
+
+  it('an amount close but not equal is suggested only when a tolerance is allowed', () => {
+    expect(suggestMatches([line({ amountCents: 50030 })], [entry()])).toEqual([]);
+    expect(suggestMatches([line({ amountCents: 50030 })], [entry()], { rules: rules({ amountToleranceCents: 50 }) })).toEqual([{ lineId: 1, entryIds: [10], rule: 'amount_date', certainty: 'proposed' }]);
+  });
+
+  it('quoting our reference closes the line by itself only if the rules trust it; otherwise it is a suggestion', () => {
+    const quoting = line({ reference: 'PAY-26-00000001' });
+    expect(suggestMatches([quoting], [entry()])[0]).toMatchObject({ rule: 'reference', certainty: 'matched' });
+    expect(suggestMatches([quoting], [entry()], { rules: rules({ reference: 'propose' }) })[0]).toMatchObject({ rule: 'reference', certainty: 'proposed' });
+    expect(suggestMatches([quoting], [entry({ date: '2026-01-01' })], { rules: rules({ reference: 'off' }) })).toEqual([]);
+    expect(suggestMatches([quoting], [entry({ refs: ['PAY1'] })], { rules: rules({ minRefLength: 3 }) }).length).toBe(1);
+  });
+
+  it('shows at most as many entries as the rules allow, strongest evidence first', () => {
+    const entries = [1, 2, 3, 4].map((i) => entry({ id: i, date: `2026-10-0${String(i + 4)}` }));
+    expect(suggestMatches([line()], entries, { rules: rules({ maxProposals: 2 }) })[0].entryIds).toHaveLength(2);
   });
 });

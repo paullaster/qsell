@@ -160,9 +160,23 @@ function SalesPostingView({ view }: { view: View }) {
           </div>
         ) : null}
         <p className="text-xs text-fg-muted">
-          A difference is normal while sales are waiting above, or before they go live. Credit notes will join this in a later step; foreign-currency entries are left out of the comparison.
+          A difference is normal while sales are waiting above, or before they go live. Foreign-currency entries are left out of the comparison.
         </p>
       </section>
+
+      {view.liabilities.length > 0 ? (
+        <section className="space-y-2" aria-label="Gift cards and loyalty points">
+          <h3 className="text-sm font-bold text-fg-strong">Gift cards and loyalty points: the books against what is owed</h3>
+          <ul className="space-y-2">
+            {view.liabilities.map((l) => (
+              <li key={l.label} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-surface-raised p-3 text-sm">
+                <span className="min-w-0 break-words"><span className="font-semibold text-fg-strong">{l.label}</span> <span className="text-fg-muted">· {l.accountNo} {l.accountName}</span></span>
+                <span className="flex flex-wrap items-center gap-3 tabular-nums"><span>Ledger {money(l.gl)}</span><span>Owed {money(l.owed)}</span>{Number(l.diff) === 0 ? <Chip tone="green">Agrees</Chip> : <span className="font-semibold text-red-700" role="alert">Difference {money(l.diff)}</span>}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
     </div>
   );
 }

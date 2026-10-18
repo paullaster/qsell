@@ -39,8 +39,10 @@ export default defineConfig({
   ],
   webServer: {
     // Migrate first, so the server never starts against an empty database.
+    // The port opening is the readiness check. Probing /login does not time out inside
+    // Playwright, so a slow first compile holds the run after the server is already answering.
     command: `pnpm exec drizzle-kit migrate && exec pnpm exec next dev -p ${String(E2E_PORT)}`,
-    url: `${E2E_URL}/login`,
+    port: E2E_PORT,
     timeout: 240_000,
     reuseExistingServer: false,
     env: e2eEnvironment(),

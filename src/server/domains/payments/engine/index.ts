@@ -12,6 +12,7 @@ import { PaymentEngine } from './payment-engine';
 import { PaymentActivityService } from './activity-service';
 import { ProviderTransactionStore } from './transaction-store';
 import { PaymentVerificationService } from './verification-service';
+import { BillInvoiceService } from './bill-invoice-service';
 
 export interface PaymentEngineDeps {
   db: DrizzleDb;
@@ -48,6 +49,12 @@ export function createPaymentEngine(deps: PaymentEngineDeps): PaymentEngine {
   const disbursements = new DarajaDisbursements(db, ops, contexts, jobs);
   const engine = new PaymentEngine(db, contexts, deps.registry, events, ops, txs, jobs, verification, daraja, c2b, disbursements, deps.payments, deps.consumer);
   engine.activity = new PaymentActivityService(db);
+  const bills = new BillInvoiceService(db);
+  bills.daraja = daraja;
+  c2b.onPlaced = async (tx) => {
+    await bills.paymentPlaced(tx);
+  };
+  engine.bills = bills;
   deps.payments.useEngine(engine);
   return engine;
 }

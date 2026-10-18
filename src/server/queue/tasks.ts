@@ -1,9 +1,7 @@
 import type { JobHelpers } from 'graphile-worker';
 import { getContainer } from '@/server/di/container';
-import { ReconciliationEngine } from '@/server/domains/reconciliation/service';
-import { InventoryReservationService } from '@/server/domains/inventory/reservation-service';
 import { broadcastRealtime } from '@/server/realtime';
-import type { PaymentProviderCode } from '@/server/domains/payments/types';
+import { has } from '@/lib/values';
 
 interface ProcessPaymentCallbackPayload {
   auditId: string;
@@ -35,12 +33,12 @@ interface RetryFailedCallPayload {
  */
 export const processPaymentCallback = async (
   payload: ProcessPaymentCallbackPayload,
-  helpers: { logger: any },
+  helpers: JobHelpers,
 ) => {
   const { auditId, correlationId, provider, rawPayload, headers } = payload;
   helpers.logger.info(`Processing ${provider} callback (verified path)`, { auditId, correlationId });
   const container = getContainer();
-  if (!payload.callbackToken) {
+  if (!has(payload.callbackToken)) {
     await container.paymentRecords.updateAuditLog(auditId, { errorCode: 'NO_TOKEN', errorMessage: 'The callback had no address secret, so it cannot be tied to a payment.' });
     return;
   }
@@ -56,15 +54,15 @@ export const processPaymentCallback = async (
 };
 
 /** Worker task: ask the platform whether a payment is real; ask again later if it has not decided. */
-export const providerVerifyAttempt = async (payload: { attemptId: string }, helpers: { logger: any }) => {
+export const providerVerifyAttempt = async (payload: { attemptId: string }, helpers: JobHelpers) => {
   const result = await getContainer().paymentEngine.verification.verifyAttempt(payload.attemptId);
-  helpers.logger.info(`Payment ${payload.attemptId}: ${result.outcome}${result.reason ? ` (${result.reason})` : ''}`);
+  helpers.logger.info(`Payment ${payload.attemptId}: ${result.outcome}${has(result.reason) ? ` (${result.reason})` : ''}`);
 };
 
 /** Worker task: confirm money that arrived straight into a paybill or till. */
-export const providerVerifyTransaction = async (payload: { transactionId: string }, helpers: { logger: any }) => {
+export const providerVerifyTransaction = async (payload: { transactionId: string }, helpers: JobHelpers) => {
   const result = await getContainer().paymentEngine.c2b.verify(payload.transactionId);
-  helpers.logger.info(`Transaction ${payload.transactionId}: ${result.state}${result.reason ? ` (${result.reason})` : ''}`);
+  helpers.logger.info(`Transaction ${payload.transactionId}: ${result.state}${has(result.reason) ? ` (${result.reason})` : ''}`);
 };
 
 /** Worker task: send an operation to the platform (or send it again). */
@@ -73,22 +71,22 @@ export const providerSendOperation = async (payload: { operationId: string }) =>
 };
 
 /** Worker cron task: pick up whatever a lost job or a restart left half done. */
-export const providerSweep = async (_payload: unknown, helpers: { logger: any }) => {
+export const providerSweep = async (_payload: unknown, helpers: JobHelpers) => {
   const r = await getContainer().paymentEngine.sweep();
-  if (r.resent || r.claimed) helpers.logger.info('Payment engine sweep', r);
+  if (r.resent > 0 || r.claimed > 0) helpers.logger.info('Payment engine sweep', r);
 };
 
 /** Worker cron task: compare what Safaricom says it received with what we know. */
-export const providerPullSweep = async (_payload: unknown, helpers: { logger: any }) => {
+export const providerPullSweep = async (_payload: unknown, helpers: JobHelpers) => {
   const engine = getContainer().paymentEngine;
   for (const providerId of await engine.c2b.providersWithPull()) {
     const r = await engine.c2b.pullSweep(providerId);
-    if (r.missing || r.found) helpers.logger.info('Pull sweep', { providerId, ...r });
+    if (r.missing > 0 || r.found > 0) helpers.logger.info('Pull sweep', { providerId, ...r });
   }
 };
 
 /** Worker task: process a generic webhook (non-payment). */
-export const processWebhook = async (payload: ProcessWebhookPayload, helpers: { logger: any }) => {
+export const processWebhook = async (payload: ProcessWebhookPayload, helpers: JobHelpers) => {
   helpers.logger.info(`Processing webhook ${payload.provider}.${payload.operation}`, {
     auditId: payload.auditId,
   });
@@ -100,7 +98,7 @@ export const processWebhook = async (payload: ProcessWebhookPayload, helpers: { 
 /** Worker task: retry a failed outbound call. */
 export const retryFailedCall = async (
   payload: RetryFailedCallPayload,
-  helpers: { logger: any },
+  helpers: JobHelpers,
 ) => {
   helpers.logger.info(`Retrying failed call`, {
     auditId: payload.auditId,
@@ -174,7 +172,7 @@ export const purgeMedia = async (_payload: unknown, helpers: JobHelpers) => {
 /** Worker cron task: hand approvals that are past their due time to the approver's own approver. */
 export const sweepOverdueApprovals = async (_payload: unknown, helpers: JobHelpers) => {
   const r = await getContainer().approvals.sweepOverdue();
-  if (r.escalated || r.stuck || r.failed) {
+  if (r.escalated > 0 || r.stuck > 0 || r.failed > 0) {
     helpers.logger.info(
       `Approvals sweep: ${r.escalated} escalated, ${r.stuck} with nobody to escalate to, ${r.failed} failed`,
     );
@@ -219,7 +217,31 @@ export const resealProviderCredentials = async (_payload: unknown, helpers: JobH
 /** Worker cron task: post queued sales events to the general ledger (also retries failed ones). */
 export const financePostSales = async (_payload: unknown, helpers: JobHelpers) => {
   const r = await getContainer().finance.salesPosting.processDue(300);
-  if (r.posted || r.failed) helpers.logger.info(`Sales posting: ${r.posted} posted, ${r.failed} waiting to be fixed`);
+  if (r.posted > 0 || r.failed > 0) helpers.logger.info(`Sales posting: ${r.posted} posted, ${r.failed} waiting to be fixed`);
+};
+
+/** Worker cron task: customer credit nobody used for as long as the policy allows lapses (once for each last use). */
+export const walletExpiry = async (_payload: unknown, helpers: JobHelpers) => {
+  const r = await getContainer().finance.creditAdjustments.expireDormant(new Date());
+  if (r.expired > 0 || r.failed > 0) helpers.logger.info(`Wallet expiry: ${r.expired} lapsed, ${r.failed} could not be lapsed`);
+};
+
+/** Worker cron task: post changes in the value of stock to the general ledger (also retries failed ones). */
+export const financePostInventory = async (_payload: unknown, helpers: JobHelpers) => {
+  const r = await getContainer().finance.inventoryPosting.processDue(500);
+  if (r.posted > 0 || r.failed > 0) helpers.logger.info(`Inventory posting: ${r.posted} posted, ${r.failed} waiting to be fixed`);
+};
+
+/** Worker cron task: a revaluation of an earlier day is undone, so only real differences stay in the books. */
+export const fxReverseRevaluations = async (_payload: unknown, helpers: JobHelpers) => {
+  const n = await getContainer().finance.fx.reverseDue();
+  if (n > 0) helpers.logger.info(`Foreign-currency revaluation: ${n} undone`);
+};
+
+/** Worker cron task: gift cards past their date lose what is left on them (once each). */
+export const expireGiftCards = async (_payload: unknown, helpers: JobHelpers) => {
+  const r = await getContainer().giftCards.expireDue(new Date());
+  if (r.expired > 0 || r.failed > 0) helpers.logger.info(`Gift card expiry: ${r.expired} written off, ${r.failed} could not be`);
 };
 
 export const tasks = {
@@ -233,6 +255,10 @@ export const tasks = {
   'sweep-overdue-approvals': sweepOverdueApprovals,
   'expire-loyalty-points': expireLoyaltyPoints,
   'finance-post-sales': financePostSales,
+  'wallet-expiry': walletExpiry,
+  'finance-post-inventory': financePostInventory,
+  'fx-reverse-revaluations': fxReverseRevaluations,
+  'expire-gift-cards': expireGiftCards,
   'finance-ensure-partitions': financeEnsurePartitions,
   'finance-integrity-check': financeIntegrityCheck,
   'reseal-provider-credentials': resealProviderCredentials,

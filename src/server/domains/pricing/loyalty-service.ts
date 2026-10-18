@@ -1,7 +1,10 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
+import { has, orElse, required, trimToNull } from '@/lib/values';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   customers,
+  financeSettings,
+  orders,
   loyaltyAccounts,
   loyaltyLedger,
   loyaltyPrograms,
@@ -11,6 +14,8 @@ import type { Tx } from '@/server/kernel/approvals/engine';
 import type { Actor } from '@/server/kernel/context';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { ReasonCodes, ReasonInput } from '@/server/kernel/reason-codes/service';
+import type { FxService } from '@/server/domains/finance/fx-service';
+import { businessDate } from '@/server/kernel/numbering/business-date';
 import { PricingConfigError } from './config-service';
 import {
   checkLoyalty,
@@ -50,7 +55,7 @@ export interface LoyaltyAccountView {
   tier: LoyaltyTier | null;
   /** What the balance is worth when spent, 0 when there is no programme in force. */
   worth: number;
-  ledger: Array<{
+  ledger: {
     id: string;
     kind: string;
     points: number;
@@ -58,7 +63,7 @@ export interface LoyaltyAccountView {
     note: string | null;
     expiresAt: string | null;
     createdAt: string;
-  }>;
+  }[];
 }
 
 /**
@@ -67,16 +72,17 @@ export interface LoyaltyAccountView {
  * Nothing here changes a price: spending points is a payment, applied to an order afterwards.
  */
 export class LoyaltyService {
-  private cache = new Map<string, { at: number; value: LoyaltyProgramRow | null }>();
+  private readonly cache = new Map<string, { at: number; value: LoyaltyProgramRow | null }>();
 
   constructor(
     private readonly db: DrizzleDb,
     private readonly decisions: DecisionLog,
     private readonly reasons: ReasonCodes,
+    private readonly fx: FxService,
   ) {}
 
   invalidate(companyId?: string) {
-    if (companyId) this.cache.delete(companyId);
+    if (has(companyId)) this.cache.delete(companyId);
     else this.cache.clear();
   }
 
@@ -95,7 +101,7 @@ export class LoyaltyService {
   /** The rules, only while the programme is in force. */
   async activeConfig(companyId: string): Promise<LoyaltyConfig | null> {
     const row = await this.programRow(companyId);
-    return row && row.status === 'active' ? toConfig(row) : null;
+    return row?.status === 'active' ? toConfig(row) : null;
   }
 
   async program(companyId: string): Promise<LoyaltyProgramView | null> {
@@ -119,12 +125,13 @@ export class LoyaltyService {
   ): Promise<LoyaltyProgramView> {
     const why = await this.reasons.require(companyId, reason, 'pricing_configuration');
     const checks = checkLoyalty(input.config);
-    if (checks.errors.length)
-      throw new PricingConfigError('INVALID', checks.errors[0]!.message, checks.errors);
+    const firstError = checks.errors[0];
+    if (firstError !== undefined)
+      throw new PricingConfigError('INVALID', firstError.message, checks.errors);
     const before = await this.programRow(companyId);
     const c = input.config;
     const values = {
-      name: input.name.trim() || 'Loyalty',
+      name: orElse(input.name.trim(), 'Loyalty'),
       status: input.status,
       pointsPer100: String(c.pointsPer100),
       pointValue: String(c.pointValue),
@@ -149,7 +156,7 @@ export class LoyaltyService {
         {
           companyId,
           actor,
-          subject: { type: 'loyalty_program', id: row!.id },
+          subject: { type: 'loyalty_program', id: required(row, 'the programme row').id },
           action: before ? 'pricing.loyalty_updated' : 'pricing.loyalty_created',
           reason: why,
           from: before?.status ?? null,
@@ -161,7 +168,18 @@ export class LoyaltyService {
       );
     });
     this.invalidate(companyId);
-    return (await this.program(companyId))!;
+    return required(await this.program(companyId), 'the programme just saved');
+  }
+
+  /**
+   * What one unit of the order's currency is worth in the books' currency today. Points are worth money in the books' currency,
+   * so an order in another currency is converted at the day's rate. Null when that currency has no rate yet.
+   */
+  private async baseRate(tx: Tx, companyId: string, currency: string | undefined): Promise<string | null> {
+    if (currency === undefined) return '1';
+    const [books] = await tx.select({ base: financeSettings.baseCurrency }).from(financeSettings).where(eq(financeSettings.companyId, companyId));
+    if (books === undefined || currency.toUpperCase() === books.base.toUpperCase()) return '1';
+    return await this.fx.rateOn(tx, companyId, currency, businessDate());
   }
 
   // ── Earning and spending, inside an order's transaction ─────────────────
@@ -173,6 +191,11 @@ export class LoyaltyService {
   ): Promise<number> {
     const cfg = await this.activeConfig(input.companyId);
     if (!cfg || !(input.spend > 0)) return 0;
+    // Points are earned on what was spent in the books' currency; an order in another currency with no rate yet earns none.
+    const [placed] = await tx.select({ currency: orders.currency }).from(orders).where(eq(orders.id, input.orderId));
+    const rate = await this.baseRate(tx, input.companyId, placed?.currency);
+    if (rate === null) return 0;
+    const spend = rate === '1' ? input.spend : input.spend * Number(rate);
     await tx
       .insert(loyaltyAccounts)
       .values({ customerId: input.customerId, companyId: input.companyId })
@@ -182,14 +205,11 @@ export class LoyaltyService {
       .from(loyaltyAccounts)
       .where(eq(loyaltyAccounts.customerId, input.customerId))
       .for('update');
-    const points = pointsEarned(input.spend, cfg, acct?.lifetimeEarned ?? 0);
+    const points = pointsEarned(spend, cfg, acct?.lifetimeEarned ?? 0);
     if (points <= 0) return 0;
     const at = input.at ?? new Date();
-    const expiresAt = cfg.expiryMonths
-      ? new Date(
-          Date.UTC(at.getUTCFullYear(), at.getUTCMonth() + cfg.expiryMonths, at.getUTCDate()),
-        )
-      : null;
+    const months = cfg.expiryMonths ?? 0;
+    const expiresAt = months > 0 ? new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth() + months, at.getUTCDate())) : null;
     const inserted = await tx
       .insert(loyaltyLedger)
       .values({
@@ -226,10 +246,11 @@ export class LoyaltyService {
       customerId: string;
       orderId: string;
       due: number;
+      currency?: string;
       points?: number;
       actor: string;
     },
-  ): Promise<{ points: number; value: number }> {
+  ): Promise<{ points: number; value: number; base: number; rate: string }> {
     const cfg = await this.activeConfig(input.companyId);
     if (!cfg) throw new PricingConfigError('INVALID', 'There is no loyalty programme in force.');
     const [acct] = await tx
@@ -237,8 +258,15 @@ export class LoyaltyService {
       .from(loyaltyAccounts)
       .where(eq(loyaltyAccounts.customerId, input.customerId))
       .for('update');
-    const r = redemption(input.due, acct?.balance ?? 0, cfg, input.points);
-    if (r.problem) throw new PricingConfigError('INVALID', r.problem);
+    const rate = await this.baseRate(tx, input.companyId, input.currency);
+    if (rate === null) throw new PricingConfigError('INVALID', `There is no exchange rate for ${(input.currency ?? '').toUpperCase()} yet. Set it under Finance → Exchange rates before points can pay an order in that currency.`);
+    // What is left to pay is worked out in the books' currency, where a point has its value; what the points cover is then
+    // taken back to the order's currency, rounded down so they never cover more than is due.
+    const dueBase = rate === '1' ? input.due : input.due * Number(rate);
+    const r = redemption(dueBase, acct?.balance ?? 0, cfg, input.points);
+    if (has(r.problem)) throw new PricingConfigError('INVALID', r.problem);
+    const covers = rate === '1' ? r.value : Math.min(input.due, Math.floor((r.value / Number(rate)) * 100 + 1e-9) / 100);
+    if (!(covers > 0)) throw new PricingConfigError('INVALID', 'No points can be used on this order.');
     const inserted = await tx
       .insert(loyaltyLedger)
       .values({
@@ -265,7 +293,7 @@ export class LoyaltyService {
       .returning({ balance: loyaltyAccounts.balance });
     if (updated.length === 0)
       throw new PricingConfigError('INVALID', 'The customer no longer has enough points.');
-    return { points: r.points, value: r.value };
+    return { points: r.points, value: covers, base: r.value, rate };
   }
 
   /**
@@ -470,7 +498,7 @@ export class LoyaltyService {
           customerId,
           kind: 'adjust',
           points,
-          note: note?.trim() || null,
+          note: trimToNull(note),
           reasonCode: why.code,
           actor: actor.id,
         })
@@ -482,12 +510,12 @@ export class LoyaltyService {
           subject: { type: 'customer', id: customerId },
           action: 'pricing.loyalty_adjusted',
           reason: why,
-          outcome: { points, ledgerId: entry!.id },
+          outcome: { points, ledgerId: required(entry, 'the ledger row').id },
         },
         tx,
       );
     });
-    return this.account(companyId, customerId);
+    return await this.account(companyId, customerId);
   }
 
   /**
@@ -523,7 +551,7 @@ export class LoyaltyService {
           })
           .from(loyaltyLedger)
           .where(eq(loyaltyLedger.customerId, customerId));
-        const lapse = Math.min(acct.balance, Math.max(0, Number(t!.expired) - Number(t!.used)));
+        const lapse = Math.min(acct.balance, Math.max(0, Number(t?.expired ?? 0) - Number(t?.used ?? 0)));
         if (lapse <= 0) return 0;
         await tx.insert(loyaltyLedger).values({
           companyId,

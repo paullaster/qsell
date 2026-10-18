@@ -1,0 +1,1 @@
+ALTER TABLE "gift_cards" ADD COLUMN "rate" text DEFAULT '1' NOT NULL;

@@ -243,8 +243,8 @@ describe('register hash', () => {
 
 describe('posting setup', () => {
   const rows = [
-    { id: 'old', businessGroup: 'DOM', productGroup: 'GOODS', effectiveFrom: '2000-01-01', effectiveTo: '2026-06-30', accounts: { sales: 'a-old', sales_returns: null, sales_discount: null, cogs: null, inventory_adjustment: null } },
-    { id: 'new', businessGroup: 'DOM', productGroup: 'GOODS', effectiveFrom: '2026-07-01', effectiveTo: null, accounts: { sales: 'a-new', sales_returns: null, sales_discount: null, cogs: null, inventory_adjustment: null } },
+    { id: 'old', businessGroup: 'DOM', productGroup: 'GOODS', effectiveFrom: '2000-01-01', effectiveTo: '2026-06-30', accounts: { sales: 'a-old', sales_returns: null, sales_discount: null, cogs: null, inventory_adjustment: null, inventory: null, inventory_clearing: null } },
+    { id: 'new', businessGroup: 'DOM', productGroup: 'GOODS', effectiveFrom: '2026-07-01', effectiveTo: null, accounts: { sales: 'a-new', sales_returns: null, sales_discount: null, cogs: null, inventory_adjustment: null, inventory: null, inventory_clearing: null } },
   ];
   it('picks the row in force on the date and records the trace', () => {
     expect(resolveGeneral(rows, 'DOM', 'GOODS', 'sales', '2026-05-01').accountId).toBe('a-old');

@@ -33,6 +33,7 @@ import {
   Fingerprint,
   LifeBuoy,
   Activity,
+  FolderKanban,
   type LucideIcon,
 } from 'lucide-react';
 import { hasSubLinks, type AdminNavIconName, type AdminNavItem } from '@/config/admin-nav';
@@ -67,6 +68,7 @@ const ICONS: Record<AdminNavIconName, LucideIcon> = {
   Fingerprint,
   LifeBuoy,
   Activity,
+  FolderKanban,
 };
 
 function NavIcon({ name }: { name?: AdminNavIconName }) {

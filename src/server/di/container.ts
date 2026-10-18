@@ -63,6 +63,7 @@ import { DecisionLog } from '@/server/kernel/decision-log/service';
 import { ReasonCodes } from '@/server/kernel/reason-codes/service';
 import { NumberSeriesService } from '@/server/kernel/numbering/service';
 import { createFinanceServices, type FinanceServices } from '@/server/domains/finance';
+import { ProjectService } from '@/server/domains/projects/service';
 import { createPaymentEngine, type PaymentEngine } from '@/server/domains/payments/engine';
 import { FinanceC2bConsumer } from '@/server/domains/finance/receivables/c2b-consumer';
 import { CreditNoteService } from '@/server/domains/credit-notes/service';
@@ -124,6 +125,8 @@ export interface AppContainer {
   numbering: NumberSeriesService;
   /** Chart of accounts, fiscal periods, posting setup, the posting engine, journals, ledger reports. */
   finance: FinanceServices;
+  /** Work for a customer or for the company, with tasks and a budget. */
+  projects: ProjectService;
   /** The doors payment platforms knock on, and the checks that decide whether a payment is real. */
   paymentEngine: PaymentEngine;
   approvals: ApprovalEngine;
@@ -195,11 +198,11 @@ async function legacyPrefix(companyId: string, kind: string): Promise<string | n
     .from(companySettings)
     .where(eq(companySettings.id, companyId))
     .limit(1);
-  const base = row?.prefix
-    ?.trim()
+  const base = row.prefix
+    .trim()
     .replace(/[^A-Za-z0-9]/g, '')
     .slice(0, 6);
-  return base ? `${base}-{BRANCH}-{YY}-` : null;
+  return base !== '' ? `${base}-{BRANCH}-{YY}-` : null;
 }
 
 /**
@@ -306,8 +309,8 @@ export function getContainer(): AppContainer {
   const discounts = new DiscountService(drizzleDb, pricing, priceGuard);
   const kits = new KitService(drizzleDb);
   const rebates = new RebateService(drizzleDb, priceGuard, pricing);
-  const loyalty = new LoyaltyService(drizzleDb, decisionLog, reasonCodes);
-  const giftCards = new GiftCardService(drizzleDb, decisionLog, reasonCodes);
+  const loyalty = new LoyaltyService(drizzleDb, decisionLog, reasonCodes, finance.fx);
+  const giftCards = new GiftCardService(drizzleDb, decisionLog, reasonCodes, finance.fx);
   const insights = new InsightsService(drizzleDb, priceGuard);
   const pricingConfig = new PricingConfigService(
     drizzleDb,
@@ -360,6 +363,7 @@ export function getContainer(): AppContainer {
     reasonCodes,
     numbering,
     finance,
+    projects: new ProjectService(drizzleDb, decisionLog, numbering),
     paymentEngine,
     approvals,
     approvalConfig: new ApprovalConfigService(drizzleDb, decisionLog, reasonCodes),

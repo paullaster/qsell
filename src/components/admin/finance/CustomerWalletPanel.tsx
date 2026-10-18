@@ -47,10 +47,14 @@ export function CustomerWalletPanel({ customerId, view }: { customerId: string; 
       </div>
       <Message notice={notice} />
       {view.wallets.length === 0 ? <p className="text-sm text-fg-muted">Nothing is held for this customer yet.</p> : null}
+      {view.can.adjust ? <p><Link href={`/admin/finance/receivables/credit-adjustments/new?customer=${customerId}&kind=wallet_increase`} className={buttonClass}>Add goodwill or a correction…</Link></p> : null}
       {view.wallets.map((w) => (
         <div key={w.id} className="space-y-3 rounded-xl border border-line p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-lg font-bold tabular-nums text-fg-strong">{w.currency} {money(w.balance)} {w.status === 'frozen' ? <Chip tone="red">Frozen</Chip> : null}</p>
+            <div>
+              <p className="text-lg font-bold tabular-nums text-fg-strong">{w.currency} {money(w.balance)} {w.status === 'frozen' ? <Chip tone="red">Frozen</Chip> : null}</p>
+              {w.carried === null ? null : <p className="text-xs text-fg-muted">{w.carried}</p>}
+            </div>
             <div className="flex flex-wrap gap-2">
               {view.can.utilise && Number(w.balance) > 0 && w.status === 'active' ? (
                 <Link href={`/admin/finance/refunds/new?customer=${customerId}&source=wallet:${w.id}`} className={buttonClass}>Pay out as a refund</Link>
@@ -58,6 +62,7 @@ export function CustomerWalletPanel({ customerId, view }: { customerId: string; 
               {view.can.utilise && Number(w.balance) > 0 && w.status === 'active' ? (
                 <button type="button" className={primaryClass} disabled={busy} onClick={() => { setUsing(using === w.currency ? null : w.currency); fill(w.currency, w.balance); }} aria-expanded={using === w.currency}>Pay invoices from the {lc}</button>
               ) : null}
+              {view.can.adjust ? <Link href={`/admin/finance/receivables/credit-adjustments/new?customer=${customerId}&kind=wallet_decrease&currency=${w.currency}`} className={buttonClass}>Take some off…</Link> : null}
               {view.can.freeze ? (
                 <button type="button" className={buttonClass} disabled={busy} onClick={async () => { setBusy(true); done(await attempt(freezeWalletAction(customerId, w.currency, w.status === 'active')), w.status === 'active' ? 'Frozen.' : 'Unfrozen.'); }}>
                   {w.status === 'active' ? 'Freeze' : 'Unfreeze'}

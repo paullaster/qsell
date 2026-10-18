@@ -374,6 +374,8 @@ export class FinanceSetupService {
           salesDiscountAccountId: acct(r.salesDiscount),
           cogsAccountId: acct(r.cogs),
           inventoryAdjustmentAccountId: acct(r.inventoryAdjustment),
+          inventoryAccountId: acct(r.inventory),
+          inventoryClearingAccountId: acct(r.inventoryClearing),
         })),
       );
       await tx.insert(customerPostingGroups).values(
@@ -393,6 +395,8 @@ export class FinanceSetupService {
           rebateExpenseAccountId: acct(g.rebateExpense),
           giftCardLiabilityAccountId: acct(g.giftCardLiability),
           loyaltyProvisionAccountId: acct(g.loyaltyProvision),
+          creditForfeitAccountId: acct(g.creditForfeit),
+          creditAdjustmentAccountId: acct(g.creditAdjustment),
         })),
       );
 
