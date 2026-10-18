@@ -248,6 +248,88 @@ async function seedFinance(): Promise<void> {
   await fin.receipts.post(ctx, receipt.id, { allocate: 'none' });
 }
 
+/**
+ * What the refund-extras screens need, once for each browser project (desktop and phone) so the two never
+ * use each other's records: approved bank-transfer refunds to put in a file, a file made by another person
+ * for the admin to confirm, a paid refund whose money can come back, a refund whose M-Pesa payment is in
+ * doubt, and a wallet with two adjustment requests made by another person. Safe to run again.
+ */
+async function seedRefundExtras(): Promise<void> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const schema = await import('@/server/db/drizzle/schema');
+  const { getContainer } = await import('@/server/di/container');
+  const container = getContainer();
+  const fin = container.finance;
+  const company = await container.companySettings.ensureSeeded();
+  const admin = (await db.select().from(schema.users).limit(1)).at(0);
+  if (admin === undefined) throw new Error('e2e seed: the admin was not created');
+  const done = await db.select({ id: schema.customers.id }).from(schema.customers).where(eq(schema.customers.number, 'E2E-RX-DESKTOP-1')).limit(1);
+  if (done.length > 0) return;
+  const maker = (await db.insert(schema.users).values({ email: `e2e-maker-${randomUUID()}@e2e.test`, passwordHash: 'x', name: 'E2E Maker', role: 'manager' }).returning())[0];
+  const adminCtx = { companyId: company.id, actor: { type: 'user' as const, id: admin.id }, origin: { surface: 'e2e', action: 'seed' } };
+  const makerCtx = { ...adminCtx, actor: { type: 'user' as const, id: maker.id } };
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' });
+
+  const methods = await fin.paymentMethods.list(company.id);
+  const cash = methods.find((m) => m.method.code === 'E2ECASH')?.method;
+  if (cash === undefined) throw new Error('e2e seed: the cash method is missing');
+  const manual = (await fin.paymentMethods.providerChoices(company.id)).find((p) => p.isSystem);
+  if (manual === undefined) throw new Error('e2e seed: the manual provider is missing');
+  const gl = (await fin.setup.listAccounts(company.id)).find((a) => a.no === '1120');
+  if (gl === undefined) throw new Error('e2e seed: the chart of accounts is incomplete');
+  const bankId = cash.balancingBankAccountId;
+  await db.update(schema.bankAccounts).set({ details: { accountNumber: '0011223344', bankName: 'E2E Bank' } }).where(eq(schema.bankAccounts.id, bankId));
+  const transfer = await fin.paymentMethods.create(adminCtx, { code: 'E2EBT', name: 'E2E Bank transfer', kind: 'bank_transfer', balancingBankAccountId: bankId, providerId: manual.id, glAccountId: gl.id, usableFor: ['customer_receipt', 'customer_refund'], refundDestination: 'manual' });
+  const daraja = await fin.paymentProviders.create(adminCtx, { providerCode: 'mpesa_daraja', displayName: 'E2E Daraja' });
+  await fin.creditPolicy.save(adminCtx, { groupCode: null, walletEnabled: true, allowDeposits: true, overpaymentDefault: 'ask', autoApply: 'never', creditNoteExcess: 'ask', refundsEnabled: true, walletCashOut: true, maxBalance: null, label: 'Wallet' });
+
+  const bankDetails = { bankName: 'KCB', accountNumber: '1234567890', accountName: 'E2E Customer' };
+  let n = 0;
+  const customer = async (tag: string, label: string) => {
+    n += 1;
+    const [c] = await db.insert(schema.customers).values({ companyId: company.id, number: `E2E-RX-${tag.toUpperCase()}-${String(n)}`, name: `${label} ${tag}`, phone: `0722${String(100000 + n)}`, accountType: 'cash', creditLimit: '0' }).returning();
+    return c;
+  };
+  const unapplied = async (customerId: string, amount: string, deposit = false) => {
+    const r = await fin.receipts.create(adminCtx, { customerId, paymentMethodId: cash.id, amount, paymentDate: today, isDeposit: deposit });
+    await fin.receipts.post(adminCtx, r.id, { allocate: 'none' });
+    return r.id;
+  };
+  const refund = async (customerId: string, receiptId: string, amount: string, methodId: string, details: Record<string, string>, by = adminCtx) => {
+    const r = await fin.refunds.create(by, { customerId, sourceKind: 'receipt_unapplied', sourceId: receiptId, amount, paymentMethodId: methodId, payoutDetails: details, reasonCode: 'CUSTOMER_REQUEST' });
+    await fin.refunds.submit(by, r.id);
+    return r;
+  };
+
+  for (const [tag, bump] of [['Desktop', 0], ['Phone', 1]] as const) {
+    // two approved bank transfers to choose from when making a file
+    for (const [label, amount] of [['Bank A', 410 + bump], ['Bank B', 120 + bump]] as const) {
+      const c = await customer(tag, label);
+      await refund(c.id, await unapplied(c.id, String(amount)), String(amount), transfer.id, bankDetails);
+    }
+    // a file another person made, waiting for the bank's confirmation
+    const filed = await customer(tag, 'Filed');
+    const filedRefund = await refund(filed.id, await unapplied(filed.id, String(205 + bump)), String(205 + bump), transfer.id, bankDetails);
+    const filedFile = await fin.refundFiles.generate(makerCtx, { methodId: transfer.id, format: 'csv', refundIds: [filedRefund.id] });
+    // The test server has no media storage, so the bank's confirmation is on the file already.
+    await fin.refundFiles.attach(makerCtx, filedFile.id, { mediaAssetId: 'media_e2e', fileName: 'bank-confirmation.png' });
+    // a refund that was paid, whose money can come back
+    const paid = await customer(tag, 'Returned');
+    const paidRefund = await refund(paid.id, await unapplied(paid.id, String(300 + bump)), String(300 + bump), cash.id, { recipientName: 'E2E Customer' });
+    await fin.refunds.attach(adminCtx, paidRefund.id, { mediaAssetId: 'media_e2e', fileName: 'slip.jpg' });
+    await fin.refunds.recordPayout(adminCtx, paidRefund.id, { paidFromMethodId: cash.id, reference: `E2E-PAID-${tag}` });
+    // an M-Pesa payment that could not be confirmed
+    const doubt = await customer(tag, 'Doubt');
+    const doubtRefund = await refund(doubt.id, await unapplied(doubt.id, String(90 + bump)), String(90 + bump), cash.id, { recipientName: 'E2E Customer' });
+    await db.insert(schema.providerOperations).values({ companyId: company.id, providerId: daraja.id, methodId: cash.id, operation: 'b2c', status: 'in_doubt', idempotencyKey: `e2e:refund:${doubtRefund.id}:payout:1`, subjectType: 'refund', subjectId: doubtRefund.id, amount: String(90 + bump), input: {}, failureCode: 'NO_RESULT', failureReason: 'No answer arrived. It must be checked with the platform before anything is done again.' });
+    // a wallet, with a take-off asked for by someone else
+    const holder = await customer(tag, 'Wallet');
+    await unapplied(holder.id, '400', true);
+    const asked = await fin.creditAdjustments.request(makerCtx, { kind: 'wallet_decrease', customerId: holder.id, amount: String(40 + bump), reasonCode: 'DATA_ENTRY_ERROR' });
+    await fin.creditAdjustments.submit(makerCtx, asked.id);
+  }
+}
+
 main().then(
   () => process.exit(0),
   (error: unknown) => {

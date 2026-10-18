@@ -21,6 +21,7 @@ import { FINANCE_LOOKUP_SOURCES } from '@/server/domains/finance/lookup-sources'
 import { NUMBERING_LOOKUP_SOURCES } from '@/server/kernel/numbering/lookup-sources';
 import { TAX_LOOKUP_SOURCES } from '@/server/domains/taxes/lookup-sources';
 import { COMPANY_LOOKUP_SOURCES } from '@/server/domains/company/lookup-sources';
+import { PROJECT_LOOKUP_SOURCES } from '@/server/domains/projects/lookup-sources';
 import { CUSTOMER_LOOKUP_SOURCES } from '@/server/domains/customers/lookup-sources';
 import { KRA_LOOKUP_SOURCES } from '@/server/domains/kra/lookup-sources';
 import { APPROVAL_LOOKUP_SOURCES } from '@/server/kernel/approvals/lookup-sources';
@@ -139,10 +140,10 @@ const enabledCurrenciesFor = (key: string, permission: 'quotes:read' | 'pricing:
   }),
 });
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const enabledCurrencies = enabledCurrenciesFor('currencies', 'quotes:read');
 const pricingCurrencies = enabledCurrenciesFor('pricing-currencies', 'pricing:read');
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** How a quote can be paid. "On account" is offered only when the quote's customer has credit. */
 const paymentMethods = staticSource({
@@ -198,8 +199,8 @@ const SOURCES: ReadonlyMap<string, LookupSource> = new Map(
     sectionTemplates,
     tradeCustomers,
     enabledCurrencies,
-    paymentMethods,
     pricingCurrencies,
+    paymentMethods,
     quoteStatuses,
     templateStatuses,
     ...PAYMENT_LOOKUP_SOURCES,
@@ -212,6 +213,7 @@ const SOURCES: ReadonlyMap<string, LookupSource> = new Map(
     ...TAX_LOOKUP_SOURCES,
     ...CUSTOMER_LOOKUP_SOURCES,
     ...COMPANY_LOOKUP_SOURCES,
+    ...PROJECT_LOOKUP_SOURCES,
   ].map((source) => [source.key, source]),
 );
 

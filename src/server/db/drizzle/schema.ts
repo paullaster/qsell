@@ -5107,3 +5107,238 @@ export const providerTransactions = pgTable(
 export type ProviderOperationRow = typeof providerOperations.$inferSelect;
 export type ProviderEventRow = typeof providerEvents.$inferSelect;
 export type ProviderTransactionRow = typeof providerTransactions.$inferSelect;
+
+// ─── Payments: Bill Manager invoices, one by one ──────────────────────────────────────────────
+
+export type BillInvoiceStatus = 'requested' | 'sent' | 'failed' | 'part_paid' | 'paid' | 'cancelled';
+
+/**
+ * An invoice sent to a customer through M-Pesa Bill Manager, followed to the end: asked for, sent (or refused), paid in part
+ * or in full by a payment Safaricom confirmed, acknowledged back to Bill Manager so the customer gets a receipt, or cancelled.
+ */
+export const billInvoices = pgTable(
+  'bill_invoices',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    providerId: uuid('provider_id')
+      .notNull()
+      .references(() => paymentProviderConfigs.id, { onDelete: 'restrict' }),
+    methodId: uuid('method_id')
+      .notNull()
+      .references(() => paymentMethods.id, { onDelete: 'restrict' }),
+    /** Our invoice number: how Bill Manager and we both name it. */
+    reference: text('reference').notNull(),
+    /** What the customer pays to (the account number on the paybill). */
+    accountReference: text('account_reference').notNull(),
+    customerId: uuid('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+    billedName: text('billed_name').notNull(),
+    /** Only the masked number is kept; the invoice was sent with the real one. */
+    phoneMasked: text('phone_masked').notNull(),
+    invoiceName: text('invoice_name').notNull(),
+    period: text('period').notNull(),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    dueDate: date('due_date', { mode: 'string' }).notNull(),
+    status: text('status').$type<BillInvoiceStatus>().notNull().default('requested'),
+    failureReason: text('failure_reason'),
+    paidAmount: numeric('paid_amount', { precision: 14, scale: 2 }).notNull().default('0'),
+    paidAt: timestamp('paid_at', { withTimezone: true }),
+    lastTransactionId: uuid('last_transaction_id'),
+    sendOperationId: uuid('send_operation_id').references(() => providerOperations.id, { onDelete: 'set null' }),
+    cancelOperationId: uuid('cancel_operation_id').references(() => providerOperations.id, { onDelete: 'set null' }),
+    acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }),
+    ackError: text('ack_error'),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('bill_invoices_ref_uidx').on(t.providerId, t.reference),
+    index('bill_invoices_account_idx').on(t.providerId, t.accountReference, t.status),
+    index('bill_invoices_status_idx').on(t.companyId, t.status, t.createdAt),
+    check('bill_invoices_amount_chk', sql`${t.amount} > 0`),
+  ],
+);
+
+export type BillInvoiceRow = typeof billInvoices.$inferSelect;
+
+/** Each confirmed payment settles an invoice once: this is the record that it did, and the guard against doing it again. */
+export const billInvoicePayments = pgTable(
+  'bill_invoice_payments',
+  {
+    transactionId: uuid('transaction_id')
+      .primaryKey()
+      .references(() => providerTransactions.id, { onDelete: 'restrict' }),
+    invoiceId: uuid('invoice_id')
+      .notNull()
+      .references(() => billInvoices.id, { onDelete: 'restrict' }),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('bill_invoice_payments_invoice_idx').on(t.invoiceId)],
+);
+
+// ─── Foreign currency: rates, and the revaluation of what is owed ───────────────────────────
+
+/**
+ * What one unit of a foreign currency is worth in the books' currency, from a date. A day's rate is set once and then
+ * stands for good: sales, receipts and settlements dated on or after it are valued by it.
+ */
+export const exchangeRates = pgTable(
+  'exchange_rates',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    currency: text('currency').notNull(),
+    effectiveOn: date('effective_on', { mode: 'string' }).notNull(),
+    /** Books' currency per one unit of `currency`. */
+    rate: numeric('rate', { precision: 24, scale: 8 }).notNull(),
+    source: text('source').notNull().default('manual'),
+    note: text('note'),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('exchange_rates_day_uidx').on(t.companyId, t.currency, t.effectiveOn),
+    check('exchange_rates_positive_chk', sql`${t.rate} > 0`),
+  ],
+);
+
+/** A month-end (or any day's) revaluation of foreign balances owed by or to customers. Posted, then undone the next day. */
+export const fxRevaluations = pgTable(
+  'fx_revaluations',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    asOf: date('as_of', { mode: 'string' }).notNull(),
+    /** The rates used, by currency. */
+    rates: jsonb('rates').$type<Record<string, string>>().notNull(),
+    /** Net gain (positive) or loss (negative) in the books' currency. */
+    net: numeric('net', { precision: 20, scale: 4 }).notNull(),
+    /** What was posted for each customer posting group, and the register that undid it. */
+    groups: jsonb('groups').$type<Record<string, { net: string; register: string; reversal: string | null }>>().notNull(),
+    reversedAt: timestamp('reversed_at', { withTimezone: true }),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('fx_revaluations_day_uidx').on(t.companyId, t.asOf)],
+);
+
+export type ExchangeRateRow = typeof exchangeRates.$inferSelect;
+export type FxRevaluationRow = typeof fxRevaluations.$inferSelect;
+
+// ─── Projects: work for a customer, or for the company itself ───────────────────────────────
+
+export type ProjectStatus = 'draft' | 'open' | 'on_hold' | 'completed' | 'closed' | 'cancelled';
+export type ProjectTaskStatus = 'open' | 'completed' | 'cancelled';
+
+/**
+ * A piece of work. Draft until someone opens it, then it can wait, be finished, be closed, or be
+ * cancelled. Closing and cancelling are the end: the history of how it got there is kept on
+ * `project_events`, which is never rewritten.
+ */
+export const projects = pgTable(
+  'projects',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    number: text('number').notNull(),
+    name: text('name').notNull(),
+    description: text('description'),
+    /** Null when the work is for the company itself, not for a customer. */
+    customerId: uuid('customer_id').references(() => customers.id, { onDelete: 'restrict' }),
+    status: text('status').$type<ProjectStatus>().notNull().default('draft'),
+    /** True when this work is meant to be sold. */
+    billable: boolean('billable').notNull().default(false),
+    currency: text('currency').notNull(),
+    budgetAmount: numeric('budget_amount', { precision: 19, scale: 4 }).notNull().default('0'),
+    startOn: date('start_on', { mode: 'string' }),
+    endOn: date('end_on', { mode: 'string' }),
+    version: integer('version').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    openedAt: timestamp('opened_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    idempotencyKey: text('idempotency_key'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('projects_company_number_uidx').on(t.companyId, t.number),
+    uniqueIndex('projects_idem_uidx').on(t.companyId, t.idempotencyKey).where(sql`${t.idempotencyKey} IS NOT NULL`),
+    index('projects_list_idx').on(t.companyId, t.createdAt, t.id),
+    index('projects_status_idx').on(t.companyId, t.status, t.createdAt),
+    index('projects_customer_idx').on(t.companyId, t.customerId, t.createdAt),
+    check('projects_name_chk', sql`char_length(btrim(${t.name})) BETWEEN 1 AND 120`),
+    check('projects_description_chk', sql`${t.description} IS NULL OR char_length(${t.description}) <= 2000`),
+    check('projects_currency_chk', sql`char_length(${t.currency}) = 3`),
+    check('projects_budget_chk', sql`${t.budgetAmount} >= 0`),
+    check('projects_dates_chk', sql`${t.endOn} IS NULL OR ${t.startOn} IS NULL OR ${t.endOn} >= ${t.startOn}`),
+    check('projects_version_chk', sql`${t.version} >= 1`),
+  ],
+);
+
+/** A step of a project. Its code is unique on that project. */
+export const projectTasks = pgTable(
+  'project_tasks',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    description: text('description'),
+    status: text('status').$type<ProjectTaskStatus>().notNull().default('open'),
+    budgetAmount: numeric('budget_amount', { precision: 19, scale: 4 }).notNull().default('0'),
+    sortOrder: integer('sort_order').notNull(),
+    version: integer('version').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('project_tasks_project_code_uidx').on(t.projectId, t.code),
+    index('project_tasks_order_idx').on(t.projectId, t.sortOrder, t.id),
+    check('project_tasks_code_chk', sql`${t.code} ~ '^[A-Z0-9][A-Z0-9-]{0,19}$'`),
+    check('project_tasks_name_chk', sql`char_length(btrim(${t.name})) BETWEEN 1 AND 120`),
+    check('project_tasks_description_chk', sql`${t.description} IS NULL OR char_length(${t.description}) <= 2000`),
+    check('project_tasks_budget_chk', sql`${t.budgetAmount} >= 0`),
+    check('project_tasks_version_chk', sql`${t.version} >= 1`),
+  ],
+);
+
+/** Every step of a project's life: who, what, from where. Append-only. */
+export const projectEvents = pgTable(
+  'project_events',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    event: text('event').notNull(),
+    fromStatus: text('from_status'),
+    toStatus: text('to_status'),
+    data: jsonb('data').$type<Record<string, unknown>>().notNull().default({}),
+    actorType: text('actor_type').notNull(),
+    actorId: text('actor_id'),
+    origin: jsonb('origin').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('project_events_project_idx').on(t.projectId, t.id)],
+);
+
+export type ProjectRow = typeof projects.$inferSelect;
+export type ProjectTaskRow = typeof projectTasks.$inferSelect;
+export type ProjectEventRow = typeof projectEvents.$inferSelect;

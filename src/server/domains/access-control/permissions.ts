@@ -10,6 +10,7 @@
 export const PERMISSION_CATEGORIES = [
   'General',
   'Orders & Sales',
+  'Projects',
   'Customers',
   'Products & Inventory',
   'Finance & Payments',
@@ -154,6 +155,55 @@ export const PERMISSIONS = {
     action: 'delete',
     category: 'Orders & Sales',
     description: 'Delete sales quotes',
+  },
+
+  'projects:read': {
+    resource: 'projects',
+    action: 'read',
+    category: 'Projects',
+    description: 'View projects and their tasks',
+  },
+  'projects:create': {
+    resource: 'projects',
+    action: 'create',
+    category: 'Projects',
+    description: 'Create projects',
+  },
+  'projects:update': {
+    resource: 'projects',
+    action: 'update',
+    category: 'Projects',
+    description: 'Edit a project and its tasks',
+  },
+  'projects:open': {
+    resource: 'projects',
+    action: 'open',
+    category: 'Projects',
+    description: 'Open a draft project, resume one on hold, or reopen a completed one',
+  },
+  'projects:hold': {
+    resource: 'projects',
+    action: 'hold',
+    category: 'Projects',
+    description: 'Put an open project on hold',
+  },
+  'projects:complete': {
+    resource: 'projects',
+    action: 'complete',
+    category: 'Projects',
+    description: 'Mark a project completed',
+  },
+  'projects:close': {
+    resource: 'projects',
+    action: 'close',
+    category: 'Projects',
+    description: 'Close a completed project so it can no longer change',
+  },
+  'projects:cancel': {
+    resource: 'projects',
+    action: 'cancel',
+    category: 'Projects',
+    description: 'Cancel a project',
   },
 
   'customers:read': {
@@ -594,56 +644,6 @@ export const PERMISSIONS = {
     category: 'Finance & Payments',
     description: 'Send an approved refund to the customer through M-Pesa',
   },
-  'payments:confirm_unverified': {
-    resource: 'payments',
-    action: 'confirm_unverified',
-    category: 'Finance & Payments',
-    description: 'Confirm or close a payment the platform could not confirm, with a reason',
-  },
-  'payment_providers:create': {
-    resource: 'payment_providers',
-    action: 'create',
-    category: 'Finance & Payments',
-    description: 'Add a payment provider (a connection to a payment service)',
-  },
-  'payment_providers:delete': {
-    resource: 'payment_providers',
-    action: 'delete',
-    category: 'Finance & Payments',
-    description: 'Delete a payment provider that nothing uses',
-  },
-  'payment_providers:edit': {
-    resource: 'payment_providers',
-    action: 'edit',
-    category: 'Finance & Payments',
-    description: 'Change a payment provider connection (URLs, environment, settings)',
-  },
-  'payment_providers:set_credentials': {
-    resource: 'payment_providers',
-    action: 'set_credentials',
-    category: 'Finance & Payments',
-    description: 'Enter or replace payment provider credentials',
-  },
-  'payment_providers:enable': {
-    resource: 'payment_providers',
-    action: 'enable',
-    category: 'Finance & Payments',
-    description: 'Switch a payment provider on or off',
-  },
-  'payment_providers:test': {
-    resource: 'payment_providers',
-    action: 'test',
-    category: 'Finance & Payments',
-    description: 'Run "Test connection" on a payment provider',
-  },
-  'receipts:read': {
-    resource: 'receipts',
-    action: 'read',
-    category: 'Finance & Payments',
-    description: 'View customer receipts',
-  },
-  'receipts:create': {
-    resource: 'receipts',
   'refunds:resolve_payout': {
     resource: 'refunds',
     action: 'resolve_payout',
@@ -770,6 +770,56 @@ export const PERMISSIONS = {
     category: 'Finance & Payments',
     description: 'Cancel a credit adjustment that has not taken effect',
   },
+  'payments:confirm_unverified': {
+    resource: 'payments',
+    action: 'confirm_unverified',
+    category: 'Finance & Payments',
+    description: 'Confirm or close a payment the platform could not confirm, with a reason',
+  },
+  'payment_providers:create': {
+    resource: 'payment_providers',
+    action: 'create',
+    category: 'Finance & Payments',
+    description: 'Add a payment provider (a connection to a payment service)',
+  },
+  'payment_providers:delete': {
+    resource: 'payment_providers',
+    action: 'delete',
+    category: 'Finance & Payments',
+    description: 'Delete a payment provider that nothing uses',
+  },
+  'payment_providers:edit': {
+    resource: 'payment_providers',
+    action: 'edit',
+    category: 'Finance & Payments',
+    description: 'Change a payment provider connection (URLs, environment, settings)',
+  },
+  'payment_providers:set_credentials': {
+    resource: 'payment_providers',
+    action: 'set_credentials',
+    category: 'Finance & Payments',
+    description: 'Enter or replace payment provider credentials',
+  },
+  'payment_providers:enable': {
+    resource: 'payment_providers',
+    action: 'enable',
+    category: 'Finance & Payments',
+    description: 'Switch a payment provider on or off',
+  },
+  'payment_providers:test': {
+    resource: 'payment_providers',
+    action: 'test',
+    category: 'Finance & Payments',
+    description: 'Run "Test connection" on a payment provider',
+  },
+  'receipts:read': {
+    resource: 'receipts',
+    action: 'read',
+    category: 'Finance & Payments',
+    description: 'View customer receipts',
+  },
+  'receipts:create': {
+    resource: 'receipts',
     action: 'create',
     category: 'Finance & Payments',
     description: 'Record a customer receipt as a draft',

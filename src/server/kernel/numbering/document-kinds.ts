@@ -170,6 +170,11 @@ export const DOCUMENT_KINDS = {
     fiscal: false,
     suggested: { code: 'CNT', prefix: 'CNT-{YY}-', digits: 8, reset: 'yearly', blockSize: 20 },
   },
+  project: {
+    label: 'Project',
+    fiscal: false,
+    suggested: { code: 'PRJ', prefix: 'PRJ-{YYYY}-', digits: 8, reset: 'yearly', blockSize: 20 },
+  },
 } as const satisfies Record<string, DocumentKindDef>;
 
 export type DocumentKind = keyof typeof DOCUMENT_KINDS;

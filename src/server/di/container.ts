@@ -63,6 +63,7 @@ import { DecisionLog } from '@/server/kernel/decision-log/service';
 import { ReasonCodes } from '@/server/kernel/reason-codes/service';
 import { NumberSeriesService } from '@/server/kernel/numbering/service';
 import { createFinanceServices, type FinanceServices } from '@/server/domains/finance';
+import { ProjectService } from '@/server/domains/projects/service';
 import { createPaymentEngine, type PaymentEngine } from '@/server/domains/payments/engine';
 import { FinanceC2bConsumer } from '@/server/domains/finance/receivables/c2b-consumer';
 import { CreditNoteService } from '@/server/domains/credit-notes/service';
@@ -124,6 +125,8 @@ export interface AppContainer {
   numbering: NumberSeriesService;
   /** Chart of accounts, fiscal periods, posting setup, the posting engine, journals, ledger reports. */
   finance: FinanceServices;
+  /** Work for a customer or for the company, with tasks and a budget. */
+  projects: ProjectService;
   /** The doors payment platforms knock on, and the checks that decide whether a payment is real. */
   paymentEngine: PaymentEngine;
   approvals: ApprovalEngine;
@@ -360,6 +363,7 @@ export function getContainer(): AppContainer {
     reasonCodes,
     numbering,
     finance,
+    projects: new ProjectService(drizzleDb, decisionLog, numbering),
     paymentEngine,
     approvals,
     approvalConfig: new ApprovalConfigService(drizzleDb, decisionLog, reasonCodes),
