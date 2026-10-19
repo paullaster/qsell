@@ -18,6 +18,8 @@ env:
   NODE_VERSION: 24
   REGISTRY: ghcr.io
   IMAGE_NAME: ghcr.io/${{ github.repository }}
+  # Must match the length of the e2e job's strategy.matrix.shard list.
+  E2E_SHARDS: 4
 
 jobs:
   validate:
@@ -75,9 +77,14 @@ jobs:
           DATABASE_URL: postgresql://qsell:ci-only-password@localhost:5432/qsell
 
   e2e:
-    name: End-to-end tests
+    name: End-to-end tests (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 30
+    strategy:
+      # Let every shard finish so one failure shows all the failing specs, not just the first.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     services:
       postgres:
         image: postgres:18-alpine
@@ -111,7 +118,9 @@ jobs:
           pnpm exec playwright install --with-deps chrome
       - name: Run end-to-end tests (desktop and phone width)
         # The run migrates, seeds and logs in on its own database and port; see e2e/README.md.
-        run: pnpm test:e2e
+        # Each shard has its own runner and Postgres service, so the fresh-database rule holds.
+        run: pnpm test:e2e --shard=${{ matrix.shard }}/${{ env.E2E_SHARDS }}
+        timeout-minutes: 25
         env:
           E2E_DATABASE_URL: postgresql://qsell:ci-only-password@localhost:5432/qsell_e2e
           AUTH_SECRET: ci-only-auth-secret-not-for-deployment
@@ -122,7 +131,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-results
+          name: e2e-results-${{ matrix.shard }}
           path: test-results
           retention-days: 7
 

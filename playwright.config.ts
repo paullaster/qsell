@@ -19,6 +19,8 @@ export default defineConfig({
   // One retry: the development server compiles routes on first use, which can stall a first attempt.
   retries: 1,
   timeout: 120_000,
+  // A stuck run must fail in minutes, not hold a runner for hours. CI only: a full local run is longer.
+  globalTimeout: process.env.CI === 'true' ? 22 * 60_000 : 0,
   expect: { timeout: 15_000 },
   reporter: [['list']],
   globalSetup: './e2e/support/global-setup.ts',
