@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bootstrap a clean Ubuntu 22.04/24.04/26.04 host for Compose deployment.
+# Bootstrap a clean Ubuntu 20.04/22.04/24.04/26.04 host for Compose deployment.
 # Run as root. Settings (all optional, pass as environment variables):
 #   APP_USER             deploy account to create            (default: deploy)
 #   APP_DIR              root directory for installations    (default: /opt/qsell)
@@ -27,9 +27,9 @@ if [[ "${ID:-}" != "ubuntu" ]]; then
   exit 1
 fi
 case "${VERSION_ID:-}" in
-  22.04|24.04|26.04) ;;
+  20.04|22.04|24.04|26.04) ;;
   *)
-    echo "Unsupported Ubuntu release: ${VERSION_ID:-unknown} (expected 22.04, 24.04, or 26.04)." >&2
+    echo "Unsupported Ubuntu release: ${VERSION_ID:-unknown} (expected 20.04, 22.04, 24.04, or 26.04)." >&2
     exit 1
     ;;
 esac

@@ -149,7 +149,7 @@ sudo APP_USER=$DEPLOY_USER APP_DIR=$APP_DIR \
 Installs Docker Engine + Compose/Buildx (log rotation, live-restore), creates the
 deploy account with a **locked password** (so `ssh-copy-id` cannot work — hence
 `SSH_PUBLIC_KEY`), creates `$APP_DIR/instances`, and opens UFW for 22/80/443.
-Supports Ubuntu 22.04, 24.04 and 26.04. Docker group membership is root-equivalent:
+Supports Ubuntu 20.04, 22.04, 24.04 and 26.04 (20.04 is past standard support; the Nginx script detects its older nginx 1.18 and writes `listen 443 ssl http2` instead of `http2 on`). Docker group membership is root-equivalent:
 restrict the account to trusted operators. Log in again so the group applies, and
 reboot if Ubuntu reports a pending kernel update.
 
