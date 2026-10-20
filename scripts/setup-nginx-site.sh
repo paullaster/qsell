@@ -91,7 +91,21 @@ if ((NO_CERT == 0)) && [[ ! -d "$live_dir" ]]; then
   [[ -n "$resolved" ]] || die "$PUBLIC_DOMAIN does not resolve yet. Create the DNS record first (Cloudflare: DNS-only until the cert is issued)."
   info "$PUBLIC_DOMAIN resolves to $resolved (confirm this host's public IP matches)."
   install -d /var/www/html
-  # Webroot challenge through the stock nginx site on port 80; no vhost needed yet.
+  # Answer the challenge from a vhost of our own. On a host that already serves other sites,
+  # an existing default_server would otherwise catch the request (and e.g. redirect it away).
+  cat > "$site" <<ACME
+# Temporary: replaced with the full vhost once the certificate exists.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $PUBLIC_DOMAIN;
+    location ^~ /.well-known/acme-challenge/ { root /var/www/html; }
+    location / { return 503; }
+}
+ACME
+  ln -sf "$site" "/etc/nginx/sites-enabled/$INSTANCE_ID"
+  nginx -t
+  systemctl reload nginx
   certbot certonly --webroot -w /var/www/html -d "$PUBLIC_DOMAIN" \
     --non-interactive --agree-tos -m "$CERT_EMAIL"
 fi
@@ -99,7 +113,6 @@ fi
 
 render_vhost > "$site"
 ln -sf "$site" "/etc/nginx/sites-enabled/$INSTANCE_ID"
-rm -f /etc/nginx/sites-enabled/default
 
 nginx -t
 systemctl reload nginx
