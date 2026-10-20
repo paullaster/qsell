@@ -23,7 +23,7 @@ export function useQuotePricePreview(
   const signature = JSON.stringify([
     input.customerId ?? null,
     input.paymentMethod,
-    input.lines.map((l, i) => [l.productId, l.quantity, modes[i]]),
+    input.lines.map((l, i) => [l.productId, l.quantity, modes[i], l.unitId ?? null]),
   ]);
 
   useEffect(() => {
@@ -36,7 +36,7 @@ export function useQuotePricePreview(
       void previewQuotePricesAction({
         customerId: input.customerId ?? null,
         paymentMethod: input.paymentMethod,
-        lines: want.map(({ l }) => ({ productId: l.productId, quantity: l.quantity })),
+        lines: want.map(({ l }) => ({ productId: l.productId, quantity: l.quantity, unitId: l.unitId ?? null })),
       }).then((r) => {
         // An answer for lines that have since changed would be wrong; drop it.
         if (!r.ok || latest.current !== signature) return;
@@ -62,6 +62,7 @@ export function useQuotePricePreview(
                 l.productId,
                 l.quantity,
                 l.priceMode ?? (l.unitPrice != null ? 'manual' : 'catalog'),
+                l.unitId ?? null,
               ]),
             ]) !== signature
           )

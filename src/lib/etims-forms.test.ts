@@ -24,14 +24,16 @@ describe('eTIMS forms', () => {
   it('builds what is sent, or says what is wrong', () => {
     expect(registerPayload(null, product, registerFormFor(product))).toEqual({ ok: true, payload: { branchId: null, productId: 'p1', qtyUnitCode: 'U', pkgUnitCode: 'CT', itemClassCode: '99000000', initialStock: 12 } });
     expect(registerPayload('b1', product, { ...registerFormFor(product), stock: '-1' })).toMatchObject({ ok: false });
-    expect(registerPayload('b1', product, { ...registerFormFor(product), stock: '1.5' })).toMatchObject({ ok: false });
+    expect(registerPayload('b1', product, { ...registerFormFor(product), stock: '1.5555' })).toMatchObject({ ok: false });
+    expect(registerPayload('b1', product, { ...registerFormFor(product), stock: '1.5' })).toMatchObject({ ok: true });
     expect(registerPayload('b1', product, { ...registerFormFor(product), qtyUnitCode: ' ' })).toMatchObject({ ok: false });
   });
   it('knows when a stock figure changed', () => {
     expect(stockChanged('5', 3)).toBe(true);
     expect(stockChanged('3', 3)).toBe(false);
     expect(stockChanged('', 3)).toBe(false);
-    expect(stockChanged('2.5', 3)).toBe(false);
+    expect(stockChanged('2.5', 3)).toBe(true);
+    expect(stockChanged('2.5555', 3)).toBe(false);
   });
   it('has a tone for every status', () => {
     expect(Object.keys(STATUS_TONE).sort()).toEqual(['deleted', 'failed', 'pending', 'registered', 'unconfirmed']);

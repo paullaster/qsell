@@ -71,8 +71,11 @@ export function quoteFormOf(quote: SalesQuote, newId: () => string): QuoteInput 
       .map((line) => ({
         productId: line.productId ?? '',
         sectionId: line.sectionId === null ? null : (sectionIds.get(line.sectionId) ?? null),
-        quantity: Number(line.quantity),
-        unitPrice: Number(line.unitPrice),
+        // As it was typed: in the unit it was entered in, at the price per that unit.
+        quantity: line.enteredQuantity ?? Number(line.quantity),
+        unitPrice: Number(line.enteredUnitPrice ?? line.unitPrice),
+        unitId: line.enteredQuantity === null ? null : line.unitId,
+        unitCode: line.enteredQuantity === null ? null : line.unitCode,
         priceMode: 'kept' as const,
         discountPercent: Number(line.discountPercent),
         fromTemplate: line.fromTemplate,
@@ -125,6 +128,9 @@ export function parseTotalsRequest(raw: unknown): TotalsRequest {
         (line.sectionId !== undefined &&
           line.sectionId !== null &&
           (typeof line.sectionId !== 'string' || line.sectionId.length > 100)) ||
+        (line.unitId !== undefined &&
+          line.unitId !== null &&
+          (typeof line.unitId !== 'string' || line.unitId.length > 100)) ||
         (line.unitPrice !== undefined &&
           line.unitPrice !== null &&
           (!finite(line.unitPrice) || line.unitPrice < 0 || line.unitPrice > 1_000_000_000))
@@ -137,6 +143,7 @@ export function parseTotalsRequest(raw: unknown): TotalsRequest {
         discountPercent: line.discountPercent,
         ...(typeof line.unitPrice === 'number' ? { unitPrice: line.unitPrice } : {}),
         ...(typeof line.sectionId === 'string' ? { sectionId: line.sectionId } : {}),
+        ...(typeof line.unitId === 'string' ? { unitId: line.unitId } : {}),
       };
     }),
   };

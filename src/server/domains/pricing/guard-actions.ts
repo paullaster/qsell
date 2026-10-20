@@ -1,5 +1,6 @@
 'use server';
 
+import { roundQty } from '@/lib/decimal';
 import { revalidatePath } from 'next/cache';
 import { inArray } from 'drizzle-orm';
 import { drizzleDb } from '@/server/db/drizzle/client';
@@ -230,8 +231,10 @@ export async function previewQuoteGuardAction(input: {
   quoteDiscountPercent?: number;
   lines: Array<{
     productId: string;
+    /** In the line's own unit (`unitId`; the base unit when left out). */
     quantity: number;
-    /** The typed or saved unit price; absent for a line priced from the lists. */
+    unitId?: string | null;
+    /** The typed or saved unit price, per the line's own unit; absent for a line priced from the lists. */
     unitPrice?: number | null;
     discountPercent?: number;
   }>;
@@ -251,7 +254,13 @@ export async function previewQuoteGuardAction(input: {
         ),
       );
     const byId = new Map(rows.map((p) => [p.id, p]));
-    const usable = input.lines.map((l) => (byId.has(l.productId) && l.quantity > 0 ? l : null));
+    // The checks work in each product's base unit.
+    const factors = await getContainer().unitWriter.lineFactors(input.lines, (id) => byId.get(id)?.baseUnitId);
+    const inBase = input.lines.map((l, i) => {
+      const f = factors[i] ?? 1;
+      return { ...l, quantity: roundQty(l.quantity * f), unitPrice: l.unitPrice == null ? l.unitPrice : Math.round((l.unitPrice / f) * 1e4) / 1e4 };
+    });
+    const usable = inBase.map((l) => (byId.has(l.productId) && l.quantity > 0 ? l : null));
     const branch = await branchRepo.getDefault(companyId);
     const listed = await pricing.priceLines(
       companyId,

@@ -40,12 +40,16 @@ export interface InvoiceLineItem {
     sku: string;
     name: string;
     quantity: number;
+    /** The unit `quantity` is in (kg, crate), when it has one. */
+    unit?: string | null;
     unitPrice: number;
     totalPrice: number;
   }>;
   sku: string;
   name: string;
   quantity: number;
+  /** The unit `quantity` is in (kg, crate), when it has one. */
+  unit?: string | null;
   unitPrice: number;
   totalPrice: number;
 }

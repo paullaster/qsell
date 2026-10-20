@@ -9,6 +9,10 @@ export interface TotalsLine {
   /** The section the line sits in, if any, so section totals can be given. */
   sectionId?: string | null;
   discountPercent: number;
+  /** The unit `quantity` and `unitPrice` are typed in (one of the product's own); the base unit when left out. */
+  unitId?: string | null;
+  /** What the line is worth before discounts when a price was typed per unit: that price times the typed quantity, exactly. */
+  exactAmount?: number;
 }
 
 /** What the totals need to know about a product. */
@@ -63,7 +67,7 @@ export function computeQuoteTotals(
     const product = products.get(line.productId);
     const unit = line.unitPrice ?? product?.price ?? 0;
     const discount = (1 - line.discountPercent / 100) * (1 - input.discountPercent / 100);
-    const gross = unit * line.quantity * discount;
+    const gross = (line.exactAmount ?? unit * line.quantity) * discount;
     const rate = product?.taxRate ?? 0;
     const inclusive = product?.isTaxInclusive !== false;
     const kit = kits.get(line.productId);

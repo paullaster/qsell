@@ -4,6 +4,8 @@ import {
   etimsItems,
   itemTypes,
   products,
+  productUnits,
+  unitsOfMeasure,
   taxCategories,
   type EtimsItemRow,
 } from '@/server/db/drizzle/schema';
@@ -364,9 +366,23 @@ export class EtimsItemService {
       .orderBy(sql`${etimsItems.createdAt} desc`);
     const active = rows.filter((r) => r.status !== 'deleted');
     const latest = rows[0];
+    // The first registration starts from the product's units of measure: the unit stock is counted in is the
+    // quantity unit, and the unit it is sold or bought in by default is the package unit.
+    const [baseUnit] = await this.db
+      .select({ etimsCode: unitsOfMeasure.etimsCode })
+      .from(products)
+      .innerJoin(unitsOfMeasure, eq(unitsOfMeasure.id, products.baseUnitId))
+      .where(eq(products.id, input.productId))
+      .limit(1);
+    const [packUnit] = await this.db
+      .select({ etimsCode: unitsOfMeasure.etimsCode })
+      .from(productUnits)
+      .innerJoin(unitsOfMeasure, eq(unitsOfMeasure.id, productUnits.unitId))
+      .where(and(eq(productUnits.productId, input.productId), eq(productUnits.isSalesDefault, true)))
+      .limit(1);
     const suggested = {
-      qtyUnitCode: latest?.qtyUnitCode ?? '',
-      pkgUnitCode: latest?.pkgUnitCode ?? '',
+      qtyUnitCode: latest?.qtyUnitCode ?? baseUnit?.etimsCode ?? '',
+      pkgUnitCode: latest?.pkgUnitCode ?? packUnit?.etimsCode ?? '',
       itemClassCode: latest?.itemClassCode ?? '',
     };
 

@@ -1,5 +1,6 @@
 'use server';
 
+import { roundQty } from '@/lib/decimal';
 import { revalidatePath } from 'next/cache';
 import { eq, inArray } from 'drizzle-orm';
 import { drizzleDb } from '@/server/db/drizzle/client';
@@ -733,7 +734,8 @@ export async function checkPriceAction(
 export async function previewQuotePricesAction(input: {
   customerId?: string | null;
   paymentMethod?: string | null;
-  lines: { productId: string; quantity: number }[];
+  /** `quantity` is in the line's own unit (`unitId`, one of the product's units; the base unit when left out). */
+  lines: { productId: string; quantity: number; unitId?: string | null }[];
 }): Promise<PricingResult<{ unitPrice: number | null; trace: PriceResult['trace'] }[]>> {
   return run('quotes:create', async ({ companyId }) => {
     const { pricing, branches: branchRepo } = getContainer();
@@ -751,7 +753,12 @@ export async function previewQuotePricesAction(input: {
       );
     const byId = new Map(rows.map((p) => [p.id, p]));
     const branch = await branchRepo.getDefault(companyId);
-    const lines = input.lines.filter((l) => byId.has(l.productId) && l.quantity > 0);
+    // Priced in each product's base unit; the answer is given back per the unit the line was typed in.
+    const factors = await getContainer().unitWriter.lineFactors(input.lines, (id) => byId.get(id)?.baseUnitId);
+    const factorOf = new Map(input.lines.map((l, i) => [l, factors[i] ?? 1]));
+    const lines = input.lines
+      .filter((l) => byId.has(l.productId) && l.quantity > 0)
+      .map((l) => ({ ...l, source: l, quantity: roundQty(l.quantity * (factorOf.get(l) ?? 1)) }));
     const results = await pricing.priceLines(
       companyId,
       {
@@ -816,11 +823,16 @@ export async function previewQuotePricesAction(input: {
           trace: { ...results[i]!.trace, discounts: b.trace },
         };
     // Answers line for line, in the order asked.
-    const answered = new Map(lines.map((l, i) => [l, results[i]!]));
+    const answered = new Map(
+      lines.flatMap((l, i) => {
+        const r = results[i];
+        return r === undefined ? [] : [[l.source, r] as const];
+      }),
+    );
     return input.lines.map((l) => {
       const r = answered.get(l);
       return r
-        ? { unitPrice: r.unitPrice, trace: r.trace }
+        ? { unitPrice: r.unitPrice === null ? null : Math.round(r.unitPrice * (factorOf.get(l) ?? 1) * 1e4) / 1e4, trace: r.trace }
         : {
             unitPrice: null,
             trace: { ...emptyTrace(l.productId), steps: ['This line cannot be priced.'] },

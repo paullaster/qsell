@@ -8,7 +8,8 @@ export const CATALOG_SHORTCUT_CREATED = 'qsell:catalog-shortcut-created';
 export type CatalogShortcutDetail =
   | { kind: 'category'; category: Category }
   | { kind: 'itemType'; itemType: ItemType }
-  | { kind: 'tax'; tax: TaxCategory };
+  | { kind: 'tax'; tax: TaxCategory }
+  | { kind: 'unit'; unit: { id: string; label: string; decimals: number } };
 
 export function publishCatalogShortcut(detail: CatalogShortcutDetail) {
   window.dispatchEvent(

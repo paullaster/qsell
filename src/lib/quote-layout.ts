@@ -186,7 +186,13 @@ export interface CatalogueEntry {
 }
 
 /** A line that can take more of the same item. */
-type Stackable = Placed & { productId: string; quantity: number; discountPercent: number };
+type Stackable = Placed & {
+  productId: string;
+  quantity: number;
+  discountPercent: number;
+  /** A line typed in another unit of the product is never added to: items are added in the base unit. */
+  unitId?: string | null;
+};
 
 /** Quantities are kept to three decimals, as the editors do, so repeated adds do not drift. */
 const addQuantities = (a: number, b: number) => Math.round((a + b) * 1000) / 1000;
@@ -208,6 +214,7 @@ export function addCatalogueEntry<L extends Stackable & { unitPrice?: number | n
   const hit = lines.findIndex(
     (l) =>
       l.productId === entry.productId &&
+      (l.unitId === undefined || l.unitId === null) &&
       slotOf(l) === entry.sectionId &&
       l.discountPercent === entry.discountPercent &&
       (entry.unitPrice === null

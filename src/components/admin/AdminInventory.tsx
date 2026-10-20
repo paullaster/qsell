@@ -1,5 +1,6 @@
 'use client';
 
+import { quantityStep } from '@/lib/unit-rules';
 import React, { use, useState } from 'react';
 import {
   Layers,
@@ -650,7 +651,8 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
                   <label className="mb-1 block font-semibold text-fg">Quantity Received *</label>
                   <input
                     type="number"
-                    min={1}
+                    min={quantityStep(selectedProduct.baseUnitDecimals)}
+                    step={quantityStep(selectedProduct.baseUnitDecimals)}
                     value={receiveQty}
                     onChange={(e) => setReceiveQty(Number(e.target.value))}
                     required
@@ -770,7 +772,8 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
                   </label>
                   <input
                     type="number"
-                    min={1}
+                    min={quantityStep(selectedProduct.baseUnitDecimals)}
+                    step={quantityStep(selectedProduct.baseUnitDecimals)}
                     max={selectedProduct.stockQuantity}
                     value={writeOffQty}
                     onChange={(e) => setWriteOffQty(Number(e.target.value))}
@@ -872,6 +875,7 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
                 <input
                   type="number"
                   min={0}
+                  step={quantityStep(selectedProduct.baseUnitDecimals)}
                   value={auditCountedQty}
                   onChange={(e) => setAuditCountedQty(Number(e.target.value))}
                   required

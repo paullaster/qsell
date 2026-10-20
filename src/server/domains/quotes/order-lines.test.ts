@@ -42,4 +42,26 @@ describe('turning quote lines into order lines', () => {
       ]),
     ).toHaveLength(2);
   });
+
+  describe('lines typed in a unit', () => {
+    const typed = (productId: string, base: number, entered: number, unitId: string | null, amount: number) => ({
+      ...line(productId, base, amount),
+      unitId,
+      unitCode: unitId === null ? null : 'CRATE',
+      enteredQuantity: unitId === null ? null : entered,
+      qtyPerUnit: unitId === null ? null : '20',
+      enteredUnitPrice: unitId === null ? null : '1500.0000',
+    });
+
+    it('keeps the unit when two lines of a product are in the same unit, adding what was typed', () => {
+      const out = mergeLinesForOrder([typed('fish', 60, 3, 'u1', 4500), typed('fish', 20, 1, 'u1', 1500)]);
+      expect(out).toHaveLength(1);
+      expect(out[0]).toMatchObject({ quantity: '80.000', lineAmount: '6000.00', unitId: 'u1', enteredQuantity: 4, enteredUnitPrice: null });
+    });
+
+    it('goes back to the base unit when the lines were typed in different units', () => {
+      const out = mergeLinesForOrder([typed('fish', 60, 3, 'u1', 4500), typed('fish', 5, 0, null, 500)]);
+      expect(out[0]).toMatchObject({ quantity: '65.000', unitId: null, unitCode: null, enteredQuantity: null, qtyPerUnit: null, enteredUnitPrice: null });
+    });
+  });
 });

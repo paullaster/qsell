@@ -1,3 +1,4 @@
+import { quantityProblem } from '@/lib/unit-rules';
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import type { NumberSeriesService } from '@/server/kernel/numbering/service';
 import type { MediaService } from '@/server/domains/media/service';
@@ -12,11 +13,13 @@ import {
   productImportRows,
   products,
   taxCategories,
+  unitsOfMeasure,
   type CategoryRow,
   type ItemTypeRow,
   type ProductImportJobRow,
   type ProductInsert,
   type TaxCategoryRow,
+  type UnitOfMeasureRow,
 } from '@/server/db/drizzle/schema';
 import { CsvParseError, parseCsv, toCsv, UTF8_BOM, type CsvRecord } from '@/lib/csv';
 import {
@@ -71,9 +74,12 @@ interface References {
   companyId: string;
   categoryByName: Map<string, CategoryRow>;
   itemTypeByRef: Map<string, ItemTypeRow>;
+  /** Active units by code. */
+  unitByCode: Map<string, UnitOfMeasureRow>;
   defaultItemType: ItemTypeRow | undefined;
   taxByRef: Map<string, TaxCategoryRow>;
   defaultTax: TaxCategoryRow | undefined;
+  defaultUnit: UnitOfMeasureRow | undefined;
 }
 
 const key = (value: string) => value.trim().toLowerCase();
@@ -290,6 +296,16 @@ export class ProductImportService {
       }
       if (draft.taxRef !== null && !refs.taxByRef.has(key(draft.taxRef))) {
         report(line, 'Tax_Category', `Tax category "${draft.taxRef}" does not exist.`);
+      }
+      // Stock is counted in the product's unit: 2.5 pieces cannot be on a shelf.
+      const unit = draft.unitRef === null ? refs.defaultUnit : refs.unitByCode.get(key(draft.unitRef));
+      if (unit === undefined) {
+        report(line, 'Unit', draft.unitRef === null ? 'There is no default unit of measure.' : `Unit "${draft.unitRef}" does not exist or is switched off.`);
+      } else {
+        for (const [column, value] of [['Stock_Qty', draft.stockQuantity], ['Low_Stock_Threshold', draft.lowStockThreshold]] as const) {
+          const problem = quantityProblem(value, unit.decimals, unit.name, column.replace('_', ' '));
+          if (problem !== null) report(line, column, problem);
+        }
       }
 
       const unique = (field: 'sku' | 'stockCode', column: string, value: string) => {
@@ -511,6 +527,9 @@ export class ProductImportService {
         : refs.itemTypeByRef.get(key(draft.itemTypeRef));
     if (!itemType)
       throw new RowRejected(`Item_Type: "${draft.itemTypeRef ?? 'default'}" no longer exists.`);
+    const unit = draft.unitRef === null ? refs.defaultUnit : refs.unitByCode.get(key(draft.unitRef));
+    if (!unit)
+      throw new RowRejected(`Unit: "${draft.unitRef ?? 'default'}" no longer exists or is switched off.`);
     if (itemType.isSellable && (draft.price === null || draft.price <= 0)) {
       throw new RowRejected(
         `Price: required above 0 for the sellable item type "${itemType.name}".`,
@@ -548,6 +567,7 @@ export class ProductImportService {
       brand: draft.brand,
       itemTypeId: itemType.id,
       isSellable: itemType.isSellable,
+      baseUnitId: unit.id,
       price: draft.price === null ? null : draft.price.toFixed(2),
       compareAtPrice: draft.compareAtPrice === null ? null : draft.compareAtPrice.toFixed(2),
       costPrice: draft.costPrice.toFixed(2),
@@ -691,10 +711,11 @@ export class ProductImportService {
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   private async loadReferences(): Promise<References> {
-    const [categoryRows, itemTypeRows, taxRows] = await Promise.all([
+    const [categoryRows, itemTypeRows, taxRows, unitRows] = await Promise.all([
       this.db.select().from(categories),
       this.db.select().from(itemTypes).orderBy(asc(itemTypes.code)),
       this.db.select().from(taxCategories).orderBy(asc(taxCategories.name)),
+      this.db.select().from(unitsOfMeasure).where(eq(unitsOfMeasure.isActive, true)),
     ]);
     const itemTypeByRef = new Map<string, ItemTypeRow>();
     for (const type of itemTypeRows) {
@@ -717,6 +738,8 @@ export class ProductImportService {
         itemTypeRows[0],
       taxByRef,
       defaultTax: taxRows.find((t) => t.isDefault) ?? taxRows[0],
+      unitByCode: new Map(unitRows.map((u) => [key(u.code), u])),
+      defaultUnit: unitRows.find((u) => u.isDefault),
     };
   }
 

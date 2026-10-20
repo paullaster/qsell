@@ -449,6 +449,34 @@
       "when": 1792347197541,
       "tag": "0063_foreign_points",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1792466736150,
+      "tag": "0064_units_of_measure",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1792469862879,
+      "tag": "0065_decimal_quantities",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1792470096737,
+      "tag": "0066_unit_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1792470276908,
+      "tag": "0067_document_line_units",
+      "breakpoints": true
     }
   ]
 }

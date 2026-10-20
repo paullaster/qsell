@@ -20,6 +20,8 @@ import { BulkAddDialog } from '../quote-layout/BulkAddDialog';
 import { QuantityInput } from '../quote-layout/QuantityInput';
 import { TemplateSwapDialog } from '../quote-layout/TemplateSwapDialog';
 import { LookupAutocomplete } from '@/components/ui/autocomplete/LookupAutocomplete';
+import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import type { Choice } from '@/lib/payment-options';
 import type { LookupOption } from '@/lib/lookup';
 import { methodLabel } from '@/lib/payment-method-labels';
 
@@ -144,6 +146,23 @@ export function QuoteEditor({
       'lines',
       input.lines.map((line, lineIndex) => (lineIndex === index ? { ...line, ...patch } : line)),
     );
+  /**
+   * Changing a line's unit (kg to crate) keeps the quantity typed and puts the line back on the price lists;
+   * until the lists answer, the catalogue price for one of the new unit is shown.
+   */
+  const changeUnit = (index: number, choice: Choice | null) => {
+    const line = input.lines[index];
+    const product = line === undefined ? undefined : productById.get(line.productId);
+    if (line === undefined || product === undefined || choice === null) return;
+    const toBase = choice.id === product.baseUnitId;
+    const perUnit = toBase ? 1 : Number(choice.meta?.qtyPerUnit ?? 1);
+    patchLine(index, {
+      unitId: toBase ? null : choice.id,
+      unitCode: toBase ? null : (choice.meta?.code ?? choice.label.split(' · ')[0] ?? null),
+      priceMode: 'catalog',
+      unitPrice: product.price == null ? undefined : Math.round(product.price * perUnit * 1e4) / 1e4,
+    });
+  };
   const { traces, problems } = useQuotePricePreview(input, setInput);
   const guards = useQuoteGuardPreview(input);
   const [swap, setSwap] = useState<{
@@ -436,6 +455,23 @@ export function QuoteEditor({
                       value={line.quantity}
                       onChange={(value) => patchLine(index, { quantity: Number(value) })}
                     />
+                    {entry.product === undefined || entry.product.baseUnitId === '' ? null : (
+                      <div className="mt-1">
+                        <ChoicePicker
+                          label={`Unit of ${entry.product.name}`}
+                          hideLabel
+                          source="product-units"
+                          filters={{ product: line.productId }}
+                          choice={{
+                            id: line.unitId ?? entry.product.baseUnitId,
+                            label: line.unitId == null ? entry.product.baseUnitCode : (line.unitCode ?? '…'),
+                          }}
+                          onChoice={(choice) => changeUnit(index, choice)}
+                          clearable={false}
+                          placeholder="Unit"
+                        />
+                      </div>
+                    )}
                   </td>
                   <td className="p-3">
                     <input

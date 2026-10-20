@@ -56,6 +56,18 @@ describe.skipIf(!has(process.env.TEST_DATABASE_URL))('stock at cost in the books
   };
 
   describe('what the database writes down', () => {
+    it('writes a fraction of a unit exactly, and rounds only the money to cents', async () => {
+      const id = await product(10, '33.33');
+      await move(id, 0.125, 'purchase_order_receipt');
+      await move(id, -2.5, 'damage_writeoff');
+      const rows = await events(id);
+      expect(rows.map((r) => [r.quantity, r.value])).toEqual([[0.125, '4.17'], [-2.5, '-83.33']]);
+      // A change of cost revalues the 7.625 in hand.
+      await k.db.update(k.schema.products).set({ costPrice: '34.00' }).where(eq(k.schema.products.id, id));
+      const revaluation = (await events(id)).find((r) => r.kind === 'revaluation');
+      expect(revaluation).toMatchObject({ quantity: 7.625, value: '5.11' });
+    });
+
     it('writes a movement once, at the cost the goods had, and ignores reservations, releases and nothing-moved', async () => {
       const id = await product(10, '300.00');
       await move(id, 4, 'purchase_order_receipt');

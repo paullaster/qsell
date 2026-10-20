@@ -23,6 +23,9 @@ export type CatalogueProduct = Pick<
   | 'stockQuantity'
   | 'reservedQuantity'
   | 'imageUrl'
+  | 'baseUnitId'
+  | 'baseUnitCode'
+  | 'baseUnitName'
 >;
 
 /** A sellable product with its searchable text worked out once, so each keystroke only filters. */
