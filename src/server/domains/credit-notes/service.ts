@@ -1,4 +1,5 @@
-import { quantityFits } from '@/lib/decimal';
+import { quantityFits, roundQty } from '@/lib/decimal';
+import { creditInBase, soldByProduct, type CreditAsk, type SoldItem, type SoldProduct, type SoldUnit } from '@/lib/credit-units';
 import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
@@ -11,6 +12,8 @@ import {
   invoiceDocuments,
   orderItems,
   orders,
+  products,
+  unitsOfMeasure,
   type CreditNoteLineRow,
   type CreditNoteRow,
 } from '@/server/db/drizzle/schema';
@@ -45,13 +48,7 @@ export class CreditNoteError extends Error {
 }
 
 /** A line of the original invoice as it was sold. */
-export interface SoldLine {
-  productId: string;
-  description: string;
-  quantity: number;
-  unitPrice: number;
-  amount: number;
-}
+export type SoldLine = SoldItem;
 
 export interface IssueCreditNoteInput {
   companyId: string;
@@ -67,7 +64,7 @@ export interface IssueCreditNoteInput {
     totalAmount: number;
     soldLines: SoldLine[];
   };
-  lines: { productId: string; quantity: number }[];
+  lines: CreditAsk[];
   reason: { code: CreditNoteReason; note?: string };
   issuedBy: string;
   /**
@@ -79,6 +76,7 @@ export interface IssueCreditNoteInput {
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+const plain = (n: string): string => n.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
 
 /**
  * The one place a credit note is created, whatever module the sale came from. It validates
@@ -165,6 +163,10 @@ export class CreditNoteService {
             quantity: l.quantity,
             unitPrice: l.unitPrice.toFixed(2),
             amount: l.amount.toFixed(2),
+            unitId: l.unit?.id ?? null,
+            unitCode: l.unit?.code ?? null,
+            qtyPerUnit: l.unit?.qtyPerUnit ?? null,
+            enteredQuantity: l.entered,
           })),
         )
         .returning();
@@ -228,6 +230,9 @@ export class CreditNoteService {
       creditedQuantity: number;
       remainingQuantity: number;
       remainingAmount: number;
+      unit: SoldUnit | null;
+      baseUnitName: string;
+      baseDecimals: number;
     }[];
   }> {
     const [order] = await this.db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
@@ -242,7 +247,7 @@ export class CreditNoteService {
         ),
       )
       .limit(1);
-    const items = await this.db.select().from(orderItems).where(eq(orderItems.orderId, order.id));
+    const sold = await this.soldLinesOf(order.id);
     const credited = await this.db
       .select({
         productId: creditNoteLines.productId,
@@ -258,22 +263,58 @@ export class CreditNoteService {
       invoiceTotal: Number(order.totalAmount),
       creditedTotal: round2(credited.reduce((s, c) => s + Number(c.amount), 0)),
       canRestock: await this.stockWasTaken(order.id),
-      lines: items.map((i) => {
+      lines: sold.map((i) => {
         const mine = credited.filter((c) => c.productId === i.productId);
-        const creditedQuantity = mine.reduce((s, c) => s + c.quantity, 0);
+        const creditedQuantity = roundQty(mine.reduce((s, c) => s + c.quantity, 0));
         return {
           productId: i.productId,
-          description: i.productName,
-          unitPrice: Number(i.unitPrice),
+          description: i.description,
+          unitPrice: i.unitPrice,
           soldQuantity: i.quantity,
           creditedQuantity,
-          remainingQuantity: i.quantity - creditedQuantity,
-          remainingAmount: round2(
-            Number(i.totalPrice) - mine.reduce((s, c) => s + Number(c.amount), 0),
-          ),
+          remainingQuantity: roundQty(i.quantity - creditedQuantity),
+          remainingAmount: round2(i.amount - mine.reduce((s, c) => s + Number(c.amount), 0)),
+          /** The unit it was sold in (credit can be given in it), or null when sold in the base unit. */
+          unit: i.unit ?? null,
+          baseUnitName: i.baseUnitName ?? '',
+          baseDecimals: i.baseDecimals ?? 3,
         };
       }),
     };
+  }
+
+  /** The order's lines per product, each with the unit it was sold in and what its base unit allows. */
+  private async soldLinesOf(orderId: string): Promise<SoldProduct[]> {
+    const rows = await this.db
+      .select({
+        item: orderItems,
+        baseUnitId: unitsOfMeasure.id,
+        baseUnitName: unitsOfMeasure.name,
+        baseDecimals: unitsOfMeasure.decimals,
+      })
+      .from(orderItems)
+      .leftJoin(products, eq(products.id, orderItems.productId))
+      .leftJoin(unitsOfMeasure, eq(unitsOfMeasure.id, products.baseUnitId))
+      .where(eq(orderItems.orderId, orderId));
+    return soldByProduct(
+      rows.map(({ item: i, baseUnitId, baseUnitName, baseDecimals }): SoldItem => {
+        const unit: SoldUnit | null =
+          has(i.unitId) && has(i.unitCode) && has(i.qtyPerUnit)
+            ? { id: i.unitId, code: i.unitCode, qtyPerUnit: plain(i.qtyPerUnit) }
+            : null;
+        return {
+          productId: i.productId,
+          description: i.productName,
+          quantity: i.quantity,
+          unitPrice: Number(i.unitPrice),
+          amount: Number(i.totalPrice),
+          unit,
+          baseUnitId: baseUnitId ?? undefined,
+          baseUnitName: baseUnitName ?? undefined,
+          baseDecimals: baseDecimals ?? undefined,
+        };
+      }),
+    );
   }
 
   /** True once the order's reservation was settled as a fulfilment, i.e. stock really left. */
@@ -299,7 +340,7 @@ export class CreditNoteService {
   async issueForOrder(
     input: {
       orderId: string;
-      lines: { productId: string; quantity: number }[];
+      lines: CreditAsk[];
       reason: { code: CreditNoteReason; note?: string };
       issuedBy: string;
       /** Put the credited units back into stock. */
@@ -335,7 +376,7 @@ export class CreditNoteService {
         'This order was never fulfilled, so no stock was taken for it. Cancel the order to release its reserved stock instead of restocking.',
       );
     }
-    const items = await this.db.select().from(orderItems).where(eq(orderItems.orderId, order.id));
+    const soldLines = await this.soldLinesOf(order.id);
 
     return await this.issue(
       {
@@ -347,13 +388,7 @@ export class CreditNoteService {
           documentKey: `order:${order.id}:tax_invoice`,
           currency: order.currency,
           totalAmount: Number(order.totalAmount),
-          soldLines: items.map((i) => ({
-            productId: i.productId,
-            description: i.productName,
-            quantity: i.quantity,
-            unitPrice: Number(i.unitPrice),
-            amount: Number(i.totalPrice),
-          })),
+          soldLines,
         },
         lines: input.lines,
         reason: input.reason,
@@ -433,7 +468,7 @@ export class CreditNoteService {
    */
   async previewForOrder(
     orderId: string,
-    lines: { productId: string; quantity: number }[],
+    lines: CreditAsk[],
   ): Promise<{
     companyId: string;
     branchId: string | null;
@@ -443,14 +478,17 @@ export class CreditNoteService {
   }> {
     const [order] = await this.db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
     if (!order) throw new CreditNoteError('NOT_FOUND', `Order ${orderId} not found.`);
-    const view = await this.creditableForOrder(orderId);
+    const [view, sold] = await Promise.all([this.creditableForOrder(orderId), this.soldLinesOf(orderId)]);
     let amount = 0;
     for (const l of lines) {
-      const sold = view.lines.find((x) => x.productId === l.productId);
-      if (!sold) continue;
-      const qty = Math.min(l.quantity, sold.remainingQuantity);
-      amount +=
-        qty === sold.remainingQuantity ? sold.remainingAmount : round2(sold.unitPrice * qty);
+      const line = view.lines.find((x) => x.productId === l.productId);
+      const product = sold.find((x) => x.productId === l.productId);
+      if (!line || !product) continue;
+      // An invalid ask is refused when the credit is issued; here it simply is not counted.
+      const given = creditInBase(product, l);
+      if (!given.ok) continue;
+      const qty = Math.min(given.value.base, line.remainingQuantity);
+      amount += qty === line.remainingQuantity ? line.remainingAmount : round2(line.unitPrice * qty);
     }
     amount = round2(amount);
     return {
@@ -501,34 +539,40 @@ export class CreditNoteService {
     input: IssueCreditNoteInput,
     previous: { productId: string; quantity: number; amount: string }[],
   ) {
+    const soldProducts = soldByProduct(input.original.soldLines);
     return input.lines.map((l) => {
-      const sold = input.original.soldLines.find((s) => s.productId === l.productId);
+      const sold = soldProducts.find((s) => s.productId === l.productId);
       if (!sold) {
         throw new CreditNoteError('INVALID_LINE', 'That product is not on the original invoice.');
       }
-      const priorQty = previous
-        .filter((p) => p.productId === l.productId)
-        .reduce((n, p) => n + p.quantity, 0);
+      const given = creditInBase(sold, l);
+      if (!given.ok) throw new CreditNoteError('INVALID_LINE', given.error);
+      const quantity = given.value.base;
+      const priorQty = roundQty(
+        previous.filter((p) => p.productId === l.productId).reduce((n, p) => n + p.quantity, 0),
+      );
       const priorAmount = previous
         .filter((p) => p.productId === l.productId)
         .reduce((n, p) => n + Number(p.amount), 0);
-      if (priorQty + l.quantity > sold.quantity) {
+      if (roundQty(priorQty + quantity) > sold.quantity) {
         throw new CreditNoteError(
           'OVER_CREDIT',
-          `${sold.description}: ${sold.quantity} sold, ${priorQty} already credited, cannot credit ${l.quantity} more.`,
+          `${sold.description}: ${sold.quantity} sold, ${priorQty} already credited, cannot credit ${quantity} more.`,
         );
       }
       // The final unit takes whatever is left, so rounding never leaves cents uncredited.
       const amount =
-        priorQty + l.quantity === sold.quantity
+        roundQty(priorQty + quantity) === sold.quantity
           ? round2(sold.amount - priorAmount)
-          : round2(sold.unitPrice * l.quantity);
+          : round2(sold.unitPrice * quantity);
       return {
         productId: l.productId,
         description: sold.description,
-        quantity: l.quantity,
+        quantity,
         unitPrice: sold.unitPrice,
         amount,
+        unit: given.value.unit,
+        entered: given.value.entered,
       };
     });
   }

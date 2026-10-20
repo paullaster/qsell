@@ -53,13 +53,18 @@ const quantity = (entry: Entry): number => {
 };
 
 /** The lines with something typed, as the server expects them. */
-export function confirmItems(lineIds: readonly string[], entries: Readonly<Record<string, Entry>>) {
+export function confirmItems(
+  lineIds: readonly string[],
+  entries: Readonly<Record<string, Entry>>,
+  /** The unit each line's count is typed in, when it was sold in one (the server checks it against the line). */
+  unitOf: Readonly<Record<string, string | null>> = {},
+) {
   return lineIds
     .filter((id) => Object.hasOwn(entries, id) && quantity(entries[id]) > 0)
     .map((id) => {
       const e = entries[id];
       const note = e.note.trim();
-      return { lineId: id, quantity: quantity(e), condition: e.condition.id as ConditionId, disposition: e.disposition.id as DispositionId, note: note === '' ? undefined : note };
+      return { lineId: id, quantity: quantity(e), ...(Object.hasOwn(unitOf, id) && unitOf[id] !== null ? { unitId: unitOf[id] } : {}), condition: e.condition.id as ConditionId, disposition: e.disposition.id as DispositionId, note: note === '' ? undefined : note };
     });
 }
 

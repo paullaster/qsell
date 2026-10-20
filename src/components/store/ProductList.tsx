@@ -7,6 +7,7 @@ import { Package } from 'lucide-react';
 import { productGridClassName } from '@/config/company-ui';
 import { useCompanyUiConfig } from '@/components/company/CompanyUiConfigProvider';
 import { productDescriptionPlainText } from '@/lib/productDescription';
+import { availableOf } from '@/lib/cart-quantity';
 
 interface ProductListProps {
   productsPromise: Promise<PublicProduct[]>;
@@ -72,7 +73,7 @@ export function ProductList({
           p.sku.toLowerCase().includes(searchQuery.toLowerCase()) ||
           p.tags.some((t) => t.toLowerCase().includes(searchQuery.toLowerCase()));
 
-        const available = p.stockQuantity - p.reservedQuantity;
+        const available = availableOf(p);
         let matchesStock = true;
         if (stockFilter === 'in_stock') matchesStock = available > 0;
         if (stockFilter === 'low_stock')

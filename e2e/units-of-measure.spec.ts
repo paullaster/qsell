@@ -248,5 +248,119 @@ test.describe('fish sold by the kilogram', () => {
     );
     await expect(again.getByRole('spinbutton', { name: `Quantity of ${fish}` })).toHaveValue('2');
     await expect(again.getByLabel(`Unit price of ${fish}`)).toHaveValue('6000');
+    await again.getByRole('button', { name: 'Cancel' }).click();
+    await expect(again).toBeHidden({ timeout: 30_000 });
+
+    // The product stops being sold in crates. The saved quote opens in kilograms at the same total, and says so.
+    await open(page, '/admin/products', /Products|Catalog/);
+    await page.getByText(fish, { exact: true }).first().click();
+    dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: 'Stock' }).click();
+    await dialog.getByRole('button', { name: 'Remove alternate unit 1' }).click();
+    await dialog.getByRole('button', { name: 'Save Changes' }).click();
+    await expect(dialog).toBeHidden({ timeout: 30_000 });
+
+    const repaired = await openQuoteOf(page, `Crate buyer ${tag}`);
+    const notice = repaired.getByRole('status', { name: 'Changes made when this quote was opened' });
+    await expect(notice).toContainText(`no longer sold in ${crate}`, { timeout: 30_000 });
+    await expect(notice).toContainText('40 KG at 300 each');
+    await expect(repaired.getByRole('spinbutton', { name: `Quantity of ${fish}` })).toHaveValue('40');
+    await expect(repaired.getByLabel(`Unit price of ${fish}`)).toHaveValue('300');
+    await saveQuote(page, repaired, `Crate buyer ${tag}`);
+  });
+});
+
+test.describe('credit notes in the unit the goods were sold in', () => {
+  test('3 crates were sold: a crate and a half is credited in crates, over-crediting is refused in words', async ({
+    page,
+  }, testInfo) => {
+    const order = testInfo.project.name === 'phone' ? 'E2E-CR-PHONE' : 'E2E-CR-DESKTOP';
+    await open(page, '/admin/orders', /Customer Orders/);
+    await page.getByPlaceholder(/Search Order #/).fill(order);
+    const row = page.getByRole('row').filter({ hasText: order });
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    await clickUntilVisible(
+      row.getByRole('button', { name: 'Manage & Fulfill' }),
+      page.getByRole('heading', { name: new RegExp(`Order Details: ${order}`) }),
+    );
+    const panel = page.getByRole('region', { name: 'Credit notes' });
+    await clickUntilVisible(
+      panel.getByRole('button', { name: 'Issue credit note' }),
+      panel.getByRole('form', { name: 'Issue credit note' }),
+    );
+    const form = panel.getByRole('form', { name: 'Issue credit note' });
+    // What was sold is shown in crates, with the price for one crate.
+    await expect(form).toContainText('3 E2ECRATE sold');
+    await expect(form).toContainText('3 E2ECRATE left');
+    await expect(form).toContainText('6,000.00 per E2ECRATE');
+    const credit = form.getByLabel('Credit (E2ECRATE)');
+    await expect(credit).toHaveAttribute('step', '0.001');
+
+    // More than is left: said in words, and nothing can be sent.
+    await credit.fill('3.5');
+    await expect(form.getByRole('alert')).toContainText('Only 3 E2ECRATE left to credit.');
+    await expect(form.getByRole('button', { name: 'Issue credit note' })).toBeDisabled();
+
+    // A crate and a half is 30 kg of the 60 kg: 9,000.
+    await credit.fill('1.5');
+    await expect(form.getByRole('alert')).toHaveCount(0);
+    await expect(form).toContainText('Credit total: KES 9,000.00');
+    await form.getByRole('button', { name: 'Issue credit note' }).click();
+    await expect(panel.getByText(/Credit note .* issued/)).toBeVisible({ timeout: 30_000 });
+    await expect(panel.getByText(/KES 9,000\.00/).first()).toBeVisible();
+
+    // Half of it is left, and it is offered in crates.
+    await clickUntilVisible(
+      panel.getByRole('button', { name: 'Issue credit note' }),
+      panel.getByRole('form', { name: 'Issue credit note' }),
+    );
+    await expect(panel.getByRole('form', { name: 'Issue credit note' })).toContainText(
+      '1.5 E2ECRATE left',
+    );
+  });
+});
+
+test.describe('the shop sells fish by the kilogram', () => {
+  test('half a kilo goes in the cart, a quantity can be typed, and more than is in stock is cut back in words', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    const search = page.getByRole('textbox', { name: 'Search products, brands, or SKU' });
+    await expect(search).toBeVisible({ timeout: 30_000 });
+    await search.fill('Fish kg Shop');
+    // Priced per kilogram, with what is in stock in kilograms.
+    await expect(page.getByText('/ KG').first()).toBeVisible({ timeout: 30_000 });
+    await expect(async () => {
+      await page.getByRole('button', { name: 'Add Fish kg Shop to cart' }).click();
+      await page.getByRole('button', { name: 'Shopping Cart' }).click();
+      await expect(page.getByRole('heading', { name: 'Your Cart' })).toBeVisible({ timeout: 3000 });
+    }).toPass({ timeout: 60_000 });
+    const cart = page;
+    const quantity = cart.getByRole('textbox', { name: 'quantity of Fish kg Shop' });
+    await expect(quantity).toHaveValue('1');
+    await expect(cart.getByText(/@ .*300/)).toBeVisible();
+
+    // The buttons move by half a kilo.
+    await cart.getByRole('button', { name: 'Less quantity of Fish kg Shop' }).click();
+    await expect(quantity).toHaveValue('0.5');
+    await expect(cart.getByText(/150/).first()).toBeVisible();
+    await cart.getByRole('button', { name: 'More quantity of Fish kg Shop' }).click();
+    await cart.getByRole('button', { name: 'More quantity of Fish kg Shop' }).click();
+    await expect(quantity).toHaveValue('1.5');
+
+    // A quantity is typed exactly, within three decimals.
+    await quantity.fill('0.25');
+    await quantity.press('Enter');
+    await expect(quantity).toHaveValue('0.25');
+    await expect(cart.getByText(/75/).first()).toBeVisible();
+
+    // More than is in stock is cut back, and the person is told why.
+    await quantity.fill('99');
+    await quantity.press('Enter');
+    await expect(quantity).toHaveValue('25.5');
+    await expect(cart.getByText('Only 25.5 KG available.')).toBeVisible();
+    await expect(cart.getByRole('button', { name: 'More quantity of Fish kg Shop' })).toBeDisabled();
+    await noHorizontalScroll(page);
+    await noInnerHorizontalScroll(page);
   });
 });

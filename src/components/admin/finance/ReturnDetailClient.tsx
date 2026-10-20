@@ -5,6 +5,7 @@ import { use, useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { closeReturnAction, confirmReturnAction, type returnDetailAction } from '@/server/domains/returns/actions';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { roundQty } from '@/lib/decimal';
 import { RETURN_STATUS, blankEntries, blankEntry, conditionLabel, confirmItems, confirmedMessage, dispositionLabel, nothingTyped, type Entry } from '@/lib/return-form';
 import { statusInfo } from '@/lib/finance-statuses';
 import { needsComment } from '@/lib/receipt-detail';
@@ -26,6 +27,8 @@ function ReturnDetailView({ view }: { view: View }) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
   const lineIds = view.lines.map((l) => l.id);
+  // A line sold in a crate is counted in crates; the server turns that into kilograms with the line's own conversion.
+  const unitOf = Object.fromEntries(view.lines.map((l) => [l.id, l.unit?.id ?? null]));
   const [entries, setEntries] = useState<Record<string, Entry>>(() => blankEntries(lineIds, view.suggested));
   const [closing, setClosing] = useState(false);
   const [reason, setReason] = useState<Choice | null>(null);
@@ -36,7 +39,7 @@ function ReturnDetailView({ view }: { view: View }) {
     e.preventDefault();
     setBusy(true);
     setNotice(null);
-    const res = await attempt(confirmReturnAction(view.id, confirmItems(lineIds, entries)));
+    const res = await attempt(confirmReturnAction(view.id, confirmItems(lineIds, entries, unitOf)));
     setBusy(false);
     if (!res.ok) {
       setNotice({ kind: 'error', text: res.error });
@@ -72,18 +75,19 @@ function ReturnDetailView({ view }: { view: View }) {
 
       <form onSubmit={confirm} className="space-y-3" aria-label="Confirm goods that arrived">
         {view.lines.map((l) => {
-          const left = l.expected - l.received;
+          const left = roundQty(l.expected - l.received);
+          const leftInUnit = roundQty(left / l.perUnit);
           const en = Object.hasOwn(entries, l.id) ? entries[l.id] : blankEntry(view.suggested);
           return (
             <div key={l.id} className={`${cardClass} space-y-3`}>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-sm font-bold text-fg-strong">{l.description}</p>
-                <p className="text-xs text-fg-muted">{l.received} of {l.expected} received{has(l.unitCost) ? ` · cost ${Number(l.unitCost).toFixed(2)} each` : ''}</p>
+                <p className="text-xs text-fg-muted">{l.receivedWords} of {l.expectedWords} received{has(l.unitCost) ? ` · cost ${Number(l.unitCost).toFixed(2)} each` : ''}</p>
               </div>
               {open && view.can.confirm && left > 0 ? (
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
-                  <Field id={`${uid}-q-${l.id}`} label={`How many arrived (up to ${left})`}>
-                    <input id={`${uid}-q-${l.id}`} value={en.qty} onChange={(e) => set(l.id, { qty: e.target.value })} className={fieldClass} inputMode="numeric" placeholder="0" autoComplete="off" />
+                  <Field id={`${uid}-q-${l.id}`} label={l.unit === null ? `How many arrived (up to ${String(left)})` : `How many ${l.unit.code} arrived (up to ${String(leftInUnit)})`}>
+                    <input id={`${uid}-q-${l.id}`} value={en.qty} onChange={(e) => set(l.id, { qty: e.target.value })} className={fieldClass} inputMode="decimal" placeholder="0" autoComplete="off" />
                   </Field>
                   <ChoicePicker label="Condition" source="return-conditions" choice={en.condition} onChoice={(c) => set(l.id, { condition: c ?? en.condition })} clearable={false} required />
                   <ChoicePicker label="What was done with it" source="return-dispositions" choice={en.disposition} onChoice={(c) => set(l.id, { disposition: c ?? en.disposition })} clearable={false} required />
@@ -131,7 +135,7 @@ function ReturnDetailView({ view }: { view: View }) {
                   <tr key={c.id} className="border-t border-line">
                     <td className="py-1.5 pr-3 whitespace-nowrap">{new Date(c.at).toLocaleString()}</td>
                     <td className="pr-3">{c.line}</td>
-                    <td className="pr-3 text-right tabular-nums">{c.quantity}</td>
+                    <td className="pr-3 text-right tabular-nums">{c.words}</td>
                     <td className="pr-3">{conditionLabel(c.condition)}</td>
                     <td>{dispositionLabel(c.disposition)} {c.stockAdded ? <Chip tone="green">Stock +{c.quantity}</Chip> : null}</td>
                   </tr>

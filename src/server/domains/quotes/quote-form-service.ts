@@ -2,6 +2,7 @@ import { required } from '@/lib/values';
 import { randomUUID } from 'node:crypto';
 import { getContainer } from '@/server/di/container';
 import { CatalogService } from '@/server/domains/catalog/service';
+import { repairsFor } from './unit-repair';
 import { blankQuoteForm, parseTotalsRequest, quoteFormOf } from './quote-forms';
 import { SalesQuoteService, type QuoteInput, type QuoteTemplateInput } from './service';
 import { parseQuoteForm, TemplateSwapService } from './template-swap-service';
@@ -22,13 +23,47 @@ export class QuoteFormService {
     return (await new TemplateSwapService().defaultDraft()) ?? blankQuoteForm(new Date());
   }
 
-  /** The form for editing a saved quote, with what the editor shows beside it. */
-  async formFor(id: string): Promise<{ form: QuoteInput; quoteNumber: string }> {
+  /**
+   * The form for editing a saved quote, with what the editor shows beside it. A line in a unit its product no longer
+   * has is shown in the base unit at the same total, and a unit whose size has changed is pointed out: both as
+   * notices, in words, so nothing about the quote changes unseen.
+   */
+  async formFor(id: string): Promise<{
+    form: QuoteInput;
+    quoteNumber: string;
+    notices: { line: number; message: string }[];
+  }> {
     const quote = await new SalesQuoteService().get(id);
     if (quote === null) throw new Error('Quote not found.');
     if (!EDITABLE.includes(quote.status))
       throw new Error('Only draft or approved quotes can be edited.');
-    return { form: quoteFormOf(quote, randomUUID), quoteNumber: quote.quoteNumber };
+    const form = quoteFormOf(quote, randomUUID);
+    const repairs = await repairsFor(
+      quote.lines
+        .filter((line) => !line.isGift)
+        .map((line) => ({
+          productId: line.productId,
+          unitId: line.unitId ?? null,
+          unitCode: line.unitCode ?? null,
+          enteredQuantity: line.enteredQuantity ?? null,
+          qtyPerUnit: line.qtyPerUnit ?? null,
+          quantity: Number(line.quantity),
+          unitPrice: Number(line.unitPrice),
+        })),
+    );
+    return {
+      form: {
+        ...form,
+        lines: form.lines.map((line, i) => {
+          const to = repairs[i]?.to;
+          return to === undefined
+            ? line
+            : { ...line, quantity: to.quantity, unitPrice: to.unitPrice, unitId: null, unitCode: null };
+        }),
+      },
+      quoteNumber: quote.quoteNumber,
+      notices: repairs.flatMap((r, line) => (r === null ? [] : [{ line, message: r.message }])),
+    };
   }
 
   /**

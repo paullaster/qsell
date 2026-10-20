@@ -45,7 +45,9 @@ export async function startNewQuoteAction(): Promise<QuoteActionResult<QuoteInpu
 /** The form for editing a saved quote. */
 export async function getQuoteFormAction(
   id: string,
-): Promise<QuoteActionResult<{ form: QuoteInput; quoteNumber: string }>> {
+): Promise<
+  QuoteActionResult<{ form: QuoteInput; quoteNumber: string; notices: { line: number; message: string }[] }>
+> {
   return runQuoteAction(async () => {
     await requirePermission('quotes:update');
     if (typeof id !== 'string') throw new Error('Invalid quote.');

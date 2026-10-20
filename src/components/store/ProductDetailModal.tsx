@@ -17,6 +17,8 @@ import {
 import { type PublicProduct } from '@/types/index';
 import { AppImage } from '@/components/ui/AppImage';
 import { ProductDescriptionView } from '@/components/ui/ProductDescriptionView';
+import { QuantityStepper } from '@/components/store/QuantityStepper';
+import { availableOf, cartQuantityWords, decimalsOf, perUnitSuffix } from '@/lib/cart-quantity';
 
 interface ProductDetailModalProps {
   product: PublicProduct | null;
@@ -34,7 +36,8 @@ export function ProductDetailModal({
   if (!product) return null;
 
   const [quantity, setQuantity] = useState<number>(1);
-  const availableStock = product.stockQuantity - product.reservedQuantity;
+  const decimals = decimalsOf(product);
+  const availableStock = availableOf(product);
   const isOutOfStock = availableStock <= 0;
 
   return (
@@ -95,6 +98,9 @@ export function ProductDetailModal({
                 </span>
                 <span className="font-mono text-2xl font-bold text-fg-strong">
                   KES {(product.price ?? 0).toLocaleString()}
+                  {perUnitSuffix(product) === '' ? null : (
+                    <span className="text-sm font-normal text-fg-muted">{perUnitSuffix(product)}</span>
+                  )}
                 </span>
               </div>
               {product.compareAtPrice &&
@@ -122,7 +128,7 @@ export function ProductDetailModal({
               ) : (
                 <span className="flex items-center gap-1.5 font-semibold text-emerald-600">
                   <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                  In Stock ({availableStock} units)
+                  In Stock ({cartQuantityWords(availableStock, product)}{decimals > 0 ? '' : ' units'})
                 </span>
               )}
             </div>
@@ -138,25 +144,14 @@ export function ProductDetailModal({
           <div className="space-y-3 border-t border-line pt-3">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-fg-muted">Quantity:</span>
-              <div className="flex items-center rounded-lg border border-line bg-surface p-1">
-                <button
-                  onClick={() => setQuantity(Math.max(1, quantity - 1))}
-                  disabled={quantity <= 1 || isOutOfStock}
-                  className="flex h-7 w-7 cursor-pointer items-center justify-center rounded text-xs font-bold text-fg hover:bg-hover disabled:opacity-40"
-                >
-                  -
-                </button>
-                <span className="w-8 text-center font-mono text-xs font-semibold text-fg-strong">
-                  {quantity}
-                </span>
-                <button
-                  onClick={() => setQuantity(Math.min(availableStock, quantity + 1))}
-                  disabled={quantity >= availableStock || isOutOfStock}
-                  className="flex h-7 w-7 cursor-pointer items-center justify-center rounded text-xs font-bold text-fg hover:bg-hover disabled:opacity-40"
-                >
-                  +
-                </button>
-              </div>
+              <QuantityStepper
+                label={`quantity of ${product.name}`}
+                value={quantity}
+                decimals={decimals}
+                unitCode={product.baseUnitCode}
+                available={availableStock}
+                onChange={setQuantity}
+              />
             </div>
 
             <div className="grid grid-cols-2 gap-2">

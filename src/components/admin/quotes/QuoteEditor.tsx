@@ -56,12 +56,15 @@ export function QuoteEditor({
   products,
   initial,
   quoteNumber,
+  notices = [],
   onClose,
   onSave,
 }: {
   products: CatalogueProduct[];
   initial: QuoteInput;
   quoteNumber?: string;
+  /** Things changed or worth knowing when the saved quote was opened (a unit its product no longer has). */
+  notices?: { line: number; message: string }[];
   onClose: () => void;
   onSave: (input: QuoteInput) => Promise<void>;
 }) {
@@ -260,6 +263,22 @@ export function QuoteEditor({
           >
             {error}
           </p>
+        )}
+        {notices.length > 0 && (
+          <div
+            role="status"
+            aria-label="Changes made when this quote was opened"
+            className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+          >
+            <p className="font-semibold">Check these lines before you save</p>
+            <ul className="list-disc space-y-1 pl-5">
+              {notices.map((n) => (
+                <li key={`${String(n.line)}-${n.message}`}>
+                  Line {n.line + 1}: {n.message}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
         <LookupAutocomplete
           source="quote-templates"

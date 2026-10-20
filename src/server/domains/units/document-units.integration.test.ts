@@ -331,7 +331,7 @@ describe.skipIf(url === '')('decimal stock and document line units (database)', 
     it('counts as use of the unit, so it cannot be deleted while a quote uses it', async () => {
       const usage = (await c.units.usageOf([crate]))[crate];
       expect(usage?.documentLines).toBeGreaterThan(0);
-      await expect(c.unitWriter.remove(crate)).rejects.toThrow(/quote and order lines?/);
+      await expect(c.unitWriter.remove(crate)).rejects.toThrow(/document lines?/);
     });
 
     it('carries the unit to the order made from it, and shows it on the invoice', async () => {
@@ -393,6 +393,98 @@ describe.skipIf(url === '')('decimal stock and document line units (database)', 
           enteredUnitPrice: item.enteredUnitPrice,
         }),
       ).toBe('3 CRATE');
+    });
+  });
+
+  describe('a saved quote whose product no longer has the unit', () => {
+    const quoteOf = (lines: Record<string, unknown>[]) =>
+      ({
+        customerName: 'Buyer',
+        currency: 'KES',
+        paymentMethod: 'mpesa_daraja',
+        discountPercent: 0,
+        shippingFee: 0,
+        sections: [],
+        deliveryAddress: { street: '1', city: 'N', countyOrState: 'N', country: 'KE' },
+        lines,
+      }) as never;
+    const withCrate = async (qtyPerBase = '20') => {
+      const made = await Catalog.createProduct(
+        product({
+          name: `Drop ${randomUUID().slice(0, 4)} ${tag}`,
+          baseUnitId: kg,
+          stockQuantity: 500,
+          packagings: [{ unitId: crate, qtyPerBase, weightKg: '', isSalesDefault: false, isPurchaseDefault: false }],
+        }),
+      );
+      return made.id;
+    };
+    const crateOf = (productId: string) => ({
+      productId,
+      quantity: 3,
+      unitId: crate,
+      unitPrice: 1500,
+      priceMode: 'manual',
+      discountPercent: 0,
+    });
+
+    it('opens in the base unit at the same total, says so, and saves', async () => {
+      const { SalesQuoteService } = await import('@/server/domains/quotes/service');
+      const { QuoteFormService } = await import('@/server/domains/quotes/quote-form-service');
+      const productId = await withCrate();
+      const quotes = new SalesQuoteService();
+      const quote = await quotes.create(userId, quoteOf([crateOf(productId)]));
+      expect(Number(quote.totalAmount)).toBe(4500);
+      await Catalog.updateProduct(productId, { packagings: [] });
+      const opened = await new QuoteFormService().formFor(quote.id);
+      expect(opened.notices).toHaveLength(1);
+      expect(opened.notices[0]?.message).toMatch(/no longer sold in .*CR/);
+      expect(opened.notices[0]?.message).toContain('60 KG at 75 each');
+      expect(opened.form.lines[0]).toMatchObject({ quantity: 60, unitPrice: 75, unitId: null, unitCode: null });
+      const saved = await quotes.update(userId, quote.id, opened.form);
+      expect(Number(saved.totalAmount)).toBe(4500);
+      expect(Number(saved.lines[0]?.quantity)).toBe(60);
+      expect(saved.lines[0]?.enteredQuantity ?? null).toBeNull();
+    });
+
+    it('is revised into a new quote in the base unit, with the same total', async () => {
+      const { SalesQuoteService } = await import('@/server/domains/quotes/service');
+      const productId = await withCrate();
+      const quotes = new SalesQuoteService();
+      const quote = await quotes.create(userId, quoteOf([crateOf(productId)]));
+      await Catalog.updateProduct(productId, { packagings: [] });
+      const revised = await quotes.revise(userId, quote.id);
+      expect(Number(revised.totalAmount)).toBe(4500);
+      expect(Number(revised.lines[0]?.quantity)).toBe(60);
+    });
+
+    it('points out a unit whose size changed, and works the line out with the new size when saved', async () => {
+      const { SalesQuoteService } = await import('@/server/domains/quotes/service');
+      const { QuoteFormService } = await import('@/server/domains/quotes/quote-form-service');
+      const productId = await withCrate('20');
+      const quotes = new SalesQuoteService();
+      const quote = await quotes.create(userId, quoteOf([crateOf(productId)]));
+      await Catalog.updateProduct(productId, {
+        packagings: [{ unitId: crate, qtyPerBase: '24', weightKg: '', isSalesDefault: false, isPurchaseDefault: false }],
+      });
+      const opened = await new QuoteFormService().formFor(quote.id);
+      expect(opened.notices).toHaveLength(1);
+      expect(opened.notices[0]?.message).toMatch(/now holds 24 KG \(it held 20/);
+      // The line itself is untouched: still 3 crates at 1500.
+      expect(opened.form.lines[0]).toMatchObject({ quantity: 3, unitId: crate, unitPrice: 1500 });
+      const saved = await quotes.update(userId, quote.id, opened.form);
+      expect(Number(saved.lines[0]?.quantity)).toBe(72);
+      expect(Number(saved.totalAmount)).toBe(4500);
+    });
+
+    it('has nothing to say about a quote whose units are as they were', async () => {
+      const { SalesQuoteService } = await import('@/server/domains/quotes/service');
+      const { QuoteFormService } = await import('@/server/domains/quotes/quote-form-service');
+      const productId = await withCrate();
+      const quote = await new SalesQuoteService().create(userId, quoteOf([crateOf(productId)]));
+      const opened = await new QuoteFormService().formFor(quote.id);
+      expect(opened.notices).toEqual([]);
+      expect(opened.form.lines[0]).toMatchObject({ quantity: 3, unitId: crate });
     });
   });
 

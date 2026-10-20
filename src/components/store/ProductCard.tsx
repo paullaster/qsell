@@ -5,6 +5,7 @@ import { ShoppingCart, Eye, Star, Zap, ShieldCheck, Check } from 'lucide-react';
 import { type PublicProduct } from '@/types/index';
 import { productDescriptionPlainText } from '@/lib/productDescription';
 import { AppImage } from '@/components/ui/AppImage';
+import { availableOf, cartQuantityWords, perUnitSuffix } from '@/lib/cart-quantity';
 
 interface ProductCardProps {
   key?: React.Key;
@@ -22,7 +23,7 @@ export function ProductCard({
   onQuickBuy,
   preloadImage,
 }: ProductCardProps) {
-  const availableStock = product.stockQuantity - product.reservedQuantity;
+  const availableStock = availableOf(product);
   const isOutOfStock = availableStock <= 0;
   const isLowStock = availableStock > 0 && availableStock <= product.lowStockThreshold;
 
@@ -66,7 +67,7 @@ export function ProductCard({
             </span>
           ) : isLowStock ? (
             <span className="rounded-md border border-line-strong bg-surface-sunken px-2.5 py-1 text-[11px] font-bold text-amber-600 dark:text-amber-400">
-              Only {availableStock} left
+              Only {cartQuantityWords(availableStock, product)} left
             </span>
           ) : (
             <span className="flex items-center gap-1 rounded-md border border-line bg-surface/90 px-2.5 py-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
@@ -111,6 +112,9 @@ export function ProductCard({
               <span className="-mb-0.5 block text-xs text-fg-muted">Price</span>
               <div className="font-mono text-base font-bold text-fg-strong">
                 KES {(product.price ?? 0).toLocaleString()}
+                {perUnitSuffix(product) === '' ? null : (
+                  <span className="text-xs font-normal text-fg-muted">{perUnitSuffix(product)}</span>
+                )}
               </div>
             </div>
 

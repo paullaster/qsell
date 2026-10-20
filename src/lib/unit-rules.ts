@@ -225,7 +225,7 @@ export interface UnitUsage {
   products: number;
   packagings: number;
   derivedUnits: number;
-  /** Quote and order lines entered in this unit. */
+  /** Quote, order, credit note and return lines entered in this unit. */
   documentLines: number;
 }
 
@@ -247,7 +247,7 @@ export function usageWords(usage: UnitUsage): string | null {
     parts.push(plural(usage.packagings, 'product packaging', 'product packagings'));
   if (usage.derivedUnits > 0) parts.push(plural(usage.derivedUnits, 'other unit', 'other units'));
   if (usage.documentLines > 0)
-    parts.push(plural(usage.documentLines, 'quote or order line', 'quote and order lines'));
+    parts.push(plural(usage.documentLines, 'document line', 'document lines'));
   return parts.length === 0 ? null : `Used by ${parts.join(', ')}`;
 }
 

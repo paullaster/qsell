@@ -1,5 +1,6 @@
 'use client';
 
+import { cartQuantityWords, perUnitSuffix } from '@/lib/cart-quantity';
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import {
@@ -642,12 +643,12 @@ export function CheckoutModal({
                           {product.name}
                         </div>
                         <div className="text-[10px] text-fg-subtle">
-                          Qty: {quantity} × {money(product.price ?? 0)}
+                          Qty: {cartQuantityWords(quantity, product)} × {money(product.price ?? 0)}{perUnitSuffix(product)}
                         </div>
                       </div>
                     </div>
                     <span className="shrink-0 font-mono text-fg-strong">
-                      {money((product.price ?? 0) * quantity)}
+                      {money(Math.round((product.price ?? 0) * quantity * 100) / 100)}
                     </span>
                   </div>
                 ))}

@@ -68,6 +68,20 @@ describe.skipIf(!has(process.env.TEST_DATABASE_URL))('stock at cost in the books
       expect(revaluation).toMatchObject({ quantity: 7.625, value: '5.11' });
     });
 
+    it('keeps the books at units x cost to the cent over many small fractional changes, with a change of cost in between', async () => {
+      const id = await product(0, '0.07');
+      for (let i = 0; i < 25; i++) await move(id, 0.333, 'purchase_order_receipt');
+      await k.db.update(k.schema.products).set({ costPrice: '0.11' }).where(eq(k.schema.products.id, id));
+      for (let i = 0; i < 25; i++) await move(id, 0.333, 'purchase_order_receipt');
+      await move(id, -1.111, 'damage_writeoff');
+      const booked = (await events(id)).reduce((n, r) => n + Math.round(Number(r.value) * 100), 0);
+      const [p] = await k.db.select().from(k.schema.products).where(eq(k.schema.products.id, id));
+      // Written one by one to the cent, 51 changes of a few thousandths of a cent would drift; carried, they never do.
+      expect(booked).toBe(Math.round(p.stockQuantity * Number(p.costPrice) * 100));
+      const [totals] = await k.db.select().from(k.schema.financeInventoryTotals).where(and(eq(k.schema.financeInventoryTotals.companyId, k.companyId), eq(k.schema.financeInventoryTotals.productId, id)));
+      expect(Math.round(Number(totals.bookedTotal) * 100)).toBe(booked);
+    });
+
     it('writes a movement once, at the cost the goods had, and ignores reservations, releases and nothing-moved', async () => {
       const id = await product(10, '300.00');
       await move(id, 4, 'purchase_order_receipt');

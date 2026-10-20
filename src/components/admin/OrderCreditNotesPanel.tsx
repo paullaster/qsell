@@ -9,7 +9,7 @@ import {
   type CreditNoteView,
 } from '@/server/domains/credit-notes/actions';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
-import { anythingLeft, chosenLines, creditEstimate, creditNoteRequest, formatMoney, noteMissing, reasonLabel } from '@/lib/credit-note-form';
+import { anythingLeft, chosenLines, creditStep, creditUnitName, creditEstimate, inCreditUnit, creditNoteRequest, formatMoney, noteMissing, perUnit, reasonLabel } from '@/lib/credit-note-form';
 import type { Choice } from '@/lib/payment-options';
 
 type Creditable = NonNullable<
@@ -39,6 +39,8 @@ const fieldClass =
 const buttonClass =
   'min-h-10 cursor-pointer rounded-lg border border-line-strong bg-surface-sunken px-3 py-2 text-xs font-semibold text-fg hover:bg-hover disabled:opacity-50';
 const money = formatMoney;
+const words = (l: Creditable['lines'][number], base: number): string =>
+  [String(inCreditUnit(l, base)), creditUnitName(l)].filter((w) => w !== '').join(' ');
 const RETURNED_GOODS: Choice = { id: 'returned_goods', label: reasonLabel('returned_goods') };
 
 /**
@@ -94,6 +96,7 @@ export function OrderCreditNotesPanel({ orderId }: { orderId: string }) {
   const lines = data?.lines ?? [];
   const chosen = chosenLines(lines, qty);
   const estimate = creditEstimate(chosen);
+  const problems = new Map(chosen.flatMap((c) => (c.problem === null ? [] : [[c.line.productId, c.problem] as const])));
   const missingNote = noteMissing(reason?.id ?? null, note);
 
   if (hidden) return null;
@@ -259,20 +262,25 @@ export function OrderCreditNotesPanel({ orderId }: { orderId: string }) {
                 <div>
                   <p className="font-semibold text-fg-strong">{l.description}</p>
                   <p className="text-fg-muted">
-                    {l.soldQuantity} sold · {l.creditedQuantity} credited · {l.remainingQuantity}{' '}
-                    left @ {money(l.unitPrice, data.currency)}
+                    {words(l, l.soldQuantity)} sold · {words(l, l.creditedQuantity)} credited ·{' '}
+                    {words(l, l.remainingQuantity)} left @ {money(l.unitPrice * perUnit(l), data.currency)}
+                    {l.unit == null ? '' : ` per ${l.unit.code}`}
                   </p>
+                  {problems.has(l.productId) ? (
+                    <p role="alert" className="text-red-700">{problems.get(l.productId)}</p>
+                  ) : null}
                 </div>
                 <div className="flex items-center gap-2">
                   <label htmlFor={`${uid}-q-${l.productId}`} className="text-fg-muted">
-                    Credit
+                    Credit{creditUnitName(l) === '' ? '' : ` (${creditUnitName(l)})`}
                   </label>
                   <input
                     id={`${uid}-q-${l.productId}`}
                     type="number"
                     min={0}
-                    max={l.remainingQuantity}
-                    step={1}
+                    max={inCreditUnit(l, l.remainingQuantity)}
+                    step={creditStep(l)}
+                    inputMode="decimal"
                     disabled={l.remainingQuantity === 0}
                     value={qty[l.productId] ?? ''}
                     placeholder="0"
@@ -336,7 +344,7 @@ export function OrderCreditNotesPanel({ orderId }: { orderId: string }) {
               </button>
               <button
                 type="submit"
-                disabled={issuing || chosen.length === 0 || missingNote || reason === null}
+                disabled={issuing || chosen.length === 0 || problems.size > 0 || missingNote || reason === null}
                 className="min-h-10 cursor-pointer rounded-lg bg-indigo-600 px-5 py-2 text-xs font-bold text-white hover:bg-indigo-500 disabled:opacity-50"
               >
                 {issuing ? 'Issuing…' : 'Issue credit note'}
