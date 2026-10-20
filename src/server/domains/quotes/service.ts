@@ -1,4 +1,5 @@
 import { required } from '@/lib/values';
+import { repairsFor } from './unit-repair';
 import { and, desc, eq, ilike, inArray, lt, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { businessDate } from '@/server/kernel/numbering/business-date';
@@ -808,6 +809,19 @@ export class SalesQuoteService {
       fromTemplate: section.fromTemplate,
       sectionTemplateId: section.sectionTemplateId,
     }));
+    const unitRepairs = await repairsFor(
+      previous.lines
+        .filter((line) => !line.isGift)
+        .map((line) => ({
+          productId: line.productId,
+          unitId: line.unitId ?? null,
+          unitCode: line.unitCode ?? null,
+          enteredQuantity: line.enteredQuantity ?? null,
+          qtyPerUnit: line.qtyPerUnit ?? null,
+          quantity: num(line.quantity),
+          unitPrice: num(line.unitPrice),
+        })),
+    );
     const revised = await this.create(userId, {
       customerId: previous.customerId,
       customerName: previous.customerName,
@@ -832,15 +846,17 @@ export class SalesQuoteService {
       // Free gifts are worked out again for the new quote, not copied.
       lines: previous.lines
         .filter((line) => !line.isGift)
-        .map((line) => ({
+        .map((line, i) => ({
           sectionId: line.sectionId
             ? revisedSections.find((section) => section.sourceId === line.sectionId)?.id
             : null,
           productId: line.productId ?? '',
-          // As it was typed: in the unit it was entered in, at the price per that unit.
-          quantity: line.enteredQuantity ?? num(line.quantity),
-          unitPrice: num(line.enteredUnitPrice ?? line.unitPrice),
-          unitId: line.enteredQuantity === null ? null : line.unitId,
+          // As it was typed: in the unit it was entered in, at the price per that unit; or, where
+          // the product no longer has that unit, in its base unit at the same total.
+          quantity: unitRepairs[i]?.to?.quantity ?? line.enteredQuantity ?? num(line.quantity),
+          unitPrice: unitRepairs[i]?.to?.unitPrice ?? num(line.enteredUnitPrice ?? line.unitPrice),
+          unitId:
+            line.enteredQuantity === null || unitRepairs[i]?.to !== undefined ? null : line.unitId,
           discountPercent: num(line.discountPercent),
           fromTemplate: line.fromTemplate,
           fromSectionTemplate: line.fromSectionTemplate,

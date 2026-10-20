@@ -477,6 +477,20 @@
       "when": 1792470276908,
       "tag": "0067_document_line_units",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1792496273339,
+      "tag": "0068_credit_return_line_units",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1792496969066,
+      "tag": "0069_inventory_value_running_totals",
+      "breakpoints": true
     }
   ]
 }

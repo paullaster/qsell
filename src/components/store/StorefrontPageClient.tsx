@@ -23,6 +23,8 @@ import {
 } from '@/server/actions';
 import type { PublicProduct, Order, PaymentProvider, CurrencyConfig } from '@/types/index';
 import { resolveBaseCurrency } from '@/lib/cartMoney';
+import { availableOf, cartBadgeCount, clampCartQuantity, decimalsOf } from '@/lib/cart-quantity';
+import { roundQty } from '@/lib/decimal';
 import type { PublicCompany } from '@/lib/company-view';
 
 interface StorefrontPageClientProps {
@@ -111,16 +113,19 @@ export function StorefrontPageClient({
 
   const handleAddToCart = useCallback(
     (product: PublicProduct, quantity = 1) => {
+      const decimals = decimalsOf(product);
+      const available = availableOf(product);
       setCart((prev) => {
         const existing = prev.find((item) => item.product.id === product.id);
-        const available = product.stockQuantity - product.reservedQuantity;
+        const wanted = roundQty((existing?.quantity ?? 0) + quantity);
+        const next = clampCartQuantity(wanted, decimals, available);
+        if (next === 0) return prev;
         if (existing) {
-          const newQty = Math.min(existing.quantity + quantity, available);
           return prev.map((item) =>
-            item.product.id === product.id ? { ...item, quantity: newQty } : item,
+            item.product.id === product.id ? { ...item, product, quantity: next } : item,
           );
         }
-        return [...prev, { product, quantity: Math.min(quantity, Math.max(1, available)) }];
+        return [...prev, { product, quantity: next }];
       });
       addToast({
         type: 'success',
@@ -270,7 +275,7 @@ export function StorefrontPageClient({
     addToast({ type: 'error', title: 'Payment Declined', message: error });
   };
 
-  const cartItemsCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const cartItemsCount = cartBadgeCount(cart);
 
   return (
     <div className="flex min-h-screen flex-col bg-canvas text-fg">

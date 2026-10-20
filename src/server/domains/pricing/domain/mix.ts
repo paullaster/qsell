@@ -128,6 +128,10 @@ function unitsOf(lines: DiscountLine[]): Unit[] {
   return out;
 }
 
+/** Whether a line has a part unit left over (the 0.5 of 2.5 kg), which no deal counts. */
+const hasPartUnit = (l: DiscountLine) =>
+  Math.round((l.quantity - Math.floor(l.quantity)) * 1000) > 0;
+
 const rewardOn = (reward: { kind: MixRewardKind; value?: number }, price: number) =>
   reward.kind === 'free'
     ? price
@@ -270,6 +274,15 @@ function plan(rule: DiscountRule, config: MixConfig, free: Unit[]): Plan | null 
   }
 }
 
+/** Said once a deal used a line that has a part unit: deals count whole units only. */
+function partNote(p: Plan, byIndex: Map<number, DiscountLine>): string {
+  const touched = [...p.claims.map((c) => c.unit), ...p.holds].some((u) => {
+    const l = byIndex.get(u.line);
+    return l !== undefined && hasPartUnit(l);
+  });
+  return touched ? '. Deals count whole units; a part unit is priced as usual' : '';
+}
+
 /**
  * Applies the mix promotions to the lines (carrying whatever the line rules already took off).
  * `lines` hold their totals after the line rules; the discounts here are on top, and never take
@@ -407,7 +420,7 @@ export function resolveMixDiscounts(lines: DiscountLine[], inputs: DiscountInput
       code: p.rule.code,
       outcome: gave ? 'applied' : 'lost',
       why: gave
-        ? `${p.sets} set${p.sets === 1 ? '' : 's'}: ${p.how}`
+        ? `${p.sets} set${p.sets === 1 ? '' : 's'}: ${p.how}${partNote(p, byIndex)}`
         : "Cut back to keep every line at or above its floor, or to the rule's budget",
     });
   }
@@ -451,7 +464,8 @@ export function resolveGifts(
       (l) => targetMatches(t.target ?? {}, l) && (!l.contractPriced || rule.appliesToContract),
     );
     const value = round(mine.reduce((n, l) => n + l.lineTotal, 0));
-    const qty = Math.floor(mine.reduce((n, l) => n + l.quantity, 0));
+    // Goods sold by weight or length count exactly (2.5 kg is 2.5), not as 2.
+    const qty = Math.round(mine.reduce((n, l) => n + l.quantity, 0) * 1000) / 1000;
     if (mine.length === 0 || value <= 0) {
       considered.push({
         ruleId: rule.id,

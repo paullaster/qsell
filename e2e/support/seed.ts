@@ -24,6 +24,7 @@ async function main(): Promise<void> {
     await seedFinance();
     await seedRefundExtras();
     await seedApprovals();
+    await seedUnitDocuments();
     return;
   }
   await container.organizations.ensureDefaultOrgAndBranch(company.id, 'E2E Co');
@@ -196,6 +197,7 @@ async function main(): Promise<void> {
   await seedFinance();
   await seedRefundExtras();
   await seedApprovals();
+  await seedUnitDocuments();
   console.warn('e2e seed: done');
 }
 
@@ -355,6 +357,69 @@ async function seedRefundExtras(): Promise<void> {
     await unapplied(holder.id, '400', true);
     const asked = await fin.creditAdjustments.request(makerCtx, { kind: 'wallet_decrease', customerId: holder.id, amount: String(40 + bump), reasonCode: 'DATA_ENTRY_ERROR' });
     await fin.creditAdjustments.submit(makerCtx, asked.id);
+  }
+}
+
+/**
+ * What the unit screens that look at documents need: fish sold by the kilogram (and by the crate of 20 kg) on the shop, and for
+ * each project an invoiced order of 3 crates, so a credit note can be issued in crates. Safe to run again.
+ */
+async function seedUnitDocuments(): Promise<void> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const schema = await import('@/server/db/drizzle/schema');
+  const { getContainer } = await import('@/server/di/container');
+  const { sql } = await import('drizzle-orm');
+  const container = getContainer();
+  const existing = await db.select({ id: schema.products.id }).from(schema.products).where(eq(schema.products.sku, 'E2E-FISH-SHOP')).limit(1);
+  if (existing.length > 0) return;
+  const kilogram = (await db.select().from(schema.unitsOfMeasure).where(eq(schema.unitsOfMeasure.code, 'KG'))).at(0);
+  const category = (await db.select().from(schema.categories).where(eq(schema.categories.name, 'E2E Pantry'))).at(0);
+  const itemType = (await db.select().from(schema.itemTypes).limit(1)).at(0);
+  const branch = (await db.select().from(schema.branches).limit(1)).at(0);
+  if (kilogram === undefined || category === undefined || itemType === undefined || branch === undefined) throw new Error('e2e seed: the units, category or branch are missing');
+  const { emptyUnitDraft } = await import('@/lib/unit-rules');
+  const crate = await container.unitWriter.create({ ...emptyUnitDraft(), code: 'E2ECRATE', name: 'E2E crate', kind: 'packaging', decimals: '0' });
+  const fish = `prod_${randomUUID()}`;
+  await db.insert(schema.products).values({
+    id: fish,
+    sku: 'E2E-FISH-SHOP',
+    stockCode: 'E2ES-FISH-SHOP',
+    name: 'Fish kg Shop',
+    slug: `e2e-${randomUUID()}`,
+    itemTypeId: itemType.id,
+    categoryId: category.id,
+    categoryName: 'E2E Pantry',
+    baseUnitId: kilogram.id,
+    price: '300',
+    costPrice: '120',
+    taxRate: '0',
+    isTaxInclusive: true,
+    stockQuantity: 25.5,
+  });
+  await db.insert(schema.productUnits).values({ productId: fish, unitId: crate.id, qtyPerBase: '20' });
+  for (const label of ['Desktop', 'Phone']) {
+    const id = `e2e_crate_${label.toLowerCase()}`;
+    const number = `E2E-CR-${label.toUpperCase()}`;
+    await db.execute(sql`INSERT INTO orders (id, order_number, user_id, branch_id, customer_name, customer_email, customer_phone, shipping_address, subtotal, tax, shipping_fee, total_amount, payment_method)
+      VALUES (${id}, ${number}, 'u', ${branch.id}::uuid, ${`Crate buyer ${label}`}, 'crate@e2e.test', '0700000000', '{"street":"s","city":"c","countyOrState":"x","country":"k"}'::jsonb, 18000, 0, 0, 18000, 'mpesa_daraja')`);
+    await db.insert(schema.orderItems).values({
+      orderId: id,
+      productId: fish,
+      productName: 'Fish kg Shop',
+      sku: 'E2E-FISH-SHOP',
+      quantity: 60,
+      unitPrice: '300.00',
+      totalPrice: '18000.00',
+      imageUrl: '',
+      unitCost: '120.0000',
+      unitId: crate.id,
+      unitCode: 'E2ECRATE',
+      enteredQuantity: 3,
+      qtyPerUnit: '20.0000000000',
+      enteredUnitPrice: '6000.0000',
+    });
+    await db.insert(schema.inventoryMovements).values({ id: `mv_${randomUUID()}`, productId: fish, productName: 'Fish kg Shop', changeAmount: 0, previousStock: 25.5, newStock: 25.5, changeType: 'order_fulfillment', referenceId: id });
+    await db.insert(schema.invoiceDocuments).values({ orderId: id, orderNumber: number, invoiceNumber: `E2E-TI-${label.toUpperCase()}`, documentType: 'tax_invoice', customerEmail: 'crate@e2e.test', customerName: `Crate buyer ${label}`, currency: 'KES', subtotal: '18000', tax: '0', shippingFee: '0', totalAmount: '18000', pdfStorageKey: 'x.pdf', emailStatus: 'not_sent', meta: {} });
   }
 }
 

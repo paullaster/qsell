@@ -465,8 +465,21 @@ export const creditNoteLines = pgTable(
     quantity: quantity('quantity').notNull(),
     unitPrice: numeric('unit_price', { precision: 14, scale: 2 }).notNull(),
     amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    /**
+     * The unit the goods were sold in (null when sold in the base unit, or in a mix of units): `quantity`
+     * is always base units, as on the order line this came from.
+     */
+    unitId: uuid('unit_id').references(() => unitsOfMeasure.id, { onDelete: 'restrict' }),
+    unitCode: text('unit_code'),
+    /** Base units in one of that unit, as on the order when it was sold. */
+    qtyPerUnit: numeric('qty_per_unit', { precision: 24, scale: 10 }),
+    /** The quantity in that unit (2 crates), where `quantity` is what it comes to in base units. */
+    enteredQuantity: quantity('entered_quantity'),
   },
-  (t) => [index('credit_note_lines_cn_idx').on(t.creditNoteId)],
+  (t) => [
+    index('credit_note_lines_cn_idx').on(t.creditNoteId),
+    index('credit_note_lines_unit_idx').on(t.unitId),
+  ],
 );
 
 /**
@@ -3331,9 +3344,17 @@ export const returnReceiptLines = pgTable(
     receivedQty: quantity('received_qty').notNull().default(0),
     /** What it cost when it was sold (kept with the sale), for the stock-value slice. */
     unitCost: numeric('unit_cost', { precision: 14, scale: 4 }),
+    /**
+     * The unit the goods were sold in (null when sold in the base unit, or in a mix of units): `quantity`
+     * is always base units, as on the order line this came from.
+     */
+    unitId: uuid('unit_id').references(() => unitsOfMeasure.id, { onDelete: 'restrict' }),
+    unitCode: text('unit_code'),
+    /** Base units in one of that unit, as on the order when it was sold. */
+    qtyPerUnit: numeric('qty_per_unit', { precision: 24, scale: 10 }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('return_receipt_lines_receipt_idx').on(t.receiptId), check('return_receipt_lines_qty_chk', sql`${t.receivedQty} >= 0 AND ${t.receivedQty} <= ${t.expectedQty}`)],
+  (t) => [index('return_receipt_lines_receipt_idx').on(t.receiptId), index('return_receipt_lines_unit_idx').on(t.unitId), check('return_receipt_lines_qty_chk', sql`${t.receivedQty} >= 0 AND ${t.receivedQty} <= ${t.expectedQty}`)],
 );
 
 /** Each act of confirming goods: how many, in what condition, and what was done with them. Append-only. */
@@ -4385,7 +4406,10 @@ export const financeInventoryEvents = pgTable(
     quantity: quantity('quantity').notNull(),
     /** The cost per unit the goods had when they moved; for a revaluation, the change in cost per unit. */
     unitCost: numeric('unit_cost', { precision: 14, scale: 2 }).notNull(),
-    /** Signed value: quantity × unit cost. */
+    /**
+     * Signed value in cents-exact money: quantity × unit cost, with the sub-cent part carried from one change of a product to the
+     * next (see `finance_inventory_totals`), so a product's values always add up to its units × cost to the cent.
+     */
     value: numeric('value', { precision: 20, scale: 2 }).notNull(),
     eventDate: date('event_date', { mode: 'string' }).notNull(),
     status: text('status').$type<InventoryEventStatus>().notNull().default('pending'),
@@ -4401,6 +4425,28 @@ export const financeInventoryEvents = pgTable(
     index('finance_inventory_events_due_idx').on(t.nextAttemptAt).where(sql`${t.status} IN ('pending', 'failed')`),
     index('finance_inventory_events_status_idx').on(t.companyId, t.status, t.id),
   ],
+);
+
+/**
+ * What each product is worth in the books, exactly. Units have three decimals and costs two, so one change is worth up to five
+ * decimals; writing every change down to the cent would drift from units × cost by a little each time. Instead each change is
+ * written as the difference between the rounded running totals, so the books for a product are always units × cost to the cent.
+ * Kept up by the database triggers in the same transaction as the stock movement.
+ */
+export const financeInventoryTotals = pgTable(
+  'finance_inventory_totals',
+  {
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    productId: text('product_id').notNull(),
+    /** Units × cost per unit since the books started for the product, with no rounding. */
+    exactTotal: numeric('exact_total', { precision: 30, scale: 5 }).notNull(),
+    /** What has been written down, to the cent: always the exact total rounded. */
+    bookedTotal: numeric('booked_total', { precision: 20, scale: 2 }).notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.companyId, t.productId] })],
 );
 
 export type FinanceInventoryEventRow = typeof financeInventoryEvents.$inferSelect;

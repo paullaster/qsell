@@ -84,11 +84,37 @@ describe('credit note form', () => {
     { productId: 'p2', unitPrice: 5, remainingQuantity: 2, remainingAmount: 10 },
   ];
   it('prices the chosen lines as the server does: the last unit takes what is left', () => {
-    const chosen = chosenLines(lines, { p1: '3', p2: '1.9' });
+    const chosen = chosenLines(lines, { p1: '3', p2: '1' });
     expect(chosen.map((c) => c.quantity)).toEqual([3, 1]);
     expect(creditEstimate(chosen)).toBe(15);
     expect(creditEstimate(chosenLines(lines, { p1: '2' }))).toBe(round2(3.33 * 2));
     expect(chosenLines(lines, { p1: '0', p2: '' })).toEqual([]);
+  });
+
+  it('refuses a part unit where the unit is counted whole, and more than is left', () => {
+    const [bad] = chosenLines(lines, { p2: '1.9' });
+    expect(bad.problem).toContain('whole number');
+    expect(chosenLines(lines, { p2: '3' })[0].problem).toBe('Only 2 left to credit.');
+  });
+
+  it('credits goods sold by weight in part: 0.5 kg of fish', () => {
+    const fish = [{ productId: 'f', description: 'Fish', unitPrice: 300, remainingQuantity: 2.5, remainingAmount: 750, baseDecimals: 3, baseUnitName: 'Kilogram' }];
+    const half = chosenLines(fish, { f: '0.5' });
+    expect(half[0]).toMatchObject({ quantity: 0.5, base: 0.5, problem: null });
+    expect(creditEstimate(half)).toBe(150);
+    expect(creditEstimate(chosenLines(fish, { f: '2.5' }))).toBe(750);
+    expect(creditNoteRequest('o1', half, 'goodwill', '', false, false).lines).toEqual([{ productId: 'f', quantity: 0.5 }]);
+  });
+
+  it('credits goods sold in a crate in crates: 1.5 crates of 20 kg is 30 kg, priced per kg', () => {
+    const crate = { id: 'u-crate', code: 'CRATE', qtyPerUnit: '20' };
+    const fish = [{ productId: 'f', description: 'Fish', unitPrice: 300, remainingQuantity: 60, remainingAmount: 18000, unit: crate, baseDecimals: 3, baseUnitName: 'Kilogram' }];
+    const chosen = chosenLines(fish, { f: '1.5' });
+    expect(chosen[0]).toMatchObject({ quantity: 1.5, base: 30, problem: null });
+    expect(creditEstimate(chosen)).toBe(9000);
+    expect(creditEstimate(chosenLines(fish, { f: '3' }))).toBe(18000);
+    expect(creditNoteRequest('o1', chosen, 'goodwill', '', false, false).lines).toEqual([{ productId: 'f', quantity: 1.5, unitId: 'u-crate' }]);
+    expect(chosenLines(fish, { f: '4' })[0].problem).toBe('Only 3 CRATE left to credit.');
   });
 
   it('knows what is left, when a note is required and the words of a reason', () => {

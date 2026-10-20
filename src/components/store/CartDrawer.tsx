@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { type PublicProduct, type CurrencyConfig } from '@/types/index';
 import { cartTaxRows, cartTotals, formatCartAmount } from '@/lib/cartMoney';
 import { AppImage } from '@/components/ui/AppImage';
+import { QuantityStepper } from '@/components/store/QuantityStepper';
+import { availableOf, decimalsOf, perUnitSuffix } from '@/lib/cart-quantity';
 
 export interface CartItem {
   product: PublicProduct;
@@ -89,8 +91,8 @@ export function CartDrawer({
               </div>
             ) : (
               items.map(({ product, quantity }) => {
-                const available = product.stockQuantity - product.reservedQuantity;
-                const lineAmount = (product.price ?? 0) * quantity;
+                const available = availableOf(product);
+                const lineAmount = Math.round((product.price ?? 0) * quantity * 100) / 100;
                 return (
                   <div
                     key={product.id}
@@ -116,33 +118,28 @@ export function CartDrawer({
                       <div className="font-mono text-[11px] text-fg-subtle">SKU: {product.sku}</div>
                       <div className="font-mono text-xs font-bold text-fg-strong">
                         {money(lineAmount)}
+                        <span className="font-normal text-fg-subtle">
+                          {' '}
+                          @ {money(product.price ?? 0)}
+                          {perUnitSuffix(product)}
+                        </span>
                       </div>
 
                       <div className="flex items-center justify-between pt-1">
-                        <div className="flex items-center rounded-lg border border-line bg-surface-raised p-0.5">
-                          <button
-                            onClick={() => onUpdateQuantity(product.id, quantity - 1)}
-                            disabled={quantity <= 1}
-                            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded text-xs text-fg hover:bg-hover disabled:opacity-30"
-                          >
-                            -
-                          </button>
-                          <span className="w-8 text-center font-mono text-xs font-semibold text-fg-strong">
-                            {quantity}
-                          </span>
-                          <button
-                            onClick={() => onUpdateQuantity(product.id, quantity + 1)}
-                            disabled={quantity >= available}
-                            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded text-xs text-fg hover:bg-hover disabled:opacity-30"
-                          >
-                            +
-                          </button>
-                        </div>
+                        <QuantityStepper
+                          label={`quantity of ${product.name}`}
+                          value={quantity}
+                          decimals={decimalsOf(product)}
+                          unitCode={product.baseUnitCode}
+                          available={available}
+                          onChange={(next) => onUpdateQuantity(product.id, next)}
+                        />
 
                         <button
                           onClick={() => onRemoveItem(product.id)}
-                          className="cursor-pointer p-1 text-fg-subtle transition-colors hover:text-red-600"
+                          className="flex h-10 w-10 cursor-pointer items-center justify-center text-fg-subtle transition-colors hover:text-red-600"
                           title="Remove item"
+                          aria-label={`Remove ${product.name}`}
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>
