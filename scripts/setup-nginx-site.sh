@@ -29,12 +29,31 @@ snippet="$DEPLOY_PATH/deploy/nginx/$INSTANCE_ID.conf"
 live_dir="/etc/letsencrypt/live/$PUBLIC_DOMAIN"
 site="/etc/nginx/sites-available/$INSTANCE_ID"
 
+# True when this nginx understands "http2 on;" (1.25.1+). Unknown or not yet installed
+# (e.g. --dry-run) counts as modern; only a detected older version takes the legacy form.
+nginx_has_http2_directive() {
+  local v
+  v="$(nginx -v 2>&1 | sed -n 's|.*nginx/\([0-9][0-9.]*\).*|\1|p')"
+  [[ -n "$v" ]] || return 0
+  [[ "$(printf '%s\n1.25.1\n' "$v" | sort -V | head -n1)" == "1.25.1" ]]
+}
+
 render_vhost() {
   if [[ -f "$snippet" ]]; then
     app_block="    include $snippet;"
   else
     app_block="    # Not deployed yet: re-run this script after the first deploy to enable the app.
     location / { return 503; }"
+  fi
+  # nginx before 1.25.1 (Ubuntu 20.04 ships 1.18) has no standalone "http2" directive.
+  local listen_443
+  if nginx_has_http2_directive; then
+    listen_443="    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;"
+  else
+    listen_443="    listen 443 ssl http2;
+    listen [::]:443 ssl http2;"
   fi
   cat <<VHOST
 # Managed by scripts/setup-nginx-site.sh for instance "$INSTANCE_ID". Re-run the script to change.
@@ -46,9 +65,7 @@ server {
     location / { return 301 https://\$host\$request_uri; }
 }
 server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
+$listen_443
     server_name $PUBLIC_DOMAIN;
     ssl_certificate     $live_dir/fullchain.pem;
     ssl_certificate_key $live_dir/privkey.pem;
