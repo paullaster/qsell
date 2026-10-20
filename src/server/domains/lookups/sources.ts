@@ -27,6 +27,7 @@ import { KRA_LOOKUP_SOURCES } from '@/server/domains/kra/lookup-sources';
 import { APPROVAL_LOOKUP_SOURCES } from '@/server/kernel/approvals/lookup-sources';
 import { REASON_LOOKUP_SOURCES } from '@/server/kernel/reason-codes/lookup-sources';
 import { DIMENSION_LOOKUP_SOURCES } from '@/server/domains/dimensions/lookup-sources';
+import { UNIT_LOOKUP_SOURCES } from '@/server/domains/units/lookup-sources';
 
 /** The non-empty strings joined with a dot, or null when there are none. */
 function joinText(parts: unknown[]): string | null {
@@ -206,6 +207,7 @@ const SOURCES: ReadonlyMap<string, LookupSource> = new Map(
     ...PAYMENT_LOOKUP_SOURCES,
     ...FINANCE_LOOKUP_SOURCES,
     ...DIMENSION_LOOKUP_SOURCES,
+    ...UNIT_LOOKUP_SOURCES,
     ...REASON_LOOKUP_SOURCES,
     ...NUMBERING_LOOKUP_SOURCES,
     ...APPROVAL_LOOKUP_SOURCES,

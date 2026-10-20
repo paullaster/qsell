@@ -1,3 +1,4 @@
+import { has } from '@/lib/values';
 import PDFDocument from 'pdfkit';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
@@ -293,7 +294,7 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
 
       // One priced row of the table. `indent` pushes a section's own items in under its title.
       const drawRow = (
-        row: { name: string; quantity: number; unitPrice: number; totalPrice: number },
+        row: { name: string; quantity: number; unit?: string | null; unitPrice: number; totalPrice: number },
         index: number,
         indent = 0,
       ) => {
@@ -322,7 +323,7 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
         doc.text(row.name, cols.desc.x + 6 + indent, textY, {
           width: cols.desc.w - 8 - indent,
         });
-        doc.text(String(row.quantity), cols.qty.x, textY, {
+        doc.text(has(row.unit) ? `${String(row.quantity)} ${row.unit}` : String(row.quantity), cols.qty.x, textY, {
           width: cols.qty.w,
           align: 'right',
           lineBreak: false,

@@ -1,3 +1,4 @@
+import { quantityProblem } from '@/lib/unit-rules';
 import { randomUUID } from 'node:crypto';
 import type { Order, OrderItem, PaymentProvider } from '@/types/index';
 import { computeCheckoutTotals } from '@/lib/checkoutPricing';
@@ -47,6 +48,12 @@ export class OrderWriteService {
       priceTrace?: PriceTrace | null;
       /** A free gift the quote added, carried across as it was. */
       isGift?: boolean;
+      /** The unit the quote line was typed in, carried across as it was. */
+      unitId?: string | null;
+      unitCode?: string | null;
+      enteredQuantity?: number | null;
+      qtyPerUnit?: string | null;
+      enteredUnitPrice?: number | null;
     }[];
     quotedTotals?: { subtotal: number; tax: number; shippingFee: number; totalAmount: number };
     orderId?: string;
@@ -95,6 +102,15 @@ export class OrderWriteService {
       ]),
     );
     const quotedItems = new Map((params.quotedItems ?? []).map((item) => [item.productId, item]));
+
+    // A quantity is counted in the product's unit: 2 pieces, 2.5 kg, never 2.5 pieces.
+    for (const item of params.items) {
+      const prod = catalogProducts.get(item.productId);
+      if (prod === undefined) continue;
+      const what = `Quantity of "${prod.name}"`;
+      const problem = item.quantity > 0 ? quantityProblem(item.quantity, prod.baseUnitDecimals, prod.baseUnitName, what) : `${what} must be above zero.`;
+      if (problem !== null) return { success: false, error: problem };
+    }
 
     // Staff channels are priced from the price lists. The web shop keeps the standard price, so
     // what a shopper is shown is what they are charged, until the storefront shows list prices.
@@ -174,9 +190,9 @@ export class OrderWriteService {
         return { success: false, error: `${prod.name} has no valid selling price.` };
       }
       const unitPrice = quoted
-        ? quoted.lineAmount / Math.max(quoted.quantity, 1)
+        ? quoted.lineAmount / (quoted.quantity > 0 ? quoted.quantity : 1)
         : priced
-          ? priced.lineTotal! / Math.max(item.quantity, 1)
+          ? (priced.lineTotal ?? 0) / (item.quantity > 0 ? item.quantity : 1)
           : prod.price!;
       const itemTotal = quoted
         ? quoted.lineAmount
@@ -204,6 +220,12 @@ export class OrderWriteService {
         imageUrl: prod.imageUrl,
         priceTrace: quoted ? (quoted.priceTrace ?? null) : (priced?.trace ?? null),
         isGift: quoted?.isGift,
+        // The unit a line was typed in; a line made from the product alone is in its base unit.
+        unitId: quoted?.unitId ?? prod.baseUnitId,
+        unitCode: quoted?.unitCode ?? prod.baseUnitCode,
+        enteredQuantity: quoted?.enteredQuantity ?? null,
+        qtyPerUnit: quoted?.qtyPerUnit ?? null,
+        enteredUnitPrice: quoted?.enteredUnitPrice ?? null,
       });
       pricedLines.push({
         productId: prod.id,

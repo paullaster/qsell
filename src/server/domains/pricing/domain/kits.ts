@@ -4,6 +4,8 @@
  * the price. That is what lets stock leave per component, each component carry its own tax rate
  * and tax class, and a partial return credit the right amount.
  */
+import { quantityFits } from '@/lib/decimal';
+
 
 export type KitAllocation = 'list_price' | 'cost' | 'explicit';
 
@@ -133,10 +135,10 @@ export function checkKit(
         message: 'The same product is listed twice. Add its units to one row.',
       });
     seen.add(c.productId);
-    if (!(Number.isInteger(c.quantity) && c.quantity >= 1))
+    if (!(quantityFits(c.quantity, 3) && c.quantity > 0))
       out.push({
         path: `components.${i}`,
-        message: 'Each component needs a whole number of units, at least 1.',
+        message: 'Each component needs a quantity above zero, with at most 3 decimals.',
       });
     if (method === 'explicit' && !(c.weight != null && c.weight > 0))
       out.push({ path: `components.${i}`, message: 'Give every component a share above zero.' });

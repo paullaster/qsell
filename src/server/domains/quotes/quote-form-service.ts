@@ -1,3 +1,4 @@
+import { required } from '@/lib/values';
 import { randomUUID } from 'node:crypto';
 import { getContainer } from '@/server/di/container';
 import { CatalogService } from '@/server/domains/catalog/service';
@@ -44,9 +45,27 @@ export class QuoteFormService {
       container.kits.forProducts(companyId, ids),
       new SalesQuoteService().getSettings(companyId),
     ]);
+    const byId = new Map(products.map((product) => [product.id, product]));
+    // Lines typed in another unit (3 crates) are worked out in the product's base unit, as saving does.
+    const unitLines = await container.unitWriter.convertLines(
+      byId,
+      request.lines.map((line) => ({ productId: line.productId, quantity: line.quantity, unitId: line.unitId, unitPrice: line.unitPrice })),
+    );
     return computeQuoteTotals(
-      request,
-      new Map(products.map((product) => [product.id, product])),
+      {
+        ...request,
+        lines: request.lines.map((line, i) => {
+          const unit = required(unitLines[i], 'the unit of a line');
+          const { unitId: _unitId, ...rest } = line;
+          return {
+            ...rest,
+            quantity: unit.quantity,
+            ...(unit.unitPrice === undefined ? {} : { unitPrice: unit.unitPrice }),
+            ...(unit.enteredUnitPrice !== null && unit.enteredQuantity !== null ? { exactAmount: unit.enteredUnitPrice * unit.enteredQuantity } : {}),
+          };
+        }),
+      },
+      byId,
       kits,
       Number(settings.minimumGrossMarginPercent),
     );

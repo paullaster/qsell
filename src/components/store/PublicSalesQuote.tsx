@@ -1,5 +1,6 @@
 'use client';
 
+import { lineDisplay, lineFromRow, quantityWords } from '@/lib/unit-rules';
 import { useState } from 'react';
 import { CheckCircle2, LoaderCircle } from 'lucide-react';
 import { keyed } from '@/lib/keyed';
@@ -81,9 +82,9 @@ export function PublicSalesQuote({ token, quote }: { token: string; quote: Share
                             <div className="font-medium text-fg-strong">{line.description}</div>
                             <div className="text-xs text-fg-muted">{line.sku}</div>
                           </td>
-                          <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right" data-label="Qty">{Number(line.quantity)}</td>
+                          <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right" data-label="Qty">{quantityWords(lineFromRow(line))}</td>
                           <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right" data-label="Unit price">
-                            {quote.currency} {Number(line.unitPrice).toFixed(2)}
+                            {quote.currency} {lineDisplay(lineFromRow(line)).unitPrice.toFixed(2)}
                           </td>
                           <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right font-medium" data-label="Amount">
                             {quote.currency} {Number(line.lineAmount).toFixed(2)}
@@ -120,9 +121,9 @@ export function PublicSalesQuote({ token, quote }: { token: string; quote: Share
                               <div className="font-medium text-fg-strong">{line.description}</div>
                               <div className="text-xs text-fg-muted">{line.sku}</div>
                             </td>
-                            <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right" data-label="Qty">{Number(line.quantity)}</td>
+                            <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right" data-label="Qty">{quantityWords(lineFromRow(line))}</td>
                             <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right" data-label="Unit price">
-                              {quote.currency} {Number(line.unitPrice).toFixed(2)}
+                              {quote.currency} {lineDisplay(lineFromRow(line)).unitPrice.toFixed(2)}
                             </td>
                             <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right font-medium" data-label="Amount">
                               {quote.currency} {Number(line.lineAmount).toFixed(2)}

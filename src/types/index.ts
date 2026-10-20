@@ -60,7 +60,14 @@ export interface Product {
   taxCategoryName?: string;
   taxRate?: number;
   isTaxInclusive?: boolean;
-  weight?: number; // kg
+  /** Shipping weight of one base unit, in kg. */
+  weight?: number;
+  /** The unit stock is counted in (kg for fish, pieces for a phone). */
+  baseUnitId: string;
+  baseUnitCode: string;
+  baseUnitName: string;
+  /** Digits after the point a quantity of this product may have. */
+  baseUnitDecimals: number;
   specifications?: ProductSpecification[];
   stockQuantity: number;
   reservedQuantity: number;
@@ -118,12 +125,32 @@ export interface ProductMediaItem extends ProductMediaInput {
 }
 
 /** A product as accepted by create: the gallery is given as asset references. */
-export type ProductWrite = Omit<Product, 'id' | 'createdAt' | 'updatedAt' | 'reservedQuantity' | 'media'> & {
+export type ProductWrite = Omit<
+  Product,
+  'id' | 'createdAt' | 'updatedAt' | 'reservedQuantity' | 'media' | 'baseUnitId' | 'baseUnitCode' | 'baseUnitName' | 'baseUnitDecimals'
+> & {
   media?: ProductMediaInput[];
+  /** Left out: the default unit of measure. */
+  baseUnitId?: string;
+  /** The other units the product is kept, bought or sold in. */
+  packagings?: ProductPackagingInput[];
 };
 
+/** One alternate unit of a product as the form sends it. */
+export interface ProductPackagingInput {
+  unitId: string;
+  qtyPerBase: string;
+  weightKg: string;
+  isSalesDefault: boolean;
+  isPurchaseDefault: boolean;
+}
+
 /** A partial product as accepted by update. Omit `media` to leave the gallery untouched. */
-export type ProductPatch = Partial<Omit<Product, 'media'>> & { media?: ProductMediaInput[] };
+export type ProductPatch = Partial<Omit<Product, 'media' | 'baseUnitCode' | 'baseUnitName' | 'baseUnitDecimals'>> & {
+  media?: ProductMediaInput[];
+  /** Omit to leave the alternate units alone; send the full list to replace them. */
+  packagings?: ProductPackagingInput[];
+};
 
 /**
  * What the public storefront may see. Unit cost (margin) is staff-only, so it is
@@ -241,6 +268,15 @@ export interface OrderItem {
   isGift?: boolean;
   /** What one unit cost when it was sold. Absent on older orders. */
   unitCost?: number | null;
+  /**
+   * `quantity` is always in the product's base unit. When the line was typed in another unit of the
+   * product (3 crates), these say so; the order's amounts are unchanged by it.
+   */
+  unitId?: string | null;
+  unitCode?: string | null;
+  enteredQuantity?: number | null;
+  qtyPerUnit?: string | null;
+  enteredUnitPrice?: number | null;
 }
 
 export interface Order {

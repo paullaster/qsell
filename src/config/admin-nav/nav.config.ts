@@ -256,6 +256,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'products:read',
       },
       {
+        id: 'units-of-measure',
+        title: 'Units of Measure',
+        name: 'units-of-measure',
+        href: '/admin/settings/units',
+        description: 'Kilograms, pieces, litres, boxes: one list of units, shared by every product',
+        icon: 'Scale',
+        permission: 'units:read',
+      },
+      {
         id: 'categories',
         title: 'Categories',
         name: 'categories',

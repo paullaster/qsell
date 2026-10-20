@@ -1,5 +1,6 @@
 'use client';
 
+import { lineDisplay, lineFromRow, quantityWords } from '@/lib/unit-rules';
 import { BadgeCheck, Ban, Check, FilePlus2, ShoppingCart, Files, X } from 'lucide-react';
 
 import type { SalesQuote } from '@/server/domains/quotes/service';
@@ -142,9 +143,9 @@ export function QuoteDetails({
                           {line.sku} · tax {Number(line.taxRate)}%
                         </div>
                       </td>
-                      <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right" data-label="Qty">{Number(line.quantity)}</td>
+                      <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right" data-label="Qty">{quantityWords(lineFromRow(line))}</td>
                       <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right" data-label="Price">
-                        {money(Number(line.unitPrice), quote.currency)}
+                        {money(lineDisplay(lineFromRow(line)).unitPrice, quote.currency)}
                       </td>
                       <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right text-fg-muted" data-label="Cost (internal)">
                         {money(Number(line.costAmount), quote.currency)}
@@ -190,9 +191,9 @@ export function QuoteDetails({
                             {line.sku} · tax {Number(line.taxRate)}%
                           </div>
                         </td>
-                        <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right" data-label="Qty">{Number(line.quantity)}</td>
+                        <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right" data-label="Qty">{quantityWords(lineFromRow(line))}</td>
                         <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right" data-label="Price">
-                          {money(Number(line.unitPrice), quote.currency)}
+                          {money(lineDisplay(lineFromRow(line)).unitPrice, quote.currency)}
                         </td>
                         <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3 md:text-right text-fg-muted" data-label="Cost (internal)">
                           {money(Number(line.costAmount), quote.currency)}

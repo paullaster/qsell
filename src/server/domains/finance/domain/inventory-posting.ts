@@ -55,11 +55,12 @@ export function planChange(c: InventoryChange): Plan | null {
   return { debit: 'inventory_adjustment', credit: 'inventory', cents, label };
 }
 
-/** The value of goods: units × cost per unit, both exact, in cents. Cost has two decimal places, so this never rounds. */
+/** The value of goods: units × cost per unit, in whole cents (units have up to three decimals, so a half cent rounds away from zero). */
 export function stockValueCents(quantity: number, unitCost: string): number {
   const [whole = '0', frac = ''] = unitCost.replace('-', '').split('.');
   const cents = Number(whole) * 100 + Number(`${frac}00`.slice(0, 2));
-  return quantity * (unitCost.startsWith('-') ? -cents : cents);
+  const value = quantity * (unitCost.startsWith('-') ? -cents : cents);
+  return Math.sign(value) * Math.round(Math.abs(value) + 1e-9);
 }
 
 export interface InventoryReadinessInput {

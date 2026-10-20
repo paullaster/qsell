@@ -95,6 +95,9 @@ export async function getSalesQuoteEditorDataAction() {
     stockQuantity: p.stockQuantity,
     reservedQuantity: p.reservedQuantity,
     imageUrl: p.imageUrl,
+    baseUnitId: p.baseUnitId,
+    baseUnitCode: p.baseUnitCode,
+    baseUnitName: p.baseUnitName,
   }));
   return { products: slim, settings, kits };
 }

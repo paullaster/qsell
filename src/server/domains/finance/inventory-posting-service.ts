@@ -151,7 +151,7 @@ export class InventoryPostingService {
 
   /** What the goods on the shelves are worth at cost, in cents: units on hand × cost per unit, product by product. */
   async stockValueCents(w: DrizzleDb | Tx = this.db): Promise<number> {
-    const [row] = await w.execute<{ cents: string }>(sql`SELECT COALESCE(SUM(stock_quantity::numeric * cost_price * 100), 0)::numeric(30,0)::text AS cents FROM products WHERE stock_quantity <> 0`);
+    const [row] = await w.execute<{ cents: string }>(sql`SELECT COALESCE(SUM(ROUND(stock_quantity::numeric * cost_price * 100)), 0)::numeric(30,0)::text AS cents FROM products WHERE stock_quantity <> 0`);
     return Number(row?.cents ?? 0);
   }
 

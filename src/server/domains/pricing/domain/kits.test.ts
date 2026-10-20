@@ -117,8 +117,10 @@ describe('checking a kit', () => {
       checkKit('kit', 'list_price', [{ productId: 'a', quantity: 0, weight: null }]),
     ).toHaveLength(1);
     expect(
-      checkKit('kit', 'list_price', [{ productId: 'a', quantity: 1.5, weight: null }]),
+      checkKit('kit', 'list_price', [{ productId: 'a', quantity: 1.5555, weight: null }]),
     ).toHaveLength(1);
+    // Half a kilogram of salt in a hamper is a fine component.
+    expect(checkKit('kit', 'list_price', [{ productId: 'a', quantity: 0.5, weight: null }])).toHaveLength(0);
   });
   it('explicit shares must be above zero', () => {
     expect(checkKit('kit', 'explicit', ok).length).toBe(2);

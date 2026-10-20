@@ -1,3 +1,4 @@
+import { quantityFits } from '@/lib/decimal';
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
@@ -101,8 +102,8 @@ export class ReturnReceiptService {
         creditNoteNo: creditNotes.creditNoteNo,
         sourceRef: creditNotes.sourceRef,
         reasonCode: creditNotes.reasonCode,
-        expected: sql<number>`(SELECT COALESCE(SUM(l.expected_qty),0)::int FROM return_receipt_lines l WHERE l.receipt_id = ${returnReceipts.id})`,
-        received: sql<number>`(SELECT COALESCE(SUM(l.received_qty),0)::int FROM return_receipt_lines l WHERE l.receipt_id = ${returnReceipts.id})`,
+        expected: sql<number>`(SELECT COALESCE(SUM(l.expected_qty),0)::float8 FROM return_receipt_lines l WHERE l.receipt_id = ${returnReceipts.id})`,
+        received: sql<number>`(SELECT COALESCE(SUM(l.received_qty),0)::float8 FROM return_receipt_lines l WHERE l.receipt_id = ${returnReceipts.id})`,
       })
       .from(returnReceipts)
       .innerJoin(creditNotes, eq(creditNotes.id, returnReceipts.creditNoteId))
@@ -157,7 +158,7 @@ export class ReturnReceiptService {
         if (!line) throw new ReturnError('LINE_NOT_FOUND', 'One of the lines is not on this return.');
         if (seen.has(it.lineId)) throw new ReturnError('DUPLICATE_LINE', 'Enter each line once.');
         seen.add(it.lineId);
-        if (!Number.isInteger(it.quantity) || it.quantity <= 0) throw new ReturnError('QUANTITY_INVALID', `${line.description}: the quantity must be a whole number above zero.`);
+        if (!quantityFits(it.quantity, 3) || it.quantity <= 0) throw new ReturnError('QUANTITY_INVALID', `${line.description}: the quantity must be a number above zero with at most 3 decimals.`);
         if (it.quantity > line.expectedQty - line.receivedQty) {
           throw new ReturnError('OVER_RECEIVED', `${line.description}: ${line.expectedQty - line.receivedQty} still expected, you entered ${it.quantity}.`);
         }

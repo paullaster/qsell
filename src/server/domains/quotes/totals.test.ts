@@ -176,4 +176,14 @@ describe('what a quote comes to', () => {
     );
     expect(totals.total).toBe(100);
   });
+
+  it('uses the exact amount of a line typed per crate, not the price per kilogram rounded', () => {
+    const totals = computeQuoteTotals(
+      { lines: [{ productId: 'a', quantity: 1200, unitPrice: 83.3333, exactAmount: 100000, discountPercent: 0 }], discountPercent: 0, shippingFee: 0 },
+      new Map(Object.entries({ a: product() })),
+      none,
+      0,
+    );
+    expect(totals.total).toBe(100000);
+  });
 });

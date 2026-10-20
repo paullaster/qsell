@@ -39,6 +39,8 @@ import {
 import { OrderRepository } from '@/server/domains/orders/repository';
 import { UserRepository } from '@/server/domains/auth/user-repository';
 import { DimensionRepository } from '@/server/domains/dimensions/repository';
+import { UnitRepository } from '@/server/domains/units/repository';
+import { UnitWriteService } from '@/server/domains/units/write-service';
 import { DimensionSetService } from '@/server/domains/dimensions/set-service';
 import { CustomerMasterService } from '@/server/domains/customers/master-service';
 import { TransactionLedgerService } from '@/server/domains/transactions/ledger-service';
@@ -102,6 +104,8 @@ export interface AppContainer {
   accessControl: AccessControlService;
   reports: ReportsService;
   dimensions: DimensionRepository;
+  units: UnitRepository;
+  unitWriter: UnitWriteService;
   dimensionSets: DimensionSetService;
   customers: CustomerMasterService;
   transactionLedger: TransactionLedgerService;
@@ -262,6 +266,8 @@ export function getContainer(): AppContainer {
   });
   const dimensions = new DimensionRepository(drizzleDb);
   const dimensionSets = new DimensionSetService(drizzleDb, dimensions);
+  const units = new UnitRepository(drizzleDb);
+  const unitWriter = new UnitWriteService(units);
   const transactionLedger = new TransactionLedgerService(drizzleDb);
   const transactionReconcile = new TransactionReconcileService(drizzleDb, transactionLedger);
   const customers = new CustomerMasterService(drizzleDb, dimensionSets, transactionLedger);
@@ -338,6 +344,8 @@ export function getContainer(): AppContainer {
     accessControl,
     reports: new ReportsService(drizzleDb, accessControl),
     dimensions,
+    units,
+    unitWriter,
     dimensionSets,
     customers,
     transactionLedger,

@@ -11,6 +11,7 @@ import {
   products,
   reconciliationLogs,
   taxCategories,
+  unitsOfMeasure,
   integrationAuditLog,
   type IntegrationAuditLogRow,
   type CategoryRow,
@@ -30,6 +31,9 @@ const productRelations = {
   itemTypeCode: itemTypes.code,
   taxCategoryName: taxCategories.name,
   categoryLabel: categories.name,
+  baseUnitCode: unitsOfMeasure.code,
+  baseUnitName: unitsOfMeasure.name,
+  baseUnitDecimals: unitsOfMeasure.decimals,
 };
 
 /**
@@ -45,6 +49,9 @@ type ProductJoined = ProductRow & {
   itemTypeCode: number | null;
   taxCategoryName: string | null;
   categoryLabel: string | null;
+  baseUnitCode: string | null;
+  baseUnitName: string | null;
+  baseUnitDecimals: number | null;
 };
 
 export class CatalogRepository {
@@ -365,7 +372,8 @@ export class CatalogRepository {
       .from(products)
       .leftJoin(itemTypes, eq(products.itemTypeId, itemTypes.id))
       .leftJoin(taxCategories, eq(products.taxCategoryId, taxCategories.id))
-      .leftJoin(categories, eq(products.categoryId, categories.id));
+      .leftJoin(categories, eq(products.categoryId, categories.id))
+      .leftJoin(unitsOfMeasure, eq(products.baseUnitId, unitsOfMeasure.id));
   }
 
   async listProducts(): Promise<ProductJoined[]> {

@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { drizzleDb } from '@/server/db/drizzle/client';
 import { inventoryMovements, orders, orderItems, products } from '@/server/db/drizzle/schema';
+import { roundQty } from '@/lib/decimal';
 import { getContainer } from '@/server/di/container';
 import { broadcastRealtime } from '@/server/realtime';
 
@@ -62,7 +63,7 @@ export class InventoryReservationService {
       const remainingItems = items
         .map((item) => ({
           ...item,
-          quantity: Math.max(0, item.quantity - (reservedByProduct.get(item.productId) ?? 0)),
+          quantity: Math.max(0, roundQty(item.quantity - (reservedByProduct.get(item.productId) ?? 0))),
         }))
         .filter((item) => item.quantity > 0);
       if (remainingItems.length === 0) return { success: true as const };
@@ -89,7 +90,7 @@ export class InventoryReservationService {
             error: `Product ID ${item.productId} was not found in catalog.`,
           };
         }
-        const available = product.stockQuantity - product.reservedQuantity;
+        const available = roundQty(product.stockQuantity - product.reservedQuantity);
         if (available < item.quantity) {
           return {
             success: false as const,
@@ -104,7 +105,7 @@ export class InventoryReservationService {
         await tx
           .update(products)
           .set({
-            reservedQuantity: product.reservedQuantity + item.quantity,
+            reservedQuantity: roundQty(product.reservedQuantity + item.quantity),
             updatedAt: new Date(),
           })
           .where(eq(products.id, item.productId));
@@ -115,7 +116,7 @@ export class InventoryReservationService {
           productName: product.name,
           changeAmount: -item.quantity,
           previousStock: product.stockQuantity,
-          newStock: product.stockQuantity - (product.reservedQuantity + item.quantity),
+          newStock: roundQty(product.stockQuantity - (product.reservedQuantity + item.quantity)),
           changeType: 'order_reservation',
           referenceId: orderId,
           actor,
@@ -216,10 +217,10 @@ export class InventoryReservationService {
    */
   static async fulfilOrder(orderId: string): Promise<void> {
     await this.settleLines(orderId, 'payment_reconciliation_engine', async (product, quantity) => {
-      const nextStock = Math.max(0, product.stockQuantity - quantity);
+      const nextStock = Math.max(0, roundQty(product.stockQuantity - quantity));
       return {
         stockQuantity: nextStock,
-        reservedQuantity: Math.max(0, product.reservedQuantity - quantity),
+        reservedQuantity: Math.max(0, roundQty(product.reservedQuantity - quantity)),
         changeType: 'order_fulfillment' as const,
         changeAmount: -quantity,
         note: `Fulfilled and finalized stock deduction of ${quantity} units for order ${orderId}`,
@@ -246,7 +247,7 @@ export class InventoryReservationService {
       async (product, quantity) => ({
         // A release returns held units to available stock; on-hand is unchanged.
         stockQuantity: product.stockQuantity,
-        reservedQuantity: Math.max(0, product.reservedQuantity - quantity),
+        reservedQuantity: Math.max(0, roundQty(product.reservedQuantity - quantity)),
         changeType: 'order_cancellation_release' as const,
         changeAmount: quantity,
         note: `Released reservation of ${quantity} units for order ${orderId}. ${reason}`.trim(),

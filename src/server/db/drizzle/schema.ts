@@ -66,6 +66,12 @@ import type {
   KraTransmissionStatus,
 } from '@/server/domains/kra/types';
 
+/**
+ * A quantity of goods: up to three decimals (a unit of measure allows 0 to 3), read back as a JS number.
+ * Sums and differences are done by the database in exact decimals; code that adds in JS rounds with `roundQty`.
+ */
+const quantity = (name: string) => numeric(name, { precision: 14, scale: 3, mode: 'number' });
+
 /** Top-level tenant. */
 export const organizations = pgTable('organizations', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -334,7 +340,7 @@ export const etimsItems = pgTable(
     pkgUnitCode: text('pkg_unit_code').notNull(),
     itemClassCode: text('item_class_code').notNull(),
     /** Last quantity we told KRA about. */
-    stockQuantity: integer('stock_quantity').notNull().default(0),
+    stockQuantity: quantity('stock_quantity').notNull().default(0),
     errorCode: text('error_code'),
     errorMessage: text('error_message'),
     lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
@@ -456,7 +462,7 @@ export const creditNoteLines = pgTable(
       .references(() => creditNotes.id, { onDelete: 'cascade' }),
     productId: text('product_id').notNull(),
     description: text('description').notNull(),
-    quantity: integer('quantity').notNull(),
+    quantity: quantity('quantity').notNull(),
     unitPrice: numeric('unit_price', { precision: 14, scale: 2 }).notNull(),
     amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
   },
@@ -1564,7 +1570,7 @@ export const orderItems = pgTable(
     productId: text('product_id').notNull(),
     productName: text('product_name').notNull(),
     sku: text('sku').notNull(),
-    quantity: integer('quantity').notNull(),
+    quantity: quantity('quantity').notNull(),
     unitPrice: numeric('unit_price', { precision: 14, scale: 2 }).notNull(),
     totalPrice: numeric('total_price', { precision: 14, scale: 2 }).notNull(),
     imageUrl: text('image_url').notNull().default(''),
@@ -1574,8 +1580,21 @@ export const orderItems = pgTable(
     isGift: boolean('is_gift').notNull().default(false),
     /** What one unit cost when it was sold (null on orders from before this was kept). */
     unitCost: numeric('unit_cost', { precision: 14, scale: 4 }),
+    /**
+     * The unit this line was entered in (null on lines from before units, and on kit parts): `quantity` is
+     * always in the product's base unit, so stock and prices work as ever, and these say how it was typed.
+     */
+    unitId: uuid('unit_id').references(() => unitsOfMeasure.id, { onDelete: 'restrict' }),
+    /** The unit's code when the line was made, so a document never changes its words later. */
+    unitCode: text('unit_code'),
+    /** The quantity in that unit (3 crates), where `quantity` is what it comes to in base units (60 kg). */
+    enteredQuantity: quantity('entered_quantity'),
+    /** Base units in one of that unit. */
+    qtyPerUnit: numeric('qty_per_unit', { precision: 24, scale: 10 }),
+    /** The price per one of that unit, exactly as typed or worked out: the line's amount is this times the entered quantity. */
+    enteredUnitPrice: numeric('entered_unit_price', { precision: 14, scale: 4 }),
   },
-  (t) => [index('order_items_order_idx').on(t.orderId)],
+  (t) => [index('order_items_order_idx').on(t.orderId), index('order_items_unit_idx').on(t.unitId)],
 );
 
 /**
@@ -1787,6 +1806,96 @@ export const taxCategories = pgTable(
   ],
 );
 
+/**
+ * Units of measure, managed once and shared by the whole system. Units of one family (`kind`) convert
+ * through their factor to the family's base unit ("1 g = 0.001 kg"); packaging units (box, crate)
+ * convert per product instead (`product_units`). Like the rest of the catalog these are not per company.
+ */
+export const unitsOfMeasure = pgTable(
+  'units_of_measure',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    description: text('description'),
+    symbol: text('symbol'),
+    kind: text('kind').notNull(),
+    /** The base unit of this unit's family; null for a base unit and for packaging. */
+    baseUnitId: uuid('base_unit_id').references((): AnyPgColumn => unitsOfMeasure.id, { onDelete: 'restrict' }),
+    /** How many base units make one of this unit (1 for a base unit). */
+    factorToBase: numeric('factor_to_base', { precision: 24, scale: 10 }).notNull().default('1'),
+    /** Digits after the point a quantity in this unit may have, 0 to 3 (0 for pieces, 3 for kilograms): the most a stored quantity holds. */
+    decimals: smallint('decimals').notNull().default(0),
+    /** UN/ECE Recommendation 20 code (KGM, C62, LTR), the one e-invoicing and customs use. */
+    internationalCode: text('international_code'),
+    /** KRA eTIMS quantity unit code. */
+    etimsCode: text('etims_code'),
+    /** The unit a new product starts with. Exactly one. */
+    isDefault: boolean('is_default').notNull().default(false),
+    isActive: boolean('is_active').notNull().default(true),
+    /** Counts saves, so two people editing the same unit cannot overwrite each other unseen. */
+    version: integer('version').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('units_of_measure_code_uidx').on(t.code),
+    uniqueIndex('units_of_measure_name_uidx').on(sql`lower(${t.name})`),
+    uniqueIndex('units_of_measure_default_uidx')
+      .on(t.isDefault)
+      .where(sql`${t.isDefault}`),
+    index('units_of_measure_base_idx').on(t.baseUnitId),
+    index('units_of_measure_kind_idx').on(t.kind, t.code),
+    check('units_of_measure_code_chk', sql`${t.code} ~ '^[A-Z0-9][A-Z0-9._-]{0,19}$'`),
+    check('units_of_measure_name_chk', sql`char_length(btrim(${t.name})) BETWEEN 1 AND 80`),
+    check('units_of_measure_kind_chk', sql`${t.kind} IN ('count','mass','volume','length','area','time','packaging')`),
+    check('units_of_measure_decimals_chk', sql`${t.decimals} BETWEEN 0 AND 3`),
+    check('units_of_measure_factor_chk', sql`${t.factorToBase} > 0`),
+    check('units_of_measure_base_chk', sql`(${t.baseUnitId} IS NULL AND ${t.factorToBase} = 1) OR (${t.baseUnitId} IS NOT NULL AND ${t.baseUnitId} <> ${t.id} AND ${t.kind} <> 'packaging')`),
+    check('units_of_measure_default_active_chk', sql`NOT ${t.isDefault} OR ${t.isActive}`),
+    check('units_of_measure_version_chk', sql`${t.version} >= 1`),
+  ],
+);
+
+/**
+ * The other units a product is kept, bought or sold in, beside its base unit ("1 CRATE = 20 KG").
+ * The base unit itself has no row: it is one of itself by definition.
+ */
+export const productUnits = pgTable(
+  'product_units',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'cascade' }),
+    unitId: uuid('unit_id')
+      .notNull()
+      .references(() => unitsOfMeasure.id, { onDelete: 'restrict' }),
+    /** How many of the product's base unit one of this unit holds. */
+    qtyPerBase: numeric('qty_per_base', { precision: 24, scale: 10 }).notNull(),
+    /** Shipping weight of one of this unit, in kg. */
+    weightKg: numeric('weight_kg', { precision: 12, scale: 4 }),
+    /** The unit offered first when selling this product. At most one per product. */
+    isSalesDefault: boolean('is_sales_default').notNull().default(false),
+    /** The unit offered first when buying this product. At most one per product. */
+    isPurchaseDefault: boolean('is_purchase_default').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('product_units_product_unit_uidx').on(t.productId, t.unitId),
+    uniqueIndex('product_units_sales_default_uidx')
+      .on(t.productId)
+      .where(sql`${t.isSalesDefault}`),
+    uniqueIndex('product_units_purchase_default_uidx')
+      .on(t.productId)
+      .where(sql`${t.isPurchaseDefault}`),
+    index('product_units_unit_idx').on(t.unitId),
+    check('product_units_qty_chk', sql`${t.qtyPerBase} > 0`),
+    check('product_units_weight_chk', sql`${t.weightKg} IS NULL OR ${t.weightKg} >= 0`),
+  ],
+);
+
 /** Enabled display currencies. Exactly one row has is_base_currency = true. */
 export const currencies = pgTable('currencies', {
   /** ISO 4217 alpha code, e.g. "KES". Primary key. */
@@ -1836,15 +1945,23 @@ export const products = pgTable(
     }),
     taxRate: numeric('tax_rate', { precision: 7, scale: 4 }),
     isTaxInclusive: boolean('is_tax_inclusive'),
-    /** kg */
+    /** Shipping weight of one base unit, in kg. */
     weight: numeric('weight', { precision: 12, scale: 4 }),
+    /**
+     * The unit stock is counted in. Rows written without one take the default unit
+     * (`default_unit_id()`); the application always sets it explicitly.
+     */
+    baseUnitId: uuid('base_unit_id')
+      .notNull()
+      .default(sql`default_unit_id()`)
+      .references(() => unitsOfMeasure.id, { onDelete: 'restrict' }),
     specifications: jsonb('specifications')
       .$type<{ key: string; value: string }[]>()
       .notNull()
       .default([]),
-    stockQuantity: integer('stock_quantity').notNull().default(0),
-    reservedQuantity: integer('reserved_quantity').notNull().default(0),
-    lowStockThreshold: integer('low_stock_threshold').notNull().default(0),
+    stockQuantity: quantity('stock_quantity').notNull().default(0),
+    reservedQuantity: quantity('reserved_quantity').notNull().default(0),
+    lowStockThreshold: quantity('low_stock_threshold').notNull().default(0),
     isActive: boolean('is_active').notNull().default(true),
     imageUrl: text('image_url').notNull().default(''),
     additionalImages: jsonb('additional_images').$type<string[]>().notNull().default([]),
@@ -1873,6 +1990,7 @@ export const products = pgTable(
     index('products_category_idx').on(t.categoryId),
     index('products_item_type_idx').on(t.itemTypeId),
     index('products_active_idx').on(t.isActive),
+    index('products_base_unit_idx').on(t.baseUnitId),
   ],
 );
 
@@ -2034,9 +2152,9 @@ export const inventoryMovements = pgTable(
       .references(() => products.id, { onDelete: 'cascade' }),
     /** Denormalized so history survives a product rename. */
     productName: text('product_name').notNull().default(''),
-    changeAmount: integer('change_amount').notNull(),
-    previousStock: integer('previous_stock').notNull(),
-    newStock: integer('new_stock').notNull(),
+    changeAmount: quantity('change_amount').notNull(),
+    previousStock: quantity('previous_stock').notNull(),
+    newStock: quantity('new_stock').notNull(),
     changeType: text('change_type').notNull(),
     /** PO number, order id, or adjustment reference. */
     referenceId: text('reference_id').notNull().default(''),
@@ -2525,8 +2643,21 @@ export const salesQuoteLines = pgTable(
     fromTemplate: boolean('from_template').notNull().default(false),
     /** Came from the section template of the section it sits in; false when added by hand. */
     fromSectionTemplate: boolean('from_section_template').notNull().default(false),
+    /**
+     * The unit this line was entered in (null on lines from before units, and on kit parts): `quantity` is
+     * always in the product's base unit, so stock and prices work as ever, and these say how it was typed.
+     */
+    unitId: uuid('unit_id').references(() => unitsOfMeasure.id, { onDelete: 'restrict' }),
+    /** The unit's code when the line was made, so a document never changes its words later. */
+    unitCode: text('unit_code'),
+    /** The quantity in that unit (3 crates), where `quantity` is what it comes to in base units (60 kg). */
+    enteredQuantity: quantity('entered_quantity'),
+    /** Base units in one of that unit. */
+    qtyPerUnit: numeric('qty_per_unit', { precision: 24, scale: 10 }),
+    /** The price per one of that unit, exactly as typed or worked out: the line's amount is this times the entered quantity. */
+    enteredUnitPrice: numeric('entered_unit_price', { precision: 14, scale: 4 }),
   },
-  (t) => [uniqueIndex('sales_quote_lines_number_uidx').on(t.quoteId, t.lineNumber)],
+  (t) => [uniqueIndex('sales_quote_lines_number_uidx').on(t.quoteId, t.lineNumber), index('sales_quote_lines_unit_idx').on(t.unitId)],
 );
 
 export const salesQuoteEvents = pgTable(
@@ -2633,6 +2764,8 @@ export type EtimsItemRow = typeof etimsItems.$inferSelect;
 export type KraTransmissionRow = typeof kraTransmissions.$inferSelect;
 
 export type TaxCategoryRow = typeof taxCategories.$inferSelect;
+export type UnitOfMeasureRow = typeof unitsOfMeasure.$inferSelect;
+export type ProductUnitRow = typeof productUnits.$inferSelect;
 export type TaxCategoryInsert = typeof taxCategories.$inferInsert;
 export type CurrencyRow = typeof currencies.$inferSelect;
 export type CurrencyInsert = typeof currencies.$inferInsert;
@@ -3194,8 +3327,8 @@ export const returnReceiptLines = pgTable(
       .references(() => returnReceipts.id, { onDelete: 'cascade' }),
     productId: text('product_id').notNull(),
     description: text('description').notNull(),
-    expectedQty: integer('expected_qty').notNull(),
-    receivedQty: integer('received_qty').notNull().default(0),
+    expectedQty: quantity('expected_qty').notNull(),
+    receivedQty: quantity('received_qty').notNull().default(0),
     /** What it cost when it was sold (kept with the sale), for the stock-value slice. */
     unitCost: numeric('unit_cost', { precision: 14, scale: 4 }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -3214,7 +3347,7 @@ export const returnReceiptConfirmations = pgTable(
     lineId: uuid('line_id')
       .notNull()
       .references(() => returnReceiptLines.id, { onDelete: 'cascade' }),
-    quantity: integer('quantity').notNull(),
+    quantity: quantity('quantity').notNull(),
     condition: text('condition').$type<ReturnCondition>().notNull(),
     disposition: text('disposition').$type<ReturnDisposition>().notNull(),
     /** Set when stock was added, so the movement can be traced to this act. */
@@ -3844,7 +3977,7 @@ export const productKitComponents = pgTable(
     productId: text('product_id')
       .notNull()
       .references(() => products.id, { onDelete: 'restrict' }),
-    quantity: integer('quantity').notNull().default(1),
+    quantity: quantity('quantity').notNull().default(1),
     /** For the "shares you set" method. */
     weight: numeric('weight', { precision: 12, scale: 4 }),
     sortOrder: integer('sort_order').notNull().default(0),
@@ -3852,7 +3985,7 @@ export const productKitComponents = pgTable(
   (t) => [
     primaryKey({ columns: [t.kitId, t.productId] }),
     index('product_kit_components_product_idx').on(t.productId),
-    check('product_kit_components_qty_chk', sql`${t.quantity} >= 1`),
+    check('product_kit_components_qty_chk', sql`${t.quantity} > 0`),
   ],
 );
 
@@ -4249,7 +4382,7 @@ export const financeInventoryEvents = pgTable(
     productId: text('product_id').notNull(),
     changeType: text('change_type').notNull(),
     /** Units gained (positive) or lost (negative); for a revaluation, the units on hand. */
-    quantity: integer('quantity').notNull(),
+    quantity: quantity('quantity').notNull(),
     /** The cost per unit the goods had when they moved; for a revaluation, the change in cost per unit. */
     unitCost: numeric('unit_cost', { precision: 14, scale: 2 }).notNull(),
     /** Signed value: quantity × unit cost. */

@@ -13,6 +13,8 @@ import type {
   Category,
   ItemType,
 } from '@/types/index';
+import { SettingsError } from '@/server/domains/settings/errors';
+import { quantityProblem } from '@/lib/unit-rules';
 import { toCategory, toItemType, toProduct, toPublicProduct, productToRow } from './mappers';
 import type { CatalogRepository } from './repository';
 import { inTreeOrder, parentProblem } from './category-tree';
@@ -89,14 +91,29 @@ export class CatalogService {
 
   static async createProduct(productData: ProductWrite): Promise<Product> {
     const catalog = repo();
-    const { media: galleryInput, ...fields } = productData;
+    const { media: galleryInput, packagings: packagingInput, baseUnitId: requestedUnit, ...fields } = productData;
     const itemType =
       (productData.itemTypeId ? await catalog.getItemTypeById(productData.itemTypeId) : null) ??
       (await catalog.getDefaultItemType());
     if (!itemType) {
-      throw new Error('Create an item type first, then assign it to this product');
+      throw new SettingsError('Create an item type first, then assign it to this product');
     }
     // A blank SKU or stock code is numbered by its series when the product is saved (below).
+    const { unit, packagings: preparedPackagings } = await getContainer().unitWriter.planForProduct({
+      productId: null,
+      requestedUnitId: requestedUnit,
+      current: null,
+      packagings: packagingInput ?? [],
+    });
+    const packagings = preparedPackagings ?? [];
+    for (const [value, what] of [
+      [productData.stockQuantity, 'Stock quantity'],
+      [productData.lowStockThreshold, 'The low stock threshold'],
+    ] as const) {
+      const problem = quantityProblem(value, unit.decimals, unit.name, what);
+      if (problem !== null) throw new SettingsError(problem);
+      if (value < 0) throw new SettingsError(`${what} must be 0 or more`);
+    }
 
     const isSellable = itemType.isSellable;
     let price: number | undefined;
@@ -107,13 +124,13 @@ export class CatalogService {
         !Number.isFinite(Number(productData.price)) ||
         Number(productData.price) <= 0
       ) {
-        throw new Error('Selling price is required for sellable item types');
+        throw new SettingsError('Selling price is required for sellable item types');
       }
       price = Number(productData.price);
     } else if (productData.price != null) {
       price = Number(productData.price);
       if (!Number.isFinite(price) || price < 0) {
-        throw new Error('Selling price must be 0 or greater when provided');
+        throw new SettingsError('Selling price must be 0 or greater when provided');
       }
     }
 
@@ -122,7 +139,7 @@ export class CatalogService {
       !Number.isFinite(Number(productData.costPrice)) ||
       Number(productData.costPrice) < 0
     ) {
-      throw new Error('Cost of goods is required');
+      throw new SettingsError('Cost of goods is required');
     }
 
     const id = newId('prod');
@@ -142,6 +159,10 @@ export class CatalogService {
       itemTypeName: itemType.name,
       itemTypeCode: itemType.code,
       isSellable,
+      baseUnitId: unit.id,
+      baseUnitCode: unit.code,
+      baseUnitName: unit.name,
+      baseUnitDecimals: unit.decimals,
       reservedQuantity: 0,
       createdAt: now,
       updatedAt: now,
@@ -172,6 +193,7 @@ export class CatalogService {
         newProduct[field] = row[field];
       }
       await tx.insert(products).values(row);
+      await getContainer().units.replacePackagingIn(tx, id, packagings);
       // The gallery commits with the product. Callers that only know image links
       // (API, CSV-style input) still get proper assets so the model stays consistent.
       let gallery: { imageUrl: string; additionalImages: string[] } | null = null;
@@ -213,38 +235,47 @@ export class CatalogService {
 
   static async updateProduct(id: string, patchInput: ProductPatch): Promise<Product> {
     const catalog = repo();
-    const { media: galleryUpdate, ...updates } = patchInput;
+    const { media: galleryUpdate, packagings: packagingUpdate, ...updates } = patchInput;
     const existingRow = await catalog.getProductById(id);
-    if (!existingRow) throw new Error(`Product ${id} not found`);
+    if (!existingRow) throw new SettingsError(`Product ${id} not found`);
     const existing = toProduct(existingRow);
 
     if (updates.sku !== undefined) {
-      if (!updates.sku.trim()) throw new Error('SKU code is required');
+      if (updates.sku.trim() === '') throw new SettingsError('SKU code is required');
       updates.sku = updates.sku.trim().toUpperCase();
     }
     if (updates.stockCode !== undefined) {
-      if (!updates.stockCode.trim()) throw new Error('Stock code is required');
+      if (updates.stockCode.trim() === '') throw new SettingsError('Stock code is required');
       updates.stockCode = updates.stockCode.trim().toUpperCase();
     }
     if (updates.sku !== undefined && updates.sku !== existing.sku) {
       const clash = await catalog.getProductBySku(updates.sku);
       if (clash && clash.id !== id) {
-        throw new Error(`SKU ${updates.sku} is already used by "${clash.name}"`);
+        throw new SettingsError(`SKU ${updates.sku} is already used by "${clash.name}"`);
       }
     }
     if (updates.stockCode !== undefined && updates.stockCode !== existing.stockCode) {
       const clash = await catalog.getProductByStockCode(updates.stockCode);
       if (clash && clash.id !== id) {
-        throw new Error(`Stock code ${updates.stockCode} is already used by "${clash.name}"`);
+        throw new SettingsError(`Stock code ${updates.stockCode} is already used by "${clash.name}"`);
       }
     }
     if (updates.slug !== undefined && updates.slug !== existing.slug) {
       updates.slug = await resolveUniqueSlug(updates.slug || existing.name, id);
     }
 
+    const plan = await getContainer().unitWriter.planForProduct({
+      productId: id,
+      requestedUnitId: updates.baseUnitId,
+      current: existing,
+      packagings: packagingUpdate,
+    });
+    updates.baseUnitId = plan.unit.id;
+    const packagings = plan.packagings;
+
     if (updates.itemTypeId) {
       const itemType = await catalog.getItemTypeById(updates.itemTypeId);
-      if (!itemType) throw new Error('Selected item type was not found');
+      if (!itemType) throw new SettingsError('Selected item type was not found');
       updates.itemTypeName = itemType.name;
       updates.itemTypeCode = itemType.code;
       updates.isSellable = itemType.isSellable;
@@ -257,7 +288,7 @@ export class CatalogService {
 
     if (nextSellable) {
       if (nextPrice == null || !Number.isFinite(Number(nextPrice)) || Number(nextPrice) <= 0) {
-        throw new Error('Selling price is required for sellable item types');
+        throw new SettingsError('Selling price is required for sellable item types');
       }
       if (updates.price !== undefined) updates.price = Number(nextPrice);
     } else if (updates.price !== undefined) {
@@ -266,14 +297,14 @@ export class CatalogService {
       } else {
         const p = Number(updates.price);
         if (!Number.isFinite(p) || p < 0) {
-          throw new Error('Selling price must be 0 or greater when provided');
+          throw new SettingsError('Selling price must be 0 or greater when provided');
         }
         updates.price = p;
       }
     }
 
     if (nextCost == null || !Number.isFinite(Number(nextCost)) || Number(nextCost) < 0) {
-      throw new Error('Cost of goods is required');
+      throw new SettingsError('Cost of goods is required');
     }
     if (updates.costPrice !== undefined) updates.costPrice = Number(nextCost);
 
@@ -284,8 +315,14 @@ export class CatalogService {
       updates.stockQuantity !== undefined && updates.stockQuantity !== existing.stockQuantity
         ? updates.stockQuantity
         : undefined;
-    if (stockChange !== undefined && (!Number.isInteger(stockChange) || stockChange < 0)) {
-      throw new Error('Stock quantity must be a whole number of 0 or more');
+    if (stockChange !== undefined && stockChange < 0) throw new SettingsError('Stock quantity must be 0 or more');
+    // Counted in the product's unit (the new one, when this save changes it).
+    for (const [value, what] of [
+      [stockChange, 'Stock quantity'],
+      [updates.lowStockThreshold, 'The low stock threshold'],
+    ] as const) {
+      const problem = value === undefined ? null : quantityProblem(value, plan.unit.decimals, plan.unit.name, what);
+      if (problem !== null) throw new SettingsError(problem);
     }
 
     const merged: Product = { ...existing, ...updates, id, updatedAt: new Date().toISOString() };
@@ -313,6 +350,7 @@ export class CatalogService {
         .update(products)
         .set({ ...fieldPatch, updatedAt: new Date() })
         .where(eq(products.id, id));
+      if (packagings !== undefined) await getContainer().units.replacePackagingIn(tx, id, packagings);
       // After the field update: the gallery refreshes image_url / additional_images itself.
       if (galleryUpdate !== undefined) {
         await mediaService.setProductGallery(tx, id, galleryUpdate);
