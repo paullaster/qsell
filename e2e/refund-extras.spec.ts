@@ -117,8 +117,11 @@ test.describe('customer credit adjustments', () => {
     await page.getByRole('link', { name: new RegExp(`CAJ-.*Wallet ${tag}`) }).first().click();
     await expect(page.getByRole('heading', { name: /^Credit adjustment CAJ-/, level: 2 })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText('Waiting for a decision').first()).toBeVisible();
-    await clickUntilVisible(page.getByRole('button', { name: 'Approve' }), page.getByText('Approved and done.'));
+    // One click: the page was reached by a link, so it is wired up. The "Approved and done." notice is only there until the page
+    // is redrawn with the new status, so the lasting result is what is waited for (and a second click would find no button).
+    await page.getByRole('button', { name: 'Approve' }).click();
     await expect(page.getByText('Done').first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('button', { name: 'Approve' })).toHaveCount(0);
     await noHorizontalScroll(page);
   });
 
