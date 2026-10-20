@@ -395,6 +395,10 @@ async function seedUnitDocuments(): Promise<void> {
     taxRate: '0',
     isTaxInclusive: true,
     stockQuantity: 25.5,
+    specifications: [
+      { key: 'Origin', value: 'Lake Victoria' },
+      { key: 'Grade', value: 'A' },
+    ],
   });
   await db.insert(schema.productUnits).values({ productId: fish, unitId: crate.id, qtyPerBase: '20' });
   for (const label of ['Desktop', 'Phone']) {
