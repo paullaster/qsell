@@ -1,22 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import {
-  X,
-  ShoppingCart,
-  Star,
-  ShieldCheck,
-  Truck,
-  RotateCcw,
-  Zap,
-  CheckCircle2,
-  Tag,
-  Smartphone,
-  CreditCard,
-} from 'lucide-react';
+import { X, ShoppingCart, Star, Zap } from 'lucide-react';
 import { type PublicProduct } from '@/types/index';
 import { AppImage } from '@/components/ui/AppImage';
 import { ProductDescriptionView } from '@/components/ui/ProductDescriptionView';
+import { visibleSpecifications } from '@/lib/product-specifications';
 import { QuantityStepper } from '@/components/store/QuantityStepper';
 import { availableOf, cartQuantityWords, decimalsOf, perUnitSuffix } from '@/lib/cart-quantity';
 
@@ -27,16 +16,20 @@ interface ProductDetailModalProps {
   onQuickBuy?: (product: PublicProduct) => void;
 }
 
-export function ProductDetailModal({
+export function ProductDetailModal({ product, ...rest }: ProductDetailModalProps) {
+  // Keyed by product, so the chosen quantity starts again for each product shown.
+  return product === null ? null : <ProductDetails key={product.id} product={product} {...rest} />;
+}
+
+function ProductDetails({
   product,
   onClose,
   onAddToCart,
   onQuickBuy,
-}: ProductDetailModalProps) {
-  if (!product) return null;
-
+}: Omit<ProductDetailModalProps, 'product'> & { product: PublicProduct }) {
   const [quantity, setQuantity] = useState<number>(1);
   const decimals = decimalsOf(product);
+  const specifications = visibleSpecifications(product.specifications);
   const availableStock = availableOf(product);
   const isOutOfStock = availableStock <= 0;
 
@@ -99,11 +92,13 @@ export function ProductDetailModal({
                 <span className="font-mono text-2xl font-bold text-fg-strong">
                   KES {(product.price ?? 0).toLocaleString()}
                   {perUnitSuffix(product) === '' ? null : (
-                    <span className="text-sm font-normal text-fg-muted">{perUnitSuffix(product)}</span>
+                    <span className="text-sm font-normal text-fg-muted">
+                      {perUnitSuffix(product)}
+                    </span>
                   )}
                 </span>
               </div>
-              {product.compareAtPrice &&
+              {product.compareAtPrice != null &&
                 product.price != null &&
                 product.compareAtPrice > product.price && (
                   <div className="text-right">
@@ -128,7 +123,8 @@ export function ProductDetailModal({
               ) : (
                 <span className="flex items-center gap-1.5 font-semibold text-emerald-600">
                   <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                  In Stock ({cartQuantityWords(availableStock, product)}{decimals > 0 ? '' : ' units'})
+                  In Stock ({cartQuantityWords(availableStock, product)}
+                  {decimals > 0 ? '' : ' units'})
                 </span>
               )}
             </div>
@@ -138,6 +134,25 @@ export function ProductDetailModal({
               <span className="text-xs font-semibold text-fg">Description:</span>
               <ProductDescriptionView description={product.description} dense />
             </div>
+
+            {specifications.length > 0 && (
+              <section aria-labelledby="product-specifications" className="space-y-1.5">
+                <h3 id="product-specifications" className="text-xs font-semibold text-fg">
+                  Specifications:
+                </h3>
+                <dl className="divide-y divide-line rounded-lg border border-line bg-surface text-xs">
+                  {specifications.map((spec) => (
+                    <div
+                      key={`${spec.key}:${spec.value}`}
+                      className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-3 px-3 py-2"
+                    >
+                      <dt className="font-medium break-words text-fg-muted">{spec.key}</dt>
+                      <dd className="break-words text-fg-strong">{spec.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+            )}
           </div>
 
           {/* Action & Quantity */}
