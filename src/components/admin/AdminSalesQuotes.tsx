@@ -97,6 +97,7 @@ export function AdminSalesQuotes({
   const [loadingEditorData, setLoadingEditorData] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   /** The quote being edited (null for a new one) and the form the editor starts from. */
+  const [editNotices, setEditNotices] = useState<{ line: number; message: string }[]>([]);
   const [editing, setEditing] = useState<{ id: string; quoteNumber: string } | null>(null);
   const [startForm, setStartForm] = useState<QuoteInput | null>(null);
   const [details, setDetails] = useState<SalesQuote | null>(null);
@@ -165,6 +166,7 @@ export function AdminSalesQuotes({
       if (!loaded.ok) throw new Error(loaded.error);
       if (data === null) return;
       setEditing({ id, quoteNumber: loaded.data.quoteNumber });
+      setEditNotices(loaded.data.notices);
       setStartForm(loaded.data.form);
       setEditorOpen(true);
       setDetails(null);
@@ -399,6 +401,7 @@ export function AdminSalesQuotes({
           products={editorData.products}
           initial={startForm}
           quoteNumber={editing?.quoteNumber}
+          notices={editing === null ? [] : editNotices}
           onClose={() => setEditorOpen(false)}
           onSave={async (input) => {
             const quote = editing

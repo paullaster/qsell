@@ -1,4 +1,5 @@
-import { quantityFits } from '@/lib/decimal';
+import { quantityFits, roundQty } from '@/lib/decimal';
+import { lineInBase } from '@/lib/unit-rules';
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
@@ -41,7 +42,10 @@ export interface ReturnActor {
 
 export interface ConfirmItem {
   lineId: string;
+  /** In the unit named by `unitId`, or in base units when there is none. */
   quantity: number;
+  /** The unit the goods were sold in, when the count is in it (a crate, not its kilograms). */
+  unitId?: string | null;
   condition: ReturnCondition;
   disposition: ReturnDisposition;
   note?: string | null;
@@ -86,7 +90,7 @@ export class ReturnReceiptService {
     const costs = await tx.select({ productId: orderItems.productId, cost: orderItems.unitCost }).from(orderItems).where(eq(orderItems.orderId, p.orderId));
     const cost = new Map(costs.map((c) => [c.productId, c.cost]));
     await tx.insert(returnReceiptLines).values(
-      p.lines.map((l) => ({ receiptId: r.id, productId: l.productId, description: l.description, expectedQty: l.quantity, unitCost: cost.get(l.productId) ?? null })),
+      p.lines.map((l) => ({ receiptId: r.id, productId: l.productId, description: l.description, expectedQty: l.quantity, unitCost: cost.get(l.productId) ?? null, unitId: l.unitId, unitCode: l.unitCode, qtyPerUnit: l.qtyPerUnit })),
     );
     await this.decisions.record(
       { companyId: p.companyId, subject: { type: 'return_receipt', id: r.id }, action: 'returns.requested', actor: { type: 'user', id: p.requestedBy }, to: 'awaiting_goods', inputs: { creditNote: p.creditNote.creditNoteNo }, outcome: { number, lines: p.lines.length } },
@@ -159,8 +163,17 @@ export class ReturnReceiptService {
         if (seen.has(it.lineId)) throw new ReturnError('DUPLICATE_LINE', 'Enter each line once.');
         seen.add(it.lineId);
         if (!quantityFits(it.quantity, 3) || it.quantity <= 0) throw new ReturnError('QUANTITY_INVALID', `${line.description}: the quantity must be a number above zero with at most 3 decimals.`);
-        if (it.quantity > line.expectedQty - line.receivedQty) {
-          throw new ReturnError('OVER_RECEIVED', `${line.description}: ${line.expectedQty - line.receivedQty} still expected, you entered ${it.quantity}.`);
+        // Counted in the unit the goods were sold in, it is turned into base units with the conversion kept on the line.
+        let quantity = it.quantity;
+        if (has(it.unitId)) {
+          if (it.unitId !== line.unitId || !has(line.qtyPerUnit)) throw new ReturnError('UNIT_INVALID', `${line.description}: count it in ${has(line.unitCode) ? line.unitCode : 'its base unit'}.`);
+          const base = lineInBase(it.quantity, line.qtyPerUnit, 3);
+          if (!base.ok) throw new ReturnError('QUANTITY_INVALID', `${line.description}: ${base.error}`);
+          quantity = base.value;
+        }
+        const stillExpected = roundQty(line.expectedQty - line.receivedQty);
+        if (quantity > stillExpected) {
+          throw new ReturnError('OVER_RECEIVED', `${line.description}: ${stillExpected} still expected, you entered ${quantity}.`);
         }
         if (!CONDITIONS.includes(it.condition) || !DISPOSITIONS.includes(it.disposition)) throw new ReturnError('INVALID', 'Choose the condition and what was done with the goods.');
         const bad = checkDisposition(it.condition, it.disposition);
@@ -169,19 +182,19 @@ export class ReturnReceiptService {
         if (toStock) {
           await applyStockDelta(tx, {
             productId: line.productId,
-            delta: it.quantity,
+            delta: quantity,
             allowDeleted: true,
             changeType: 'credit_note_restock',
             referenceId: r.id,
             actor: a.actorId,
-            note: `Return ${r.number}: ${it.quantity} confirmed back into stock.`,
+            note: `Return ${r.number}: ${quantity} confirmed back into stock.`,
           });
-          stockAdded += it.quantity;
+          stockAdded = roundQty(stockAdded + quantity);
         }
         await tx.insert(returnReceiptConfirmations).values({
           receiptId,
           lineId: line.id,
-          quantity: it.quantity,
+          quantity,
           condition: it.condition,
           disposition: it.disposition,
           stockAdded: toStock,
@@ -189,7 +202,7 @@ export class ReturnReceiptService {
           confirmedBy: a.actorId,
           origin: a.origin,
         });
-        await tx.update(returnReceiptLines).set({ receivedQty: sql`${returnReceiptLines.receivedQty} + ${it.quantity}` }).where(eq(returnReceiptLines.id, line.id));
+        await tx.update(returnReceiptLines).set({ receivedQty: sql`${returnReceiptLines.receivedQty} + ${quantity}` }).where(eq(returnReceiptLines.id, line.id));
       }
       const after = await tx.select().from(returnReceiptLines).where(eq(returnReceiptLines.receiptId, receiptId));
       const complete = after.every((l) => l.receivedQty === l.expectedQty);
@@ -210,7 +223,7 @@ export class ReturnReceiptService {
       const [r] = await tx.select().from(returnReceipts).where(and(eq(returnReceipts.companyId, a.companyId), eq(returnReceipts.id, receiptId))).for('update');
       if (!r) throw new ReturnError('NOT_FOUND', 'That return does not exist.');
       if (r.closedAt) throw new ReturnError('CLOSED', `This return is already ${r.status.replace('_', ' ')}.`);
-      const lines = await tx.select({ n: sql<number>`COALESCE(SUM(${returnReceiptLines.receivedQty}),0)::int` }).from(returnReceiptLines).where(eq(returnReceiptLines.receiptId, receiptId));
+      const lines = await tx.select({ n: sql<number>`COALESCE(SUM(${returnReceiptLines.receivedQty}),0)::float8` }).from(returnReceiptLines).where(eq(returnReceiptLines.receiptId, receiptId));
       const status: ReturnReceiptRow['status'] = (lines[0]?.n ?? 0) > 0 ? 'partially_confirmed' : 'rejected';
       await tx.update(returnReceipts).set({ status, closedAt: new Date(), closedBy: a.actorId, closeReasonCode: rs.code, closeReasonText: rs.text }).where(eq(returnReceipts.id, receiptId));
       await this.decisions.record(

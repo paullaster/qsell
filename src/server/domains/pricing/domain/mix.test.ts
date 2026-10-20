@@ -80,6 +80,15 @@ describe('buy and get', () => {
     expect(resolveMixDiscounts([line(0, 2, 100)], inputs([rule(buy2get1())])).lines.size).toBe(0);
   });
 
+  it('a part unit is priced as usual and the deal says so', () => {
+    const r = resolveMixDiscounts([line(0, 3.5, 100)], inputs([rule(buy2get1())]));
+    // Three whole units make one set; the half unit is neither bought-for nor free.
+    expect(totalOff(r)).toBe(100);
+    expect(r.considered[0]?.why).toContain('part unit is priced as usual');
+    const whole = resolveMixDiscounts([line(0, 3, 100)], inputs([rule(buy2get1())]));
+    expect(whole.considered[0]?.why).not.toContain('part unit');
+  });
+
   it('the cheapest unit of the group is the free one, across lines', () => {
     const r = resolveMixDiscounts([line(0, 2, 100), line(1, 1, 40)], inputs([rule(buy2get1())]));
     expect(r.lines.get(1)!.total).toBe(40);
@@ -310,6 +319,13 @@ describe('gifts', () => {
     const g = gift({ minQuantity: 3, target: only('p0') });
     expect(resolveGifts([line(0, 2, 100), line(1, 5, 100)], inputs([g])).gifts).toHaveLength(0);
     expect(resolveGifts([line(0, 3, 100)], inputs([g])).gifts).toHaveLength(1);
+  });
+
+  it('counts weight exactly: 2.5 kg satisfies "at least 2" and the words say 2.5', () => {
+    const g = gift({ minQuantity: 2.5, target: only('p0') });
+    expect(resolveGifts([line(0, 2.4, 100)], inputs([g])).gifts).toHaveLength(0);
+    expect(resolveGifts([line(0, 2.4, 100)], inputs([g])).considered[0]?.why).toContain('has 2.4');
+    expect(resolveGifts([line(0, 2.5, 100)], inputs([g])).gifts).toHaveLength(1);
   });
 
   it('respects coupons and used-up limits', () => {

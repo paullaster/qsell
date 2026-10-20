@@ -8,6 +8,7 @@ import { CreditNoteError } from './service';
 import { PostingError } from '@/server/domains/finance/engine';
 import { FinanceError } from '@/server/domains/finance/errors';
 import type { CreditNoteReason } from './reasons';
+import type { CreditAsk } from '@/lib/credit-units';
 
 import { has } from '@/lib/values';
 
@@ -54,7 +55,7 @@ export type IssueCreditNoteOutcome =
 
 export async function issueOrderCreditNoteAction(input: {
   orderId: string;
-  lines: { productId: string; quantity: number }[];
+  lines: CreditAsk[];
   reasonCode: CreditNoteReason;
   reasonNote?: string;
   restock?: boolean;

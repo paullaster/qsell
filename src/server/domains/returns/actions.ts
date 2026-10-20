@@ -10,6 +10,8 @@ import { ReasonError } from '@/server/kernel/reason-codes/service';
 import { ReturnError, type ConfirmItem, type ReturnActor } from './return-receipt-service';
 import { injectedDelay } from '@/server/domains/finance/action-runner';
 import { suggestedDisposition } from '@/server/domains/finance/domain/credit-note-accounting';
+import { creditWords } from '@/lib/credit-units';
+import { has } from '@/lib/values';
 import { isMalformedId, NO_SUCH_RECORD } from '@/server/domains/settings/errors';
 
 export type ReturnResult<T> = { ok: true; data: T } | { ok: false; error: string; code?: string; forbidden?: true };
@@ -60,6 +62,9 @@ export async function returnDetailAction(id: string) {
     const d = await getContainer().returns.detail(a.companyId, id);
     if (!d) throw new ReturnError('NOT_FOUND', 'That return does not exist.');
     const names = new Map(d.lines.map((l) => [l.id, l.description]));
+    const unitOf = (l: (typeof d.lines)[number]) =>
+      has(l.unitId) && has(l.unitCode) && has(l.qtyPerUnit) ? { id: l.unitId, code: l.unitCode, qtyPerUnit: l.qtyPerUnit } : null;
+    const unitByLine = new Map(d.lines.map((l) => [l.id, unitOf(l)]));
     return {
       id: d.r.id,
       number: d.r.number,
@@ -71,8 +76,23 @@ export async function returnDetailAction(id: string) {
       closed: d.r.closedAt !== null,
       closeReason: d.r.closeReasonCode,
       closeText: d.r.closeReasonText,
-      lines: d.lines.map((l) => ({ id: l.id, productId: l.productId, description: l.description, expected: l.expectedQty, received: l.receivedQty, unitCost: l.unitCost })),
-      confirmations: d.confirmations.map((c) => ({ id: String(c.id), line: names.get(c.lineId) ?? '', quantity: c.quantity, condition: c.condition, disposition: c.disposition, stockAdded: c.stockAdded, note: c.note, by: c.confirmedBy, at: c.createdAt.toISOString() })),
+      lines: d.lines.map((l) => {
+        const unit = unitOf(l);
+        return {
+          id: l.id,
+          productId: l.productId,
+          description: l.description,
+          expected: l.expectedQty,
+          received: l.receivedQty,
+          unitCost: l.unitCost,
+          /** The unit the goods were sold in: they can be counted in it. */
+          unit: unit === null ? null : { id: unit.id, code: unit.code },
+          perUnit: unit === null ? 1 : Number(unit.qtyPerUnit),
+          expectedWords: creditWords(l.expectedQty, unit),
+          receivedWords: creditWords(l.receivedQty, unit),
+        };
+      }),
+      confirmations: d.confirmations.map((c) => ({ id: String(c.id), line: names.get(c.lineId) ?? '', quantity: c.quantity, words: creditWords(c.quantity, unitByLine.get(c.lineId) ?? null), condition: c.condition, disposition: c.disposition, stockAdded: c.stockAdded, note: c.note, by: c.confirmedBy, at: c.createdAt.toISOString() })),
       can: { confirm: await canPermission('restock:confirm'), reject: await canPermission('restock:reject') },
     };
   });

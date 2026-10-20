@@ -5,6 +5,8 @@ import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   inventoryMovements,
   orderItems,
+  creditNoteLines,
+  returnReceiptLines,
   priceListLines,
   productKitComponents,
   products,
@@ -138,7 +140,7 @@ export class UnitRepository {
       ids.map((id) => [id, { ...NO_USAGE }]),
     );
     if (ids.length === 0) return usage;
-    const [byProducts, byPackagings, byUnits, byQuoteLines, byOrderLines] = await Promise.all([
+    const [byProducts, byPackagings, byUnits, byQuoteLines, byOrderLines, byCreditLines, byReturnLines] = await Promise.all([
       this.db
         .select({ id: products.baseUnitId, n: count() })
         .from(products)
@@ -164,6 +166,16 @@ export class UnitRepository {
         .from(orderItems)
         .where(inArray(orderItems.unitId, ids))
         .groupBy(orderItems.unitId),
+      this.db
+        .select({ id: creditNoteLines.unitId, n: count() })
+        .from(creditNoteLines)
+        .where(inArray(creditNoteLines.unitId, ids))
+        .groupBy(creditNoteLines.unitId),
+      this.db
+        .select({ id: returnReceiptLines.unitId, n: count() })
+        .from(returnReceiptLines)
+        .where(inArray(returnReceiptLines.unitId, ids))
+        .groupBy(returnReceiptLines.unitId),
     ]);
     const add = (id: string | null, change: Partial<UnitUsage>) => {
       if (id === null) return;
@@ -178,7 +190,7 @@ export class UnitRepository {
     for (const r of byProducts) add(r.id, { products: r.n });
     for (const r of byPackagings) add(r.id, { packagings: r.n });
     for (const r of byUnits) add(r.id, { derivedUnits: r.n });
-    for (const r of [...byQuoteLines, ...byOrderLines]) add(r.id, { documentLines: r.n });
+    for (const r of [...byQuoteLines, ...byOrderLines, ...byCreditLines, ...byReturnLines]) add(r.id, { documentLines: r.n });
     return usage;
   }
 

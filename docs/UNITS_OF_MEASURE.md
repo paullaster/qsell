@@ -23,8 +23,23 @@ One list of units, managed in **Products → Units of Measure** (`/admin/setting
 - Pick a unit with `ChoicePicker` / `LookupAutocomplete`, source `units-of-measure` (filters `kind`, `exclude`, `bases=1`). Quick create and "view all" are `/admin/settings/units/new` and `/admin/settings/units/browse` (intercepted in `@create`).
 - Convert with `convertQuantity` and `toBaseQuantity` in `src/lib/unit-rules.ts` (exact decimals in `src/lib/decimal.ts`, never floating point).
 
+## Quantities and documents (migrations 0065, 0067, 0068)
+
+- Stock, reservations, order lines, credit note and return lines, kits and the stock ledger hold up to **three decimals** (`numeric(14,3)`, `quantity()` in `schema.ts`). A product accepts only as many decimals as its base unit allows (pieces: none, kilograms: three). Add quantities in code with `roundQty` (`src/lib/decimal.ts`), never with bare `+`.
+- A quote or order line is stored in the product's **base unit** (`quantity`); when it was typed in another unit of the product (3 crates) the line also keeps the unit, the quantity as typed, the conversion and the price per that unit. Money is worked out from what was typed, so 1000 per crate of 12 stays 1000.
+- **Credit notes and returns** keep the unit the goods were sold in (`unit_id`, `unit_code`, `qty_per_unit`, `entered_quantity`). The unit and conversion are those on the order line (a document never depends on the product's live units), so a unit the product has since dropped can still be credited. Credit is tracked per product in base units; two lines of one product (kg and crate) are one line to credit, in base units. A credit can be asked for in the unit sold or in the base unit only (`src/lib/credit-units.ts`); goods coming back are confirmed the same way.
+- **Storefront cart**: pieces step by 1; goods with decimals step by half a unit and the quantity can be typed (`src/lib/cart-quantity.ts`, `QuantityStepper`). Quantity is cut to the unit's decimals and to what is in stock, with a message.
+- **Mix promotions** count whole units. A part unit (the 0.5 of 2.5 kg) is priced normally and the deal's explanation says so; free-gift triggers count the exact quantity.
+- **A saved quote whose product has dropped a unit** opens in the base unit at the same total, with a notice per line (`src/lib/quote-unit-repair.ts`); a unit whose size changed is pointed out and re-worked when saved. Revising such a quote does the same.
+- **Stock value in the books** is carried so a product's postings always add up to units x cost to the cent: each change is written as the difference between the rounded running totals kept in `finance_inventory_totals` (migration 0069, database triggers). Rounding left by changes written before this migration is not rewritten; it shows in the reconciliation and does not grow.
+
+## Using it elsewhere
+
+- Pick a unit with `ChoicePicker` / `LookupAutocomplete`, source `units-of-measure` (filters `kind`, `exclude`, `bases=1`) or, for a line of a product, `product-units`. Quick create and "view all" are `/admin/settings/units/new` and `/admin/settings/units/browse` (intercepted in `@create`).
+- Convert with `convertQuantity` and `toBaseQuantity` in `src/lib/unit-rules.ts` (exact decimals in `src/lib/decimal.ts`, never floating point). For document lines use `unitWriter.convertLines`; for goods coming back or being credited use `src/lib/credit-units.ts`.
+
 ## Not done yet
 
-- Stock, reservations and order/quote quantities are still whole numbers, so a unit's `decimals` are recorded and validated but a product cannot yet hold 2.5 kg in stock. Making quantities decimal across inventory, quotes, orders and the ledger is its own change.
-- Quote, order and invoice lines do not carry a unit yet (they use the product's base unit); the eTIMS item panel does not prefill from the unit's eTIMS code; the CSV import has no unit column; units have no per-language names.
-- Role grants are written when a role is first created, so existing roles other than super admin need `units:read` / `units:manage` added in the roles screen.
+- Units have no per-language names.
+- A unit that a credit note or return line uses cannot be deleted (counted as "document lines"); there is no way to merge two units.
+- Role grants are written when a role is first created (migration 0066 granted them to roles that had product permissions); roles made later need `units:read` / `units:manage` added in the roles screen.
