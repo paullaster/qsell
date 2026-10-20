@@ -38,6 +38,10 @@ import {
 import { discardMediaUploadsAction } from '@/server/domains/media/actions';
 import { ProductMediaManager } from '@/components/admin/ProductMediaManager';
 import { ProductEtimsPanel } from '@/components/admin/ProductEtimsPanel';
+import { ProductUnitsSection, type PackagingRowState } from '@/components/admin/ProductUnitsSection';
+import { quantityStep } from '@/lib/unit-rules';
+import { checkProductUnitsAction } from '@/server/domains/units/actions';
+import type { Choice } from '@/lib/payment-options';
 import { listEtimsTargetsAction } from '@/server/domains/kra/etims/actions';
 
 type ProductFormTab =
@@ -126,6 +130,10 @@ export function AdminProductModal({
   const [stockQuantity, setStockQuantity] = useState('');
   const [lowStockThreshold, setLowStockThreshold] = useState('');
   const [weight, setWeight] = useState('');
+  const [baseUnit, setBaseUnit] = useState<Choice | null>(null);
+  const [packagings, setPackagings] = useState<PackagingRowState[]>([]);
+  /** False until a saved product's alternate units are read: sending the empty list before that would wipe them. */
+  const [packagingsLoaded, setPackagingsLoaded] = useState(false);
 
   // Media & Description
   const [gallery, setGallery] = useState<ProductMediaItem[]>([]);
@@ -176,6 +184,19 @@ export function AdminProductModal({
         setCategory(detail.category.name);
         return;
       }
+      if (detail.kind === 'unit') {
+        const created: Choice = { id: detail.unit.id, label: detail.unit.label, meta: { code: detail.unit.label.split(' · ')[0] ?? '', decimals: String(detail.unit.decimals) } };
+        // A new unit goes to the alternate-unit row that was waiting for one, else it becomes the base unit.
+        setPackagings((rows) => {
+          const waiting = rows.findIndex((r) => r.unitId === '');
+          if (waiting === -1) {
+            setBaseUnit(created);
+            return rows;
+          }
+          return rows.map((r, i) => (i === waiting ? { ...r, unitId: created.id, unitLabel: created.label } : r));
+        });
+        return;
+      }
       if (detail.kind === 'tax') {
         setTaxCategories((current) => {
           const cleared = detail.tax.isDefault
@@ -217,6 +238,9 @@ export function AdminProductModal({
       setStockQuantity(String(template.stockQuantity));
       setLowStockThreshold(String(template.lowStockThreshold));
       setWeight(template.weight != null ? String(template.weight) : '');
+      setBaseUnit({ id: template.baseUnitId, label: `${template.baseUnitCode} · ${template.baseUnitName}`, meta: { code: template.baseUnitCode, decimals: String(template.baseUnitDecimals) } });
+      setPackagings([]);
+      setPackagingsLoaded(!productToEdit);
       // Edit and duplicate both carry the gallery (assets are shared, so copying is free).
       setGallery(template.media ?? []);
       setDescription(template.description || '');
@@ -252,6 +276,9 @@ export function AdminProductModal({
       setStockQuantity('');
       setLowStockThreshold('');
       setWeight('');
+      setBaseUnit(null);
+      setPackagings([]);
+      setPackagingsLoaded(true);
       setGallery([]);
       setDescription('');
       setTagsInput('');
@@ -325,7 +352,7 @@ export function AdminProductModal({
       setTab('basics');
     } else if (m.includes('price') || m.includes('selling') || m.includes('cost')) {
       setTab('pricing');
-    } else if (m.includes('stock') || m.includes('weight')) {
+    } else if (m.includes('stock') || m.includes('weight') || m.includes('unit') || m.includes('decimal') || m.includes('whole number')) {
       setTab('inventory');
     }
   };
@@ -396,6 +423,23 @@ export function AdminProductModal({
     setIsSubmitting(true);
     setError(null);
 
+    // The unit rules are checked first and answered in words, because errors thrown by the save are masked in production.
+    const sentPackagings = packagings.map(({ key: _key, unitLabel: _label, ...row }) => row);
+    const unitsToSave = !isEditing || packagingsLoaded ? sentPackagings : undefined;
+    if (baseUnit !== null || unitsToSave !== undefined) {
+      const unitCheck = await checkProductUnitsAction({
+        productId: productToEdit?.id ?? null,
+        baseUnitId: baseUnit?.id ?? productToEdit?.baseUnitId ?? '',
+        packagings: unitsToSave ?? [],
+      }).catch(() => ({ ok: false as const, error: 'The server could not be reached. Check your connection and try again.' }));
+      if (!unitCheck.ok) {
+        setError(unitCheck.error);
+        setTab('inventory');
+        setIsSubmitting(false);
+        return;
+      }
+    }
+
     const tags = tagsInput
       .split(',')
       .map((t) => t.trim())
@@ -430,6 +474,8 @@ export function AdminProductModal({
         stockQuantity: Number.isFinite(stock) ? stock : 0,
         lowStockThreshold: Number.isFinite(lowThreshold) ? lowThreshold : 0,
         weight: weightValue != null && Number.isFinite(weightValue) ? weightValue : undefined,
+        ...(baseUnit === null ? {} : { baseUnitId: baseUnit.id }),
+        ...(unitsToSave === undefined ? {} : { packagings: unitsToSave }),
         specifications,
         // The server derives the stored image columns from the gallery; this is just the main image.
         imageUrl: gallery[0]?.url ?? '',
@@ -439,22 +485,28 @@ export function AdminProductModal({
         isActive,
       };
 
+      let saved: { ok: true } | { ok: false; error: string };
       if (isEditing && productToEdit) {
         // Send stock only when the admin changed it: the loaded number goes stale as
         // orders reserve units, and re-sending it would overwrite them.
         const { stockQuantity: editedStock, ...fieldUpdates } = productPayload;
-        await updateProductAction(
+        saved = await updateProductAction(
           productToEdit.id,
           editedStock !== productToEdit.stockQuantity
             ? { ...fieldUpdates, stockQuantity: editedStock }
             : fieldUpdates,
         );
       } else {
-        await createProductAction({
+        saved = await createProductAction({
           ...productPayload,
           rating: 0,
           reviewCount: 0,
         });
+      }
+      if (!saved.ok) {
+        setError(saved.error);
+        focusTabForError(saved.error);
+        return;
       }
       onSuccess();
       onClose();
@@ -466,6 +518,8 @@ export function AdminProductModal({
   };
 
   if (!isOpen) return null;
+
+  const unitStep = quantityStep(Number(baseUnit?.meta?.decimals ?? 0));
 
   const fieldClass =
     'w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong placeholder-fg-subtle focus:border-indigo-500 focus:outline-none';
@@ -832,12 +886,24 @@ export function AdminProductModal({
             ) : null}
 
             {tab === 'inventory' ? (
+              <div className="space-y-4">
+              <ProductUnitsSection
+                productId={productToEdit?.id ?? null}
+                base={baseUnit}
+                onBase={setBaseUnit}
+                rows={packagings}
+                onRows={(next) => {
+                  setPackagings(next);
+                  setPackagingsLoaded(true);
+                }}
+              />
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <div>
-                  <label className={labelClass}>On-Hand Stock</label>
+                  <label className={labelClass}>{`On-Hand Stock${baseUnit?.meta?.code === undefined ? '' : ` (${baseUnit.meta.code})`}`}</label>
                   <input
                     type="number"
                     min={0}
+                    step={unitStep}
                     value={stockQuantity}
                     onChange={(e) => setStockQuantity(e.target.value)}
                     placeholder="e.g. 15"
@@ -849,6 +915,7 @@ export function AdminProductModal({
                   <input
                     type="number"
                     min={0}
+                    step={unitStep}
                     value={lowStockThreshold}
                     onChange={(e) => setLowStockThreshold(e.target.value)}
                     placeholder="e.g. 5"
@@ -856,7 +923,7 @@ export function AdminProductModal({
                   />
                 </div>
                 <div>
-                  <label className={labelClass}>Shipping Weight (kg)</label>
+                  <label className={labelClass}>{`Shipping Weight${baseUnit?.meta?.code === undefined ? '' : ` per ${baseUnit.meta.code}`} (kg)`}</label>
                   <input
                     type="number"
                     step="0.1"
@@ -867,6 +934,7 @@ export function AdminProductModal({
                     className={`${fieldClass} font-mono`}
                   />
                 </div>
+              </div>
               </div>
             ) : null}
 

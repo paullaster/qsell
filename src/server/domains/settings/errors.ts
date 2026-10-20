@@ -23,3 +23,9 @@ export function isUniqueViolation(error: unknown): boolean {
   const e = error as { code?: string; cause?: { code?: string } } | null;
   return e?.code === '23505' || e?.cause?.code === '23505';
 }
+
+/** True when the database refused a change because other rows still point at this one. */
+export function isForeignKeyViolation(error: unknown): boolean {
+  const e = error as { code?: string; cause?: { code?: string } } | null;
+  return e?.code === '23503' || e?.cause?.code === '23503';
+}

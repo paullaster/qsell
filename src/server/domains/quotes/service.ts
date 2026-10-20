@@ -1,3 +1,4 @@
+import { required } from '@/lib/values';
 import { and, desc, eq, ilike, inArray, lt, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { businessDate } from '@/server/kernel/numbering/business-date';
@@ -141,6 +142,13 @@ export interface QuoteInput {
      * Without it, a typed `unitPrice` is manual and no price at all is catalog.
      */
     priceMode?: 'catalog' | 'manual' | 'kept';
+    /**
+     * The unit `quantity` and `unitPrice` are in: one of the product's own units. Left out (or the base unit),
+     * they are in the product's base unit. The server turns them into base units when it works the line out.
+     */
+    unitId?: string | null;
+    /** The unit's code, for display only; the server reads the real one from `unitId`. */
+    unitCode?: string | null;
     discountPercent: number;
     /** A free gift the quote added. Gifts are worked out again on every save, so these are dropped. */
     isGift?: boolean;
@@ -829,8 +837,10 @@ export class SalesQuoteService {
             ? revisedSections.find((section) => section.sourceId === line.sectionId)?.id
             : null,
           productId: line.productId ?? '',
-          quantity: num(line.quantity),
-          unitPrice: num(line.unitPrice),
+          // As it was typed: in the unit it was entered in, at the price per that unit.
+          quantity: line.enteredQuantity ?? num(line.quantity),
+          unitPrice: num(line.enteredUnitPrice ?? line.unitPrice),
+          unitId: line.enteredQuantity === null ? null : line.unitId,
           discountPercent: num(line.discountPercent),
           fromTemplate: line.fromTemplate,
           fromSectionTemplate: line.fromSectionTemplate,
@@ -890,6 +900,15 @@ export class SalesQuoteService {
         (p) => [p.id, p],
       ),
     );
+    // Lines typed in another unit (3 crates) are worked out in the product's base unit (60 kg); what was typed is kept.
+    const lineUnits = await getContainer().unitWriter.convertLines(
+      products,
+      input.lines.map((line) => ({ productId: line.productId, quantity: line.quantity, unitId: line.unitId, unitPrice: line.unitPrice })),
+    );
+    input.lines = input.lines.map((line, i) => {
+      const unit = required(lineUnits[i], 'the unit of a line');
+      return { ...line, quantity: unit.quantity, unitPrice: unit.unitPrice };
+    });
     const kitDefs = await getContainer().kits.forProducts(
       companyId,
       input.lines.map((line) => line.productId),
@@ -1102,7 +1121,13 @@ export class SalesQuoteService {
         throw new Error(`${product.name} needs a valid selling price.`);
       }
       this.assertPercent(line.discountPercent, `${product.name} discount`);
-      const beforeDiscount = unitPrice * line.quantity;
+      // A price typed per crate is worth exactly that per crate: it is not rounded through the price per kg.
+      const lineUnit = required(lineUnits[index], 'the unit of a line');
+      const typedPrice = afterRules === undefined && result === undefined ? lineUnit.enteredUnitPrice : null;
+      const beforeDiscount =
+        typedPrice !== null && lineUnit.enteredQuantity !== null
+          ? typedPrice * lineUnit.enteredQuantity
+          : unitPrice * line.quantity;
       const orderPct = orderBasket.lines[index]?.orderPercent ?? 0;
       const discountedGross =
         beforeDiscount *
@@ -1155,6 +1180,14 @@ export class SalesQuoteService {
         lineAmount: lineTotal.toFixed(2),
         costAmount: money(cost).toFixed(2),
         priceTrace,
+        unitId: lineUnit.unitId,
+        unitCode: lineUnit.unitCode,
+        enteredQuantity: lineUnit.enteredQuantity,
+        qtyPerUnit: lineUnit.qtyPerUnit,
+        enteredUnitPrice:
+          lineUnit.enteredQuantity === null
+            ? null
+            : (typedPrice ?? Math.round(unitPrice * Number(lineUnit.qtyPerUnit) * 1e4) / 1e4).toFixed(4),
       };
     });
     // Free gifts the order rules have earned join the quote at no charge. What they cost is counted.
@@ -1718,6 +1751,11 @@ export class SalesQuoteService {
           isTaxInclusive: line.isTaxInclusive,
           priceTrace: line.priceTrace ?? null,
           isGift: line.isGift,
+          unitId: line.unitId,
+          unitCode: line.unitCode,
+          enteredQuantity: line.enteredQuantity,
+          qtyPerUnit: line.qtyPerUnit,
+          enteredUnitPrice: line.enteredUnitPrice === null ? null : Number(line.enteredUnitPrice),
         })),
         quotedTotals: {
           subtotal: num(quote.subtotal),
@@ -1906,6 +1944,9 @@ export class SalesQuoteService {
         taxRate: salesQuoteLines.taxRate,
         isTaxInclusive: salesQuoteLines.isTaxInclusive,
         lineAmount: salesQuoteLines.lineAmount,
+        unitCode: salesQuoteLines.unitCode,
+        enteredQuantity: salesQuoteLines.enteredQuantity,
+        enteredUnitPrice: salesQuoteLines.enteredUnitPrice,
       })
       .from(salesQuoteLines)
       .where(eq(salesQuoteLines.quoteId, quote.id))

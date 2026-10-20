@@ -1,3 +1,4 @@
+import { lineDisplay } from '@/lib/unit-rules';
 import { and, desc, eq } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
@@ -77,6 +78,21 @@ function escapeHtml(value: string): string {
     .replaceAll('"', '&quot;');
 }
 
+const orderLine = (item: Order['items'][number]) => ({
+  quantity: item.quantity,
+  unitPrice: item.unitPrice,
+  total: item.totalPrice,
+  unitCode: item.unitCode,
+  enteredQuantity: item.enteredQuantity,
+  enteredUnitPrice: item.enteredUnitPrice,
+});
+
+/** "3 crate" or "12" as the line was typed. */
+function shownQuantity(item: Order['items'][number]): string {
+  const shown = lineDisplay(orderLine(item));
+  return shown.unit === null ? String(shown.quantity) : `${String(shown.quantity)} ${escapeHtml(shown.unit)}`;
+}
+
 function buildInvoiceEmailHtml(args: {
   documentType: InvoiceDocumentType;
   labels: ReturnType<typeof documentLabels>;
@@ -94,8 +110,8 @@ function buildInvoiceEmailHtml(args: {
         <td style="padding:8px;border-bottom:1px solid #E5E7EB;">
           <div style="font-weight:600;">${escapeHtml(item.productName)}</div>
         </td>
-        <td style="padding:8px;border-bottom:1px solid #E5E7EB;text-align:center;">${item.quantity}</td>
-        <td style="padding:8px;border-bottom:1px solid #E5E7EB;text-align:right;">${formatMoney(item.unitPrice, order.currency)}</td>
+        <td style="padding:8px;border-bottom:1px solid #E5E7EB;text-align:center;">${shownQuantity(item)}</td>
+        <td style="padding:8px;border-bottom:1px solid #E5E7EB;text-align:right;">${formatMoney(lineDisplay(orderLine(item)).unitPrice, order.currency)}</td>
         <td style="padding:8px;border-bottom:1px solid #E5E7EB;text-align:right;">${formatMoney(item.totalPrice, order.currency)}</td>
       </tr>`,
     )
@@ -294,13 +310,17 @@ export class InvoiceService {
         kraPin: buyerTaxPin,
         shippingAddress: order.shippingAddress,
       },
-      items: order.items.map((item) => ({
-        sku: item.sku,
-        name: item.productName,
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        totalPrice: item.totalPrice,
-      })),
+      items: order.items.map((item) => {
+        const shown = lineDisplay(orderLine(item));
+        return {
+          sku: item.sku,
+          name: item.productName,
+          quantity: shown.quantity,
+          unit: shown.unit,
+          unitPrice: shown.unitPrice,
+          totalPrice: item.totalPrice,
+        };
+      }),
       subtotal: order.subtotal,
       tax: order.tax,
       shippingFee: order.shippingFee,

@@ -1131,6 +1131,18 @@ export const PERMISSIONS = {
     category: 'Company & Settings',
     description: 'Create and update branches',
   },
+  'units:read': {
+    resource: 'units',
+    action: 'read',
+    category: 'Products & Inventory',
+    description: 'View units of measure and where they are used',
+  },
+  'units:manage': {
+    resource: 'units',
+    action: 'manage',
+    category: 'Products & Inventory',
+    description: 'Create, change, switch off and delete units of measure',
+  },
   'dimensions:manage': {
     resource: 'dimensions',
     action: 'manage',

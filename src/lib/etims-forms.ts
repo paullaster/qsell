@@ -1,3 +1,4 @@
+import { quantityFits } from '@/lib/decimal';
 import type { Choice } from '@/lib/payment-options';
 
 export type EtimsStatus = 'registered' | 'pending' | 'unconfirmed' | 'failed' | 'deleted';
@@ -39,11 +40,11 @@ export function registerPayload(branchId: string | null, product: Choice, form: 
   | { ok: true; payload: { branchId: string | null; productId: string; qtyUnitCode: string; pkgUnitCode: string; itemClassCode: string; initialStock: number } }
   | { ok: false; error: string } {
   const stock = Number(form.stock);
-  if (!Number.isInteger(stock) || stock < 0) return { ok: false, error: 'The opening stock is a whole number, zero or more.' };
+  if (!quantityFits(stock, 3) || stock < 0) return { ok: false, error: 'The opening stock is a number of zero or more, with at most 3 decimals.' };
   const [qty, pkg, cls] = [form.qtyUnitCode.trim(), form.pkgUnitCode.trim(), form.itemClassCode.trim()];
   if (qty === '' || pkg === '' || cls === '') return { ok: false, error: 'Give the quantity unit, package unit and classification codes.' };
   return { ok: true, payload: { branchId, productId: product.id, qtyUnitCode: qty, pkgUnitCode: pkg, itemClassCode: cls, initialStock: stock } };
 }
 
 /** Whether the stock typed differs from what KRA holds and is a whole number. */
-export const stockChanged = (typed: string, current: number): boolean => typed !== '' && Number.isInteger(Number(typed)) && Number(typed) !== current;
+export const stockChanged = (typed: string, current: number): boolean => typed !== '' && quantityFits(Number(typed), 3) && Number(typed) !== current;

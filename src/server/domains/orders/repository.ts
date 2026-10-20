@@ -123,6 +123,11 @@ export class OrderRepository {
             priceTrace: item.priceTrace ?? null,
             isGift: item.isGift ?? false,
             unitCost: item.unitCost == null ? null : item.unitCost.toFixed(4),
+            unitId: item.unitId ?? null,
+            unitCode: item.unitCode ?? null,
+            enteredQuantity: item.enteredQuantity ?? null,
+            qtyPerUnit: item.qtyPerUnit ?? null,
+            enteredUnitPrice: item.enteredUnitPrice == null ? null : item.enteredUnitPrice.toFixed(4),
           })),
         );
       }
@@ -213,6 +218,11 @@ export class OrderRepository {
       priceTrace: r.priceTrace ?? null,
       isGift: r.isGift,
       unitCost: r.unitCost == null ? null : Number(r.unitCost),
+      unitId: r.unitId,
+      unitCode: r.unitCode,
+      enteredQuantity: r.enteredQuantity,
+      qtyPerUnit: r.qtyPerUnit,
+      enteredUnitPrice: r.enteredUnitPrice == null ? null : Number(r.enteredUnitPrice),
     }));
   }
 }

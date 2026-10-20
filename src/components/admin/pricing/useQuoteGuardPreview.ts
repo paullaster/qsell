@@ -16,7 +16,7 @@ export function useQuoteGuardPreview(input: QuoteInput): Record<number, GuardTra
     input.customerId ?? null,
     input.paymentMethod,
     input.discountPercent,
-    input.lines.map((l) => [l.productId, l.quantity, l.unitPrice ?? null, l.discountPercent]),
+    input.lines.map((l) => [l.productId, l.quantity, l.unitPrice ?? null, l.discountPercent, l.unitId ?? null]),
   ]);
 
   useEffect(() => {
@@ -31,6 +31,7 @@ export function useQuoteGuardPreview(input: QuoteInput): Record<number, GuardTra
         lines: lines.map((l) => ({
           productId: l.productId,
           quantity: l.quantity,
+          unitId: l.unitId ?? null,
           unitPrice: l.unitPrice ?? null,
           discountPercent: l.discountPercent,
         })),

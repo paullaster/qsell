@@ -110,17 +110,25 @@ export const PRODUCT_CSV_COLUMNS = [
   {
     header: 'Stock_Qty',
     aliases: ['Stock_Quantity', 'Quantity'],
-    kind: 'integer',
+    kind: 'decimal',
     required: false,
-    help: 'Opening stock, a whole number. Blank means 0.',
+    help: 'Opening stock, in the product’s unit (up to 3 decimals where the unit allows it). Blank means 0.',
     example: '25',
   },
   {
     header: 'Low_Stock_Threshold',
-    kind: 'integer',
+    kind: 'decimal',
     required: false,
-    help: 'Alert level, a whole number. Blank means 0.',
+    help: 'Alert level, in the product’s unit. Blank means 0.',
     example: '5',
+  },
+  {
+    header: 'Unit',
+    aliases: ['Unit_Of_Measure', 'UoM'],
+    kind: 'text',
+    required: false,
+    help: 'Code of the unit stock is counted in (for example KG or PCS), as listed under Units of Measure. Blank means the default unit.',
+    example: 'PCS',
   },
   {
     header: 'Weight_Kg',
@@ -194,6 +202,8 @@ export interface ProductImportDraft {
   slug: string | null;
   categoryName: string;
   itemTypeRef: string | null;
+  /** The code of the unit stock is counted in; null for the default unit. */
+  unitRef: string | null;
   price: number | null;
   compareAtPrice: number | null;
   costPrice: number;
@@ -275,6 +285,7 @@ export function resolveHeaders(
 
 const MONEY = /^\d{1,12}(\.\d{1,2})?$/;
 const DECIMAL = /^\d{1,8}(\.\d{1,4})?$/;
+const QUANTITY = /^\d{1,10}(\.\d{1,3})?$/;
 const INTEGER = /^\d{1,9}$/;
 const MAX_TEXT = 200;
 const MAX_DESCRIPTION = 20_000;
@@ -346,6 +357,16 @@ export function parseProductRow(
     return Number(value);
   };
 
+  const quantityCell = (header: ProductCsvHeader): number => {
+    const value = cell(header);
+    if (value === '') return 0;
+    if (!QUANTITY.test(value)) {
+      fail(header, `"${value}" must be a number of 0 or more with at most 3 decimals.${numberHint(value)}`);
+      return 0;
+    }
+    return Number(value);
+  };
+
   const sku = text('SKU', false, 64).toUpperCase();
   const stockCode = text('Stock_Code', false, 64).toUpperCase();
   const name = text('Name', true);
@@ -355,6 +376,7 @@ export function parseProductRow(
   }
   const categoryName = text('Category', true);
   const itemTypeRef = text('Item_Type', false);
+  const unitRef = text('Unit', false, 20);
   // Whether 0 is allowed depends on the item type (sellable needs > 0): checked by the import service.
   const price = money('Price');
   const compareAtPrice = money('Compare_At_Price');
@@ -364,8 +386,8 @@ export function parseProductRow(
   const costPrice = money('Cost_Price');
   if (costRaw === '') fail('Cost_Price', 'is required (use 0 if the item has no cost).');
   const taxRef = text('Tax_Category', false);
-  const stockQuantity = integer('Stock_Qty');
-  const lowStockThreshold = integer('Low_Stock_Threshold');
+  const stockQuantity = quantityCell('Stock_Qty');
+  const lowStockThreshold = quantityCell('Low_Stock_Threshold');
 
   const weightRaw = cell('Weight_Kg');
   let weight: number | null = null;
@@ -417,6 +439,7 @@ export function parseProductRow(
       slug: slugRaw === '' ? null : slugRaw,
       categoryName,
       itemTypeRef: itemTypeRef === '' ? null : itemTypeRef,
+      unitRef: unitRef === '' ? null : unitRef,
       price,
       compareAtPrice,
       costPrice: costPrice ?? 0,
@@ -457,6 +480,7 @@ function exportCells(product: Product): Record<ProductCsvHeader, string> {
     Slug: product.slug,
     Category: product.category,
     Item_Type: product.itemTypeName,
+    Unit: product.baseUnitCode,
     Price: money2(product.price),
     Compare_At_Price: money2(product.compareAtPrice),
     Cost_Price: money2(product.costPrice),

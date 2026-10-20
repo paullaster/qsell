@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
+import { roundQty } from '@/lib/decimal';
 import { getContainer } from '@/server/di/container';
 import { drizzleDb } from '@/server/db/drizzle/client';
-import { inventoryMovements, products } from '@/server/db/drizzle/schema';
+import { inventoryMovements, products, unitsOfMeasure } from '@/server/db/drizzle/schema';
+import { quantityProblem } from '@/lib/unit-rules';
 import { broadcastRealtime } from '@/server/realtime';
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import { afterCommit, withAfterCommit } from '@/server/kernel/after-commit';
@@ -69,14 +71,21 @@ export async function applyStockDelta(tx: Tx, params: StockDelta): Promise<numbe
   const previousStock = locked.stockQuantity;
   const nextStock =
     params.setTo ??
-    (params.clampAtZero ? Math.max(0, previousStock + params.delta) : previousStock + params.delta);
+    roundQty(params.clampAtZero === true ? Math.max(0, previousStock + params.delta) : previousStock + params.delta);
+
+  // Stock is counted in the product's unit: 2.5 pieces cannot be on a shelf, 2.5 kg can.
+  const unit = (await tx.select({ name: unitsOfMeasure.name, decimals: unitsOfMeasure.decimals }).from(unitsOfMeasure).where(eq(unitsOfMeasure.id, locked.baseUnitId)).limit(1)).at(0);
+  if (unit !== undefined) {
+    const problem = quantityProblem(nextStock, unit.decimals, unit.name, `Stock of "${locked.name}"`) ?? quantityProblem(roundQty(nextStock - previousStock), unit.decimals, unit.name, `The change in stock of "${locked.name}"`);
+    if (problem !== null) throw new Error(problem);
+  }
 
   const patch: Partial<typeof products.$inferInsert> = {
     stockQuantity: nextStock,
     updatedAt: new Date(),
   };
   if (params.reservedDelta) {
-    patch.reservedQuantity = Math.max(0, locked.reservedQuantity + params.reservedDelta);
+    patch.reservedQuantity = Math.max(0, roundQty(locked.reservedQuantity + params.reservedDelta));
   }
   if (params.costPrice !== undefined && params.costPrice > 0) {
     patch.costPrice = String(params.costPrice);
@@ -87,7 +96,7 @@ export async function applyStockDelta(tx: Tx, params: StockDelta): Promise<numbe
     id: newId('ledger'),
     productId: params.productId,
     productName: locked.name,
-    changeAmount: nextStock - previousStock,
+    changeAmount: roundQty(nextStock - previousStock),
     previousStock,
     newStock: nextStock,
     changeType: params.changeType,
@@ -96,7 +105,7 @@ export async function applyStockDelta(tx: Tx, params: StockDelta): Promise<numbe
     note: params.note,
   });
 
-  return nextStock - previousStock;
+  return roundQty(nextStock - previousStock);
 }
 
 type StockDocumentKind = 'stock_adjustment' | 'stock_receipt' | 'stock_write_off' | 'stock_count';

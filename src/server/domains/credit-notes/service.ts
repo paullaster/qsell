@@ -1,3 +1,4 @@
+import { quantityFits } from '@/lib/decimal';
 import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
@@ -479,10 +480,10 @@ export class CreditNoteService {
     }
     const seen = new Set<string>();
     for (const l of input.lines) {
-      if (!Number.isInteger(l.quantity) || l.quantity <= 0) {
+      if (!quantityFits(l.quantity, 3) || l.quantity <= 0) {
         throw new CreditNoteError(
           'INVALID_LINE',
-          'Each quantity must be a whole number above zero.',
+          'Each quantity must be a number above zero with at most 3 decimals.',
         );
       }
       if (seen.has(l.productId)) {

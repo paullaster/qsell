@@ -44,6 +44,10 @@ describe('the value of stock', () => {
     expect(stockValueCents(-2, '12.34')).toBe(-2468);
     expect(stockValueCents(7, '0.05')).toBe(35);
     expect(stockValueCents(5, '10')).toBe(5000);
+    // A fraction of a unit: the money is rounded to the cent, half away from zero.
+    expect(stockValueCents(0.125, '33.33')).toBe(417);
+    expect(stockValueCents(-2.5, '33.33')).toBe(-8333);
+    expect(stockValueCents(1.5, '0.01')).toBe(2);
     expect(stockValueCents(0, '99.99')).toBe(0);
   });
 });

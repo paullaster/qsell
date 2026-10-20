@@ -76,6 +76,7 @@ const SEED_ROLES: SeedRole[] = [
       'currencies:manage',
       'branches:manage',
       'dimensions:manage',
+      'units:manage',
       'company:manage',
       'settings:manage',
       'analytics:export',

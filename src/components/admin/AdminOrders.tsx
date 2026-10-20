@@ -1,5 +1,6 @@
 'use client';
 
+import { lineDisplay, lineFromRow, quantityWords } from '@/lib/unit-rules';
 import { OrderApprovalBanner } from './approvals/OrderApprovalBanner';
 import React, { use, useState } from 'react';
 import {
@@ -537,13 +538,13 @@ export function AdminOrders({ ordersPromise, companyPromise, onRefresh }: AdminO
                             <div className="font-mono text-[10px] text-fg-muted">{item.sku}</div>
                           </td>
                           <td className="px-4 py-3 text-right font-mono">
-                            {money(item.unitPrice, selectedOrder.currency)}
+                            {money(lineDisplay(lineFromRow(item)).unitPrice, selectedOrder.currency)}
                           </td>
                           <td className="px-4 py-3 text-center font-mono font-bold">
-                            {item.quantity}
+                            {quantityWords(lineFromRow(item))}
                           </td>
                           <td className="px-4 py-3 text-right font-mono font-bold text-fg-strong">
-                            {money(item.unitPrice * item.quantity, selectedOrder.currency)}
+                            {money(item.totalPrice, selectedOrder.currency)}
                           </td>
                         </tr>
                       ))}
@@ -773,9 +774,9 @@ export function AdminOrders({ ordersPromise, companyPromise, onRefresh }: AdminO
                     <td className="p-2">
                       <div className="font-semibold">{item.productName}</div>
                     </td>
-                    <td className="p-2 text-center font-mono font-bold">{item.quantity}</td>
+                    <td className="p-2 text-center font-mono font-bold">{quantityWords(lineFromRow(item))}</td>
                     <td className="p-2 text-right font-mono">
-                      {money(item.unitPrice, selectedOrder.currency)}
+                      {money(lineDisplay(lineFromRow(item)).unitPrice, selectedOrder.currency)}
                     </td>
                     <td className="p-2 text-right font-mono font-bold">
                       {money(item.totalPrice, selectedOrder.currency)}

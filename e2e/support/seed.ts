@@ -39,6 +39,10 @@ async function main(): Promise<void> {
     .insert(schema.itemTypes)
     .values({ id: itemTypeId, code: Math.floor(Math.random() * 1e9), name: itemTypeId });
 
+  // A product can only be saved in the editor with a category, so the seeded ones have one.
+  const categoryId = `cat_e2e_${randomUUID().slice(0, 8)}`;
+  await db.insert(schema.categories).values({ id: categoryId, name: 'E2E Pantry', slug: categoryId });
+
   const products: Record<string, string> = {};
   for (const [name, price] of [
     ['Rice 5kg', '600'],
@@ -57,11 +61,35 @@ async function main(): Promise<void> {
       name,
       slug: `e2e-${randomUUID()}`,
       itemTypeId,
+      categoryId,
+      categoryName: 'E2E Pantry',
       price,
       costPrice: '100',
       taxRate: '0',
       isTaxInclusive: true,
       stockQuantity: 500,
+    });
+  }
+
+  // Fish sold by the kilogram, one for each project (they share this database and each saves its own changes).
+  const kilogram = (await db.select().from(schema.unitsOfMeasure).where(eq(schema.unitsOfMeasure.code, 'KG'))).at(0);
+  if (kilogram === undefined) throw new Error('e2e seed: the standard units are missing');
+  for (const label of ['Desktop', 'Phone']) {
+    await db.insert(schema.products).values({
+      id: `prod_${randomUUID()}`,
+      sku: `E2E-FISH-${label.toUpperCase()}`,
+      stockCode: `E2ES-FISH-${label.toUpperCase()}`,
+      name: `Fish kg ${label}`,
+      slug: `e2e-${randomUUID()}`,
+      itemTypeId,
+      categoryId,
+      categoryName: 'E2E Pantry',
+      baseUnitId: kilogram.id,
+      price: '300',
+      costPrice: '120',
+      taxRate: '0',
+      isTaxInclusive: true,
+      stockQuantity: 0,
     });
   }
 

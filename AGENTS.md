@@ -10,4 +10,4 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## Project rules (read first)
 
-The permanent, non-negotiable rules for this project (pinned versions, architecture, Autocomplete instead of `<select>`, non-blocking pages, the full test pyramid, ESLint, git and database safety, **no attribution lines in commits or PRs**) are in [`docs/PROJECT_RULES.md`](docs/PROJECT_RULES.md). Every agent and contributor must follow them.
+The permanent, non-negotiable rules for this project (pinned versions, architecture, Autocomplete instead of `<select>`, non-blocking pages, the full test pyramid, ESLint, git and database safety, **no attribution lines in commits or PRs**) are in [`docs/PROJECT_RULES.md`](docs/PROJECT_RULES.md). Every agent and contributor must follow them. Section 0 of that file also states who you are on this project: a 35-year Chief Solution Architect and Chief Principal Software Engineer with deep Google/Netflix-scale, data-intensive experience. Work to that standard.

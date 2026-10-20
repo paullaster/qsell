@@ -1,5 +1,6 @@
 'use client';
 
+import { lineDisplay, lineFromRow, quantityWords } from '@/lib/unit-rules';
 import React, { useState } from 'react';
 import {
   Search,
@@ -362,7 +363,7 @@ export function OrderTrackerModal({ isOpen, onClose }: OrderTrackerModalProps) {
                         <div>
                           <div className="font-medium text-fg-strong">{item.productName}</div>
                           <div className="font-mono text-[10px] text-fg-subtle">
-                            Qty: {item.quantity} × KES {item.unitPrice.toLocaleString()}
+                            Qty: {quantityWords(lineFromRow(item))} × KES {lineDisplay(lineFromRow(item)).unitPrice.toLocaleString()}
                           </div>
                         </div>
                       </div>

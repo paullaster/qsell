@@ -8,6 +8,9 @@ import { auth } from '@/auth';
 import { getContainer } from '@/server/di/container';
 import { buildProductTemplateCsv, MAX_IMPORT_BYTES } from '@/lib/productCsv';
 import { CatalogService } from './service';
+import { runSetting } from '@/server/domains/settings/action-runner';
+import { isUniqueViolation } from '@/server/domains/settings/errors';
+import { unitConflictWords } from '@/server/domains/units/write-service';
 import {
   BulkDeleteError,
   ProductBulkDelete,
@@ -49,23 +52,19 @@ export async function getPublicProductAction(id: string): Promise<PublicProduct 
   return (await CatalogService.getPublicProduct(id)) ?? null;
 }
 
-export async function createProductAction(productData: ProductWrite): Promise<Product> {
-  await requirePermission('products:create');
-  const product = await CatalogService.createProduct(productData);
-  revalidatePath('/admin/products');
-  revalidatePath('/admin/inventory');
-  revalidatePath('/');
-  return product;
+/** A product rule that was not met, or a code or slug already taken, in words for the person. */
+const productFriendly = (error: unknown): string | null =>
+  isUniqueViolation(error) ? 'That SKU, stock code or URL slug is already used by another product.' : unitConflictWords(error);
+
+const PRODUCT_PATHS = ['/admin/products', '/admin/inventory', '/'];
+
+/** Failures come back as data: the text of a thrown server action is masked in production. */
+export async function createProductAction(productData: ProductWrite) {
+  return runSetting('products:create', async () => CatalogService.createProduct(productData), { paths: PRODUCT_PATHS, friendly: productFriendly });
 }
 
-export async function updateProductAction(id: string, updates: ProductPatch): Promise<Product> {
-  await requirePermission('products:update');
-  const product = await CatalogService.updateProduct(id, updates);
-  revalidatePath('/admin/products');
-  revalidatePath('/admin/inventory');
-  revalidatePath('/');
-  revalidatePath(`/product/${id}`);
-  return product;
+export async function updateProductAction(id: string, updates: ProductPatch) {
+  return runSetting('products:update', async () => CatalogService.updateProduct(id, updates), { paths: [...PRODUCT_PATHS, `/product/${id}`], friendly: productFriendly });
 }
 
 export async function deleteProductAction(id: string): Promise<boolean> {
