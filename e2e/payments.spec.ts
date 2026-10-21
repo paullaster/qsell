@@ -71,10 +71,11 @@ test.describe('payment activity and Bill Manager', () => {
     await noHorizontalScroll(page);
   });
 
-  test('Bill Manager says when no paybill exists and has no native select', async ({ page }) => {
+  test('Bill Manager offers the seeded paybill through a picker and has no native select', async ({ page }) => {
     await page.goto('/admin/payments/bills');
     await expect(page.getByRole('heading', { name: 'Bill Manager invoices', level: 2 })).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByRole('status').filter({ hasText: 'No M-Pesa paybill' })).toBeVisible();
+    await expect(page.getByRole('combobox', { name: 'Paybill' })).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: 'No M-Pesa paybill' })).toHaveCount(0);
     await expect(page.locator('select')).toHaveCount(0);
     await noHorizontalScroll(page);
   });
