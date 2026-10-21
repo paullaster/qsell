@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { use, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { cancelRefundAction, recordRefundPayoutAction, payRefundThroughMpesaAction, submitRefundAction, type refundDetailAction } from '@/server/domains/finance/refund-actions';
+import { cancelRefundAction, recordRefundPayoutAction, payRefundThroughMpesaAction, reverseRefundPaymentAction, submitRefundAction, type refundDetailAction } from '@/server/domains/finance/refund-actions';
 import { RefundPayoutPanel } from './RefundPayoutPanel';
 import { RefundReturnPanel } from './RefundReturnPanel';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
@@ -24,7 +24,7 @@ export function RefundDetailClient({ viewPromise }: { viewPromise: ReturnType<ty
 function RefundDetailView({ view }: { view: View }) {
   const router = useRouter();
   const note = useSearchParams().get('note');
-  const [panel, setPanel] = useState<null | 'cancel' | 'pay'>(null);
+  const [panel, setPanel] = useState<null | 'cancel' | 'pay' | 'reverse'>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(note !== null && note !== '' ? { kind: 'error', text: `Saved as a draft, but it could not be sent on: ${note}` } : null);
   const [reason, setReason] = useState<Choice | null>(null);
@@ -51,6 +51,7 @@ function RefundDetailView({ view }: { view: View }) {
   };
   const pay = async (e: React.SyntheticEvent) => { e.preventDefault(); setBusy(true); setNotice(null); done(await attempt(recordRefundPayoutAction(view.id, { paidFromMethodId: payFrom?.id ?? '', reference: ref, payoutDate: when })), 'Payment recorded.'); };
   const sendMpesa = async () => { setBusy(true); setNotice(null); done(await attempt(payRefundThroughMpesaAction(view.id)), 'Sent for payment through M-Pesa. It is recorded as paid once Safaricom confirms it; follow it under Payment activity.'); };
+  const reverse = async () => { setBusy(true); setNotice(null); const res = await attempt(reverseRefundPaymentAction(view.id)); setPanel(null); done(res, 'Reversal sent to M-Pesa. The refund is recorded as paid once Safaricom confirms it; follow it under Payment activity.'); };
   const upload = async (file: File) => {
     setBusy(true); setNotice(null);
     const body = new FormData(); body.set('file', file); body.set('refundId', view.id);
@@ -83,10 +84,19 @@ function RefundDetailView({ view }: { view: View }) {
       <div className="flex flex-wrap gap-2">
         {s === 'draft' && view.can.submit ? <button type="button" className={primaryClass} disabled={busy} onClick={() => void submit()}>Send on</button> : null}
         {s === 'approved' && view.method.automatic && view.can.payAutomatic ? <button type="button" className={primaryClass} disabled={busy} onClick={() => void sendMpesa()}>Pay through M-Pesa</button> : null}
+        {s === 'approved' && view.reversal?.ok === true && view.can.reversePayment ? <button type="button" className={primaryClass} disabled={busy} aria-expanded={panel === 'reverse'} onClick={() => setPanel('reverse')}>Reverse the customer&apos;s M-Pesa payment</button> : null}
         {s === 'approved' && view.can.pay && view.inFile === null ? <button type="button" className={primaryClass} disabled={busy} aria-expanded={panel === 'pay'} onClick={() => setPanel('pay')}>Record payment</button> : null}
         {canCancel ? <button type="button" className={dangerClass} disabled={busy} aria-expanded={panel === 'cancel'} onClick={() => setPanel('cancel')}>Cancel refund</button> : null}
       </div>
 
+      {s === 'approved' && view.reversal?.ok === false && view.can.reversePayment && view.method.automatic ? <p className="text-xs text-fg-muted">Not paid by reversal: {view.reversal.reason}</p> : null}
+      {panel === 'reverse' && view.reversal?.ok === true ? (
+        <section className={`${cardClass} space-y-3`} aria-label="Reverse the customer's payment">
+          <h2 className="text-sm font-bold text-fg-strong">Reverse the customer&apos;s M-Pesa payment</h2>
+          <p className="text-sm text-fg">This asks Safaricom to give the customer&apos;s whole payment <span className="font-mono font-semibold">{view.reversal.transactionId}</span> ({view.currency} {money(view.amount)}) back to the phone that paid. It goes only to that phone, and it cannot be undone.</p>
+          <div className="flex gap-2"><button type="button" className={dangerClass} disabled={busy} onClick={() => void reverse()}>Reverse it</button><button type="button" className={buttonClass} disabled={busy} onClick={() => setPanel(null)}>Keep it</button></div>
+        </section>
+      ) : null}
       {panel === 'cancel' ? (
         <form onSubmit={(e) => void cancel(e)} className={`${cardClass} space-y-3`}>
           <h2 className="text-sm font-bold text-fg-strong">Cancel this refund{s === 'approved' ? ' (the money set aside goes back to where it came from)' : ''}</h2>

@@ -130,6 +130,16 @@ export const DOCUMENT_KINDS = {
     fiscal: false,
     suggested: { code: 'BCH', prefix: 'BCH-{YY}-', digits: 8, reset: 'yearly', blockSize: 50 },
   },
+  bank_income: {
+    label: 'Bank income',
+    fiscal: false,
+    suggested: { code: 'BIN', prefix: 'BIN-{YY}-', digits: 8, reset: 'yearly', blockSize: 50 },
+  },
+  cash_count: {
+    label: 'Cash count',
+    fiscal: false,
+    suggested: { code: 'CCT', prefix: 'CCT-{YY}-', digits: 8, reset: 'yearly', blockSize: 20 },
+  },
   customer_payment: {
     label: 'Customer payment',
     fiscal: false,

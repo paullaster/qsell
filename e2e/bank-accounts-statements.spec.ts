@@ -92,4 +92,56 @@ test.describe('bank statements', () => {
     await line.getByRole('button', { name: 'Create receipt' }).click();
     await expect(page.getByText('Receipt created, posted and matched.')).toBeVisible({ timeout: 30_000 });
   });
+
+  test('a charge the bank bundled is split over accounts, and interest is recorded as income', async ({ page }, testInfo) => {
+    // (a retry meets the lines the first attempt imported, so each attempt has lines of its own)
+    const who = `${testInfo.project.name}${String(testInfo.retry)}`;
+    await open(page, '/admin/finance/bank-statements', 'Bank statements');
+    await page.getByRole('link', { name: /E2EBANK/ }).click();
+    await expect(page.getByRole('heading', { name: /E2EBANK/, level: 2 })).toBeVisible({ timeout: 30_000 });
+    await page.getByRole('button', { name: 'Import a statement' }).click();
+    const csv = `Date,Details,Paid In,Withdrawn\n2026-10-13,Fee and duty ${who},,115.00\n2026-10-13,Interest ${who},48.20,\n`;
+    await page.getByLabel(/Statement file/).setInputFiles({ name: `statement3-${who}.csv`, mimeType: 'text/csv', buffer: Buffer.from(csv) });
+    await expect(page.getByText('Which column is which')).toBeVisible({ timeout: 30_000 });
+    await chooseColumns(page);
+    await page.getByRole('button', { name: 'Check the file' }).click();
+    await page.getByRole('button', { name: /^Import 2 lines/ }).click();
+    await expect(page.getByText(/^Imported 2 lines/)).toBeVisible({ timeout: 30_000 });
+    await page.getByRole('button', { name: 'Close' }).first().click();
+
+    // The bundled charge: the parts must come to exactly what the bank took.
+    const fee = page.getByRole('listitem').filter({ hasText: `Fee and duty ${who}` });
+    await expect(fee).toBeVisible({ timeout: 30_000 });
+    await fee.getByRole('button', { name: 'Split the charge…' }).click();
+    const split = fee.getByRole('form', { name: 'Split this charge' });
+    await expect(split).toContainText('Still to place: 115.00');
+    const part1 = split.getByRole('group', { name: 'Part 1' });
+    const part2 = split.getByRole('group', { name: 'Part 2' });
+    await part1.getByRole('combobox', { name: 'Account' }).click();
+    await page.getByRole('option').first().click();
+    await part1.getByLabel('Amount').fill('100');
+    await expect(split).toContainText('Still to place: 15.00');
+    await expect(split.getByRole('button', { name: 'Record the charge' })).toBeDisabled();
+    await part2.getByRole('combobox', { name: 'Account' }).click();
+    await page.getByRole('option').nth(1).click();
+    await part2.getByLabel('Amount').fill('20');
+    await expect(split).toContainText('Too much by 5.00');
+    await part2.getByLabel('Amount').fill('15');
+    await expect(split).toContainText('All of it is placed.');
+    await split.getByRole('button', { name: 'Record the charge' }).click();
+    await expect(page.getByText('Charge recorded in parts and matched.')).toBeVisible({ timeout: 30_000 });
+
+    // Interest paid in is income, not a customer's payment.
+    const interest = page.getByRole('listitem').filter({ hasText: `Interest ${who}` });
+    await interest.getByRole('button', { name: 'Record as income…' }).click();
+    const income = interest.getByRole('form', { name: 'Record this as income' });
+    await income.getByRole('combobox', { name: 'Income account' }).click();
+    await page.getByRole('option').first().click();
+    await income.getByLabel('Note (optional)').fill('Interest for September');
+    await income.getByRole('button', { name: 'Record the income' }).click();
+    await expect(page.getByText('Income recorded and matched.')).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('select')).toHaveCount(0);
+    await noHorizontalScroll(page);
+  });
 });
+

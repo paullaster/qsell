@@ -12,6 +12,8 @@ import { asJengaCredentials, type JengaHqCredentials } from '../types';
 import { extractPaymentReference } from '../payment-reference';
 import type { InboundClaim, PlatformContext, VerificationOutcome, VerifyAttemptInput } from '../engine/types';
 import { judgeAnswer, stateOf, unusableAnswer, type PlatformAnswer } from './status-judge';
+import { callFailure, runPull } from './statement-pull-runner';
+import { jengaCursor, jengaFullStatementPlain, jengaLines, readJengaPage, type StatementPullRequest, type StatementPullResult } from '../statement-pull';
 
 import { toCentsLoose } from '../daraja/security';
 
@@ -29,7 +31,7 @@ function jengaReason(paid: boolean, failed: boolean, state: string, j: Record<st
 
 export class JengaHqAdapter implements PaymentPort {
   readonly code = 'jenga_hq' as const;
-  readonly capabilities = ['collect', 'status_query'] as const;
+  readonly capabilities = ['collect', 'status_query', 'statement'] as const;
 
   async testConnection(
     credentials: Record<string, unknown>,
@@ -219,6 +221,52 @@ export class JengaHqAdapter implements PaymentPort {
       evidence: { jenga: { status: state, reference: j.reference ?? null, transactionId: j.transactionId ?? null, amount: j.amount ?? null, currency: j.currency ?? null } },
     };
     return judgeAnswer(by, answer, input, [ref, input.orderNumber]);
+  }
+
+  /**
+   * The account's full statement from Jenga (POST .../accounts/fullStatement). The call is signed over the account number, the country
+   * and the last day; a page that is full is followed by asking for the one after its last transaction. The path and the page size can
+   * be changed in the provider settings (`statementPath`, `statementPageSize`) if Jenga moves them.
+   */
+  async pullStatement(request: StatementPullRequest, ctx: PlatformContext): Promise<StatementPullResult> {
+    const creds = asJengaCredentials(ctx.credentials);
+    if (!has(creds.merchantCode) || !has(creds.consumerSecret) || !has(creds.apiKey)) return { ok: false, error: 'The Jenga merchant code, consumer secret and API key are not all saved yet.', retryable: false };
+    if (!has(creds.privateKeyPem)) return { ok: false, error: 'Jenga signs every statement request: the private key is not saved with this provider yet.', retryable: false };
+    const base = ctx.provider.apiBaseUrl.replace(/\/$/, '');
+    const auth = await ctx.call({ label: 'oauth', provider: 'jenga_hq', method: 'POST', url: `${base}/authentication/api/v3/authenticate/merchant`, headers: { 'Api-Key': creds.apiKey }, body: { merchantCode: creds.merchantCode, consumerSecret: creds.consumerSecret }, timeoutMs: 15000 });
+    const failed = callFailure('Jenga', auth);
+    if (failed !== null) return { ok: false, ...failed };
+    const token = readText(auth.json?.accessToken, auth.json?.token, '');
+    if (!has(token)) return { ok: false, error: 'Jenga did not give a token. Check the merchant code, consumer secret and API key.', retryable: false };
+    let signature: string;
+    try {
+      signature = this.sign(jengaFullStatementPlain(request), creds.privateKeyPem);
+    } catch {
+      return { ok: false, error: 'The private key saved with this provider could not be used to sign. Save it again as a PEM key.', retryable: false };
+    }
+    const path = typeof ctx.settings.statementPath === 'string' ? ctx.settings.statementPath : '/v3-apis/account-api/v3.0/accounts/fullStatement';
+    const size = typeof ctx.settings.statementPageSize === 'number' && ctx.settings.statementPageSize >= 1 && ctx.settings.statementPageSize <= 500 ? Math.floor(ctx.settings.statementPageSize) : 100;
+    return await runPull(
+      ctx,
+      {
+        provider: 'Jenga',
+        label: 'full_statement',
+        request: (cursor) => ({
+          method: 'POST',
+          url: `${base}${path}`,
+          headers: { Authorization: `Bearer ${token}`, signature, 'Content-Type': 'application/json' },
+          body: { countryCode: request.countryCode, accountNumber: request.accountNumber, fromDate: request.fromDate, toDate: request.toDate, limit: size, ...(cursor ?? {}) },
+        }),
+        read: (json) => {
+          const page = readJengaPage(json);
+          if (page.problem !== null) return { lines: [], count: 0, cursor: null, problem: page.problem };
+          const read = jengaLines(page.transactions);
+          const last = page.transactions.at(-1);
+          return { lines: read.lines, count: page.transactions.length, cursor: last === undefined ? null : jengaCursor(last), problem: read.problem };
+        },
+      },
+      size,
+    );
   }
 
   handleCallback(input: CallbackInput): Promise<CallbackResult> {

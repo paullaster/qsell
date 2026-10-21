@@ -1,11 +1,13 @@
-import { listOrdersAction } from '@/server/domains/orders/actions';
+import { ordersPageAction } from '@/server/domains/orders/actions';
 import { getCompanySettingsAction } from '@/server/domains/company/actions';
 import { AdminOrdersClient } from '@/components/admin/AdminOrdersClient';
 
-export default async function Page() {
-  const ordersPromise = listOrdersAction();
-  const companyPromise = getCompanySettingsAction();
+export default function Page() {
+  // Nothing is awaited here: the first page of orders and the company details start together, and the screen draws at once.
   return (
-    <AdminOrdersClient ordersPromise={ordersPromise} companyPromise={companyPromise} />
+    <AdminOrdersClient
+      firstPage={ordersPageAction({})}
+      companyPromise={getCompanySettingsAction()}
+    />
   );
 }

@@ -20,6 +20,8 @@ describe.skipIf(!has(url))('bank statements (database)', () => {
   let glBank: string;
   let manualProvider: string;
   let glFee: string;
+  let glOtherExpense: string;
+  let glIncome: string;
   let ctx: FinanceContext;
   const run = randomUUID().slice(0, 6).toUpperCase();
   let seq = 0;
@@ -90,6 +92,8 @@ describe.skipIf(!has(url))('bank statements (database)', () => {
     glBank = required(accts.find((a) => a.no === '1120')).id;
     manualProvider = required((await fin.paymentMethods.providerChoices(companyId)).find((p) => p.isSystem)).id;
     glFee = required(accts.find((a) => a.category === 'expense' && a.type === 'posting')).id;
+    glOtherExpense = required(accts.find((a) => a.category === 'expense' && a.type === 'posting' && a.id !== glFee)).id;
+    glIncome = required(accts.find((a) => a.category === 'income' && a.type === 'posting')).id;
   });
 
   describe('other kinds of file', () => {
@@ -421,6 +425,44 @@ describe.skipIf(!has(url))('bank statements (database)', () => {
     });
   });
 
+  describe('charges the bank bundled, and money paid in that is not a customer\'s', () => {
+    it('a bundled charge is placed part by part, and the line closes against one entry for the whole', async () => {
+      const f = await fresh('split');
+      await importCsv(f.account.id, [[dmy(day(1)), 'Fee and excise duty', 'SP1', '', '115.00', '']]);
+      const [l] = await lines(f.account.id);
+      const part = (glAccountId: string, amount: string, description?: string) => ({ glAccountId, amount, description });
+      // The parts must come to the line exactly, each names an account once, and there must be a part.
+      expect(await codeOf(fin.bankStatements.recordChargeFromLine(ctx, l.id, { parts: [part(glFee, '100.00')] }))).toBe('SPLIT_INVALID');
+      expect(await codeOf(fin.bankStatements.recordChargeFromLine(ctx, l.id, { parts: [part(glFee, '100.00'), part(glFee, '15.00')] }))).toBe('SPLIT_INVALID');
+      expect(await codeOf(fin.bankStatements.recordChargeFromLine(ctx, l.id, { parts: [] }))).toBe('SPLIT_INVALID');
+      expect((await lines(f.account.id))[0].status).toBe('unmatched');
+      // No fee account is needed when every part names its own.
+      await db.update(schema.bankAccounts).set({ feeGlAccountId: null }).where(eq(schema.bankAccounts.id, f.account.id));
+      const out = await fin.bankStatements.recordChargeFromLine(ctx, l.id, { parts: [part(glFee, '100.00', 'Transfer fee'), part(glOtherExpense, '15.00', 'Excise duty')] });
+      expect(out).toMatchObject({ parts: 2 });
+      expect((await lines(f.account.id))[0]).toMatchObject({ status: 'matched', matchRule: 'recorded_charge' });
+      const entries = await db.select().from(schema.bankLedgerEntries).where(and(eq(schema.bankLedgerEntries.bankAccountId, f.account.id), eq(schema.bankLedgerEntries.documentType, 'bank_charge')));
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({ amount: '-115.0000' });
+      // It cannot be recorded twice.
+      expect(await codeOf(fin.bankStatements.recordChargeFromLine(ctx, l.id, { parts: [part(glFee, '115.00')] }))).toBe('LINE_CLOSED');
+    });
+
+    it('money paid in is recorded as income against the chosen account, and only money paid in', async () => {
+      const f = await fresh('income');
+      await importCsv(f.account.id, [[dmy(day(1)), 'Interest for September', 'INT1', '48.20', '', ''], [dmy(day(1)), 'A fee', 'FEE9', '', '5.00', '']]);
+      const [interest, fee] = await lines(f.account.id);
+      expect(await codeOf(fin.bankStatements.recordIncomeFromLine(ctx, fee.id, { incomeGlAccountId: glIncome }))).toBe('NOT_INCOME');
+      expect(await codeOf(fin.bankStatements.recordIncomeFromLine(ctx, interest.id, { incomeGlAccountId: randomUUID() }))).toBe('INCOME_ACCOUNT_INVALID');
+      const out = await fin.bankStatements.recordIncomeFromLine(ctx, interest.id, { incomeGlAccountId: glIncome, description: 'Interest, September' });
+      expect(out.number).toMatch(/^BIN-/);
+      expect((await lines(f.account.id))[0]).toMatchObject({ status: 'matched', matchRule: 'recorded_income' });
+      const [e] = await db.select().from(schema.bankLedgerEntries).where(and(eq(schema.bankLedgerEntries.bankAccountId, f.account.id), eq(schema.bankLedgerEntries.documentType, 'bank_income')));
+      expect(e).toMatchObject({ amount: '48.2000', description: 'Interest, September' });
+      expect(await codeOf(fin.bankStatements.recordIncomeFromLine(ctx, interest.id, { incomeGlAccountId: glIncome }))).toBe('LINE_CLOSED');
+    });
+  });
+
   describe('reconciling', () => {
     it('is blocked by lines not dealt with, and by a sum that does not agree, in words', async () => {
       const f = await fresh('rec1');
@@ -517,6 +559,23 @@ describe.skipIf(!has(url))('bank statements (database)', () => {
       expect(gl.reduce((n, x) => n + Number(x.debit), 0)).toBe(150);
       expect(gl.reduce((n, x) => n + Number(x.credit), 0)).toBe(150);
       expect(gl.find((x) => x.accountId === glFee && Number(x.debit) === 150)).toBeTruthy();
+      expect((await fin.salesPosting.reconciliation(companyId)).rows.map((r) => r.diffCents)).toEqual([0]);
+    });
+
+    it('a bundled charge posts one debit to each account and one credit to the bank, and interest posts to income', async () => {
+      const f = await fresh('livesplit');
+      await importCsv(f.account.id, [[dmy(day(0)), 'Fee and duty', 'LS1', '', '115.00', ''], [dmy(day(0)), 'Interest', 'LS2', '30.00', '', '']]);
+      const [charge, interest] = await lines(f.account.id);
+      await fin.bankStatements.recordChargeFromLine(ctx, charge.id, { parts: [{ glAccountId: glFee, amount: '100.00' }, { glAccountId: glOtherExpense, amount: '15.00' }] });
+      const [c] = await db.select().from(schema.bankLedgerEntries).where(and(eq(schema.bankLedgerEntries.bankAccountId, f.account.id), eq(schema.bankLedgerEntries.documentType, 'bank_charge')));
+      const cg = await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, required(c.registerId)));
+      expect(cg.filter((x) => Number(x.debit) > 0).map((x) => [x.accountId, Number(x.debit)]).sort()).toEqual([[glFee, 100], [glOtherExpense, 15]].sort());
+      expect(cg.filter((x) => Number(x.credit) > 0).map((x) => [x.accountId, Number(x.credit)])).toEqual([[glBank, 115]]);
+      await fin.bankStatements.recordIncomeFromLine(ctx, interest.id, { incomeGlAccountId: glIncome });
+      const [i] = await db.select().from(schema.bankLedgerEntries).where(and(eq(schema.bankLedgerEntries.bankAccountId, f.account.id), eq(schema.bankLedgerEntries.documentType, 'bank_income')));
+      const ig = await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, required(i.registerId)));
+      expect(ig.find((x) => Number(x.debit) === 30)?.accountId).toBe(glBank);
+      expect(ig.find((x) => Number(x.credit) === 30)?.accountId).toBe(glIncome);
       expect((await fin.salesPosting.reconciliation(companyId)).rows.map((r) => r.diffCents)).toEqual([0]);
     });
 

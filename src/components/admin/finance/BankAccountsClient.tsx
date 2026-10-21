@@ -112,6 +112,7 @@ function BankAccountsView({ view }: { view: View }) {
             {form.kind === 'bank' ? (
               <>
                 <Field id={`${uid}-bank`} label="Bank"><input id={`${uid}-bank`} value={form.bankName} onChange={(e) => set('bankName', e.target.value)} className={fieldClass} maxLength={80} /></Field>
+                <ChoicePicker label="Read its statement through" source="statement-providers" choice={form.provider} onChoice={(c) => set('provider', c)} placeholder="Not connected" />
                 <Field id={`${uid}-acc`} label="Account number"><input id={`${uid}-acc`} value={form.accountNumber} onChange={(e) => set('accountNumber', e.target.value)} className={fieldClass} maxLength={40} inputMode="numeric" autoComplete="off" /></Field>
               </>
             ) : null}

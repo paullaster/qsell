@@ -120,7 +120,7 @@ export const TRIGGERS: TriggerDefinition[] = [
     label: 'Payout through a payment provider',
     fields: [
       ...common,
-      { path: 'operation', label: 'Kind of payout (b2c, reversal, b2b_paybill, b2b_buygoods, tax_remittance)', type: 'text' },
+      { path: 'operation', label: 'Kind of payout (b2c, b2pochi, b2c_topup, reversal, b2b_paybill, b2b_buygoods, tax_remittance)', type: 'text' },
       { path: 'providerId', label: 'Provider', type: 'text' },
     ],
   },

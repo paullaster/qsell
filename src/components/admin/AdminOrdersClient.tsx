@@ -1,23 +1,15 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { AdminOrders } from '@/components/admin/AdminOrders';
-import type { Order } from '@/types/index';
+import type { ordersPageAction } from '@/server/domains/orders/actions';
 import type { PublicCompany } from '@/lib/company-view';
 
 export function AdminOrdersClient({
-  ordersPromise,
+  firstPage,
   companyPromise,
 }: {
-  ordersPromise: Promise<Order[]>;
+  firstPage: ReturnType<typeof ordersPageAction>;
   companyPromise: Promise<PublicCompany>;
 }) {
-  const router = useRouter();
-  return (
-    <AdminOrders
-      ordersPromise={ordersPromise}
-      companyPromise={companyPromise}
-      onRefresh={() => router.refresh()}
-    />
-  );
+  return <AdminOrders firstPage={firstPage} companyPromise={companyPromise} />;
 }

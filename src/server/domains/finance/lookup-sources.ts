@@ -1,5 +1,6 @@
-import { eq, sql, type SQL } from 'drizzle-orm';
-import { bankAccounts, customers, glAccounts, paymentMethods, reasonCodes } from '@/server/db/drizzle/schema';
+import { eq, inArray, sql, type SQL } from 'drizzle-orm';
+import { LIMIT_MODES } from '@/lib/refund-limits-form';
+import { bankAccounts, customers, glAccounts, paymentMethods, paymentProviderConfigs, reasonCodes } from '@/server/db/drizzle/schema';
 import { ADJUSTMENT_STATUS, CHEQUE_STATUS, RECEIPT_STATUS, REFUND_FILE_STATUS, REFUND_STATUS, statusChoices } from '@/lib/finance-statuses';
 import { METHOD_KINDS, labelOf } from '@/lib/payment-options';
 import { AUTO_APPLY_MODES, CREDIT_NOTE_MODES, OVERPAYMENT_MODES } from '@/lib/wallet-policy';
@@ -260,6 +261,43 @@ const expenseAccounts = tableSource({
   toOption: (row) => ({ id: text(row.id), label: `${text(row.label)} ${text(row.name)}`, description: null, badge: null }),
 });
 
+/** The bank connections a statement can be read through: providers whose driver gives statements. */
+const statementProviders = tableSource({
+  key: 'statement-providers',
+  permission: 'bank_accounts:read',
+  table: paymentProviderConfigs,
+  id: paymentProviderConfigs.id,
+  label: paymentProviderConfigs.displayName,
+  searchColumns: [paymentProviderConfigs.displayName],
+  select: { code: paymentProviderConfigs.providerCode },
+  scope: ({ companyId, filters }) => {
+    acceptFilters(filters, {});
+    return [eq(paymentProviderConfigs.companyId, companyId), inArray(paymentProviderConfigs.providerCode, ['jenga_hq', 'kcb_buni'])];
+  },
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.code) === 'jenga_hq' ? 'Jenga' : 'KCB Buni', badge: null }),
+});
+
+/** Open posting accounts of one category, for the statement panels: asked for under the permission of the thing being done, not the chart's. */
+const statementAccounts = (key: string, permission: PermissionKey, categories: ('income' | 'expense')[]) =>
+  tableSource({
+    key,
+    permission,
+    table: glAccounts,
+    id: glAccounts.id,
+    label: glAccounts.no,
+    searchColumns: [glAccounts.no, glAccounts.name],
+    select: { name: glAccounts.name },
+    scope: ({ companyId, filters }) => {
+      acceptFilters(filters, {});
+      return [eq(glAccounts.companyId, companyId), eq(glAccounts.type, 'posting'), eq(glAccounts.blocked, false), inArray(glAccounts.category, categories)];
+    },
+    toOption: (row) => ({ id: text(row.id), label: `${text(row.label)} ${text(row.name)}`, description: null, badge: null }),
+  });
+
+const statementIncomeAccounts = statementAccounts('statement-income-accounts', 'bank_statements:record_income', ['income']);
+const statementExpenseAccounts = statementAccounts('statement-expense-accounts', 'bank_statements:record_charge', ['expense'])
+const cashVarianceAccounts = statementAccounts('cash-variance-accounts', 'cash_counts:post', ['expense', 'income']);
+
 const accountFilter = (filters: Record<string, string>): string => {
   const { account = '', ...rest } = filters;
   if (Object.keys(rest).length > 0 || !UUID.test(account)) throw new LookupFilterError('Choose the account first.');
@@ -288,6 +326,16 @@ const statementReceiptMethods = tableSource({
 const statementChargeAccounts = staticSource({
   key: 'statement-charge-accounts',
   permission: 'bank_statements:record_charge',
+  async items({ companyId, filters }) {
+    const rows = await getContainer().finance.bankStatements.chargeGlChoices(companyId, accountFilter(filters));
+    return rows.map((g) => ({ id: g.glId, label: g.label, description: g.methods.join(', ') }));
+  },
+});
+
+/** The G/L accounts the methods of one cash account post to, which a counted difference is written against. */
+const cashCountGlAccounts = staticSource({
+  key: 'cash-count-gl-accounts',
+  permission: 'cash_counts:post',
   async items({ companyId, filters }) {
     const rows = await getContainer().finance.bankStatements.chargeGlChoices(companyId, accountFilter(filters));
     return rows.map((g) => ({ id: g.glId, label: g.label, description: g.methods.join(', ') }));
@@ -332,6 +380,11 @@ export const FINANCE_LOOKUP_SOURCES: readonly LookupSource[] = [
   customerSource('refund-customers', 'refunds:create'),
   customerSource('statement-customers', 'bank_statements:create_receipt'),
   expenseAccounts,
+  statementIncomeAccounts,
+  statementProviders,
+  statementExpenseAccounts,
+  cashVarianceAccounts,
+  cashCountGlAccounts,
   statementReceiptMethods,
   statementChargeAccounts,
   reasons('statement-reasons', 'bank_statements:read'),
@@ -353,6 +406,7 @@ export const FINANCE_LOOKUP_SOURCES: readonly LookupSource[] = [
   fixedChoices('wallet-overpayment-modes', 'wallet:read', OVERPAYMENT_MODES),
   fixedChoices('wallet-auto-apply-modes', 'wallet:read', AUTO_APPLY_MODES),
   fixedChoices('wallet-credit-note-modes', 'wallet:read', CREDIT_NOTE_MODES),
+  fixedChoices('refund-limit-modes', 'refund_limits:read', LIMIT_MODES),
   fixedChoices('return-conditions', 'return_receipts:read', CONDITIONS),
   fixedChoices('return-dispositions', 'return_receipts:read', DISPOSITIONS),
   fixedChoices('credit-note-reasons', 'credit_notes:create', CREDIT_NOTE_REASONS.map((id) => ({ id, label: reasonLabel(id) }))),

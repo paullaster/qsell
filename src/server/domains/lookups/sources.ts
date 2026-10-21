@@ -1,4 +1,5 @@
 import { and, eq } from 'drizzle-orm';
+import { FULFILMENT_STATUSES, STATUS_FILTERS } from '@/lib/order-admin';
 import { drizzleDb } from '@/server/db/drizzle/client';
 import {
   currencies,
@@ -194,6 +195,26 @@ const templateStatuses = staticSource({
   },
 });
 
+/** The states to narrow the admin orders list by. */
+const orderStatuses = staticSource({
+  key: 'order-statuses',
+  permission: 'orders:read',
+  items: ({ filters }) => {
+    acceptFilters(filters, {});
+    return STATUS_FILTERS.map((s) => ({ id: s.id, label: s.label, description: null }));
+  },
+});
+
+/** The states a person can move an order to by hand. */
+const orderFulfilmentStatuses = staticSource({
+  key: 'order-fulfilment-statuses',
+  permission: 'orders:update',
+  items: ({ filters }) => {
+    acceptFilters(filters, {});
+    return FULFILMENT_STATUSES.map((s) => ({ id: s.id, label: s.label, description: null }));
+  },
+});
+
 const SOURCES: ReadonlyMap<string, LookupSource> = new Map(
   [
     quoteTemplates,
@@ -204,6 +225,8 @@ const SOURCES: ReadonlyMap<string, LookupSource> = new Map(
     paymentMethods,
     quoteStatuses,
     templateStatuses,
+    orderStatuses,
+    orderFulfilmentStatuses,
     ...PAYMENT_LOOKUP_SOURCES,
     ...FINANCE_LOOKUP_SOURCES,
     ...DIMENSION_LOOKUP_SOURCES,

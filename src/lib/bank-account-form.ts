@@ -20,12 +20,14 @@ export interface AccountForm {
   kind: BankKind;
   currency: string;
   fee: { id: string; label: string } | null;
+  /** The bank connection statements are read through (kind bank only). */
+  provider: { id: string; label: string } | null;
   bankName: string;
   accountNumber: string;
   paybill: string;
 }
 
-export const blankAccountForm = (currency: string): AccountForm => ({ id: null, code: '', name: '', kind: 'bank', currency, fee: null, bankName: '', accountNumber: '', paybill: '' });
+export const blankAccountForm = (currency: string): AccountForm => ({ id: null, code: '', name: '', kind: 'bank', currency, fee: null, provider: null, bankName: '', accountNumber: '', paybill: '' });
 
 export interface AccountLike {
   id: string;
@@ -35,6 +37,8 @@ export interface AccountLike {
   currency: string;
   feeGlAccountId: string | null;
   feeGlLabel: string | null;
+  providerConfigId?: string | null;
+  providerLabel?: string | null;
   details: Readonly<Record<string, string>>;
 }
 
@@ -48,6 +52,7 @@ export function editAccountForm(a: AccountLike): AccountForm {
     kind: a.kind,
     currency: a.currency,
     fee: a.feeGlAccountId === null ? null : { id: a.feeGlAccountId, label: a.feeGlLabel ?? a.feeGlAccountId },
+    provider: a.providerConfigId == null ? null : { id: a.providerConfigId, label: a.providerLabel ?? a.providerConfigId },
     bankName: detail(a.details, 'bankName'),
     accountNumber: detail(a.details, 'accountNumber'),
     paybill: detail(a.details, 'paybill'),
@@ -70,7 +75,7 @@ export function accountDetails(form: AccountForm): Record<string, string> {
 }
 
 export function accountInput(form: AccountForm) {
-  return { name: form.name, kind: form.kind, currency: form.currency.toUpperCase(), feeGlAccountId: form.fee?.id ?? null, details: accountDetails(form) };
+  return { name: form.name, kind: form.kind, currency: form.currency.toUpperCase(), feeGlAccountId: form.fee?.id ?? null, providerConfigId: form.kind === 'bank' ? (form.provider?.id ?? null) : null, details: accountDetails(form) };
 }
 
 /** "Paybill / till" or "Account no." with its value, when the account has either. */
