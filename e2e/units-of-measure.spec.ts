@@ -277,7 +277,7 @@ test.describe('credit notes in the unit the goods were sold in', () => {
     const order = testInfo.project.name === 'phone' ? 'E2E-CR-PHONE' : 'E2E-CR-DESKTOP';
     await open(page, '/admin/orders', /Customer Orders/);
     await page.getByPlaceholder(/Search Order #/).fill(order);
-    const row = page.getByRole('row').filter({ hasText: order });
+    const row = page.getByRole(testInfo.project.name === 'phone' ? 'listitem' : 'row').filter({ hasText: order });
     await expect(row).toBeVisible({ timeout: 30_000 });
     await clickUntilVisible(
       row.getByRole('button', { name: 'Manage & Fulfill' }),

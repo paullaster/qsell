@@ -5,7 +5,7 @@ import type { DocumentHandler } from '@/server/kernel/approvals/engine';
 import type { PaymentJobs } from '../engine/jobs';
 import type { ProviderOperationService } from '../engine/operation-service';
 import type { PlatformContexts } from '../engine/context';
-import { DARAJA_OPERATIONS, validateOperationInput, type DarajaOperationCode } from './catalog';
+import { DARAJA_OPERATIONS, MONEY_OUT_OPERATIONS, validateOperationInput, type DarajaOperationCode } from './catalog';
 import { darajaSettings, OPERATION_DEFAULTS } from './config';
 import { OperationRefused } from './operations';
 import { randomUUID } from 'node:crypto';
@@ -63,7 +63,7 @@ export class DarajaDisbursements {
       const [row] = await this.db
         .select({ total: sql<string>`coalesce(sum(${providerOperations.amount}), 0)` })
         .from(providerOperations)
-        .where(and(eq(providerOperations.providerId, input.providerId), eq(providerOperations.companyId, input.companyId), inArray(providerOperations.operation, ['reversal', 'b2c', 'b2b_paybill', 'b2b_buygoods', 'tax_remittance']), inArray(providerOperations.status, ['pending_approval', 'approved', 'queued', 'submitted', 'accepted', 'timed_out', 'in_doubt', 'succeeded']), gte(providerOperations.createdAt, since)));
+        .where(and(eq(providerOperations.providerId, input.providerId), eq(providerOperations.companyId, input.companyId), inArray(providerOperations.operation, MONEY_OUT_OPERATIONS), inArray(providerOperations.status, ['pending_approval', 'approved', 'queued', 'submitted', 'accepted', 'timed_out', 'in_doubt', 'succeeded']), gte(providerOperations.createdAt, since)));
       if (Number(row?.total ?? 0) + Number(amount) > Number(settings.dailyPayoutLimit)) throw new OperationRefused('DAILY_LIMIT', `That would take the last 24 hours of payouts past this provider's limit of ${settings.dailyPayoutLimit}.`);
     }
     const { getContainer } = await import('@/server/di/container');

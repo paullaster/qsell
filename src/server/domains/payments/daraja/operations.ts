@@ -9,7 +9,7 @@ import type { PlatformContext } from '../engine/types';
 import { DarajaClient, darajaFailure } from './client';
 import { type DarajaOperationCode, operationInfo } from './catalog';
 import { darajaSettings, OPERATION_DEFAULTS } from './config';
-import { parseAsyncResult, receiptFromParams, resultParameters } from './parsers';
+import { parseAsyncResult, parseRatiba, receiptFromParams, resultParameters } from './parsers';
 import { darajaTimestamp, looksLikeReceipt, securityCredential, stkPassword, toMsisdn } from './security';
 
 import { asRecord, emptyToNull, firstFilled, has, orElse, readText, toList } from '@/lib/values';
@@ -58,12 +58,20 @@ export function acceptance(operation: DarajaOperationCode, body: Record<string, 
     case 'bill_cancel_bulk':
     case 'bill_acknowledge':
       return text('rescode') === '200' ? { ok: true } : { ok: false, code: orElse(text('rescode'), 'REFUSED'), reason: (firstFilled(text('resmsg'), text('Status_Message')) ?? 'Bill Manager did not accept the request.') };
+    case 'ratiba_create': {
+      // Ratiba answers in its own shape: a header with a code of 200 when the request was taken in.
+      const header = asRecord(body.ResponseHeader ?? body.responseHeader);
+      const code = readText(header.responseCode, '');
+      return code === '200' ? { ok: true } : { ok: false, code: orElse(code, 'REFUSED'), reason: orElse(readText(header.responseDescription, header.ResultDesc, ''), 'The standing order was not accepted.') };
+    }
     case 'qr_generate':
       return has(text('QRCode')) ? { ok: true } : refused(text('ResponseCode'), 'No QR code came back.');
     case 'account_balance':
     case 'b2b_buygoods':
     case 'b2b_paybill':
     case 'b2c':
+    case 'b2c_topup':
+    case 'b2pochi':
     case 'c2b_register_urls':
     case 'c2b_simulate':
     case 'reversal':
@@ -79,7 +87,7 @@ const RESEND_SECONDS = [10, 30, 90, 300, 900];
 const ASYNC_WAIT_SECONDS = 600;
 
 /** The addresses Safaricom calls us on. The secret is the provider's; the words in the path avoid what Safaricom refuses. */
-export function callbackUrl(ctx: PlatformContext, secret: string, kind: 'c2b-confirm' | 'c2b-validate' | 'result' | 'timeout' | 'express' | 'bill' | 'pull'): string {
+export function callbackUrl(ctx: PlatformContext, secret: string, kind: 'c2b-confirm' | 'c2b-validate' | 'result' | 'timeout' | 'express' | 'bill' | 'pull' | 'ratiba'): string {
   if (!has(ctx.publicBaseUrl)) throw new OperationRefused('NO_PUBLIC_URL', "Set the company's public address first (Settings → Payments); Safaricom needs it to call back.");
   return `${ctx.publicBaseUrl}/api/hooks/pay/${ctx.provider.id}/${kind}/${secret}`;
 }
@@ -189,7 +197,7 @@ export class DarajaOperations {
       const fresh = (await this.ops.get(op.id));
       // Sending a customer prompt twice would ask them to pay twice, and we cannot tell whether an unanswered one arrived.
       // Only B2C is de-duplicated by Safaricom (on the originator id). Any other payout sent twice could pay twice.
-      const unsafeToRepeat = op.operation === 'stk_push' || (info?.moneyOut === true && op.operation !== 'b2c');
+      const unsafeToRepeat = op.operation === 'stk_push' || (info?.moneyOut === true && op.operation !== 'b2c' && op.operation !== 'b2pochi');
       if (failure.retryable && !unsafeToRepeat && fresh.attempts < RESEND_SECONDS.length + 1) {
         const wait = RESEND_SECONDS[Math.min(fresh.attempts - 1, RESEND_SECONDS.length - 1)];
         await this.ops.update(op.id, { status: 'queued', failureCode: failure.code, failureReason: failure.message, response: res.json ?? {}, nextAttemptAt: new Date(Date.now() + wait * 1000) });
@@ -209,7 +217,7 @@ export class DarajaOperations {
       await this.ops.update(op.id, {
         status: 'accepted',
         response: body,
-        conversationId: emptyToNull(readText(body.ConversationID, body.CheckoutRequestID, '')),
+        conversationId: emptyToNull(readText(body.ConversationID, body.CheckoutRequestID, asRecord(body.ResponseHeader ?? body.responseHeader).responseRefID, '')),
         nextAttemptAt: new Date(Date.now() + ASYNC_WAIT_SECONDS * 1000),
         failureCode: null,
         failureReason: null,
@@ -350,6 +358,46 @@ export class DarajaOperations {
           body: { OriginatorConversationID: op.originatorId, InitiatorName: init.name, SecurityCredential: init.credential, CommandID: readText(input.commandId, 'BusinessPayment'), Amount: String(input.amount), PartyA: shortcode, PartyB: phone, Remarks: readText(input.remarks, 'Payment').slice(0, 100), QueueTimeOutURL: callbackUrl(ctx, secret, 'timeout'), ResultURL: callbackUrl(ctx, secret, 'result'), Occassion: readText(input.occasion, '').slice(0, 100) },
         };
       }
+      case 'b2pochi': {
+        const init = this.initiator(ctx);
+        const secret = await this.contexts.callbackSecret(ctx.provider.id);
+        const phone = toMsisdn(readText(input.phone, ''));
+        if (!has(phone)) throw new OperationRefused('PHONE_INVALID', 'The phone number is not a Kenyan mobile number.');
+        return {
+          path: '/mpesa/b2pochi/v1/paymentrequest',
+          body: { OriginatorConversationID: op.originatorId, InitiatorName: init.name, SecurityCredential: init.credential, CommandID: 'BusinessPayToPochi', Amount: String(input.amount), PartyA: shortcode, PartyB: phone, Remarks: readText(input.remarks, 'Payment').slice(0, 100), QueueTimeOutURL: callbackUrl(ctx, secret, 'timeout'), ResultURL: callbackUrl(ctx, secret, 'result'), Occassion: readText(input.occasion, '').slice(0, 100) },
+        };
+      }
+      case 'ratiba_create': {
+        const secret = await this.contexts.callbackSecret(ctx.provider.id);
+        if (!has(shortcode)) throw new OperationRefused('NO_SHORTCODE', 'Choose the paybill or till the standing order pays.');
+        const phone = toMsisdn(readText(input.phone, ''));
+        if (!has(phone)) throw new OperationRefused('PHONE_INVALID', 'The phone number is not a Kenyan mobile number.');
+        const start = readText(input.startDate, '');
+        const end = readText(input.endDate, '');
+        const today = now.toISOString().slice(0, 10);
+        if (start < today) throw new OperationRefused('DATES_INVALID', 'The first payment cannot be before today.');
+        if (end < start) throw new OperationRefused('DATES_INVALID', 'The standing order cannot end before it starts.');
+        const till = readText(input.receiverType, '4') === '2';
+        return {
+          path: '/standingorder/v1/createStandingOrderExternal',
+          body: {
+            StandingOrderName: readText(input.standingOrderName, '').slice(0, 40),
+            StartDate: start.replaceAll('-', ''),
+            EndDate: end.replaceAll('-', ''),
+            BusinessShortCode: shortcode,
+            TransactionType: till ? 'Standing Order Customer Pay Marchant' : 'Standing Order Customer Pay Bill',
+            ReceiverPartyIdentifierType: till ? '2' : '4',
+            Amount: String(input.amount),
+            PartyA: phone,
+            CallBackURL: callbackUrl(ctx, secret, 'ratiba'),
+            AccountReference: readText(input.accountReference, '').slice(0, 12),
+            TransactionDesc: readText(input.transactionDesc, 'Standing order').slice(0, 13),
+            Frequency: readText(input.frequency, '4'),
+          },
+        };
+      }
+      case 'b2c_topup':
       case 'b2b_paybill':
       case 'b2b_buygoods': {
         const init = this.initiator(ctx);
@@ -359,7 +407,7 @@ export class DarajaOperations {
           body: {
             Initiator: init.name,
             SecurityCredential: init.credential,
-            CommandID: op.operation === 'b2b_paybill' ? 'BusinessPayBill' : 'BusinessBuyGoods',
+            CommandID: b2bCommand(op.operation),
             SenderIdentifierType: '4',
             RecieverIdentifierType: '4',
             Amount: String(input.amount),
@@ -441,6 +489,32 @@ export class DarajaOperations {
     return { matched: true, op: (await this.ops.get(op.id)) };
   }
 
+  /**
+   * Ratiba's word on a standing order (its callback is not a "Result"). It is matched to our request by the id Safaricom gave when it
+   * took the request in. Creating a standing order moves no money, so the answer settles the operation; each later payment arrives as
+   * an ordinary payment to the paybill and is verified like any other.
+   */
+  async completeFromRatiba(providerId: string, payload: unknown): Promise<{ matched: boolean; op?: ProviderOperationRow; reason?: string }> {
+    const answer = parseRatiba(payload);
+    if (answer === null) return { matched: false, reason: 'The body is not a Ratiba answer.' };
+    const byId = has(answer.responseRefId) ? await this.ops.byConversation(providerId, answer.responseRefId) : null;
+    const op = byId?.operation === 'ratiba_create' ? byId : null;
+    if (op === null) return { matched: false, reason: 'No standing order of ours has this reference.' };
+    if (['succeeded', 'failed', 'cancelled', 'rejected'].includes(op.status)) return { matched: true, op, reason: 'Already finished.' };
+    if (answer.succeeded === null) {
+      await this.ops.update(op.id, { status: 'in_doubt', failureCode: 'UNCLEAR', failureReason: 'Safaricom did not say clearly whether the standing order was created. Check with the customer and on the M-Pesa portal.', nextAttemptAt: null });
+      return { matched: true, op: await this.ops.get(op.id) };
+    }
+    await this.ops.update(op.id, {
+      status: answer.succeeded ? 'succeeded' : 'failed',
+      platformReference: answer.transactionId,
+      result: { code: answer.code, description: answer.description, transactionId: answer.transactionId },
+      failureCode: answer.succeeded ? null : orElse(answer.code, 'RATIBA_FAILED'),
+      failureReason: answer.succeeded ? null : orElse(answer.description, 'The customer did not approve the standing order, or Safaricom could not create it.'),
+    });
+    return { matched: true, op: await this.ops.get(op.id) };
+  }
+
   /** The platform said it timed the request out in its queue. The operation is not dead: it must be checked, never assumed. */
   async markTimedOut(providerId: string, payload: unknown): Promise<{ matched: boolean; op?: ProviderOperationRow }> {
     const body = (payload ?? {}) as Record<string, unknown>;
@@ -456,6 +530,12 @@ export class DarajaOperations {
   paramsOf(result: Record<string, unknown>): Record<string, string> {
     return resultParameters({ ResultParameters: (result as { ResultParameters?: unknown }).ResultParameters });
   }
+}
+
+/** The command a business-to-business style request is sent with. */
+function b2bCommand(operation: string): string {
+  if (operation === 'b2c_topup') return 'BusinessPayToBulk';
+  return operation === 'b2b_paybill' ? 'BusinessPayBill' : 'BusinessBuyGoods';
 }
 
 /** One invoice in the form Bill Manager takes: phone in 254 form, due date with a time, and at least one line item. */

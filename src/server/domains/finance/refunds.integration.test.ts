@@ -281,6 +281,96 @@ describe.skipIf(!has(url))('refunds (database)', () => {
     });
   });
 
+  describe('paying by reversing the customer\'s own M-Pesa payment', () => {
+    /** An M-Pesa connection the refund method goes through, and a payment of the customer's that Safaricom confirmed. */
+    async function mpesa() {
+      const { id: providerId } = await fin.paymentProviders.create(ctx, { providerCode: 'mpesa_daraja', displayName: `RF rev ${run} ${++seq}` });
+      const [before] = await db.select().from(schema.paymentMethods).where(eq(schema.paymentMethods.id, methodId.MPESA));
+      await db.update(schema.paymentMethods).set({ providerId, refundDestination: 'automatic' }).where(eq(schema.paymentMethods.id, methodId.MPESA));
+      const restore = () => db.update(schema.paymentMethods).set({ providerId: before.providerId, refundDestination: before.refundDestination }).where(eq(schema.paymentMethods.id, methodId.MPESA));
+      return { providerId, restore };
+    }
+    const code = () => `RV${run.toUpperCase()}${String(++seq).padStart(4, '0')}`.slice(0, 12);
+    async function paidByStk(orderId: string, providerId: string, amount: string, ref: string) {
+      const [attempt] = await db.insert(schema.paymentAttempts).values({ branchId, providerConfigId: providerId, providerCode: 'mpesa_daraja', orderId, orderNumber: `RFO-${run}`, amount, status: 'successful', callbackToken: randomUUID(), callbackUrl: 'https://x.test/cb' }).returning();
+      await db.insert(schema.providerTransactions).values({ companyId, providerId, methodId: methodId.MPESA, kind: 'stk', platformReference: ref, amount, state: 'consumed', consumedType: 'payment_attempt', consumedId: attempt.id, shortcode: '174379' });
+      return attempt;
+    }
+
+    it('is offered for a refund of exactly the payment that paid the order, and sends nothing until a person who did not approve it asks', async () => {
+      const m = await mpesa();
+      try {
+        const o = await owed();
+        const ref = code();
+        await paidByStk(o.orderId, m.providerId, '580', ref);
+        const r = await request(o.customer.id, 'credit_note_excess', o.cn.id, '580', { paymentMethodId: methodId.MPESA, payoutDetails: { phone: required(o.customer.phone) } });
+        expect(await fin.refunds.reversalOption(companyId, r.id)).toMatchObject({ ok: false, reason: expect.stringContaining('Only an approved refund') });
+        await fin.refunds.submit(reqCtx, r.id);
+        expect(await fin.refunds.reversalOption(companyId, r.id)).toMatchObject({ ok: true, original: { transactionId: ref, amountCents: 58_000 } });
+        const plan = await fin.refunds.prepareReversal(reqCtx, r.id);
+        expect(plan).toMatchObject({ providerId: m.providerId, methodId: methodId.MPESA, transactionId: ref, amount: '580.00', attempt: 1 });
+        // The person who approved cannot send it.
+        await db.update(schema.refundRequests).set({ approvedBy: reqCtx.actor.id }).where(eq(schema.refundRequests.id, r.id));
+        expect(await codeOf(fin.refunds.prepareReversal(reqCtx, r.id))).toBe('SAME_PERSON');
+        await db.update(schema.refundRequests).set({ approvedBy: null }).where(eq(schema.refundRequests.id, r.id));
+        // Once a payment for it is on its way, no second one, and no payment by hand on top of it.
+        const [op] = await db.insert(schema.providerOperations).values({ companyId, providerId: m.providerId, methodId: methodId.MPESA, operation: 'reversal', status: 'accepted', idempotencyKey: `refund:${r.id}:reversal:1`, subjectType: 'refund', subjectId: r.id, amount: '580', input: { transactionId: ref } }).returning();
+        expect(await codeOf(fin.refunds.prepareReversal(reqCtx, r.id))).toBe('NOT_REVERSIBLE');
+        expect(await fin.refunds.reversalOption(companyId, r.id)).toMatchObject({ ok: false, reason: expect.stringContaining('already been reversed') });
+        expect(await codeOf(payOut(r.id))).toBe('PAYOUT_IN_PROGRESS');
+        // Safaricom\'s confirmed reversal is recorded as the payment, with its transaction number as the reference.
+        await fin.refunds.onAutomaticPayoutFinished({ ...op, status: 'succeeded', platformReference: 'REVTXN0001' });
+        const [paid] = await db.select().from(schema.refundRequests).where(eq(schema.refundRequests.id, r.id));
+        expect(paid).toMatchObject({ status: 'paid', payoutReference: 'REVTXN0001' });
+      } finally {
+        await m.restore();
+      }
+    });
+
+    it('is found for an unapplied receipt too: the payment that became the receipt', async () => {
+      const m = await mpesa();
+      try {
+        const o = await owed();
+        const ref = code();
+        const rc = await fin.receipts.create(ctx, { customerId: o.customer.id, paymentMethodId: methodId.MPESA, amount: '250', paymentDate: today, externalReference: ref });
+        await fin.receipts.post(ctx, rc.id, { allocate: 'none' });
+        await db.insert(schema.providerTransactions).values({ companyId, providerId: m.providerId, methodId: methodId.MPESA, kind: 'c2b', platformReference: ref, amount: '250', state: 'consumed', consumedType: 'customer_receipt', consumedId: rc.id, shortcode: '174379' });
+        const r = await request(o.customer.id, 'receipt_unapplied', rc.id, '250', { paymentMethodId: methodId.MPESA, payoutDetails: { phone: required(o.customer.phone) } });
+        await fin.refunds.submit(reqCtx, r.id);
+        expect(await fin.refunds.reversalOption(companyId, r.id)).toMatchObject({ ok: true, original: { transactionId: ref, amountCents: 25_000 } });
+      } finally {
+        await m.restore();
+      }
+    });
+
+    it('is refused, in words, for a part of the payment, a payment not found, another phone, a method paid by hand, and another connection', async () => {
+      const m = await mpesa();
+      try {
+        const o = await owed(2);
+        await paidByStk(o.orderId, m.providerId, '1160', code());
+        const approved = async (amount: string, extra: Partial<RefundInput> = {}) => {
+          const r = await request(o.customer.id, 'credit_note_excess', o.cn.id, amount, { paymentMethodId: methodId.MPESA, payoutDetails: { phone: required(o.customer.phone) }, ...extra });
+          await fin.refunds.submit(reqCtx, r.id);
+          return r;
+        };
+        const part = await approved('300');
+        expect(await fin.refunds.reversalOption(companyId, part.id)).toMatchObject({ ok: false, reason: expect.stringContaining('whole payment') });
+        expect(await codeOf(fin.refunds.prepareReversal(reqCtx, part.id))).toBe('NOT_REVERSIBLE');
+        await fin.refunds.cancel(ctx, part.id, { code: 'CUSTOMER_REQUEST' }, {} as never);
+        // Another phone: a reversal always goes back to whoever paid.
+        const other = await approved('1160', { payoutDetails: { phone: '0799000111' }, mayChangeDestination: true }).catch(() => null);
+        if (other !== null) expect(await fin.refunds.reversalOption(companyId, other.id)).toMatchObject({ ok: false });
+        // No payment to point at.
+        const none = await owed();
+        const lone = await request(none.customer.id, 'credit_note_excess', none.cn.id, '580', { paymentMethodId: methodId.MPESA, payoutDetails: { phone: required(none.customer.phone) } });
+        await fin.refunds.submit(reqCtx, lone.id);
+        expect(await fin.refunds.reversalOption(companyId, lone.id)).toMatchObject({ ok: false, reason: expect.stringContaining('nothing to reverse') });
+      } finally {
+        await m.restore();
+      }
+    });
+  });
+
   describe('a payout that could not be confirmed', () => {
     it('is found for the refund, kept in its history, and nothing else is offered while it is not held', async () => {
       const o = await owed();

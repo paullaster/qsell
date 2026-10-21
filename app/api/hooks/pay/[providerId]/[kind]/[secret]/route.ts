@@ -5,7 +5,7 @@ import type { HookKind } from '@/server/domains/payments/engine/payment-engine';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const KINDS = new Set<HookKind>(['c2b-validate', 'c2b-confirm', 'result', 'timeout', 'bill', 'express', 'pull']);
+const KINDS = new Set<HookKind>(['c2b-validate', 'c2b-confirm', 'result', 'timeout', 'bill', 'express', 'pull', 'ratiba']);
 
 /**
  * Where Safaricom (and other platforms) call a provider: payments made straight to a paybill or till,

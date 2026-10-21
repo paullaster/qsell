@@ -10,6 +10,10 @@ import { looksLikeReceipt } from '../daraja/security';
 import { DARAJA_OPERATIONS, type DarajaOperationCode } from '../daraja/catalog';
 import { readStatusAnswer, statusAgrees } from '../daraja/verify';
 import type { PaymentRegistry } from '../registry';
+import type { PaymentPort } from '../port';
+import type { PaymentProviderCode } from '../types';
+import type { StatementPullRequest, StatementPullResult } from '../statement-pull';
+import type { PlatformContext } from './types';
 import type { PlatformContexts } from './context';
 import type { ProviderEventService } from './event-service';
 import type { PaymentJobs } from './jobs';
@@ -37,7 +41,7 @@ export interface IngestReply {
 
 const ACK = { ResultCode: 0, ResultDesc: 'Accepted' };
 
-export type HookKind = 'c2b-validate' | 'c2b-confirm' | 'result' | 'timeout' | 'bill' | 'express' | 'pull';
+export type HookKind = 'c2b-validate' | 'c2b-confirm' | 'result' | 'timeout' | 'bill' | 'express' | 'pull' | 'ratiba';
 
 /**
  * The only doors payment platforms knock on. Each one writes down what arrived (who sent it, whether it
@@ -77,6 +81,33 @@ export class PaymentEngine {
     private readonly payments: PaymentService,
     private readonly consumer: C2bConsumer | null,
   ) {}
+
+  /**
+   * Asks a connected bank for an account's statement. The provider must be switched on and its driver must be able to give statements;
+   * whatever goes wrong comes back as words, never as a thrown error.
+   */
+  async pullStatement(providerId: string, request: StatementPullRequest): Promise<StatementPullResult> {
+    let ctx: PlatformContext;
+    try {
+      ctx = await this.contexts.forProvider(providerId);
+    } catch {
+      return { ok: false, error: 'That payment provider does not exist.', retryable: false };
+    }
+    if (!ctx.provider.isEnabled) return { ok: false, error: `${ctx.provider.displayName} is switched off. Switch it on in Settings → Payments.`, retryable: false };
+    let port: PaymentPort;
+    try {
+      port = this.registry.resolve(ctx.provider.providerCode as PaymentProviderCode);
+    } catch {
+      return { ok: false, error: `${ctx.provider.displayName} cannot give statements.`, retryable: false };
+    }
+    if (port.pullStatement === undefined) return { ok: false, error: `${ctx.provider.displayName} cannot give statements.`, retryable: false };
+    try {
+      return await port.pullStatement(request, ctx);
+    } catch (error) {
+      console.error('[payments] statement pull', error);
+      return { ok: false, error: `${ctx.provider.displayName} could not be asked for the statement.`, retryable: true };
+    }
+  }
 
   private parseBody(input: IngestInput, query?: Record<string, string>): unknown {
     if (query && Object.keys(query).length > 0 && !has(input.rawText.trim())) return query;
@@ -209,6 +240,12 @@ export class PaymentEngine {
         }
         // A payment that was not clearly made is never credited; the callback is kept as it came.
         await this.events.setState(event.id, 'unverified', { operationId: op.id, failureCode: 'CALLBACK_ONLY', failureReason: 'The callback did not clearly say the payment was made, so nothing is credited from it.' });
+        return { httpStatus: 200, body: ACK };
+      }
+      case 'ratiba': {
+        const done = await this.daraja.completeFromRatiba(ctx.provider.id, body);
+        await this.events.setState(event.id, done.matched ? 'verified' : 'unmatched', done.matched ? { operationId: done.op?.id, failureCode: null, failureReason: null } : { failureCode: 'NO_OPERATION', failureReason: done.reason ?? 'No standing order of ours matches this answer.' });
+        if (done.op) await this.finished(done.op.id);
         return { httpStatus: 200, body: ACK };
       }
       case 'bill': {

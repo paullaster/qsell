@@ -5,9 +5,13 @@ import { toCentsLoose } from './security';
 import { asRecord, firstFilled, has, readText, toList, trimToNull } from '@/lib/values';
 
 /** A payer number becomes a fingerprint and a masked form; one that Safaricom already masked has no fingerprint. */
-function payer(raw: string | null): { payerFingerprint: string | null; payerMasked: string | null } {
+function payer(raw: string | null): {
+  payerFingerprint: string | null;
+  payerMasked: string | null;
+} {
   if (!has(raw)) return { payerFingerprint: null, payerMasked: null };
-  if (/[*•x]/i.test(raw) || raw.replace(/\D/g, '').length < 9) return { payerFingerprint: null, payerMasked: raw.slice(0, 16) };
+  if (/[*•x]/i.test(raw) || raw.replace(/\D/g, '').length < 9)
+    return { payerFingerprint: null, payerMasked: raw.slice(0, 16) };
   return { payerFingerprint: phoneFingerprint(raw), payerMasked: maskPhone(raw) };
 }
 
@@ -28,14 +32,33 @@ const valueText = (value: unknown): string => {
 };
 
 function emptyClaim(kind: string): InboundClaim {
-  return { kind, claimsSuccess: null, platformReference: null, conversationId: null, originatorId: null, requestIds: {}, amountCents: null, currency: 'KES', payerFingerprint: null, payerMasked: null, shortcode: null, accountReference: null, occurredAt: null, failureCode: null, failureReason: null, extra: {} };
+  return {
+    kind,
+    claimsSuccess: null,
+    platformReference: null,
+    conversationId: null,
+    originatorId: null,
+    requestIds: {},
+    amountCents: null,
+    currency: 'KES',
+    payerFingerprint: null,
+    payerMasked: null,
+    shortcode: null,
+    accountReference: null,
+    occurredAt: null,
+    failureCode: null,
+    failureReason: null,
+    extra: {},
+  };
 }
 
 /** "20240131124530" -> Date in East Africa Time. */
 export function parseDarajaTime(v: unknown): Date | null {
   const t = str(v);
   if (!has(t) || !/^\d{14}$/.test(t)) return null;
-  const d = new Date(`${t.slice(0, 4)}-${t.slice(4, 6)}-${t.slice(6, 8)}T${t.slice(8, 10)}:${t.slice(10, 12)}:${t.slice(12, 14)}+03:00`);
+  const d = new Date(
+    `${t.slice(0, 4)}-${t.slice(4, 6)}-${t.slice(6, 8)}T${t.slice(8, 10)}:${t.slice(10, 12)}:${t.slice(12, 14)}+03:00`,
+  );
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
@@ -73,14 +96,20 @@ export function parseStkCallback(body: unknown): InboundClaim | null {
   const claim = emptyClaim('stk_callback');
   const code = str(cb.ResultCode);
   claim.claimsSuccess = code === null ? null : code === '0';
-  claim.requestIds = { checkoutRequestId: str(cb.CheckoutRequestID) ?? '', merchantRequestId: str(cb.MerchantRequestID) ?? '' };
+  claim.requestIds = {
+    checkoutRequestId: str(cb.CheckoutRequestID) ?? '',
+    merchantRequestId: str(cb.MerchantRequestID) ?? '',
+  };
   claim.conversationId = str(cb.CheckoutRequestID);
   claim.failureCode = has(code) && code !== '0' ? code : null;
-  claim.failureReason = has(code) && code !== '0' ? (str(cb.ResultDesc) ?? `ResultCode ${code}`) : null;
+  claim.failureReason =
+    has(code) && code !== '0' ? (str(cb.ResultDesc) ?? `ResultCode ${code}`) : null;
   const meta = rec(cb.CallbackMetadata).Item;
   const items = Array.isArray(meta) ? meta : [];
   const get = (name: string) => {
-    const hit = items.map(rec).find((i) => readText(i.Name, '').toLowerCase() === name.toLowerCase());
+    const hit = items
+      .map(rec)
+      .find((i) => readText(i.Name, '').toLowerCase() === name.toLowerCase());
     return hit ? hit.Value : undefined;
   };
   claim.platformReference = str(get('MpesaReceiptNumber'));
@@ -92,7 +121,10 @@ export function parseStkCallback(body: unknown): InboundClaim | null {
 }
 
 /** Customer-to-Business validation or confirmation. */
-export function parseC2b(kind: 'c2b_validation' | 'c2b_confirmation', body: unknown): InboundClaim | null {
+export function parseC2b(
+  kind: 'c2b_validation' | 'c2b_confirmation',
+  body: unknown,
+): InboundClaim | null {
   const b = rec(body);
   if (!has(str(b.TransID)) && !has(str(b.BusinessShortCode))) return null;
   const claim = emptyClaim(kind);
@@ -144,13 +176,58 @@ export function receiptFromParams(p: Record<string, string>): string | null {
   return firstFilled(p.ReceiptNo, p.TransactionReceipt, p.TransactionID);
 }
 
+/** What Ratiba tells us about a standing order it was asked to set up. Its callback is neither a "Result" nor flat, and its casing varies. */
+export interface RatibaAnswer {
+  /** The id Safaricom gave the request: the one the first, synchronous answer carried too. */
+  responseRefId: string | null;
+  requestRefId: string | null;
+  /** The customer approved and the order was created; null when it cannot be told. */
+  succeeded: boolean | null;
+  code: string;
+  description: string;
+  transactionId: string | null;
+}
+
+const ci = (o: Record<string, unknown>, key: string): unknown =>
+  o[Object.keys(o).find((k) => k.toLowerCase() === key.toLowerCase()) ?? key];
+
+/** OKAY (or code 0 with no status) is a created order; ERROR or any other code is not; anything else cannot be told. */
+function ratibaVerdict(status: string, code: string): boolean | null {
+  if (status === 'OKAY' || (code === '0' && status === '')) return true;
+  if (status === 'ERROR') return false;
+  return has(code) && code !== '0' ? false : null;
+}
+
+export function parseRatiba(body: unknown): RatibaAnswer | null {
+  const b = rec(body);
+  const header = rec(ci(b, 'responseHeader'));
+  const inner = rec(ci(b, 'responseBody'));
+  const data = toList(ci(inner, 'responseData')).map((d) => rec(d));
+  const named = (name: string): string | null => {
+    const item = data.find((d) => readText(ci(d, 'name'), '').toLowerCase() === name.toLowerCase());
+    return item === undefined ? null : str(ci(item, 'value'));
+  };
+  if (Object.keys(header).length === 0 && data.length === 0) return null;
+  const status = readText(named('Status'), '').toUpperCase();
+  const code = readText(named('responseCode'), ci(header, 'responseCode'), '');
+  return {
+    responseRefId: str(ci(header, 'responseRefID')),
+    requestRefId: str(ci(header, 'requestRefID')),
+    succeeded: ratibaVerdict(status, code),
+    code,
+    description: readText(ci(header, 'responseDescription'), ''),
+    transactionId: named('TransactionID'),
+  };
+}
+
 /** B2B Express Checkout's callback is flat, not wrapped in "Result". */
 export function parseB2bExpress(body: unknown): InboundClaim | null {
   const b = rec(body);
   if (!has(str(b.requestId)) && !has(str(b.resultCode))) return null;
   const claim = emptyClaim('b2b_express_callback');
   const code = str(b.resultCode);
-  claim.claimsSuccess = code === null ? null : code === '0' && readText(b.status, 'SUCCESS').toUpperCase() !== 'FAILED';
+  claim.claimsSuccess =
+    code === null ? null : code === '0' && readText(b.status, 'SUCCESS').toUpperCase() !== 'FAILED';
   claim.originatorId = str(b.requestId);
   claim.conversationId = str(b.conversationID);
   claim.platformReference = str(b.transactionId);
@@ -177,10 +254,18 @@ export function parseBillPayment(body: unknown): InboundClaim | null {
 }
 
 /** The balance string: "Working Account|KES|700000.00|700000.00|0.00|0.00&Utility Account|KES|…". */
-export function parseAccountBalance(value: string): { account: string; currency: string; available: string; uncleared: string; reserved: string }[] {
+export function parseAccountBalance(
+  value: string,
+): { account: string; currency: string; available: string; uncleared: string; reserved: string }[] {
   return value
     .split('&')
     .map((part) => part.split('|'))
     .filter((f) => f.length >= 3)
-    .map((f) => ({ account: f[0].trim(), currency: f[1].trim(), available: (f[2] ?? '').trim(), uncleared: (f[3] ?? '').trim(), reserved: (f[4] ?? '').trim() }));
+    .map((f) => ({
+      account: f[0].trim(),
+      currency: f[1].trim(),
+      available: (f[2] ?? '').trim(),
+      uncleared: (f[3] ?? '').trim(),
+      reserved: (f[4] ?? '').trim(),
+    }));
 }

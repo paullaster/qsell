@@ -2828,6 +2828,48 @@ export const bankAccounts = pgTable(
   ],
 );
 
+/**
+ * A count of the cash in a drawer or safe against what the books say it holds. The count is notes and coins; the books'
+ * figure is read at that moment; the difference (short or over) is written to the books at once, with a note, and the
+ * count is kept for good. Counts are never changed or removed: a mistake is answered by counting again.
+ */
+export const cashCounts = pgTable(
+  'cash_counts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    bankAccountId: uuid('bank_account_id')
+      .notNull()
+      .references(() => bankAccounts.id, { onDelete: 'restrict' }),
+    number: text('number').notNull(),
+    countDate: date('count_date', { mode: 'string' }).notNull(),
+    currency: text('currency').notNull(),
+    /** Each denomination counted: its value and how many. Empty when only a total was entered. */
+    denominations: jsonb('denominations').$type<{ value: string; count: number }[]>().notNull().default([]),
+    countedAmount: numeric('counted_amount', { precision: 20, scale: 2 }).notNull(),
+    /** What the books said the account held on the count date. */
+    expectedAmount: numeric('expected_amount', { precision: 20, scale: 2 }).notNull(),
+    /** Counted less expected: negative is short, positive is over. */
+    difference: numeric('difference', { precision: 20, scale: 2 }).notNull(),
+    varianceGlAccountId: uuid('variance_gl_account_id').references(() => glAccounts.id, { onDelete: 'restrict' }),
+    note: text('note'),
+    registerId: uuid('register_id'),
+    bankEntryId: bigint('bank_entry_id', { mode: 'number' }),
+    countedBy: text('counted_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('cash_counts_company_number_uidx').on(t.companyId, t.number),
+    index('cash_counts_account_idx').on(t.bankAccountId, t.countDate, t.createdAt),
+    check('cash_counts_counted_chk', sql`${t.countedAmount} >= 0`),
+    check('cash_counts_difference_chk', sql`${t.difference} = ${t.countedAmount} - ${t.expectedAmount}`),
+  ],
+);
+
+export type CashCountRow = typeof cashCounts.$inferSelect;
+
 export type PaymentMethodKind =
   | 'cash'
   | 'bank_transfer'
@@ -3395,6 +3437,40 @@ export type RefundSource = 'credit_note_excess' | 'wallet' | 'receipt_unapplied'
  * Money the business pays out to a customer because it owes them. Always made from a source
  * obligation, so it can never be for more than is owed. A refund is a document with a life, not a flag.
  */
+/**
+ * How fast refunds may be asked for, per company: a customer, a destination (phone or account) and a person can only be
+ * refunded, or ask for refunds, so many times and for so much in a window. Past a limit a refund is refused, or held for
+ * approval whatever its amount (the fraud signals refunds are known for: one phone paid many times, one person paying out
+ * a lot). Off until someone sets it.
+ */
+export const refundLimits = pgTable(
+  'refund_limits',
+  {
+    companyId: uuid('company_id')
+      .primaryKey()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    enabled: boolean('enabled').notNull().default(false),
+    windowHours: integer('window_hours').notNull().default(24),
+    maxPerCustomer: integer('max_per_customer'),
+    maxAmountPerCustomer: numeric('max_amount_per_customer', { precision: 14, scale: 2 }),
+    maxPerDestination: integer('max_per_destination'),
+    maxPerRequester: integer('max_per_requester'),
+    maxAmountPerRequester: numeric('max_amount_per_requester', { precision: 14, scale: 2 }),
+    /** What happens past a limit: hold the refund for approval, or refuse it. */
+    mode: text('mode').$type<'review' | 'refuse'>().notNull().default('review'),
+    version: integer('version').notNull().default(1),
+    updatedBy: text('updated_by'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('refund_limits_window_chk', sql`${t.windowHours} BETWEEN 1 AND 720`),
+    check('refund_limits_counts_chk', sql`COALESCE(${t.maxPerCustomer}, 1) >= 1 AND COALESCE(${t.maxPerDestination}, 1) >= 1 AND COALESCE(${t.maxPerRequester}, 1) >= 1`),
+    check('refund_limits_amounts_chk', sql`COALESCE(${t.maxAmountPerCustomer}, 1) > 0 AND COALESCE(${t.maxAmountPerRequester}, 1) > 0`),
+  ],
+);
+
+export type RefundLimitsRow = typeof refundLimits.$inferSelect;
+
 export const refundRequests = pgTable(
   'refund_requests',
   {
@@ -3425,6 +3501,8 @@ export const refundRequests = pgTable(
     payoutDetails: jsonb('payout_details').$type<Record<string, string>>().notNull().default({}),
     /** The destination differs from what is on the customer's record (a fraud signal). */
     detailsChanged: boolean('details_changed').notNull().default(false),
+    /** Why this refund is held for approval whatever the amount: it went past a velocity limit. Null when it did not. */
+    heldForReview: text('held_for_review'),
     branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
     requestedBy: text('requested_by').notNull(),
     approvedBy: text('approved_by'),
@@ -3453,6 +3531,7 @@ export const refundRequests = pgTable(
     index('refund_requests_status_idx').on(t.companyId, t.status, t.createdAt),
     index('refund_requests_source_idx').on(t.sourceKind, t.sourceId),
     index('refund_requests_customer_idx').on(t.customerId, t.createdAt),
+    index('refund_requests_requester_idx').on(t.companyId, t.requestedBy, t.createdAt),
     check('refund_requests_amount_chk', sql`${t.amount} > 0`),
   ],
 );

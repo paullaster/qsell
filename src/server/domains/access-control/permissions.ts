@@ -644,6 +644,12 @@ export const PERMISSIONS = {
     category: 'Finance & Payments',
     description: 'Send an approved refund to the customer through M-Pesa',
   },
+  'refunds:reverse_payment': {
+    resource: 'refunds',
+    action: 'reverse_payment',
+    category: 'Finance & Payments',
+    description: 'Pay an approved refund by reversing the customer\'s own M-Pesa payment',
+  },
   'refunds:resolve_payout': {
     resource: 'refunds',
     action: 'resolve_payout',
@@ -902,6 +908,30 @@ export const PERMISSIONS = {
     category: 'Finance & Payments',
     description: 'Record a bank charge from a statement line',
   },
+  'bank_statements:pull': {
+    resource: 'bank_statements',
+    action: 'pull',
+    category: 'Finance & Payments',
+    description: 'Read an account\'s statement from the bank through its API',
+  },
+  'bank_statements:record_income': {
+    resource: 'bank_statements',
+    action: 'record_income',
+    category: 'Finance & Payments',
+    description: 'Record interest or other money paid into the bank from a statement line',
+  },
+  'cash_counts:read': {
+    resource: 'cash_counts',
+    action: 'read',
+    category: 'Finance & Payments',
+    description: 'See cash counts and what the books say each cash account holds',
+  },
+  'cash_counts:post': {
+    resource: 'cash_counts',
+    action: 'post',
+    category: 'Finance & Payments',
+    description: 'Count the cash in a drawer or safe and write any difference to the books',
+  },
   'bank_reconciliation:post': {
     resource: 'bank_reconciliation',
     action: 'post',
@@ -1075,6 +1105,18 @@ export const PERMISSIONS = {
     action: 'change_destination',
     category: 'Finance & Payments',
     description: 'Refund to a phone number other than the customers own',
+  },
+  'refund_limits:read': {
+    resource: 'refund_limits',
+    action: 'read',
+    category: 'Finance & Payments',
+    description: 'See how fast refunds may be asked for',
+  },
+  'refund_limits:manage': {
+    resource: 'refund_limits',
+    action: 'manage',
+    category: 'Finance & Payments',
+    description: 'Change the refund limits (per customer, phone or account, and person)',
   },
   'payments:read': {
     resource: 'payments',

@@ -36,6 +36,7 @@ import {
   type ParsedStatement,
 } from '../domain/bank-statement';
 import { fromCents } from '../domain/receivables';
+import { checkChargeSplit, type ChargePartInput } from '@/lib/charge-split';
 import type { PostingRequest } from '../domain/types';
 import { NO_SPECIAL_PERMISSIONS, type PostingEngine, type PostingPermissions, type Tx } from '../engine';
 import { FinanceError, type FinanceContext } from '../errors';
@@ -45,7 +46,7 @@ import type { StatementFormat } from '../domain/statement-file';
 import { parseCamt053 } from '../domain/bank-statement-camt';
 import { DEFAULT_RULES, checkRules, phoneKeyOf, type MatchRules } from '../domain/bank-match';
 
-import { has, orElse } from '@/lib/values';
+import { has, orElse, required } from '@/lib/values';
 
 export type { StatementFormat } from '../domain/statement-file';
 export const MAX_STATEMENT_BYTES = 10 * 1024 * 1024;
@@ -518,7 +519,12 @@ export class BankStatementService {
     return [...byGl.values()];
   }
 
-  async recordChargeFromLine(ctx: FinanceContext, lineId: number, opts: { glAccountId?: string; permissions?: PostingPermissions } = {}) {
+  /**
+   * Records a charge the bank took. By default the whole amount goes to the account's fee account; `parts` splits it over
+   * several accounts (the fee, the excise duty on it, a tax) when the bank bundled them in one line. The parts must come to
+   * the line exactly, and the bank side is one entry for the whole amount.
+   */
+  async recordChargeFromLine(ctx: FinanceContext, lineId: number, opts: { glAccountId?: string; parts?: ChargePartInput[]; permissions?: PostingPermissions } = {}) {
     const permissions = opts.permissions ?? NO_SPECIAL_PERMISSIONS;
     return await this.db.transaction(async (tx) => {
       const line = await this.lockLine(tx, ctx.companyId, lineId);
@@ -527,7 +533,10 @@ export class BankStatementService {
       const cents = -centsOf(line.amount);
       if (cents <= 0) throw new FinanceError('NOT_A_CHARGE', 'Only money taken out of the account can be recorded as a charge.');
       const account = await this.account(tx, ctx.companyId, line.bankAccountId);
-      if (!has(account.feeGlAccountId)) throw new FinanceError('NO_FEE_ACCOUNT', `${account.code} has no fee account. Choose where its charges post (Finance → Bank accounts).`);
+      const split = opts.parts === undefined ? null : checkChargeSplit(cents, opts.parts);
+      if (split !== null && !split.ok) throw new FinanceError('SPLIT_INVALID', split.error);
+      // A split names every account itself, so only an unsplit charge needs the bank account's fee account.
+      if (split === null && !has(account.feeGlAccountId)) throw new FinanceError('NO_FEE_ACCOUNT', `${account.code} has no fee account. Choose where its charges post (Finance → Bank accounts).`);
       const choices = await this.chargeGlChoices(ctx.companyId, account.id);
       if (choices.length === 0) throw new FinanceError('NO_METHOD', `No payment method pays into ${account.code}, so there is no G/L account to take the charge from. Add one under Settings → Payments.`);
       const bankGl = has(opts.glAccountId) ? choices.find((c) => c.glId === opts.glAccountId) : onlyOne(choices);
@@ -554,7 +563,9 @@ export class BankStatementService {
           rate,
           rateSource: foreign ? 'manual' : 'base',
           lines: [
-            { accountId: account.feeGlAccountId, debit: fromCents(cents), credit: '0', description: line.description.slice(0, 200) },
+            ...(split === null
+              ? [{ accountId: required(account.feeGlAccountId), debit: fromCents(cents), credit: '0', description: line.description.slice(0, 200) }]
+              : split.value.map((part) => ({ accountId: part.glAccountId, debit: fromCents(part.cents), credit: '0', description: (has(part.description) ? part.description : line.description).slice(0, 200) }))),
             { accountId: bankGl.glId, debit: '0', credit: fromCents(cents), description: `Charge ${number}`, sourceLedger: 'bank', sourceEntryId: account.id },
           ],
           chainKey: 'general',
@@ -566,6 +577,63 @@ export class BankStatementService {
       }
       const [entry] = await tx.insert(bankLedgerEntries).values({ companyId: ctx.companyId, bankAccountId: account.id, glAccountId: bankGl.glId, postingDate: date, documentType: 'bank_charge', documentNo: number, documentId: id, description: line.description.slice(0, 300), amount: fromCents(-cents), currency: account.currency, registerId, createdBy: ctx.actor.id }).returning({ id: bankLedgerEntries.id });
       await this.applyMatchIn(tx, ctx, lineId, [entry.id], 'recorded_charge');
+      return { number, gl: live, parts: split === null ? 1 : split.value.length };
+    });
+  }
+
+  /**
+   * Money the bank paid in that is not a customer's payment: interest, a refund of bank fees, a grant. Recorded against the
+   * income (or other) account the person chooses, and the line is closed against it. Like a charge, it posts only once the books are live.
+   */
+  async recordIncomeFromLine(ctx: FinanceContext, lineId: number, opts: { incomeGlAccountId: string; description?: string; glAccountId?: string; permissions?: PostingPermissions }) {
+    const permissions = opts.permissions ?? NO_SPECIAL_PERMISSIONS;
+    return await this.db.transaction(async (tx) => {
+      const line = await this.lockLine(tx, ctx.companyId, lineId);
+      if (has(line.reconciliationId)) throw new FinanceError('LINE_RECONCILED', 'This line is part of a posted reconciliation.');
+      if (line.status === 'matched' || line.status === 'ignored') throw new FinanceError('LINE_CLOSED', `This line is already ${line.status}.`);
+      const cents = centsOf(line.amount);
+      if (cents <= 0) throw new FinanceError('NOT_INCOME', 'Only money paid into the account can be recorded as income.');
+      const account = await this.account(tx, ctx.companyId, line.bankAccountId);
+      const [income] = await tx.select().from(glAccounts).where(and(eq(glAccounts.companyId, ctx.companyId), eq(glAccounts.id, opts.incomeGlAccountId)));
+      if (income === undefined || income.type !== 'posting' || income.blocked) throw new FinanceError('INCOME_ACCOUNT_INVALID', 'Choose an open account to record this money against.');
+      const choices = await this.chargeGlChoices(ctx.companyId, account.id);
+      if (choices.length === 0) throw new FinanceError('NO_METHOD', `No payment method pays into ${account.code}, so there is no G/L account to bring the money into. Add one under Settings → Payments.`);
+      const bankGl = has(opts.glAccountId) ? choices.find((c) => c.glId === opts.glAccountId) : onlyOne(choices);
+      if (bankGl === undefined) throw new FinanceError('GL_CHOICE_NEEDED', has(opts.glAccountId) ? 'That G/L account is not used by any payment method of this bank account.' : `Several G/L accounts are used for ${account.code}: choose the one this money went into.`);
+      const date = line.lineDate;
+      const issues = await this.engine.dateIssues(tx, ctx.companyId, date, permissions);
+      if (issues.length > 0) throw new FinanceError(issues[0].code, issues.map((i) => i.message).join(' '));
+      const { s, live } = await this.glLive(tx, ctx.companyId, date);
+      const id = crypto.randomUUID();
+      const { number } = await this.numbering.assign('bank_income', { companyId: ctx.companyId, branchId: undefined, date: businessDate(), document: { kind: 'bank_income', id }, actor: ctx.actor }, tx);
+      const note = (has(opts.description) ? opts.description : line.description).trim().slice(0, 200);
+      let registerId: string | null = null;
+      if (live) {
+        const foreign = account.currency.toUpperCase() !== s.baseCurrency;
+        const rate = foreign ? await this.fx.requireRate(tx, ctx.companyId, account.currency, date) : '1';
+        const req: PostingRequest = {
+          companyId: ctx.companyId,
+          idempotencyKey: `bank_income:${line.id}`,
+          postingDate: date,
+          documentType: 'bank_income',
+          documentNo: number,
+          description: `Bank income ${note}`.slice(0, 200),
+          currency: foreign ? account.currency.toUpperCase() : s.baseCurrency,
+          rate,
+          rateSource: foreign ? 'manual' : 'base',
+          lines: [
+            { accountId: bankGl.glId, debit: fromCents(cents), credit: '0', description: `Income ${number}`, sourceLedger: 'bank', sourceEntryId: account.id },
+            { accountId: income.id, debit: '0', credit: fromCents(cents), description: note },
+          ],
+          chainKey: 'general',
+          origin: ctx.origin,
+          source: { type: 'bank_income', id },
+          postedBy: 'engine',
+        };
+        registerId = (await this.engine.post(req, permissions, tx)).registerId;
+      }
+      const [entry] = await tx.insert(bankLedgerEntries).values({ companyId: ctx.companyId, bankAccountId: account.id, glAccountId: bankGl.glId, postingDate: date, documentType: 'bank_income', documentNo: number, documentId: id, description: note, amount: fromCents(cents), currency: account.currency, registerId, createdBy: ctx.actor.id }).returning({ id: bankLedgerEntries.id });
+      await this.applyMatchIn(tx, ctx, lineId, [entry.id], 'recorded_income');
       return { number, gl: live };
     });
   }

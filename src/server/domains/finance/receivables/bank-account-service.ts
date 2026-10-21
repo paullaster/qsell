@@ -5,6 +5,7 @@ import {
   bankLedgerEntries,
   glAccounts,
   paymentMethods,
+  paymentProviderConfigs,
   type BankAccountRow,
 } from '@/server/db/drizzle/schema';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
@@ -45,6 +46,7 @@ export class BankAccountService {
         balance: sql<string>`COALESCE((SELECT SUM(l.amount) FROM bank_ledger_entries l WHERE l.bank_account_id = "bank_accounts"."id"), 0)`,
         methods: sql<number>`(SELECT COUNT(*)::int FROM payment_methods m WHERE m.balancing_bank_account_id = "bank_accounts"."id")`,
         feeGlLabel: sql<string | null>`(SELECT g.no || ' ' || g.name FROM gl_accounts g WHERE g.id = "bank_accounts"."fee_gl_account_id")`,
+        providerLabel: sql<string | null>`(SELECT p.display_name FROM payment_provider_configs p WHERE p.id = "bank_accounts"."provider_config_id")`,
       })
       .from(bankAccounts)
       .where(eq(bankAccounts.companyId, companyId))
@@ -73,6 +75,12 @@ export class BankAccountService {
     return gl;
   }
 
+  /** The provider an account is connected to must be one of this company's own. */
+  private async checkProvider(db: Pick<DrizzleDb, 'select'>, companyId: string, id: string) {
+    const [p] = await db.select({ id: paymentProviderConfigs.id }).from(paymentProviderConfigs).where(and(eq(paymentProviderConfigs.companyId, companyId), eq(paymentProviderConfigs.id, id))).limit(1);
+    if (!p) throw new FinanceError('PROVIDER_NOT_FOUND', 'That bank connection does not exist.');
+  }
+
   private validate(input: BankAccountInput) {
     if (!has(input.code.trim()) || !has(input.name.trim())) {
       throw new FinanceError('INVALID', 'A bank account needs a code and a name.');
@@ -88,6 +96,7 @@ export class BankAccountService {
     this.validate(input);
     return await this.db.transaction(async (tx) => {
       if (has(input.feeGlAccountId)) await this.checkGl(tx, ctx.companyId, input.feeGlAccountId, 'fee');
+      if (has(input.providerConfigId)) await this.checkProvider(tx, ctx.companyId, input.providerConfigId);
       const [dup] = await tx
         .select({ id: bankAccounts.id })
         .from(bankAccounts)
@@ -145,6 +154,7 @@ export class BankAccountService {
       const next = { ...current, ...stripUndefined(input) };
       this.validate({ ...next, details: next.details });
       if (has(input.feeGlAccountId)) await this.checkGl(tx, ctx.companyId, input.feeGlAccountId, 'fee');
+      if (has(input.providerConfigId)) await this.checkProvider(tx, ctx.companyId, input.providerConfigId);
       if (has(input.code) && input.code !== current.code) {
         throw new FinanceError('CODE_FIXED', 'The code of a bank account does not change; block it and add a new one.');
       }

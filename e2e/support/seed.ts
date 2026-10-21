@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
+import { FAKE_BANK_PORT } from './constants';
 
 /**
  * Seeds the end-to-end database: the admin, a few products, 47 quote templates (so the
@@ -25,6 +26,9 @@ async function main(): Promise<void> {
     await seedRefundExtras();
     await seedApprovals();
     await seedUnitDocuments();
+    await seedCashDrawers();
+    await seedStatementPull();
+    await seedReversal();
     return;
   }
   await container.organizations.ensureDefaultOrgAndBranch(company.id, 'E2E Co');
@@ -198,6 +202,9 @@ async function main(): Promise<void> {
   await seedRefundExtras();
   await seedApprovals();
   await seedUnitDocuments();
+  await seedCashDrawers();
+  await seedStatementPull();
+  await seedReversal();
   console.warn('e2e seed: done');
 }
 
@@ -424,6 +431,100 @@ async function seedUnitDocuments(): Promise<void> {
     });
     await db.insert(schema.inventoryMovements).values({ id: `mv_${randomUUID()}`, productId: fish, productName: 'Fish kg Shop', changeAmount: 0, previousStock: 25.5, newStock: 25.5, changeType: 'order_fulfillment', referenceId: id });
     await db.insert(schema.invoiceDocuments).values({ orderId: id, orderNumber: number, invoiceNumber: `E2E-TI-${label.toUpperCase()}`, documentType: 'tax_invoice', customerEmail: 'crate@e2e.test', customerName: `Crate buyer ${label}`, currency: 'KES', subtotal: '18000', tax: '0', shippingFee: '0', totalAmount: '18000', pdfStorageKey: 'x.pdf', emailStatus: 'not_sent', meta: {} });
+  }
+}
+
+/**
+ * A cash drawer for each browser project with 700 in it, for the cash count screen. The two projects share one database, so each
+ * counts its own drawer. Safe to run again.
+ */
+async function seedCashDrawers(): Promise<void> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const schema = await import('@/server/db/drizzle/schema');
+  const { getContainer } = await import('@/server/di/container');
+  const container = getContainer();
+  const fin = container.finance;
+  const company = await container.companySettings.ensureSeeded();
+  const user = (await db.select().from(schema.users).limit(1)).at(0);
+  if (user === undefined) throw new Error('e2e seed: the admin was not created');
+  const ctx = { companyId: company.id, actor: { type: 'user' as const, id: user.id }, origin: { surface: 'e2e', action: 'seed' } };
+  const accounts = await fin.setup.listAccounts(company.id);
+  const gl = accounts.find((a) => a.no === '1120');
+  const manual = (await fin.paymentMethods.providerChoices(company.id)).find((p) => p.isSystem);
+  const alice = (await db.select().from(schema.customers).where(eq(schema.customers.number, 'E2E001'))).at(0);
+  if (gl === undefined || manual === undefined || alice === undefined) throw new Error('e2e seed: finance or the customer is missing');
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' });
+  for (const label of ['DESKTOP', 'PHONE']) {
+    const code = `E2EDRAWER-${label}`;
+    if ((await db.select({ id: schema.bankAccounts.id }).from(schema.bankAccounts).where(eq(schema.bankAccounts.code, code)).limit(1)).length > 0) continue;
+    const account = await fin.bankAccounts.create(ctx, { code, name: `E2E drawer ${label.toLowerCase()}`, kind: 'cash', currency: 'KES' });
+    const method = await fin.paymentMethods.create(ctx, { code: `E2ETILL-${label}`, name: `E2E till ${label.toLowerCase()}`, kind: 'cash', balancingBankAccountId: account.id, providerId: manual.id, glAccountId: gl.id, usableFor: ['customer_receipt'], refundDestination: 'none' });
+    const receipt = await fin.receipts.create(ctx, { customerId: alice.id, paymentMethodId: method.id, amount: '700.00', paymentDate: today, externalReference: `E2E-DRAWER-${label}` });
+    await fin.receipts.post(ctx, receipt.id, { allocate: 'none' });
+  }
+}
+
+/**
+ * A bank account connected to a Jenga provider that points at a stand-in for the bank on this machine, so the "Pull from the bank"
+ * screen can be tried end to end. The provider holds a throwaway key, so it can sign. Safe to run again.
+ */
+async function seedStatementPull(): Promise<void> {
+  const { generateKeyPairSync } = await import('node:crypto');
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const schema = await import('@/server/db/drizzle/schema');
+  const { getContainer } = await import('@/server/di/container');
+  const container = getContainer();
+  const fin = container.finance;
+  const company = await container.companySettings.ensureSeeded();
+  const user = (await db.select().from(schema.users).limit(1)).at(0);
+  if (user === undefined) throw new Error('e2e seed: the admin was not created');
+  if ((await db.select({ id: schema.bankAccounts.id }).from(schema.bankAccounts).where(eq(schema.bankAccounts.code, 'E2EJENGA')).limit(1)).length > 0) return;
+  const ctx = { companyId: company.id, actor: { type: 'user' as const, id: user.id }, origin: { surface: 'e2e', action: 'seed' } };
+  const key = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+  // (a seed that stopped half way leaves the provider behind: it is reused, not made twice)
+  const existing = (await db.select({ id: schema.paymentProviderConfigs.id }).from(schema.paymentProviderConfigs).where(eq(schema.paymentProviderConfigs.displayName, 'Jenga e2e')).limit(1)).at(0);
+  const id = existing?.id ?? (await fin.paymentProviders.create(ctx, { providerCode: 'jenga_hq', displayName: 'Jenga e2e' })).id;
+  await fin.paymentProviders.setCredentials(ctx, id, { merchantCode: 'e2e', consumerSecret: 'e2e', apiKey: 'e2e', privateKeyPem: key });
+  // The app insists on https addresses; the test's stand-in for the bank is on this machine, so its address is set directly.
+  await db.update(schema.paymentProviderConfigs).set({ isEnabled: true, apiBaseUrl: `http://127.0.0.1:${String(FAKE_BANK_PORT)}` }).where(eq(schema.paymentProviderConfigs.id, id));
+  await fin.bankAccounts.create(ctx, { code: 'E2EJENGA', name: 'E2E Jenga account', kind: 'bank', currency: 'KES', providerConfigId: id, details: { bankName: 'Equity', accountNumber: '0099887766' } });
+}
+
+/**
+ * For each browser project, an approved refund of money a customer paid through M-Pesa (a payment Safaricom confirmed, kept as an
+ * unapplied receipt), on an M-Pesa connection that may reverse payments: the refund can be paid by reversing that payment. Safe to run again.
+ */
+async function seedReversal(): Promise<void> {
+  const { generateKeyPairSync } = await import('node:crypto');
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const schema = await import('@/server/db/drizzle/schema');
+  const { getContainer } = await import('@/server/di/container');
+  const container = getContainer();
+  const fin = container.finance;
+  const company = await container.companySettings.ensureSeeded();
+  const user = (await db.select().from(schema.users).limit(1)).at(0);
+  if (user === undefined) throw new Error('e2e seed: the admin was not created');
+  if ((await db.select({ id: schema.paymentProviderConfigs.id }).from(schema.paymentProviderConfigs).where(eq(schema.paymentProviderConfigs.displayName, 'E2E Reversal Daraja')).limit(1)).length > 0) return;
+  const ctx = { companyId: company.id, actor: { type: 'user' as const, id: user.id }, origin: { surface: 'e2e', action: 'seed' } };
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' });
+  const gl = (await fin.setup.listAccounts(company.id)).find((a) => a.no === '1125');
+  if (gl === undefined) throw new Error('e2e seed: the mobile-money account is missing');
+  const certificate = generateKeyPairSync('rsa', { modulusLength: 2048 }).publicKey.export({ type: 'spki', format: 'pem' }).toString();
+  const { id: providerId } = await fin.paymentProviders.create(ctx, { providerCode: 'mpesa_daraja', displayName: 'E2E Reversal Daraja' });
+  await fin.paymentProviders.setCredentials(ctx, providerId, { consumerKey: 'e2e', consumerSecret: 'e2e', shortcode: '174379', passkey: 'e2e', initiatorName: 'e2eapi', initiatorPassword: 'E2eInit#1', certificate });
+  await db.update(schema.paymentProviderConfigs).set({ isEnabled: true }).where(eq(schema.paymentProviderConfigs.id, providerId));
+  await fin.paymentProviders.updateSettings(ctx, providerId, { operations: { reversal: { enabled: true } } });
+  const account = await fin.bankAccounts.create(ctx, { code: 'E2EMPESA', name: 'E2E M-Pesa paybill', kind: 'mobile_money', currency: 'KES', details: { paybill: '174379' } });
+  const method = await fin.paymentMethods.create(ctx, { code: 'E2EMPESAM', name: 'E2E M-Pesa paybill', kind: 'mobile_money', balancingBankAccountId: account.id, providerId, glAccountId: gl.id, usableFor: ['customer_receipt', 'customer_refund'], refundDestination: 'automatic', channelKind: 'paybill', channelNumber: '174379', requiresReference: false });
+  await fin.creditPolicy.save(ctx, { groupCode: null, walletEnabled: true, allowDeposits: true, overpaymentDefault: 'ask', autoApply: 'never', creditNoteExcess: 'ask', refundsEnabled: true, walletCashOut: true, maxBalance: null, label: 'Wallet' });
+  for (const label of ['Desktop', 'Phone']) {
+    const code = `E2ERV${label.toUpperCase().slice(0, 1)}${String(Date.now()).slice(-6)}`;
+    const [customer] = await db.insert(schema.customers).values({ companyId: company.id, number: `E2E-RV-${label.toUpperCase()}`, name: `Reversal ${label}`, phone: label === 'Desktop' ? '0733100001' : '0733100002', accountType: 'cash', creditLimit: '0' }).returning();
+    const receipt = await fin.receipts.create(ctx, { customerId: customer.id, paymentMethodId: method.id, amount: '250.00', paymentDate: today, externalReference: code });
+    await fin.receipts.post(ctx, receipt.id, { allocate: 'none' });
+    await db.insert(schema.providerTransactions).values({ companyId: company.id, providerId, methodId: method.id, kind: 'c2b', platformReference: code, amount: '250', state: 'consumed', consumedType: 'customer_receipt', consumedId: receipt.id, shortcode: '174379' });
+    const refund = await fin.refunds.create(ctx, { customerId: customer.id, sourceKind: 'receipt_unapplied', sourceId: receipt.id, amount: '250.00', paymentMethodId: method.id, payoutDetails: { phone: customer.phone ?? '' }, reasonCode: 'CUSTOMER_REQUEST' });
+    await fin.refunds.submit(ctx, refund.id);
   }
 }
 

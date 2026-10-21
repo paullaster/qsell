@@ -7,11 +7,13 @@ import {
   bankMatchRulesAction,
   candidateEntriesAction,
   chargeFromStatementLineAction,
+  incomeFromStatementLineAction,
   ignoreStatementLineAction,
   matchStatementLineAction,
   receiptFromStatementLineAction,
   restoreStatementLineAction,
   runAutoMatchAction,
+  statementPullSetupAction,
   statementWorkbenchAction,
   unmatchStatementLineAction,
 } from '@/server/domains/finance/bank-statement-actions';
@@ -22,14 +24,15 @@ import { has } from '@/lib/finance-history';
 import type { Choice } from '@/lib/payment-options';
 import { ReconcilePanel } from './ReconcilePanel';
 import { StatementImportPanel } from './StatementImportPanel';
+import { StatementPullPanel } from './StatementPullPanel';
 import { StatementSettingsPanel, type SettingsLoads } from './StatementSettingsPanel';
-import { CustomerReceiptPanel, FindEntriesPanel, ReasonPanel, type CandidateEntry } from './StatementLinePanels';
+import { CustomerReceiptPanel, FindEntriesPanel, IncomePanel, ReasonPanel, SplitChargePanel, type CandidateEntry } from './StatementLinePanels';
 import { Chip, LoadFailed, Message, PageHeader, buttonClass, cardClass, dangerClass, money, primaryClass, type Notice, attempt } from './ui';
 
 export type WorkbenchView = Extract<Awaited<ReturnType<typeof statementWorkbenchAction>>, { ok: true }>['data'];
 type Line = WorkbenchView['lines'][number];
 type Filter = 'open' | 'matched' | 'ignored';
-type Panel = { id: number; kind: 'find' | 'customer' | 'ignore' | 'unmatch' } | null;
+type Panel = { id: number; kind: 'find' | 'customer' | 'ignore' | 'unmatch' | 'split' | 'income' } | null;
 type Done = { ok: true; data?: unknown } | { ok: false; error: string };
 
 export function StatementWorkbenchClient({ viewPromise }: { viewPromise: ReturnType<typeof statementWorkbenchAction> }) {
@@ -42,6 +45,7 @@ function StatementWorkbench({ initial }: { initial: WorkbenchView }) {
   const [filter, setFilter] = useState<Filter>('open');
   const [panel, setPanel] = useState<Panel>(null);
   const [importing, setImporting] = useState(false);
+  const [pulling, setPulling] = useState<Extract<Awaited<ReturnType<typeof statementPullSetupAction>>, { ok: true }>['data'] | null>(null);
   const [settings, setSettings] = useState<SettingsLoads | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
@@ -87,6 +91,16 @@ function StatementWorkbench({ initial }: { initial: WorkbenchView }) {
     setPanel({ id: l.id, kind: 'find' });
     const res = await attempt(candidateEntriesAction(acc.id, l.amount, l.date));
     if (res.ok) setCandidates(res.data);
+    else setNotice({ kind: 'error', text: res.error });
+  };
+  // The setup (which bank, whether the account can be found there) is read when the panel is asked for, in the click.
+  const togglePull = async () => {
+    if (pulling !== null) {
+      setPulling(null);
+      return;
+    }
+    const res = await attempt(statementPullSetupAction(acc.id));
+    if (res.ok) setPulling(res.data);
     else setNotice({ kind: 'error', text: res.error });
   };
   const autoMatch = () =>
@@ -141,6 +155,8 @@ function StatementWorkbench({ initial }: { initial: WorkbenchView }) {
           <div className="flex flex-wrap gap-2">
             {open && view.can.match ? <button type="button" className={buttonClass} disabled={busy} aria-expanded={p?.kind === 'find'} onClick={() => void openFind(l)}>Find in our records</button> : null}
             {open && !out && view.can.createReceipt && view.methodCount > 0 ? <button type="button" className={buttonClass} disabled={busy} aria-expanded={p?.kind === 'customer'} onClick={() => { close(); setPanel({ id: l.id, kind: 'customer' }); }}>It is a customer&apos;s payment</button> : null}
+            {open && out && view.can.recordCharge ? <button type="button" className={buttonClass} disabled={busy} aria-expanded={p?.kind === 'split'} onClick={() => { close(); setPanel({ id: l.id, kind: 'split' }); }}>Split the charge…</button> : null}
+            {open && !out && view.can.recordIncome && view.chargeGlCount > 0 ? <button type="button" className={buttonClass} disabled={busy} aria-expanded={p?.kind === 'income'} onClick={() => { close(); setPanel({ id: l.id, kind: 'income' }); }}>Record as income…</button> : null}
             {open && out && view.can.recordCharge && !acc.hasFeeAccount ? <Chip tone="amber">No fee account set (Bank accounts)</Chip> : null}
             {open && out && view.can.recordCharge && acc.hasFeeAccount ? (
               <span className="flex flex-wrap items-center gap-2">
@@ -156,6 +172,18 @@ function StatementWorkbench({ initial }: { initial: WorkbenchView }) {
 
         {p?.kind === 'find' ? <FindEntriesPanel lineAmount={l.amount} candidates={candidates} busy={busy} onMatch={(ids) => void act('Matched.', () => matchStatementLineAction(acc.id, l.id, ids))} onClose={close} /> : null}
         {p?.kind === 'customer' ? <CustomerReceiptPanel accountId={acc.id} lineAmount={l.amount} lineDate={l.date} busy={busy} onCreate={(input) => void act('Receipt created, posted and matched.', () => receiptFromStatementLineAction(acc.id, l.id, input))} onClose={close} /> : null}
+        {p?.kind === 'split' ? (
+          <div className="space-y-2">
+            {needsGlChoice ? <div className="max-w-sm"><ChoicePicker label="G/L account the charge came out of" source="statement-charge-accounts" filters={{ account: acc.id }} choice={chargeGl} onChoice={setChargeGl} placeholder="Which G/L account?" /></div> : null}
+            <SplitChargePanel lineAmount={l.amount} busy={busy || (needsGlChoice && chargeGl === null)} onSubmit={(parts) => void act('Charge recorded in parts and matched.', () => chargeFromStatementLineAction(acc.id, l.id, needsGlChoice ? chargeGl?.id : undefined, parts))} onClose={close} />
+          </div>
+        ) : null}
+        {p?.kind === 'income' ? (
+          <div className="space-y-2">
+            {needsGlChoice ? <div className="max-w-sm"><ChoicePicker label="G/L account the money went into" source="statement-charge-accounts" filters={{ account: acc.id }} choice={chargeGl} onChoice={setChargeGl} placeholder="Which G/L account?" /></div> : null}
+            <IncomePanel lineAmount={l.amount} busy={busy || (needsGlChoice && chargeGl === null)} onSubmit={(input) => void act('Income recorded and matched.', () => incomeFromStatementLineAction(acc.id, l.id, { ...input, glAccountId: needsGlChoice ? chargeGl?.id : undefined }))} onClose={close} />
+          </div>
+        ) : null}
         {p?.kind === 'ignore' ? <ReasonPanel kind="ignore" busy={busy} onSubmit={(r) => void act('Set aside.', () => ignoreStatementLineAction(acc.id, l.id, r))} onClose={close} /> : null}
         {p?.kind === 'unmatch' ? <ReasonPanel kind="unmatch" busy={busy} onSubmit={(r) => void act('Match undone.', () => unmatchStatementLineAction(acc.id, l.id, r))} onClose={close} /> : null}
       </li>
@@ -172,12 +200,14 @@ function StatementWorkbench({ initial }: { initial: WorkbenchView }) {
             <Link href="/admin/finance/bank-statements" className={buttonClass}>All accounts</Link>
             {view.can.match ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void autoMatch()}>Match automatically</button> : null}
             <button type="button" className={buttonClass} aria-expanded={settings !== null} onClick={() => setSettings(settings === null ? { rules: bankMatchRulesAction(acc.id), feed: bankFeedStatusAction(acc.id) } : null)}>Rules and feed</button>
+            {view.can.pull ? <button type="button" className={buttonClass} aria-expanded={pulling !== null} onClick={() => void togglePull()}>Pull from the bank</button> : null}
             {view.can.import ? <button type="button" className={primaryClass} aria-expanded={importing} onClick={() => setImporting(!importing)}>Import a statement</button> : null}
           </div>
         }
       />
       <Message notice={notice} />
       {settings !== null ? <StatementSettingsPanel bankAccountId={acc.id} loads={settings} onClose={() => setSettings(null)} /> : null}
+      {pulling !== null ? <StatementPullPanel bankAccountId={acc.id} setup={pulling} onClose={() => setPulling(null)} onDone={(text) => { setPulling(null); setNotice({ kind: 'ok', text }); void reload(); }} /> : null}
       {importing ? <StatementImportPanel bankAccountId={acc.id} onClose={() => { setImporting(false); void reload(); }} /> : null}
 
       <div role="group" aria-label="Show lines" className="flex flex-wrap gap-2">

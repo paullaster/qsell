@@ -29,6 +29,8 @@ export function e2eEnvironment(): Record<string, string> {
     CLOUDINARY_CLOUD_NAME: '',
     CLOUDINARY_API_KEY: '',
     CLOUDINARY_API_SECRET: '',
+    // Provider credentials are sealed with this key; a run that sets none gets a fixed one that guards nothing real.
+    DATA_ENCRYPTION_KEY: inherited.DATA_ENCRYPTION_KEY ?? 'e2e-only-data-encryption-key-not-for-deployment',
     NEXT_TELEMETRY_DISABLED: '1',
     // Lets a test slow the finance actions with a cookie (see `injectedDelay`); off everywhere else.
     E2E_FAULTS: '1',
