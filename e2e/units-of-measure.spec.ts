@@ -171,8 +171,14 @@ test.describe('fish sold by the kilogram', () => {
   test('stock is counted in decimals, and a quote line can be typed in crates', async ({
     page,
   }, testInfo) => {
+    // Units, a product, a quote and a repair of that quote in one run: three times the usual time on a slow machine.
+    test.slow();
     const tag = suffix(testInfo.project.name);
-    const crate = `E2EFC${tag}`;
+    // A retry follows an attempt that may have got far, and what that attempt saved stays saved. Its own unit and customer keep the
+    // retry from meeting the earlier attempt's, and the fish is cleared of any unit left on it below.
+    const attempt = testInfo.retry === 0 ? tag : `${tag}R${String(testInfo.retry)}`;
+    const crate = `E2EFC${attempt}`;
+    const buyer = `Crate buyer ${attempt}`;
     const fish = testInfo.project.name === 'phone' ? 'Fish kg Phone' : 'Fish kg Desktop';
 
     // A crate that holds 20 kg.
@@ -180,16 +186,15 @@ test.describe('fish sold by the kilogram', () => {
     await page.getByRole('button', { name: 'New unit' }).click();
     const form = page.getByRole('form', { name: 'New unit of measure' });
     await form.getByLabel('Code', { exact: true }).fill(crate);
-    await form.getByLabel('Name', { exact: true }).fill(`E2E fish crate ${tag}`);
+    await form.getByLabel('Name', { exact: true }).fill(`E2E fish crate ${attempt}`);
     await pick(page, form.getByRole('combobox', { name: 'Kind' }), 'Packaging', /Packaging/);
     await form.getByRole('button', { name: 'Create unit' }).click();
     await expect(page.getByText(`${crate} created.`)).toBeVisible({ timeout: 30_000 });
 
     // The fish is counted in kg, so its stock takes decimals; a product counted in pieces takes whole numbers only.
     await open(page, '/admin/products', /Products|Catalog/);
-    await page.getByText('Rice 5kg', { exact: true }).first().click();
     let dialog = page.getByRole('dialog');
-    await expect(dialog).toBeVisible({ timeout: 30_000 });
+    await clickUntilVisible(page.getByText('Rice 5kg', { exact: true }).first(), dialog);
     await dialog.getByRole('button', { name: 'Stock' }).click();
     const stockField = (d: typeof dialog) =>
       d
@@ -200,8 +205,8 @@ test.describe('fish sold by the kilogram', () => {
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     await expect(dialog).toBeHidden({ timeout: 30_000 });
 
-    await page.getByText(fish, { exact: true }).first().click();
     dialog = page.getByRole('dialog');
+    await clickUntilVisible(page.getByText(fish, { exact: true }).first(), dialog);
     await expect(dialog).toBeVisible({ timeout: 30_000 });
     await dialog.getByRole('button', { name: 'Stock' }).click();
     await expect(dialog.getByRole('combobox', { name: /Unit of measure/ })).toHaveValue(/KG/, {
@@ -209,6 +214,10 @@ test.describe('fish sold by the kilogram', () => {
     });
     await expect(dialog.getByText(/Shipping Weight per KG/)).toBeVisible();
     await expect(stockField(dialog)).toHaveAttribute('step', '0.001');
+    // The product's saved units arrive after the form opens, and "Add a unit" stays disabled until they have.
+    await expect(dialog.getByRole('button', { name: 'Add a unit' })).toBeEnabled({ timeout: 30_000 });
+    const left = dialog.getByRole('button', { name: 'Remove alternate unit 1' });
+    while (await left.isVisible()) await left.click();
     await stockField(dialog).fill('12.5');
     await dialog.getByRole('button', { name: 'Add a unit' }).click();
     const row = dialog.getByRole('group', { name: 'Alternate unit 1' });
@@ -217,8 +226,8 @@ test.describe('fish sold by the kilogram', () => {
     await dialog.getByRole('button', { name: 'Save Changes' }).click();
     await expect(dialog).toBeHidden({ timeout: 30_000 });
 
-    await page.getByText(fish, { exact: true }).first().click();
     dialog = page.getByRole('dialog');
+    await clickUntilVisible(page.getByText(fish, { exact: true }).first(), dialog);
     await dialog.getByRole('button', { name: 'Stock' }).click();
     await expect(stockField(dialog)).toHaveValue('12.5', { timeout: 30_000 });
     await dialog.getByRole('button', { name: 'Cancel' }).click();
@@ -239,9 +248,9 @@ test.describe('fish sold by the kilogram', () => {
       timeout: 30_000,
     });
     await quote.getByRole('spinbutton', { name: `Quantity of ${fish}` }).fill('2');
-    await saveQuote(page, quote, `Crate buyer ${tag}`);
+    await saveQuote(page, quote, buyer);
 
-    const again = await openQuoteOf(page, `Crate buyer ${tag}`);
+    const again = await openQuoteOf(page, buyer);
     await expect(again.getByRole('combobox', { name: `Unit of ${fish}` })).toHaveValue(
       new RegExp(crate),
       { timeout: 30_000 },
@@ -253,20 +262,20 @@ test.describe('fish sold by the kilogram', () => {
 
     // The product stops being sold in crates. The saved quote opens in kilograms at the same total, and says so.
     await open(page, '/admin/products', /Products|Catalog/);
-    await page.getByText(fish, { exact: true }).first().click();
     dialog = page.getByRole('dialog');
+    await clickUntilVisible(page.getByText(fish, { exact: true }).first(), dialog);
     await dialog.getByRole('button', { name: 'Stock' }).click();
     await dialog.getByRole('button', { name: 'Remove alternate unit 1' }).click();
     await dialog.getByRole('button', { name: 'Save Changes' }).click();
     await expect(dialog).toBeHidden({ timeout: 30_000 });
 
-    const repaired = await openQuoteOf(page, `Crate buyer ${tag}`);
+    const repaired = await openQuoteOf(page, buyer);
     const notice = repaired.getByRole('status', { name: 'Changes made when this quote was opened' });
     await expect(notice).toContainText(`no longer sold in ${crate}`, { timeout: 30_000 });
     await expect(notice).toContainText('40 KG at 300 each');
     await expect(repaired.getByRole('spinbutton', { name: `Quantity of ${fish}` })).toHaveValue('40');
     await expect(repaired.getByLabel(`Unit price of ${fish}`)).toHaveValue('300');
-    await saveQuote(page, repaired, `Crate buyer ${tag}`);
+    await saveQuote(page, repaired, buyer);
   });
 });
 
