@@ -6,8 +6,8 @@ import { expect, type Locator, type Page } from '@playwright/test';
  */
 export async function gotoAdmin(page: Page, url: string, heading: string | RegExp): Promise<void> {
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    await page.goto(url);
     try {
+      await page.goto(url);
       await expect(page.getByRole('heading', { name: heading, level: 1 }).first()).toBeVisible({
         timeout: 30_000,
       });
@@ -38,10 +38,11 @@ export async function openQuoteOf(page: Page, customerName: string): Promise<Loc
   await gotoAdmin(page, '/admin/quotes', 'Sales Quotes');
   const row = page.getByRole('row').filter({ hasText: customerName }).first();
   await expect(row).toBeVisible();
+  // The editor fetches its data before it draws, so give each press time: pressing again while it loads only starts it over.
   await expect(async () => {
     await row.getByTitle('Edit quote').click();
-    await expect(editor(page)).toBeVisible({ timeout: 3000 });
-  }).toPass({ timeout: 90_000 });
+    await expect(editor(page)).toBeVisible({ timeout: 20_000 });
+  }).toPass({ timeout: 100_000, intervals: [1000, 5000] });
   return editor(page);
 }
 
