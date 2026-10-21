@@ -16,6 +16,7 @@ export const ENTRY_TYPE: Record<string, string> = {
   customer_receipt_reversal: 'Receipt reversed',
   refund: 'Refund',
   bank_charge: 'Bank charge',
+  bank_income: 'Bank income',
   cheque_clearing: 'Cheque cleared',
   cash_sale: 'Cash sale',
   payment: 'Payment',

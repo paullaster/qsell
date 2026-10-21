@@ -1,4 +1,6 @@
-import { and, desc, eq, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
+import { decodeCursor, encodeCursor } from '@/server/domains/lookups/request';
+import { matching } from '@/server/domains/settings/paging';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { orders, orderItems, type OrderRow } from '@/server/db/drizzle/schema';
 import type { Order, OrderItem, OrderStatus, PaymentStatus, PaymentProvider } from '@/types/index';
@@ -147,7 +149,35 @@ export class OrderRepository {
 
   async listAll(limit = 500): Promise<Order[]> {
     const rows = await this.db.select().from(orders).orderBy(desc(orders.createdAt)).limit(limit);
-    return Promise.all(rows.map(async (row) => mapOrderRow(row, await this.loadItems(row.id))));
+    return await this.withItems(rows);
+  }
+
+  /**
+   * One page of orders, newest first, narrowed by text (order number, customer, phone, email, tracking) and by status. The place to
+   * start the next page is the database's own text for the time of the last order, so no microsecond is lost; their items are read in one query.
+   */
+  async page(input: { query?: string; status?: OrderStatus | null; cursor?: string | null; limit?: number }): Promise<{ rows: Order[]; nextCursor: string | null }> {
+    const limit = Math.min(Math.max(input.limit ?? 25, 1), 100);
+    const after = typeof input.cursor === 'string' && input.cursor !== '' ? decodeCursor(input.cursor) : null;
+    const text = (input.query ?? '').trim().slice(0, 100);
+    const found = await this.db
+      .select({ row: orders, cursor: sql<string>`${orders.createdAt}::text` })
+      .from(orders)
+      .where(
+        and(
+          input.status == null ? undefined : eq(orders.status, input.status),
+          matching(text, [orders.orderNumber, orders.customerName, orders.customerPhone, orders.customerEmail, orders.trackingNumber]),
+          after === null ? undefined : sql`(${orders.createdAt}, ${orders.id}) < (${after.k}::timestamptz, ${after.id})`,
+        ),
+      )
+      .orderBy(desc(orders.createdAt), desc(orders.id))
+      .limit(limit + 1);
+    const page = found.slice(0, limit);
+    const last = page.at(-1);
+    return {
+      rows: await this.withItems(page.map((f) => f.row)),
+      nextCursor: found.length > limit && last !== undefined ? encodeCursor({ k: last.cursor, id: last.row.id }) : null,
+    };
   }
 
   async listByUserId(userId: string): Promise<Order[]> {
@@ -156,7 +186,16 @@ export class OrderRepository {
       .from(orders)
       .where(eq(orders.userId, userId))
       .orderBy(desc(orders.createdAt));
-    return Promise.all(rows.map(async (row) => mapOrderRow(row, await this.loadItems(row.id))));
+    return await this.withItems(rows);
+  }
+
+  /** The orders with their items, all items read in one query however many orders there are. */
+  private async withItems(rows: OrderRow[]): Promise<Order[]> {
+    if (rows.length === 0) return [];
+    const items = await this.db.select().from(orderItems).where(inArray(orderItems.orderId, rows.map((r) => r.id)));
+    const byOrder = new Map<string, OrderItem[]>();
+    for (const r of items) byOrder.set(r.orderId, [...(byOrder.get(r.orderId) ?? []), toItem(r)]);
+    return rows.map((row) => mapOrderRow(row, byOrder.get(row.id) ?? []));
   }
 
   async findByNumberAndContact(orderNumber: string, contact: string): Promise<Order | null> {
@@ -207,22 +246,26 @@ export class OrderRepository {
 
   private async loadItems(orderId: string): Promise<OrderItem[]> {
     const rows = await this.db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
-    return rows.map((r) => ({
-      productId: r.productId,
-      productName: r.productName,
-      sku: r.sku,
-      quantity: r.quantity,
-      unitPrice: num(r.unitPrice),
-      totalPrice: num(r.totalPrice),
-      imageUrl: r.imageUrl,
-      priceTrace: r.priceTrace ?? null,
-      isGift: r.isGift,
-      unitCost: r.unitCost == null ? null : Number(r.unitCost),
-      unitId: r.unitId,
-      unitCode: r.unitCode,
-      enteredQuantity: r.enteredQuantity,
-      qtyPerUnit: r.qtyPerUnit,
-      enteredUnitPrice: r.enteredUnitPrice == null ? null : Number(r.enteredUnitPrice),
-    }));
+    return rows.map(toItem);
   }
+}
+
+function toItem(r: typeof orderItems.$inferSelect): OrderItem {
+  return {
+    productId: r.productId,
+    productName: r.productName,
+    sku: r.sku,
+    quantity: r.quantity,
+    unitPrice: num(r.unitPrice),
+    totalPrice: num(r.totalPrice),
+    imageUrl: r.imageUrl,
+    priceTrace: r.priceTrace ?? null,
+    isGift: r.isGift,
+    unitCost: r.unitCost == null ? null : Number(r.unitCost),
+    unitId: r.unitId,
+    unitCode: r.unitCode,
+    enteredQuantity: r.enteredQuantity,
+    qtyPerUnit: r.qtyPerUnit,
+    enteredUnitPrice: r.enteredUnitPrice == null ? null : Number(r.enteredUnitPrice),
+  };
 }

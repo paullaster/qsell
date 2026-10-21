@@ -6,6 +6,7 @@ import { AccessDeniedError } from '@/server/domains/access-control/engine';
 import type { LookupResult } from '@/lib/lookup';
 import { pageHeaders } from '@/lib/statement-import-form';
 import { postingPermissions, run } from './action-runner';
+import { businessDate } from '@/server/kernel/numbering/business-date';
 import type { CsvMapping } from './domain/bank-statement';
 import { FinanceError } from './errors';
 import type { StatementLineStatus } from '@/server/db/drizzle/schema';
@@ -69,6 +70,8 @@ export async function statementWorkbenchAction(bankAccountId: string, filter: { 
         ignore: await canPermission('bank_statements:ignore'),
         createReceipt: (await canPermission('bank_statements:create_receipt')) && (await canPermission('receipts:create')),
         recordCharge: await canPermission('bank_statements:record_charge'),
+        recordIncome: await canPermission('bank_statements:record_income'),
+        pull: await canPermission('bank_statements:pull'),
         reconcile: await canPermission('bank_reconciliation:post'),
         reverse: await canPermission('bank_reconciliation:reverse'),
       },
@@ -106,8 +109,13 @@ export async function receiptFromStatementLineAction(bankAccountId: string, line
   }, [`${ROOT}/${bankAccountId}`, '/admin/finance/receipts']);
 }
 
-export async function chargeFromStatementLineAction(bankAccountId: string, lineId: number, glAccountId?: string) {
-  return await run('bank_statements:record_charge', { surface: 'finance/bank-statements/account', action: 'record_charge' }, async (ctx) => await fin().bankStatements.recordChargeFromLine(ctx, lineId, { glAccountId, permissions: await postingPermissions() }), [`${ROOT}/${bankAccountId}`]);
+export async function chargeFromStatementLineAction(bankAccountId: string, lineId: number, glAccountId?: string, parts?: { glAccountId: string; amount: string; description?: string }[]) {
+  return await run('bank_statements:record_charge', { surface: 'finance/bank-statements/account', action: parts === undefined ? 'record_charge' : 'record_split_charge' }, async (ctx) => await fin().bankStatements.recordChargeFromLine(ctx, lineId, { glAccountId, parts, permissions: await postingPermissions() }), [`${ROOT}/${bankAccountId}`]);
+}
+
+/** Interest or other money the bank paid in that is not a customer's payment, recorded against an account the person chooses. */
+export async function incomeFromStatementLineAction(bankAccountId: string, lineId: number, input: { incomeGlAccountId: string; description?: string; glAccountId?: string }) {
+  return await run('bank_statements:record_income', { surface: 'finance/bank-statements/account', action: 'record_income' }, async (ctx) => await fin().bankStatements.recordIncomeFromLine(ctx, lineId, { ...input, permissions: await postingPermissions() }), [`${ROOT}/${bankAccountId}`]);
 }
 
 export async function reconciliationPreviewAction(bankAccountId: string, statementDate: string) {
@@ -186,4 +194,23 @@ export async function disableBankFeedAction(bankAccountId: string) {
     await fin().bankFeeds.disable(ctx, bankAccountId);
     return { ok: true };
   }, [`${ROOT}/${bankAccountId}`]);
+}
+
+/** What pulling needs, and what the last pull did, for the workbench. */
+export async function statementPullSetupAction(bankAccountId: string) {
+  return await run('bank_statements:pull', { surface: 'finance/bank-statements/account', action: 'pull_setup' }, async (ctx) => {
+    const s = await fin().statementPulls.setup(ctx.companyId, bankAccountId);
+    return {
+      ready: s.ready,
+      provider: s.provider === null ? null : s.provider.displayName,
+      hasAccountNumber: s.accountNumber !== '',
+      today: businessDate(),
+      last: s.last === null ? null : { at: s.last.at.toISOString(), from: s.last.from, to: s.last.to, lines: s.last.lines },
+    };
+  });
+}
+
+/** Reads the statement of a range of days from the bank and keeps what is new. */
+export async function pullStatementAction(bankAccountId: string, range: { fromDate: string; toDate: string }) {
+  return await run('bank_statements:pull', { surface: 'finance/bank-statements/account', action: 'pull' }, async (ctx) => await fin().statementPulls.pull(ctx, bankAccountId, range), [`${ROOT}/${bankAccountId}`]);
 }

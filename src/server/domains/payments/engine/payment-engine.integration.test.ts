@@ -924,6 +924,84 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       expect((await engine.ops.get(r.op.id)).status).not.toBe('succeeded');
     });
 
+    it('B2C Account Top Up and Pochi la Biashara are built to what Safaricom documents; a Pochi payout is safe to send again, a top-up is not', async () => {
+      const on = (code: string) => [code, { enabled: true }] as const;
+      const p = await provider({ initiator: true, settings: { operations: Object.fromEntries([on('b2c_topup'), on('b2pochi')]) } });
+      const { c } = await payoutWorkflow();
+      fake.on('/oauth/v1/generate', () => ({ json: { access_token: 'tok', expires_in: '3599' } }));
+      for (const path of ['/mpesa/b2b/v1/paymentrequest', '/mpesa/b2pochi/v1/paymentrequest']) {
+        fake.on(path, (b) => ({ json: { ConversationID: `AG_TOP_${path.length}`, OriginatorConversationID: b.OriginatorConversationID ?? 'x', ResponseCode: '0', ResponseDescription: 'Accept the service request successfully.' } }));
+      }
+      // The top-up
+      const top = await ask(p, { operation: 'b2c_topup', input: { partyB: '600000', amount: '239', accountReference: '353353', requester: '0708374149', remarks: 'Float for refunds' } });
+      await approveAll(c, top.op.id);
+      await engine.sweep();
+      const topSent = required(fake.calls.filter((x) => x.path === '/mpesa/b2b/v1/paymentrequest').at(-1));
+      expect(topSent.body).toMatchObject({ CommandID: 'BusinessPayToBulk', SenderIdentifierType: '4', RecieverIdentifierType: '4', Amount: '239', PartyB: '600000', AccountReference: '353353', Requester: '254708374149', Remarks: 'Float for refunds' });
+      expect(typeof (topSent.body as { SecurityCredential?: unknown }).SecurityCredential).toBe('string');
+      expect(JSON.stringify(topSent.body)).not.toContain('Init#Pass1');
+      expect(await engine.ops.get(top.op.id)).toMatchObject({ status: 'accepted' });
+      // A shortcode that is not a shortcode is refused before anything is written down.
+      await expect(ask(p, { operation: 'b2c_topup', input: { partyB: '12', amount: '10', accountReference: 'x', remarks: 'bad' } })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+
+      // Pochi la Biashara
+      const pochi = await ask(p, { operation: 'b2pochi', input: { phone: '0705912645', amount: '11', remarks: 'Cashback', occasion: 'October' } });
+      await approveAll(c, pochi.op.id);
+      await engine.sweep();
+      const sent = required(fake.calls.filter((x) => x.path === '/mpesa/b2pochi/v1/paymentrequest').at(-1));
+      const now = await engine.ops.get(pochi.op.id);
+      expect(sent.body).toMatchObject({ OriginatorConversationID: now.originatorId, InitiatorName: 'apiuser', CommandID: 'BusinessPayToPochi', Amount: '11', PartyB: '254705912645', Remarks: 'Cashback', Occassion: 'October' });
+      expect(now).toMatchObject({ status: 'accepted' });
+      // The result arrives with the receipt, is held until Safaricom's own record agrees, and names the Pochi receipt.
+      const secret = await engine.contexts.callbackSecret(p.providerId);
+      const receipt = rc();
+      await engine.ingestHook({ providerId: p.providerId, kind: 'result', secret, rawText: JSON.stringify({ Result: { ResultType: 0, ResultCode: 0, ResultDesc: 'The service request is processed successfully.', OriginatorConversationID: now.originatorId, ConversationID: now.conversationId, TransactionID: receipt, ResultParameters: { ResultParameter: [{ Key: 'TransactionAmount', Value: 11 }, { Key: 'TransactionReceipt', Value: receipt }, { Key: 'ReceiverPartyPublicName', Value: '254705912645 - A CUSTOMER' }, { Key: 'B2CRecipientIsRegisteredCustomer', Value: 'Y' }] } } }), headers: {}, sourceIp: '196.201.214.200', https: true, method: 'POST' });
+      expect(await engine.ops.get(pochi.op.id)).toMatchObject({ platformReference: receipt });
+    });
+
+    it('M-Pesa Ratiba: a standing order is asked for, and the customer\'s answer settles it by the reference Safaricom gave', async () => {
+      const p = await provider({ settings: { operations: { ratiba_create: { enabled: true } } } });
+      fake.on('/oauth/v1/generate', () => ({ json: { access_token: 'tok', expires_in: '3599' } }));
+      let n = 0;
+      fake.on('/standingorder/v1/createStandingOrderExternal', () => ({ json: { ResponseHeader: { responseRefID: `ratiba-ref-${run}-${++n}`, responseCode: '200', responseDescription: 'Request accepted for processing', ResultDesc: 'The service request is processed successfully.' }, ResponseBody: { responseDescription: 'Request accepted for processing', responseCode: '200' } } }));
+      const day = (ahead: number) => new Date(Date.now() + ahead * 86_400_000).toISOString().slice(0, 10);
+      const input = { standingOrderName: `Rent ${run}`, phone: '0708374149', amount: '4500', frequency: '4', startDate: day(1), endDate: day(365), receiverType: '4', accountReference: 'RENT7', transactionDesc: 'Rent' };
+      const secret = await engine.contexts.callbackSecret(p.providerId);
+      const hook = (body: unknown, s = secret) => engine.ingestHook({ providerId: p.providerId, kind: 'ratiba', secret: s, rawText: JSON.stringify(body), headers: {}, sourceIp: '196.201.214.200', https: true, method: 'POST' } as never);
+
+      const ok = (await engine.daraja.start({ providerId: p.providerId, methodId: p.methodId, operation: 'ratiba_create', input })).op;
+      const sent = required(fake.calls.filter((x) => x.path === '/standingorder/v1/createStandingOrderExternal').at(-1));
+      expect(sent.body).toMatchObject({ StandingOrderName: `Rent ${run}`, StartDate: day(1).replaceAll('-', ''), EndDate: day(365).replaceAll('-', ''), BusinessShortCode: '174379', TransactionType: 'Standing Order Customer Pay Bill', ReceiverPartyIdentifierType: '4', Amount: '4500', PartyA: '254708374149', AccountReference: 'RENT7', TransactionDesc: 'Rent', Frequency: '4' });
+      expect((sent.body as { CallBackURL: string }).CallBackURL).toContain(`/api/hooks/pay/${p.providerId}/ratiba/`);
+      expect(ok).toMatchObject({ status: 'accepted' });
+      const refId = required(ok.conversationId);
+      // An answer for a standing order that is not ours is kept as unmatched.
+      expect((await hook({ responseHeader: { responseRefID: 'someone-else', responseCode: '0' }, responseBody: { responseData: [{ name: 'Status', value: 'OKAY' }] } })).httpStatus).toBe(200);
+      expect(await engine.ops.get(ok.id)).toMatchObject({ status: 'accepted' });
+      // A wrong secret is just "not found".
+      expect((await hook({ responseHeader: { responseRefID: refId } }, 'wrong-secret')).httpStatus).toBe(404);
+      // The customer approved: the order stands, under Safaricom's id for it.
+      await hook({ responseHeader: { responseRefID: refId, requestRefID: refId, responseCode: '0', responseDescription: 'The service request is processed successfully' }, responseBody: { responseData: [{ name: 'TransactionID', value: 'SC8F2IQMH5' }, { name: 'responseCode', value: '0' }, { name: 'Status', value: 'OKAY' }, { name: 'Msisdn', value: '254******867' }] } });
+      expect(await engine.ops.get(ok.id)).toMatchObject({ status: 'succeeded', platformReference: 'SC8F2IQMH5' });
+      // The same answer again changes nothing.
+      await hook({ responseHeader: { responseRefID: refId, responseCode: '1037' }, responseBody: { responseData: [{ name: 'Status', value: 'ERROR' }] } });
+      expect((await engine.ops.get(ok.id)).status).toBe('succeeded');
+
+      // A customer who does not approve (a timeout on the phone): failed, with Safaricom's words and capital-letter keys.
+      const declined = (await engine.daraja.start({ providerId: p.providerId, methodId: p.methodId, operation: 'ratiba_create', input: { ...input, standingOrderName: `Declined ${run}` } })).op;
+      await hook({ ResponseHeader: { responseRefID: required(declined.conversationId), requestRefID: 'x', responseCode: '1037', responseDescription: 'Error' }, ResponseBody: { ResponseData: [{ Name: 'TransactionID', Value: '0000000000' }, { Name: 'responseCode', Value: '1037' }, { Name: 'Status', Value: 'ERROR' }, { Name: 'Msisdn', Value: '*********149' }] } });
+      expect(await engine.ops.get(declined.id)).toMatchObject({ status: 'failed', failureCode: '1037' });
+
+      // Dates that make no sense are refused before anything is sent.
+      const calls = fake.calls.filter((x) => x.path === '/standingorder/v1/createStandingOrderExternal').length;
+      const backwards = (await engine.daraja.start({ providerId: p.providerId, methodId: p.methodId, operation: 'ratiba_create', input: { ...input, standingOrderName: `Back ${run}`, startDate: day(30), endDate: day(5) } })).op;
+      expect(backwards).toMatchObject({ status: 'failed', failureCode: 'DATES_INVALID' });
+      expect(fake.calls.filter((x) => x.path === '/standingorder/v1/createStandingOrderExternal')).toHaveLength(calls);
+      // A till is paid under its own type.
+      await engine.daraja.start({ providerId: p.providerId, methodId: p.methodId, operation: 'ratiba_create', input: { ...input, standingOrderName: `Till ${run}`, receiverType: '2' } });
+      expect(required(fake.calls.filter((x) => x.path === '/standingorder/v1/createStandingOrderExternal').at(-1)).body).toMatchObject({ TransactionType: 'Standing Order Customer Pay Marchant', ReceiverPartyIdentifierType: '2' });
+    });
+
     it('B2B Express Checkout: a failure is recorded; a success is only a claim, claimed under its M-Pesa code, and credited once Safaricom confirms it', async () => {
       const p = await provider({ initiator: true, autoAllocate: true, channel: '600638', settings: { operations: { b2b_express: { enabled: true } } } });
       const number = `E${run}${++seq}`;

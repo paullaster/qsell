@@ -6,11 +6,30 @@ import { revalidatePath } from 'next/cache';
 import { OrdersService } from './service';
 import { resubmitOrderForApproval } from './approval';
 import { getContainer } from '@/server/di/container';
-import type { Order, PaymentProvider } from '@/types/index';
+import type { Order, OrderStatus, PaymentProvider } from '@/types/index';
+import { ORDER_STATUSES } from '@/lib/order-admin';
 
 export async function listOrdersAction(): Promise<Order[]> {
   await requirePermission('orders:read');
   return getContainer().orders.listAll();
+}
+
+/** One page of orders for the admin screen, newest first: search by text and narrow by status. Failures come back as data. */
+export async function ordersPageAction(input: { query?: string; status?: string | null; cursor?: string | null }): Promise<
+  { ok: true; data: { rows: Order[]; nextCursor: string | null } } | { ok: false; error: string }
+> {
+  try {
+    await requirePermission('orders:read');
+  } catch {
+    return { ok: false, error: 'You do not have permission to see orders.' };
+  }
+  const status = typeof input.status === 'string' && (ORDER_STATUSES as readonly string[]).includes(input.status) ? (input.status as OrderStatus) : null;
+  try {
+    return { ok: true, data: await getContainer().orders.page({ query: input.query, status, cursor: input.cursor }) };
+  } catch (error) {
+    console.error('[orders] page', error);
+    return { ok: false, error: 'The orders could not be loaded. Please try again.' };
+  }
 }
 
 export async function getOrderAction(id: string): Promise<Order | null> {

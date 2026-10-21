@@ -775,3 +775,21 @@ The bulk Bill Manager screen and the automatic B2C payout existed already. Added
 ### Not done, on purpose
 
 Gift cards past the date set on them lose what is left once a day (`expire-gift-cards`, 04:32): one `adjust` row writes the balance off and the books move it from the gift-card liability to forfeit income; a card with no date never expires. Jenga and KCB statement *pull* adapters are not built (only the generic push feed). The Safaricom sandbox has not been exercised from here. The development database has not had migrations 0043–0062 applied. Evidence uploads need media storage to be configured.
+
+## 29. Leftovers built (2026-10-21)
+
+Correction to the "not built" lists above: excess write-off already exists as the credit adjustment `waive_excess`, and matching by phone number and by name, with configurable rules, already exists. IMSI/Swap is deliberately **not** built (an optional SIM-swap fraud check; not wanted).
+
+| Item | What it is |
+|---|---|
+| Refund velocity limits | `refund_limits` (migration 0070), `refund_limits:read\|manage`. A request over a limit is held for approval (`HELD_NEEDS_APPROVAL`). Screen: Finance, Refunds, Limits. |
+| Bundled charges | A statement fee line is split into several charges (`charge-split.ts`). |
+| Income from a line | Interest or other money-in recorded straight from a statement line (`bank_income`, BIN; `bank_statements:record_income`). |
+| Cash counts | Drawer count against books, variance posted (`cash_counts`, migration 0071, CCT; `cash_counts:read\|post`). |
+| Statement pull | Jenga (documented API, signed requests) and KCB Buni (no public statement API: settings-driven, fails closed until configured). `bank_statements:pull`. **Not verified live.** |
+| M-Pesa products | B2C Account Top Up, Business to Pochi, Ratiba (standing orders; matched by `responseRefID`). Off by default, payout approval applies. **Safaricom sandbox not exercised.** |
+| Refund by reversal | Reverses the whole original M-Pesa payment to the original payer only (`refunds:reverse_payment`). |
+| Evidence uploads | Plain message when media storage is not configured. |
+| Orders screen | Server-paged (keyset), batched items, status picker, cards on phones. |
+
+The development database needs migrations 0070 and 0071 applied.

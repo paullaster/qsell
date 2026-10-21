@@ -1,5 +1,6 @@
 'use client';
 
+import type { ordersPageAction } from '@/server/domains/orders/actions';
 import React, { Suspense, useState, use } from 'react';
 import {
   LayoutDashboard,
@@ -60,7 +61,7 @@ interface AdminViewProps {
   taxesPromise: Promise<TaxCategory[]>;
   currenciesPromise: Promise<CurrencyConfig[]>;
   gatewaysPromise: Promise<PaymentGatewayConfig[]>;
-  ordersPromise: Promise<Order[]>;
+  ordersPromise: ReturnType<typeof ordersPageAction>;
   transactionsPromise: Promise<TransactionRecord[]>;
   reconciliationLogsPromise: Promise<ReconciliationLog[]>;
   inventoryLedgerPromise: Promise<InventoryLedgerEntry[]>;
@@ -218,11 +219,7 @@ export function AdminView({
 
       {activeTab === 'orders' && (
         <Suspense fallback={<SkeletonTable />}>
-          <AdminOrders
-            ordersPromise={ordersPromise}
-            companyPromise={companyPromise}
-            onRefresh={onRefreshAll}
-          />
+          <AdminOrders firstPage={ordersPromise} companyPromise={companyPromise} />
         </Suspense>
       )}
 

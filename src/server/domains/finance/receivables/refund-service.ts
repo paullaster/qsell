@@ -16,8 +16,10 @@ import {
   financeAttachments,
   financeSettings,
   orders,
+  paymentAttempts,
   paymentMethods,
   providerOperations,
+  providerTransactions,
   refundEvents,
   refundRequests,
   refundPaymentFileItems,
@@ -42,6 +44,8 @@ import {
   looksDuplicate,
   refundedState,
 } from '../domain/refund';
+import { checkVelocity } from '../domain/refund-limits';
+import { decideReversal, type OriginalPayment } from '../domain/refund-reversal';
 import type { PostingRequest } from '../domain/types';
 import type { FxService } from '../fx-service';
 import { NO_SPECIAL_PERMISSIONS, type PostingEngine, type PostingPermissions, type Tx } from '../engine';
@@ -49,6 +53,7 @@ import { FinanceError, type FinanceContext } from '../errors';
 import type { PostingSetupService } from '../posting-setup-service';
 import type { CreditPolicyService } from './credit-policy-service';
 import type { CustomerLedgerService } from './customer-ledger-service';
+import type { RefundLimitsService } from './refund-limits-service';
 import type { WalletService } from './wallet-service';
 
 import { filledStrings, has, orElse, required } from '@/lib/values';
@@ -108,6 +113,7 @@ export class RefundService {
     private readonly numbering: NumberSeriesService,
     private readonly reasons: ReasonCodes,
     private readonly fx: FxService,
+    private readonly limits: RefundLimitsService,
   ) {
     this.legacyLedger = new TransactionLedgerService(db);
   }
@@ -208,7 +214,7 @@ export class RefundService {
 
   // ── create ───────────────────────────────────────────────────────────────
 
-  async create(ctx: FinanceContext, input: RefundInput): Promise<{ id: string; number: string; detailsChanged: boolean }> {
+  async create(ctx: FinanceContext, input: RefundInput): Promise<{ id: string; number: string; detailsChanged: boolean; heldForReview?: string | null }> {
     const rs = await this.reasons.require(ctx.companyId, { code: input.reasonCode, text: input.reasonText }, 'refund');
     if (input.sourceKind === 'returned_payout') throw new FinanceError('SOURCE_INVALID', 'Money that came back is paid again from the refund it came back from, not asked for here.');
     return await this.db.transaction(async (tx) => {
@@ -254,6 +260,18 @@ export class RefundService {
       );
       if (dupe) throw new FinanceError('DUPLICATE_REFUND', 'The same amount was already asked for this customer, by the same method, within the last day. Cancel that one first if this is a replacement.');
 
+      // How fast refunds are being asked for: past a limit the refund is refused, or held for approval whatever its amount.
+      const limits = await this.limits.get(tx, ctx.companyId);
+      let held: string | null = null;
+      if (limits.enabled) {
+        const usage = await this.limits.usage(tx, { companyId: ctx.companyId, customerId: customer.id, requester: ctx.actor.id ?? 'system', kind: m.kind, details, windowHours: limits.windowHours });
+        const breaches = checkVelocity(limits, usage, cents);
+        if (breaches.length > 0) {
+          if (limits.mode === 'refuse') throw new FinanceError('VELOCITY_LIMIT', `${breaches.join(' ')} Refunds are refused past these limits (Finance → Refunds → Limits).`);
+          held = breaches.join(' ');
+        }
+      }
+
       const id = crypto.randomUUID();
       const { number } = await this.numbering.assign('refund', { companyId: ctx.companyId, branchId: undefined, date: businessDate(), document: { kind: 'refund', id }, actor: ctx.actor }, tx);
       await tx.insert(refundRequests).values({
@@ -271,12 +289,13 @@ export class RefundService {
         paymentMethodId: m.id,
         payoutDetails: details,
         detailsChanged: changed,
+        heldForReview: held,
         requestedBy: ctx.actor.id ?? 'system',
         idempotencyKey: input.idempotencyKey ?? null,
       });
-      await this.event(tx, ctx, id, 'created', null, 'draft', { reason: rs, data: { amount: fromCents(cents), source: open.label, method: m.code, detailsChanged: changed } });
+      await this.event(tx, ctx, id, 'created', null, 'draft', { reason: rs, data: { amount: fromCents(cents), source: open.label, method: m.code, detailsChanged: changed, heldForReview: held } });
       await this.decisions.record({ companyId: ctx.companyId, subject: { type: 'refund', id }, action: 'finance.refund_created', actor: ctx.actor, to: 'draft', reason: rs, inputs: { origin: ctx.origin, source: open.label }, outcome: { number, amount: fromCents(cents), method: m.code } }, tx);
-      return { id, number, detailsChanged: changed };
+      return { id, number, detailsChanged: changed, heldForReview: held };
     });
   }
 
@@ -298,13 +317,16 @@ export class RefundService {
           branchId: r.branchId,
           requestedBy: ctx.actor.id ?? '',
           amount: Number(r.amount),
-          snapshot: { reasonCode: r.reasonCode, methodKind: m?.kind ?? '', source: r.sourceKind, destinationChanged: r.detailsChanged, customer: { id: c?.id ?? '' } },
+          snapshot: { reasonCode: r.reasonCode, methodKind: m?.kind ?? '', source: r.sourceKind, destinationChanged: r.detailsChanged, heldForReview: has(r.heldForReview), customer: { id: c?.id ?? '' } },
         },
         tx,
       );
       if (!outcome.required) {
         if (r.detailsChanged) {
           throw new FinanceError('CHANGED_DESTINATION_NEEDS_APPROVAL', 'This refund goes somewhere other than the customer\'s recorded details, so it must be approved, but no approval workflow covers refunds. Ask an administrator to set one up (Settings → Approvals).');
+        }
+        if (has(r.heldForReview)) {
+          throw new FinanceError('HELD_NEEDS_APPROVAL', `This refund went past a refund limit, so it must be approved: ${r.heldForReview}. No approval workflow covers refunds. Ask an administrator to set one up (Settings → Approvals).`);
         }
         await this.event(tx, ctx, id, 'submitted', 'draft', 'approved', { data: { approval: 'not required' } });
         await this.approveIn(tx, ctx, r.id, null);
@@ -803,6 +825,70 @@ export class RefundService {
       await this.decisions.record({ companyId: ctx.companyId, subject: { type: 'refund', id }, action: 'finance.refund_auto_payout_requested', actor: ctx.actor, inputs: { origin: ctx.origin } }, tx);
       const attempt = (await tx.select({ n: sql<string>`count(*)` }).from(providerOperations).where(and(eq(providerOperations.subjectType, 'refund'), eq(providerOperations.subjectId, id))))[0]?.n ?? '0';
       return { providerId: m.providerId, methodId: m.id, phone, amount: r.amount, number: r.number, attempt: Number(attempt) + 1 };
+    });
+  }
+
+  /**
+   * The customer's own M-Pesa payment a refund comes out of, when there is exactly one to point at: the payment that became the receipt,
+   * or the one successful M-Pesa payment of the same amount that paid the order the credit note is for. Anything else has none.
+   */
+  async originalPaymentOf(db: Pick<DrizzleDb, 'select'>, companyId: string, r: Pick<RefundRequestRow, 'sourceKind' | 'sourceId' | 'amount'>): Promise<OriginalPayment | null> {
+    // (a platform transaction keeps four decimals; M-Pesa moves whole shillings, so it rounds to cents safely)
+    const cents = (amount: string) => Math.round(Number(amount) * 100);
+    const asOriginal = (t: { platformReference: string; amount: string; providerId: string; methodId: string | null }): OriginalPayment => ({ transactionId: t.platformReference, amountCents: cents(t.amount), providerId: t.providerId, methodId: t.methodId });
+    if (r.sourceKind === 'receipt_unapplied') {
+      const [t] = await db.select().from(providerTransactions).where(and(eq(providerTransactions.companyId, companyId), eq(providerTransactions.consumedType, 'customer_receipt'), eq(providerTransactions.consumedId, r.sourceId), eq(providerTransactions.state, 'consumed')));
+      return t === undefined ? null : asOriginal(t);
+    }
+    if (r.sourceKind === 'credit_note_excess') {
+      const [cn] = await db.select({ kind: creditNotes.sourceKind, id: creditNotes.sourceId }).from(creditNotes).where(and(eq(creditNotes.companyId, companyId), eq(creditNotes.id, r.sourceId)));
+      if (cn?.kind !== 'order') return null;
+      const attempts = await db.select({ id: paymentAttempts.id }).from(paymentAttempts).where(and(eq(paymentAttempts.orderId, cn.id), eq(paymentAttempts.status, 'successful'), eq(paymentAttempts.providerCode, 'mpesa_daraja')));
+      if (attempts.length === 0) return null;
+      const paid = await db.select().from(providerTransactions).where(and(eq(providerTransactions.companyId, companyId), eq(providerTransactions.consumedType, 'payment_attempt'), inArray(providerTransactions.consumedId, attempts.map((a) => a.id)), eq(providerTransactions.state, 'consumed')));
+      // Only an unambiguous payment: the one that matches the amount, else the only one there is (the rules then say a part cannot
+      // be reversed). With several to choose from, a person decides which to reverse by another route.
+      const same = paid.filter((t) => cents(t.amount) === cents(r.amount));
+      if (same.length === 1) return asOriginal(required(same[0]));
+      return paid.length === 1 ? asOriginal(required(paid[0])) : null;
+    }
+    return null;
+  }
+
+  /** Whether (and why not) this refund can be paid by reversing the customer's M-Pesa payment. */
+  async reversalOption(companyId: string, id: string) {
+    const [r] = await this.db.select().from(refundRequests).where(and(eq(refundRequests.companyId, companyId), eq(refundRequests.id, id)));
+    if (!r) throw new FinanceError('NOT_FOUND', 'That refund does not exist.');
+    return await this.reversalVerdict(this.db, r);
+  }
+
+  private async reversalVerdict(db: Pick<DrizzleDb, 'select'>, r: RefundRequestRow) {
+    const [m] = await db.select().from(paymentMethods).where(eq(paymentMethods.id, r.paymentMethodId));
+    const original = await this.originalPaymentOf(db, r.companyId, r);
+    const [done] = original === null ? [] : await db.select({ id: providerOperations.id }).from(providerOperations).where(and(eq(providerOperations.companyId, r.companyId), eq(providerOperations.operation, 'reversal'), sql`${providerOperations.input}->>'transactionId' = ${original.transactionId}`, inArray(providerOperations.status, ['pending_approval', 'queued', 'submitted', 'accepted', 'timed_out', 'in_doubt', 'succeeded']))).limit(1);
+    return decideReversal({
+      status: r.status,
+      detailsChanged: r.detailsChanged,
+      amountCents: toCents(r.amount),
+      method: { kind: m?.kind ?? '', providerId: m?.providerId ?? null, refundable: m !== undefined && m.refundDestination === 'automatic' && m.usableFor.includes('customer_refund') },
+      original,
+      alreadyReversed: done !== undefined,
+    });
+  }
+
+  /** Checks a reversal may be sent now, and gives what to send. The refund's own approval is the approval for the money. */
+  async prepareReversal(ctx: FinanceContext, id: string) {
+    return await this.db.transaction(async (tx) => {
+      const r = await this.lock(tx, ctx.companyId, id);
+      if (has(r.approvedBy) && r.approvedBy === ctx.actor.id) throw new FinanceError('SAME_PERSON', 'The person who approved a refund cannot be the one who sends its payment.');
+      const verdict = await this.reversalVerdict(tx, r);
+      if (!verdict.ok) throw new FinanceError('NOT_REVERSIBLE', verdict.reason);
+      const live = await this.payoutOperations(tx, id, ['queued', 'submitted', 'accepted', 'timed_out', 'in_doubt', 'succeeded']);
+      if (live.length > 0) throw new FinanceError('PAYOUT_IN_PROGRESS', 'A payment for this refund has already been sent or is waiting for a check. See Payment activity.');
+      await this.event(tx, ctx, id, 'reversal_requested', 'approved', 'approved', { data: { transactionId: verdict.original.transactionId, amount: r.amount } });
+      await this.decisions.record({ companyId: ctx.companyId, subject: { type: 'refund', id }, action: 'finance.refund_reversal_requested', actor: ctx.actor, inputs: { origin: ctx.origin, transactionId: verdict.original.transactionId }, outcome: { amount: r.amount } }, tx);
+      const attempt = (await tx.select({ n: sql<string>`count(*)` }).from(providerOperations).where(and(eq(providerOperations.subjectType, 'refund'), eq(providerOperations.subjectId, id))))[0]?.n ?? '0';
+      return { providerId: verdict.original.providerId, methodId: verdict.original.methodId ?? r.paymentMethodId, transactionId: verdict.original.transactionId, amount: r.amount, number: r.number, attempt: Number(attempt) + 1 };
     });
   }
 

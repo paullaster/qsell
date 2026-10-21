@@ -7,6 +7,7 @@ import { fromCents } from './domain/receivables';
 import { lastDays } from '@/lib/report-window';
 import { FinanceError } from './errors';
 import type { RefundInput } from './receivables/refund-service';
+import type { RefundLimitValues } from './domain/refund-limits';
 import type { RefundSource, RefundStatus } from '@/server/db/drizzle/schema';
 
 import { has } from '@/lib/values';
@@ -85,6 +86,31 @@ export async function payRefundThroughMpesaAction(id: string) {
   }, [ROOT, `${ROOT}/${id}`]);
 }
 
+/**
+ * Pays an approved refund by reversing the customer's own M-Pesa payment: the money goes back to whoever paid, whole, and cannot go to
+ * another phone. The refund's own approval is the approval for the money.
+ */
+export async function reverseRefundPaymentAction(id: string) {
+  return await run('refunds:reverse_payment', { surface: 'finance/refunds/detail', action: 'reverse_payment' }, async (ctx) => {
+    const { getContainer } = await import('@/server/di/container');
+    const c = getContainer();
+    const plan = await c.finance.refunds.prepareReversal(ctx, id);
+    const { OperationRefused } = await import('@/server/domains/payments/daraja/operations');
+    try {
+      const r = await c.paymentEngine.disbursements.request({
+        companyId: ctx.companyId, providerId: plan.providerId, methodId: plan.methodId, operation: 'reversal', preApproved: true,
+        input: { transactionId: plan.transactionId, amount: plan.amount.split('.')[0], remarks: `Refund ${plan.number}`.slice(0, 100) },
+        requestedBy: ctx.actor.id ?? 'system', subject: { type: 'refund', id }, idempotencyKey: `refund:${id}:reversal:${plan.attempt}`,
+        origin: ctx.origin,
+      });
+      return { operationId: r.op.id, status: r.status };
+    } catch (error) {
+      if (error instanceof OperationRefused) throw new FinanceError(error.code, error.message);
+      throw error;
+    }
+  }, [ROOT, `${ROOT}/${id}`]);
+}
+
 /** Money from a paid refund came back: record it, and start a replacement refund to details that work. */
 export async function recordRefundReturnAction(id: string, input: { amount?: string; returnedOn?: string; reference: string; receivedIntoMethodId: string; reasonCode: string; reasonText?: string; replacement: { paymentMethodId: string; payoutDetails: Record<string, string> } }) {
   return await run('refunds:record_return', { surface: 'finance/refunds/detail', action: 'record_return' }, async (ctx) => {
@@ -146,6 +172,7 @@ export async function refundDetailAction(id: string) {
     if (!d) throw new FinanceError('NOT_FOUND', 'That refund does not exist.');
     const media = getContainer().media;
     const payouts = await fin().refunds.payoutAttempts(ctx.companyId, id);
+    const reversal = d.r.status === 'approved' ? await fin().refunds.reversalOption(ctx.companyId, id) : null;
     const [returns, replaces, returnable, inFile] = await Promise.all([
       fin().refunds.returnsOf(ctx.companyId, id),
       d.r.sourceKind === 'returned_payout' ? fin().refunds.replacedNumber(ctx.companyId, d.r.sourceId) : Promise.resolve(null),
@@ -182,6 +209,7 @@ export async function refundDetailAction(id: string) {
       returnable: fromCents(returnable),
       inFile: inFile === null ? null : { id: inFile.fileId, number: inFile.number },
       replacesNumber: replaces,
+      reversal: reversal === null ? null : reversal.ok ? { ok: true as const, transactionId: reversal.original.transactionId } : { ok: false as const, reason: reversal.reason },
       payouts: payouts.map((p) => ({ id: p.id, status: p.status, reference: p.reference, failure: p.failureReason, at: p.createdAt.toISOString() })),
       events: d.events.map((e) => ({ id: String(e.id), event: e.event, from: e.fromStatus, to: e.toStatus, reasonCode: e.reasonCode, reasonText: e.reasonText, by: name(e.actorId) ?? e.actorType, surface: (e.origin as { surface?: string }).surface ?? null, permission: (e.origin as { permissionUsed?: string }).permissionUsed ?? null, at: e.createdAt.toISOString(), data: e.data })),
       can: {
@@ -189,6 +217,7 @@ export async function refundDetailAction(id: string) {
         cancel: await canPermission('refunds:cancel'),
         pay: await canPermission('refunds:record_manual_payout'),
         payAutomatic: await canPermission('refunds:pay_automatic'),
+        reversePayment: await canPermission('refunds:reverse_payment'),
         resolvePayout: await canPermission('refunds:resolve_payout'),
         recordReturn: await canPermission('refunds:record_return'),
         changeDestination: await canPermission('refunds:change_destination'),
@@ -216,3 +245,36 @@ export async function refundReportAction(period?: { from: string; to: string }) 
 }
 
 export type { RefundSource };
+
+/** The refund limits as they stand, and whether this person may change them. */
+export async function refundLimitsAction() {
+  return await run('refund_limits:read', { surface: 'finance/refunds/limits', action: 'view' }, async (ctx) => {
+    const view = await fin().refundLimits.view(ctx.companyId);
+    return { ...view, canManage: await canPermission('refund_limits:manage') };
+  });
+}
+
+export async function saveRefundLimitsAction(values: RefundLimitValues, expectedVersion: number) {
+  return await run(
+    'refund_limits:manage',
+    { surface: 'finance/refunds/limits', action: 'save' },
+    async (ctx) => {
+      // Checked here, not trusted from the form: counts and amounts are whole and positive, the window is 1 to 720 hours.
+      const { checkLimitsForm } = await import('@/lib/refund-limits-form');
+      const f = (n: number | null) => (n === null ? '' : String(n));
+      const checked = checkLimitsForm({
+        enabled: values.enabled === true,
+        windowHours: String(values.windowHours),
+        maxPerCustomer: f(values.maxPerCustomer),
+        maxAmountPerCustomer: values.maxCentsPerCustomer === null ? '' : fromCents(values.maxCentsPerCustomer),
+        maxPerDestination: f(values.maxPerDestination),
+        maxPerRequester: f(values.maxPerRequester),
+        maxAmountPerRequester: values.maxCentsPerRequester === null ? '' : fromCents(values.maxCentsPerRequester),
+        mode: values.mode,
+      });
+      if (!checked.ok) throw new FinanceError('LIMITS_INVALID', checked.error);
+      return await fin().refundLimits.save(ctx, checked.value, expectedVersion);
+    },
+    [`${ROOT}/limits`],
+  );
+}

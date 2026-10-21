@@ -12,6 +12,8 @@ import { extractPaymentReference } from '../payment-reference';
 import type { InboundClaim, PlatformContext, VerificationOutcome, VerifyAttemptInput } from '../engine/types';
 import { toCentsLoose } from '../daraja/security';
 import { judgeAnswer, stateOf, unusableAnswer, type PlatformAnswer } from './status-judge';
+import { callFailure, runPull } from './statement-pull-runner';
+import { fillTemplate, mappedLines, readStatementMap, type StatementPullRequest, type StatementPullResult } from '../statement-pull';
 
 import { asRecord, emptyToNull, has, orElse, readText } from '@/lib/values';
 
@@ -24,7 +26,7 @@ function formatPhoneKe(phone: string): string {
 
 export class KcbBuniAdapter implements PaymentPort {
   readonly code = 'kcb_buni' as const;
-  readonly capabilities = ['collect', 'status_query'] as const;
+  readonly capabilities = ['collect', 'status_query', 'statement'] as const;
 
   async testConnection(
     credentials: Record<string, unknown>,
@@ -188,6 +190,47 @@ export class KcbBuniAdapter implements PaymentPort {
       evidence: { kcb: { ResultCode: raw, ResultDesc: desc, Amount: j.Amount ?? j.amount ?? null, MpesaReceiptNumber: j.MpesaReceiptNumber ?? j.receiptNumber ?? null, CheckoutRequestID: j.CheckoutRequestID ?? null } },
     };
     return judgeAnswer(by, answer, input, [input.orderNumber]);
+  }
+
+  /**
+   * KCB Buni publishes no account-statement call that is open to read, so this one is described in the provider settings, from the
+   * API the Buni developer portal shows for your account: `statementPath` (with {account}, {from}, {to}, {country} where they go),
+   * `statementMethod` (GET or POST), `statementBody` (for POST, an object whose text values may use the same four), and
+   * `statementMap` (where the list, date, words, amount and balance are in the answer). Until all are saved the pull says what is missing.
+   */
+  async pullStatement(request: StatementPullRequest, ctx: PlatformContext): Promise<StatementPullResult> {
+    const creds = asKcbBuniCredentials(ctx.credentials);
+    if (!has(creds.consumerKey) || !has(creds.consumerSecret)) return { ok: false, error: 'The KCB Buni consumer key and secret are not saved yet.', retryable: false };
+    const path = typeof ctx.settings.statementPath === 'string' ? ctx.settings.statementPath.trim() : '';
+    const map = readStatementMap(ctx.settings.statementMap);
+    if (!has(path) || map === null) {
+      return { ok: false, error: 'KCB Buni\'s statement call is not set up yet. Add its path and where the date, words and amount are in its answer to this provider\'s settings (statementPath and statementMap), taking them from the API shown in the Buni developer portal.', retryable: false };
+    }
+    if (!path.startsWith('/')) return { ok: false, error: 'The statement path must start with "/".', retryable: false };
+    const method = ctx.settings.statementMethod === 'GET' ? 'GET' : 'POST';
+    const base = ctx.provider.apiBaseUrl.replace(/\/$/, '');
+    const basic = Buffer.from(`${creds.consumerKey}:${creds.consumerSecret}`).toString('base64');
+    const auth = await ctx.call({ label: 'oauth', provider: 'kcb_buni', method: 'POST', url: `${base}/token`, headers: { Authorization: `Basic ${basic}`, 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'grant_type=client_credentials', timeoutMs: 15000 });
+    const failed = callFailure('KCB Buni', auth);
+    if (failed !== null) return { ok: false, ...failed };
+    const token = readText(auth.json?.access_token, '');
+    if (!has(token)) return { ok: false, error: 'KCB Buni did not give a token. Check the consumer key and secret.', retryable: false };
+    const raw = ctx.settings.statementBody;
+    const body = method === 'GET' || typeof raw !== 'object' || raw === null ? undefined : Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, typeof v === 'string' ? fillTemplate(v, request) : v]));
+    return await runPull(
+      ctx,
+      {
+        provider: 'KCB Buni',
+        label: 'account_statement',
+        request: () => ({ method, url: `${base}${fillTemplate(path, request)}`, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body }),
+        read: (json) => {
+          const read = mappedLines(json, map);
+          // One answer holds the whole range: there is no way to ask for a next page that is described here.
+          return { lines: read.lines, count: read.lines.length, cursor: null, problem: read.problem };
+        },
+      },
+      Number.MAX_SAFE_INTEGER,
+    );
   }
 
   handleCallback(input: CallbackInput): Promise<CallbackResult> {

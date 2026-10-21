@@ -36,6 +36,7 @@ export async function listBankAccountsAction() {
         feeGlAccountId: r.account.feeGlAccountId,
         feeGlLabel: r.feeGlLabel,
         providerConfigId: r.account.providerConfigId,
+        providerLabel: r.providerLabel,
         details: r.account.details,
         blocked: r.account.blocked,
         balance: r.balance,

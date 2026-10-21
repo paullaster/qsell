@@ -64,7 +64,9 @@ export function evidenceUpload(route: EvidenceRoute): (request: Request) => Prom
           await route.attach(finance, ctx, id, { mediaAssetId: asset.id, fileName: file.name.slice(0, 200), note: typeof note === 'string' ? (trimToNull(note)?.slice(0, 300) ?? null) : null });
           return { assetId: asset.id };
         } catch (error) {
-          if (error instanceof MediaError || error instanceof MediaConfigError) throw new FinanceError('EVIDENCE_REJECTED', error.message);
+          // Where photos are kept is set up by whoever runs the server; the name of that setting is not for the screen.
+          if (error instanceof MediaConfigError) throw new FinanceError('EVIDENCE_NOT_CONFIGURED', 'Photos cannot be saved yet: this installation has no place to keep them. Ask whoever looks after the server to set up media storage.');
+          if (error instanceof MediaError) throw new FinanceError('EVIDENCE_REJECTED', error.message);
           throw error;
         }
       },

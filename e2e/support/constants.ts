@@ -8,3 +8,6 @@ export const E2E_ADMIN_PASSWORD = 'E2eTest-Passw0rd-9';
 
 /** Where the signed-in browser state is kept between tests. */
 export const AUTH_FILE = 'e2e/.auth/admin.json';
+
+/** The port the statement-pull test's stand-in for Jenga listens on (see e2e/statement-pull.spec.ts and the seed). */
+export const FAKE_BANK_PORT = 3199;
