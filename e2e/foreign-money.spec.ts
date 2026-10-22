@@ -1,8 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { pick } from './support/quotes';
+import { businessDay } from './support/dates';
 import { noHorizontalScroll, noNativeSelect, open } from './support/page';
-
-const today = (): string => new Date().toISOString().slice(0, 10);
 
 test.describe('money in another currency', () => {
   test('a gift card is issued in dollars at the rate set for the day, and listed with its currency', async ({ page }, testInfo) => {
@@ -11,7 +10,7 @@ test.describe('money in another currency', () => {
     await open(page, '/admin/finance/exchange-rates', 'Exchange rates');
     const rates = page.getByRole('form', { name: 'Set a rate' });
     await pick(page, rates.getByRole('combobox', { name: 'Currency' }), 'US', /USD/);
-    await rates.getByLabel('Starts on').fill(today());
+    await rates.getByLabel('Starts on').fill(businessDay());
     await rates.getByLabel(/for one unit/).fill('129');
     await rates.getByRole('button', { name: 'Save rate' }).click();
     await expect(page.getByText(/^Rate saved: 1 USD = /)).toBeVisible({ timeout: 30_000 });

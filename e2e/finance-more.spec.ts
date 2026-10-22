@@ -1,14 +1,13 @@
 import { workbook, zip } from '../src/server/domains/finance/domain/xlsx-test-kit';
 import { expect, test } from '@playwright/test';
+import { businessDay } from './support/dates';
 import { pick } from './support/quotes';
 import { clickUntilVisible, noHorizontalScroll, noInnerHorizontalScroll, noNativeSelect, open } from './support/page';
-
-const daysFromNow = (n: number): string => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
 
 test.describe('exchange rates', () => {
   test('a rate for a coming day is set with a picker, listed, and removed after asking once', async ({ page }, testInfo) => {
     const phone = testInfo.project.name === 'phone';
-    const day = daysFromNow(phone ? 6 : 5);
+    const day = businessDay(phone ? 6 : 5);
     await open(page, '/admin/finance/exchange-rates', 'Exchange rates');
     await noNativeSelect(page);
     const form = page.getByRole('form', { name: 'Set a rate' });
