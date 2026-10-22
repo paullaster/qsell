@@ -444,6 +444,16 @@ export class CustomerLedgerService {
     };
   }
 
+  /** True when this company's ledger holds an invoice for the order: the only orders whose invoice may be printed from finance. */
+  async hasInvoice(companyId: string, orderId: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ id: customerLedgerEntries.id })
+      .from(customerLedgerEntries)
+      .where(and(eq(customerLedgerEntries.companyId, companyId), eq(customerLedgerEntries.orderId, orderId), eq(customerLedgerEntries.documentType, 'invoice')))
+      .limit(1);
+    return row !== undefined;
+  }
+
   /** Detailed history of one ledger entry (what happened to it, in order). */
   async history(companyId: string, ledgerEntryId: string) {
     return await this.db

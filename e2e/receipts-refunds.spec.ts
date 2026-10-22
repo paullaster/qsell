@@ -127,3 +127,22 @@ test.describe('refunds', () => {
     await expect(page.locator('select')).toHaveCount(0);
   });
 });
+
+test.describe('invoices on the customer account', () => {
+  test('an invoice can be downloaded and printed from the customer account', async ({ page }, testInfo) => {
+    test.slow();
+    const label = testInfo.project.name === 'phone' ? 'Phone' : 'Desktop';
+    await open(page, '/admin/finance/receivables/ageing', 'Receivables ageing');
+    await page.getByRole('link', { name: `Invoiced buyer ${label}` }).first().click();
+    const download = page.getByRole('link', { name: `Download invoice E2E-CR-${label.toUpperCase()} as PDF` });
+    await expect(download).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('button', { name: `Print invoice E2E-CR-${label.toUpperCase()}` })).toBeVisible();
+    await noHorizontalScroll(page);
+    const file = await page.request.get((await download.getAttribute('href')) ?? '');
+    expect(file.status()).toBe(200);
+    expect(file.headers()['content-type']).toBe('application/pdf');
+    expect((await file.body()).subarray(0, 5).toString()).toBe('%PDF-');
+    // An order with no invoice in the ledger is not found, whatever its id.
+    expect((await page.request.get('/api/admin/finance/invoices/no-such-order/pdf')).status()).toBe(404);
+  });
+});

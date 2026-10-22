@@ -430,6 +430,11 @@ async function seedUnitDocuments(): Promise<void> {
       enteredUnitPrice: '6000.0000',
     });
     await db.insert(schema.inventoryMovements).values({ id: `mv_${randomUUID()}`, productId: fish, productName: 'Fish kg Shop', changeAmount: 0, previousStock: 25.5, newStock: 25.5, changeType: 'order_fulfillment', referenceId: id });
+    // The customer's account shows this invoice, so its PDF can be downloaded and printed from there.
+    const company = await container.companySettings.ensureSeeded();
+    const [buyer] = await db.insert(schema.customers).values({ companyId: company.id, number: `E2E-INV-${label.toUpperCase()}`, name: `Invoiced buyer ${label}`, phone: label === 'Desktop' ? '0744100001' : '0744100002', accountType: 'cash', creditLimit: '0' }).returning();
+    if (buyer === undefined) throw new Error('e2e seed: the invoiced customer was not created');
+    await db.insert(schema.customerLedgerEntries).values({ companyId: company.id, customerId: buyer.id, orderId: id, documentType: 'invoice', documentNo: number, description: 'Cash invoice', amount: '18000.00', remainingAmount: '18000.00', postingDate: '2026-10-01', currency: 'KES' });
     await db.insert(schema.invoiceDocuments).values({ orderId: id, orderNumber: number, invoiceNumber: `E2E-TI-${label.toUpperCase()}`, documentType: 'tax_invoice', customerEmail: 'crate@e2e.test', customerName: `Crate buyer ${label}`, currency: 'KES', subtotal: '18000', tax: '0', shippingFee: '0', totalAmount: '18000', pdfStorageKey: 'x.pdf', emailStatus: 'not_sent', meta: {} });
   }
 }
