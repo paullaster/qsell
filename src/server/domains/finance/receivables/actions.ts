@@ -411,6 +411,7 @@ export async function customerStatementAction(customerId: string, from?: string,
         currency: l.currency,
         dueDate: l.dueDate ? l.dueDate.toISOString().slice(0, 10) : null,
         documentId: l.documentId,
+        orderId: l.orderId,
       })),
     };
   });
