@@ -50,8 +50,15 @@ function report(passed: boolean, label: string, detail = ''): void {
 }
 
 async function status(url: string): Promise<{ code: number; type: string }> {
-  const response = await fetch(url, { redirect: 'follow' });
-  await response.arrayBuffer();
+  let response: Response;
+  try {
+    response = await fetch(url, { redirect: 'follow' });
+    await response.arrayBuffer();
+  } catch (error) {
+    // undici reports every network failure as a bare "fetch failed"; the real reason is on `cause`.
+    const cause = error instanceof Error && error.cause instanceof Error ? ` (${error.cause.message})` : '';
+    throw new Error(`Could not reach ${new URL(url).host}${cause}`, { cause: error });
+  }
   return { code: response.status, type: response.headers.get('content-type') ?? '' };
 }
 
