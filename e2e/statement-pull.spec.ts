@@ -68,10 +68,14 @@ test.describe('pulling a statement from the bank', () => {
   }, testInfo) => {
     label = testInfo.project.name === 'phone' ? 'phone' : 'desktop';
     await open(page, '/admin/finance/bank-statements', 'Bank statements');
-    await page.getByRole('link', { name: /E2EJENGA/ }).click();
-    await expect(page.getByRole('heading', { name: /E2EJENGA/, level: 2 })).toBeVisible({
-      timeout: 30_000,
-    });
+    await expect(async () => {
+      if (page.url().endsWith('/bank-statements')) {
+        await page.getByRole('link', { name: /E2EJENGA/ }).click();
+      }
+      await expect(page.getByRole('heading', { name: /E2EJENGA/, level: 2 })).toBeVisible({
+        timeout: 15_000,
+      });
+    }).toPass({ timeout: 90_000 });
     await noNativeSelect(page);
 
     const pull = page.getByRole('button', { name: 'Pull from the bank' });

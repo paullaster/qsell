@@ -10,11 +10,14 @@ test.describe('product specifications on the shop', () => {
     await expect(search).toBeVisible({ timeout: 30_000 });
     await search.fill('Fish kg Shop');
     await expect(async () => {
-      await page.getByRole('button', { name: 'View Fish kg Shop' }).click();
+      // Once the address has changed the click landed; clicking again would restart a slow first compile.
+      if (!page.url().includes('/product/')) {
+        await page.getByRole('button', { name: 'View Fish kg Shop' }).click();
+      }
       await expect(page.getByRole('heading', { name: 'Specifications:' })).toBeVisible({
-        timeout: 3000,
+        timeout: 10_000,
       });
-    }).toPass({ timeout: 60_000 });
+    }).toPass({ timeout: 100_000 });
     const list = page.getByRole('term').first();
     await expect(list).toHaveText('Origin');
     await expect(page.getByText('Lake Victoria')).toBeVisible();
@@ -39,9 +42,11 @@ test.describe('product specifications on the shop', () => {
     await expect(search).toBeVisible({ timeout: 30_000 });
     await search.fill('Salt 500g');
     await expect(async () => {
-      await page.getByRole('button', { name: 'View Salt 500g' }).click();
-      await expect(page.getByText('Availability:')).toBeVisible({ timeout: 3000 });
-    }).toPass({ timeout: 60_000 });
+      if (!page.url().includes('/product/')) {
+        await page.getByRole('button', { name: 'View Salt 500g' }).click();
+      }
+      await expect(page.getByText('Availability:')).toBeVisible({ timeout: 10_000 });
+    }).toPass({ timeout: 100_000 });
     await expect(page.getByRole('heading', { name: 'Specifications:' })).toHaveCount(0);
   });
 });
