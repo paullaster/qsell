@@ -19,7 +19,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ghcr.io/${{ github.repository }}
   # Must match the length of the e2e job's strategy.matrix.shard list.
-  E2E_SHARDS: 4
+  E2E_SHARDS: 6
 
 jobs:
   validate:
@@ -84,7 +84,7 @@ jobs:
       # Let every shard finish so one failure shows all the failing specs, not just the first.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     services:
       postgres:
         image: postgres:18-alpine
