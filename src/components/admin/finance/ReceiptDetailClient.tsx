@@ -17,6 +17,7 @@ import {
   type receiptDetailAction,
 } from '@/server/domains/finance/receivables/actions';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { ReceiptPdfActions } from './ReceiptPdfActions';
 import { CHEQUE_STATUS, RECEIPT_STATUS, statusInfo } from '@/lib/finance-statuses';
 import { has, plain, recordValue } from '@/lib/finance-history';
 import { applications, canApply, chosenCents, fillOldest, fromCents, groupApplications, needsComment, postedMessage } from '@/lib/receipt-detail';
@@ -145,7 +146,7 @@ function ReceiptDetailView({ view, postingFailed }: { view: View; postingFailed?
             <span>from <Link className="font-semibold text-indigo-600 hover:underline" href={`/admin/finance/receivables/customer/${view.customer.id}`}>{view.customer.name}</Link> ({view.customer.number})</span>
           </span>
         }
-        actions={<Link href="/admin/finance/receipts" className={buttonClass}>All receipts</Link>}
+        actions={<><ReceiptPdfActions receiptId={r.id} status={r.status} number={r.number} /><Link href="/admin/finance/receipts" className={buttonClass}>All receipts</Link></>}
       />
       <Message notice={notice} />
 

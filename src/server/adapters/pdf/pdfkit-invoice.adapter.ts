@@ -15,7 +15,7 @@ function nonEmpty(parts: Array<string | null | undefined>): string[] {
   return parts.filter((p): p is string => typeof p === 'string' && p.trim().length > 0);
 }
 
-function resolveLocalLogoPath(logoUrl?: string | null): string | null {
+export function resolveLocalLogoPath(logoUrl?: string | null): string | null {
   if (!logoUrl || !logoUrl.startsWith('/')) return null;
   const apiRoute = logoUrl.match(/^\/api\/company\/logo\/(logo-[a-z\d-]+\.(?:png|jpg|webp|svg))$/i);
   const legacyPath = logoUrl.match(/^\/uploads\/company\/(logo-[a-z\d-]+\.(?:png|jpg|webp|svg))$/i);

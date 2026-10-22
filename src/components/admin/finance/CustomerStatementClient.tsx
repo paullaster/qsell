@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Suspense, use, useId, useState } from 'react';
 import { customerStatementAction } from '@/server/domains/finance/receivables/actions';
 import type { customerWalletAction } from '@/server/domains/finance/wallet-actions';
+import { ReceiptPdfActions } from './ReceiptPdfActions';
 import { CustomerWalletPanel } from './CustomerWalletPanel';
 import { Chip, Field, LoadFailed, Message, PageHeader, buttonClass, cardClass, fieldClass, money, primaryClass, type Notice, attempt } from './ui';
 
@@ -15,13 +16,15 @@ interface Props {
   statementPromise: ReturnType<typeof customerStatementAction>;
   walletPromise: ReturnType<typeof customerWalletAction>;
   canReceivePromise: Promise<boolean>;
+  canReadReceiptsPromise: Promise<boolean>;
 }
 
-export function CustomerStatementClient({ statementPromise, walletPromise, canReceivePromise }: Props) {
+export function CustomerStatementClient({ statementPromise, walletPromise, canReceivePromise, canReadReceiptsPromise }: Props) {
   const statement = use(statementPromise);
   const canReceive = use(canReceivePromise);
+  const canReadReceipts = use(canReadReceiptsPromise);
   if (!statement.ok) return <LoadFailed error={statement.error} />;
-  return <CustomerStatementView initial={statement.data} canReceive={canReceive} walletPromise={walletPromise} />;
+  return <CustomerStatementView initial={statement.data} canReceive={canReceive} canReadReceipts={canReadReceipts} walletPromise={walletPromise} />;
 }
 
 /** The wallet loads on its own, so the statement never waits for it. */
@@ -30,7 +33,7 @@ function WalletSection({ customerId, walletPromise }: { customerId: string; wall
   return wallet.ok ? <CustomerWalletPanel customerId={customerId} view={wallet.data} /> : null;
 }
 
-function CustomerStatementView({ initial, canReceive, walletPromise }: { initial: View; canReceive: boolean; walletPromise: ReturnType<typeof customerWalletAction> }) {
+function CustomerStatementView({ initial, canReceive, canReadReceipts, walletPromise }: { initial: View; canReceive: boolean; canReadReceipts: boolean; walletPromise: ReturnType<typeof customerWalletAction> }) {
   const uid = useId();
   // The position (owed, ageing) always follows the page; only the list of entries is what a date range replaces.
   const [ranged, setRanged] = useState<View['lines'] | null>(null);
@@ -98,7 +101,7 @@ function CustomerStatementView({ initial, canReceive, walletPromise }: { initial
           <table className="w-full min-w-[40rem] text-left text-xs">
             <caption className="sr-only">Customer ledger entries, newest first</caption>
             <thead className="text-fg-muted">
-              <tr><th scope="col" className="py-2 pr-3">Date</th><th scope="col" className="pr-3">Document</th><th scope="col" className="pr-3">Description</th><th scope="col" className="pr-3">Due</th><th scope="col" className="pr-3 text-right">Amount</th><th scope="col" className="text-right">Still open</th></tr>
+              <tr><th scope="col" className="py-2 pr-3">Date</th><th scope="col" className="pr-3">Document</th><th scope="col" className="pr-3">Description</th><th scope="col" className="pr-3">Due</th><th scope="col" className="pr-3 text-right">Amount</th><th scope="col" className="pr-3 text-right">Still open</th><th scope="col"><span className="sr-only">Receipt PDF</span></th></tr>
             </thead>
             <tbody>
               {view.lines.map((l) => (
@@ -111,7 +114,8 @@ function CustomerStatementView({ initial, canReceive, walletPromise }: { initial
                   <td className="pr-3">{l.description}</td>
                   <td className="pr-3 whitespace-nowrap">{l.dueDate ?? ''}</td>
                   <td className={`pr-3 text-right tabular-nums ${l.amount.startsWith('-') ? 'text-emerald-700' : ''}`}>{money(l.amount)} {l.currency ?? ''}</td>
-                  <td className="text-right tabular-nums">{Number(l.remaining) === 0 ? <Chip tone="gray">Settled</Chip> : money(l.remaining)}</td>
+                  <td className="pr-3 text-right tabular-nums">{Number(l.remaining) === 0 ? <Chip tone="gray">Settled</Chip> : money(l.remaining)}</td>
+                  <td className="py-1">{canReadReceipts && l.type === 'payment' && l.documentId !== null && l.documentId !== '' ? <ReceiptPdfActions receiptId={l.documentId} status="posted" number={l.documentNo} compact /> : null}</td>
                 </tr>
               ))}
             </tbody>
