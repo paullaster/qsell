@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { use, useState } from 'react';
 import { listReceiptsAction } from '@/server/domains/finance/receivables/actions';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { ReceiptPdfActions } from './ReceiptPdfActions';
 import { CHEQUE_STATUS, RECEIPT_STATUS, statusInfo } from '@/lib/finance-statuses';
 import { listArgs } from '@/lib/finance-list-filters';
 import type { Choice } from '@/lib/payment-options';
@@ -85,7 +86,7 @@ function ReceiptsView({ initial }: { initial: Page }) {
         <>
           <ul className="space-y-2 md:hidden" aria-label="Receipts">
             {rows.map((r) => (
-              <li key={r.id}>
+              <li key={r.id} className="space-y-2">
                 <Link href={`/admin/finance/receipts/${r.id}`} className={`${cardClass} block min-h-10 hover:bg-hover`}>
                   <div className="flex items-start justify-between gap-2">
                     <p className="text-sm font-bold text-fg-strong">{r.number}</p>
@@ -97,6 +98,7 @@ function ReceiptsView({ initial }: { initial: Page }) {
                     <span>{r.methodName}</span><span>{r.paymentDate}</span>
                   </div>
                 </Link>
+                <ReceiptPdfActions receiptId={r.id} status={r.status} number={r.number} compact />
               </li>
             ))}
           </ul>
@@ -106,7 +108,7 @@ function ReceiptsView({ initial }: { initial: Page }) {
               <thead className="text-fg-muted">
                 <tr>
                   <th scope="col" className="py-2 pr-3">Receipt</th><th scope="col" className="pr-3">Customer</th><th scope="col" className="pr-3">Method</th>
-                  <th scope="col" className="pr-3">Reference</th><th scope="col" className="pr-3">Date</th><th scope="col" className="pr-3">Status</th><th scope="col" className="text-right">Amount</th>
+                  <th scope="col" className="pr-3">Reference</th><th scope="col" className="pr-3">Date</th><th scope="col" className="pr-3">Status</th><th scope="col" className="pr-3 text-right">Amount</th><th scope="col"><span className="sr-only">Download or print</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -118,7 +120,8 @@ function ReceiptsView({ initial }: { initial: Page }) {
                     <td className="pr-3">{r.reference ?? '—'}</td>
                     <td className="pr-3 whitespace-nowrap">{r.paymentDate}</td>
                     <td className="pr-3"><span className="flex flex-wrap gap-1"><StatusChips row={r} /></span></td>
-                    <td className="text-right font-semibold tabular-nums">{r.currency} {money(r.amount)}</td>
+                    <td className="pr-3 text-right font-semibold tabular-nums">{r.currency} {money(r.amount)}</td>
+                    <td className="py-1"><ReceiptPdfActions receiptId={r.id} status={r.status} number={r.number} compact /></td>
                   </tr>
                 ))}
               </tbody>
