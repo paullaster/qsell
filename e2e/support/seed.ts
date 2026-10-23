@@ -29,6 +29,7 @@ async function main(): Promise<void> {
     await seedCashDrawers();
     await seedStatementPull();
     await seedReversal();
+    await seedVendors();
     return;
   }
   await container.organizations.ensureDefaultOrgAndBranch(company.id, 'E2E Co');
@@ -205,6 +206,7 @@ async function main(): Promise<void> {
   await seedCashDrawers();
   await seedStatementPull();
   await seedReversal();
+  await seedVendors();
   console.warn('e2e seed: done');
 }
 
@@ -530,6 +532,35 @@ async function seedReversal(): Promise<void> {
     await db.insert(schema.providerTransactions).values({ companyId: company.id, providerId, methodId: method.id, kind: 'c2b', platformReference: code, amount: '250', state: 'consumed', consumedType: 'customer_receipt', consumedId: receipt.id, shortcode: '174379' });
     const refund = await fin.refunds.create(ctx, { customerId: customer.id, sourceKind: 'receipt_unapplied', sourceId: receipt.id, amount: '250.00', paymentMethodId: method.id, payoutDetails: { phone: customer.phone ?? '' }, reasonCode: 'CUSTOMER_REQUEST' });
     await fin.refunds.submit(ctx, refund.id);
+  }
+}
+
+/**
+ * Vendors for the vendor screens: three the staff added (two active, one waiting for the vendor's own profile), and for each browser
+ * project a vendor business with a verified portal login to sign in as. Safe to run again.
+ */
+async function seedVendors(): Promise<void> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const schema = await import('@/server/db/drizzle/schema');
+  const { getContainer } = await import('@/server/di/container');
+  const { UserRepository } = await import('@/server/domains/auth/user-repository');
+  const { emptyVendorCreation } = await import('@/lib/vendor-forms');
+  const { E2E_VENDOR_PASSWORD, e2eVendorEmail } = await import('./constants');
+  const container = getContainer();
+  const company = await container.companySettings.ensureSeeded();
+  if ((await db.select({ id: schema.vendors.id }).from(schema.vendors).where(eq(schema.vendors.legalName, 'E2E Vendor Alpha')).limit(1)).length > 0) return;
+  const user = (await db.select().from(schema.users).limit(1)).at(0);
+  if (user === undefined) throw new Error('e2e seed: the admin was not created');
+  const ctx = { companyId: company.id, actor: { type: 'user' as const, id: user.id }, origin: { surface: 'e2e', action: 'seed' } };
+  const staffAdded: [string, boolean][] = [['E2E Vendor Alpha', true], ['E2E Vendor Bravo', true], ['E2E Vendor Waiting', false]];
+  for (const [index, [legalName, active]] of staffAdded.entries()) {
+    await container.vendors.createByStaff(ctx, { ...emptyVendorCreation(), legalName, email: `vendor${String(index)}@example.test`, taxId: `E2EPIN${String(index)}` }, active);
+  }
+  const users = new UserRepository();
+  for (const label of ['Desktop', 'Phone']) {
+    const email = e2eVendorEmail(label.toLowerCase());
+    const login = await users.create({ email, password: E2E_VENDOR_PASSWORD, name: `Portal ${label}`, role: 'vendor', emailVerified: true });
+    await container.vendors.registerBusiness({ companyId: company.id, userId: login.id, legalName: `Portal Vendor ${label}`, email, phone: null });
   }
 }
 

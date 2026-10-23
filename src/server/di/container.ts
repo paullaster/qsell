@@ -43,6 +43,7 @@ import { UnitRepository } from '@/server/domains/units/repository';
 import { UnitWriteService } from '@/server/domains/units/write-service';
 import { DimensionSetService } from '@/server/domains/dimensions/set-service';
 import { CustomerMasterService } from '@/server/domains/customers/master-service';
+import { VendorService } from '@/server/domains/vendors/service';
 import { TransactionLedgerService } from '@/server/domains/transactions/ledger-service';
 import { TransactionReconcileService } from '@/server/domains/transactions/reconcile-service';
 import { PaymentCallbackService } from '@/server/domains/payments/callback-service';
@@ -108,6 +109,8 @@ export interface AppContainer {
   unitWriter: UnitWriteService;
   dimensionSets: DimensionSetService;
   customers: CustomerMasterService;
+  /** Vendors: the master record, portal links and events (F-7). */
+  vendors: VendorService;
   transactionLedger: TransactionLedgerService;
   transactionReconcile: TransactionReconcileService;
   paymentCallbacks: PaymentCallbackService;
@@ -350,6 +353,7 @@ export function getContainer(): AppContainer {
     unitWriter,
     dimensionSets,
     customers,
+    vendors: new VendorService(drizzleDb, numbering),
     transactionLedger,
     transactionReconcile,
     paymentCallbacks,

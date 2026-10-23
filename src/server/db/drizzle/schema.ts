@@ -5600,3 +5600,247 @@ export const projectEvents = pgTable(
 export type ProjectRow = typeof projects.$inferSelect;
 export type ProjectTaskRow = typeof projectTasks.$inferSelect;
 export type ProjectEventRow = typeof projectEvents.$inferSelect;
+
+// ── Vendor management and accounts payable (F-7, docs/architecture/vendor-management-module.md) ──
+
+export type VendorStatus =
+  | 'registered'
+  | 'profile_in_progress'
+  | 'profile_submitted'
+  | 'under_review'
+  | 'revision_requested'
+  | 'active'
+  | 'rejected'
+  | 'suspended'
+  | 'archived';
+export type VendorBlock = 'none' | 'payment' | 'all';
+export type VendorPortalRole = 'owner' | 'finance' | 'sales' | 'readonly';
+
+/** Which accounts a vendor's payables, advances, discounts, tolerance, exchange differences and withholding post to. */
+export const vendorPostingGroups = pgTable(
+  'vendor_posting_groups',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    payablesAccountId: uuid('payables_account_id').references(() => glAccounts.id, { onDelete: 'restrict' }),
+    prepaymentsAccountId: uuid('prepayments_account_id').references(() => glAccounts.id, { onDelete: 'restrict' }),
+    paymentDiscountAccountId: uuid('payment_discount_account_id').references(() => glAccounts.id, { onDelete: 'restrict' }),
+    paymentToleranceAccountId: uuid('payment_tolerance_account_id').references(() => glAccounts.id, { onDelete: 'restrict' }),
+    fxGainAccountId: uuid('fx_gain_account_id').references(() => glAccounts.id, { onDelete: 'restrict' }),
+    fxLossAccountId: uuid('fx_loss_account_id').references(() => glAccounts.id, { onDelete: 'restrict' }),
+    withholdingPayableAccountId: uuid('withholding_payable_account_id').references(() => glAccounts.id, { onDelete: 'restrict' }),
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('vendor_posting_groups_company_code_uidx').on(t.companyId, t.code),
+    check('vendor_posting_groups_code_chk', sql`${t.code} ~ '^[A-Z0-9][A-Z0-9._-]{0,19}$'`),
+  ],
+);
+
+/** A business we buy from. The number is given when the vendor is approved, not when it registers. */
+export const vendors = pgTable(
+  'vendors',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    number: text('number'),
+    status: text('status').$type<VendorStatus>().notNull().default('registered'),
+    /** BC's Blocked field: payments refused, or every new document refused. */
+    block: text('block').$type<VendorBlock>().notNull().default('none'),
+    vendorType: text('vendor_type').notNull().default('company'),
+    legalName: text('legal_name').notNull(),
+    tradingName: text('trading_name'),
+    taxId: text('tax_id'),
+    vatNo: text('vat_no'),
+    registrationNo: text('registration_no'),
+    country: text('country'),
+    email: text('email').notNull(),
+    phone: text('phone'),
+    /** The same business as a customer, when it is both. */
+    customerId: uuid('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+    postingGroupId: uuid('posting_group_id').references(() => vendorPostingGroups.id, { onDelete: 'restrict' }),
+    paymentTermDays: integer('payment_term_days').notNull().default(30),
+    currency: text('currency'),
+    /** May be invoiced without a purchase order (an approved expense vendor). */
+    approvedExpenseVendor: boolean('approved_expense_vendor').notNull().default(false),
+    createdByStaff: boolean('created_by_staff').notNull().default(false),
+    notes: text('notes'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('vendors_company_number_uidx').on(t.companyId, t.number).where(sql`${t.number} IS NOT NULL`),
+    uniqueIndex('vendors_company_tax_id_uidx')
+      .on(t.companyId, sql`lower(${t.taxId})`)
+      .where(sql`${t.taxId} IS NOT NULL AND ${t.status} <> 'archived'`),
+    index('vendors_company_status_idx').on(t.companyId, t.status, t.createdAt),
+    index('vendors_company_email_idx').on(t.companyId, sql`lower(${t.email})`),
+    check(
+      'vendors_status_chk',
+      sql`${t.status} IN ('registered','profile_in_progress','profile_submitted','under_review','revision_requested','active','rejected','suspended','archived')`,
+    ),
+    check('vendors_block_chk', sql`${t.block} IN ('none','payment','all')`),
+    check('vendors_legal_name_chk', sql`char_length(btrim(${t.legalName})) BETWEEN 1 AND 200`),
+    // A vendor in good standing always has a number.
+    check('vendors_active_numbered_chk', sql`${t.status} <> 'active' OR ${t.number} IS NOT NULL`),
+    check('vendors_term_chk', sql`${t.paymentTermDays} BETWEEN 0 AND 365`),
+  ],
+);
+
+/** The people who can sign in to the vendor portal for one vendor business. */
+export const vendorUsers = pgTable(
+  'vendor_users',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    portalRole: text('portal_role').$type<VendorPortalRole>().notNull().default('owner'),
+    status: text('status').notNull().default('active'),
+    invitedBy: text('invited_by'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One portal login belongs to one vendor business.
+    uniqueIndex('vendor_users_user_uidx').on(t.userId),
+    index('vendor_users_vendor_idx').on(t.vendorId),
+    uniqueIndex('vendor_users_one_owner_uidx')
+      .on(t.vendorId)
+      .where(sql`${t.portalRole} = 'owner' AND ${t.status} = 'active'`),
+    check('vendor_users_role_chk', sql`${t.portalRole} IN ('owner','finance','sales','readonly')`),
+    check('vendor_users_status_chk', sql`${t.status} IN ('active','removed')`),
+  ],
+);
+
+/** Every step of a vendor's life: who, what, why, from where. Append-only. */
+export const vendorEvents = pgTable(
+  'vendor_events',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'restrict' }),
+    event: text('event').notNull(),
+    fromStatus: text('from_status'),
+    toStatus: text('to_status'),
+    reasonCode: text('reason_code'),
+    reasonText: text('reason_text'),
+    data: jsonb('data').$type<Record<string, unknown>>().notNull().default({}),
+    actorType: text('actor_type').notNull(),
+    actorId: text('actor_id'),
+    origin: jsonb('origin').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('vendor_events_vendor_idx').on(t.vendorId, t.id)],
+);
+
+export type VendorLedgerDocumentType = 'invoice' | 'credit_memo' | 'payment' | 'advance' | 'refund';
+
+/**
+ * What the company owes each vendor, one row per posted document. Amounts are positive when the
+ * company owes the vendor (invoices, advances' counterpart) and negative for payments and credits,
+ * the same convention as the customer ledger turned round, so "remaining" is what is still open.
+ */
+export const vendorLedgerEntries = pgTable(
+  'vendor_ledger_entries',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'restrict' }),
+    documentType: text('document_type').$type<VendorLedgerDocumentType>().notNull(),
+    documentNo: text('document_no').notNull(),
+    /** The vendor's own number for it (their invoice number). */
+    externalDocumentNo: text('external_document_no'),
+    description: text('description'),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    remainingAmount: numeric('remaining_amount', { precision: 14, scale: 2 }).notNull(),
+    currency: text('currency').notNull(),
+    postingDate: date('posting_date', { mode: 'string' }).notNull(),
+    documentDate: date('document_date', { mode: 'string' }),
+    dueDate: date('due_date', { mode: 'string' }),
+    /** The document behind it (posted purchase invoice, payment voucher). */
+    documentId: uuid('document_id'),
+    registerId: uuid('register_id'),
+    idempotencyKey: text('idempotency_key'),
+    createdBy: text('created_by'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('vendor_ledger_vendor_idx').on(t.vendorId, t.postingDate),
+    index('vendor_ledger_document_idx').on(t.documentId),
+    index('vendor_ledger_open_due_idx').on(t.dueDate).where(sql`${t.remainingAmount} <> 0`),
+    uniqueIndex('vendor_ledger_idem_uidx').on(t.companyId, t.idempotencyKey).where(sql`${t.idempotencyKey} IS NOT NULL`),
+    // The same vendor invoice number cannot be booked twice for one vendor.
+    uniqueIndex('vendor_ledger_external_no_uidx')
+      .on(t.vendorId, sql`lower(btrim(${t.externalDocumentNo}))`)
+      .where(sql`${t.externalDocumentNo} IS NOT NULL AND ${t.documentType} = 'invoice'`),
+    check('vendor_ledger_type_chk', sql`${t.documentType} IN ('invoice','credit_memo','payment','advance','refund')`),
+  ],
+);
+
+export type VendorDetailedEntryType =
+  | 'initial'
+  | 'application'
+  | 'unapplication'
+  | 'reversal'
+  | 'write_off'
+  | 'payment_discount'
+  | 'payment_tolerance'
+  | 'fx_gain'
+  | 'fx_loss'
+  | 'advance_application';
+
+/** Every change to what is open on a vendor ledger entry. Append-only; the sum per entry is what is open. */
+export const vendorDetailedEntries = pgTable(
+  'vendor_detailed_entries',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'restrict' }),
+    ledgerEntryId: uuid('ledger_entry_id')
+      .notNull()
+      .references(() => vendorLedgerEntries.id, { onDelete: 'restrict' }),
+    entryType: text('entry_type').$type<VendorDetailedEntryType>().notNull(),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    appliedToEntryId: uuid('applied_to_entry_id'),
+    applicationId: uuid('application_id'),
+    unappliesApplicationId: uuid('unapplies_application_id'),
+    postingDate: date('posting_date', { mode: 'string' }).notNull(),
+    registerId: uuid('register_id'),
+    reasonCode: text('reason_code'),
+    reasonText: text('reason_text'),
+    createdBy: text('created_by'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('vendor_detailed_entry_idx').on(t.ledgerEntryId),
+    index('vendor_detailed_vendor_idx').on(t.vendorId, t.id),
+    index('vendor_detailed_application_idx').on(t.applicationId),
+    uniqueIndex('vendor_detailed_unapply_once_uidx')
+      .on(t.unappliesApplicationId, t.ledgerEntryId, t.appliedToEntryId)
+      .where(sql`${t.unappliesApplicationId} IS NOT NULL`),
+  ],
+);
+
+export type VendorRow = typeof vendors.$inferSelect;
+export type VendorUserRow = typeof vendorUsers.$inferSelect;
+export type VendorLedgerEntryRow = typeof vendorLedgerEntries.$inferSelect;

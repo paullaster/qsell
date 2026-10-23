@@ -11,6 +11,7 @@ export const PERMISSION_CATEGORIES = [
   'General',
   'Orders & Sales',
   'Projects',
+  'Vendor Management',
   'Customers',
   'Products & Inventory',
   'Finance & Payments',
@@ -673,6 +674,30 @@ export const PERMISSIONS = {
     action: 'generate',
     category: 'Finance & Payments',
     description: 'Put approved bank-transfer refunds into a payment file for the bank',
+  },
+  'vendors:read': {
+    resource: 'vendors',
+    action: 'read',
+    category: 'Vendor Management',
+    description: 'See vendors, their profile and their account',
+  },
+  'vendors:create': {
+    resource: 'vendors',
+    action: 'create',
+    category: 'Vendor Management',
+    description: 'Add a vendor on their behalf (they still complete their own profile)',
+  },
+  'vendors:create_active': {
+    resource: 'vendors',
+    action: 'create_active',
+    category: 'Vendor Management',
+    description: 'Add a vendor that is active at once, without the vendor review (a walk-in supplier or a migration)',
+  },
+  'vendor_ledger:read': {
+    resource: 'vendor_ledger',
+    action: 'read',
+    category: 'Finance & Payments',
+    description: 'See what is owed to a vendor: their ledger entries and balances',
   },
   'refund_files:download': {
     resource: 'refund_files',

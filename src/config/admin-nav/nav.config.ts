@@ -349,6 +349,25 @@ export const ADMIN_NAV: AdminNavItem[] = [
     permission: 'projects:read',
   },
   {
+    id: 'vendor-management',
+    title: 'Vendor Management',
+    name: 'vendor-management',
+    href: '/admin/vendors',
+    description: 'The businesses you buy from: vendors, prequalification, quotations, purchase orders and supplier invoices',
+    icon: 'Store',
+    subLinks: [
+      {
+        id: 'vendors',
+        title: 'Vendors',
+        name: 'vendors',
+        href: '/admin/vendors',
+        description: 'Vendor accounts, their profile and what is owed to them',
+        icon: 'Store',
+        permission: 'vendors:read',
+      },
+    ],
+  },
+  {
     id: 'finance',
     title: 'Finance',
     name: 'finance',

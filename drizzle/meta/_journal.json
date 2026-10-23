@@ -505,6 +505,13 @@
       "when": 1792537017686,
       "tag": "0071_cash_counts",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1792738890114,
+      "tag": "0072_vendor_foundation",
+      "breakpoints": true
     }
   ]
 }

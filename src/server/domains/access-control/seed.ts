@@ -121,6 +121,15 @@ const SEED_ROLES: SeedRole[] = [
     ],
   },
   {
+    key: 'vendor',
+    name: 'Vendor',
+    description: 'A supplier who signs in to the vendor portal. Never staff; has no back-office permissions.',
+    priority: 1000,
+    isSystem: true,
+    isStaff: false,
+    grants: [],
+  },
+  {
     key: 'customer',
     name: 'Customer',
     description: 'Limited self-service access for customer-store users.',
