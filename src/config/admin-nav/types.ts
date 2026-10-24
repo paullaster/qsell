@@ -43,7 +43,11 @@ export type AdminNavIconName =
   | 'Fingerprint'
   | 'LifeBuoy'
   | 'Activity'
-  | 'FolderKanban';
+  | 'FolderKanban'
+  | 'ClipboardCheck'
+  | 'Landmark'
+  | 'CalendarClock'
+  | 'FileCheck';
 
 export interface AdminNavItem {
   /** Stable unique id across the whole tree */

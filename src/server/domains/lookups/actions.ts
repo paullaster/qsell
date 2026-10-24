@@ -7,6 +7,7 @@ import { getContainer } from '@/server/di/container';
 import { parseLookupRequest } from './request';
 import { LookupFilterError } from './runner';
 import { getLookupSource } from './sources';
+import { PortalAccessError, requirePortalVendor } from '@/server/domains/vendors/portal-session';
 
 /**
  * Searches one of the lists an Autocomplete offers. The request is untrusted: it is parsed and
@@ -20,7 +21,17 @@ export async function searchLookupAction(raw: unknown): Promise<LookupResult> {
   const source = getLookupSource(key);
   if (source === undefined) return { ok: false, error: 'Unknown list.' };
   try {
-    await requirePermission(source.permission);
+    // A vendor portal user may use the fixed lists made for the portal; every other list needs its staff permission.
+    let portalUser = false;
+    if (source.vendorPortal === true) {
+      try {
+        await requirePortalVendor();
+        portalUser = true;
+      } catch (portalError: unknown) {
+        if (!(portalError instanceof PortalAccessError)) throw portalError;
+      }
+    }
+    if (!portalUser) await requirePermission(source.permission);
     const companyId = (await getContainer().companySettings.ensureSeeded()).id;
     return { ok: true, data: await source.search({ companyId, query, limit, after, filters }) };
   } catch (error: unknown) {

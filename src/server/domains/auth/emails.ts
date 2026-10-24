@@ -20,7 +20,7 @@ function escapeHtml(value: string): string {
     .replaceAll("'", '&#39;');
 }
 
-function layout(args: {
+export function layout(args: {
   heading: string;
   greeting: string;
   body: string;

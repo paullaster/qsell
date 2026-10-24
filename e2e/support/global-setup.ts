@@ -39,12 +39,27 @@ async function warmUp(): Promise<void> {
   const page = await context.newPage();
   const routes = ['/admin/quotes', '/admin/quotes/templates', '/admin/quotes/section-templates'];
   for (const route of routes) {
-    await page.goto(route, { timeout: 300_000 });
-    await page.getByRole('heading', { level: 1 }).first().waitFor({ timeout: 300_000 });
+    // A warm-up that is cut short (the machine's network changed while the page loaded) is tried again, not fatal.
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      try {
+        await page.goto(route, { timeout: 300_000 });
+        await page.getByRole('heading', { level: 1 }).first().waitFor({ timeout: 300_000 });
+        break;
+      } catch (error) {
+        if (attempt === 4) throw error;
+      }
+    }
   }
   // A product opens in a dialog through a soft navigation, which compiles its own route the first time. A click that comes
   // before that finishes fails to fetch and falls back to a plain page load, so open one product here and wait.
-  await page.goto('/admin/products', { timeout: 300_000 });
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    try {
+      await page.goto('/admin/products', { timeout: 300_000 });
+      break;
+    } catch (error) {
+      if (attempt === 4) throw error;
+    }
+  }
   await page.getByText('Rice 5kg', { exact: true }).first().click({ timeout: 300_000 });
   await page.getByRole('dialog').waitFor({ timeout: 300_000 }).catch(() => undefined);
   await browser.close();

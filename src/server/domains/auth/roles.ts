@@ -1,5 +1,5 @@
 /** Application roles. super_admin is env-seeded and has full system power. */
-export const APP_ROLES = ['super_admin', 'admin', 'manager', 'customer'] as const;
+export const APP_ROLES = ['super_admin', 'admin', 'manager', 'customer', 'vendor'] as const;
 export type AppRole = (typeof APP_ROLES)[number];
 
 export function isSuperAdminRole(role: string | null | undefined): boolean {

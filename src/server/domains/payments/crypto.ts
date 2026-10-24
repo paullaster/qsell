@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHmac, randomBytes, createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { EncryptedCredentialsBlob } from './types';
 
@@ -76,6 +76,15 @@ function oldKeys(): Map<string, Buffer> {
 export function needsResealing(blob: EncryptedCredentialsBlob | null | undefined): boolean {
   if (!blob) return false;
   return blob.v !== 2 || blob.kid !== currentKeyId();
+}
+
+/**
+ * A keyed fingerprint of a value (an account number): equal values give equal fingerprints, so the same account on two vendors
+ * can be found without opening either, but the value cannot be recovered from it without the master key. It is computed under
+ * the current key, so key rotation must recompute the stored ones (as it reseals the sealed values).
+ */
+export function fingerprintSecret(value: string): string {
+  return createHmac('sha256', currentKey()).update(value.replace(/[\s-]+/g, '').toUpperCase()).digest('hex');
 }
 
 export function encryptCredentials(plaintext: Record<string, unknown>): EncryptedCredentialsBlob {

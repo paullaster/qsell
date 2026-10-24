@@ -3,6 +3,7 @@ import Credentials from 'next-auth/providers/credentials';
 import type { NextAuthConfig } from 'next-auth';
 import type {} from 'next-auth/jwt';
 import { UserRepository } from '@/server/domains/auth/user-repository';
+import { findPortalAccess } from '@/server/domains/vendors/portal-access';
 
 declare module 'next-auth' {
   interface User {
@@ -11,6 +12,8 @@ declare module 'next-auth' {
     phone?: string | null;
     customerStoreId?: string | null;
     mustChangePassword?: boolean;
+    vendorId?: string | null;
+    vendorRole?: string | null;
   }
   interface Session {
     user: {
@@ -24,6 +27,9 @@ declare module 'next-auth' {
       customerStoreId?: string | null;
       /** Set for admin-issued passwords; the user must choose their own before doing anything else. */
       mustChangePassword: boolean;
+      /** Set only for a vendor portal user: the vendor business they act for and their portal role. */
+      vendorId?: string | null;
+      vendorRole?: string | null;
     };
   }
 }
@@ -37,6 +43,8 @@ declare module 'next-auth/jwt' {
     mustChangePassword?: boolean;
     /** Epoch ms when role/status were last confirmed against the database. */
     verifiedAt?: number;
+    vendorId?: string | null;
+    vendorRole?: string | null;
   }
 }
 
@@ -58,6 +66,9 @@ if (!authSecret) {
  * this a demoted or suspended admin would keep admin access until expiry.
  */
 const STAFF_REVALIDATE_MS = 60_000;
+
+/** Portal pages anyone may open: signing up. Everything else under /vendor needs a vendor session. */
+const PUBLIC_VENDOR_PATHS = new Set(['/vendor/register']);
 
 const authConfig = {
   secret: authSecret,
@@ -96,6 +107,9 @@ const authConfig = {
         // The single place credentials are checked — every sign-in path goes through here.
         if (user.emailVerifiedAt === null) throw new EmailNotVerified();
 
+        // A vendor login is only valid while it belongs to a vendor business.
+        const portal = user.role === 'vendor' ? await findPortalAccess(user.id) : null;
+        if (user.role === 'vendor' && portal === null) return null;
         return {
           id: user.id,
           email: user.email,
@@ -105,6 +119,8 @@ const authConfig = {
           phone: user.phone,
           customerStoreId: user.customerStoreId,
           mustChangePassword: user.mustChangePassword,
+          vendorId: portal?.vendorId ?? null,
+          vendorRole: portal?.portalRole ?? null,
         };
       },
     }),
@@ -120,6 +136,11 @@ const authConfig = {
           return Response.redirect(target);
         }
       }
+      if (path.startsWith('/vendor') && !PUBLIC_VENDOR_PATHS.has(path)) {
+        // Staff never use the portal and vendors never use the back office.
+        if (auth?.user.isStaff === true) return Response.redirect(new URL('/admin', request.nextUrl));
+        return auth?.user.role === 'vendor' && typeof auth.user.vendorId === 'string' && auth.user.vendorId !== '';
+      }
       return true;
     },
     async jwt({ token, user }) {
@@ -130,6 +151,8 @@ const authConfig = {
         token.customerStoreId = user.customerStoreId;
         token.mustChangePassword = user.mustChangePassword === true;
         token.sub = user.id;
+        token.vendorId = user.vendorId ?? null;
+        token.vendorRole = user.vendorRole ?? null;
         token.verifiedAt = Date.now();
         return token;
       }
@@ -152,6 +175,16 @@ const authConfig = {
       token.role = current.role;
       token.isStaff = await new UserRepository().isStaffRoleKey(current.role);
       token.mustChangePassword = current.mustChangePassword;
+      if (current.role === 'vendor') {
+        // A removed portal user or an archived vendor ends the session at the next check.
+        const portal = await findPortalAccess(current.id);
+        if (portal === null) return null;
+        token.vendorId = portal.vendorId;
+        token.vendorRole = portal.portalRole;
+      } else {
+        token.vendorId = null;
+        token.vendorRole = null;
+      }
       token.verifiedAt = Date.now();
       return token;
     },
@@ -167,6 +200,8 @@ const authConfig = {
             ? token.customerStoreId
             : null;
         session.user.mustChangePassword = token.mustChangePassword === true;
+        session.user.vendorId = typeof token.vendorId === 'string' ? token.vendorId : null;
+        session.user.vendorRole = typeof token.vendorRole === 'string' ? token.vendorRole : null;
       }
       return session;
     },

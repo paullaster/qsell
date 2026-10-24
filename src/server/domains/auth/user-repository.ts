@@ -102,6 +102,11 @@ export class UserRepository {
     return row!;
   }
 
+  /** Removes an account that never verified its email (a registration that could not be completed). A verified account is never touched. */
+  async deleteUnverified(userId: string): Promise<void> {
+    await this.db.delete(users).where(and(eq(users.id, userId), isNull(users.emailVerifiedAt)));
+  }
+
   /** Idempotent: keeps the original verification time if already verified. */
   async markEmailVerified(userId: string, executor: DbExecutor = this.db): Promise<void> {
     const now = new Date();

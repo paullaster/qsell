@@ -180,6 +180,11 @@ export const DOCUMENT_KINDS = {
     fiscal: false,
     suggested: { code: 'CNT', prefix: 'CNT-{YY}-', digits: 8, reset: 'yearly', blockSize: 20 },
   },
+  vendor: {
+    label: 'Vendor',
+    fiscal: false,
+    suggested: { code: 'VND', prefix: 'V-', digits: 6, reset: 'never', blockSize: 20 },
+  },
   project: {
     label: 'Project',
     fiscal: false,
