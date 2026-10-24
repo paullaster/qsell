@@ -74,3 +74,20 @@ export function makeRfq(tag: string, vendorIds: string[], mode: 'category' | 'is
   if (line === undefined) throw new Error(`the request fixture printed nothing usable: ${output.slice(-500)}`);
   return JSON.parse(line.slice('FIXTURE '.length)) as RfqFixture;
 }
+
+export interface PoFixture {
+  categoryId: string;
+  categoryName: string;
+  poId?: string;
+  number?: string;
+  rfqId?: string;
+  advanceId?: string;
+}
+
+/** A purchase order (or an awarded request) for one test, written by another person so the signed-in test user may approve it (see po-fixture.ts). */
+export function makePo(tag: string, vendorId: string, mode: 'pending' | 'sent' | 'sent_flagged' | 'amendment' | 'advance_pending' | 'awarded'): PoFixture {
+  const output = execFileSync('pnpm', ['exec', 'tsx', 'e2e/support/po-fixture.ts', tag, vendorId, mode], { env: { ...process.env, ...e2eEnvironment() }, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+  const line = output.split('\n').find((l) => l.startsWith('FIXTURE '));
+  if (line === undefined) throw new Error(`the purchase order fixture printed nothing usable: ${output.slice(-500)}`);
+  return JSON.parse(line.slice('FIXTURE '.length)) as PoFixture;
+}

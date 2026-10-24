@@ -185,6 +185,11 @@ export const DOCUMENT_KINDS = {
     fiscal: false,
     suggested: { code: 'VND', prefix: 'V-', digits: 6, reset: 'never', blockSize: 20 },
   },
+  purchase_order: {
+    label: 'Purchase order',
+    fiscal: false,
+    suggested: { code: 'PO', prefix: 'PO-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
+  },
   rfq: {
     label: 'Request for quotation',
     fiscal: false,

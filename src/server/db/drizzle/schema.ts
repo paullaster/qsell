@@ -6521,3 +6521,234 @@ export const rfqEvents = pgTable(
 export type RfqRow = typeof rfqs.$inferSelect;
 export type RfqLineRow = typeof rfqLines.$inferSelect;
 export type RfqQuoteRow = typeof rfqQuotes.$inferSelect;
+
+// ── Purchase orders and advance payments (V-4, docs/architecture/vendor-management-module.md §9) ──
+
+export type PurchaseOrderStatus =
+  | 'draft'
+  | 'pending_approval'
+  | 'approved'
+  | 'sent'
+  | 'confirmed'
+  | 'amendment_pending'
+  | 'partially_received'
+  | 'received'
+  | 'partially_invoiced'
+  | 'invoiced'
+  | 'closed'
+  | 'cancelled';
+export type AdvancePaymentStatus = 'draft' | 'pending_approval' | 'approved' | 'paid' | 'applied' | 'refunded' | 'written_off' | 'cancelled';
+
+/** Company-wide vendor policy that is data, not code. */
+export const vendorSettings = pgTable('vendor_settings', {
+  companyId: uuid('company_id')
+    .primaryKey()
+    .references(() => companySettings.id, { onDelete: 'cascade' }),
+  /** A purchase order above this value needs a request for quotation, unless someone allowed to skip it says why. Empty: never required. */
+  rfqRequiredAbove: numeric('rfq_required_above', { precision: 14, scale: 2 }),
+  /** An amendment that raises the value by more than this percent goes to approval again (any price change always does). */
+  amendmentTolerancePercent: numeric('amendment_tolerance_percent', { precision: 5, scale: 2 }).notNull().default('0'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const purchaseOrders = pgTable(
+  'purchase_orders',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    /** Given when the order is approved, so abandoned drafts leave no gaps. */
+    number: text('number'),
+    version: integer('version').notNull().default(1),
+    status: text('status').$type<PurchaseOrderStatus>().notNull().default('draft'),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'restrict' }),
+    categoryId: uuid('category_id')
+      .notNull()
+      .references(() => procurementCategories.id, { onDelete: 'restrict' }),
+    rfqId: uuid('rfq_id').references(() => rfqs.id, { onDelete: 'restrict' }),
+    quoteId: uuid('quote_id').references(() => rfqQuotes.id, { onDelete: 'restrict' }),
+    orderDate: date('order_date', { mode: 'string' }).notNull(),
+    expectedDate: date('expected_date', { mode: 'string' }),
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+    currency: text('currency').notNull(),
+    paymentTerms: text('payment_terms'),
+    deliveryTerms: text('delivery_terms'),
+    notesToVendor: text('notes_to_vendor'),
+    internalNotes: text('internal_notes'),
+    /** Only someone with the flag permission sets it; it is approved with the order. */
+    requiresAdvancePayment: boolean('requires_advance_payment').notNull().default(false),
+    /** Raised without a request for quotation, with the reason. */
+    noRfq: boolean('no_rfq').notNull().default(false),
+    noRfqReason: text('no_rfq_reason'),
+    /** The vendor was not qualified in the category and someone allowed to override said why (reported). */
+    qualificationOverrideReason: text('qualification_override_reason'),
+    subtotal: numeric('subtotal', { precision: 14, scale: 2 }).notNull().default('0'),
+    taxTotal: numeric('tax_total', { precision: 14, scale: 2 }).notNull().default('0'),
+    total: numeric('total', { precision: 14, scale: 2 }).notNull().default('0'),
+    buyerId: text('buyer_id'),
+    createdBy: text('created_by'),
+    submittedAt: timestamp('submitted_at', { withTimezone: true }),
+    approvedBy: text('approved_by'),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+    confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+    confirmedBy: text('confirmed_by'),
+    confirmationNote: text('confirmation_note'),
+    cancelReason: text('cancel_reason'),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('purchase_orders_company_number_uidx').on(t.companyId, t.number).where(sql`${t.number} IS NOT NULL`),
+    // One order per awarded vendor per request, unless it was cancelled.
+    uniqueIndex('purchase_orders_rfq_vendor_uidx').on(t.rfqId, t.vendorId).where(sql`${t.rfqId} IS NOT NULL AND ${t.status} <> 'cancelled'`),
+    index('purchase_orders_company_status_idx').on(t.companyId, t.status, t.createdAt),
+    index('purchase_orders_vendor_idx').on(t.vendorId, t.createdAt),
+    check('purchase_orders_status_chk', sql`${t.status} IN ('draft','pending_approval','approved','sent','confirmed','amendment_pending','partially_received','received','partially_invoiced','invoiced','closed','cancelled')`),
+    check('purchase_orders_no_rfq_chk', sql`NOT ${t.noRfq} OR ${t.noRfqReason} IS NOT NULL`),
+    check('purchase_orders_approver_chk', sql`${t.approvedBy} IS NULL OR ${t.approvedBy} IS DISTINCT FROM ${t.createdBy}`),
+  ],
+);
+
+export const purchaseOrderLines = pgTable(
+  'purchase_order_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    poId: uuid('po_id')
+      .notNull()
+      .references(() => purchaseOrders.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull(),
+    productId: text('product_id').references(() => products.id, { onDelete: 'set null' }),
+    description: text('description').notNull(),
+    specification: text('specification'),
+    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    unit: text('unit').notNull().default('each'),
+    unitPrice: numeric('unit_price', { precision: 14, scale: 2 }).notNull(),
+    discountPercent: numeric('discount_percent', { precision: 5, scale: 2 }).notNull().default('0'),
+    taxRate: numeric('tax_rate', { precision: 5, scale: 2 }).notNull().default('0'),
+    /** Worked out on the server. */
+    lineTotal: numeric('line_total', { precision: 14, scale: 2 }).notNull().default('0'),
+    expectedDate: date('expected_date', { mode: 'string' }),
+    awardId: uuid('award_id').references(() => rfqAwards.id, { onDelete: 'restrict' }),
+    // Kept by receiving and invoicing (later slices), never edited by hand.
+    receivedQuantity: numeric('received_quantity', { precision: 14, scale: 3 }).notNull().default('0'),
+    invoicedQuantity: numeric('invoiced_quantity', { precision: 14, scale: 3 }).notNull().default('0'),
+    cancelledQuantity: numeric('cancelled_quantity', { precision: 14, scale: 3 }).notNull().default('0'),
+  },
+  (t) => [
+    index('purchase_order_lines_po_idx').on(t.poId, t.position),
+    check('purchase_order_lines_qty_chk', sql`${t.quantity} > 0 AND ${t.unitPrice} >= 0`),
+    check('purchase_order_lines_discount_chk', sql`${t.discountPercent} BETWEEN 0 AND 100`),
+  ],
+);
+
+/** Every version that was ever released, as it was. Append-only. */
+export const purchaseOrderVersions = pgTable(
+  'purchase_order_versions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    poId: uuid('po_id')
+      .notNull()
+      .references(() => purchaseOrders.id, { onDelete: 'cascade' }),
+    version: integer('version').notNull(),
+    snapshot: jsonb('snapshot').$type<Record<string, unknown>>().notNull(),
+    reason: text('reason'),
+    createdBy: text('created_by'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('purchase_order_versions_uidx').on(t.poId, t.version)],
+);
+
+/** A change to an order after it was released: proposed, approved when it needs to be, then applied as the next version. */
+export const purchaseOrderAmendments = pgTable(
+  'purchase_order_amendments',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    poId: uuid('po_id')
+      .notNull()
+      .references(() => purchaseOrders.id, { onDelete: 'cascade' }),
+    status: text('status').notNull().default('pending_approval'),
+    reason: text('reason').notNull(),
+    proposed: jsonb('proposed').$type<Record<string, unknown>>().notNull(),
+    needsApproval: boolean('needs_approval').notNull(),
+    proposedBy: text('proposed_by'),
+    decidedBy: text('decided_by'),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    decisionNote: text('decision_note'),
+    appliedVersion: integer('applied_version'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('purchase_order_amendments_open_uidx').on(t.poId).where(sql`${t.status} = 'pending_approval'`),
+    check('purchase_order_amendments_status_chk', sql`${t.status} IN ('pending_approval','applied','rejected','withdrawn')`),
+    check('purchase_order_amendments_approver_chk', sql`${t.decidedBy} IS NULL OR ${t.status} <> 'applied' OR NOT ${t.needsApproval} OR ${t.decidedBy} IS DISTINCT FROM ${t.proposedBy}`),
+  ],
+);
+
+export const purchaseOrderEvents = pgTable(
+  'purchase_order_events',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    poId: uuid('po_id')
+      .notNull()
+      .references(() => purchaseOrders.id, { onDelete: 'cascade' }),
+    event: text('event').notNull(),
+    fromStatus: text('from_status'),
+    toStatus: text('to_status'),
+    reasonText: text('reason_text'),
+    data: jsonb('data').$type<Record<string, unknown>>().notNull().default({}),
+    actorType: text('actor_type').notNull(),
+    actorId: text('actor_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('purchase_order_events_po_idx').on(t.poId, t.id)],
+);
+
+/** The document that lets money go out as an advance. A payment voucher must reference it (V-7). */
+export const vendorAdvancePayments = pgTable(
+  'vendor_advance_payments',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    poId: uuid('po_id')
+      .notNull()
+      .references(() => purchaseOrders.id, { onDelete: 'restrict' }),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'restrict' }),
+    status: text('status').$type<AdvancePaymentStatus>().notNull().default('draft'),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    currency: text('currency').notNull(),
+    dueDate: date('due_date', { mode: 'string' }),
+    reason: text('reason').notNull(),
+    /** The account it will be paid into, fixed when the document is approved. */
+    bankAccountId: uuid('bank_account_id').references(() => vendorBankAccounts.id, { onDelete: 'restrict' }),
+    createdBy: text('created_by'),
+    approvedBy: text('approved_by'),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    decisionNote: text('decision_note'),
+    /** The payment voucher that paid it (V-7). */
+    voucherId: uuid('voucher_id'),
+    paidAt: timestamp('paid_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One live advance document per order.
+    uniqueIndex('vendor_advance_payments_live_uidx').on(t.poId).where(sql`${t.status} IN ('draft','pending_approval','approved','paid')`),
+    index('vendor_advance_payments_company_idx').on(t.companyId, t.status),
+    check('vendor_advance_payments_status_chk', sql`${t.status} IN ('draft','pending_approval','approved','paid','applied','refunded','written_off','cancelled')`),
+    check('vendor_advance_payments_amount_chk', sql`${t.amount} > 0`),
+    check('vendor_advance_payments_approver_chk', sql`${t.approvedBy} IS NULL OR ${t.approvedBy} IS DISTINCT FROM ${t.createdBy}`),
+  ],
+);
+
+export type PurchaseOrderRow = typeof purchaseOrders.$inferSelect;
+export type PurchaseOrderLineRow = typeof purchaseOrderLines.$inferSelect;
+export type VendorAdvancePaymentRow = typeof vendorAdvancePayments.$inferSelect;

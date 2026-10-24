@@ -123,7 +123,7 @@ const tradeCustomers = tableSource({
   }),
 });
 
-const enabledCurrenciesFor = (key: string, permission: 'quotes:read' | 'pricing:read' | 'rfq:create') => tableSource({
+const enabledCurrenciesFor = (key: string, permission: 'quotes:read' | 'pricing:read' | 'rfq:create' | 'purchase_orders:create') => tableSource({
   key,
   permission,
   table: currencies,
@@ -146,6 +146,7 @@ const enabledCurrenciesFor = (key: string, permission: 'quotes:read' | 'pricing:
 const enabledCurrencies = enabledCurrenciesFor('currencies', 'quotes:read');
 const pricingCurrencies = enabledCurrenciesFor('pricing-currencies', 'pricing:read');
 const rfqCurrencies = enabledCurrenciesFor('rfq-currencies', 'rfq:create');
+const poCurrencies = enabledCurrenciesFor('po-currencies', 'purchase_orders:create');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -225,6 +226,7 @@ const SOURCES: ReadonlyMap<string, LookupSource> = new Map(
     enabledCurrencies,
     pricingCurrencies,
     rfqCurrencies,
+    poCurrencies,
     paymentMethods,
     quoteStatuses,
     templateStatuses,

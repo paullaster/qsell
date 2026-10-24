@@ -292,4 +292,41 @@ export class VendorNotifier {
       details: [['Request', number]],
     }, 'vendor');
   }
+
+  async poSent(vendorId: string, number: string, total: string, currency: string, expected: string | null): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId);
+    await this.send(addresses, `Purchase order ${number}`, {
+      heading: `You have a purchase order: ${number}`,
+      body: 'Open it in the vendor portal, check it, and confirm that you accept it.',
+      cta: 'Open the order',
+      path: '/vendor/orders',
+      details: [['Order', number], ['Total', `${total} ${currency}`], ['Expected delivery', expected ?? 'to be agreed']],
+    }, 'vendor');
+  }
+
+  async poAmended(vendorId: string, number: string, version: number, changes: string[], reason: string): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId);
+    await this.send(addresses, `Purchase order ${number} was changed`, {
+      heading: `Purchase order ${number} was changed`,
+      body: `Version ${String(version)} replaces the earlier one. Please read the changes and confirm again. Reason: ${reason}`,
+      cta: 'Review and confirm',
+      path: '/vendor/orders',
+      details: changes.slice(0, 8).map((c, i) => [`Change ${String(i + 1)}`, c] as const),
+    }, 'vendor');
+  }
+
+  async poCancelled(vendorId: string, number: string, reason: string): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId);
+    await this.send(addresses, `Purchase order ${number} is cancelled`, { heading: `Purchase order ${number} is cancelled`, body: `The buyer cancelled this order: ${reason}`, cta: 'Open my orders', path: '/vendor/orders', details: [['Order', number]] }, 'vendor');
+  }
+
+  async poConfirmed(vendorId: string, number: string): Promise<void> {
+    const { legalName } = await this.vendorAddresses(vendorId);
+    await this.send(await this.staffAddress(), `${legalName} confirmed ${number}`, { heading: `${legalName} confirmed purchase order ${number}`, body: 'The vendor accepted the order.', cta: 'Open the order', path: '/admin/vendors/orders', details: [['Order', number]] }, 'staff');
+  }
+
+  async advanceApproved(vendorId: string, number: string, amount: string, currency: string): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId, 'finance');
+    await this.send(addresses, `Advance payment approved for ${number}`, { heading: `An advance payment was approved for order ${number}`, body: 'It will be paid into your bank account on record. You will get a remittance when it is paid.', cta: 'Open the order', path: '/vendor/orders', details: [['Order', number], ['Advance', `${amount} ${currency}`]] }, 'vendor');
+  }
 }

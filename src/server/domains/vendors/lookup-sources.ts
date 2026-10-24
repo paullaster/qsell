@@ -3,6 +3,7 @@ import { procurementCategories, reasonCodes, vendors } from '@/server/db/drizzle
 import { VENDOR_STATUS, VENDOR_TYPES } from '@/lib/vendor-forms';
 import { QUESTION_KINDS, STATUS_WORDS } from '@/lib/prequalification';
 import { RFQ_STATUS } from '@/lib/rfq';
+import { PO_STATUS } from '@/lib/purchase-order';
 import { CONTACT_ROLES, ID_TYPES, TURNOVER_BANDS } from '@/lib/vendor-profile';
 import { acceptFilters, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
 
@@ -135,6 +136,14 @@ export const VENDOR_LOOKUP_SOURCES: LookupSource[] = [
       return [eq(reasonCodes.companyId, companyId), eq(reasonCodes.isActive, true), sql`${reasonCodes.appliesTo} @> '["rfq_rejection"]'::jsonb`];
     },
     toOption: (row) => ({ id: text(row.id), label: text(row.label), description: null, badge: null, meta: { requiresComment: row.requiresComment === true ? '1' : '' } }),
+  }),
+  staticSource({
+    key: 'po-statuses',
+    permission: 'purchase_orders:read',
+    items: ({ filters }) => {
+      acceptFilters(filters, {});
+      return Object.entries(PO_STATUS).map(([id, v]) => ({ id, label: v.label, description: null }));
+    },
   }),
   staticSource({
     key: 'rfq-statuses',

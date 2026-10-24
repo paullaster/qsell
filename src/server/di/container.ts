@@ -60,6 +60,9 @@ import { PrequalLifecycle } from '@/server/domains/vendors/prequal-lifecycle';
 import { RfqService } from '@/server/domains/vendors/rfq-service';
 import { RfqPortalService } from '@/server/domains/vendors/rfq-portal-service';
 import { RfqEvaluationService } from '@/server/domains/vendors/rfq-evaluation-service';
+import { PurchaseOrderService } from '@/server/domains/vendors/po-service';
+import { PurchaseOrderPortalService } from '@/server/domains/vendors/po-portal-service';
+import { AdvancePaymentService } from '@/server/domains/vendors/advance-service';
 import { TransactionLedgerService } from '@/server/domains/transactions/ledger-service';
 import { TransactionReconcileService } from '@/server/domains/transactions/reconcile-service';
 import { PaymentCallbackService } from '@/server/domains/payments/callback-service';
@@ -148,6 +151,10 @@ export interface AppContainer {
   rfqs: RfqService;
   rfqPortal: RfqPortalService;
   rfqEvaluation: RfqEvaluationService;
+  /** Purchase orders, the vendor's view of them, and the advance payment document. */
+  purchaseOrders: PurchaseOrderService;
+  poPortal: PurchaseOrderPortalService;
+  advances: AdvancePaymentService;
   transactionLedger: TransactionLedgerService;
   transactionReconcile: TransactionReconcileService;
   paymentCallbacks: PaymentCallbackService;
@@ -349,6 +356,7 @@ export function getContainer(): AppContainer {
   const vendorNotifier = new VendorNotifier(drizzleDb, email, companySettings);
   const prequalLifecycle = new PrequalLifecycle(drizzleDb, vendorNotifier);
   const rfqService = new RfqService(drizzleDb, numbering, prequalLifecycle, vendorNotifier);
+  const purchaseOrderService = new PurchaseOrderService(drizzleDb, numbering, prequalLifecycle, vendorNotifier);
   const finance = createFinanceServices(drizzleDb, decisionLog, { numbering, reasons: reasonCodes, paymentConfigs, payments });
   const paymentEngine = createPaymentEngine({ db: drizzleDb, registry: paymentRegistry, payments, consumer: new FinanceC2bConsumer(drizzleDb, finance.receipts) });
   // The finance side asks banks for statements through the payment engine.
@@ -412,6 +420,9 @@ export function getContainer(): AppContainer {
     rfqs: rfqService,
     rfqPortal: new RfqPortalService(drizzleDb, prequalLifecycle, vendorNotifier),
     rfqEvaluation: new RfqEvaluationService(drizzleDb, rfqService, reasonCodes, vendorNotifier),
+    purchaseOrders: purchaseOrderService,
+    poPortal: new PurchaseOrderPortalService(drizzleDb, purchaseOrderService),
+    advances: new AdvancePaymentService(drizzleDb, vendorNotifier),
     transactionLedger,
     transactionReconcile,
     paymentCallbacks,

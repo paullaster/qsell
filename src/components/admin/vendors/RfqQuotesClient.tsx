@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { use, useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { awardRfqAction, decideQuoteAction, type rfqQuotesAction } from '@/server/domains/vendors/rfq-actions';
+import { makeOrderFromAwardAction, toMakeAction } from '@/server/domains/vendors/po-actions';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import type { Choice } from '@/lib/payment-options';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, dangerClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
@@ -29,6 +30,42 @@ export function RfqQuotesClient({ rfqId, viewPromise }: { rfqId: string; viewPro
   const res = use(viewPromise);
   if (!res.ok) return <LoadFailed error={res.error} />;
   return res.data.sealed ? <Sealed rfqId={rfqId} view={res.data} /> : <Quotes rfqId={rfqId} view={res.data} />;
+}
+
+/** One draft purchase order per awarded vendor, made from the award; nothing is typed again. */
+function MakeOrders({ rfqId }: { rfqId: string }) {
+  const router = useRouter();
+  const [rows, setRows] = useState<{ vendorId: string; name: string; lines: number; orderId: string | null }[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<Notice>(null);
+  const load = async () => {
+    const res = await attempt(toMakeAction(rfqId));
+    if (res.ok) setRows(res.data);
+    else setNotice({ kind: 'error', text: res.error });
+  };
+  const make = async (vendorId: string) => {
+    setBusy(true);
+    setNotice(null);
+    const res = await attempt(makeOrderFromAwardAction(rfqId, vendorId));
+    setBusy(false);
+    if (!res.ok) {
+      setNotice({ kind: 'error', text: res.error });
+      return;
+    }
+    router.push(`/admin/vendors/orders/${res.data.id}`);
+  };
+  return (
+    <div className="mt-3 space-y-2" role="group" aria-label="Purchase orders from this award">
+      <Message notice={notice} />
+      {rows === null ? <button type="button" className={buttonClass} onClick={() => void load()}>Make the purchase orders…</button> : (
+        <ul className="divide-y divide-line text-sm">
+          {rows.map((r) => (
+            <li key={r.vendorId} className="flex flex-wrap items-center justify-between gap-2 py-2"><span>{r.name} · {r.lines} {r.lines === 1 ? 'line' : 'lines'}</span>{r.orderId === null ? <button type="button" className={primaryClass} disabled={busy} onClick={() => void make(r.vendorId)}>{`Make the order for ${r.name}`}</button> : <Link href={`/admin/vendors/orders/${r.orderId}`} className="font-semibold text-indigo-600 hover:underline">Open the order</Link>}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 function VendorChip({ declined, hasQuote, tone, label }: { declined: boolean; hasQuote: boolean; tone: 'green' | 'amber' | 'red' | 'sky' | 'gray'; label: string }) {
@@ -183,7 +220,7 @@ function Quotes({ rfqId, view }: { rfqId: string; view: Open }) {
         <section className={cardClass} aria-label="Award">
           <h3 className="text-sm font-bold text-fg-strong">Awarded</h3>
           <ul className="mt-2 divide-y divide-line text-sm">{view.awards.map((a) => <li key={a.id} className="py-2">{a.description}: {a.quantity} to <span className="font-semibold">{a.vendorName}</span> at {a.unitPrice}{a.justification === null ? '' : ` — ${a.justification}`}</li>)}</ul>
-          <p className="mt-2 text-xs text-fg-muted">The purchase order is made from this award.</p>
+          <MakeOrders rfqId={rfqId} />
         </section>
       ) : null}
       {!awarded && view.canAward ? (
