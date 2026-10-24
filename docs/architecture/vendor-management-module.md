@@ -846,3 +846,71 @@ The next step is to build **V-0** with its full test set, then report what is do
 | Vendor bank accounts, documents, contacts, profile versions, review and activation by the vendor review | V-1 |
 | Withholding, tax and payment terms tables, vendor posting-group screens | V-0 uses the one default group; the screens come with the AP slices |
 | `vendors:edit`, `vendors:invite`, `vendors:view_audit` and the other keys in §14 | Added with the slice that uses them (a key with no use is not added) |
+
+---
+
+## 26. V-1a as built (2026-10-23): the vendor's profile, documents, and staff review
+
+V-1 is large, so it is built in parts. **V-1a (this section)** is the core of onboarding. **V-1b** (below) is what is still to come in V-1.
+
+**Built.**
+
+* **Five profile sections in the portal** (`/vendor/profile`, `/vendor/profile/<section>`): profile, business information (with owners and directors, whose ID numbers are sealed, and references), financial information (bank accounts, whose numbers are sealed and shown by their last four digits; payment terms; turnover; mobile money), contact persons (exactly one main contact), and attachments. Each section is saved on its own; each shows what is missing in plain words; completeness is decided by the same pure rules on the server (`src/lib/vendor-profile.ts`) and in the browser.
+* **Who may change what** (§5.3, enforced on the server): the owner everything; finance the financial section and attachments; sales the contacts and attachments; read-only nothing. Before approval, and after a revision request, the whole profile is open. While it is with the reviewer nothing can be changed. An approved vendor keeps its contacts and documents current itself; **who it is, its registration and tax ID, and where it is paid are locked** until the controlled change flow exists (V-1b). A refused vendor can apply again 30 days after the decision.
+* **Documents.** Document types are data (`vendor_document_types`; a standard set is made the first time: incorporation, tax compliance with expiry, tax PIN, bank letter, business permit with expiry, directors' IDs, company profile, insurance). Files are PDF, JPEG, PNG or WebP, up to 10 MB, **identified by their own first bytes** (never by name or the type the browser says), stored in the database (`vendor_files`, append-only, no public link) and served only through routes that check who is asking: a vendor opens its own files; staff need `vendors:view_documents` and every opening is written to the vendor's history; anyone else, a made-up id and a signed-out caller all get the same "not found". A file nobody may attach is never stored. A newer upload replaces the older, which is kept.
+* **Submit.** The owner sends the profile when every section is complete; the copy sent is **frozen** (`vendor_profile_versions`, guarded by a trigger) and the vendor's status becomes "profile submitted". Account and ID numbers are not in the frozen copy.
+* **Staff review** (`vendors:review | verify_documents | approve | reject | request_revision | view_documents`): take a profile for review; mark each document valid, or not valid with a note the vendor sees; **approve** (every required document must be valid; the vendor becomes active, gets its number, its bank accounts go into use); **send back** with a note on each section that needs work (the vendor sees the notes against those sections and sends version 2); **refuse** with a reason from a controlled list (a comment where the reason asks for one). Every decision is in the vendor's history with who, why and from where. The review panel is on the vendor card.
+* **Portal lists.** The portal's pickers (kind of business, kind of ID, contact role, turnover band) use the same server-searched Autocomplete as the back office. A lookup source may be marked `vendorPortal`, which lets a vendor session use that fixed list; every other list still needs its staff permission, so a vendor cannot reach company data through the pickers.
+* **Account-number fingerprint.** `fingerprintSecret()` (a keyed hash under the master key) lets the same bank account on two vendors be found without opening either. Key rotation must recompute it as it reseals the sealed values.
+* **Tests.** Unit: `src/lib/vendor-profile.test.ts` (12). Integration against a database built from the migrations: `src/server/domains/vendors/vendor-profile.integration.test.ts` (21: sections, roles, sealing, duplicates, files, isolation, submit, freeze, approval, revision, refusal, history). E2E on desktop and phone: `e2e/vendor-onboarding.spec.ts` (a vendor fills every section and sends it; own files vs another vendor's; staff verify and approve and the vendor becomes active; send back and resubmit; refuse with a reason).
+
+**V-1b: still to build in V-1.**
+
+| Item | Note |
+|---|---|
+| Controlled change of bank details (§17.2): pending change, other person approves, call-back verification, cool-off | Today an approved vendor's bank account is locked, not changeable |
+| Document types screen (admin), vendor settings (tolerances later), pack rule for the tax ID pattern | Types exist as data; there is no screen to edit them yet |
+| Expiry job and reminders (§6.5), expiring-documents worklist | The expiry date is stored and required where needed; nothing marks a document expired or reminds yet |
+| Invitation of a vendor by staff and invitation of colleagues by the owner (`vendors:invite`, portal users) | Registration and "add a vendor" exist; invitations do not |
+| Emails to the vendor and to staff (profile sent back, approved, refused, new application) | Nothing is mailed yet; the vendor sees status when it signs in |
+| Suspend / block / archive actions (§6.2) on the vendor card | The states exist; the actions do not |
+| Review through the approvals engine (`vendor.onboarding`, optional) | Not wired |
+| Real "return to the review queue" worklist screen | The review panel is on each vendor card; the queue query exists (`VendorReviewService.queue`) with no screen yet |
+
+---
+
+## 27. V-1b as built (2026-10-24): controls around a vendor that is already approved
+
+V-1 is now complete except for two items listed at the end. Migration `0074_vendor_bank_change_and_reminders`.
+
+**Changing where a vendor is paid (§17.2).** A bank account is never edited. An approved vendor's owner or finance person asks for a change in the portal (`/vendor/profile/financial`, "Where you are paid"), choosing the account it replaces (or "additional account") and the bank letter it uploaded. That inserts a *pending* account (`vendor_bank_accounts.status = pending_change`; one pending change per vendor, enforced by a partial unique index). Then:
+
+1. Staff with `vendor_bank:verify_callback` phone the vendor **on a number from our own records** and record the call (who, which number, what was confirmed; required).
+2. A **different** person with `vendor_bank:approve_change` approves. This is enforced three times: the service refuses it, the screen hides the button, and a check constraint (`vendor_bank_four_eyes_chk`) refuses an approver who is the proposer or the caller.
+3. Approval starts a **cool-off of 3 working days** (`BANK_COOL_OFF_DAYS`; weekends skipped, public holidays not known). Until then payments use the old account: `payableAccounts()` returns only `active` accounts, and a pending account never receives money.
+4. When the cool-off passes, the account goes live and the account it replaced is retired, in one transaction. This happens from the hourly worker task `vendor-bank-promote` and also whenever `payableAccounts()` is asked (so a payment never waits for the job).
+5. Staff may refuse (reason required); the vendor may withdraw until approved; both leave the existing account untouched. The same account number already held by another vendor is flagged on the staff card.
+* The vendor and the buyer are mailed when a change is asked for, and the vendor when it is decided. Every step is in the vendor's history. The number is sealed, shown by its last four digits only, and never in a mail.
+* Staff screen: **Vendor Management → Bank changes** (`/admin/vendors/bank-changes`).
+
+**Standing (§6.2).** `VendorLifecycleService`: suspend / reinstate (`vendors:suspend`), payments-only or full block / lift (`vendors:block`), archive / restore (`vendors:archive`). Each needs a reason from the reason-code list `vendor_standing` (made on first use; a company adds its own), with a comment where the reason asks for one; each is written to the vendor's history. Archiving is refused while the vendor is owed money (or owes), has a bank change waiting, or its application is undecided; an archived vendor loses portal access within a minute; **restore** returns it as *suspended*, so nothing is bought until someone checks and reinstates it. Panel on the vendor card.
+
+**Document types, expiry and reminders (§6.4–6.5).** Admin screen **Document types** (`vendor_settings:manage`): add, rename, require, set whether it expires, the reminder days, whether an expiry blocks, and switch off (never delete). The worker task `vendor-document-expiry` runs daily: it marks documents past their date `expired` (once, with an event and a mail), and sends the reminders each type asks for, **each threshold once** (`vendor_documents.last_reminder_day`; claimed with a conditional update so two runs cannot both send). Reminders go to the vendor, and to the buyer within 7 days. The screen **Expiring documents** lists what has expired or will, soonest first, paged by a keyset cursor. *"Blocking" is stored and shown, but suspending a category prequalification on expiry arrives with V-2, when categories exist.*
+
+**Invitations.** The owner invites colleagues (finance, sales, read-only; at most 10 people per vendor) at `/vendor/team`; staff with `vendors:invite` invite the owner of a vendor they added (the vendor card). An invitation creates the login with a random password nobody knows and mails a single-use link, valid 7 days, that reuses the existing password-reset token (choosing a password also verifies the address). The answer never says whether an address already has an account. An unused invitation can be resent (the old link stops working) or cancelled (the login is deleted); removing someone who joined switches their login off and ends their access; the owner cannot be removed.
+
+**Mail (`VendorNotifier`).** Application received (to the company's address), profile sent back, approved, refused (with the reason), suspended, bank change asked for / decided, document expiring / expired, invitation. A mail that cannot be sent is logged and never undoes the decision. Links come from configuration only. *Staff mail goes to the company's address; per-user subscriptions need the notification centre, which is not built.*
+
+**Review queue.** **Vendor Management → Review queue** lists applications waiting, oldest first.
+
+**Permissions added:** `vendors:suspend | block | archive | invite`, `vendor_bank:verify_callback | approve_change`, `vendor_settings:manage`.
+
+**Tests.** Unit: `vendor-schedule.test.ts` (working days, days until, reminder thresholds), `vendor-document-types.test.ts`. Integration (database built from the migrations): `vendor-controls.integration.test.ts`, 20 tests — bank change from request to cool-off with fake dates; four-eyes at the database; evidence, role and one-at-a-time rules; refusal, withdrawal, duplicate flag; isolation between vendors; mails; suspend / block / archive / restore and company isolation; expiry once, reminders once per threshold, paging; invitations end to end (set a password from the link and sign in), silent on existing addresses, removal; document types. E2E (`e2e/vendor-controls.spec.ts`, desktop and phone): standing, both invitation flows, the bank change from the vendor's request to staff approval and refusal, the three worklists and document types.
+
+**Not built, on purpose or deferred.**
+
+| Item | Why |
+|---|---|
+| Country-pack rule for the tax ID pattern | The profile rules already accept a pattern (`taxPattern`); nothing supplies one yet. Foreign vendors make a single national pattern wrong, so it needs the per-country pack design rather than a guess. |
+| Review through the approvals engine (`vendor.onboarding`) | Optional in the design. Review has its own permissions and history; wiring it adds a second path to the same decision. Revisit if a company wants multi-step sign-off. |
+| Calling the vendor on a number *from our records* is a rule for the person | The system records that it was done and by whom; it cannot place the call. |

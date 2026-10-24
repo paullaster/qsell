@@ -1,21 +1,23 @@
 'use client';
 
 import Link from 'next/link';
-import { use } from 'react';
+import { use, type ReactNode } from 'react';
 import type { vendorDetailAction } from '@/server/domains/vendors/actions';
 import { VENDOR_BLOCK, VENDOR_STATUS, VENDOR_TYPES } from '@/lib/vendor-forms';
+import { VendorPeoplePanel } from './VendorPeoplePanel';
+import { VendorStandingPanel } from './VendorStandingPanel';
 import { Chip, LoadFailed, PageHeader, buttonClass, cardClass, money } from '@/components/ui/screen-kit';
 
 type View = Extract<Awaited<ReturnType<typeof vendorDetailAction>>, { ok: true }>['data'];
 
-export function VendorDetailClient({ viewPromise }: { viewPromise: ReturnType<typeof vendorDetailAction> }) {
+export function VendorDetailClient({ viewPromise, reviewSlot }: { viewPromise: ReturnType<typeof vendorDetailAction>; reviewSlot: ReactNode }) {
   const res = use(viewPromise);
-  return res.ok ? <VendorDetailView view={res.data} /> : <LoadFailed error={res.error} />;
+  return res.ok ? <VendorDetailView view={res.data} reviewSlot={reviewSlot} /> : <LoadFailed error={res.error} />;
 }
 
 const dash = (v: string | number | null): string => (v === null || v === '' ? '—' : String(v));
 
-function VendorDetailView({ view }: { view: View }) {
+function VendorDetailView({ view, reviewSlot }: { view: View; reviewSlot: ReactNode }) {
   const v = view.vendor;
   const state = VENDOR_STATUS[v.status] ?? { label: v.status, tone: 'gray' as const };
   const type = VENDOR_TYPES.find((t) => t.id === v.vendorType)?.label ?? v.vendorType;
@@ -51,6 +53,8 @@ function VendorDetailView({ view }: { view: View }) {
         {v.notes === null ? null : <div className="sm:col-span-2"><dt className="text-xs text-fg-muted">Notes</dt><dd className="whitespace-pre-line">{v.notes}</dd></div>}
       </section>
 
+      {reviewSlot}
+
       {view.canSeeLedger ? (
         <section aria-label="What we owe" className={cardClass}>
           <h3 className="text-sm font-bold text-fg-strong">What we owe this vendor</h3>
@@ -60,19 +64,9 @@ function VendorDetailView({ view }: { view: View }) {
         </section>
       ) : null}
 
-      <section aria-label="Portal users" className={cardClass}>
-        <h3 className="text-sm font-bold text-fg-strong">People who can sign in</h3>
-        {view.portalUsers.length === 0 ? <p className="mt-1 text-sm text-fg-muted">Nobody has a vendor portal login for this vendor yet.</p> : (
-          <ul className="mt-2 divide-y divide-line text-sm">
-            {view.portalUsers.map((u) => (
-              <li key={u.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
-                <span><span className="font-semibold text-fg-strong">{u.name}</span> <span className="text-fg-muted">{u.email}</span></span>
-                <span className="flex items-center gap-2 text-xs text-fg-muted"><Chip tone="gray">{u.role}</Chip>{u.status === 'active' ? null : <Chip tone="amber">Removed</Chip>}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      <VendorStandingPanel vendorId={v.id} status={v.status} block={v.block} standing={view.standing} can={view.can} />
+
+      <VendorPeoplePanel vendorId={v.id} people={view.portalUsers} canInvite={view.can.invite} archived={v.status === 'archived'} />
 
       <section aria-label="History" className={cardClass}>
         <h3 className="text-sm font-bold text-fg-strong">History</h3>

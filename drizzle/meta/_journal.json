@@ -512,6 +512,20 @@
       "when": 1792738890114,
       "tag": "0072_vendor_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1792754571634,
+      "tag": "0073_vendor_profile",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1792824923584,
+      "tag": "0074_vendor_bank_change_and_reminders",
+      "breakpoints": true
     }
   ]
 }

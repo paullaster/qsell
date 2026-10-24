@@ -52,10 +52,20 @@ export async function vendorDetailAction(id: string) {
     const container = getContainer();
     const found = await container.vendors.get(ctx.companyId, id);
     if (found === null) throw new FinanceError('NOT_FOUND', 'That vendor does not exist.');
+    await container.vendorLifecycle.ensureReasons(ctx.companyId);
     const canLedger = await canPermission('vendor_ledger:read');
     const balances = canLedger ? await container.finance.vendorLedger.balances(ctx.companyId, id) : [];
     const v = found.vendor;
+    const [standing, canSuspend, canBlock, canArchive, canInvite] = await Promise.all([
+      container.vendorLifecycle.standing(ctx.companyId, id),
+      canPermission('vendors:suspend'),
+      canPermission('vendors:block'),
+      canPermission('vendors:archive'),
+      canPermission('vendors:invite'),
+    ]);
     return {
+      standing,
+      can: { suspend: canSuspend, block: canBlock, archive: canArchive, invite: canInvite },
       vendor: {
         id: v.id,
         number: v.number,
@@ -78,7 +88,7 @@ export async function vendorDetailAction(id: string) {
         createdAt: v.createdAt.toISOString(),
       },
       postingGroup: found.postingGroup,
-      portalUsers: found.portalUsers.map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.portal_role, status: u.status, lastLoginAt: u.last_login_at })),
+      portalUsers: found.portalUsers.map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.portal_role, status: u.status, lastLoginAt: u.last_login_at, joined: u.joined })),
       balances: balances.map((b) => ({ currency: b.currency, owed: fromCents(b.cents) })),
       canSeeLedger: canLedger,
       events: found.events.map((e) => ({

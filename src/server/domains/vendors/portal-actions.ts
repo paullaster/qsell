@@ -9,7 +9,8 @@ import { validatePassword } from '@/lib/passwordPolicy';
 import { checkRegistration, type VendorRegistration } from '@/lib/vendor-forms';
 import { has } from '@/lib/values';
 import { isUniqueViolation } from '@/server/domains/settings/errors';
-import { PortalAccessError, requirePortalVendor } from './portal-session';
+import { PortalAccessError } from './portal-session';
+import { portal } from './portal-runner';
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -86,25 +87,21 @@ export async function registerVendorAction(input: VendorRegistration): Promise<R
   }
 }
 
-export type PortalResult<T> = { ok: true; data: T } | { ok: false; error: string; signedOut?: true };
-
 /** What the vendor's dashboard shows: the business, where it stands, and what it still has to do. */
-export async function portalOverviewAction(): Promise<PortalResult<{
-  legalName: string;
-  status: string;
-  block: string;
-  number: string | null;
-  yourName: string;
-  yourRole: string;
-}>> {
-  try {
-    const me = await requirePortalVendor();
-    const found = await getContainer().vendors.portalView(me.vendorId);
-    if (found === null) return { ok: false, error: 'Your vendor account could not be found.', signedOut: true };
-    return { ok: true, data: { legalName: found.legalName, status: found.status, block: found.block, number: found.number, yourName: me.name, yourRole: me.portalRole } };
-  } catch (error) {
-    if (error instanceof PortalAccessError) return { ok: false, error: error.message, signedOut: true };
-    console.error('[vendor.portal] overview failed', error);
-    return { ok: false, error: 'Something went wrong. Please try again.' };
-  }
+export async function portalOverviewAction() {
+  return await portal('overview', async (me) => {
+    const container = getContainer();
+    const found = await container.vendors.portalView(me.vendorId);
+    if (found === null) throw new PortalAccessError();
+    const profile = await container.vendorProfile.statuses(me.companyId, me.vendorId);
+    return {
+      legalName: found.legalName,
+      status: found.status,
+      block: found.block,
+      number: found.number,
+      yourName: me.name,
+      yourRole: me.portalRole,
+      sections: profile?.statuses ?? null,
+    };
+  });
 }

@@ -15,6 +15,7 @@ import {
   index,
   check,
   primaryKey,
+  customType,
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import type { CompanyUiConfigRaw } from '@/config/company-ui';
@@ -73,6 +74,9 @@ import type {
 const quantity = (name: string) => numeric(name, { precision: 14, scale: 3, mode: 'number' });
 
 /** Top-level tenant. */
+/** Raw bytes (files kept in the database). */
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => 'bytea' });
+
 export const organizations = pgTable('organizations', {
   id: uuid('id').defaultRandom().primaryKey(),
   name: text('name').notNull(),
@@ -5673,6 +5677,25 @@ export const vendors = pgTable(
     approvedExpenseVendor: boolean('approved_expense_vendor').notNull().default(false),
     createdByStaff: boolean('created_by_staff').notNull().default(false),
     notes: text('notes'),
+    // The profile the vendor fills in itself (portal, V-1).
+    yearEstablished: integer('year_established'),
+    website: text('website'),
+    description: text('description'),
+    physicalStreet: text('physical_street'),
+    physicalCity: text('physical_city'),
+    physicalCounty: text('physical_county'),
+    physicalPostalCode: text('physical_postal_code'),
+    postalAddress: text('postal_address'),
+    registrationDate: date('registration_date', { mode: 'string' }),
+    employeeCount: integer('employee_count'),
+    turnoverBand: text('turnover_band'),
+    /** The payment terms the vendor asks for (ours are `paymentTermDays`). */
+    offeredPaymentTermDays: integer('offered_payment_term_days'),
+    mobileMoneyNumber: text('mobile_money_number'),
+    taxExempt: boolean('tax_exempt').notNull().default(false),
+    submittedAt: timestamp('submitted_at', { withTimezone: true }),
+    reviewerId: text('reviewer_id'),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -5844,3 +5867,226 @@ export const vendorDetailedEntries = pgTable(
 export type VendorRow = typeof vendors.$inferSelect;
 export type VendorUserRow = typeof vendorUsers.$inferSelect;
 export type VendorLedgerEntryRow = typeof vendorLedgerEntries.$inferSelect;
+
+export type VendorSection = 'profile' | 'business' | 'financial' | 'contacts' | 'attachments';
+export type VendorContactRole = 'management' | 'sales' | 'finance' | 'technical';
+export type VendorDocumentStatus = 'submitted' | 'valid' | 'invalid' | 'expired' | 'replaced';
+export type VendorBankStatus = 'draft' | 'active' | 'pending_change' | 'retired';
+export type VendorDecision = 'pending' | 'approved' | 'revision_requested' | 'rejected';
+
+export const vendorContacts = pgTable(
+  'vendor_contacts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    role: text('role').$type<VendorContactRole>().notNull(),
+    email: text('email').notNull(),
+    phone: text('phone').notNull(),
+    isPrimary: boolean('is_primary').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('vendor_contacts_vendor_idx').on(t.vendorId),
+    uniqueIndex('vendor_contacts_one_primary_uidx').on(t.vendorId).where(sql`${t.isPrimary}`),
+    check('vendor_contacts_role_chk', sql`${t.role} IN ('management','sales','finance','technical')`),
+  ],
+);
+
+/** Owners and directors. The ID number is sealed: it is shown only to the person who must verify it. */
+export const vendorDirectors = pgTable(
+  'vendor_directors',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    idType: text('id_type').notNull(),
+    idNumberSealed: jsonb('id_number_sealed').$type<EncryptedCredentialsBlob>().notNull(),
+    idLast4: text('id_last4').notNull(),
+    sharePercent: numeric('share_percent', { precision: 5, scale: 2 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('vendor_directors_vendor_idx').on(t.vendorId), check('vendor_directors_share_chk', sql`${t.sharePercent} IS NULL OR ${t.sharePercent} BETWEEN 0 AND 100`)],
+);
+
+export const vendorReferences = pgTable(
+  'vendor_references',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'cascade' }),
+    clientName: text('client_name').notNull(),
+    workDescription: text('work_description'),
+    valueAmount: numeric('value_amount', { precision: 14, scale: 2 }),
+    contactName: text('contact_name'),
+    contactPhone: text('contact_phone'),
+    year: integer('year'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('vendor_references_vendor_idx').on(t.vendorId)],
+);
+
+/**
+ * Where a vendor is paid. The number is sealed and shown masked; its hash finds the same account on two vendors. A bank
+ * account is never edited: a change is a new row (`pending_change`) that replaces the old one only when approved.
+ */
+export const vendorBankAccounts = pgTable(
+  'vendor_bank_accounts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'cascade' }),
+    bankName: text('bank_name').notNull(),
+    branch: text('branch').notNull(),
+    accountName: text('account_name').notNull(),
+    accountSealed: jsonb('account_sealed').$type<EncryptedCredentialsBlob>().notNull(),
+    accountLast4: text('account_last4').notNull(),
+    accountHash: text('account_hash').notNull(),
+    swift: text('swift'),
+    status: text('status').$type<VendorBankStatus>().notNull().default('draft'),
+    createdBy: text('created_by'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    // A change to an approved vendor's bank details (design doc §17.2): proposed by the vendor, a call-back by one person,
+    // approval by a different one, then a cool-off before the account is used.
+    /** The account this one takes the place of when it goes live; empty when it is an additional account. */
+    replacesId: uuid('replaces_id').references((): AnyPgColumn => vendorBankAccounts.id, { onDelete: 'set null' }),
+    proposedBy: text('proposed_by'),
+    /** The bank letter the vendor gave as evidence for this change. */
+    evidenceDocumentId: uuid('evidence_document_id').references((): AnyPgColumn => vendorDocuments.id, { onDelete: 'set null' }),
+    callbackBy: text('callback_by'),
+    callbackAt: timestamp('callback_at', { withTimezone: true }),
+    callbackNote: text('callback_note'),
+    approvedBy: text('approved_by'),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    /** When the account may be used: approval plus the cool-off. */
+    effectiveFrom: timestamp('effective_from', { withTimezone: true }),
+    decisionNote: text('decision_note'),
+  },
+  (t) => [
+    index('vendor_bank_vendor_idx').on(t.vendorId),
+    index('vendor_bank_hash_idx').on(t.accountHash),
+    uniqueIndex('vendor_bank_one_pending_uidx').on(t.vendorId).where(sql`${t.status} = 'pending_change'`),
+    index('vendor_bank_pending_idx').on(t.effectiveFrom).where(sql`${t.status} = 'pending_change'`),
+    check('vendor_bank_four_eyes_chk', sql`(${t.approvedBy} IS NULL OR ${t.approvedBy} IS DISTINCT FROM ${t.proposedBy}) AND (${t.approvedBy} IS NULL OR ${t.approvedBy} IS DISTINCT FROM ${t.callbackBy})`),
+    check('vendor_bank_status_chk', sql`${t.status} IN ('draft','active','pending_change','retired')`),
+  ],
+);
+
+export const vendorDocumentTypes = pgTable(
+  'vendor_document_types',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    /** Every vendor must hold a valid one before it can be approved. */
+    requiredForAll: boolean('required_for_all').notNull().default(false),
+    needsExpiry: boolean('needs_expiry').notNull().default(false),
+    /** Days before expiry on which the vendor and the buyer are reminded. */
+    reminderDays: jsonb('reminder_days').$type<number[]>().notNull().default([30, 7, 0]),
+    /** An expired one suspends what it supports (qualifications, V-2) until replaced. */
+    blocking: boolean('blocking').notNull().default(false),
+    sortOrder: integer('sort_order').notNull().default(0),
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('vendor_document_types_company_code_uidx').on(t.companyId, t.code), check('vendor_document_types_code_chk', sql`${t.code} ~ '^[A-Z0-9][A-Z0-9._-]{0,29}$'`)],
+);
+
+/** What a vendor uploads, kept in the database behind our own authorised routes: never a public link. */
+export const vendorFiles = pgTable(
+  'vendor_files',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'restrict' }),
+    fileName: text('file_name').notNull(),
+    mime: text('mime').notNull(),
+    sizeBytes: integer('size_bytes').notNull(),
+    sha256: text('sha256').notNull(),
+    data: bytea('data').notNull(),
+    createdBy: text('created_by'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('vendor_files_vendor_idx').on(t.vendorId),
+    check('vendor_files_mime_chk', sql`${t.mime} IN ('application/pdf','image/jpeg','image/png','image/webp')`),
+    check('vendor_files_size_chk', sql`${t.sizeBytes} BETWEEN 1 AND 26214400`),
+  ],
+);
+
+export const vendorDocuments = pgTable(
+  'vendor_documents',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'cascade' }),
+    documentTypeId: uuid('document_type_id')
+      .notNull()
+      .references(() => vendorDocumentTypes.id, { onDelete: 'restrict' }),
+    fileId: uuid('file_id')
+      .notNull()
+      .references(() => vendorFiles.id, { onDelete: 'restrict' }),
+    issuedOn: date('issued_on', { mode: 'string' }),
+    expiresOn: date('expires_on', { mode: 'string' }),
+    status: text('status').$type<VendorDocumentStatus>().notNull().default('submitted'),
+    /** The reminder threshold (days before expiry) last mailed for this document, so each is sent once. */
+    lastReminderDay: integer('last_reminder_day'),
+    verifiedBy: text('verified_by'),
+    verifiedAt: timestamp('verified_at', { withTimezone: true }),
+    note: text('note'),
+    createdBy: text('created_by'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('vendor_documents_vendor_idx').on(t.vendorId, t.documentTypeId),
+    index('vendor_documents_expiry_idx').on(t.expiresOn).where(sql`${t.status} IN ('submitted','valid')`),
+    check('vendor_documents_status_chk', sql`${t.status} IN ('submitted','valid','invalid','expired','replaced')`),
+  ],
+);
+
+/** One row each time a vendor submits its profile: a frozen copy, and what the reviewer decided about it. */
+export const vendorProfileVersions = pgTable(
+  'vendor_profile_versions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'cascade' }),
+    version: integer('version').notNull(),
+    snapshot: jsonb('snapshot').$type<Record<string, unknown>>().notNull(),
+    submittedAt: timestamp('submitted_at', { withTimezone: true }).notNull().defaultNow(),
+    submittedBy: text('submitted_by'),
+    decision: text('decision').$type<VendorDecision>().notNull().default('pending'),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    decidedBy: text('decided_by'),
+    reasonCode: text('reason_code'),
+    comment: text('comment'),
+    /** For a revision request: what to fix, section by section. */
+    sectionNotes: jsonb('section_notes').$type<Partial<Record<VendorSection, string>>>().notNull().default({}),
+  },
+  (t) => [
+    uniqueIndex('vendor_profile_versions_uidx').on(t.vendorId, t.version),
+    check('vendor_profile_versions_decision_chk', sql`${t.decision} IN ('pending','approved','revision_requested','rejected')`),
+  ],
+);
+
+export type VendorContactRow = typeof vendorContacts.$inferSelect;
+export type VendorDirectorRow = typeof vendorDirectors.$inferSelect;
+export type VendorBankAccountRow = typeof vendorBankAccounts.$inferSelect;
+export type VendorDocumentRow = typeof vendorDocuments.$inferSelect;
+export type VendorDocumentTypeRow = typeof vendorDocumentTypes.$inferSelect;
+export type VendorProfileVersionRow = typeof vendorProfileVersions.$inferSelect;

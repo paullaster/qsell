@@ -16,7 +16,8 @@ import { businessDate } from '@/server/kernel/numbering/business-date';
 import { FinanceError, type FinanceContext } from '@/server/domains/finance/errors';
 import { isUniqueViolation } from '@/server/domains/settings/errors';
 
-type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
+export type VendorTx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
+type Tx = VendorTx;
 
 export interface VendorListFilter {
   q?: string;
@@ -124,7 +125,7 @@ export class VendorService {
   }
 
   /** Gives the vendor its number and makes it active. Runs inside the caller's transaction. */
-  private async activateIn(tx: Tx, ctx: FinanceContext, vendorId: string, from: VendorStatus): Promise<string> {
+  async activateIn(tx: Tx, ctx: FinanceContext, vendorId: string, from: VendorStatus): Promise<string> {
     const { number } = await this.numbering.assign(
       'vendor',
       { companyId: ctx.companyId, branchId: null, date: businessDate(), document: { kind: 'vendor', id: vendorId } },
@@ -169,8 +170,8 @@ export class VendorService {
       .where(and(eq(vendors.companyId, companyId), eq(vendors.id, id)));
     if (row === undefined) return null;
     const [portalUsers, events] = await Promise.all([
-      this.db.execute<{ id: string; name: string; email: string; portal_role: string; status: string; last_login_at: string | null }>(sql`
-        SELECT vu.id, u.name, u.email, vu.portal_role, vu.status, u.last_login_at::text AS last_login_at
+      this.db.execute<{ id: string; name: string; email: string; portal_role: string; status: string; last_login_at: string | null; joined: boolean }>(sql`
+        SELECT vu.id, u.name, u.email, vu.portal_role, vu.status, u.last_login_at::text AS last_login_at, (u.email_verified_at IS NOT NULL) AS joined
         FROM vendor_users vu JOIN users u ON u.id = vu.user_id WHERE vu.vendor_id = ${id}::uuid ORDER BY vu.created_at`),
       this.db.select().from(vendorEvents).where(eq(vendorEvents.vendorId, id)).orderBy(desc(vendorEvents.id)).limit(100),
     ]);

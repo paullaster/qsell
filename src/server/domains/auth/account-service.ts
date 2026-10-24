@@ -167,7 +167,7 @@ function isAccountUsable(user: UserRow): boolean {
  * Links are built only from configuration, never from the request's Host
  * header, so a forged Host cannot redirect a victim's reset link to an attacker.
  */
-function resolvePublicBaseUrl(configured: string | null): string {
+export function resolvePublicBaseUrl(configured: string | null): string {
   const candidates = [
     configured,
     process.env.APP_URL,
