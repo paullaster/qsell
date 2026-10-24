@@ -64,6 +64,15 @@ export function VendorDashboardClient({ overviewPromise }: { overviewPromise: Re
           <p className="mt-1 text-sm text-fg-muted">Apply to be qualified for the kinds of work you do, and follow your applications.</p>
         </section>
       ) : null}
+      {v.status === 'active' ? (
+        <section aria-label="Requests for quotation" className={cardClass}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-bold text-fg-strong">Requests for quotation</h2>
+            <Link href="/vendor/rfqs" className={buttonClass}>Open my requests</Link>
+          </div>
+          <p className="mt-1 text-sm text-fg-muted">Requests you were invited to, your quotes, and the results.</p>
+        </section>
+      ) : null}
       {v.yourRole === 'owner' ? (
         <section aria-label="Your team" className={cardClass}>
           <div className="flex flex-wrap items-center justify-between gap-2">

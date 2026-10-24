@@ -221,4 +221,75 @@ export class VendorNotifier {
     if (note !== null) details.push(['Note', note]);
     await this.send(addresses, `${heading}: ${categoryName}`, { heading, body, cta: 'Open prequalification', path: '/vendor/prequalification', details }, 'vendor');
   }
+
+  /** Every vendor's own contacts, separately: one invitation each, never a shared list of who else was invited. */
+  private async eachVendor(vendorIds: string[], make: (vendorId: string, addresses: string[]) => Promise<void>): Promise<void> {
+    for (const id of vendorIds) {
+      const { addresses } = await this.vendorAddresses(id);
+      await make(id, addresses);
+    }
+  }
+
+  async rfqInvited(vendorIds: string[], number: string, title: string, deadline: Date): Promise<void> {
+    await this.eachVendor(vendorIds, async (_id, addresses) => {
+      await this.send(addresses, `You are invited to quote: ${number}`, {
+        heading: `You are invited to quote for ${title}`,
+        body: 'Open the request in the vendor portal to read what is wanted and send your quote before the deadline.',
+        cta: 'Open the request',
+        path: '/vendor/rfqs',
+        details: [['Request', number], ['Quotes are due', `${deadline.toISOString().replace('T', ' ').slice(0, 16)  } UTC`]],
+      }, 'vendor');
+    });
+  }
+
+  async rfqAddendum(vendorIds: string[], number: string, title: string, text: string, deadline: Date | null): Promise<void> {
+    const details: [string, string][] = [['Request', number === '' ? title : `${number} · ${title}`]];
+    if (deadline !== null) details.push(['New deadline', `${deadline.toISOString().replace('T', ' ').slice(0, 16)  } UTC`]);
+    await this.eachVendor(vendorIds, async (_id, addresses) => {
+      await this.send(addresses, `Update to ${number === '' ? title : number}`, { heading: 'An update to a request you were invited to', body: text, cta: 'Open the request', path: '/vendor/rfqs', details }, 'vendor');
+    });
+  }
+
+  async rfqClosed(vendorIds: string[], number: string, title: string, reason: string): Promise<void> {
+    await this.eachVendor(vendorIds, async (_id, addresses) => {
+      await this.send(addresses, `${number} is closed`, { heading: `${title} is closed to new quotes`, body: `The buyer closed this request early: ${reason}`, cta: 'Open the request', path: '/vendor/rfqs', details: [['Request', number]] }, 'vendor');
+    });
+  }
+
+  async rfqCancelled(vendorIds: string[], number: string, title: string, reason: string): Promise<void> {
+    await this.eachVendor(vendorIds, async (_id, addresses) => {
+      await this.send(addresses, `${number} is cancelled`, { heading: `${title} is cancelled`, body: `The buyer cancelled this request: ${reason}`, cta: 'Open the request', path: '/vendor/rfqs', details: [['Request', number]] }, 'vendor');
+    });
+  }
+
+  async rfqReminder(vendorId: string, number: string, title: string, deadline: Date, hours: number): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId);
+    await this.send(addresses, `Quotes for ${number} are due in ${String(hours)} hours`, { heading: `Quotes for ${title} are due soon`, body: 'You have not sent a quote yet. Send it before the deadline, or tell us you are not bidding.', cta: 'Open the request', path: '/vendor/rfqs', details: [['Request', number], ['Quotes are due', `${deadline.toISOString().replace('T', ' ').slice(0, 16)  } UTC`]] }, 'vendor');
+  }
+
+  async quoteReceived(vendorId: string, number: string, version: number): Promise<void> {
+    const { legalName } = await this.vendorAddresses(vendorId);
+    await this.send(await this.staffAddress(), `A quote came in for ${number}`, { heading: `${legalName} sent a quote`, body: `Version ${String(version)} of a quote for ${number} was received. Sealed quotes stay closed until the deadline.`, cta: 'Open the request', path: '/admin/vendors/rfqs', details: [['Request', number]] }, 'staff');
+  }
+
+  async quoteRevisionRequested(vendorId: string, number: string, title: string, comment: string, due: Date): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId);
+    await this.send(addresses, `Please revise your quote for ${number}`, { heading: `The buyer asks you to revise your quote for ${title}`, body: comment, cta: 'Revise my quote', path: '/vendor/rfqs', details: [['Request', number], ['Send the revision by', `${due.toISOString().replace('T', ' ').slice(0, 16)  } UTC`]] }, 'vendor');
+  }
+
+  async quoteRejected(vendorId: string, number: string, title: string, reason: string): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId);
+    await this.send(addresses, `Your quote for ${number} was not accepted`, { heading: `Your quote for ${title} was not accepted`, body: 'Thank you for quoting.', cta: 'See why', path: '/vendor/rfqs', details: [['Request', number], ['Reason', reason]] }, 'vendor');
+  }
+
+  async rfqResult(vendorId: string, number: string, title: string, awarded: boolean): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId);
+    await this.send(addresses, awarded ? `You were awarded ${number}` : `Result of ${number}`, {
+      heading: awarded ? `You were awarded work on ${title}` : `${title} was awarded to another vendor`,
+      body: awarded ? 'Congratulations. A purchase order will follow.' : 'Thank you for quoting. We do not share other vendors’ details or prices.',
+      cta: 'Open the request',
+      path: '/vendor/rfqs',
+      details: [['Request', number]],
+    }, 'vendor');
+  }
 }

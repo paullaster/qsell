@@ -789,6 +789,42 @@ export const PERMISSIONS = {
     category: 'Vendor Management',
     description: 'Approve, refuse or send back a prequalification application; suspend, reinstate or revoke a qualification',
   },
+  'rfq:read': {
+    resource: 'rfq',
+    action: 'read',
+    category: 'Vendor Management',
+    description: 'See requests for quotation and who was invited',
+  },
+  'rfq:create': {
+    resource: 'rfq',
+    action: 'create',
+    category: 'Vendor Management',
+    description: 'Write requests for quotation, invite qualified vendors, send clarifications and answer vendors’ questions',
+  },
+  'rfq:issue': {
+    resource: 'rfq',
+    action: 'issue',
+    category: 'Vendor Management',
+    description: 'Issue a request for quotation to the invited vendors',
+  },
+  'rfq:close': {
+    resource: 'rfq',
+    action: 'close',
+    category: 'Vendor Management',
+    description: 'Close a request early, move its deadline, reopen it or cancel it',
+  },
+  'rfq:evaluate': {
+    resource: 'rfq',
+    action: 'evaluate',
+    category: 'Vendor Management',
+    description: 'Open the quotes after the deadline, compare them, and accept, refuse or ask for a revision',
+  },
+  'rfq:award': {
+    resource: 'rfq',
+    action: 'award',
+    category: 'Vendor Management',
+    description: 'Award a request for quotation to the chosen vendors',
+  },
   'vendor_ledger:read': {
     resource: 'vendor_ledger',
     action: 'read',

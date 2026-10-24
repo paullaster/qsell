@@ -262,6 +262,15 @@ export const vendorBankPromote = async (_payload: unknown, helpers: JobHelpers) 
   if (n > 0) helpers.logger.info(`Vendor bank accounts: ${n} put into use after the cool-off`);
 };
 
+/** Worker cron task (every few minutes): requests past their deadline close, and vendors that have not quoted are reminded. */
+export const rfqDeadlines = async (_payload: unknown, helpers: JobHelpers) => {
+  const container = getContainer();
+  const now = new Date();
+  const closed = await container.rfqs.closeDue(now);
+  const reminded = await container.rfqs.remind(now);
+  if (closed > 0 || reminded > 0) helpers.logger.info(`Requests for quotation: ${closed} closed at their deadline, ${reminded} reminders sent`);
+};
+
 export const tasks = {
   'process-payment-callback': processPaymentCallback,
   'process-webhook': processWebhook,
@@ -287,4 +296,5 @@ export const tasks = {
   'provider-pull-sweep': providerPullSweep,
   'vendor-document-expiry': vendorDocumentExpiry,
   'vendor-bank-promote': vendorBankPromote,
+  'rfq-deadlines': rfqDeadlines,
 };

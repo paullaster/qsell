@@ -29,7 +29,7 @@ export const attemptTag = (project: string, retry: number): string => `${project
 export async function signInAsVendor(page: Page, vendor: Pick<VendorFixture, 'email' | 'password'>): Promise<void> {
   await page.goto('/login?callbackUrl=%2Fvendor');
   await expect(page.getByLabel('Email')).toBeVisible({ timeout: 60_000 });
-  await expect.poll(() => page.getByLabel('Email').evaluate((el) => Object.keys(el).some((k) => k.startsWith('__reactProps'))), { timeout: 30_000 }).toBe(true);
+  await expect.poll(() => page.getByLabel('Email').evaluate((el) => Object.keys(el).some((k) => k.startsWith('__reactProps'))).catch(() => false), { timeout: 30_000 }).toBe(true);
   await page.getByLabel('Email').fill(vendor.email);
   await page.getByLabel('Password', { exact: true }).fill(vendor.password);
   await page.getByRole('button', { name: /^Sign in/ }).click();
@@ -55,4 +55,22 @@ export function makePrequal(tag: string, vendorId: string | null, mode: 'categor
   const line = output.split('\n').find((l) => l.startsWith('FIXTURE '));
   if (line === undefined) throw new Error(`the prequalification fixture printed nothing usable: ${output.slice(-500)}`);
   return JSON.parse(line.slice('FIXTURE '.length)) as PrequalFixture;
+}
+
+export interface RfqFixture {
+  categoryId: string;
+  categoryName: string;
+  rfqId?: string;
+  number?: string;
+  title?: string;
+  lineA?: string;
+  lineB?: string;
+}
+
+/** A category with these approved vendors qualified in it, and (by mode) a request, sent quotes, or a closed request (see rfq-fixture.ts). */
+export function makeRfq(tag: string, vendorIds: string[], mode: 'category' | 'issued' | 'quoted' | 'closed'): RfqFixture {
+  const output = execFileSync('pnpm', ['exec', 'tsx', 'e2e/support/rfq-fixture.ts', tag, vendorIds.join(','), mode], { env: { ...process.env, ...e2eEnvironment() }, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+  const line = output.split('\n').find((l) => l.startsWith('FIXTURE '));
+  if (line === undefined) throw new Error(`the request fixture printed nothing usable: ${output.slice(-500)}`);
+  return JSON.parse(line.slice('FIXTURE '.length)) as RfqFixture;
 }

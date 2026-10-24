@@ -185,6 +185,11 @@ export const DOCUMENT_KINDS = {
     fiscal: false,
     suggested: { code: 'VND', prefix: 'V-', digits: 6, reset: 'never', blockSize: 20 },
   },
+  rfq: {
+    label: 'Request for quotation',
+    fiscal: false,
+    suggested: { code: 'RFQ', prefix: 'RFQ-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
+  },
   project: {
     label: 'Project',
     fiscal: false,

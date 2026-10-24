@@ -4,6 +4,8 @@
  * `category` is an open category with two scored questions (10 and 20 points) and one that is not scored; `submitted` adds a
  * sent application by the vendor; `evaluated` adds an evaluator (someone else) who has given full marks. Prints one JSON line.
  */
+export {};
+
 const MODES = ['category', 'submitted', 'evaluated'];
 
 async function main(): Promise<void> {

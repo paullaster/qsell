@@ -2,6 +2,7 @@ import { eq, ne, sql } from 'drizzle-orm';
 import { procurementCategories, reasonCodes, vendors } from '@/server/db/drizzle/schema';
 import { VENDOR_STATUS, VENDOR_TYPES } from '@/lib/vendor-forms';
 import { QUESTION_KINDS, STATUS_WORDS } from '@/lib/prequalification';
+import { RFQ_STATUS } from '@/lib/rfq';
 import { CONTACT_ROLES, ID_TYPES, TURNOVER_BANDS } from '@/lib/vendor-profile';
 import { acceptFilters, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
 
@@ -118,6 +119,29 @@ export const VENDOR_LOOKUP_SOURCES: LookupSource[] = [
     items: ({ filters }) => {
       acceptFilters(filters, {});
       return QUESTION_KINDS.map((k) => ({ id: k.id, label: k.label, description: null }));
+    },
+  }),
+  /** The reasons a quote can be refused for. */
+  tableSource({
+    key: 'rfq-rejection-reasons',
+    permission: 'rfq:evaluate',
+    table: reasonCodes,
+    id: reasonCodes.code,
+    label: reasonCodes.description,
+    searchColumns: [reasonCodes.description, reasonCodes.code],
+    select: { requiresComment: reasonCodes.requiresComment },
+    scope: ({ companyId, filters }) => {
+      acceptFilters(filters, {});
+      return [eq(reasonCodes.companyId, companyId), eq(reasonCodes.isActive, true), sql`${reasonCodes.appliesTo} @> '["rfq_rejection"]'::jsonb`];
+    },
+    toOption: (row) => ({ id: text(row.id), label: text(row.label), description: null, badge: null, meta: { requiresComment: row.requiresComment === true ? '1' : '' } }),
+  }),
+  staticSource({
+    key: 'rfq-statuses',
+    permission: 'rfq:read',
+    items: ({ filters }) => {
+      acceptFilters(filters, {});
+      return Object.entries(RFQ_STATUS).map(([id, v]) => ({ id, label: v.label, description: null }));
     },
   }),
   staticSource({

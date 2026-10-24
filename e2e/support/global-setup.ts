@@ -40,7 +40,7 @@ async function warmUp(): Promise<void> {
   const browser = await chromium.launch({ channel: 'chrome' });
   const context = await browser.newContext({ storageState: AUTH_FILE, baseURL: E2E_URL });
   const page = await context.newPage();
-  const routes = ['/admin/quotes', '/admin/quotes/templates', '/admin/quotes/section-templates'];
+  const routes = ['/admin/quotes', '/admin/quotes/templates', '/admin/quotes/section-templates', '/admin/vendors/rfqs'];
   for (const route of routes) {
     // A warm-up that is cut short (the machine's network changed while the page loaded) is tried again, not fatal.
     for (let attempt = 1; attempt <= 4; attempt += 1) {

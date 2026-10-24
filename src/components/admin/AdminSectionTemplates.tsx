@@ -3,6 +3,12 @@
 import { useId, useMemo, useRef, useState } from 'react';
 import { Copy, Plus, X } from 'lucide-react';
 import { buildCatalogueIndex, type CatalogueProduct } from '@/lib/catalogue-entry';
+import {
+  firstUnpricedFixed,
+  priceOnModeChange,
+  readPriceInput,
+  unpricedFixedMessage,
+} from '@/lib/template-line-price';
 import { addCatalogueEntry, lastIndexOfProduct, type CatalogueEntry } from '@/lib/quote-layout';
 import type {
   SectionTemplate,
@@ -426,13 +432,10 @@ function SectionTemplateEditor({
 
   const submit = async (event: React.SyntheticEvent) => {
     event.preventDefault();
-    const unpriced = input.lines.findIndex(
-      (line) => line.priceMode === 'fixed' && line.unitPrice === null,
-    );
+    const unpriced = firstUnpricedFixed(input.lines);
     if (unpriced >= 0) {
-      const name = productById.get(input.lines[unpriced].productId)?.name ?? 'An item';
       setError(
-        `${name} is set to a fixed price but has none. Type its price or use the catalog price.`,
+        unpricedFixedMessage(productById.get(input.lines[unpriced].productId)?.name ?? 'An item'),
       );
       return;
     }
@@ -627,10 +630,7 @@ function SectionTemplateEditor({
                         onChange={(mode) =>
                           patchLine(index, {
                             priceMode: mode,
-                            unitPrice:
-                              mode === 'catalog'
-                                ? null
-                                : (line.unitPrice ?? product?.price ?? null),
+                            unitPrice: priceOnModeChange(mode, line.unitPrice, product?.price),
                           })
                         }
                       />
@@ -648,8 +648,7 @@ function SectionTemplateEditor({
                         }
                         onChange={(event) =>
                           patchLine(index, {
-                            unitPrice:
-                              event.target.value === '' ? null : Number(event.target.value),
+                            unitPrice: readPriceInput(event.target.value),
                           })
                         }
                         className="min-h-9 w-28 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong disabled:opacity-50"

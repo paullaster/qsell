@@ -3,12 +3,13 @@ import { expect, type Locator, type Page } from '@playwright/test';
 /** Opens an admin screen and waits for its heading, trying again if the development server was still compiling it. */
 export async function open(page: Page, url: string, heading: string | RegExp): Promise<void> {
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    await page.goto(url);
     try {
+      // A first visit that makes the development server compile can reload the page under us; that is another try, not a failure.
+      await page.goto(url);
       const title = page.getByRole('heading', { name: heading, level: 2 }).first();
       await expect(title).toBeVisible({ timeout: 30_000 });
       // A streamed page is drawn before it is wired up; clicks and typing in that moment are lost.
-      await expect.poll(() => title.evaluate((el) => Object.keys(el).some((k) => k.startsWith('__reactProps'))), { timeout: 30_000 }).toBe(true);
+      await expect.poll(() => title.evaluate((el) => Object.keys(el).some((k) => k.startsWith('__reactProps'))).catch(() => false), { timeout: 30_000 }).toBe(true);
       return;
     } catch (error) {
       if (attempt === 3) throw error;

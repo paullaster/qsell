@@ -366,6 +366,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'vendors:read',
       },
       {
+        id: 'vendor-rfqs',
+        title: 'Requests for quotation',
+        name: 'vendor-rfqs',
+        href: '/admin/vendors/rfqs',
+        description: 'Ask qualified vendors for quotes, compare them and award',
+        icon: 'FileText',
+        permission: 'rfq:read',
+      },
+      {
         id: 'vendor-prequalification',
         title: 'Prequalification',
         name: 'vendor-prequalification',

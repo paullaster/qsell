@@ -9,6 +9,12 @@ import { CataloguePicker } from './quote-layout/CataloguePicker';
 import { QuickAdd } from './quote-layout/QuickAdd';
 import { BulkAddDialog } from './quote-layout/BulkAddDialog';
 import { QuantityInput } from './quote-layout/QuantityInput';
+import {
+  firstUnpricedFixed,
+  priceOnModeChange,
+  readPriceInput,
+  unpricedFixedMessage,
+} from '@/lib/template-line-price';
 import { addCatalogueEntry, lastIndexOfProduct, type CatalogueEntry } from '@/lib/quote-layout';
 import type {
   QuoteSearchHit,
@@ -241,31 +247,55 @@ export function AdminSalesQuoteTemplates({
         </header>
         <ListFilters noun="templates" onChange={setFilters} />
         <div className={`overflow-x-auto ${list.phase === 'loading' ? 'opacity-60' : ''}`}>
-          <table role="table"
-            className="block md:table w-full text-left text-sm"
+          <table
+            role="table"
+            className="block w-full text-left text-sm md:table"
             aria-busy={list.phase === 'loading'}
           >
-            <thead role="rowgroup" className="hidden md:table-header-group bg-surface text-xs text-fg-muted">
+            <thead
+              role="rowgroup"
+              className="hidden bg-surface text-xs text-fg-muted md:table-header-group"
+            >
               <tr role="row" className="block md:table-row">
-                <th role="columnheader" className="px-4 py-3">Template</th>
-                <th role="columnheader" className="px-4 py-3">Default customer</th>
-                <th role="columnheader" className="px-4 py-3 text-right">Items</th>
-                <th role="columnheader" className="px-4 py-3 text-right">Used</th>
-                <th role="columnheader" className="px-4 py-3">State</th>
-                <th role="columnheader" className="px-4 py-3 text-right">Actions</th>
+                <th role="columnheader" className="px-4 py-3">
+                  Template
+                </th>
+                <th role="columnheader" className="px-4 py-3">
+                  Default customer
+                </th>
+                <th role="columnheader" className="px-4 py-3 text-right">
+                  Items
+                </th>
+                <th role="columnheader" className="px-4 py-3 text-right">
+                  Used
+                </th>
+                <th role="columnheader" className="px-4 py-3">
+                  State
+                </th>
+                <th role="columnheader" className="px-4 py-3 text-right">
+                  Actions
+                </th>
               </tr>
             </thead>
-            <tbody role="rowgroup" className="block md:table-row-group divide-y divide-line">
+            <tbody role="rowgroup" className="block divide-y divide-line md:table-row-group">
               {list.rows.length === 0 ? (
                 <tr role="row" className="block md:table-row">
-                  <td role="cell" colSpan={6} className="block md:table-cell p-12 text-center text-fg-muted">
+                  <td
+                    role="cell"
+                    colSpan={6}
+                    className="block p-12 text-center text-fg-muted md:table-cell"
+                  >
                     {emptyText}
                   </td>
                 </tr>
               ) : (
                 list.rows.map((template) => (
-                  <tr role="row" key={template.id} className="block md:table-row hover:bg-hover/50">
-                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3" data-label="Template">
+                  <tr role="row" key={template.id} className="block hover:bg-hover/50 md:table-row">
+                    <td
+                      role="cell"
+                      className="block px-4 py-3 before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:table-cell md:before:hidden"
+                      data-label="Template"
+                    >
                       <button
                         type="button"
                         onClick={() => void openEditor(template)}
@@ -280,12 +310,32 @@ export function AdminSalesQuoteTemplates({
                         </p>
                       )}
                     </td>
-                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 text-fg-muted" data-label="Default customer">
+                    <td
+                      role="cell"
+                      className="block px-4 py-3 text-fg-muted before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:table-cell md:before:hidden"
+                      data-label="Default customer"
+                    >
                       {template.customerName ?? 'Any customer'}
                     </td>
-                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 md:text-right tabular-nums" data-label="Items">{template.lineCount}</td>
-                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 md:text-right tabular-nums" data-label="Used">{template.usageCount}</td>
-                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3" data-label="State">
+                    <td
+                      role="cell"
+                      className="block px-4 py-3 tabular-nums before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:table-cell md:text-right md:before:hidden"
+                      data-label="Items"
+                    >
+                      {template.lineCount}
+                    </td>
+                    <td
+                      role="cell"
+                      className="block px-4 py-3 tabular-nums before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:table-cell md:text-right md:before:hidden"
+                      data-label="Used"
+                    >
+                      {template.usageCount}
+                    </td>
+                    <td
+                      role="cell"
+                      className="block px-4 py-3 before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:table-cell md:before:hidden"
+                      data-label="State"
+                    >
                       <span
                         className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${template.status === 'active' ? 'bg-emerald-100 text-emerald-800' : 'bg-surface-sunken text-fg-muted'}`}
                       >
@@ -295,7 +345,11 @@ export function AdminSalesQuoteTemplates({
                         {templateStateLabel(template)}
                       </span>
                     </td>
-                    <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3" data-label="Actions">
+                    <td
+                      role="cell"
+                      className="block px-4 py-3 before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:table-cell md:before:hidden"
+                      data-label="Actions"
+                    >
                       <div className="flex justify-end gap-1">
                         {template.status === 'active' && canUpdate && !template.isDefault && (
                           <button
@@ -560,6 +614,13 @@ function TemplateEditor({
   useCustomerCreated((created) => void chooseCustomer({ id: created.id, label: created.label }));
   const submit = async (event: React.SyntheticEvent) => {
     event.preventDefault();
+    const unpriced = firstUnpricedFixed(input.lines);
+    if (unpriced >= 0) {
+      setError(
+        unpricedFixedMessage(productById.get(input.lines[unpriced].productId)?.name ?? 'An item'),
+      );
+      return;
+    }
     try {
       setBusy(true);
       setError(null);
@@ -943,8 +1004,7 @@ function TemplateEditor({
                         onChange={(mode) =>
                           patchLine(index, {
                             priceMode: mode,
-                            unitPrice:
-                              mode === 'catalog' ? null : (line.unitPrice ?? product?.price ?? 0),
+                            unitPrice: priceOnModeChange(mode, line.unitPrice, product?.price),
                           })
                         }
                       />
@@ -961,7 +1021,7 @@ function TemplateEditor({
                             : (product?.price ?? '')
                         }
                         onChange={(event) =>
-                          patchLine(index, { unitPrice: Number(event.target.value) })
+                          patchLine(index, { unitPrice: readPriceInput(event.target.value) })
                         }
                         className="w-28 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong disabled:opacity-50"
                         aria-label={`Fixed price of ${name}`}

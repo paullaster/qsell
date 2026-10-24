@@ -6264,3 +6264,260 @@ export const prequalScores = pgTable(
 export type ProcurementCategoryRow = typeof procurementCategories.$inferSelect;
 export type CategoryQuestionRow = typeof categoryQuestions.$inferSelect;
 export type PrequalEntryRow = typeof prequalEntries.$inferSelect;
+
+// ── Requests for quotation (V-3, docs/architecture/vendor-management-module.md §8) ──
+
+export type RfqStatus = 'draft' | 'issued' | 'closed' | 'awarded' | 'cancelled';
+export type RfqQuoteStatus = 'draft' | 'submitted' | 'withdrawn';
+export type RfqDecision = 'pending' | 'accepted' | 'rejected' | 'revision_requested';
+
+/** One request sent to several qualified vendors, answered in confidence, compared, then awarded. */
+export const rfqs = pgTable(
+  'rfqs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    number: text('number'),
+    status: text('status').$type<RfqStatus>().notNull().default('draft'),
+    title: text('title').notNull(),
+    categoryId: uuid('category_id')
+      .notNull()
+      .references(() => procurementCategories.id, { onDelete: 'restrict' }),
+    description: text('description'),
+    terms: text('terms'),
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+    requiredBy: date('required_by', { mode: 'string' }),
+    deadline: timestamp('deadline', { withTimezone: true }).notNull(),
+    /** Days a quote must hold. */
+    validityDays: integer('validity_days').notNull().default(30),
+    currency: text('currency').notNull(),
+    /** Staff cannot read quotes before `opensAt` when sealed. */
+    sealed: boolean('sealed').notNull().default(true),
+    opensAt: timestamp('opens_at', { withTimezone: true }),
+    allowPartial: boolean('allow_partial').notNull().default(false),
+    allowAlternatives: boolean('allow_alternatives').notNull().default(false),
+    estimatedValue: numeric('estimated_value', { precision: 14, scale: 2 }),
+    buyerId: text('buyer_id'),
+    createdBy: text('created_by'),
+    issuedAt: timestamp('issued_at', { withTimezone: true }),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    closeReason: text('close_reason'),
+    awardedAt: timestamp('awarded_at', { withTimezone: true }),
+    awardNote: text('award_note'),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    cancelReason: text('cancel_reason'),
+    /** Which deadline reminders have gone out (48 h, 4 h), reset when the deadline moves. */
+    reminded48: boolean('reminded_48').notNull().default(false),
+    reminded4: boolean('reminded_4').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('rfqs_company_number_uidx').on(t.companyId, t.number).where(sql`${t.number} IS NOT NULL`),
+    index('rfqs_company_status_idx').on(t.companyId, t.status, t.createdAt),
+    index('rfqs_deadline_idx').on(t.deadline).where(sql`${t.status} = 'issued'`),
+    check('rfqs_status_chk', sql`${t.status} IN ('draft','issued','closed','awarded','cancelled')`),
+    check('rfqs_validity_chk', sql`${t.validityDays} BETWEEN 1 AND 365`),
+  ],
+);
+
+export const rfqLines = pgTable(
+  'rfq_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    rfqId: uuid('rfq_id')
+      .notNull()
+      .references(() => rfqs.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull(),
+    productId: text('product_id').references(() => products.id, { onDelete: 'set null' }),
+    description: text('description').notNull(),
+    specification: text('specification'),
+    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    unit: text('unit').notNull().default('each'),
+    requiredDate: date('required_date', { mode: 'string' }),
+  },
+  (t) => [index('rfq_lines_rfq_idx').on(t.rfqId, t.position), check('rfq_lines_qty_chk', sql`${t.quantity} > 0`)],
+);
+
+export const rfqInvitations = pgTable(
+  'rfq_invitations',
+  {
+    rfqId: uuid('rfq_id')
+      .notNull()
+      .references(() => rfqs.id, { onDelete: 'cascade' }),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'restrict' }),
+    /** invited → opened by the vendor; or declined to bid. */
+    status: text('status').notNull().default('invited'),
+    declineReason: text('decline_reason'),
+    invitedAt: timestamp('invited_at', { withTimezone: true }),
+    openedAt: timestamp('opened_at', { withTimezone: true }),
+    declinedAt: timestamp('declined_at', { withTimezone: true }),
+    /** The buyer's decision about this vendor's quote. */
+    decision: text('decision').$type<RfqDecision>().notNull().default('pending'),
+    decisionReason: text('decision_reason'),
+    decisionComment: text('decision_comment'),
+    revisionDue: timestamp('revision_due', { withTimezone: true }),
+    decidedBy: text('decided_by'),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    /** Told of the result (awarded or not) once. */
+    resultSeenAt: timestamp('result_seen_at', { withTimezone: true }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.rfqId, t.vendorId] }),
+    index('rfq_invitations_vendor_idx').on(t.vendorId),
+    check('rfq_invitations_status_chk', sql`${t.status} IN ('invited','opened','declined')`),
+    check('rfq_invitations_decision_chk', sql`${t.decision} IN ('pending','accepted','rejected','revision_requested')`),
+  ],
+);
+
+/** A numbered addendum sent to every invitee. Append-only. */
+export const rfqAddenda = pgTable(
+  'rfq_addenda',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    rfqId: uuid('rfq_id')
+      .notNull()
+      .references(() => rfqs.id, { onDelete: 'cascade' }),
+    number: integer('number').notNull(),
+    body: text('body').notNull(),
+    deadlineBefore: timestamp('deadline_before', { withTimezone: true }),
+    deadlineAfter: timestamp('deadline_after', { withTimezone: true }),
+    createdBy: text('created_by'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('rfq_addenda_uidx').on(t.rfqId, t.number)],
+);
+
+export const rfqQuestions = pgTable(
+  'rfq_questions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    rfqId: uuid('rfq_id')
+      .notNull()
+      .references(() => rfqs.id, { onDelete: 'cascade' }),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'restrict' }),
+    body: text('body').notNull(),
+    answer: text('answer'),
+    /** Only a published answer goes to the invitees, and then without saying who asked. */
+    published: boolean('published').notNull().default(false),
+    answeredBy: text('answered_by'),
+    answeredAt: timestamp('answered_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('rfq_questions_rfq_idx').on(t.rfqId, t.createdAt)],
+);
+
+/** One version of a vendor's quote. Once submitted, a version never changes. */
+export const rfqQuotes = pgTable(
+  'rfq_quotes',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    rfqId: uuid('rfq_id')
+      .notNull()
+      .references(() => rfqs.id, { onDelete: 'cascade' }),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'restrict' }),
+    version: integer('version').notNull(),
+    status: text('status').$type<RfqQuoteStatus>().notNull().default('draft'),
+    paymentTerms: text('payment_terms'),
+    deliveryTerms: text('delivery_terms'),
+    validUntil: date('valid_until', { mode: 'string' }),
+    notes: text('notes'),
+    /** Worked out on the server from the lines; never taken from the browser. */
+    subtotal: numeric('subtotal', { precision: 14, scale: 2 }).notNull().default('0'),
+    taxTotal: numeric('tax_total', { precision: 14, scale: 2 }).notNull().default('0'),
+    total: numeric('total', { precision: 14, scale: 2 }).notNull().default('0'),
+    submittedAt: timestamp('submitted_at', { withTimezone: true }),
+    submittedBy: text('submitted_by'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('rfq_quotes_version_uidx').on(t.rfqId, t.vendorId, t.version),
+    // At most one version being written at a time.
+    uniqueIndex('rfq_quotes_one_draft_uidx').on(t.rfqId, t.vendorId).where(sql`${t.status} = 'draft'`),
+    index('rfq_quotes_rfq_idx').on(t.rfqId, t.status),
+    check('rfq_quotes_status_chk', sql`${t.status} IN ('draft','submitted','withdrawn')`),
+  ],
+);
+
+export const rfqQuoteLines = pgTable(
+  'rfq_quote_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    quoteId: uuid('quote_id')
+      .notNull()
+      .references(() => rfqQuotes.id, { onDelete: 'cascade' }),
+    rfqLineId: uuid('rfq_line_id')
+      .notNull()
+      .references(() => rfqLines.id, { onDelete: 'restrict' }),
+    noBid: boolean('no_bid').notNull().default(false),
+    isAlternative: boolean('is_alternative').notNull().default(false),
+    unitPrice: numeric('unit_price', { precision: 14, scale: 2 }),
+    quantity: numeric('quantity', { precision: 14, scale: 3 }),
+    taxRate: numeric('tax_rate', { precision: 5, scale: 2 }).notNull().default('0'),
+    leadTimeDays: integer('lead_time_days'),
+    brand: text('brand'),
+    warranty: text('warranty'),
+    note: text('note'),
+  },
+  (t) => [
+    uniqueIndex('rfq_quote_lines_uidx').on(t.quoteId, t.rfqLineId, t.isAlternative),
+    check('rfq_quote_lines_price_chk', sql`${t.unitPrice} IS NULL OR ${t.unitPrice} >= 0`),
+    check('rfq_quote_lines_bid_chk', sql`${t.noBid} OR (${t.unitPrice} IS NOT NULL AND ${t.quantity} IS NOT NULL AND ${t.quantity} > 0)`),
+  ],
+);
+
+/** What was awarded to whom, line by line, with the price and quantity the quote gave. Append-only. */
+export const rfqAwards = pgTable(
+  'rfq_awards',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    rfqId: uuid('rfq_id')
+      .notNull()
+      .references(() => rfqs.id, { onDelete: 'cascade' }),
+    rfqLineId: uuid('rfq_line_id')
+      .notNull()
+      .references(() => rfqLines.id, { onDelete: 'restrict' }),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'restrict' }),
+    quoteLineId: uuid('quote_line_id')
+      .notNull()
+      .references(() => rfqQuoteLines.id, { onDelete: 'restrict' }),
+    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    unitPrice: numeric('unit_price', { precision: 14, scale: 2 }).notNull(),
+    justification: text('justification'),
+    awardedBy: text('awarded_by'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('rfq_awards_rfq_idx').on(t.rfqId), check('rfq_awards_qty_chk', sql`${t.quantity} > 0`)],
+);
+
+export const rfqEvents = pgTable(
+  'rfq_events',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    rfqId: uuid('rfq_id')
+      .notNull()
+      .references(() => rfqs.id, { onDelete: 'cascade' }),
+    vendorId: uuid('vendor_id'),
+    event: text('event').notNull(),
+    reasonText: text('reason_text'),
+    data: jsonb('data').$type<Record<string, unknown>>().notNull().default({}),
+    actorType: text('actor_type').notNull(),
+    actorId: text('actor_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('rfq_events_rfq_idx').on(t.rfqId, t.id)],
+);
+
+export type RfqRow = typeof rfqs.$inferSelect;
+export type RfqLineRow = typeof rfqLines.$inferSelect;
+export type RfqQuoteRow = typeof rfqQuotes.$inferSelect;
