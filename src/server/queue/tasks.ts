@@ -247,8 +247,13 @@ export const expireGiftCards = async (_payload: unknown, helpers: JobHelpers) =>
 
 /** Worker cron task: documents past their date are marked expired, and vendors are reminded at the days each type asks for. */
 export const vendorDocumentExpiry = async (_payload: unknown, helpers: JobHelpers) => {
-  const r = await getContainer().vendorExpiry.run(businessDate());
+  const container = getContainer();
+  const today = businessDate();
+  const r = await container.vendorExpiry.run(today);
   if (r.expired > 0 || r.reminded > 0) helpers.logger.info(`Vendor documents: ${r.expired} expired, ${r.reminded} reminders sent`);
+  // Documents first: a qualification whose blocking document just expired is suspended in the same run.
+  const q = await container.prequalLifecycle.run(today);
+  if (q.expired > 0 || q.suspended > 0 || q.restored > 0) helpers.logger.info(`Prequalification: ${q.expired} expired, ${q.suspended} suspended, ${q.restored} restored`);
 };
 
 /** Worker cron task: a changed vendor bank account starts to be used once its cool-off has passed. */

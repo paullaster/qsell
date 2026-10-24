@@ -14,16 +14,19 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
 
   // The first compile of the sign-in route can take longer than the default 30 seconds.
   const api = await request.newContext({ baseURL: E2E_URL, timeout: 300_000 });
-  const csrf = (await (await api.get('/api/auth/csrf')).json()) as { csrfToken: string };
-  const response = await api.post('/api/auth/callback/credentials', {
-    form: {
-      csrfToken: csrf.csrfToken,
-      email: E2E_ADMIN_EMAIL,
-      password: E2E_ADMIN_PASSWORD,
-      callbackUrl: `${E2E_URL}/admin`,
-    },
-  });
-  if (!response.ok()) throw new Error(`e2e sign-in failed: ${String(response.status())}`);
+  // A connection cut while the server is still compiling is tried again, as the warm-up below is.
+  let response = null;
+  for (let attempt = 1; attempt <= 4 && response === null; attempt += 1) {
+    try {
+      const csrf = (await (await api.get('/api/auth/csrf')).json()) as { csrfToken: string };
+      response = await api.post('/api/auth/callback/credentials', {
+        form: { csrfToken: csrf.csrfToken, email: E2E_ADMIN_EMAIL, password: E2E_ADMIN_PASSWORD, callbackUrl: `${E2E_URL}/admin` },
+      });
+    } catch (error) {
+      if (attempt === 4) throw error;
+    }
+  }
+  if (response === null || !response.ok()) throw new Error(`e2e sign-in failed: ${String(response?.status())}`);
   await api.storageState({ path: AUTH_FILE });
   await api.dispose();
   await warmUp();
@@ -60,7 +63,8 @@ async function warmUp(): Promise<void> {
       if (attempt === 4) throw error;
     }
   }
-  await page.getByText('Rice 5kg', { exact: true }).first().click({ timeout: 300_000 });
-  await page.getByRole('dialog').waitFor({ timeout: 300_000 }).catch(() => undefined);
+  // Only a warm-up: a click cut short by a network flap must not stop the whole run.
+  await page.getByText('Rice 5kg', { exact: true }).first().click({ timeout: 120_000 }).catch(() => undefined);
+  await page.getByRole('dialog').waitFor({ timeout: 120_000 }).catch(() => undefined);
   await browser.close();
 }

@@ -42,3 +42,17 @@ export async function signedOutPage(browser: Browser, testInfo: TestInfo): Promi
   const context = await browser.newContext({ baseURL: E2E_URL, viewport: use.viewport ?? { width: 1280, height: 900 }, isMobile: use.isMobile, hasTouch: use.hasTouch, storageState: { cookies: [], origins: [] } });
   return { page: await context.newPage(), close: async () => { await context.close(); } };
 }
+
+export interface PrequalFixture {
+  categoryId: string;
+  categoryName: string;
+  entryId?: string;
+}
+
+/** An open category for one test, and (for `submitted` / `evaluated`) the approved vendor's application in it (see prequal-fixture.ts). */
+export function makePrequal(tag: string, vendorId: string | null, mode: 'category' | 'submitted' | 'evaluated'): PrequalFixture {
+  const output = execFileSync('pnpm', ['exec', 'tsx', 'e2e/support/prequal-fixture.ts', tag, vendorId ?? '-', mode], { env: { ...process.env, ...e2eEnvironment() }, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+  const line = output.split('\n').find((l) => l.startsWith('FIXTURE '));
+  if (line === undefined) throw new Error(`the prequalification fixture printed nothing usable: ${output.slice(-500)}`);
+  return JSON.parse(line.slice('FIXTURE '.length)) as PrequalFixture;
+}

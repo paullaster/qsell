@@ -1,6 +1,7 @@
 import { eq, ne, sql } from 'drizzle-orm';
-import { reasonCodes, vendors } from '@/server/db/drizzle/schema';
+import { procurementCategories, reasonCodes, vendors } from '@/server/db/drizzle/schema';
 import { VENDOR_STATUS, VENDOR_TYPES } from '@/lib/vendor-forms';
+import { QUESTION_KINDS, STATUS_WORDS } from '@/lib/prequalification';
 import { CONTACT_ROLES, ID_TYPES, TURNOVER_BANDS } from '@/lib/vendor-profile';
 import { acceptFilters, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
 
@@ -71,6 +72,52 @@ export const VENDOR_LOOKUP_SOURCES: LookupSource[] = [
         { id: 'payment', label: 'Payments only', description: 'Invoices are still received; no payment is made' },
         { id: 'all', label: 'Everything', description: 'No new document of any kind is accepted' },
       ];
+    },
+  }),
+  /** The categories vendors are qualified for, as a picker for the parent of a category and for filters. */
+  tableSource({
+    key: 'procurement-categories',
+    permission: 'vendors:read',
+    table: procurementCategories,
+    id: procurementCategories.id,
+    label: procurementCategories.name,
+    searchColumns: [procurementCategories.name, procurementCategories.code],
+    select: { code: procurementCategories.code, status: procurementCategories.status },
+    scope: ({ companyId, filters }) => {
+      acceptFilters(filters, {});
+      return [eq(procurementCategories.companyId, companyId), ne(procurementCategories.status, 'archived')];
+    },
+    toOption: (row) => ({ id: text(row.id), label: text(row.label), description: joinText([row.code, row.status]), badge: null, meta: { status: text(row.status) } }),
+  }),
+  /** The reasons a prequalification can be refused, suspended or revoked for. */
+  tableSource({
+    key: 'prequal-reasons',
+    permission: 'vendors:read',
+    table: reasonCodes,
+    id: reasonCodes.code,
+    label: reasonCodes.description,
+    searchColumns: [reasonCodes.description, reasonCodes.code],
+    select: { requiresComment: reasonCodes.requiresComment },
+    scope: ({ companyId, filters }) => {
+      acceptFilters(filters, {});
+      return [eq(reasonCodes.companyId, companyId), eq(reasonCodes.isActive, true), sql`${reasonCodes.appliesTo} @> '["prequalification_decision"]'::jsonb`];
+    },
+    toOption: (row) => ({ id: text(row.id), label: text(row.label), description: null, badge: null, meta: { requiresComment: row.requiresComment === true ? '1' : '' } }),
+  }),
+  staticSource({
+    key: 'prequal-statuses',
+    permission: 'vendors:read',
+    items: ({ filters }) => {
+      acceptFilters(filters, {});
+      return Object.entries(STATUS_WORDS).filter(([id]) => id !== 'draft').map(([id, v]) => ({ id, label: v.label, description: null }));
+    },
+  }),
+  staticSource({
+    key: 'prequal-question-kinds',
+    permission: 'vendors:read',
+    items: ({ filters }) => {
+      acceptFilters(filters, {});
+      return QUESTION_KINDS.map((k) => ({ id: k.id, label: k.label, description: null }));
     },
   }),
   staticSource({

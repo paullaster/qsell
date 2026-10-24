@@ -193,4 +193,32 @@ export class VendorNotifier {
       details: [['Reason', reason]],
     }, 'vendor');
   }
+
+  async prequalSubmitted(vendorId: string, categoryName: string): Promise<void> {
+    const { legalName } = await this.vendorAddresses(vendorId);
+    await this.send(await this.staffAddress(), 'A prequalification application is waiting', {
+      heading: `${legalName} applied to be qualified`,
+      body: `${legalName} applied for ${categoryName}. Take it for evaluation from the prequalification queue.`,
+      cta: 'Open the queue',
+      path: '/admin/vendors/prequalification',
+    }, 'staff');
+  }
+
+  async prequalDecided(vendorId: string, categoryName: string, outcome: 'approved' | 'rejected' | 'revision' | 'suspended' | 'revoked' | 'reinstated' | 'expired', note: string | null, until: string | null): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId);
+    const words = {
+      approved: ['You are qualified', 'Your application was approved.'],
+      rejected: ['Your application was not accepted', 'Your application was reviewed and was not accepted.'],
+      revision: ['We need changes to your application', 'Please update your answers and send the application again.'],
+      suspended: ['Your qualification is suspended', 'Your qualification is paused until the reason below is resolved.'],
+      revoked: ['Your qualification was withdrawn', 'We have withdrawn your qualification.'],
+      reinstated: ['Your qualification is back', 'Your qualification is active again.'],
+      expired: ['Your qualification has expired', 'Apply again to renew it: your earlier answers are filled in for you.'],
+    } as const;
+    const [heading, body] = words[outcome];
+    const details: [string, string][] = [['Category', categoryName]];
+    if (until !== null) details.push(['Qualified until', until]);
+    if (note !== null) details.push(['Note', note]);
+    await this.send(addresses, `${heading}: ${categoryName}`, { heading, body, cta: 'Open prequalification', path: '/vendor/prequalification', details }, 'vendor');
+  }
 }

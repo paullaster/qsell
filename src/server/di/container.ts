@@ -53,6 +53,10 @@ import { VendorLifecycleService } from '@/server/domains/vendors/lifecycle-servi
 import { VendorExpiryService } from '@/server/domains/vendors/expiry-service';
 import { VendorInvitationService } from '@/server/domains/vendors/invitation-service';
 import { VendorDocumentTypeService } from '@/server/domains/vendors/document-type-service';
+import { CategoryService } from '@/server/domains/vendors/category-service';
+import { PrequalService } from '@/server/domains/vendors/prequal-service';
+import { PrequalReviewService } from '@/server/domains/vendors/prequal-review-service';
+import { PrequalLifecycle } from '@/server/domains/vendors/prequal-lifecycle';
 import { TransactionLedgerService } from '@/server/domains/transactions/ledger-service';
 import { TransactionReconcileService } from '@/server/domains/transactions/reconcile-service';
 import { PaymentCallbackService } from '@/server/domains/payments/callback-service';
@@ -132,6 +136,11 @@ export interface AppContainer {
   vendorExpiry: VendorExpiryService;
   vendorInvitations: VendorInvitationService;
   vendorDocumentTypes: VendorDocumentTypeService;
+  /** Procurement categories, vendor prequalification, and the question "is this vendor qualified for that category". */
+  categories: CategoryService;
+  prequal: PrequalService;
+  prequalReview: PrequalReviewService;
+  prequalLifecycle: PrequalLifecycle;
   transactionLedger: TransactionLedgerService;
   transactionReconcile: TransactionReconcileService;
   paymentCallbacks: PaymentCallbackService;
@@ -387,6 +396,10 @@ export function getContainer(): AppContainer {
     vendorExpiry: new VendorExpiryService(drizzleDb, vendorNotifier),
     vendorInvitations: new VendorInvitationService(drizzleDb, users, authTokens, vendorNotifier),
     vendorDocumentTypes: new VendorDocumentTypeService(drizzleDb),
+    categories: new CategoryService(drizzleDb),
+    prequal: new PrequalService(drizzleDb, vendorNotifier),
+    prequalReview: new PrequalReviewService(drizzleDb, reasonCodes, vendorNotifier),
+    prequalLifecycle: new PrequalLifecycle(drizzleDb, vendorNotifier),
     transactionLedger,
     transactionReconcile,
     paymentCallbacks,

@@ -55,6 +55,15 @@ export function VendorDashboardClient({ overviewPromise }: { overviewPromise: Re
           </ol>
         )}
       </section>
+      {v.status === 'active' ? (
+        <section aria-label="Prequalification" className={cardClass}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-bold text-fg-strong">Prequalification</h2>
+            <Link href="/vendor/prequalification" className={buttonClass}>Open prequalification</Link>
+          </div>
+          <p className="mt-1 text-sm text-fg-muted">Apply to be qualified for the kinds of work you do, and follow your applications.</p>
+        </section>
+      ) : null}
       {v.yourRole === 'owner' ? (
         <section aria-label="Your team" className={cardClass}>
           <div className="flex flex-wrap items-center justify-between gap-2">

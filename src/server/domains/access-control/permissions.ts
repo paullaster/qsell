@@ -771,6 +771,24 @@ export const PERMISSIONS = {
     category: 'Vendor Management',
     description: 'Set up the documents vendors must provide and how reminders work',
   },
+  'prequalification:manage': {
+    resource: 'prequalification',
+    action: 'manage',
+    category: 'Vendor Management',
+    description: 'Set up the categories vendors can be qualified for: their questions, documents, window and what vendors see of an evaluation',
+  },
+  'prequalification:evaluate': {
+    resource: 'prequalification',
+    action: 'evaluate',
+    category: 'Vendor Management',
+    description: 'Take a vendor’s prequalification application to evaluate and score it',
+  },
+  'prequalification:decide': {
+    resource: 'prequalification',
+    action: 'decide',
+    category: 'Vendor Management',
+    description: 'Approve, refuse or send back a prequalification application; suspend, reinstate or revoke a qualification',
+  },
   'vendor_ledger:read': {
     resource: 'vendor_ledger',
     action: 'read',

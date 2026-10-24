@@ -426,6 +426,16 @@ function SectionTemplateEditor({
 
   const submit = async (event: React.SyntheticEvent) => {
     event.preventDefault();
+    const unpriced = input.lines.findIndex(
+      (line) => line.priceMode === 'fixed' && line.unitPrice === null,
+    );
+    if (unpriced >= 0) {
+      const name = productById.get(input.lines[unpriced].productId)?.name ?? 'An item';
+      setError(
+        `${name} is set to a fixed price but has none. Type its price or use the catalog price.`,
+      );
+      return;
+    }
     try {
       setBusy(true);
       setError(null);
@@ -597,7 +607,8 @@ function SectionTemplateEditor({
                     <td className="p-3">
                       <div className="font-medium text-fg-strong">{name}</div>
                       <div className="text-xs text-fg-muted">
-                        {product?.sku} · {amount(product?.price ?? 0)}
+                        {product?.sku} ·{' '}
+                        {product?.price == null ? 'Price list' : amount(product.price)}
                       </div>
                     </td>
                     <td className="p-3">
@@ -617,7 +628,9 @@ function SectionTemplateEditor({
                           patchLine(index, {
                             priceMode: mode,
                             unitPrice:
-                              mode === 'catalog' ? null : (line.unitPrice ?? product?.price ?? 0),
+                              mode === 'catalog'
+                                ? null
+                                : (line.unitPrice ?? product?.price ?? null),
                           })
                         }
                       />
@@ -634,7 +647,10 @@ function SectionTemplateEditor({
                             : (product?.price ?? '')
                         }
                         onChange={(event) =>
-                          patchLine(index, { unitPrice: Number(event.target.value) })
+                          patchLine(index, {
+                            unitPrice:
+                              event.target.value === '' ? null : Number(event.target.value),
+                          })
                         }
                         className="min-h-9 w-28 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong disabled:opacity-50"
                         aria-label={`Fixed price of ${name}`}

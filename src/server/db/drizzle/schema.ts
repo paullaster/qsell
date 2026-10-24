@@ -6090,3 +6090,177 @@ export type VendorBankAccountRow = typeof vendorBankAccounts.$inferSelect;
 export type VendorDocumentRow = typeof vendorDocuments.$inferSelect;
 export type VendorDocumentTypeRow = typeof vendorDocumentTypes.$inferSelect;
 export type VendorProfileVersionRow = typeof vendorProfileVersions.$inferSelect;
+
+// ── Prequalification (V-2, docs/architecture/vendor-management-module.md §7) ──
+
+export type CategoryStatus = 'draft' | 'open' | 'closed' | 'archived';
+export type QuestionKind = 'yes_no' | 'number' | 'text' | 'choice';
+export type PrequalStatus = 'draft' | 'submitted' | 'in_review' | 'revision_requested' | 'approved' | 'rejected' | 'withdrawn' | 'expired' | 'suspended' | 'revoked';
+
+/** What a vendor can be qualified for. A tree; its questions and required documents are fixed once it leaves draft. */
+export const procurementCategories = pgTable(
+  'procurement_categories',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    parentId: uuid('parent_id').references((): AnyPgColumn => procurementCategories.id, { onDelete: 'restrict' }),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    description: text('description'),
+    status: text('status').$type<CategoryStatus>().notNull().default('draft'),
+    /** Months a qualification lasts. */
+    validityMonths: integer('validity_months').notNull().default(24),
+    windowFrom: date('window_from', { mode: 'string' }),
+    windowTo: date('window_to', { mode: 'string' }),
+    /** The score (percent of the highest possible) needed to pass; empty means pass or fail by the evaluator's decision only. */
+    passMarkPercent: numeric('pass_mark_percent', { precision: 5, scale: 2 }),
+    /** The person who decides cannot be one who scored. */
+    fourEyes: boolean('four_eyes').notNull().default(true),
+    // What the vendor may see of an evaluation (the decision and its reason are always shown).
+    showTotalScore: boolean('show_total_score').notNull().default(false),
+    showPassMark: boolean('show_pass_mark').notNull().default(false),
+    showQuestionScores: boolean('show_question_scores').notNull().default(false),
+    showEvaluatorComments: boolean('show_evaluator_comments').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('procurement_categories_company_code_uidx').on(t.companyId, t.code),
+    index('procurement_categories_parent_idx').on(t.parentId),
+    check('procurement_categories_code_chk', sql`${t.code} ~ '^[A-Z0-9][A-Z0-9._-]{0,29}$'`),
+    check('procurement_categories_status_chk', sql`${t.status} IN ('draft','open','closed','archived')`),
+    check('procurement_categories_validity_chk', sql`${t.validityMonths} BETWEEN 1 AND 120`),
+    check('procurement_categories_pass_chk', sql`${t.passMarkPercent} IS NULL OR ${t.passMarkPercent} BETWEEN 0 AND 100`),
+  ],
+);
+
+export const categoryDocuments = pgTable(
+  'category_documents',
+  {
+    categoryId: uuid('category_id')
+      .notNull()
+      .references(() => procurementCategories.id, { onDelete: 'cascade' }),
+    documentTypeId: uuid('document_type_id')
+      .notNull()
+      .references(() => vendorDocumentTypes.id, { onDelete: 'restrict' }),
+  },
+  (t) => [primaryKey({ columns: [t.categoryId, t.documentTypeId] })],
+);
+
+export const categoryQuestions = pgTable(
+  'category_questions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    categoryId: uuid('category_id')
+      .notNull()
+      .references(() => procurementCategories.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull().default(0),
+    prompt: text('prompt').notNull(),
+    kind: text('kind').$type<QuestionKind>().notNull(),
+    choices: jsonb('choices').$type<string[]>().notNull().default([]),
+    /** The most an evaluator can give this question; 0 means it is asked but not scored. */
+    weight: integer('weight').notNull().default(0),
+    required: boolean('required').notNull().default(true),
+  },
+  (t) => [
+    index('category_questions_category_idx').on(t.categoryId, t.position),
+    check('category_questions_kind_chk', sql`${t.kind} IN ('yes_no','number','text','choice')`),
+    check('category_questions_weight_chk', sql`${t.weight} BETWEEN 0 AND 100`),
+  ],
+);
+
+/** One vendor's application for one category (a renewal is a new row pointing at the old). */
+export const prequalEntries = pgTable(
+  'prequal_entries',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'restrict' }),
+    categoryId: uuid('category_id')
+      .notNull()
+      .references(() => procurementCategories.id, { onDelete: 'restrict' }),
+    status: text('status').$type<PrequalStatus>().notNull().default('draft'),
+    previousEntryId: uuid('previous_entry_id').references((): AnyPgColumn => prequalEntries.id, { onDelete: 'set null' }),
+    submittedAt: timestamp('submitted_at', { withTimezone: true }),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    decidedBy: text('decided_by'),
+    reasonCode: text('reason_code'),
+    decisionComment: text('decision_comment'),
+    revisionDue: date('revision_due', { mode: 'string' }),
+    validFrom: date('valid_from', { mode: 'string' }),
+    validUntil: date('valid_until', { mode: 'string' }),
+    /** A condition on what the vendor may be given: the largest order value, and a note. */
+    maxOrderValue: numeric('max_order_value', { precision: 14, scale: 2 }),
+    conditionsNote: text('conditions_note'),
+    /** Filled in at the decision, from the scores. */
+    totalScore: numeric('total_score', { precision: 7, scale: 2 }),
+    maxScore: numeric('max_score', { precision: 7, scale: 2 }),
+    /** Why a suspension is in force: a staff decision or an expired document. */
+    suspendedBecause: text('suspended_because'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One live application or qualification per vendor and category.
+    uniqueIndex('prequal_entries_live_uidx')
+      .on(t.vendorId, t.categoryId)
+      .where(sql`${t.status} IN ('draft','submitted','in_review','revision_requested','approved','suspended')`),
+    index('prequal_entries_category_idx').on(t.categoryId, t.status),
+    index('prequal_entries_queue_idx').on(t.companyId, t.status, t.submittedAt),
+    index('prequal_entries_valid_idx').on(t.validUntil).where(sql`${t.status} IN ('approved','suspended')`),
+    check('prequal_entries_status_chk', sql`${t.status} IN ('draft','submitted','in_review','revision_requested','approved','rejected','withdrawn','expired','suspended','revoked')`),
+  ],
+);
+
+export const prequalAnswers = pgTable(
+  'prequal_answers',
+  {
+    entryId: uuid('entry_id')
+      .notNull()
+      .references(() => prequalEntries.id, { onDelete: 'cascade' }),
+    questionId: uuid('question_id')
+      .notNull()
+      .references(() => categoryQuestions.id, { onDelete: 'restrict' }),
+    value: text('value').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.entryId, t.questionId] })],
+);
+
+export const prequalEvaluators = pgTable(
+  'prequal_evaluators',
+  {
+    entryId: uuid('entry_id')
+      .notNull()
+      .references(() => prequalEntries.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull(),
+    assignedAt: timestamp('assigned_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.entryId, t.userId] })],
+);
+
+export const prequalScores = pgTable(
+  'prequal_scores',
+  {
+    entryId: uuid('entry_id')
+      .notNull()
+      .references(() => prequalEntries.id, { onDelete: 'cascade' }),
+    evaluatorId: text('evaluator_id').notNull(),
+    questionId: uuid('question_id')
+      .notNull()
+      .references(() => categoryQuestions.id, { onDelete: 'restrict' }),
+    score: integer('score').notNull(),
+    comment: text('comment'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.entryId, t.evaluatorId, t.questionId] }), check('prequal_scores_score_chk', sql`${t.score} >= 0`)],
+);
+
+export type ProcurementCategoryRow = typeof procurementCategories.$inferSelect;
+export type CategoryQuestionRow = typeof categoryQuestions.$inferSelect;
+export type PrequalEntryRow = typeof prequalEntries.$inferSelect;
