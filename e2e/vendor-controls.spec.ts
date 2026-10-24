@@ -259,6 +259,6 @@ test.describe('vendor worklists and settings', () => {
     await edit.getByLabel('Name').fill('Health and safety permit');
     await edit.getByLabel('In use').uncheck();
     await edit.getByRole('button', { name: 'Save' }).click();
-    await expect(page.getByRole('listitem').filter({ hasText: 'Health and safety permit' }).getByText('Not in use')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('listitem').filter({ hasText: code }).getByText('Not in use')).toBeVisible({ timeout: 30_000 });
   });
 });

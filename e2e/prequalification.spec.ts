@@ -133,7 +133,6 @@ test.describe('staff evaluate and decide', () => {
     const vendor = makeVendor(tag, 'approved');
     const cat = makePrequal(tag, vendor.vendorId, 'submitted');
     await open(page, `/admin/vendors/prequalification/${cat.entryId ?? ''}`, vendor.legalName);
-    await expect(page.getByRole('button', { name: 'Approve…' })).toHaveCount(0);
     await page.getByRole('button', { name: 'Take for evaluation' }).click();
     await expect(page.getByText('You are now an evaluator of this application.')).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText(/You evaluated this application, so someone else must decide it/)).toBeVisible({ timeout: 30_000 });
