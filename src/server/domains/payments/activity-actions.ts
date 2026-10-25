@@ -65,6 +65,14 @@ export async function confirmPaymentAction(attemptId: string, reference: string,
   }, [PAGE]);
 }
 
+/** Adds the platform's transaction number to a paid order whose receipt never reached us. */
+export async function attachOrderReferenceAction(orderId: string, reference: string, reason: string) {
+  return await run('payments:confirm_unverified', { surface: 'orders', action: 'attach_payment_reference' }, async (_ctx, userId) => {
+    const r = await engine().attachOrderReference({ orderId, reference, reason, userId });
+    if (!r.ok) throw new FinanceError('CANNOT_ATTACH', r.error);
+  }, ['/admin/orders', PAGE]);
+}
+
 export async function failPaymentAction(attemptId: string, reason: string) {
   return await run('payments:confirm_unverified', { surface: 'payments/activity', action: 'fail_payment' }, async (_ctx, userId) => {
     const r = await engine().failAttemptManually({ attemptId, reason, userId });
