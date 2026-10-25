@@ -74,6 +74,7 @@ export const INTERNATIONAL_ACCOUNTS: AccountDraft[] = build([
   ['2310', 'Output tax (payable)', 'p', 'liabilities', 'credit', { control: true, indent: 2 }],
   ['2320', 'Income tax payable', 'p', 'liabilities', 'credit', { indent: 2 }],
   ['2330', 'Payroll taxes payable', 'p', 'liabilities', 'credit', { indent: 2 }],
+  ['2350', 'Withholding tax payable', 'p', 'liabilities', 'credit', { indent: 2 }],
   ['2400', 'Borrowings', 'h', null, 'credit', { indent: 1 }],
   ['2410', 'Loans', 'p', 'liabilities', 'credit', { indent: 2 }],
   ['2999', 'TOTAL LIABILITIES', 'e', null, 'credit', { totaling: '2000..2999' }],

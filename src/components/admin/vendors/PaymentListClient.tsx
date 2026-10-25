@@ -35,7 +35,7 @@ function ListView({ initial }: { initial: Page }) {
   };
   return (
     <div className="max-w-5xl space-y-5">
-      <PageHeader title="Payments to vendors" intro="Payment vouchers: prepared by one person, approved by another, and paid when the money has gone." actions={<><Link href="/admin/vendors/payables" className={buttonClass}>What we owe</Link><Link href="/admin/vendors/payments/new" className={primaryClass}>New payment</Link></>} />
+      <PageHeader title="Payments to vendors" intro="Payment vouchers: prepared by one person, approved by another, and paid when the money has gone." actions={<><Link href="/admin/vendors/payables" className={buttonClass}>What we owe</Link><Link href="/admin/vendors/payments/runs" className={buttonClass}>Payment runs</Link><Link href="/admin/vendors/payments/new" className={primaryClass}>New payment</Link></>} />
       <Message notice={notice} />
       <div className={`${cardClass} max-w-xs`}><ChoicePicker label="Status" source="voucher-statuses" choice={status} onChoice={(c) => { setStatus(c); void load(c, null, false); }} placeholder="All" /></div>
       {rows.length === 0 ? <p className="text-sm text-fg-muted">{busy ? 'Loading…' : 'No payment vouchers here.'}</p> : (

@@ -15,6 +15,13 @@ describe('voucher forms', () => {
   });
 });
 
+describe('a payment on account', () => {
+  it('needs an amount and a reason, since there is no invoice to say', () => {
+    expect(checkVoucherHeader({ kind: 'on_account', vendorId: 'v', methodId: 'm', narration: 'Deposit for next season', advanceId: '', amount: '1500.50' })).toEqual({});
+    expect(Object.keys(checkVoucherHeader({ kind: 'on_account', vendorId: 'v', methodId: 'm', narration: ' ', advanceId: '', amount: '0' })).sort()).toEqual(['amount', 'narration']);
+  });
+});
+
 describe('who may do what', () => {
   it('needs three people only from the threshold up, and 0 turns it off', () => {
     expect(needsThreePeople(9_999_999, 10_000_000)).toBe(false);

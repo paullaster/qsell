@@ -164,7 +164,7 @@ test.describe('staff review a vendor', () => {
       await expect(vendorWindow.page.getByText('Active', { exact: true }).first()).toBeVisible({ timeout: 60_000 });
       await expect(vendorWindow.page.getByText(/Vendor V-\d{6}/)).toBeVisible();
       await vendorWindow.page.goto('/vendor/profile/financial');
-      await expect(vendorWindow.page.getByText('In use')).toBeVisible({ timeout: 60_000 });
+      await expect(vendorWindow.page.getByText('In use').first()).toBeVisible({ timeout: 60_000 });
       await expect(vendorWindow.page.getByText(/use the request below/).first()).toBeVisible();
     } finally {
       await vendorWindow.close();

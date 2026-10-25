@@ -1,6 +1,7 @@
-import { and, asc, desc, eq, gte, lte, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { vendorLedgerEntries, vendors } from '@/server/db/drizzle/schema';
+import { glAccounts, glAccountBalances, payablesChecks, vendorLedgerEntries, vendorPostingGroups, vendors } from '@/server/db/drizzle/schema';
+import type { VendorLedgerService } from '@/server/domains/finance/payables/vendor-ledger-service';
 import { has } from '@/lib/values';
 import { AGE_BUCKETS, toCents, type AgeBucket } from '@/lib/vendor-payment';
 
@@ -10,7 +11,10 @@ import { AGE_BUCKETS, toCents, type AgeBucket } from '@/lib/vendor-payment';
  * are not booked yet.
  */
 export class PayablesReportService {
-  constructor(private readonly db: DrizzleDb) {}
+  constructor(
+    private readonly db: DrizzleDb,
+    private readonly ledger: VendorLedgerService,
+  ) {}
 
   async ageing(companyId: string, asOf: string) {
     const days = sql`(${asOf}::date - COALESCE(${vendorLedgerEntries.dueDate}, ${vendorLedgerEntries.postingDate}))`;
@@ -65,5 +69,73 @@ export class PayablesReportService {
       balance: open?.owed ?? '0',
       entries: entries.map((e) => ({ id: e.id, documentType: e.documentType, documentNo: e.documentNo, externalNo: e.externalDocumentNo, postingDate: e.postingDate, dueDate: e.dueDate, amount: e.amount, remaining: e.remainingAmount, currency: e.currency })),
     };
+  }
+
+  /**
+   * The vendor ledger against the books (design doc §12.7): what the ledger says we owe against the general ledger's payables account,
+   * and the advances paid against the prepayments account, per account the vendor groups post to. A difference is a defect and is
+   * shown with the ledger entries whose open amount does not match their detailed entries.
+   */
+  async reconcile(companyId: string) {
+    const owed = await this.db
+      .select({
+        accountId: vendorPostingGroups.payablesAccountId,
+        total: sql<string>`COALESCE(SUM(CASE WHEN ${vendorLedgerEntries.documentType} <> 'advance' THEN ${vendorLedgerEntries.remainingAmount} ELSE 0 END), 0)::text`,
+      })
+      .from(vendorLedgerEntries)
+      .innerJoin(vendors, eq(vendors.id, vendorLedgerEntries.vendorId))
+      .innerJoin(vendorPostingGroups, eq(vendorPostingGroups.id, vendors.postingGroupId))
+      .where(eq(vendorLedgerEntries.companyId, companyId))
+      .groupBy(vendorPostingGroups.payablesAccountId);
+    const advances = await this.db
+      .select({
+        accountId: vendorPostingGroups.prepaymentsAccountId,
+        total: sql<string>`COALESCE(SUM(CASE WHEN ${vendorLedgerEntries.documentType} = 'advance' THEN ${vendorLedgerEntries.remainingAmount} ELSE 0 END), 0)::text`,
+      })
+      .from(vendorLedgerEntries)
+      .innerJoin(vendors, eq(vendors.id, vendorLedgerEntries.vendorId))
+      .innerJoin(vendorPostingGroups, eq(vendorPostingGroups.id, vendors.postingGroupId))
+      .where(eq(vendorLedgerEntries.companyId, companyId))
+      .groupBy(vendorPostingGroups.prepaymentsAccountId);
+    const wanted = [...owed.map((o) => o.accountId), ...advances.map((a) => a.accountId)].filter((x): x is string => x !== null);
+    const accounts = wanted.length === 0 ? [] : await this.db.select({ id: glAccounts.id, no: glAccounts.no, name: glAccounts.name }).from(glAccounts).where(inArray(glAccounts.id, wanted));
+    const balances = wanted.length === 0 ? [] : await this.db
+      .select({ accountId: glAccountBalances.accountId, debit: sql<string>`COALESCE(SUM(${glAccountBalances.baseDebit}), 0)::text`, credit: sql<string>`COALESCE(SUM(${glAccountBalances.baseCredit}), 0)::text` })
+      .from(glAccountBalances)
+      .where(and(eq(glAccountBalances.companyId, companyId), inArray(glAccountBalances.accountId, wanted)))
+      .groupBy(glAccountBalances.accountId);
+    const bal = new Map(balances.map((b) => [b.accountId, b]));
+    const rows: { accountId: string; accountNo: string; accountName: string; purpose: 'payables' | 'prepayments'; ledgerCents: number; glCents: number; diffCents: number }[] = [];
+    const add = (accountId: string | null, purpose: 'payables' | 'prepayments', ledgerCents: number): void => {
+      if (accountId === null) return;
+      const a = accounts.find((x) => x.id === accountId);
+      const b = bal.get(accountId);
+      // Payables are a credit balance (we owe); prepayments are a debit balance (we paid ahead).
+      const glCents = b === undefined ? 0 : toCents(purpose === 'payables' ? (Number(b.credit) - Number(b.debit)).toFixed(2) : (Number(b.debit) - Number(b.credit)).toFixed(2));
+      const existing = rows.find((r) => r.accountId === accountId && r.purpose === purpose);
+      if (existing !== undefined) {
+        existing.ledgerCents += ledgerCents;
+        existing.diffCents = existing.glCents - existing.ledgerCents;
+        return;
+      }
+      rows.push({ accountId, accountNo: a?.no ?? '', accountName: a?.name ?? '', purpose, ledgerCents, glCents, diffCents: glCents - ledgerCents });
+    };
+    for (const o of owed) add(o.accountId, 'payables', toCents(Number(o.total).toFixed(2)));
+    for (const a of advances) add(a.accountId, 'prepayments', -toCents(Number(a.total).toFixed(2)));
+    const drift = await this.ledger.drift(companyId);
+    const differences = rows.filter((r) => r.diffCents !== 0).length + drift.length;
+    return { rows, drift, differences, ok: differences === 0 };
+  }
+
+  /** Runs the comparison and keeps the result: the nightly job and the "check now" button both come here. */
+  async runCheck(companyId: string, ranBy: string) {
+    const r = await this.reconcile(companyId);
+    const [row] = await this.db.insert(payablesChecks).values({ companyId, ranBy, ok: r.ok, differences: r.differences, rows: r.rows, drift: r.drift }).returning();
+    return { id: row?.id ?? '', ranAt: row?.ranAt.toISOString() ?? '', ranBy, ...r };
+  }
+
+  async lastCheck(companyId: string) {
+    const [row] = await this.db.select().from(payablesChecks).where(eq(payablesChecks.companyId, companyId)).orderBy(desc(payablesChecks.ranAt)).limit(1);
+    return row === undefined ? null : { id: row.id, ranAt: row.ranAt.toISOString(), ranBy: row.ranBy, ok: row.ok, differences: row.differences, rows: row.rows, drift: row.drift };
   }
 }

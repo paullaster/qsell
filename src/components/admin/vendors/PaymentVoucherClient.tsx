@@ -16,7 +16,7 @@ import {
 } from '@/server/domains/vendors/payment-actions';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
-import { VOUCHER_KIND, VOUCHER_STATUS, fromCents, needsThreePeople, toCents } from '@/lib/vendor-payment';
+import { VOUCHER_KIND, VOUCHER_STATUS, fromCents, needsThreePeople, toCents, type VoucherKind } from '@/lib/vendor-payment';
 import type { Choice } from '@/lib/payment-options';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
 
@@ -50,7 +50,8 @@ function Editor({ view }: { view: View }) {
   const found = view.found;
   const [notice, setNotice] = useState<Notice>(null);
   const [busy, setBusy] = useState(false);
-  const [kind, setKind] = useState<'invoices' | 'advance'>(found?.voucher.kind ?? 'invoices');
+  const [kind, setKind] = useState<'invoices' | 'advance' | 'on_account'>(found?.voucher.kind ?? 'invoices');
+  const [onAccountAmount, setOnAccountAmount] = useState(found?.voucher.kind === 'on_account' ? found.voucher.amount : '');
   const [vendor, setVendor] = useState<Choice | null>(() => {
     if (found !== null) return { id: found.voucher.vendorId, label: found.vendorName };
     return view.prefill === null ? null : { id: view.prefill.vendorId, label: view.prefill.vendorName };
@@ -63,6 +64,7 @@ function Editor({ view }: { view: View }) {
     const wanted = view.candidates.items.find((i) => i.purchaseInvoiceId === view.prefill?.purchaseInvoiceId);
     return wanted === undefined ? {} : { [wanted.purchaseInvoiceId]: wanted.available };
   });
+  const [closing, setClosing] = useState<Record<string, boolean>>(() => Object.fromEntries((found?.lines ?? []).map((l) => [l.purchaseInvoiceId, l.closeRemainder])));
   const [advanceId, setAdvanceId] = useState(found?.voucher.advanceId ?? '');
 
   const loadCandidates = async (v: Choice | null) => {
@@ -78,11 +80,13 @@ function Editor({ view }: { view: View }) {
   const total = chosen.reduce((s, [, a]) => s + (Number.isFinite(Number(a)) ? toCents(a) : 0), 0);
   const advance = cand.advances.find((a) => a.id === advanceId);
   const advanceCents = advance === undefined ? 0 : toCents(advance.amount);
-  const amountCents = kind === 'advance' ? advanceCents : total;
+  const typedCents = Number.isFinite(Number(onAccountAmount)) && onAccountAmount !== '' ? toCents(onAccountAmount) : 0;
+  const amountByKind = { invoices: total, advance: advanceCents, on_account: typedCents };
+  const amountCents = amountByKind[kind];
 
   const save = async (): Promise<string | null> => {
-    const header = { kind, vendorId: vendor?.id ?? '', methodId: method?.id ?? '', narration, advanceId: kind === 'advance' ? advanceId : '' };
-    const res = await attempt(saveVoucherAction(found?.voucher.id ?? null, header, kind === 'advance' ? [] : chosen.map(([purchaseInvoiceId, amount]) => ({ purchaseInvoiceId, amount }))));
+    const header = { kind, vendorId: vendor?.id ?? '', methodId: method?.id ?? '', narration, advanceId: kind === 'advance' ? advanceId : '', amount: onAccountAmount };
+    const res = await attempt(saveVoucherAction(found?.voucher.id ?? null, header, kind === 'invoices' ? chosen.map(([purchaseInvoiceId, amount]) => ({ purchaseInvoiceId, amount, closeRemainder: closing[purchaseInvoiceId] === true })) : []));
     if (!res.ok) {
       setNotice({ kind: 'error', text: res.error });
       return null;
@@ -116,7 +120,7 @@ function Editor({ view }: { view: View }) {
       <Message notice={notice} />
       <div className={`${cardClass} space-y-3`}>
         <div role="group" aria-label="What to pay" className="flex flex-wrap gap-2">
-          {(['invoices', 'advance'] as const).map((k) => (
+          {kindsOf(view.can.onAccount).map((k) => (
             <button key={k} type="button" aria-pressed={kind === k} disabled={found !== null} className={`${buttonClass} ${kind === k ? 'ring-2 ring-indigo-500' : ''}`} onClick={() => setKind(k)}>{VOUCHER_KIND[k]}</button>
           ))}
         </div>
@@ -136,10 +140,18 @@ function Editor({ view }: { view: View }) {
                 <li key={i.purchaseInvoiceId} className="grid grid-cols-1 items-end gap-2 rounded-lg border border-line p-3 sm:grid-cols-[1fr_10rem]">
                   <span className="text-sm text-fg"><span className="font-semibold">{i.vendorInvoiceNo}</span> ({i.number}) · due {i.dueDate ?? 'on receipt'} · open {i.remaining}{Number(i.held) > 0 ? ` · held by other vouchers ${i.held}` : ''} · <span className="font-semibold">available {i.available}</span></span>
                   <Field id={`${uid}-a-${i.purchaseInvoiceId}`} label="Amount to pay"><input id={`${uid}-a-${i.purchaseInvoiceId}`} inputMode="decimal" value={amounts[i.purchaseInvoiceId] ?? ''} disabled={i.availableCents === 0} onChange={(e) => setAmounts((p) => ({ ...p, [i.purchaseInvoiceId]: e.target.value }))} className={fieldClass} autoComplete="off" /></Field>
+                  <label className="flex items-center gap-2 text-xs text-fg sm:col-span-2"><input type="checkbox" className="h-4 w-4" checked={closing[i.purchaseInvoiceId] === true} onChange={(e) => setClosing((p) => ({ ...p, [i.purchaseInvoiceId]: e.target.checked }))} />Close what is left of this invoice as tolerance, if it is small enough</label>
                 </li>
               ))}
             </ul>
           )}
+        </div>
+      ) : null}
+      {vendor !== null && kind === 'on_account' ? (
+        <div className={`${cardClass} space-y-2`} aria-label="Payment on account">
+          <h2 className="text-sm font-bold text-fg-strong">Payment on account</h2>
+          <p className="text-xs text-fg-muted">Money paid to the vendor with no invoice yet. It waits on the vendor’s account and is set against an invoice when one is booked. Say in the note what it is for.</p>
+          <Field id={`${uid}-oa`} label="Amount to pay"><input id={`${uid}-oa`} inputMode="decimal" value={onAccountAmount} onChange={(e) => setOnAccountAmount(e.target.value)} className={fieldClass} autoComplete="off" /></Field>
         </div>
       ) : null}
       {vendor !== null && kind === 'advance' ? (
@@ -155,6 +167,7 @@ function Editor({ view }: { view: View }) {
         </div>
       ) : null}
       <div className={`${cardClass} space-y-2`}>
+        {found === null ? null : <Settlement v={found.voucher} />}
         <p className="text-sm text-fg" aria-live="polite">Total to pay: <span className="font-semibold">{fromCents(amountCents)}</span>{needsThreePeople(amountCents, view.thresholdCents) ? <span className="block text-xs text-amber-700">This is large enough that a third person, who neither prepares nor approves it, has to pay it.</span> : null}</p>
         <div className="flex flex-wrap gap-2">
           <button type="button" className={primaryClass} disabled={busy} onClick={() => void send()}>Send for approval</button>
@@ -220,6 +233,7 @@ function Reader({ view, found }: { view: View; found: NonNullable<View['found']>
           <div><dt className="text-xs text-fg-muted">Approved by</dt><dd className="font-medium text-fg-strong">{found.approvedName ?? '—'}</dd></div>
           <div><dt className="text-xs text-fg-muted">Paid by</dt><dd className="font-medium text-fg-strong">{found.paidName ?? '—'}</dd></div>
         </dl>
+        <Settlement v={v} />
         {v.destination === null ? null : <p className="text-sm text-fg">Goes to: {v.destination}</p>}
         {v.narration === null ? null : <p className="text-sm text-fg">{v.narration}</p>}
         {v.status === 'paid' ? <p className="text-sm text-fg">Paid on {v.paidOn}, reference <span className="font-semibold">{v.paymentReference}</span>.</p> : null}
@@ -279,5 +293,25 @@ function Reader({ view, found }: { view: View; found: NonNullable<View['found']>
         </ol>
       </section>
     </section>
+  );
+}
+
+/** The kinds of payment a person may start: a payment with no invoice behind it needs a permission of its own. */
+function kindsOf(onAccount: boolean): VoucherKind[] {
+  return onAccount ? ['invoices', 'advance', 'on_account'] : ['invoices', 'advance'];
+}
+
+/** What paying the voucher settles: the invoices cleared, less discount and tax withheld, is the cash that goes out. Shown only when something besides cash is in it. */
+function Settlement({ v }: { v: { amount: string; discountAmount: string; withholdingAmount: string; toleranceAmount: string; cashAmount: string; currency: string } }) {
+  const extra = Number(v.discountAmount) + Number(v.withholdingAmount) + Number(v.toleranceAmount);
+  if (extra === 0) return null;
+  return (
+    <dl className="grid grid-cols-2 gap-x-6 gap-y-1 rounded-lg border border-line p-3 text-sm sm:grid-cols-5" aria-label="What this payment settles">
+      <div><dt className="text-xs text-fg-muted">Invoices cleared</dt><dd className="font-medium tabular-nums text-fg-strong">{v.amount}</dd></div>
+      <div><dt className="text-xs text-fg-muted">Early-payment discount</dt><dd className="font-medium tabular-nums text-fg-strong">{v.discountAmount}</dd></div>
+      <div><dt className="text-xs text-fg-muted">Tax withheld</dt><dd className="font-medium tabular-nums text-fg-strong">{v.withholdingAmount}</dd></div>
+      <div><dt className="text-xs text-fg-muted">Leftover closed</dt><dd className="font-medium tabular-nums text-fg-strong">{v.toleranceAmount}</dd></div>
+      <div><dt className="text-xs text-fg-muted">Cash paid out</dt><dd className="font-bold tabular-nums text-fg-strong">{v.cashAmount} {v.currency}</dd></div>
+    </dl>
   );
 }

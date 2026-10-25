@@ -33,8 +33,11 @@ test.describe('a shopper’s account', () => {
     await expect(page.getByText(shopper.otherNumber)).toHaveCount(0);
     await expect(page.getByText('INTERNAL-')).toHaveCount(0);
     await noHorizontalScroll(page);
-    await page.getByRole('button', { name: 'Show older orders' }).click();
-    await expect(list.getByRole('listitem')).toHaveCount(12);
+    // The page can be drawn before its button is wired up, and an early click does nothing: click again until the rest arrives.
+    await expect(async () => {
+      if ((await list.getByRole('listitem').count()) < 12) await page.getByRole('button', { name: 'Show older orders' }).click();
+      await expect(list.getByRole('listitem')).toHaveCount(12, { timeout: 3000 });
+    }).toPass({ timeout: 60_000 });
     await expect(page.getByRole('button', { name: 'Show older orders' })).toHaveCount(0);
 
     // One order: its details, and the way back to the list.

@@ -39,6 +39,8 @@ export async function startWorker(): Promise<void> {
       '41 * * * * vendor-bank-promote',
       // Requests for quotation: close at the deadline and remind (48 h, 4 h); every five minutes so a deadline is honoured closely.
       '*/5 * * * * rfq-deadlines',
+      // The vendor ledger against the books, every night.
+      '17 3 * * * payables-check',
     ].join('\n'),
   });
 

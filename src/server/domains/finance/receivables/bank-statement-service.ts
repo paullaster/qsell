@@ -17,6 +17,9 @@ import {
   receiptEvents,
   refundEvents,
   refundRequests,
+  vendorPaymentEvents,
+  vendorPaymentVouchers,
+  vendors,
   type BankAccountRow,
   type StatementLineStatus,
 } from '@/server/db/drizzle/schema';
@@ -298,11 +301,16 @@ export class BankStatementService {
         payoutRef: refundRequests.payoutReference,
         customerName: customers.name,
         customerPhone: customers.phone,
+        vendorRef: vendorPaymentVouchers.paymentReference,
+        vendorCheque: vendorPaymentVouchers.chequeNo,
+        vendorName: vendors.legalName,
       })
       .from(bankLedgerEntries)
       .leftJoin(customerReceipts, and(eq(customerReceipts.id, bankLedgerEntries.documentId), eq(bankLedgerEntries.documentType, 'customer_receipt')))
       .leftJoin(refundRequests, and(eq(refundRequests.id, bankLedgerEntries.documentId), eq(bankLedgerEntries.documentType, 'refund')))
       .leftJoin(customers, eq(customers.id, sql`coalesce(${customerReceipts.customerId}, ${refundRequests.customerId})`))
+      .leftJoin(vendorPaymentVouchers, and(eq(vendorPaymentVouchers.id, bankLedgerEntries.documentId), eq(bankLedgerEntries.documentType, 'vendor_payment')))
+      .leftJoin(vendors, eq(vendors.id, vendorPaymentVouchers.vendorId))
       .where(
         and(
           eq(bankLedgerEntries.companyId, companyId),
@@ -318,9 +326,10 @@ export class BankStatementService {
       id: r.e.id,
       date: r.e.postingDate,
       amountCents: centsOf(r.e.amount),
-      refs: [r.e.documentNo, r.extRef, r.payoutRef].filter((x): x is string => Boolean(x)),
+      // For a payment to a vendor the bank quotes our voucher number, the reference we recorded (a run's reference is followed by a cheque or voucher number) or the cheque number.
+      refs: [r.e.documentNo, r.extRef, r.payoutRef, r.vendorRef, r.vendorCheque, ...(r.vendorRef === null ? [] : r.vendorRef.split(' / '))].filter((x): x is string => Boolean(x)),
       phones: [phoneKeyOf(r.customerPhone)].filter((x): x is string => x !== null),
-      names: [r.customerName].filter((x): x is string => has(x)),
+      names: [r.customerName, r.vendorName].filter((x): x is string => has(x)),
       entry: r.e,
     }));
   }
@@ -410,6 +419,8 @@ export class BankStatementService {
       if (e.documentType === 'refund') {
         await tx.update(refundRequests).set({ bankMatchedAt: event === 'bank_matched' ? new Date() : null }).where(eq(refundRequests.id, e.documentId));
         await tx.insert(refundEvents).values({ refundId: e.documentId, event, fromStatus: 'paid', toStatus: 'paid', data: { statementLine: lineId }, actorType: ctx.actor.type, actorId: ctx.actor.id, origin: ctx.origin });
+      } else if (e.documentType === 'vendor_payment') {
+        await tx.insert(vendorPaymentEvents).values({ voucherId: e.documentId, event, fromStatus: 'paid', toStatus: 'paid', data: { statementLine: lineId }, actorType: ctx.actor.type, actorId: ctx.actor.id });
       } else if (e.documentType === 'customer_receipt') {
         await tx.insert(receiptEvents).values({ receiptId: e.documentId, event, data: { statementLine: lineId }, actorType: ctx.actor.type, actorId: ctx.actor.id, origin: ctx.origin });
       }
@@ -595,7 +606,7 @@ export class BankStatementService {
       if (cents <= 0) throw new FinanceError('NOT_INCOME', 'Only money paid into the account can be recorded as income.');
       const account = await this.account(tx, ctx.companyId, line.bankAccountId);
       const [income] = await tx.select().from(glAccounts).where(and(eq(glAccounts.companyId, ctx.companyId), eq(glAccounts.id, opts.incomeGlAccountId)));
-      if (income === undefined || income.type !== 'posting' || income.blocked) throw new FinanceError('INCOME_ACCOUNT_INVALID', 'Choose an open account to record this money against.');
+      if (income?.type !== 'posting' || income.blocked) throw new FinanceError('INCOME_ACCOUNT_INVALID', 'Choose an open account to record this money against.');
       const choices = await this.chargeGlChoices(ctx.companyId, account.id);
       if (choices.length === 0) throw new FinanceError('NO_METHOD', `No payment method pays into ${account.code}, so there is no G/L account to bring the money into. Add one under Settings → Payments.`);
       const bankGl = has(opts.glAccountId) ? choices.find((c) => c.glId === opts.glAccountId) : onlyOne(choices);

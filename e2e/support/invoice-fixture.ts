@@ -5,6 +5,9 @@
  *   tsx e2e/support/invoice-fixture.ts payments-prepare             the e2e cash method may pay vendors
  *   tsx e2e/support/invoice-fixture.ts book <tag:vendorId:poId:dn>   a booked invoice for the received order (464.00)
  *   tsx e2e/support/invoice-fixture.ts approve-voucher <voucherId>  approves a payment voucher as `e2e-boss`
+ *   tsx e2e/support/invoice-fixture.ts run <stage:vendorId:purchaseInvoiceId>  a payment run approved or released by other people
+ *   tsx e2e/support/invoice-fixture.ts approve-run <runId>          approves a run's vouchers as `e2e-boss`
+ *   tsx e2e/support/invoice-fixture.ts approve-credit <vendorCreditNo>  approves a vendor credit memo as `e2e-boss`
  * Prints one JSON line.
  */
 export {};
@@ -67,6 +70,66 @@ async function main(): Promise<void> {
   if (action === 'approve-voucher' && arg !== undefined) {
     await container.vendorPayments.approve({ companyId: company.id, actor: { type: 'user', id: 'e2e-boss' }, origin: { surface: 'e2e', action: 'fixture' } }, arg);
     process.stdout.write(`FIXTURE ${JSON.stringify({ id: arg })}\n`);
+    return;
+  }
+  if (action === 'run' && arg !== undefined) {
+    // arg = <stage>:<vendorId>:<purchaseInvoiceId>; stage = approved | released. Made by other people so the signed-in user may confirm.
+    const [stage, vendorId, purchaseInvoiceId] = arg.split(':');
+    const staff = (id: string) => ({ companyId: company.id, actor: { type: 'user' as const, id }, origin: { surface: 'e2e', action: 'fixture' } });
+    const [method] = await db.select().from(schema.paymentMethods).where(and(eq(schema.paymentMethods.companyId, company.id), eq(schema.paymentMethods.code, 'E2ECASH')));
+    if (method === undefined || vendorId === undefined || purchaseInvoiceId === undefined) throw new Error('bad arguments');
+    const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+    const made = await container.paymentRuns.create(staff('e2e-clerk'), { methodId: method.id, executionDate: tomorrow, note: 'E2E run', selections: [{ vendorId, allocations: [{ purchaseInvoiceId, amount: '464.00' }] }] });
+    await container.paymentRuns.submit(staff('e2e-clerk'), made.id);
+    const vouchers = await db.select().from(schema.vendorPaymentVouchers).where(eq(schema.vendorPaymentVouchers.batchId, made.id));
+    await container.paymentRuns.approve(staff('e2e-boss'), made.id, { approveIds: vouchers.map((v) => v.id), sendBackReason: '' });
+    if (stage === 'released') await container.paymentRuns.release(staff('e2e-till'), made.id, {});
+    process.stdout.write(`FIXTURE ${JSON.stringify({ runId: made.id, number: made.number })}\n`);
+    return;
+  }
+  if (action === 'approve-run' && arg !== undefined) {
+    const vouchers = await db.select().from(schema.vendorPaymentVouchers).where(eq(schema.vendorPaymentVouchers.batchId, arg));
+    await container.paymentRuns.approve({ companyId: company.id, actor: { type: 'user', id: 'e2e-boss' }, origin: { surface: 'e2e', action: 'fixture' } }, arg, { approveIds: vouchers.map((v) => v.id), sendBackReason: '' });
+    process.stdout.write(`FIXTURE ${JSON.stringify({ id: arg })}\n`);
+    return;
+  }
+  if (action === 'approve-credit' && arg !== undefined) {
+    const [memo] = await db.select().from(schema.vendorCreditMemos).where(and(eq(schema.vendorCreditMemos.companyId, company.id), eq(schema.vendorCreditMemos.vendorCreditNo, arg)));
+    if (memo === undefined) throw new Error(`no credit memo ${arg}`);
+    await container.creditMemos.approve({ companyId: company.id, actor: { type: 'user', id: 'e2e-boss' }, origin: { surface: 'e2e', action: 'fixture' } }, memo.id);
+    process.stdout.write(`FIXTURE ${JSON.stringify({ id: memo.id })}\n`);
+    return;
+  }
+  if (action === 'petty-float' && arg !== undefined) {
+    const staff = (id: string) => ({ companyId: company.id, actor: { type: 'user' as const, id }, origin: { surface: 'e2e', action: 'fixture' } });
+    const accounts = await db.select().from(schema.glAccounts).where(eq(schema.glAccounts.companyId, company.id));
+    const cashGl = accounts.find((a) => a.no === '1110');
+    const [method] = await db.select().from(schema.paymentMethods).where(and(eq(schema.paymentMethods.companyId, company.id), eq(schema.paymentMethods.code, 'E2ECASH')));
+    const [admin] = await db.select().from(schema.users).limit(1);
+    if (cashGl === undefined || method === undefined || admin === undefined) throw new Error('the e2e books are not set up');
+    const bank = await container.finance.bankAccounts.create(staff('e2e-admin'), { code: `PC${arg}`.toUpperCase().slice(0, 20), name: `Petty cash ${arg}`, kind: 'cash', currency: 'KES' });
+    const made = await container.pettyCash.saveFloat(staff('e2e-admin'), null, { code: `PC${arg}`.slice(0, 20), name: `Front office ${arg}`, bankAccountId: bank.id, glAccountId: cashGl.id, custodianId: admin.id, floatAmount: '10000', perVoucherLimit: '1000', dailyLimit: '3000', minimumBalance: '0' });
+    const top = await container.pettyCash.requestReplenishment(staff('e2e-clerk'), { floatId: made.id, fromMethodId: method.id, amount: '', countNote: '' });
+    await container.pettyCash.approveReplenishment(staff('e2e-boss'), top.id);
+    await container.pettyCash.payReplenishment(staff('e2e-till'), top.id, { reference: `E2E-${arg}` });
+    process.stdout.write(`FIXTURE ${JSON.stringify({ floatId: made.id, name: `Front office ${arg}` })}\n`);
+    return;
+  }
+  if (action === 'petty-receipt' && arg !== undefined) {
+    await container.pettyCash.attach({ companyId: company.id, actor: { type: 'user', id: 'e2e-clerk' }, origin: { surface: 'e2e', action: 'fixture' } }, arg, { mediaAssetId: `media_e2e_${arg}`, fileName: 'receipt.jpg' });
+    process.stdout.write(`FIXTURE ${JSON.stringify({ id: arg })}\n`);
+    return;
+  }
+  if (action === 'petty-approve' && arg !== undefined) {
+    await container.pettyCash.approve({ companyId: company.id, actor: { type: 'user', id: 'e2e-boss' }, origin: { surface: 'e2e', action: 'fixture' } }, arg);
+    process.stdout.write(`FIXTURE ${JSON.stringify({ id: arg })}\n`);
+    return;
+  }
+  if (action === 'petty-approve-topup' && arg !== undefined) {
+    const [r] = await db.select().from(schema.pettyCashReplenishments).where(and(eq(schema.pettyCashReplenishments.floatId, arg), eq(schema.pettyCashReplenishments.status, 'pending_approval')));
+    if (r === undefined) throw new Error('no top-up is waiting');
+    await container.pettyCash.approveReplenishment({ companyId: company.id, actor: { type: 'user', id: 'e2e-boss' }, origin: { surface: 'e2e', action: 'fixture' } }, r.id);
+    process.stdout.write(`FIXTURE ${JSON.stringify({ id: r.id })}\n`);
     return;
   }
   throw new Error('usage: invoice-fixture prepare | approve <vendorInvoiceNo> | payments-prepare | book <tag:vendorId:poId:deliveryNote> | approve-voucher <voucherId>');
