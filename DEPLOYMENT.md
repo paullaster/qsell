@@ -335,7 +335,7 @@ provider chosen by `MEDIA_DRIVER` in that installation's `DEPLOY_PATH/.env.runti
 
 | `MEDIA_DRIVER`        | Where files go                                                      | Notes                                                 |
 | --------------------- | ------------------------------------------------------------------- | ----------------------------------------------------- |
-| `s3`                  | An S3-compatible bucket (AWS S3, MinIO, R2, B2, Wasabi, Spaces)     | Needs the settings below. Recommended for production. |
+| `s3`                  | An S3-compatible bucket (AWS S3, MinIO, R2, B2, Wasabi, Spaces, bundled RustFS) | Needs the settings below. Recommended for production. |
 | `local` (the default) | The persistent `media_data` volume, mounted at `/app/storage/media` | Single host. Survives releases. Back it up (below).   |
 | `cloudinary`          | Your Cloudinary account                                             | Kept so earlier uploads keep working.                 |
 
@@ -387,6 +387,39 @@ S3_SECRET_ACCESS_KEY=...
   private file cannot be read without its signed link.
 - **Policy for the key:** allow `s3:PutObject`, `s3:GetObject` and `s3:DeleteObject` on
   `arn:aws:s3:::<bucket>/<prefix>/*`, and nothing else.
+
+### Using the bundled RustFS (free, self-hosted)
+
+RustFS is open-source, S3-compatible object storage. `compose.production.yaml` includes it as an
+optional service (the `storage` profile), so an installation can keep its files in a store of its own
+without an outside account. Nothing is started unless you ask for it:
+
+```sh
+MEDIA_DRIVER=s3
+# The app and worker reach the store by its name on the private network.
+S3_ENDPOINT=http://rustfs:9000
+# Browsers load files through this site's own address, which forwards /<bucket>/* to the store.
+S3_PUBLIC_ENDPOINT=https://shop.example.com   # exactly https://<PUBLIC_DOMAIN>
+S3_BUCKET=qsell-media
+S3_REGION=us-east-1
+S3_ACCESS_KEY_ID=...        # choose any; the store is created with this key
+S3_SECRET_ACCESS_KEY=...    # a long random value
+```
+
+When a deploy sees `S3_ENDPOINT=http://rustfs…` it checks `S3_PUBLIC_ENDPOINT`, starts the `rustfs`
+service with that key, creates the bucket (once), and tells Caddy which bucket path to forward.
+Nothing else changes: the store has no published port and no route to the internet, and the host
+Nginx needs no new server block because requests already reach Caddy.
+
+- **Private files** stay private: they are never public, only reachable through a signed link that
+  expires in minutes, handed out after the app checks the person may see the file.
+- **Data:** files live in the `rustfs_data` volume. `backup-instance.sh` archives it next to the
+  database and media backups; run it when uploads are quiet. Restore by extracting the archive into a
+  fresh `rustfs_data` volume before starting the service.
+- **Version:** the image is `rustfs/rustfs:latest` unless `RUSTFS_IMAGE` is set; pin a tag once you have
+  tested one. RustFS is a newer project, so read its release notes before an upgrade.
+- **Reverse proxy:** the signature covers the path and the Host header, so the proxy must pass both
+  unchanged. The bundled Caddy route does; if you put your own proxy in front, do the same.
 
 ### Using Cloudinary
 

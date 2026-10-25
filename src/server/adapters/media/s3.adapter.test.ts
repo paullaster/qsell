@@ -84,6 +84,69 @@ describe('s3ConfigFromEnv', () => {
   });
 });
 
+describe('a store on the private network, reached from outside through a proxy', () => {
+  const PRIVATE = {
+    ...ENV,
+    NODE_ENV: 'production',
+    S3_ENDPOINT: 'http://rustfs:9000',
+    S3_PUBLIC_ENDPOINT: 'https://shop.example.test',
+  } as NodeJS.ProcessEnv;
+
+  it('talks to the private address and signs links for the public one', () => {
+    const config = s3ConfigFromEnv(PRIVATE);
+    expect(config.endpoint.href).toBe('http://rustfs:9000/');
+    expect(config.signingEndpoint.href).toBe('https://shop.example.test/');
+    expect(config.forcePathStyle).toBe(true);
+  });
+
+  it('allows plain http in production only for a name on the private network', () => {
+    expect(() =>
+      s3ConfigFromEnv({ ...PRIVATE, S3_ENDPOINT: 'http://storage.example.test:9000' }),
+    ).toThrow('private network');
+    expect(() => s3ConfigFromEnv({ ...PRIVATE, S3_ENDPOINT: 'http://203.0.113.9:9000' })).toThrow(
+      'private network',
+    );
+    expect(() => s3ConfigFromEnv({ ...PRIVATE, S3_PUBLIC_ENDPOINT: 'http://rustfs:9000' })).toThrow(
+      'S3_PUBLIC_ENDPOINT must be an https://',
+    );
+    expect(
+      s3ConfigFromEnv({ ...PRIVATE, S3_ENDPOINT: 'http://localhost:9000' }).endpoint.host,
+    ).toBe('localhost:9000');
+  });
+
+  it('without a separate public address, links use the endpoint itself', () => {
+    const config = s3ConfigFromEnv({ ...PRIVATE, S3_PUBLIC_ENDPOINT: '' });
+    expect(config.signingEndpoint).toBe(config.endpoint);
+  });
+
+  it('puts the public address in the signed link, and the signature is the one the SDK makes for that address', async () => {
+    const at = new Date('2026-10-26T09:30:15Z');
+    const port = new S3MediaAdapter(s3ConfigFromEnv(PRIVATE), () => at);
+    const ref = { storageKey: 'qsell/private/vendor/x.png', visibility: 'private' as const };
+    const mine = new URL(port.urlFor(ref));
+    expect(mine.origin).toBe('https://shop.example.test');
+    expect(mine.pathname).toBe('/qsell-assets/qsell/private/vendor/x.png');
+    const sdk = new S3Client({
+      region: 'us-east-1',
+      endpoint: 'https://shop.example.test',
+      forcePathStyle: true,
+      credentials: { accessKeyId: 'AKIDEXAMPLE', secretAccessKey: ENV.S3_SECRET_ACCESS_KEY ?? '' },
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      responseChecksumValidation: 'WHEN_REQUIRED',
+    });
+    const theirs = new URL(
+      await getSignedUrl(
+        sdk,
+        new GetObjectCommand({ Bucket: 'qsell-assets', Key: ref.storageKey }),
+        { expiresIn: 300, signingDate: at },
+      ),
+    );
+    expect(mine.searchParams.get('X-Amz-Signature')).toBe(
+      theirs.searchParams.get('X-Amz-Signature'),
+    );
+  });
+});
+
 describe('isSafeStorageKey', () => {
   it('accepts keys the app made and nothing that climbs out of its folder', () => {
     expect(isSafeStorageKey('qsell/public/product/3f2b9c1e-aaaa.png')).toBe(true);

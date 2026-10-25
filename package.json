@@ -23,6 +23,7 @@
     "worker": "tsx src/server/queue/index.ts",
     "media:verify": "tsx scripts/verify-cloudinary-adapter.ts",
     "media:check": "tsx scripts/check-media-provider.ts",
+    "media:bucket": "tsx scripts/ensure-media-bucket.ts",
     "media:purge": "tsx scripts/purge-media.ts"
   },
   "dependencies": {

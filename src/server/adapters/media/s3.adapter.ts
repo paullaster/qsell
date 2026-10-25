@@ -31,8 +31,13 @@ const PUBLIC_FALLBACK_WINDOW_SECONDS = 6 * 3600;
 const PUBLIC_FALLBACK_TTL_SECONDS = 24 * 3600;
 
 export interface S3AdapterConfig {
-  /** Service endpoint. For AWS, derived from the region. */
+  /** Service endpoint the server talks to. For AWS, derived from the region. */
   endpoint: URL;
+  /**
+   * The address browsers use in signed links. The same as `endpoint` unless the store sits on a private
+   * network and is reached from outside through a proxy (then the proxy must pass the Host header unchanged).
+   */
+  signingEndpoint: URL;
   region: string;
   bucket: string;
   accessKeyId: string;
@@ -58,16 +63,31 @@ function boundedInt(value: string | undefined, fallback: number, min: number, ma
   return Number.isInteger(parsed) && parsed >= min && parsed <= max ? parsed : fallback;
 }
 
-function parsedUrl(name: string, value: string, production: boolean): URL {
+/** A name only the private network knows (`rustfs`, `localhost`): plain http is safe there, nothing crosses the internet. */
+function isInternalHost(hostname: string): boolean {
+  return (
+    !hostname.includes('.') ||
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '[::1]'
+  );
+}
+
+function parsedUrl(name: string, value: string, production: boolean, internalOk = false): URL {
   let url: URL;
   try {
     url = new URL(value);
   } catch {
     throw new Error(`${name} is not a valid URL.`);
   }
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && !production)) {
+  const plain =
+    url.protocol === 'http:' && (!production || (internalOk && isInternalHost(url.hostname)));
+  if (url.protocol !== 'https:' && !plain) {
+    const allowed = internalOk
+      ? ' (http:// is allowed only for a name on the private network, such as http://rustfs:9000)'
+      : '';
     throw new Error(
-      `${name} must be an https:// address${production ? '' : ' (http:// is allowed outside production, for a local store)'}.`,
+      `${name} must be an https:// address${production ? allowed : ' (http:// is allowed outside production, for a local store)'}.`,
     );
   }
   if (url.username !== '' || url.password !== '')
@@ -102,7 +122,12 @@ export function s3ConfigFromEnv(env: NodeJS.ProcessEnv = process.env): S3Adapter
     'S3_ENDPOINT',
     has(rawEndpoint) ? rawEndpoint : `https://s3.${region}.amazonaws.com`,
     production,
+    true,
   );
+  const rawSigning = env.S3_PUBLIC_ENDPOINT?.trim() ?? '';
+  const signingEndpoint = has(rawSigning)
+    ? parsedUrl('S3_PUBLIC_ENDPOINT', rawSigning, production)
+    : endpoint;
 
   const prefix = (env.S3_PREFIX ?? 'qsell').replace(/^\/+|\/+$/g, '');
   if (prefix !== '' && !PREFIX_PATTERN.test(prefix)) {
@@ -119,6 +144,7 @@ export function s3ConfigFromEnv(env: NodeJS.ProcessEnv = process.env): S3Adapter
   const style = (env.S3_FORCE_PATH_STYLE ?? '').trim().toLowerCase();
   return {
     endpoint,
+    signingEndpoint,
     region,
     bucket,
     accessKeyId,
@@ -274,7 +300,7 @@ export class S3MediaAdapter implements MediaStoragePort {
 
   private sign(key: string, expiresInSeconds: number, at: Date): string {
     return presignGetUrl({
-      endpoint: this.config.endpoint,
+      endpoint: this.config.signingEndpoint,
       bucket: this.config.bucket,
       region: this.config.region,
       key,

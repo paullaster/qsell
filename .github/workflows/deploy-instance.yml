@@ -193,6 +193,25 @@ jobs:
           printf 'COMPOSE_PROJECT_NAME=%s\nPUBLIC_DOMAIN=%s\nEDGE_HTTP_PORT=%s\nAPP_IMAGE=%s\nWORKER_IMAGE=%s\nMIGRATOR_IMAGE=%s\n' \
             "$COMPOSE_PROJECT_NAME" "$PUBLIC_DOMAIN" "$EDGE_HTTP_PORT" "$APP_IMAGE" "$WORKER_IMAGE" "$MIGRATOR_IMAGE" > .env.deploy
 
+          # S3_ENDPOINT=http://rustfs:9000 means the object store bundled in Compose (profile `storage`).
+          # It is reached by the app over the private network and by browsers through this site's own
+          # address, so signed links need a public https address (S3_PUBLIC_ENDPOINT) on this domain.
+          bundled_store=false
+          if [ "${media_driver:-local}" = s3 ]; then
+            case "$(env_value S3_ENDPOINT)" in
+              http://rustfs|http://rustfs:*|http://rustfs/*) bundled_store=true ;;
+            esac
+          fi
+          if [ "$bundled_store" = true ]; then
+            case "$(env_value S3_PUBLIC_ENDPOINT)" in
+              https://"$PUBLIC_DOMAIN"|https://"$PUBLIC_DOMAIN"/) ;;
+              *) echo "With the bundled object store, S3_PUBLIC_ENDPOINT must be https://$PUBLIC_DOMAIN (this site's own address). Nothing was deployed."; exit 1 ;;
+            esac
+            printf 'COMPOSE_PROFILES=storage\nMEDIA_BUCKET=%s\n' "$(env_value S3_BUCKET)" >> .env.deploy
+            printf 'RUSTFS_ACCESS_KEY=%s\nRUSTFS_SECRET_KEY=%s\n' "$(env_value S3_ACCESS_KEY_ID)" "$(env_value S3_SECRET_ACCESS_KEY)" > .env.rustfs
+            echo 'Media storage: bundled RustFS object store will be started with this release.'
+          fi
+
           compose() { docker compose --env-file .env.deploy -f compose.production.yaml "$@"; }
 
           # Reverts app/worker/Caddy to the previously deployed images. The database
@@ -216,6 +235,9 @@ jobs:
           old_app=$(compose ps -q app || true)
           if [ -n "$old_app" ]; then docker cp "$old_app:/app/public/uploads/." "$upload_backup/" || true; fi
           compose up -d --remove-orphans
+          if [ "$bundled_store" = true ]; then
+            compose run --rm -T --no-deps worker pnpm media:bucket || { echo 'Could not prepare the media bucket on the bundled object store.'; rollback; exit 1; }
+          fi
           new_app=$(compose ps -q app)
           if [ -n "$new_app" ] && [ -d "$upload_backup/company" ]; then
             docker cp "$upload_backup/company" "$new_app:/app/public/uploads/"
