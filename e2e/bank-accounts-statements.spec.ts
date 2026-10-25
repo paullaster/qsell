@@ -34,7 +34,8 @@ test.describe('bank accounts', () => {
 
 test.describe('bank statements', () => {
   test('a statement is imported through column pickers and its lines are worked on', async ({ page }, testInfo) => {
-    const who = testInfo.project.name;
+    // A retry imports lines of its own: the failed attempt's lines are already kept, and a repeat would find nothing new.
+    const who = testInfo.retry === 0 ? testInfo.project.name : `${testInfo.project.name} retry ${String(testInfo.retry)}`;
     await open(page, '/admin/finance/bank-statements', 'Bank statements');
     await page.getByRole('link', { name: /E2EBANK/ }).click();
     await expect(page.getByRole('heading', { name: /E2EBANK/, level: 2 })).toBeVisible({ timeout: 30_000 });
