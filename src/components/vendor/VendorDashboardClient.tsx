@@ -91,6 +91,15 @@ export function VendorDashboardClient({ overviewPromise }: { overviewPromise: Re
           <p className="mt-1 text-sm text-fg-muted">Invoice us for what was delivered, and follow each invoice until it is paid.</p>
         </section>
       ) : null}
+      {v.status === 'active' ? (
+        <section aria-label="Payments" className={cardClass}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-bold text-fg-strong">Payments</h2>
+            <Link href="/vendor/payments" className={buttonClass}>Open my payments</Link>
+          </div>
+          <p className="mt-1 text-sm text-fg-muted">What we have paid you, with the invoices each payment covers.</p>
+        </section>
+      ) : null}
       {v.yourRole === 'owner' ? (
         <section aria-label="Your team" className={cardClass}>
           <div className="flex flex-wrap items-center justify-between gap-2">

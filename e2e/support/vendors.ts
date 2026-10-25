@@ -124,9 +124,11 @@ export async function signInAsShopper(page: Page, shopper: Pick<ShopperFixture, 
   await expect(page).toHaveURL(/\/profile$/, { timeout: 90_000 });
 }
 
-/** Steps of the supplier invoice tests that need a second staff member or the books set up (see invoice-fixture.ts). */
-export function invoiceTool(action: 'prepare' | 'approve', arg?: string): void {
+/** Steps of the invoice and payment tests that need a second staff member or the books set up (see invoice-fixture.ts). Returns the fixture's answer. */
+export function invoiceTool(action: 'prepare' | 'approve' | 'payments-prepare' | 'book' | 'approve-voucher', arg?: string): Record<string, string> {
   const args = ['exec', 'tsx', 'e2e/support/invoice-fixture.ts', action, ...(arg === undefined ? [] : [arg])];
   const output = execFileSync('pnpm', args, { env: { ...process.env, ...e2eEnvironment() }, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
-  if (!output.split('\n').some((l) => l.startsWith('FIXTURE '))) throw new Error(`the invoice tool printed nothing usable: ${output.slice(-500)}`);
+  const line = output.split('\n').find((l) => l.startsWith('FIXTURE '));
+  if (line === undefined) throw new Error(`the invoice tool printed nothing usable: ${output.slice(-500)}`);
+  return JSON.parse(line.slice('FIXTURE '.length)) as Record<string, string>;
 }

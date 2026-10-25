@@ -38,17 +38,19 @@ export async function invoiceAction(invoiceId: string) {
   return await run('supplier_invoices:read', { surface: 'invoices/view', action: 'view' }, async (ctx) => {
     const found = await getContainer().supplierInvoices.get(ctx.companyId, id(invoiceId));
     if (found === null) throw new FinanceError('NOT_FOUND', 'That invoice does not exist.');
-    const [process, override, ret, reject, approve, post] = await Promise.all([
+    const [process, override, ret, reject, approve, post, pay, applyAdvance] = await Promise.all([
       canPermission('supplier_invoices:process'),
       canPermission('supplier_invoices:override_match'),
       canPermission('supplier_invoices:return'),
       canPermission('supplier_invoices:reject'),
       canPermission('supplier_invoices:approve'),
       canPermission('purchase_invoices:post'),
+      canPermission('vendor_payments:create'),
+      canPermission('vendor_payments:apply_advance'),
     ]);
     const me = ctx.actor.id;
     const separate = me === null || (me !== found.invoice.linkedBy && me !== found.invoice.matchedBy);
-    return { ...found, can: { process, override, return: ret, reject, approve: approve && separate, approveBlockedBySeparation: approve && !separate, post } };
+    return { ...found, can: { process, override, return: ret, reject, approve: approve && separate, approveBlockedBySeparation: approve && !separate, post, pay, applyAdvance } };
   });
 }
 

@@ -16,6 +16,7 @@ import {
   sendInvoiceForApprovalAction,
   type invoiceAction,
 } from '@/server/domains/vendors/invoice-actions';
+import { applyAdvanceAction } from '@/server/domains/vendors/payment-actions';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
 import { INVOICE_STATE, STAFF_RETURNABLE, reasonLabel } from '@/lib/supplier-invoice';
@@ -102,7 +103,7 @@ function Workspace({ view }: { view: View }) {
         actions={<Link href="/admin/vendors/invoices" className={buttonClass}>All invoices</Link>}
       />
       <Message notice={notice} />
-      {inv.advanceBasis ? <p role="status" className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-fg">This invoice has no delivery note. It was accepted because the order is set up for an advance payment and one was approved. It is checked against the advance, and it is booked together with the payment, which comes with the payment vouchers.</p> : null}
+      {inv.advanceBasis ? <p role="status" className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-fg">This invoice has no delivery note. It was accepted because the order is set up for an advance payment and one was approved. It is checked against the advance. It is not booked: the advance is paid with an advance payment voucher, and set against the final invoice when that is booked.</p> : null}
       {inv.matchOverrideReason === null ? null : <p role="status" className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-fg">Differences were accepted{view.matchedName === null ? '' : ` by ${view.matchedName}`}: {inv.matchOverrideReason}</p>}
 
       <section className={`${cardClass} space-y-2`} aria-label="The invoice">
@@ -229,6 +230,12 @@ function Workspace({ view }: { view: View }) {
         {inv.state === 'returned' ? <p className="text-sm text-fg">Returned to the vendor: {reasonLabel(inv.returnReasonCode ?? 'other')}. {inv.returnNote}</p> : null}
         {inv.state === 'rejected' ? <p className="text-sm text-fg">Refused: {reasonLabel(inv.rejectReasonCode ?? 'other')}. {inv.rejectNote}</p> : null}
         {inv.state === 'posted' ? <p className="text-sm text-fg">Booked{inv.postedAt === null ? '' : ` on ${new Date(inv.postedAt).toLocaleDateString()}`}. It can no longer be changed. A correction is a credit memo.</p> : null}
+        {inv.state === 'posted' && view.bookedInvoice !== null ? (
+          <div className="flex flex-wrap gap-2">
+            {view.can.pay ? <Link href={`/admin/vendors/payments/new?invoice=${view.bookedInvoice.id}`} className={primaryClass}>Pay this invoice</Link> : null}
+            {view.can.applyAdvance ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void act(applyAdvanceAction(view.bookedInvoice?.id ?? ''), (d) => `The advance is set against this invoice: ${((d as { appliedCents: number }).appliedCents / 100).toFixed(2)}.`)}>Set a paid advance against it</button> : null}
+          </div>
+        ) : null}
       </section>
 
       <section className={cardClass} aria-label="History">

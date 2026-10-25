@@ -67,6 +67,8 @@ import { RgnService } from '@/server/domains/vendors/rgn-service';
 import { SupplierInvoicePortalService } from '@/server/domains/vendors/invoice-portal-service';
 import { SupplierInvoiceService } from '@/server/domains/vendors/invoice-service';
 import { SupplierInvoicePostingService } from '@/server/domains/vendors/invoice-posting-service';
+import { VendorPaymentService } from '@/server/domains/vendors/payment-service';
+import { PayablesReportService } from '@/server/domains/vendors/payables-report-service';
 import { TransactionLedgerService } from '@/server/domains/transactions/ledger-service';
 import { TransactionReconcileService } from '@/server/domains/transactions/reconcile-service';
 import { PaymentCallbackService } from '@/server/domains/payments/callback-service';
@@ -165,6 +167,9 @@ export interface AppContainer {
   invoicePortal: SupplierInvoicePortalService;
   supplierInvoices: SupplierInvoiceService;
   invoicePosting: SupplierInvoicePostingService;
+  /** Payment vouchers for invoices and advances, and what we owe (ageing, statements). */
+  vendorPayments: VendorPaymentService;
+  payablesReports: PayablesReportService;
   transactionLedger: TransactionLedgerService;
   transactionReconcile: TransactionReconcileService;
   paymentCallbacks: PaymentCallbackService;
@@ -439,6 +444,8 @@ export function getContainer(): AppContainer {
     invoicePortal: new SupplierInvoicePortalService(drizzleDb, numbering, vendorFiles, advancePayments, vendorNotifier),
     supplierInvoices: new SupplierInvoiceService(drizzleDb, vendorNotifier),
     invoicePosting: new SupplierInvoicePostingService(drizzleDb, numbering, finance.engine, finance.postingSetup, finance.vendorLedger, vendorNotifier),
+    vendorPayments: new VendorPaymentService(drizzleDb, numbering, finance.engine, finance.vendorLedger, advancePayments, vendorNotifier),
+    payablesReports: new PayablesReportService(drizzleDb),
     transactionLedger,
     transactionReconcile,
     paymentCallbacks,

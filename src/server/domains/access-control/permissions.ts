@@ -957,6 +957,42 @@ export const PERMISSIONS = {
     category: 'Vendor Management',
     description: 'Book an approved supplier invoice to the vendor’s account and the general ledger',
   },
+  'vendor_payments:read': {
+    resource: 'vendor_payments',
+    action: 'read',
+    category: 'Vendor Management',
+    description: 'See payment vouchers to vendors and what we owe them',
+  },
+  'vendor_payments:create': {
+    resource: 'vendor_payments',
+    action: 'create',
+    category: 'Vendor Management',
+    description: 'Prepare a payment voucher for a vendor’s invoices or advance',
+  },
+  'vendor_payments:approve': {
+    resource: 'vendor_payments',
+    action: 'approve',
+    category: 'Vendor Management',
+    description: 'Approve or send back a payment voucher (never one you prepared)',
+  },
+  'vendor_payments:release': {
+    resource: 'vendor_payments',
+    action: 'release',
+    category: 'Vendor Management',
+    description: 'Pay an approved voucher: record the payment and book it',
+  },
+  'vendor_payments:reverse': {
+    resource: 'vendor_payments',
+    action: 'reverse',
+    category: 'Vendor Management',
+    description: 'Reverse a paid voucher, with a reason, and cancel one that is not yet paid',
+  },
+  'vendor_payments:apply_advance': {
+    resource: 'vendor_payments',
+    action: 'apply_advance',
+    category: 'Vendor Management',
+    description: 'Set a paid advance against a booked invoice',
+  },
   'vendor_ledger:read': {
     resource: 'vendor_ledger',
     action: 'read',

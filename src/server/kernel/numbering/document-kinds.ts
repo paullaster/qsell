@@ -205,6 +205,11 @@ export const DOCUMENT_KINDS = {
     fiscal: false,
     suggested: { code: 'PINV', prefix: 'PINV-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
   },
+  vendor_payment: {
+    label: 'Vendor payment voucher',
+    fiscal: false,
+    suggested: { code: 'VPV', prefix: 'VPV-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
+  },
   rfq: {
     label: 'Request for quotation',
     fiscal: false,

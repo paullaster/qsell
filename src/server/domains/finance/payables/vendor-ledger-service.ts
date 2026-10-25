@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, asc, desc, eq, gte, lte, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { vendorDetailedEntries, vendorLedgerEntries, type VendorLedgerDocumentType } from '@/server/db/drizzle/schema';
 import { has } from '@/lib/values';
@@ -84,6 +84,78 @@ export class VendorLedgerService {
       createdBy: e.createdBy ?? null,
     });
     return { id, replayed: false };
+  }
+
+  /**
+   * Sets a payment (or an advance) against an invoice for `amountCents`: two detailed entries sharing one application id, and the
+   * remaining amount of both entries changed in the same transaction. Refuses more than either entry has open, and entries of
+   * different vendors.
+   */
+  async apply(
+    tx: Writer,
+    e: { companyId: string; vendorId: string; creditEntryId: string; invoiceEntryId: string; amountCents: number; postingDate: string; entryType?: 'application' | 'advance_application'; registerId?: string | null; createdBy?: string | null },
+  ): Promise<{ applicationId: string }> {
+    if (e.amountCents <= 0) throw new FinanceError('AMOUNT_INVALID', 'The amount to apply must be above zero.');
+    const rows = await tx
+      .select()
+      .from(vendorLedgerEntries)
+      .where(and(eq(vendorLedgerEntries.companyId, e.companyId), inArray(vendorLedgerEntries.id, [e.creditEntryId, e.invoiceEntryId])))
+      .orderBy(asc(vendorLedgerEntries.id))
+      .for('update');
+    const credit = rows.find((r) => r.id === e.creditEntryId);
+    const invoice = rows.find((r) => r.id === e.invoiceEntryId);
+    if (credit === undefined || invoice === undefined || credit.vendorId !== e.vendorId || invoice.vendorId !== e.vendorId) throw new FinanceError('NOT_FOUND', 'Those ledger entries do not belong to this vendor.');
+    if (credit.currency !== invoice.currency) throw new FinanceError('CURRENCY_MISMATCH', 'A payment can only be applied to an invoice in the same currency.');
+    const creditOpen = -toCents(Number(credit.remainingAmount).toFixed(2));
+    const invoiceOpen = toCents(Number(invoice.remainingAmount).toFixed(2));
+    if (e.amountCents > creditOpen) throw new FinanceError('NOT_ENOUGH_PAYMENT', 'The payment has less left to apply than that.');
+    if (e.amountCents > invoiceOpen) throw new FinanceError('INVOICE_NOT_OPEN', 'The invoice has less left to pay than that.');
+    const applicationId = randomUUID();
+    const type = e.entryType ?? 'application';
+    await tx.insert(vendorDetailedEntries).values([
+      { companyId: e.companyId, vendorId: e.vendorId, ledgerEntryId: credit.id, entryType: type, amount: fromCents(e.amountCents), appliedToEntryId: invoice.id, applicationId, postingDate: e.postingDate, registerId: e.registerId ?? null, createdBy: e.createdBy ?? null },
+      { companyId: e.companyId, vendorId: e.vendorId, ledgerEntryId: invoice.id, entryType: type, amount: fromCents(-e.amountCents), appliedToEntryId: credit.id, applicationId, postingDate: e.postingDate, registerId: e.registerId ?? null, createdBy: e.createdBy ?? null },
+    ]);
+    await tx.update(vendorLedgerEntries).set({ remainingAmount: fromCents(-(creditOpen - e.amountCents)) }).where(eq(vendorLedgerEntries.id, credit.id));
+    await tx.update(vendorLedgerEntries).set({ remainingAmount: fromCents(invoiceOpen - e.amountCents) }).where(eq(vendorLedgerEntries.id, invoice.id));
+    return { applicationId };
+  }
+
+  /** Undoes every application that is still in force on one entry, writing the opposite detailed entries and restoring what was open. */
+  async unapplyAll(tx: Writer, e: { companyId: string; entryId: string; postingDate: string; reasonText: string; createdBy?: string | null }): Promise<number> {
+    const applied = await tx
+      .select()
+      .from(vendorDetailedEntries)
+      .where(and(eq(vendorDetailedEntries.companyId, e.companyId), eq(vendorDetailedEntries.ledgerEntryId, e.entryId), inArray(vendorDetailedEntries.entryType, ['application', 'advance_application'])));
+    let undone = 0;
+    for (const a of applied) {
+      if (a.applicationId === null || a.appliedToEntryId === null) continue;
+      const [already] = await tx.select({ id: vendorDetailedEntries.id }).from(vendorDetailedEntries).where(and(eq(vendorDetailedEntries.unappliesApplicationId, a.applicationId), eq(vendorDetailedEntries.ledgerEntryId, e.entryId)));
+      if (already !== undefined) continue;
+      const mine = toCents(a.amount);
+      const entries = await tx.select().from(vendorLedgerEntries).where(inArray(vendorLedgerEntries.id, [e.entryId, a.appliedToEntryId])).orderBy(asc(vendorLedgerEntries.id)).for('update');
+      const own = entries.find((r) => r.id === e.entryId);
+      const other = entries.find((r) => r.id === a.appliedToEntryId);
+      if (own === undefined || other === undefined) continue;
+      await tx.insert(vendorDetailedEntries).values([
+        { companyId: e.companyId, vendorId: own.vendorId, ledgerEntryId: own.id, entryType: 'unapplication', amount: fromCents(-mine), appliedToEntryId: other.id, applicationId: a.applicationId, unappliesApplicationId: a.applicationId, postingDate: e.postingDate, reasonText: e.reasonText, createdBy: e.createdBy ?? null },
+        { companyId: e.companyId, vendorId: own.vendorId, ledgerEntryId: other.id, entryType: 'unapplication', amount: fromCents(mine), appliedToEntryId: own.id, applicationId: a.applicationId, unappliesApplicationId: a.applicationId, postingDate: e.postingDate, reasonText: e.reasonText, createdBy: e.createdBy ?? null },
+      ]);
+      await tx.update(vendorLedgerEntries).set({ remainingAmount: fromCents(toCents(Number(own.remainingAmount).toFixed(2)) - mine) }).where(eq(vendorLedgerEntries.id, own.id));
+      await tx.update(vendorLedgerEntries).set({ remainingAmount: fromCents(toCents(Number(other.remainingAmount).toFixed(2)) + mine) }).where(eq(vendorLedgerEntries.id, other.id));
+      undone += 1;
+    }
+    return undone;
+  }
+
+  /** Closes what is left open on an entry whose document was reversed: a detailed entry of the opposite amount. */
+  async reverseEntry(tx: Writer, e: { companyId: string; entryId: string; postingDate: string; reasonText: string; registerId?: string | null; createdBy?: string | null }): Promise<void> {
+    const [row] = await tx.select().from(vendorLedgerEntries).where(and(eq(vendorLedgerEntries.companyId, e.companyId), eq(vendorLedgerEntries.id, e.entryId))).for('update');
+    if (row === undefined) throw new FinanceError('NOT_FOUND', 'That ledger entry does not exist.');
+    const open = toCents(Number(row.remainingAmount).toFixed(2));
+    if (open === 0) return;
+    await tx.insert(vendorDetailedEntries).values({ companyId: e.companyId, vendorId: row.vendorId, ledgerEntryId: row.id, entryType: 'reversal', amount: fromCents(-open), postingDate: e.postingDate, reasonText: e.reasonText, registerId: e.registerId ?? null, createdBy: e.createdBy ?? null });
+    await tx.update(vendorLedgerEntries).set({ remainingAmount: '0.00' }).where(eq(vendorLedgerEntries.id, row.id));
   }
 
   /** What is owed to the vendor, per currency, in cents: the sum of what is still open. */

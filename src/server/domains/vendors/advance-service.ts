@@ -107,6 +107,27 @@ export class AdvancePaymentService {
     });
   }
 
+  /** Inside the voucher's own transaction: the voucher that pays the advance marks it paid. */
+  async payIn(tx: Tx, companyId: string, id: string, voucherId: string, now: Date): Promise<void> {
+    const a = await this.lock(tx, companyId, id);
+    if (a.status !== 'approved') throw new FinanceError('NOT_APPROVED', a.status === 'paid' ? 'This advance payment was already paid by another voucher.' : 'Only an approved advance payment can be paid.');
+    await tx.update(vendorAdvancePayments).set({ status: 'paid', voucherId, paidAt: now, updatedAt: now }).where(eq(vendorAdvancePayments.id, id));
+  }
+
+  /** A reversed voucher gives the advance back to the state it was in: approved, unpaid. Refused once any of it was applied to an invoice. */
+  async reopenIn(tx: Tx, companyId: string, id: string, now: Date): Promise<void> {
+    const a = await this.lock(tx, companyId, id);
+    if (a.status !== 'paid') throw new FinanceError('NOT_PAID', 'Only a paid advance payment can be reopened.');
+    await tx.update(vendorAdvancePayments).set({ status: 'approved', voucherId: null, paidAt: null, updatedAt: now }).where(eq(vendorAdvancePayments.id, id));
+  }
+
+  /** The whole advance has been set against invoices. */
+  async appliedIn(tx: Tx, companyId: string, id: string, now: Date): Promise<void> {
+    const a = await this.lock(tx, companyId, id);
+    if (a.status !== 'paid') throw new FinanceError('NOT_PAID', 'Only a paid advance payment can be applied.');
+    await tx.update(vendorAdvancePayments).set({ status: 'applied', updatedAt: now }).where(eq(vendorAdvancePayments.id, id));
+  }
+
   /**
    * Is an invoice for this order without any delivery note allowed? Only when the order is flagged and an advance document for it is
    * approved or paid. The answer carries the reason, so the vendor portal can say exactly what is missing.

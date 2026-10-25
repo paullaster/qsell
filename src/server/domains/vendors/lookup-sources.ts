@@ -1,11 +1,12 @@
 import { and, eq, isNull, ne, sql } from 'drizzle-orm';
-import { glAccounts, procurementCategories, products, reasonCodes, vendors } from '@/server/db/drizzle/schema';
+import { bankAccounts, glAccounts, paymentMethods, procurementCategories, products, reasonCodes, vendors } from '@/server/db/drizzle/schema';
 import { VENDOR_STATUS, VENDOR_TYPES } from '@/lib/vendor-forms';
 import { QUESTION_KINDS, STATUS_WORDS } from '@/lib/prequalification';
 import { RFQ_STATUS } from '@/lib/rfq';
 import { PO_STATUS } from '@/lib/purchase-order';
 import { REJECT_REASONS, RGN_STATUS } from '@/lib/rgn';
 import { INVOICE_REASONS, INVOICE_STATE } from '@/lib/supplier-invoice';
+import { VOUCHER_STATUS } from '@/lib/vendor-payment';
 import { CONTACT_ROLES, ID_TYPES, TURNOVER_BANDS } from '@/lib/vendor-profile';
 import { acceptFilters, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
 
@@ -286,5 +287,33 @@ export const VENDOR_LOOKUP_SOURCES: LookupSource[] = [
       return [and(eq(glAccounts.companyId, companyId), eq(glAccounts.type, 'posting'), eq(glAccounts.blocked, false), sql`${glAccounts.category} IN ('assets','liabilities')`)].filter((x): x is NonNullable<typeof x> => x !== undefined);
     },
     toOption: (row) => ({ id: text(row.id), label: `${text(row.label)} ${text(row.name)}`, description: null, badge: null }),
+  }),
+  staticSource({
+    key: 'voucher-statuses',
+    permission: 'vendor_payments:read',
+    items: ({ filters }) => {
+      acceptFilters(filters, {});
+      return Object.entries(VOUCHER_STATUS).map(([id, v]) => ({ id, label: v.label, description: null }));
+    },
+  }),
+  /** The ways of paying a vendor: switched on for vendor payments, with an open bank account behind them. */
+  tableSource({
+    key: 'vendor-payment-methods',
+    permission: 'vendor_payments:read',
+    table: paymentMethods,
+    id: paymentMethods.id,
+    label: paymentMethods.name,
+    searchColumns: [paymentMethods.name, paymentMethods.code],
+    select: { kind: paymentMethods.kind },
+    scope: ({ companyId, filters }) => {
+      acceptFilters(filters, {});
+      return [
+        eq(paymentMethods.companyId, companyId),
+        eq(paymentMethods.enabled, true),
+        sql`${paymentMethods.usableFor} @> '["vendor_payment"]'::jsonb`,
+        sql`exists (select 1 from ${bankAccounts} where ${bankAccounts.id} = ${paymentMethods.balancingBankAccountId} and ${bankAccounts.blocked} = false)`,
+      ];
+    },
+    toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.kind).replace('_', ' '), badge: null, meta: { kind: text(row.kind) } }),
   }),
 ];

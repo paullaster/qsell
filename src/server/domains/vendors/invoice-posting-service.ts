@@ -50,7 +50,7 @@ export class SupplierInvoicePostingService {
       if (inv === undefined || inv.state === 'draft') throw new FinanceError('NOT_FOUND', 'That invoice does not exist.');
       if (inv.state === 'posted') throw new FinanceError('ALREADY_POSTED', 'This invoice has already been booked.');
       if (inv.state !== 'approved') throw new FinanceError('WRONG_STATE', 'Only an approved invoice can be booked.');
-      if (inv.advanceBasis) throw new FinanceError('ADVANCE_INVOICE', 'An invoice for an advance is booked together with the payment of that advance, which comes with the payment vouchers. It stays approved until then.');
+      if (inv.advanceBasis) throw new FinanceError('ADVANCE_INVOICE', 'An invoice for an advance is not booked: the advance is paid with an advance payment voucher (Payments to vendors → New payment → Advance payment), and it is set against the final invoice when that is booked. This invoice stays approved as the vendor’s request.');
 
       const [vendor] = await tx.select().from(vendors).where(eq(vendors.id, inv.vendorId));
       if (vendor === undefined || vendor.block === 'all') throw new FinanceError('VENDOR_BLOCKED', 'This vendor is blocked, so its invoice cannot be booked.');

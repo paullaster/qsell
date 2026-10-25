@@ -348,4 +348,9 @@ export class VendorNotifier {
     const { addresses } = await this.vendorAddresses(vendorId, 'finance');
     await this.send(addresses, `Invoice ${number} was approved`, { heading: `Your invoice ${vendorNo} was approved`, body: 'It has been booked for payment. You will get a remittance when it is paid.', cta: 'Open my invoices', path: '/vendor/invoices', details: [['Our number', number], ['Your number', vendorNo], ['Amount', `${total} ${currency}`]] }, 'vendor');
   }
+
+  async paymentMade(vendorId: string, number: string, amount: string, currency: string, reference: string, invoiceNos: string[]): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId, 'finance');
+    await this.send(addresses, `Payment ${number} was made`, { heading: `We paid you: ${number}`, body: 'This is your remittance advice. You can see it again in the vendor portal.', cta: 'Open my payments', path: '/vendor/payments', details: [['Payment', number], ['Amount', `${amount} ${currency}`], ['Reference', reference], ['For', invoiceNos.length === 0 ? 'An advance payment' : invoiceNos.join(', ')]] }, 'vendor');
+  }
 }

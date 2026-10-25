@@ -6558,6 +6558,8 @@ export const vendorSettings = pgTable('vendor_settings', {
   invoicePriceToleranceAmount: numeric('invoice_price_tolerance_amount', { precision: 14, scale: 2 }).notNull().default('100'),
   /** An invoice quantity above what is linked by no more than this percent passes. */
   invoiceQuantityTolerancePercent: numeric('invoice_quantity_tolerance_percent', { precision: 5, scale: 2 }).notNull().default('0'),
+  /** A payment voucher of at least this value needs three different people: to prepare, approve and pay it. 0 turns it off. */
+  paymentThreeEyesAbove: numeric('payment_three_eyes_above', { precision: 14, scale: 2 }).notNull().default('100000'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -7069,3 +7071,109 @@ export const purchaseInvoices = pgTable(
 export type SupplierInvoiceRow = typeof supplierInvoices.$inferSelect;
 export type SupplierInvoiceLineRow = typeof supplierInvoiceLines.$inferSelect;
 export type PurchaseInvoiceRow = typeof purchaseInvoices.$inferSelect;
+
+// ── Vendor payments (V-7) ──
+
+export type VendorVoucherStatus = 'draft' | 'pending_approval' | 'approved' | 'paid' | 'reversed' | 'cancelled';
+
+/** The document that authorises one payment to one vendor: of invoices, or an advance. */
+export const vendorPaymentVouchers = pgTable(
+  'vendor_payment_vouchers',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    /** Given when it is approved, so abandoned drafts leave no gaps. */
+    number: text('number'),
+    kind: text('kind').$type<'invoices' | 'advance'>().notNull(),
+    status: text('status').$type<VendorVoucherStatus>().notNull().default('draft'),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'restrict' }),
+    currency: text('currency').notNull(),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    methodId: uuid('method_id')
+      .notNull()
+      .references(() => paymentMethods.id, { onDelete: 'restrict' }),
+    advanceId: uuid('advance_id').references(() => vendorAdvancePayments.id, { onDelete: 'restrict' }),
+    narration: text('narration'),
+    /** The vendor's bank account the money goes to, fixed when the voucher is approved; and how to recognise it. */
+    vendorBankAccountId: uuid('vendor_bank_account_id').references(() => vendorBankAccounts.id, { onDelete: 'restrict' }),
+    destination: text('destination'),
+    createdBy: text('created_by'),
+    submittedAt: timestamp('submitted_at', { withTimezone: true }),
+    approvedBy: text('approved_by'),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    /** Decided at approval from the value: a third person must pay it. */
+    needsThree: boolean('needs_three').notNull().default(false),
+    sendBackReason: text('send_back_reason'),
+    cancelReason: text('cancel_reason'),
+    paidBy: text('paid_by'),
+    paidAt: timestamp('paid_at', { withTimezone: true }),
+    paidOn: date('paid_on', { mode: 'string' }),
+    paymentReference: text('payment_reference'),
+    registerId: uuid('register_id'),
+    ledgerEntryId: uuid('ledger_entry_id'),
+    reversedBy: text('reversed_by'),
+    reversedAt: timestamp('reversed_at', { withTimezone: true }),
+    reverseReason: text('reverse_reason'),
+    reversalRegisterId: uuid('reversal_register_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('vendor_payment_vouchers_number_uidx').on(t.companyId, t.number).where(sql`${t.number} IS NOT NULL`),
+    // An advance document is paid by one voucher at a time.
+    uniqueIndex('vendor_payment_vouchers_advance_uidx').on(t.advanceId).where(sql`${t.advanceId} IS NOT NULL AND ${t.status} IN ('draft','pending_approval','approved','paid')`),
+    index('vendor_payment_vouchers_company_idx').on(t.companyId, t.status, t.createdAt),
+    index('vendor_payment_vouchers_vendor_idx').on(t.vendorId, t.createdAt),
+    check('vendor_payment_vouchers_status_chk', sql`${t.status} IN ('draft','pending_approval','approved','paid','reversed','cancelled')`),
+    check('vendor_payment_vouchers_amount_chk', sql`${t.amount} > 0`),
+    check('vendor_payment_vouchers_advance_chk', sql`(${t.kind} = 'advance') = (${t.advanceId} IS NOT NULL)`),
+    check('vendor_payment_vouchers_approver_chk', sql`${t.approvedBy} IS NULL OR ${t.approvedBy} IS DISTINCT FROM ${t.createdBy}`),
+    check('vendor_payment_vouchers_payer_chk', sql`NOT ${t.needsThree} OR ${t.paidBy} IS NULL OR (${t.paidBy} IS DISTINCT FROM ${t.createdBy} AND ${t.paidBy} IS DISTINCT FROM ${t.approvedBy})`),
+    check('vendor_payment_vouchers_paid_chk', sql`${t.status} NOT IN ('paid','reversed') OR (${t.registerId} IS NOT NULL AND ${t.ledgerEntryId} IS NOT NULL AND ${t.paidBy} IS NOT NULL AND ${t.paymentReference} IS NOT NULL)`),
+  ],
+);
+
+/** Which booked invoices a voucher pays, and how much of each. */
+export const vendorPaymentVoucherLines = pgTable(
+  'vendor_payment_voucher_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    voucherId: uuid('voucher_id')
+      .notNull()
+      .references(() => vendorPaymentVouchers.id, { onDelete: 'cascade' }),
+    purchaseInvoiceId: uuid('purchase_invoice_id')
+      .notNull()
+      .references(() => purchaseInvoices.id, { onDelete: 'restrict' }),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+  },
+  (t) => [
+    uniqueIndex('vendor_payment_voucher_lines_uidx').on(t.voucherId, t.purchaseInvoiceId),
+    index('vendor_payment_voucher_lines_invoice_idx').on(t.purchaseInvoiceId),
+    check('vendor_payment_voucher_lines_amount_chk', sql`${t.amount} > 0`),
+  ],
+);
+
+export const vendorPaymentEvents = pgTable(
+  'vendor_payment_events',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    voucherId: uuid('voucher_id')
+      .notNull()
+      .references(() => vendorPaymentVouchers.id, { onDelete: 'cascade' }),
+    event: text('event').notNull(),
+    fromStatus: text('from_status'),
+    toStatus: text('to_status'),
+    reasonText: text('reason_text'),
+    data: jsonb('data').$type<Record<string, unknown>>().notNull().default({}),
+    actorType: text('actor_type').notNull(),
+    actorId: text('actor_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('vendor_payment_events_idx').on(t.voucherId, t.id)],
+);
+
+export type VendorPaymentVoucherRow = typeof vendorPaymentVouchers.$inferSelect;

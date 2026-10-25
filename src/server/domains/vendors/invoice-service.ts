@@ -2,6 +2,7 @@ import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   glAccounts,
+  purchaseInvoices,
   purchaseOrderLines,
   purchaseOrders,
   rgnLines,
@@ -152,6 +153,7 @@ export class SupplierInvoiceService {
       inv.invoiceFileId === null ? Promise.resolve(undefined) : this.db.select({ id: vendorFiles.id, name: vendorFiles.fileName }).from(vendorFiles).where(eq(vendorFiles.id, inv.invoiceFileId)).then((r) => r[0]),
       tolerancesOf(this.db, companyId),
     ]);
+    const [booked] = inv.purchaseInvoiceId === null ? [] : await this.db.select({ id: purchaseInvoices.id, number: purchaseInvoices.number, ledgerEntryId: purchaseInvoices.ledgerEntryId }).from(purchaseInvoices).where(eq(purchaseInvoices.id, inv.purchaseInvoiceId));
     const held = await heldByOthers(this.db, rgnRows.map((r) => r.rl.id), id);
     const accountIds = [...new Set(lines.map((l) => l.glAccountId).filter((x): x is string => x !== null))];
     const accounts = accountIds.length === 0 ? [] : await this.db.select({ id: glAccounts.id, no: glAccounts.no, name: glAccounts.name }).from(glAccounts).where(inArray(glAccounts.id, accountIds));
@@ -164,6 +166,7 @@ export class SupplierInvoiceService {
       invoice: { ...inv, createdAt: inv.createdAt.toISOString(), updatedAt: inv.updatedAt.toISOString() },
       vendorName: head.vendorName,
       vendorNumber: head.vendorNumber,
+      bookedInvoice: booked === undefined ? null : { id: booked.id, number: booked.number },
       order: { id: head.po.id, number: head.po.number ?? '', requiresAdvance: head.po.requiresAdvancePayment, currency: head.po.currency },
       invoiceFile: file ?? null,
       assignedName: who(inv.assignedTo),
