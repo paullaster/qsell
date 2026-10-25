@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
-  procurementCategories, purchaseOrderAmendments, purchaseOrderEvents, purchaseOrderLines, purchaseOrderVersions, purchaseOrders, rfqAwards, rfqLines, rfqQuoteLines, rfqQuotes, rfqs, vendorAdvancePayments, vendorSettings, vendors,
+  procurementCategories, products, purchaseOrderAmendments, purchaseOrderEvents, purchaseOrderLines, purchaseOrderVersions, purchaseOrders, rfqAwards, rfqLines, rfqQuoteLines, rfqQuotes, rfqs, vendorAdvancePayments, vendorSettings, vendors,
   type PurchaseOrderRow, type PurchaseOrderStatus,
 } from '@/server/db/drizzle/schema';
 import { has, trimToNull } from '@/lib/values';
@@ -64,15 +64,17 @@ export class PurchaseOrderService {
 
   async settings(companyId: string) {
     const [s] = await this.db.select().from(vendorSettings).where(eq(vendorSettings.companyId, companyId));
-    return { rfqRequiredAbove: s?.rfqRequiredAbove ?? null, amendmentTolerancePercent: s?.amendmentTolerancePercent ?? '0' };
+    return { rfqRequiredAbove: s?.rfqRequiredAbove ?? null, amendmentTolerancePercent: s?.amendmentTolerancePercent ?? '0', receiptTolerancePercent: s?.receiptTolerancePercent ?? '0' };
   }
 
-  async saveSettings(ctx: FinanceContext, input: { rfqRequiredAbove: string; amendmentTolerancePercent: string }): Promise<void> {
+  async saveSettings(ctx: FinanceContext, input: { rfqRequiredAbove: string; amendmentTolerancePercent: string; receiptTolerancePercent?: string }): Promise<void> {
     const above = trimToNull(input.rfqRequiredAbove);
     if (above !== null && !/^\d{1,12}(\.\d{1,2})?$/.test(above)) throw new FinanceError('INVALID', 'The value above which a request for quotation is required is an amount, like 500000, or empty for never.');
     const tol = input.amendmentTolerancePercent.trim() === '' ? '0' : input.amendmentTolerancePercent.trim();
     if (!/^\d{1,3}(\.\d{1,2})?$/.test(tol) || Number(tol) > 100) throw new FinanceError('INVALID', 'The tolerance is a percentage from 0 to 100.');
-    await this.db.insert(vendorSettings).values({ companyId: ctx.companyId, rfqRequiredAbove: above, amendmentTolerancePercent: tol }).onConflictDoUpdate({ target: vendorSettings.companyId, set: { rfqRequiredAbove: above, amendmentTolerancePercent: tol, updatedAt: new Date() } });
+    const rec = (input.receiptTolerancePercent ?? '').trim() === '' ? '0' : (input.receiptTolerancePercent ?? '').trim();
+    if (!/^\d{1,3}(\.\d{1,2})?$/.test(rec) || Number(rec) > 100) throw new FinanceError('INVALID', 'The delivery tolerance is a percentage from 0 to 100.');
+    await this.db.insert(vendorSettings).values({ companyId: ctx.companyId, rfqRequiredAbove: above, amendmentTolerancePercent: tol, receiptTolerancePercent: rec }).onConflictDoUpdate({ target: vendorSettings.companyId, set: { rfqRequiredAbove: above, amendmentTolerancePercent: tol, receiptTolerancePercent: rec, updatedAt: new Date() } });
   }
 
   private checkLines(lines: PoLineForm[]): void {
@@ -474,7 +476,9 @@ export class PurchaseOrderService {
       this.db.select().from(purchaseOrderEvents).where(eq(purchaseOrderEvents.poId, id)).orderBy(desc(purchaseOrderEvents.id)).limit(100),
       this.db.select().from(vendorAdvancePayments).where(eq(vendorAdvancePayments.poId, id)).orderBy(desc(vendorAdvancePayments.createdAt)),
     ]);
-    return { po: head.po, vendorName: head.vendor, vendorNumber: head.vendorNumber, categoryName: head.category, rfqNumber: head.rfqNumber, lines, versions, amendments, events, advances };
+    const productIds = lines.flatMap((l) => (l.productId === null ? [] : [l.productId]));
+    const names = productIds.length === 0 ? [] : await this.db.select({ id: products.id, name: products.name }).from(products).where(inArray(products.id, productIds));
+    return { po: head.po, vendorName: head.vendor, vendorNumber: head.vendorNumber, categoryName: head.category, rfqNumber: head.rfqNumber, lines: lines.map((l) => ({ ...l, productName: names.find((n) => n.id === l.productId)?.name ?? null })), versions, amendments, events, advances };
   }
 
   /** Orders still to be made from an awarded request: the awarded vendors with no order yet. */

@@ -3,6 +3,7 @@ import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { purchaseOrderLines, purchaseOrderVersions, purchaseOrders, vendorAdvancePayments, type PurchaseOrderStatus } from '@/server/db/drizzle/schema';
 import { describeChanges, type Snapshot } from '@/lib/purchase-order';
 import type { PurchaseOrderService } from './po-service';
+import type { RgnService } from './rgn-service';
 import { ProfileError, type PortalActor } from './profile-service';
 
 /** An order is the vendor's once it has been sent: before that it is the buyer's own draft and approval. */
@@ -13,6 +14,7 @@ export class PurchaseOrderPortalService {
   constructor(
     private readonly db: DrizzleDb,
     private readonly orders: PurchaseOrderService,
+    private readonly receipts?: RgnService,
   ) {}
 
   async list(vendorId: string, before: { sentAt: string; id: string } | null = null, limit = 50) {
@@ -64,6 +66,7 @@ export class PurchaseOrderPortalService {
       canConfirm: po.status === 'sent' && (actor.portalRole === 'owner' || actor.portalRole === 'sales'),
       lines: lines.map((l) => ({ id: l.id, description: l.description, specification: l.specification, quantity: l.quantity, unit: l.unit, unitPrice: l.unitPrice, discountPercent: l.discountPercent, taxRate: l.taxRate, lineTotal: l.lineTotal, expectedDate: l.expectedDate, received: l.receivedQuantity, invoiced: l.invoicedQuantity })),
       versions: changes,
+      deliveries: (await this.receipts?.deliveries(id)) ?? [],
     };
   }
 

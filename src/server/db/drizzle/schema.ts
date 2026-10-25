@@ -1390,6 +1390,7 @@ export const orders = pgTable(
       .where(sql`${t.paymentStatus} in ('pending_verification', 'discrepancy')`),
     index('orders_dimension_set_idx').on(t.dimensionSetId),
     index('orders_trade_customer_idx').on(t.tradeCustomerId),
+    index('orders_user_created_idx').on(t.userId, t.createdAt),
   ],
 );
 
@@ -6548,6 +6549,8 @@ export const vendorSettings = pgTable('vendor_settings', {
   rfqRequiredAbove: numeric('rfq_required_above', { precision: 14, scale: 2 }),
   /** An amendment that raises the value by more than this percent goes to approval again (any price change always does). */
   amendmentTolerancePercent: numeric('amendment_tolerance_percent', { precision: 5, scale: 2 }).notNull().default('0'),
+  /** How much more than ordered a delivery may bring before it is refused (percent of the line). */
+  receiptTolerancePercent: numeric('receipt_tolerance_percent', { precision: 5, scale: 2 }).notNull().default('0'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -6752,3 +6755,80 @@ export const vendorAdvancePayments = pgTable(
 export type PurchaseOrderRow = typeof purchaseOrders.$inferSelect;
 export type PurchaseOrderLineRow = typeof purchaseOrderLines.$inferSelect;
 export type VendorAdvancePaymentRow = typeof vendorAdvancePayments.$inferSelect;
+
+// ── Received goods notes (V-5, docs/architecture/vendor-management-module.md §10) ──
+
+export type RgnStatus = 'draft' | 'posted' | 'reversed' | 'cancelled';
+
+/** What arrived against one purchase order. A posted note never changes; a mistake is reversed. */
+export const rgns = pgTable(
+  'rgns',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    /** Given when the note is posted. */
+    number: text('number'),
+    status: text('status').$type<RgnStatus>().notNull().default('draft'),
+    poId: uuid('po_id')
+      .notNull()
+      .references(() => purchaseOrders.id, { onDelete: 'restrict' }),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'restrict' }),
+    receivedDate: date('received_date', { mode: 'string' }).notNull(),
+    /** The number printed on the vendor's own delivery note. */
+    deliveryNoteNo: text('delivery_note_no').notNull(),
+    vehicle: text('vehicle'),
+    notes: text('notes'),
+    receivedBy: text('received_by'),
+    createdBy: text('created_by'),
+    postedAt: timestamp('posted_at', { withTimezone: true }),
+    postedBy: text('posted_by'),
+    reversedAt: timestamp('reversed_at', { withTimezone: true }),
+    reversedBy: text('reversed_by'),
+    reverseReason: text('reverse_reason'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('rgns_company_number_uidx').on(t.companyId, t.number).where(sql`${t.number} IS NOT NULL`),
+    // A vendor's delivery note is received once: the same note number cannot be posted twice.
+    uniqueIndex('rgns_delivery_note_uidx').on(t.vendorId, sql`lower(${t.deliveryNoteNo})`).where(sql`${t.status} = 'posted'`),
+    index('rgns_po_idx').on(t.poId),
+    index('rgns_company_status_idx').on(t.companyId, t.status, t.createdAt),
+    check('rgns_status_chk', sql`${t.status} IN ('draft','posted','reversed','cancelled')`),
+  ],
+);
+
+export const rgnLines = pgTable(
+  'rgn_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    rgnId: uuid('rgn_id')
+      .notNull()
+      .references(() => rgns.id, { onDelete: 'cascade' }),
+    poLineId: uuid('po_line_id')
+      .notNull()
+      .references(() => purchaseOrderLines.id, { onDelete: 'restrict' }),
+    delivered: numeric('delivered', { precision: 14, scale: 3 }).notNull(),
+    accepted: numeric('accepted', { precision: 14, scale: 3 }).notNull(),
+    rejected: numeric('rejected', { precision: 14, scale: 3 }).notNull().default('0'),
+    rejectReason: text('reject_reason'),
+    /** What the accepted goods cost per unit, fixed when the note is posted. */
+    unitCost: numeric('unit_cost', { precision: 14, scale: 4 }),
+    // Kept by supplier invoices (V-6): how much of the accepted quantity has been invoiced.
+    invoicedQuantity: numeric('invoiced_quantity', { precision: 14, scale: 3 }).notNull().default('0'),
+  },
+  (t) => [
+    index('rgn_lines_rgn_idx').on(t.rgnId),
+    index('rgn_lines_po_line_idx').on(t.poLineId),
+    uniqueIndex('rgn_lines_uidx').on(t.rgnId, t.poLineId),
+    check('rgn_lines_qty_chk', sql`${t.delivered} > 0 AND ${t.accepted} >= 0 AND ${t.rejected} >= 0 AND ${t.accepted} + ${t.rejected} = ${t.delivered}`),
+    check('rgn_lines_reason_chk', sql`${t.rejected} = 0 OR ${t.rejectReason} IS NOT NULL`),
+  ],
+);
+
+export type RgnRow = typeof rgns.$inferSelect;
+export type RgnLineRow = typeof rgnLines.$inferSelect;

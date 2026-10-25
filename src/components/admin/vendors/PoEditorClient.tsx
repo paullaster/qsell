@@ -14,7 +14,7 @@ import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, car
 type View = Extract<Awaited<ReturnType<typeof poAction>>, { ok: true }>['data'];
 type Result = { ok: true } | { ok: false; error: string };
 type Panel = null | 'reject' | 'reopen' | 'cancel' | 'close' | 'confirm' | 'amend' | 'advance';
-type Row = PoLineForm & { k: string; id?: string };
+type Row = PoLineForm & { k: string; id?: string; productLabel?: string };
 
 export function NewPoClient({ today }: { today: string }) {
   return <Editor view={null} today={today} />;
@@ -50,7 +50,7 @@ function Editor({ view, today }: { view: View | null; today: string }) {
   const [adv, setAdv] = useState({ amount: '', dueDate: '', reason: '' });
   const [override, setOverride] = useState('');
   const set = <K extends keyof PoHeaderForm>(k: K, v: PoHeaderForm[K]) => setF((p) => ({ ...p, [k]: v }));
-  const patch = (k: string, p: Partial<PoLineForm>) => setRows((r) => r.map((x) => (x.k === k ? { ...x, ...p } : x)));
+  const patch = (k: string, p: Partial<Row>) => setRows((r) => r.map((x) => (x.k === k ? { ...x, ...p } : x)));
   const id = view?.id ?? null;
   const totals = orderTotals(rows);
   const amending = panel === 'amend';
@@ -72,7 +72,7 @@ function Editor({ view, today }: { view: View | null; today: string }) {
     return true;
   };
   const header = (): PoHeaderForm => ({ ...f, vendorId: vendor?.id ?? '', categoryId: category?.id ?? '', currency: currency?.id ?? '' });
-  const lineData = () => rows.map(({ k: _k, ...l }) => l);
+  const lineData = () => rows.map(({ k: _k, productLabel: _p, ...l }) => l);
   const save = async (): Promise<string | null> => {
     setBusy(true);
     setNotice(null);
@@ -132,6 +132,7 @@ function Editor({ view, today }: { view: View | null; today: string }) {
         {rows.map((l, i) => (
           <fieldset key={l.k} className="grid grid-cols-2 gap-3 rounded-lg border border-line p-3 sm:grid-cols-6" disabled={!editableLines}>
             <legend className="px-1 text-xs font-semibold text-fg-muted">Line {i + 1}</legend>
+            <div className="col-span-2 sm:col-span-6"><ChoicePicker label="Stock item (optional)" source="po-products" choice={l.productId === '' ? null : { id: l.productId, label: l.productLabel ?? l.productId }} onChoice={(c) => patch(l.k, { productId: c?.id ?? '', productLabel: c?.label ?? undefined, ...(c !== null && l.description.trim() === '' ? { description: c.label } : {}) })} placeholder="Not a stock item" disabled={!editableLines} /></div>
             <div className="col-span-2 sm:col-span-6"><Field id={`${uid}-l${String(i)}d`} label="Description"><input id={`${uid}-l${String(i)}d`} value={l.description} onChange={(e) => patch(l.k, { description: e.target.value })} className={fieldClass} maxLength={300} autoComplete="off" /></Field></div>
             <Field id={`${uid}-l${String(i)}q`} label="Quantity"><input id={`${uid}-l${String(i)}q`} inputMode="decimal" value={l.quantity} onChange={(e) => patch(l.k, { quantity: e.target.value })} className={fieldClass} /></Field>
             <Field id={`${uid}-l${String(i)}u`} label="Unit"><input id={`${uid}-l${String(i)}u`} value={l.unit} onChange={(e) => patch(l.k, { unit: e.target.value })} className={fieldClass} maxLength={20} autoComplete="off" /></Field>
@@ -163,6 +164,7 @@ function Editor({ view, today }: { view: View | null; today: string }) {
                 </>
               ) : null}
               {view.status === 'pending_approval' && view.createdByMe ? <p className="text-sm text-fg-muted">You wrote this order, so someone else must approve it.</p> : null}
+              {['sent', 'confirmed', 'partially_received'].includes(view.status) ? <Link href={`/admin/vendors/receipts/new?po=${view.id}`} className={primaryClass}>Receive goods…</Link> : null}
               {view.status === 'approved' && view.can.release ? <button type="button" className={primaryClass} disabled={busy} onClick={() => void act(sendPoAction(view.id), 'Sent to the vendor.')}>Send to the vendor</button> : null}
               {view.status === 'sent' && view.can.release ? <button type="button" className={buttonClass} onClick={() => setPanel('confirm')}>Record the vendor’s confirmation…</button> : null}
               {released && view.can.amend ? <button type="button" className={buttonClass} onClick={() => { setPanel('amend'); setText(''); }}>Change this order…</button> : null}

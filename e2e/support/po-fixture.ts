@@ -1,13 +1,14 @@
 /**
  * Makes purchase orders for one test, written by `e2e-buyer` so that the signed-in test user is a different person and may approve.
- *   tsx e2e/support/po-fixture.ts <tag> <vendorId> pending|sent|sent_flagged|amendment|advance_pending|awarded
+ *   tsx e2e/support/po-fixture.ts <tag> <vendorId> pending|sent|sent_flagged|amendment|advance_pending|awarded|stocked|received
+ * `stocked` is a sent, confirmed order for 10 of a new stock item; `received` adds a posted note for 4 of them (delivery note DN-<tag>).
  * `pending` is waiting for approval; `sent` is approved and sent; `sent_flagged` requires an advance; `amendment` is a sent order with a
  * price change waiting; `advance_pending` is a flagged order with an advance waiting for approval; `awarded` is a closed, awarded request
  * with no order made yet. The vendor is made qualified in a new category first. Prints one JSON line.
  */
 export {};
 
-const MODES = ['pending', 'sent', 'sent_flagged', 'amendment', 'advance_pending', 'awarded'];
+const MODES = ['pending', 'sent', 'sent_flagged', 'amendment', 'advance_pending', 'awarded', 'stocked', 'received'];
 
 async function main(): Promise<void> {
   const [tag, vendorId, mode] = process.argv.slice(2);
@@ -48,6 +49,35 @@ async function main(): Promise<void> {
     await container.rfqEvaluation.award(staff('e2e-buyer'), rfq.id, [{ rfqLineId: lineId, vendorId, quantity: '4' }], '');
     out.rfqId = rfq.id;
     out.number = got?.rfq.number;
+    process.stdout.write(`FIXTURE ${JSON.stringify(out)}\n`);
+    return;
+  }
+
+  if (mode === 'stocked' || mode === 'received') {
+    const itemTypeId = `it_${tag}`;
+    await db.insert(schema.itemTypes).values({ id: itemTypeId, code: Math.floor(Math.random() * 1e9), name: itemTypeId });
+    const productId = `prod_${tag}`;
+    const productName = `Fixture stock item ${tag}`;
+    await db.insert(schema.products).values({ id: productId, sku: `FX-${tag}`.toUpperCase(), stockCode: `FXS-${tag}`.toUpperCase(), name: productName, slug: `fx-${tag}`, itemTypeId, price: '999', costPrice: '10', stockQuantity: 0 });
+    const [p] = await db.select({ unitId: schema.products.baseUnitId }).from(schema.products).where(eq(schema.products.id, productId));
+    const [u] = await db.select({ code: schema.unitsOfMeasure.code }).from(schema.unitsOfMeasure).where(eq(schema.unitsOfMeasure.id, p?.unitId ?? ''));
+    const header = { vendorId, categoryId: cat.id, orderDate: today, expectedDate: '', currency: 'KES', paymentTerms: '30 days', deliveryTerms: '', notesToVendor: '', internalNotes: '', requiresAdvancePayment: false, noRfqReason: 'Fixture order' };
+    const lines = [{ productId, description: productName, specification: '', quantity: '10', unit: u?.code ?? 'each', unitPrice: '100', discountPercent: '0', taxRate: '16', expectedDate: '' }];
+    const draft = await container.purchaseOrders.saveDraft(staff('e2e-buyer'), null, header, lines, false);
+    await container.purchaseOrders.submit(staff('e2e-buyer'), draft.id, { maySkipRfq: false, mayOverrideQualification: false });
+    out.number = (await container.purchaseOrders.approve(staff('e2e-boss'), draft.id)).number;
+    await container.purchaseOrders.send(staff('e2e-buyer'), draft.id);
+    await container.purchaseOrders.recordConfirmation(staff('e2e-buyer'), draft.id, 'Phone', new Date());
+    out.poId = draft.id;
+    out.productId = productId;
+    out.productName = productName;
+    if (mode === 'received') {
+      const got = await container.purchaseOrders.get(company.id, draft.id);
+      const note = await container.rgns.saveDraft(staff('e2e-store'), null, draft.id, { receivedDate: today, deliveryNoteNo: `DN-${tag}`, vehicle: '', notes: '' }, [{ poLineId: got?.lines[0]?.id ?? '', delivered: '4', rejected: '', rejectReason: '' }]);
+      out.rgnId = note.id;
+      out.rgnNumber = (await container.rgns.post(staff('e2e-store'), note.id)).number;
+      out.deliveryNote = `DN-${tag}`;
+    }
     process.stdout.write(`FIXTURE ${JSON.stringify(out)}\n`);
     return;
   }

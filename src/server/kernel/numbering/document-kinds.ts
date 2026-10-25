@@ -190,6 +190,11 @@ export const DOCUMENT_KINDS = {
     fiscal: false,
     suggested: { code: 'PO', prefix: 'PO-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
   },
+  rgn: {
+    label: 'Received goods note',
+    fiscal: false,
+    suggested: { code: 'RGN', prefix: 'RGN-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
+  },
   rfq: {
     label: 'Request for quotation',
     fiscal: false,

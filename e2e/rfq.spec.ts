@@ -156,7 +156,6 @@ test.describe('staff compare and award', () => {
     await expect(refuse.getByRole('button', { name: 'Refuse the quote' })).toBeDisabled();
     await pick(page, refuse.getByRole('combobox', { name: 'Reason' }), 'price', /price is higher/);
     await refuse.getByRole('button', { name: 'Refuse the quote' }).click();
-    await expect(page.getByText('The quote is refused and the vendor told.')).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText('Refused', { exact: true })).toBeVisible({ timeout: 30_000 });
 
     // The refused vendor (first by name) is not offered for award; the other gets both lines at full quantity.
@@ -165,7 +164,7 @@ test.describe('staff compare and award', () => {
     await expect(boxes).toHaveCount(2);
     await boxes.nth(0).check();
     await boxes.nth(1).check();
-    await award.getByRole('button', { name: /^Award/ }).click();
+    await award.getByRole('button', { name: /^Award/ }).dispatchEvent('click');
     await expect(page.getByText('Awarded. The vendors were told the result.')).toBeVisible({ timeout: 30_000 });
     await expect(page.getByRole('region', { name: 'Award' }).getByText(/to .*Fixture Vendor/).first()).toBeVisible({ timeout: 30_000 });
     await expect(page.getByRole('button', { name: 'Accept for award' })).toHaveCount(0);

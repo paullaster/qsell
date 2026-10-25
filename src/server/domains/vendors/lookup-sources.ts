@@ -1,9 +1,10 @@
-import { eq, ne, sql } from 'drizzle-orm';
-import { procurementCategories, reasonCodes, vendors } from '@/server/db/drizzle/schema';
+import { eq, isNull, ne, sql } from 'drizzle-orm';
+import { procurementCategories, products, reasonCodes, vendors } from '@/server/db/drizzle/schema';
 import { VENDOR_STATUS, VENDOR_TYPES } from '@/lib/vendor-forms';
 import { QUESTION_KINDS, STATUS_WORDS } from '@/lib/prequalification';
 import { RFQ_STATUS } from '@/lib/rfq';
 import { PO_STATUS } from '@/lib/purchase-order';
+import { REJECT_REASONS, RGN_STATUS } from '@/lib/rgn';
 import { CONTACT_ROLES, ID_TYPES, TURNOVER_BANDS } from '@/lib/vendor-profile';
 import { acceptFilters, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
 
@@ -136,6 +137,37 @@ export const VENDOR_LOOKUP_SOURCES: LookupSource[] = [
       return [eq(reasonCodes.companyId, companyId), eq(reasonCodes.isActive, true), sql`${reasonCodes.appliesTo} @> '["rfq_rejection"]'::jsonb`];
     },
     toOption: (row) => ({ id: text(row.id), label: text(row.label), description: null, badge: null, meta: { requiresComment: row.requiresComment === true ? '1' : '' } }),
+  }),
+  /** Stock items an order line can be for, so receiving it puts the goods into stock. */
+  tableSource({
+    key: 'po-products',
+    permission: 'purchase_orders:create',
+    table: products,
+    id: products.id,
+    label: products.name,
+    searchColumns: [products.name, products.sku, products.stockCode],
+    select: { sku: products.sku },
+    scope: ({ filters }) => {
+      acceptFilters(filters, {});
+      return [isNull(products.deletedAt)];
+    },
+    toOption: (row) => ({ id: text(row.id), label: text(row.label), description: joinText([row.sku]), badge: null }),
+  }),
+  staticSource({
+    key: 'rgn-reject-reasons',
+    permission: 'rgn:create',
+    items: ({ filters }) => {
+      acceptFilters(filters, {});
+      return REJECT_REASONS.map((r) => ({ id: r.id, label: r.label, description: null }));
+    },
+  }),
+  staticSource({
+    key: 'rgn-statuses',
+    permission: 'rgn:read',
+    items: ({ filters }) => {
+      acceptFilters(filters, {});
+      return Object.entries(RGN_STATUS).map(([id, v]) => ({ id, label: v.label, description: null }));
+    },
   }),
   staticSource({
     key: 'po-statuses',

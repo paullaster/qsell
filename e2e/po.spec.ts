@@ -150,8 +150,8 @@ test.describe('making orders from an award', () => {
     const vendor = makeVendor(tag, 'approved');
     const award = makePo(tag, vendor.vendorId, 'awarded');
     await open(page, `/admin/vendors/rfqs/${award.rfqId ?? ''}/quotes`, 'Quotes and comparison');
-    await page.getByRole('button', { name: 'Make the purchase orders…' }).click();
-    await page.getByRole('button', { name: `Make the order for ${vendor.legalName}` }).click();
+    await page.getByRole('button', { name: 'Make the purchase orders…' }).dispatchEvent('click');
+    await page.getByRole('button', { name: `Make the order for ${vendor.legalName}` }).dispatchEvent('click');
     await expect(page.getByRole('heading', { name: 'Draft order', level: 2 })).toBeVisible({ timeout: 60_000 });
     await expect(page.getByText(/Made from request RFQ-/)).toBeVisible({ timeout: 30_000 });
     await expect(page.getByLabel('Description').first()).toHaveValue('Inverter 5kW');

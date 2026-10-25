@@ -891,6 +891,30 @@ export const PERMISSIONS = {
     category: 'Vendor Management',
     description: 'Approve an advance payment document (never your own)',
   },
+  'rgn:read': {
+    resource: 'rgn',
+    action: 'read',
+    category: 'Vendor Management',
+    description: 'See received goods notes and what was received but not yet invoiced',
+  },
+  'rgn:create': {
+    resource: 'rgn',
+    action: 'create',
+    category: 'Vendor Management',
+    description: 'Write a received goods note for goods that arrived against an order',
+  },
+  'rgn:post': {
+    resource: 'rgn',
+    action: 'post',
+    category: 'Vendor Management',
+    description: 'Post a received goods note: the accepted goods go into stock',
+  },
+  'rgn:reverse': {
+    resource: 'rgn',
+    action: 'reverse',
+    category: 'Vendor Management',
+    description: 'Reverse a posted received goods note, with a reason',
+  },
   'vendor_ledger:read': {
     resource: 'vendor_ledger',
     action: 'read',

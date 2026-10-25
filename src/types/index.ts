@@ -195,6 +195,7 @@ export interface CurrencyConfig {
 
 export type InventoryChangeType =
   | 'purchase_order_receipt'
+  | 'purchase_receipt_reversal'
   | 'damage_writeoff'
   | 'loss_shrinkage'
   | 'physical_audit'

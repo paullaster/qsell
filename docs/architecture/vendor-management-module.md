@@ -986,3 +986,24 @@ Migration `0077_purchase_orders`. Number kind `purchase_order` (`PO-<year>-00001
 **Screens.** Staff: *Purchase orders* (list; editor for the draft, the released order and its actions; versions; history; advance panel), *Ordering rules*, and a **"Make the purchase orders…"** panel on an awarded request's quotes page. **Permissions added:** `purchase_orders:read | create | approve | release | amend | flag_advance | cancel | skip_rfq | override_qualification`, `vendor_advance:create | approve`.
 
 **Tests.** Unit `purchase-order.test.ts` (amounts, forms, version differences, when a change needs approval, advance ceiling). Integration `po.integration.test.ts` (14: server totals, flag permission, four eyes in the service and at the database, number at approval, immutability by triggers, reject/reopen keeping the number, qualification override and request-for-quotation policy, blocked vendor, vendor visibility and confirmation, staff-recorded confirmation, an amendment through approval to version 2 with the vendor told, immediate and refused amendments, received-quantity floor, cancel and its effects, orders made from an award, the advance document end to end and `hasCover`). E2E `e2e/po.spec.ts` (desktop and phone).
+
+## 31. V-5 as built (2026-10-24): received goods notes
+
+**What it is.** A received goods note (RGN) records what physically arrived against a released purchase order. Tables `rgns` (header: purchase order, vendor, received date, delivery note number, vehicle, notes, who received/posted/reversed) and `rgn_lines` (delivered, accepted, rejected, reject reason, unit cost, `invoiced_quantity`), migration `0078_rgn.sql`. Numbering kind `rgn` (`RGN-{YYYY}-`), the number is assigned **when the note is posted**, not at draft.
+
+**Rules kept by the database.** Per line `delivered = accepted + rejected`; a reason is required when anything is rejected; one *posted* note per vendor and delivery note number (partial unique index, case-insensitive); triggers `rgn_guard` / `rgn_guard_lines` make a posted note immutable except for the posting/reversal transition and the invoiced counters. `vendor_settings.receipt_tolerance_percent` is the over-receipt tolerance.
+
+**Posting** (`RgnService.post`, permission `rgn:post`, one transaction): the order must be released (sent or confirmed or part received); accepted quantity may not exceed what is still outstanding plus the tolerance; stock lines (order line has a product) must have the same unit as the product and increase stock through `applyStockDelta` with change type `purchase_order_receipt`; then the order moves to *part received* or *received* from the totals. **Reversal** (`rgn:reverse`) refuses when any of the note is already invoiced or when the stock is no longer there; it books the stock back out with the new change type `purchase_receipt_reversal` (Dr inventory clearing / Cr inventory, `inventory-posting.ts`).
+
+**Screens.** Staff: *Received goods* (list, editor with "Receive goods…" from a purchase order, outstanding lines prefilled), *Not yet invoiced* report. Vendor portal: the order page shows "What we received". Lookups `po-products`, `rgn-reject-reasons`, `rgn-statuses`, `po-currencies`, `po-statuses`. Permissions `rgn:read | create | post | reverse`.
+
+**Not done on purpose (stated plainly).**
+- Stock lines need a product on the order line and the same unit; a different unit is refused, not converted.
+- Foreign-currency stock receipts are refused (no rate is available at this slice).
+- Service and non-stock lines are only counted; there is no accrual posting to the ledger.
+- Rejected goods are recorded, but there is no return-to-vendor document.
+- No delivery-note attachment, and no batch or serial tracking.
+- Cost follows the existing last-cost behaviour of `applyStockDelta` (it re-bases the product cost and so revalues stock on hand).
+- `invoiced_quantity` counters on RGN and order lines are in place and wait for V-6 (supplier invoices).
+
+**Tests.** Unit `rgn.test.ts` (5) and a reversal case in `inventory-posting.test.ts`. Integration `rgn.integration.test.ts` (9, passing). E2E `e2e/rgn.spec.ts` (3 tests, desktop and phone); a clean full run of it with the order and RFQ specs is still outstanding (the last run was stopped by the machine running out of memory).

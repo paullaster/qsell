@@ -105,7 +105,7 @@ export async function poAction(poId: string) {
         noRfqReason: p.noRfqReason ?? '',
       } satisfies PoHeaderForm,
       totals: { subtotal: p.subtotal, tax: p.taxTotal, total: p.total },
-      lines: got.lines.map((l) => ({ id: l.id, productId: l.productId ?? '', description: l.description, specification: l.specification ?? '', quantity: l.quantity, unit: l.unit, unitPrice: l.unitPrice, discountPercent: l.discountPercent, taxRate: l.taxRate, expectedDate: l.expectedDate ?? '', received: l.receivedQuantity, invoiced: l.invoicedQuantity })),
+      lines: got.lines.map((l) => ({ id: l.id, productId: l.productId ?? '', productLabel: l.productName ?? undefined, description: l.description, specification: l.specification ?? '', quantity: l.quantity, unit: l.unit, unitPrice: l.unitPrice, discountPercent: l.discountPercent, taxRate: l.taxRate, expectedDate: l.expectedDate ?? '', received: l.receivedQuantity, invoiced: l.invoicedQuantity })),
       versions: got.versions.map((v) => ({ version: v.version, reason: v.reason, at: v.createdAt.toISOString() })),
       amendments: got.amendments.map((a) => ({ id: a.id, status: a.status, reason: a.reason, needsApproval: a.needsApproval, mine: a.proposedBy === ctx.actor.id, decisionNote: a.decisionNote, at: a.createdAt.toISOString() })),
       advances: got.advances.map((a) => ({ id: a.id, status: a.status, amount: a.amount, currency: a.currency, dueDate: a.dueDate, reason: a.reason, mine: a.createdBy === ctx.actor.id, decisionNote: a.decisionNote })),
@@ -230,13 +230,13 @@ export async function cancelAdvanceAction(advanceId: string, reason: string) {
 export async function vendorSettingsAction() {
   return await run('vendor_settings:manage', { surface: 'vendors/settings', action: 'view' }, async (ctx) => {
     const s = await getContainer().purchaseOrders.settings(ctx.companyId);
-    return { rfqRequiredAbove: s.rfqRequiredAbove ?? '', amendmentTolerancePercent: s.amendmentTolerancePercent };
+    return { rfqRequiredAbove: s.rfqRequiredAbove ?? '', amendmentTolerancePercent: s.amendmentTolerancePercent, receiptTolerancePercent: s.receiptTolerancePercent };
   });
 }
 
 export async function saveVendorSettingsAction(input: unknown) {
   return await run('vendor_settings:manage', { surface: 'vendors/settings', action: 'save' }, async (ctx) => {
     const i = obj(input);
-    await getContainer().purchaseOrders.saveSettings(ctx, { rfqRequiredAbove: str(i.rfqRequiredAbove, 20), amendmentTolerancePercent: str(i.amendmentTolerancePercent, 8) });
+    await getContainer().purchaseOrders.saveSettings(ctx, { rfqRequiredAbove: str(i.rfqRequiredAbove, 20), amendmentTolerancePercent: str(i.amendmentTolerancePercent, 8), receiptTolerancePercent: str(i.receiptTolerancePercent, 8) });
   });
 }

@@ -40,7 +40,7 @@ async function warmUp(): Promise<void> {
   const browser = await chromium.launch({ channel: 'chrome' });
   const context = await browser.newContext({ storageState: AUTH_FILE, baseURL: E2E_URL });
   const page = await context.newPage();
-  const routes = ['/admin/quotes', '/admin/quotes/templates', '/admin/quotes/section-templates', '/admin/vendors/rfqs'];
+  const routes = ['/admin/quotes', '/admin/quotes/templates', '/admin/quotes/section-templates'];
   for (const route of routes) {
     // A warm-up that is cut short (the machine's network changed while the page loaded) is tried again, not fatal.
     for (let attempt = 1; attempt <= 4; attempt += 1) {
@@ -53,6 +53,18 @@ async function warmUp(): Promise<void> {
       }
     }
   }
+  // The vendor screens compile on their first visit, which can take minutes and reload the page under a test. Visit each once here
+  // (a made-up id compiles a record page too); a visit that is cut short is not a failure of the set-up.
+  const fake = '00000000-0000-4000-8000-000000000000';
+  const vendorRoutes = ['/admin/vendors', `/admin/vendors/${fake}`, '/admin/vendors/rfqs', '/admin/vendors/rfqs/new', `/admin/vendors/rfqs/${fake}`, `/admin/vendors/rfqs/${fake}/quotes`, '/admin/vendors/orders', '/admin/vendors/orders/new', `/admin/vendors/orders/${fake}`, '/admin/vendors/receipts', '/admin/vendors/receipts/new', `/admin/vendors/receipts/${fake}`, '/admin/vendors/receipts/not-invoiced', '/admin/vendors/categories', `/admin/vendors/categories/${fake}`, '/admin/vendors/prequalification', `/admin/vendors/prequalification/${fake}`, '/admin/vendors/bank-changes', '/admin/vendors/expiring', '/admin/vendors/document-types', '/admin/vendors/review', '/admin/vendors/settings'];
+  for (const route of vendorRoutes) {
+    try {
+      await page.goto(route, { timeout: 300_000, waitUntil: 'load' });
+      await page.waitForTimeout(1000);
+    } catch {
+      // Tried again by the tests themselves.
+    }
+  }
   // A product opens in a dialog through a soft navigation, which compiles its own route the first time. A click that comes
   // before that finishes fails to fetch and falls back to a plain page load, so open one product here and wait.
   for (let attempt = 1; attempt <= 4; attempt += 1) {
@@ -60,7 +72,7 @@ async function warmUp(): Promise<void> {
       await page.goto('/admin/products', { timeout: 300_000 });
       break;
     } catch (error) {
-      if (attempt === 4) throw error;
+      if (attempt === 4) console.warn('e2e warm-up: /admin/products was cut short; continuing', String(error));
     }
   }
   // Only a warm-up: a click cut short by a network flap must not stop the whole run.

@@ -59,6 +59,19 @@ function Detail({ view }: { view: View }) {
         </ol>
         <p className="text-sm text-fg">Total: <span className="font-semibold">{view.total} {view.currency}</span> <span className="text-xs text-fg-muted">({view.subtotal} plus {view.taxTotal} tax)</span></p>
       </section>
+      {view.deliveries.length === 0 ? null : (
+        <section className={cardClass} aria-label="Deliveries">
+          <h2 className="text-sm font-bold text-fg-strong">What we received</h2>
+          <ul className="mt-2 space-y-3 text-sm">
+            {view.deliveries.map((d) => (
+              <li key={d.number ?? d.deliveryNoteNo}>
+                <p className="font-semibold text-fg-strong">{d.number} · your delivery note {d.deliveryNoteNo} · {d.receivedDate}{d.status === 'reversed' ? ' (reversed)' : ''}</p>
+                <ul className="ml-4 list-disc text-fg">{d.lines.map((l) => <li key={l.description}>{l.description}: {l.accepted} {l.unit} accepted{Number(l.rejected) > 0 ? `, ${l.rejected} refused (${l.rejectReason?.replace(/_/g, ' ') ?? 'no reason given'})` : ''}</li>)}</ul>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {view.requiresAdvancePayment ? (
         <section className={cardClass} aria-label="Advance payment">
           <h2 className="text-sm font-bold text-fg-strong">Advance payment</h2>

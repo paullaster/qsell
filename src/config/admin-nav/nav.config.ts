@@ -384,6 +384,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'purchase_orders:read',
       },
       {
+        id: 'vendor-receipts',
+        title: 'Received goods',
+        name: 'vendor-receipts',
+        href: '/admin/vendors/receipts',
+        description: 'Goods that arrived against orders, and what is received but not yet invoiced',
+        icon: 'ClipboardCheck',
+        permission: 'rgn:read',
+      },
+      {
         id: 'vendor-settings',
         title: 'Ordering rules',
         name: 'vendor-settings',

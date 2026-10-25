@@ -63,6 +63,7 @@ import { RfqEvaluationService } from '@/server/domains/vendors/rfq-evaluation-se
 import { PurchaseOrderService } from '@/server/domains/vendors/po-service';
 import { PurchaseOrderPortalService } from '@/server/domains/vendors/po-portal-service';
 import { AdvancePaymentService } from '@/server/domains/vendors/advance-service';
+import { RgnService } from '@/server/domains/vendors/rgn-service';
 import { TransactionLedgerService } from '@/server/domains/transactions/ledger-service';
 import { TransactionReconcileService } from '@/server/domains/transactions/reconcile-service';
 import { PaymentCallbackService } from '@/server/domains/payments/callback-service';
@@ -155,6 +156,8 @@ export interface AppContainer {
   purchaseOrders: PurchaseOrderService;
   poPortal: PurchaseOrderPortalService;
   advances: AdvancePaymentService;
+  /** Received goods notes: what arrived against an order, stock in, reversal, and received-not-invoiced. */
+  rgns: RgnService;
   transactionLedger: TransactionLedgerService;
   transactionReconcile: TransactionReconcileService;
   paymentCallbacks: PaymentCallbackService;
@@ -356,6 +359,7 @@ export function getContainer(): AppContainer {
   const vendorNotifier = new VendorNotifier(drizzleDb, email, companySettings);
   const prequalLifecycle = new PrequalLifecycle(drizzleDb, vendorNotifier);
   const rfqService = new RfqService(drizzleDb, numbering, prequalLifecycle, vendorNotifier);
+  const rgnService = new RgnService(drizzleDb, numbering);
   const purchaseOrderService = new PurchaseOrderService(drizzleDb, numbering, prequalLifecycle, vendorNotifier);
   const finance = createFinanceServices(drizzleDb, decisionLog, { numbering, reasons: reasonCodes, paymentConfigs, payments });
   const paymentEngine = createPaymentEngine({ db: drizzleDb, registry: paymentRegistry, payments, consumer: new FinanceC2bConsumer(drizzleDb, finance.receipts) });
@@ -421,8 +425,9 @@ export function getContainer(): AppContainer {
     rfqPortal: new RfqPortalService(drizzleDb, prequalLifecycle, vendorNotifier),
     rfqEvaluation: new RfqEvaluationService(drizzleDb, rfqService, reasonCodes, vendorNotifier),
     purchaseOrders: purchaseOrderService,
-    poPortal: new PurchaseOrderPortalService(drizzleDb, purchaseOrderService),
+    poPortal: new PurchaseOrderPortalService(drizzleDb, purchaseOrderService, rgnService),
     advances: new AdvancePaymentService(drizzleDb, vendorNotifier),
+    rgns: rgnService,
     transactionLedger,
     transactionReconcile,
     paymentCallbacks,
