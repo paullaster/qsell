@@ -957,6 +957,12 @@ export const PERMISSIONS = {
     category: 'Vendor Management',
     description: 'Book an approved supplier invoice to the vendor’s account and the general ledger',
   },
+  'vendor_reports:read': {
+    resource: 'vendor_reports',
+    action: 'read',
+    category: 'Vendor Management',
+    description: 'See vendor reports: commitments, performance, purchases and the watch list',
+  },
   'petty_cash:read': {
     resource: 'petty_cash',
     action: 'read',
