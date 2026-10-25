@@ -313,6 +313,34 @@ describe.skipIf(!has(url))('vendor payments (database)', () => {
     });
   });
 
+  describe('the bank', () => {
+    it('shows the payment in the bank’s own ledger, is matched to the statement line that quotes its reference, and a reversal puts the money back there', async () => {
+      const b = await booked();
+      const v = await approvedVoucher(b.v.vendorId, transfer, [alloc(b.pinv.id, '464')]);
+      const ref = `EFT${String(Date.now()).slice(-8)}`;
+      await c.vendorPayments.pay(staff('till'), v.id, { reference: ref, paidOn: new Date().toISOString().slice(0, 10) });
+      const entries = await db.select().from(schema.bankLedgerEntries).where(eq(schema.bankLedgerEntries.documentId, v.id));
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({ documentType: 'vendor_payment', documentNo: v.number, amount: '-464.0000' });
+      const row = required((await db.select().from(schema.vendorPaymentVouchers).where(eq(schema.vendorPaymentVouchers.id, v.id)))[0]);
+      const gl = await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, required(row.registerId)));
+      expect(gl.some((e) => e.sourceLedger === 'bank' && e.sourceEntryId === required(entries[0]).bankAccountId && Number(e.credit) === 464)).toBe(true);
+      // The statement shows the same money leaving, quoting our reference: matched by itself.
+      const today = new Date().toISOString().slice(0, 10);
+      const dmy = today.split('-').reverse().join('/');
+      const text = `Date,Narration,Ref,In,Out,Balance\n${dmy},Transfer to vendor,${ref},,464.00,\n`;
+      const out = await c.finance.bankStatements.import(staff('reviewer'), { bankAccountId: required(entries[0]).bankAccountId, fileName: `vp${run}.csv`, text, format: 'csv', mapping: { headerRow: 1, date: 'Date', description: ['Narration'], reference: 'Ref', paidIn: 'In', withdrawn: 'Out', balance: 'Balance' }, saveFormat: false });
+      expect(out).toMatchObject({ lines: 1, autoMatched: 1 });
+      const events = await db.select().from(schema.vendorPaymentEvents).where(eq(schema.vendorPaymentEvents.voucherId, v.id));
+      expect(events.map((e) => e.event)).toContain('bank_matched');
+      // Reversing writes the opposite entry to the bank's ledger.
+      await c.vendorPayments.reverse(staff('boss'), v.id, 'Sent to the wrong vendor');
+      const after = await db.select().from(schema.bankLedgerEntries).where(eq(schema.bankLedgerEntries.documentId, v.id));
+      expect(after.map((e) => e.documentType).sort()).toEqual(['vendor_payment', 'vendor_payment_reversal']);
+      expect(after.find((e) => e.documentType === 'vendor_payment_reversal')).toMatchObject({ amount: '464.0000', reversesEntryId: required(entries[0]).id });
+    });
+  });
+
   describe('reversing', () => {
     it('opens the invoice again and reverses the journal, with a reason, once', async () => {
       const b = await booked();
@@ -408,6 +436,67 @@ describe.skipIf(!has(url))('vendor payments (database)', () => {
       expect(st.balance).toBe('464.00');
       expect(st.entries[0]).toMatchObject({ documentType: 'invoice', externalNo: b.inv.no, remaining: '464.00' });
       expect(await c.payablesReports.statement(companyId, randomUUID())).toBeNull();
+    });
+  });
+
+  describe('a payment on account', () => {
+    it('needs a reason and an amount, waits on the vendor’s account, is set against a later invoice, and cannot be reversed once it has been', async () => {
+      const b = await booked();
+      const base = { kind: 'on_account' as const, vendorId: b.v.vendorId, methodId: cash, advanceId: '' };
+      expect(await codeOf(c.vendorPayments.saveDraft(staff('clerk'), null, { ...base, narration: ' ', amount: '300' }, []))).toBe('INVALID');
+      expect(await codeOf(c.vendorPayments.saveDraft(staff('clerk'), null, { ...base, narration: 'Deposit', amount: '0' }, []))).toBe('INVALID');
+      const { id } = await c.vendorPayments.saveDraft(staff('clerk'), null, { ...base, narration: 'Deposit for next season', amount: '300' }, []);
+      expect(await db.select().from(schema.vendorPaymentVouchers).where(eq(schema.vendorPaymentVouchers.id, id)).then((r) => r[0])).toMatchObject({ kind: 'on_account', amount: '300.00', cashAmount: '300.00' });
+      await c.vendorPayments.submit(staff('clerk'), id);
+      await c.vendorPayments.approve(staff('boss'), id);
+      await c.vendorPayments.pay(staff('till'), id, { reference: 'OA-1', paidOn: new Date().toISOString().slice(0, 10) });
+      const row = required((await db.select().from(schema.vendorPaymentVouchers).where(eq(schema.vendorPaymentVouchers.id, id)))[0]);
+      expect(await remaining(required(row.ledgerEntryId))).toBe('-300.00');
+      const credits = await c.vendorPayments.openCredits(companyId, b.v.vendorId);
+      expect(credits.map((x) => [x.documentNo, x.openCents])).toEqual([[row.number, 30000]]);
+      // The books agree even with money paid and nothing yet to set it against.
+      expect((await c.payablesReports.reconcile(companyId)).ok).toBe(true);
+      expect((await c.payablesReports.ageing(companyId, new Date().toISOString().slice(0, 10))).lines.find((l) => l.vendorId === b.v.vendorId)?.unappliedCents).toBe(-30000);
+      // Reversing an unused payment on account is allowed...
+      const second = await c.vendorPayments.saveDraft(staff('clerk'), null, { ...base, narration: 'Wrong vendor', amount: '50' }, []);
+      await c.vendorPayments.submit(staff('clerk'), second.id);
+      await c.vendorPayments.approve(staff('boss'), second.id);
+      await c.vendorPayments.pay(staff('till'), second.id, { reference: 'OA-2', paidOn: new Date().toISOString().slice(0, 10) });
+      await c.vendorPayments.reverse(staff('boss'), second.id, 'Meant for another vendor');
+      expect((await c.vendorPayments.openCredits(companyId, b.v.vendorId)).map((x) => x.openCents)).toEqual([30000]);
+      // ...and the first is set against the invoice, the invoice keeping 164.00.
+      expect(await c.vendorPayments.applyCredit(staff('finance'), b.pinv.id)).toEqual({ appliedCents: 30000 });
+      expect(await remaining(b.pinv.ledgerEntryId)).toBe('164.00');
+      expect(await remaining(required(row.ledgerEntryId))).toBe('0.00');
+      expect(await codeOf(c.vendorPayments.applyCredit(staff('finance'), b.pinv.id))).toBe('NO_CREDIT');
+      expect(await codeOf(c.vendorPayments.reverse(staff('boss'), id, 'Too late'))).toBe('ON_ACCOUNT_APPLIED');
+      expect((await c.payablesReports.reconcile(companyId)).ok).toBe(true);
+      expect(await c.finance.vendorLedger.drift(companyId)).toEqual([]);
+    });
+  });
+
+  describe('the check against the books', () => {
+    it('agrees after booking, paying, an advance and a reversal, finds a ledger entry the books do not have, and keeps the result', async () => {
+      const b = await booked();
+      const v = await approvedVoucher(b.v.vendorId, cash, [alloc(b.pinv.id, '200')]);
+      await c.vendorPayments.pay(staff('till'), v.id, { reference: 'CHK-1', paidOn: new Date().toISOString().slice(0, 10) });
+      const r = await c.payablesReports.reconcile(companyId);
+      expect(r.drift).toEqual([]);
+      expect(r.rows.filter((x) => x.diffCents !== 0)).toEqual([]);
+      expect(r.ok).toBe(true);
+      const payables = r.rows.find((x) => x.purpose === 'payables');
+      expect(payables?.accountNo).toBe('2110');
+      expect(payables?.glCents).toBe(payables?.ledgerCents);
+      // An invoice in the vendor ledger that was never booked to the books is a defect.
+      await db.transaction(async (tx) => {
+        await c.finance.vendorLedger.addEntry(tx, { companyId, vendorId: b.v.vendorId, documentType: 'invoice', documentNo: `STRAY-${run}`, externalDocumentNo: `STRAY-${run}`, amountCents: 12345, currency: 'KES', postingDate: new Date().toISOString().slice(0, 10) });
+      });
+      const bad = await c.payablesReports.runCheck(companyId, 'tester');
+      expect(bad.ok).toBe(false);
+      expect(bad.differences).toBe(1);
+      expect(bad.rows.find((x) => x.purpose === 'payables')?.diffCents).toBe(-12345);
+      const last = required(await c.payablesReports.lastCheck(companyId));
+      expect(last).toMatchObject({ ok: false, ranBy: 'tester', differences: 1 });
     });
   });
 });

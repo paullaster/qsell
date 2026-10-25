@@ -74,6 +74,9 @@ export class VendorService {
         name: 'Trade vendors',
         payablesAccountId: byNo.get('2110') ?? null,
         prepaymentsAccountId: byNo.get('1430') ?? null,
+        paymentDiscountAccountId: byNo.get('4420') ?? null,
+        paymentToleranceAccountId: byNo.get('4420') ?? null,
+        withholdingPayableAccountId: byNo.get('2350') ?? null,
       })
       .onConflictDoNothing()
       .returning({ id: vendorPostingGroups.id });

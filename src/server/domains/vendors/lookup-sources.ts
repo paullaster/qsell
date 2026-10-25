@@ -1,5 +1,5 @@
 import { and, eq, isNull, ne, sql } from 'drizzle-orm';
-import { bankAccounts, glAccounts, paymentMethods, procurementCategories, products, reasonCodes, vendors } from '@/server/db/drizzle/schema';
+import { bankAccounts, glAccounts, paymentMethods, pettyCashFloats, purchaseInvoices, users, procurementCategories, products, reasonCodes, vendors, withholdingCodes } from '@/server/db/drizzle/schema';
 import { VENDOR_STATUS, VENDOR_TYPES } from '@/lib/vendor-forms';
 import { QUESTION_KINDS, STATUS_WORDS } from '@/lib/prequalification';
 import { RFQ_STATUS } from '@/lib/rfq';
@@ -7,6 +7,7 @@ import { PO_STATUS } from '@/lib/purchase-order';
 import { REJECT_REASONS, RGN_STATUS } from '@/lib/rgn';
 import { INVOICE_REASONS, INVOICE_STATE } from '@/lib/supplier-invoice';
 import { VOUCHER_STATUS } from '@/lib/vendor-payment';
+import { CREDIT_STATE } from '@/lib/vendor-credit-memo';
 import { CONTACT_ROLES, ID_TYPES, TURNOVER_BANDS } from '@/lib/vendor-profile';
 import { acceptFilters, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
 
@@ -315,5 +316,183 @@ export const VENDOR_LOOKUP_SOURCES: LookupSource[] = [
       ];
     },
     toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.kind).replace('_', ' '), badge: null, meta: { kind: text(row.kind) } }),
+  }),
+  staticSource({
+    key: 'bank-file-formats',
+    permission: 'vendor_payments:release',
+    items: ({ filters }) => {
+      acceptFilters(filters, {});
+      return [{ id: 'csv', label: 'CSV', description: 'A spreadsheet the bank can read' }, { id: 'pain001', label: 'ISO 20022 (pain.001)', description: 'The standard bulk payment file' }];
+    },
+  }),
+  /** Any account that can be posted to, for choosing the accounts payments post to. */
+  tableSource({
+    key: 'payment-gl-accounts',
+    permission: 'vendor_payments:manage_terms',
+    table: glAccounts,
+    id: glAccounts.id,
+    label: glAccounts.no,
+    searchColumns: [glAccounts.no, glAccounts.name],
+    select: { name: glAccounts.name },
+    scope: ({ companyId, filters }) => {
+      acceptFilters(filters, {});
+      return [eq(glAccounts.companyId, companyId), eq(glAccounts.type, 'posting'), eq(glAccounts.blocked, false)];
+    },
+    toOption: (row) => ({ id: text(row.id), label: `${text(row.label)} ${text(row.name)}`, description: null, badge: null }),
+  }),
+  staticSource({
+    key: 'withholding-bases',
+    permission: 'vendor_payments:manage_terms',
+    items: ({ filters }) => {
+      acceptFilters(filters, {});
+      return [{ id: 'net', label: 'The net amount (before tax)', description: null }, { id: 'gross', label: 'Everything that is paid', description: null }];
+    },
+  }),
+  /** The withholding codes in use, for giving one to a vendor. */
+  tableSource({
+    key: 'withholding-codes',
+    permission: 'vendors:read',
+    table: withholdingCodes,
+    id: withholdingCodes.id,
+    label: withholdingCodes.code,
+    searchColumns: [withholdingCodes.code, withholdingCodes.name],
+    select: { name: withholdingCodes.name, rate: withholdingCodes.ratePercent, base: withholdingCodes.base },
+    scope: ({ companyId, filters }) => {
+      acceptFilters(filters, {});
+      return [eq(withholdingCodes.companyId, companyId), eq(withholdingCodes.active, true)];
+    },
+    toOption: (row) => ({ id: text(row.id), label: `${text(row.label)} · ${text(row.name)} (${text(row.rate)}%)`, description: text(row.base) === 'net' ? 'On the net amount' : 'On everything paid', badge: null }),
+  }),
+  staticSource({
+    key: 'credit-memo-reasons',
+    permission: 'credit_memos:read',
+    items: ({ filters }) => {
+      acceptFilters(filters, {});
+      return INVOICE_REASONS.map((r) => ({ id: r.code, label: r.label, description: null }));
+    },
+  }),
+  staticSource({
+    key: 'credit-memo-states',
+    permission: 'credit_memos:read',
+    items: ({ filters }) => {
+      acceptFilters(filters, {});
+      return Object.entries(CREDIT_STATE).filter(([id]) => id !== 'draft').map(([id, v]) => ({ id, label: v.label, description: null }));
+    },
+  }),
+  /** Cash accounts that no float uses yet. */
+  tableSource({
+    key: 'petty-cash-accounts',
+    permission: 'petty_cash:manage',
+    table: bankAccounts,
+    id: bankAccounts.id,
+    label: bankAccounts.name,
+    searchColumns: [bankAccounts.name, bankAccounts.code],
+    select: { code: bankAccounts.code },
+    scope: ({ companyId, filters }) => {
+      acceptFilters(filters, {});
+      return [eq(bankAccounts.companyId, companyId), eq(bankAccounts.kind, 'cash'), eq(bankAccounts.blocked, false), sql`NOT EXISTS (SELECT 1 FROM petty_cash_floats f WHERE f.bank_account_id = ${bankAccounts.id})`];
+    },
+    toOption: (row) => ({ id: text(row.id), label: `${text(row.code)} · ${text(row.label)}`, description: null, badge: null }),
+  }),
+  /** Open asset accounts the cash of a float is kept in. */
+  tableSource({
+    key: 'petty-cash-gl-accounts',
+    permission: 'petty_cash:manage',
+    table: glAccounts,
+    id: glAccounts.id,
+    label: glAccounts.no,
+    searchColumns: [glAccounts.no, glAccounts.name],
+    select: { name: glAccounts.name },
+    scope: ({ companyId, filters }) => {
+      acceptFilters(filters, {});
+      return [eq(glAccounts.companyId, companyId), eq(glAccounts.type, 'posting'), eq(glAccounts.blocked, false), eq(glAccounts.category, 'assets')];
+    },
+    toOption: (row) => ({ id: text(row.id), label: `${text(row.label)} ${text(row.name)}`, description: null, badge: null }),
+  }),
+  /** Staff who can look after a float. */
+  tableSource({
+    key: 'petty-custodians',
+    permission: 'petty_cash:manage',
+    table: users,
+    id: users.id,
+    label: users.name,
+    searchColumns: [users.name, users.email],
+    select: { email: users.email },
+    scope: ({ filters }) => {
+      acceptFilters(filters, {});
+      return [ne(users.role, 'customer'), ne(users.role, 'vendor'), eq(users.status, 'active')];
+    },
+    toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.email), badge: null }),
+  }),
+  staticSource({
+    key: 'petty-kinds',
+    permission: 'petty_cash:create',
+    items: ({ filters }) => {
+      acceptFilters(filters, {});
+      return [{ id: 'expense', label: 'An expense', description: 'No vendor: tea, fuel, a small repair' }, { id: 'vendor_invoice', label: 'A small vendor invoice', description: 'Pays an invoice already booked' }];
+    },
+  }),
+  tableSource({
+    key: 'petty-cash-floats',
+    permission: 'petty_cash:read',
+    table: pettyCashFloats,
+    id: pettyCashFloats.id,
+    label: pettyCashFloats.name,
+    searchColumns: [pettyCashFloats.name, pettyCashFloats.code],
+    select: { code: pettyCashFloats.code },
+    scope: ({ companyId, filters }) => {
+      acceptFilters(filters, {});
+      return [eq(pettyCashFloats.companyId, companyId), eq(pettyCashFloats.active, true)];
+    },
+    toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.code), badge: null }),
+  }),
+  /** Open expense accounts a petty cash payment can be booked to. */
+  tableSource({
+    key: 'petty-expense-accounts',
+    permission: 'petty_cash:create',
+    table: glAccounts,
+    id: glAccounts.id,
+    label: glAccounts.no,
+    searchColumns: [glAccounts.no, glAccounts.name],
+    select: { name: glAccounts.name },
+    scope: ({ companyId, filters }) => {
+      acceptFilters(filters, {});
+      return [eq(glAccounts.companyId, companyId), eq(glAccounts.type, 'posting'), eq(glAccounts.blocked, false), eq(glAccounts.postingSource, 'manual'), sql`${glAccounts.category} IN ('expense','cost_of_sales')`];
+    },
+    toOption: (row) => ({ id: text(row.id), label: `${text(row.label)} ${text(row.name)}`, description: null, badge: null }),
+  }),
+  /** The ways of paying a top-up can come from: any open one. */
+  tableSource({
+    key: 'petty-topup-methods',
+    permission: 'petty_cash:create',
+    table: paymentMethods,
+    id: paymentMethods.id,
+    label: paymentMethods.name,
+    searchColumns: [paymentMethods.name, paymentMethods.code],
+    select: { kind: paymentMethods.kind },
+    scope: ({ companyId, filters }) => {
+      acceptFilters(filters, {});
+      return [eq(paymentMethods.companyId, companyId), eq(paymentMethods.enabled, true), sql`exists (select 1 from ${bankAccounts} where ${bankAccounts.id} = ${paymentMethods.balancingBankAccountId} and ${bankAccounts.blocked} = false)`];
+    },
+    toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.kind).replace('_', ' '), badge: null }),
+  }),
+  /** Booked vendor invoices that still have something open. */
+  tableSource({
+    key: 'payable-invoices',
+    permission: 'petty_cash:create',
+    table: purchaseInvoices,
+    id: purchaseInvoices.id,
+    label: purchaseInvoices.vendorInvoiceNo,
+    searchColumns: [purchaseInvoices.vendorInvoiceNo, purchaseInvoices.number],
+    select: {
+      number: purchaseInvoices.number,
+      vendor: sql<string>`(select ${vendors.legalName} from ${vendors} where ${vendors.id} = ${purchaseInvoices.vendorId})`,
+      open: sql<string>`(select e.remaining_amount::text from vendor_ledger_entries e where e.id = ${purchaseInvoices.ledgerEntryId})`,
+    },
+    scope: ({ companyId, filters }) => {
+      acceptFilters(filters, {});
+      return [eq(purchaseInvoices.companyId, companyId), sql`exists (select 1 from vendor_ledger_entries e where e.id = ${purchaseInvoices.ledgerEntryId} and e.remaining_amount > 0)`];
+    },
+    toOption: (row) => ({ id: text(row.id), label: `${text(row.label)} · ${text(row.vendor)}`, description: `Open ${text(row.open)} · ${text(row.number)}`, badge: null, meta: { vendor: text(row.vendor), open: text(row.open) } }),
   }),
 ];

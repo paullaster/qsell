@@ -16,7 +16,7 @@ import {
   sendInvoiceForApprovalAction,
   type invoiceAction,
 } from '@/server/domains/vendors/invoice-actions';
-import { applyAdvanceAction } from '@/server/domains/vendors/payment-actions';
+import { applyAdvanceAction, applyCreditAction } from '@/server/domains/vendors/payment-actions';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
 import { INVOICE_STATE, STAFF_RETURNABLE, reasonLabel } from '@/lib/supplier-invoice';
@@ -234,6 +234,7 @@ function Workspace({ view }: { view: View }) {
           <div className="flex flex-wrap gap-2">
             {view.can.pay ? <Link href={`/admin/vendors/payments/new?invoice=${view.bookedInvoice.id}`} className={primaryClass}>Pay this invoice</Link> : null}
             {view.can.applyAdvance ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void act(applyAdvanceAction(view.bookedInvoice?.id ?? ''), (d) => `The advance is set against this invoice: ${((d as { appliedCents: number }).appliedCents / 100).toFixed(2)}.`)}>Set a paid advance against it</button> : null}
+            {view.can.applyAdvance ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void act(applyCreditAction(view.bookedInvoice?.id ?? ''), (d) => `Payments on account are set against this invoice: ${((d as { appliedCents: number }).appliedCents / 100).toFixed(2)}.`)}>Set payments on account against it</button> : null}
           </div>
         ) : null}
       </section>

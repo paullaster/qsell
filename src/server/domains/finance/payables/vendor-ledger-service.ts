@@ -148,6 +148,36 @@ export class VendorLedgerService {
     return undone;
   }
 
+  /**
+   * Reduces what is open on an invoice without a payment: an early-payment discount the vendor allowed, or a small leftover closed as
+   * tolerance. A detailed entry of the opposite sign and the remaining amount, in the same transaction.
+   */
+  async writeOff(tx: Writer, e: { companyId: string; entryId: string; entryType: 'payment_discount' | 'payment_tolerance'; amountCents: number; postingDate: string; registerId: string; createdBy?: string | null }): Promise<void> {
+    if (e.amountCents <= 0) throw new FinanceError('AMOUNT_INVALID', 'The amount must be above zero.');
+    const [row] = await tx.select().from(vendorLedgerEntries).where(and(eq(vendorLedgerEntries.companyId, e.companyId), eq(vendorLedgerEntries.id, e.entryId))).for('update');
+    if (row === undefined) throw new FinanceError('NOT_FOUND', 'That ledger entry does not exist.');
+    const open = toCents(Number(row.remainingAmount).toFixed(2));
+    if (e.amountCents > open) throw new FinanceError('INVOICE_NOT_OPEN', 'The invoice has less open than that.');
+    await tx.insert(vendorDetailedEntries).values({ companyId: e.companyId, vendorId: row.vendorId, ledgerEntryId: row.id, entryType: e.entryType, amount: fromCents(-e.amountCents), postingDate: e.postingDate, registerId: e.registerId, createdBy: e.createdBy ?? null });
+    await tx.update(vendorLedgerEntries).set({ remainingAmount: fromCents(open - e.amountCents) }).where(eq(vendorLedgerEntries.id, row.id));
+  }
+
+  /** Puts back the discounts and tolerance a reversed payment had taken, found by the payment's own journal. */
+  async undoWriteOffs(tx: Writer, e: { companyId: string; registerId: string; postingDate: string; reasonText: string; createdBy?: string | null }): Promise<number> {
+    const rows = await tx
+      .select()
+      .from(vendorDetailedEntries)
+      .where(and(eq(vendorDetailedEntries.companyId, e.companyId), eq(vendorDetailedEntries.registerId, e.registerId), inArray(vendorDetailedEntries.entryType, ['payment_discount', 'payment_tolerance'])));
+    for (const r of rows) {
+      const [entry] = await tx.select().from(vendorLedgerEntries).where(eq(vendorLedgerEntries.id, r.ledgerEntryId)).for('update');
+      if (entry === undefined) continue;
+      const back = -toCents(r.amount);
+      await tx.insert(vendorDetailedEntries).values({ companyId: e.companyId, vendorId: r.vendorId, ledgerEntryId: r.ledgerEntryId, entryType: 'reversal', amount: fromCents(back), postingDate: e.postingDate, reasonText: e.reasonText, createdBy: e.createdBy ?? null });
+      await tx.update(vendorLedgerEntries).set({ remainingAmount: fromCents(toCents(Number(entry.remainingAmount).toFixed(2)) + back) }).where(eq(vendorLedgerEntries.id, entry.id));
+    }
+    return rows.length;
+  }
+
   /** Closes what is left open on an entry whose document was reversed: a detailed entry of the opposite amount. */
   async reverseEntry(tx: Writer, e: { companyId: string; entryId: string; postingDate: string; reasonText: string; registerId?: string | null; createdBy?: string | null }): Promise<void> {
     const [row] = await tx.select().from(vendorLedgerEntries).where(and(eq(vendorLedgerEntries.companyId, e.companyId), eq(vendorLedgerEntries.id, e.entryId))).for('update');

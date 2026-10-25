@@ -210,6 +210,31 @@ export const DOCUMENT_KINDS = {
     fiscal: false,
     suggested: { code: 'VPV', prefix: 'VPV-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
   },
+  vendor_payment_batch: {
+    label: 'Vendor payment run',
+    fiscal: false,
+    suggested: { code: 'VPB', prefix: 'VPB-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
+  },
+  withholding_certificate: {
+    label: 'Withholding tax certificate',
+    fiscal: false,
+    suggested: { code: 'WHC', prefix: 'WHC-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
+  },
+  vendor_credit_memo: {
+    label: 'Vendor credit memo',
+    fiscal: false,
+    suggested: { code: 'VCM', prefix: 'VCM-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
+  },
+  petty_cash_voucher: {
+    label: 'Petty cash voucher',
+    fiscal: false,
+    suggested: { code: 'PCV', prefix: 'PCV-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
+  },
+  petty_cash_replenishment: {
+    label: 'Petty cash replenishment',
+    fiscal: false,
+    suggested: { code: 'PCR', prefix: 'PCR-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
+  },
   rfq: {
     label: 'Request for quotation',
     fiscal: false,

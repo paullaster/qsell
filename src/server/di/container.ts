@@ -69,6 +69,11 @@ import { SupplierInvoiceService } from '@/server/domains/vendors/invoice-service
 import { SupplierInvoicePostingService } from '@/server/domains/vendors/invoice-posting-service';
 import { VendorPaymentService } from '@/server/domains/vendors/payment-service';
 import { PayablesReportService } from '@/server/domains/vendors/payables-report-service';
+import { PaymentRunService } from '@/server/domains/vendors/payment-run-service';
+import { PaymentTermsService } from '@/server/domains/vendors/payment-terms-service';
+import { CreditMemoPortalService } from '@/server/domains/vendors/credit-memo-portal-service';
+import { CreditMemoService } from '@/server/domains/vendors/credit-memo-service';
+import { PettyCashService } from '@/server/domains/vendors/petty-cash-service';
 import { TransactionLedgerService } from '@/server/domains/transactions/ledger-service';
 import { TransactionReconcileService } from '@/server/domains/transactions/reconcile-service';
 import { PaymentCallbackService } from '@/server/domains/payments/callback-service';
@@ -170,6 +175,15 @@ export interface AppContainer {
   /** Payment vouchers for invoices and advances, and what we owe (ageing, statements). */
   vendorPayments: VendorPaymentService;
   payablesReports: PayablesReportService;
+  /** Payment runs: suggested from what is due, approved as one, released as a bank file or a cheque run. */
+  paymentRuns: PaymentRunService;
+  /** The rules of paying vendors: withholding codes, discount terms, payment accounts, tolerance, and certificates. */
+  paymentTerms: PaymentTermsService;
+  /** Credit notes from vendors: the vendor's side, and the staff pipeline that books them. */
+  creditMemoPortal: CreditMemoPortalService;
+  creditMemos: CreditMemoService;
+  /** Petty cash: floats with a custodian and limits, small vouchers with receipts, and top-ups. */
+  pettyCash: PettyCashService;
   transactionLedger: TransactionLedgerService;
   transactionReconcile: TransactionReconcileService;
   paymentCallbacks: PaymentCallbackService;
@@ -373,8 +387,10 @@ export function getContainer(): AppContainer {
   const rfqService = new RfqService(drizzleDb, numbering, prequalLifecycle, vendorNotifier);
   const rgnService = new RgnService(drizzleDb, numbering);
   const advancePayments = new AdvancePaymentService(drizzleDb, vendorNotifier);
+  const vendorProfileService = new VendorProfileService(drizzleDb, vendorFiles, vendorNotifier);
   const purchaseOrderService = new PurchaseOrderService(drizzleDb, numbering, prequalLifecycle, vendorNotifier);
   const finance = createFinanceServices(drizzleDb, decisionLog, { numbering, reasons: reasonCodes, paymentConfigs, payments });
+  const vendorPaymentService = new VendorPaymentService(drizzleDb, numbering, finance.engine, finance.vendorLedger, advancePayments, vendorNotifier);
   const paymentEngine = createPaymentEngine({ db: drizzleDb, registry: paymentRegistry, payments, consumer: new FinanceC2bConsumer(drizzleDb, finance.receipts) });
   // The finance side asks banks for statements through the payment engine.
   finance.statementPulls.source = paymentEngine;
@@ -421,7 +437,7 @@ export function getContainer(): AppContainer {
     dimensionSets,
     customers,
     vendors,
-    vendorProfile: new VendorProfileService(drizzleDb, vendorFiles, vendorNotifier),
+    vendorProfile: vendorProfileService,
     vendorReview: new VendorReviewService(drizzleDb, vendors, reasonCodes, vendorNotifier),
     vendorFiles,
     vendorNotifier,
@@ -444,8 +460,13 @@ export function getContainer(): AppContainer {
     invoicePortal: new SupplierInvoicePortalService(drizzleDb, numbering, vendorFiles, advancePayments, vendorNotifier),
     supplierInvoices: new SupplierInvoiceService(drizzleDb, vendorNotifier),
     invoicePosting: new SupplierInvoicePostingService(drizzleDb, numbering, finance.engine, finance.postingSetup, finance.vendorLedger, vendorNotifier),
-    vendorPayments: new VendorPaymentService(drizzleDb, numbering, finance.engine, finance.vendorLedger, advancePayments, vendorNotifier),
-    payablesReports: new PayablesReportService(drizzleDb),
+    vendorPayments: vendorPaymentService,
+    paymentTerms: new PaymentTermsService(drizzleDb, vendors),
+    creditMemoPortal: new CreditMemoPortalService(drizzleDb, numbering, vendorFiles, vendorNotifier),
+    pettyCash: new PettyCashService(drizzleDb, numbering, finance.engine, finance.vendorLedger),
+    creditMemos: new CreditMemoService(drizzleDb, finance.engine, finance.postingSetup, finance.vendorLedger, vendorNotifier),
+    paymentRuns: new PaymentRunService(drizzleDb, numbering, vendorPaymentService, (blob) => vendorProfileService.openBankNumber(blob)),
+    payablesReports: new PayablesReportService(drizzleDb, finance.vendorLedger),
     transactionLedger,
     transactionReconcile,
     paymentCallbacks,

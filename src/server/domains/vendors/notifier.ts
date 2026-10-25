@@ -353,4 +353,24 @@ export class VendorNotifier {
     const { addresses } = await this.vendorAddresses(vendorId, 'finance');
     await this.send(addresses, `Payment ${number} was made`, { heading: `We paid you: ${number}`, body: 'This is your remittance advice. You can see it again in the vendor portal.', cta: 'Open my payments', path: '/vendor/payments', details: [['Payment', number], ['Amount', `${amount} ${currency}`], ['Reference', reference], ['For', invoiceNos.length === 0 ? 'An advance payment' : invoiceNos.join(', ')]] }, 'vendor');
   }
+
+  async creditSubmitted(vendorId: string, number: string): Promise<void> {
+    const { legalName } = await this.vendorAddresses(vendorId);
+    await this.send(await this.staffAddress(), `${legalName} sent credit note ${number}`, { heading: `${legalName} sent a credit note: ${number}`, body: 'It is waiting in the credit memos queue.', cta: 'Open the queue', path: '/admin/vendors/credit-memos', details: [['Credit note', number]] }, 'staff');
+  }
+
+  async creditReturned(vendorId: string, number: string, reason: string, note: string): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId, 'finance');
+    await this.send(addresses, `Credit note ${number} was returned`, { heading: `Your credit note ${number} was returned`, body: 'Please correct what we ask for and send it again.', cta: 'Open the credit note', path: '/vendor/credits', details: [['Credit note', number], ['Reason', reason], ['What to fix', note === '' ? 'See the credit note' : note]] }, 'vendor');
+  }
+
+  async creditRefused(vendorId: string, number: string, reason: string, note: string): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId, 'finance');
+    await this.send(addresses, `Credit note ${number} was refused`, { heading: `We cannot accept credit note ${number}`, body: 'You can make a new one if this was a mistake.', cta: 'Open my credit notes', path: '/vendor/credits', details: [['Credit note', number], ['Reason', reason], ['Note', note === '' ? '-' : note]] }, 'vendor');
+  }
+
+  async creditBooked(vendorId: string, number: string, vendorNo: string, total: string, currency: string): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId, 'finance');
+    await this.send(addresses, `Credit note ${number} was booked`, { heading: `Your credit note ${vendorNo} was booked`, body: 'It has been taken off what we owe you.', cta: 'Open my credit notes', path: '/vendor/credits', details: [['Our number', number], ['Your number', vendorNo], ['Amount', `${total} ${currency}`]] }, 'vendor');
+  }
 }
