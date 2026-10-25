@@ -230,13 +230,23 @@ export async function cancelAdvanceAction(advanceId: string, reason: string) {
 export async function vendorSettingsAction() {
   return await run('vendor_settings:manage', { surface: 'vendors/settings', action: 'view' }, async (ctx) => {
     const s = await getContainer().purchaseOrders.settings(ctx.companyId);
-    return { rfqRequiredAbove: s.rfqRequiredAbove ?? '', amendmentTolerancePercent: s.amendmentTolerancePercent, receiptTolerancePercent: s.receiptTolerancePercent };
+    const account = s.inputTaxAccountId === null ? null : await getContainer().purchaseOrders.accountLabel(ctx.companyId, s.inputTaxAccountId);
+    return {
+      rfqRequiredAbove: s.rfqRequiredAbove ?? '',
+      amendmentTolerancePercent: s.amendmentTolerancePercent,
+      receiptTolerancePercent: s.receiptTolerancePercent,
+      inputTaxAccountId: s.inputTaxAccountId ?? '',
+      inputTaxAccountLabel: account ?? '',
+      invoicePriceTolerancePercent: s.invoicePriceTolerancePercent,
+      invoicePriceToleranceAmount: s.invoicePriceToleranceAmount,
+      invoiceQuantityTolerancePercent: s.invoiceQuantityTolerancePercent,
+    };
   });
 }
 
 export async function saveVendorSettingsAction(input: unknown) {
   return await run('vendor_settings:manage', { surface: 'vendors/settings', action: 'save' }, async (ctx) => {
     const i = obj(input);
-    await getContainer().purchaseOrders.saveSettings(ctx, { rfqRequiredAbove: str(i.rfqRequiredAbove, 20), amendmentTolerancePercent: str(i.amendmentTolerancePercent, 8), receiptTolerancePercent: str(i.receiptTolerancePercent, 8) });
+    await getContainer().purchaseOrders.saveSettings(ctx, { rfqRequiredAbove: str(i.rfqRequiredAbove, 20), amendmentTolerancePercent: str(i.amendmentTolerancePercent, 8), receiptTolerancePercent: str(i.receiptTolerancePercent, 8), inputTaxAccountId: str(i.inputTaxAccountId, 40), invoicePriceTolerancePercent: str(i.invoicePriceTolerancePercent, 8), invoicePriceToleranceAmount: str(i.invoicePriceToleranceAmount, 20), invoiceQuantityTolerancePercent: str(i.invoiceQuantityTolerancePercent, 8) });
   });
 }

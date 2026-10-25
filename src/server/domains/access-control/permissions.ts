@@ -915,6 +915,48 @@ export const PERMISSIONS = {
     category: 'Vendor Management',
     description: 'Reverse a posted received goods note, with a reason',
   },
+  'supplier_invoices:read': {
+    resource: 'supplier_invoices',
+    action: 'read',
+    category: 'Vendor Management',
+    description: 'See supplier invoices and their history',
+  },
+  'supplier_invoices:process': {
+    resource: 'supplier_invoices',
+    action: 'process',
+    category: 'Vendor Management',
+    description: 'Pick up a supplier invoice, link the received goods and check it against the order',
+  },
+  'supplier_invoices:override_match': {
+    resource: 'supplier_invoices',
+    action: 'override_match',
+    category: 'Vendor Management',
+    description: 'Accept a supplier invoice whose check found differences, giving a reason',
+  },
+  'supplier_invoices:return': {
+    resource: 'supplier_invoices',
+    action: 'return',
+    category: 'Vendor Management',
+    description: 'Send a supplier invoice back to the vendor to be corrected',
+  },
+  'supplier_invoices:reject': {
+    resource: 'supplier_invoices',
+    action: 'reject',
+    category: 'Vendor Management',
+    description: 'Refuse a supplier invoice with a reason',
+  },
+  'supplier_invoices:approve': {
+    resource: 'supplier_invoices',
+    action: 'approve',
+    category: 'Vendor Management',
+    description: 'Approve a supplier invoice for booking (never one you linked or checked)',
+  },
+  'purchase_invoices:post': {
+    resource: 'purchase_invoices',
+    action: 'post',
+    category: 'Vendor Management',
+    description: 'Book an approved supplier invoice to the vendor’s account and the general ledger',
+  },
   'vendor_ledger:read': {
     resource: 'vendor_ledger',
     action: 'read',

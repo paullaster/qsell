@@ -195,6 +195,16 @@ export const DOCUMENT_KINDS = {
     fiscal: false,
     suggested: { code: 'RGN', prefix: 'RGN-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
   },
+  supplier_invoice: {
+    label: 'Supplier invoice',
+    fiscal: false,
+    suggested: { code: 'SINV', prefix: 'SINV-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
+  },
+  purchase_invoice: {
+    label: 'Purchase invoice (booked)',
+    fiscal: false,
+    suggested: { code: 'PINV', prefix: 'PINV-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
+  },
   rfq: {
     label: 'Request for quotation',
     fiscal: false,

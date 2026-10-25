@@ -329,4 +329,23 @@ export class VendorNotifier {
     const { addresses } = await this.vendorAddresses(vendorId, 'finance');
     await this.send(addresses, `Advance payment approved for ${number}`, { heading: `An advance payment was approved for order ${number}`, body: 'It will be paid into your bank account on record. You will get a remittance when it is paid.', cta: 'Open the order', path: '/vendor/orders', details: [['Order', number], ['Advance', `${amount} ${currency}`]] }, 'vendor');
   }
+  async invoiceSubmitted(vendorId: string, number: string): Promise<void> {
+    const { legalName } = await this.vendorAddresses(vendorId);
+    await this.send(await this.staffAddress(), `${legalName} sent invoice ${number}`, { heading: `${legalName} sent a supplier invoice: ${number}`, body: 'It is waiting in the supplier invoices queue.', cta: 'Open the queue', path: '/admin/vendors/invoices', details: [['Invoice', number]] }, 'staff');
+  }
+
+  async invoiceReturned(vendorId: string, number: string, reason: string, note: string): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId, 'finance');
+    await this.send(addresses, `Invoice ${number} was returned`, { heading: `Your invoice ${number} was returned`, body: 'Please correct what we ask for and send it again.', cta: 'Open the invoice', path: '/vendor/invoices', details: [['Invoice', number], ['Reason', reason], ['What to fix', note === '' ? 'See the invoice' : note]] }, 'vendor');
+  }
+
+  async invoiceRefused(vendorId: string, number: string, reason: string, note: string): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId, 'finance');
+    await this.send(addresses, `Invoice ${number} was refused`, { heading: `We cannot accept invoice ${number}`, body: 'You can make a new invoice if this was a mistake.', cta: 'Open my invoices', path: '/vendor/invoices', details: [['Invoice', number], ['Reason', reason], ['Note', note === '' ? '-' : note]] }, 'vendor');
+  }
+
+  async invoiceBooked(vendorId: string, number: string, vendorNo: string, total: string, currency: string): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId, 'finance');
+    await this.send(addresses, `Invoice ${number} was approved`, { heading: `Your invoice ${vendorNo} was approved`, body: 'It has been booked for payment. You will get a remittance when it is paid.', cta: 'Open my invoices', path: '/vendor/invoices', details: [['Our number', number], ['Your number', vendorNo], ['Amount', `${total} ${currency}`]] }, 'vendor');
+  }
 }

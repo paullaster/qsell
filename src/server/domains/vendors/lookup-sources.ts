@@ -1,10 +1,11 @@
-import { eq, isNull, ne, sql } from 'drizzle-orm';
-import { procurementCategories, products, reasonCodes, vendors } from '@/server/db/drizzle/schema';
+import { and, eq, isNull, ne, sql } from 'drizzle-orm';
+import { glAccounts, procurementCategories, products, reasonCodes, vendors } from '@/server/db/drizzle/schema';
 import { VENDOR_STATUS, VENDOR_TYPES } from '@/lib/vendor-forms';
 import { QUESTION_KINDS, STATUS_WORDS } from '@/lib/prequalification';
 import { RFQ_STATUS } from '@/lib/rfq';
 import { PO_STATUS } from '@/lib/purchase-order';
 import { REJECT_REASONS, RGN_STATUS } from '@/lib/rgn';
+import { INVOICE_REASONS, INVOICE_STATE } from '@/lib/supplier-invoice';
 import { CONTACT_ROLES, ID_TYPES, TURNOVER_BANDS } from '@/lib/vendor-profile';
 import { acceptFilters, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
 
@@ -240,4 +241,50 @@ export const VENDOR_LOOKUP_SOURCES: LookupSource[] = [
       },
     }),
   ),
+  staticSource({
+    key: 'invoice-reasons',
+    permission: 'supplier_invoices:read',
+    items: ({ filters }) => {
+      acceptFilters(filters, {});
+      return INVOICE_REASONS.map((r) => ({ id: r.code, label: r.label, description: null }));
+    },
+  }),
+  staticSource({
+    key: 'invoice-states',
+    permission: 'supplier_invoices:read',
+    items: ({ filters }) => {
+      acceptFilters(filters, {});
+      return Object.entries(INVOICE_STATE).filter(([id]) => id !== 'draft').map(([id, v]) => ({ id, label: v.label, description: null }));
+    },
+  }),
+  /** Accounts a line of a supplier invoice that is not stock can be booked to: open, postable by hand. */
+  tableSource({
+    key: 'invoice-gl-accounts',
+    permission: 'supplier_invoices:process',
+    table: glAccounts,
+    id: glAccounts.id,
+    label: glAccounts.no,
+    searchColumns: [glAccounts.no, glAccounts.name],
+    select: { name: glAccounts.name },
+    scope: ({ companyId, filters }) => {
+      acceptFilters(filters, {});
+      return [eq(glAccounts.companyId, companyId), eq(glAccounts.type, 'posting'), eq(glAccounts.blocked, false), eq(glAccounts.postingSource, 'manual'), sql`${glAccounts.category} IN ('expense','assets')`];
+    },
+    toOption: (row) => ({ id: text(row.id), label: `${text(row.label)} ${text(row.name)}`, description: null, badge: null }),
+  }),
+  /** The account the tax on supplier invoices is booked to: any open posting account under assets (the input tax account is a control account). */
+  tableSource({
+    key: 'invoice-tax-accounts',
+    permission: 'vendor_settings:manage',
+    table: glAccounts,
+    id: glAccounts.id,
+    label: glAccounts.no,
+    searchColumns: [glAccounts.no, glAccounts.name],
+    select: { name: glAccounts.name },
+    scope: ({ companyId, filters }) => {
+      acceptFilters(filters, {});
+      return [and(eq(glAccounts.companyId, companyId), eq(glAccounts.type, 'posting'), eq(glAccounts.blocked, false), sql`${glAccounts.category} IN ('assets','liabilities')`)].filter((x): x is NonNullable<typeof x> => x !== undefined);
+    },
+    toOption: (row) => ({ id: text(row.id), label: `${text(row.label)} ${text(row.name)}`, description: null, badge: null }),
+  }),
 ];

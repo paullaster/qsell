@@ -6551,6 +6551,13 @@ export const vendorSettings = pgTable('vendor_settings', {
   amendmentTolerancePercent: numeric('amendment_tolerance_percent', { precision: 5, scale: 2 }).notNull().default('0'),
   /** How much more than ordered a delivery may bring before it is refused (percent of the line). */
   receiptTolerancePercent: numeric('receipt_tolerance_percent', { precision: 5, scale: 2 }).notNull().default('0'),
+  /** The account the tax on supplier invoices is booked to (input tax). Without it, an invoice with tax cannot be booked. */
+  inputTaxAccountId: uuid('input_tax_account_id').references((): AnyPgColumn => glAccounts.id, { onDelete: 'restrict' }),
+  /** An invoice price above the order's by no more than this percent, or this amount on the line, passes the match. */
+  invoicePriceTolerancePercent: numeric('invoice_price_tolerance_percent', { precision: 5, scale: 2 }).notNull().default('2'),
+  invoicePriceToleranceAmount: numeric('invoice_price_tolerance_amount', { precision: 14, scale: 2 }).notNull().default('100'),
+  /** An invoice quantity above what is linked by no more than this percent passes. */
+  invoiceQuantityTolerancePercent: numeric('invoice_quantity_tolerance_percent', { precision: 5, scale: 2 }).notNull().default('0'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -6832,3 +6839,233 @@ export const rgnLines = pgTable(
 
 export type RgnRow = typeof rgns.$inferSelect;
 export type RgnLineRow = typeof rgnLines.$inferSelect;
+
+// ── Supplier invoices (V-6) ──
+
+export type SupplierInvoiceState =
+  | 'draft'
+  | 'submitted'
+  | 'received'
+  | 'rgn_linked'
+  | 'matched'
+  | 'pending_approval'
+  | 'approved'
+  | 'posted'
+  | 'returned'
+  | 'rejected'
+  | 'closed';
+
+/**
+ * The vendor's invoice, made in the portal and processed by staff until it is booked. Two numbers: the vendor's own
+ * (`vendorInvoiceNo`, printed on their paper) and ours (`number`, given at the first submission).
+ */
+export const supplierInvoices = pgTable(
+  'supplier_invoices',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    number: text('number'),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'restrict' }),
+    poId: uuid('po_id')
+      .notNull()
+      .references(() => purchaseOrders.id, { onDelete: 'restrict' }),
+    vendorInvoiceNo: text('vendor_invoice_no').notNull(),
+    state: text('state').$type<SupplierInvoiceState>().notNull().default('draft'),
+    revision: integer('revision').notNull().default(1),
+    currency: text('currency').notNull(),
+    invoiceDate: date('invoice_date', { mode: 'string' }).notNull(),
+    dueDate: date('due_date', { mode: 'string' }),
+    notes: text('notes'),
+    declaration: boolean('declaration').notNull().default(false),
+    /** The vendor's own paper or PDF invoice, required to submit. */
+    invoiceFileId: uuid('invoice_file_id').references(() => vendorFiles.id, { onDelete: 'restrict' }),
+    subtotal: numeric('subtotal', { precision: 14, scale: 2 }).notNull().default('0'),
+    taxTotal: numeric('tax_total', { precision: 14, scale: 2 }).notNull().default('0'),
+    total: numeric('total', { precision: 14, scale: 2 }).notNull().default('0'),
+    /** True when it was accepted without a delivery note because the order has an approved advance. */
+    advanceBasis: boolean('advance_basis').notNull().default(false),
+    createdByPortalUser: text('created_by_portal_user'),
+    submittedAt: timestamp('submitted_at', { withTimezone: true }),
+    assignedTo: text('assigned_to'),
+    /** Empty until a member of staff first acts. A recall is possible only while it is empty. */
+    firstActionAt: timestamp('first_action_at', { withTimezone: true }),
+    linkedBy: text('linked_by'),
+    linkedAt: timestamp('linked_at', { withTimezone: true }),
+    matchedBy: text('matched_by'),
+    matchedAt: timestamp('matched_at', { withTimezone: true }),
+    matchOverrideReason: text('match_override_reason'),
+    sentForApprovalBy: text('sent_for_approval_by'),
+    sentForApprovalAt: timestamp('sent_for_approval_at', { withTimezone: true }),
+    approvedBy: text('approved_by'),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    returnReasonCode: text('return_reason_code'),
+    returnNote: text('return_note'),
+    rejectReasonCode: text('reject_reason_code'),
+    rejectNote: text('reject_note'),
+    closeReason: text('close_reason'),
+    postedAt: timestamp('posted_at', { withTimezone: true }),
+    postedBy: text('posted_by'),
+    purchaseInvoiceId: uuid('purchase_invoice_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('supplier_invoices_number_uidx').on(t.companyId, t.number).where(sql`${t.number} IS NOT NULL`),
+    // The duplicate guard: one live invoice per vendor and number, whatever the spaces and case. A closed or refused one frees the number.
+    uniqueIndex('supplier_invoices_vendor_no_uidx')
+      .on(t.vendorId, sql`regexp_replace(lower(${t.vendorInvoiceNo}), '[[:space:]]+', '', 'g')`)
+      .where(sql`${t.state} NOT IN ('closed','rejected')`),
+    index('supplier_invoices_queue_idx').on(t.companyId, t.state, t.submittedAt),
+    index('supplier_invoices_vendor_idx').on(t.vendorId, t.createdAt),
+    index('supplier_invoices_po_idx').on(t.poId),
+    check('supplier_invoices_state_chk', sql`${t.state} IN ('draft','submitted','received','rgn_linked','matched','pending_approval','approved','posted','returned','rejected','closed')`),
+    check('supplier_invoices_total_chk', sql`${t.subtotal} >= 0 AND ${t.taxTotal} >= 0 AND ${t.total} = ${t.subtotal} + ${t.taxTotal}`),
+    check('supplier_invoices_posted_chk', sql`${t.state} <> 'posted' OR ${t.purchaseInvoiceId} IS NOT NULL`),
+    // Whoever linked or checked an invoice cannot approve it.
+    check('supplier_invoices_four_eyes_chk', sql`${t.approvedBy} IS NULL OR (${t.approvedBy} IS DISTINCT FROM ${t.linkedBy} AND ${t.approvedBy} IS DISTINCT FROM ${t.matchedBy})`),
+  ],
+);
+
+export const supplierInvoiceLines = pgTable(
+  'supplier_invoice_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    invoiceId: uuid('invoice_id')
+      .notNull()
+      .references(() => supplierInvoices.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull(),
+    poLineId: uuid('po_line_id')
+      .notNull()
+      .references(() => purchaseOrderLines.id, { onDelete: 'restrict' }),
+    description: text('description').notNull(),
+    unit: text('unit').notNull(),
+    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    unitPrice: numeric('unit_price', { precision: 14, scale: 2 }).notNull(),
+    taxRate: numeric('tax_rate', { precision: 5, scale: 2 }).notNull().default('0'),
+    netAmount: numeric('net_amount', { precision: 14, scale: 2 }).notNull(),
+    taxAmount: numeric('tax_amount', { precision: 14, scale: 2 }).notNull(),
+    /** For a line with no stock behind it: the account it is booked to, chosen by staff. */
+    glAccountId: uuid('gl_account_id').references(() => glAccounts.id, { onDelete: 'restrict' }),
+  },
+  (t) => [
+    uniqueIndex('supplier_invoice_lines_pos_uidx').on(t.invoiceId, t.position),
+    index('supplier_invoice_lines_po_line_idx').on(t.poLineId),
+    check('supplier_invoice_lines_amounts_chk', sql`${t.quantity} > 0 AND ${t.unitPrice} >= 0 AND ${t.netAmount} >= 0 AND ${t.taxAmount} >= 0`),
+  ],
+);
+
+/** Stage 1: which received goods an invoice line is for, and how much of them. */
+export const supplierInvoiceLineRgn = pgTable(
+  'supplier_invoice_line_rgn',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    invoiceLineId: uuid('invoice_line_id')
+      .notNull()
+      .references(() => supplierInvoiceLines.id, { onDelete: 'cascade' }),
+    rgnLineId: uuid('rgn_line_id')
+      .notNull()
+      .references(() => rgnLines.id, { onDelete: 'restrict' }),
+    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+  },
+  (t) => [
+    uniqueIndex('supplier_invoice_line_rgn_uidx').on(t.invoiceLineId, t.rgnLineId),
+    index('supplier_invoice_line_rgn_rgn_idx').on(t.rgnLineId),
+    check('supplier_invoice_line_rgn_qty_chk', sql`${t.quantity} > 0`),
+  ],
+);
+
+/** The vendor's own delivery notes that the invoice claims payment for. Stage 1 matches each to a received goods note. */
+export const supplierInvoiceDeliveryNotes = pgTable(
+  'supplier_invoice_delivery_notes',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    invoiceId: uuid('invoice_id')
+      .notNull()
+      .references(() => supplierInvoices.id, { onDelete: 'cascade' }),
+    noteNo: text('note_no').notNull(),
+    noteDate: date('note_date', { mode: 'string' }).notNull(),
+    fileId: uuid('file_id')
+      .notNull()
+      .references(() => vendorFiles.id, { onDelete: 'restrict' }),
+    matchedRgnId: uuid('matched_rgn_id').references(() => rgns.id, { onDelete: 'restrict' }),
+  },
+  (t) => [uniqueIndex('supplier_invoice_dn_uidx').on(t.invoiceId, sql`lower(btrim(${t.noteNo}))`)],
+);
+
+/** The outcome of the last match, line by line. Replaced each time the match is run. */
+export const supplierInvoiceMatches = pgTable(
+  'supplier_invoice_matches',
+  {
+    invoiceLineId: uuid('invoice_line_id')
+      .primaryKey()
+      .references(() => supplierInvoiceLines.id, { onDelete: 'cascade' }),
+    status: text('status').$type<'ok' | 'exception'>().notNull(),
+    problems: jsonb('problems').$type<string[]>().notNull().default([]),
+    priceDifference: numeric('price_difference', { precision: 14, scale: 2 }).notNull().default('0'),
+    quantityDifference: numeric('quantity_difference', { precision: 14, scale: 3 }).notNull().default('0'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check('supplier_invoice_matches_status_chk', sql`${t.status} IN ('ok','exception')`)],
+);
+
+export const supplierInvoiceEvents = pgTable(
+  'supplier_invoice_events',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    invoiceId: uuid('invoice_id')
+      .notNull()
+      .references(() => supplierInvoices.id, { onDelete: 'cascade' }),
+    event: text('event').notNull(),
+    fromState: text('from_state'),
+    toState: text('to_state'),
+    reasonText: text('reason_text'),
+    data: jsonb('data').$type<Record<string, unknown>>().notNull().default({}),
+    actorType: text('actor_type').notNull(),
+    actorId: text('actor_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('supplier_invoice_events_idx').on(t.invoiceId, t.id)],
+);
+
+/** The booked invoice. Never changes; a correction is a credit memo and a new invoice. */
+export const purchaseInvoices = pgTable(
+  'purchase_invoices',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    number: text('number').notNull(),
+    supplierInvoiceId: uuid('supplier_invoice_id')
+      .notNull()
+      .references(() => supplierInvoices.id, { onDelete: 'restrict' }),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'restrict' }),
+    vendorInvoiceNo: text('vendor_invoice_no').notNull(),
+    currency: text('currency').notNull(),
+    invoiceDate: date('invoice_date', { mode: 'string' }).notNull(),
+    dueDate: date('due_date', { mode: 'string' }),
+    postingDate: date('posting_date', { mode: 'string' }).notNull(),
+    subtotal: numeric('subtotal', { precision: 14, scale: 2 }).notNull(),
+    taxTotal: numeric('tax_total', { precision: 14, scale: 2 }).notNull(),
+    total: numeric('total', { precision: 14, scale: 2 }).notNull(),
+    registerId: uuid('register_id').notNull(),
+    ledgerEntryId: uuid('ledger_entry_id').notNull(),
+    postedBy: text('posted_by'),
+    postedAt: timestamp('posted_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('purchase_invoices_number_uidx').on(t.companyId, t.number),
+    uniqueIndex('purchase_invoices_supplier_invoice_uidx').on(t.supplierInvoiceId),
+    index('purchase_invoices_vendor_idx').on(t.vendorId, t.postedAt),
+  ],
+);
+
+export type SupplierInvoiceRow = typeof supplierInvoices.$inferSelect;
+export type SupplierInvoiceLineRow = typeof supplierInvoiceLines.$inferSelect;
+export type PurchaseInvoiceRow = typeof purchaseInvoices.$inferSelect;

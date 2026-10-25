@@ -29,7 +29,7 @@ export const attemptTag = (project: string, retry: number): string => `${project
 export async function signInAsVendor(page: Page, vendor: Pick<VendorFixture, 'email' | 'password'>): Promise<void> {
   await page.goto('/login?callbackUrl=%2Fvendor');
   await expect(page.getByLabel('Email')).toBeVisible({ timeout: 60_000 });
-  await expect.poll(() => page.getByLabel('Email').evaluate((el) => Object.keys(el).some((k) => k.startsWith('__reactProps'))).catch(() => false), { timeout: 30_000 }).toBe(true);
+  await expect.poll(() => page.getByLabel('Email').evaluate((el) => Object.keys(el).some((k) => k.startsWith('__reactProps'))).catch(() => false), { timeout: 90_000 }).toBe(true);
   await page.getByLabel('Email').fill(vendor.email);
   await page.getByLabel('Password', { exact: true }).fill(vendor.password);
   await page.getByRole('button', { name: /^Sign in/ }).click();
@@ -122,4 +122,11 @@ export async function signInAsShopper(page: Page, shopper: Pick<ShopperFixture, 
   await page.getByLabel('Password', { exact: true }).fill(shopper.password);
   await page.getByRole('button', { name: /^Sign in/ }).click();
   await expect(page).toHaveURL(/\/profile$/, { timeout: 90_000 });
+}
+
+/** Steps of the supplier invoice tests that need a second staff member or the books set up (see invoice-fixture.ts). */
+export function invoiceTool(action: 'prepare' | 'approve', arg?: string): void {
+  const args = ['exec', 'tsx', 'e2e/support/invoice-fixture.ts', action, ...(arg === undefined ? [] : [arg])];
+  const output = execFileSync('pnpm', args, { env: { ...process.env, ...e2eEnvironment() }, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+  if (!output.split('\n').some((l) => l.startsWith('FIXTURE '))) throw new Error(`the invoice tool printed nothing usable: ${output.slice(-500)}`);
 }

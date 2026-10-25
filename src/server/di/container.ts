@@ -64,6 +64,9 @@ import { PurchaseOrderService } from '@/server/domains/vendors/po-service';
 import { PurchaseOrderPortalService } from '@/server/domains/vendors/po-portal-service';
 import { AdvancePaymentService } from '@/server/domains/vendors/advance-service';
 import { RgnService } from '@/server/domains/vendors/rgn-service';
+import { SupplierInvoicePortalService } from '@/server/domains/vendors/invoice-portal-service';
+import { SupplierInvoiceService } from '@/server/domains/vendors/invoice-service';
+import { SupplierInvoicePostingService } from '@/server/domains/vendors/invoice-posting-service';
 import { TransactionLedgerService } from '@/server/domains/transactions/ledger-service';
 import { TransactionReconcileService } from '@/server/domains/transactions/reconcile-service';
 import { PaymentCallbackService } from '@/server/domains/payments/callback-service';
@@ -158,6 +161,10 @@ export interface AppContainer {
   advances: AdvancePaymentService;
   /** Received goods notes: what arrived against an order, stock in, reversal, and received-not-invoiced. */
   rgns: RgnService;
+  /** Supplier invoices: the vendor's own side, the staff pipeline, and booking to payables. */
+  invoicePortal: SupplierInvoicePortalService;
+  supplierInvoices: SupplierInvoiceService;
+  invoicePosting: SupplierInvoicePostingService;
   transactionLedger: TransactionLedgerService;
   transactionReconcile: TransactionReconcileService;
   paymentCallbacks: PaymentCallbackService;
@@ -360,6 +367,7 @@ export function getContainer(): AppContainer {
   const prequalLifecycle = new PrequalLifecycle(drizzleDb, vendorNotifier);
   const rfqService = new RfqService(drizzleDb, numbering, prequalLifecycle, vendorNotifier);
   const rgnService = new RgnService(drizzleDb, numbering);
+  const advancePayments = new AdvancePaymentService(drizzleDb, vendorNotifier);
   const purchaseOrderService = new PurchaseOrderService(drizzleDb, numbering, prequalLifecycle, vendorNotifier);
   const finance = createFinanceServices(drizzleDb, decisionLog, { numbering, reasons: reasonCodes, paymentConfigs, payments });
   const paymentEngine = createPaymentEngine({ db: drizzleDb, registry: paymentRegistry, payments, consumer: new FinanceC2bConsumer(drizzleDb, finance.receipts) });
@@ -426,8 +434,11 @@ export function getContainer(): AppContainer {
     rfqEvaluation: new RfqEvaluationService(drizzleDb, rfqService, reasonCodes, vendorNotifier),
     purchaseOrders: purchaseOrderService,
     poPortal: new PurchaseOrderPortalService(drizzleDb, purchaseOrderService, rgnService),
-    advances: new AdvancePaymentService(drizzleDb, vendorNotifier),
+    advances: advancePayments,
     rgns: rgnService,
+    invoicePortal: new SupplierInvoicePortalService(drizzleDb, numbering, vendorFiles, advancePayments, vendorNotifier),
+    supplierInvoices: new SupplierInvoiceService(drizzleDb, vendorNotifier),
+    invoicePosting: new SupplierInvoicePostingService(drizzleDb, numbering, finance.engine, finance.postingSetup, finance.vendorLedger, vendorNotifier),
     transactionLedger,
     transactionReconcile,
     paymentCallbacks,

@@ -43,6 +43,7 @@ function Detail({ view }: { view: View }) {
           {view.canConfirm ? <button type="button" className={primaryClass} disabled={busy} onClick={() => void confirm()}>{view.version > 1 ? 'Confirm the changed order' : 'Confirm this order'}</button> : <p className="text-xs text-fg-muted">Only the owner or the sales person can confirm.</p>}
         </section>
       ) : null}
+      {view.status === 'sent' || view.status === 'cancelled' || view.status === 'closed' ? null : <p className="text-sm"><Link href="/vendor/invoices/new" className="font-semibold underline">Invoice this order</Link></p>}
       {view.version > 1 && latest !== undefined && latest.changes.length > 0 ? <section className={cardClass} aria-label="What changed"><h2 className="text-sm font-bold text-fg-strong">What changed in version {latest.version}</h2>{latest.reason === null ? null : <p className="text-xs text-fg-muted">Reason: {latest.reason}</p>}<ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-fg">{latest.changes.map((c) => <li key={c}>{c}</li>)}</ul></section> : null}
       <section className={`${cardClass} space-y-3`} aria-label="The order">
         <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2">

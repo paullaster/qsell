@@ -393,6 +393,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'rgn:read',
       },
       {
+        id: 'vendor-invoices',
+        title: 'Supplier invoices',
+        name: 'vendor-invoices',
+        href: '/admin/vendors/invoices',
+        description: 'Invoices vendors send: link the received goods, check, approve and book',
+        icon: 'FileText',
+        permission: 'supplier_invoices:read',
+      },
+      {
         id: 'vendor-settings',
         title: 'Ordering rules',
         name: 'vendor-settings',
