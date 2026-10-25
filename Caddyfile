@@ -14,16 +14,29 @@ http://{$PUBLIC_DOMAIN}:8080 {
 		-Server
 	}
 
-	reverse_proxy app:3069 {
-		header_up Host {http.request.host}
-		header_up X-Forwarded-Proto {http.request.header.X-Forwarded-Proto}
-		header_up X-Forwarded-Host {http.request.header.X-Forwarded-Host}
-		health_uri /api/health
-		health_interval 10s
-		health_timeout 3s
-		transport http {
-			dial_timeout 5s
-			response_header_timeout 60s
+	# Signed links to the bundled object store (compose profile `storage`) are addressed to this site as
+	# /<bucket>/<key>. They are forwarded untouched: the signature covers the path and the Host header,
+	# so neither may change. With no bucket configured the matcher never matches.
+	@media path /{$MEDIA_BUCKET:__no_media_bucket__}/*
+	handle @media {
+		reverse_proxy rustfs:9000 {
+			header_up Host {http.request.host}
+			flush_interval -1
+		}
+	}
+
+	handle {
+		reverse_proxy app:3069 {
+			header_up Host {http.request.host}
+			header_up X-Forwarded-Proto {http.request.header.X-Forwarded-Proto}
+			header_up X-Forwarded-Host {http.request.header.X-Forwarded-Host}
+			health_uri /api/health
+			health_interval 10s
+			health_timeout 3s
+			transport http {
+				dial_timeout 5s
+				response_header_timeout 60s
+			}
 		}
 	}
 }

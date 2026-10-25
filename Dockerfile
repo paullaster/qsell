@@ -53,7 +53,7 @@ ENV NODE_ENV=production \
     PATH=/pnpm:$PATH \
     # Media storage works out of the box: uploads go to this directory, which the production
     # Compose file mounts as a persistent volume on BOTH the app and the worker. A value in
-    # .env.runtime (e.g. MEDIA_DRIVER=cloudinary) overrides these defaults.
+    # .env.runtime (e.g. MEDIA_DRIVER=s3) overrides these defaults.
     MEDIA_DRIVER=local \
     MEDIA_LOCAL_DIR=/app/storage/media
 # /app/storage/media is created here, owned by the app user, so a fresh named volume mounted

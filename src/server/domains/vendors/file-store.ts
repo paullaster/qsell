@@ -4,6 +4,7 @@ import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { vendorEvents, vendorFiles } from '@/server/db/drizzle/schema';
 import type { FinanceContext } from '@/server/domains/finance/errors';
 import { sniffImage } from '@/server/domains/media/validation';
+import { scanWithClamd, scannerFromEnv } from './virus-scan';
 
 export class FileRejected extends Error {
   constructor(message: string) {
@@ -57,6 +58,7 @@ export class VendorFileStore {
     const mime = sniffDocument(input.data);
     if (mime === null) throw new FileRejected('We accept PDF files and JPEG, PNG or WebP pictures only.');
     const fileName = safeFileName(input.originalName, mime);
+    await this.scan(input.data);
     const [row] = await this.db
       .insert(vendorFiles)
       .values({
@@ -72,6 +74,24 @@ export class VendorFileStore {
       .returning({ id: vendorFiles.id });
     if (row === undefined) throw new FileRejected('The file could not be saved.');
     return { id: row.id, fileName, mime, sizeBytes: input.data.length };
+  }
+
+  /**
+   * Asks the virus scanner (ClamAV, when CLAMD_HOST is set) about a file before it is kept. Infected files are refused. When the
+   * scanner cannot be reached the file is refused too, so nothing goes in unchecked, unless CLAMD_FAIL_OPEN=1 says otherwise.
+   */
+  private async scan(data: Buffer): Promise<void> {
+    const target = scannerFromEnv(process.env);
+    if (target === null) return;
+    const verdict = await scanWithClamd(data, target);
+    if (verdict.kind === 'infected') {
+      console.error('[vendor.files] a file failed the virus check', { signature: verdict.name });
+      throw new FileRejected('This file did not pass the virus check, so it was not accepted.');
+    }
+    if (verdict.kind === 'unavailable') {
+      console.error('[vendor.files] the virus scanner could not be used', { reason: verdict.reason });
+      if (!target.failOpen) throw new FileRejected('We could not check this file for viruses right now. Please try again in a few minutes.');
+    }
   }
 
   /** The file, for a caller who has already been checked. `vendorId` null means any vendor (staff). */

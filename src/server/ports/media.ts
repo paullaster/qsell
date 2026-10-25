@@ -2,12 +2,12 @@
  * Media storage port (DI).
  *
  * The media domain service depends on this interface only. Each storage provider
- * (local disk, Cloudinary, S3-compatible …) is an adapter under
+ * (S3-compatible storage, local disk, Cloudinary) is an adapter under
  * `server/adapters/media`; the composition root picks one with `MEDIA_DRIVER`.
  */
 
 /** Providers that hold bytes. 'external' (a pasted link) has no adapter — nothing is stored. */
-export type StoredMediaProvider = 'local' | 'cloudinary';
+export type StoredMediaProvider = 's3' | 'local' | 'cloudinary';
 
 export type MediaVisibility = 'public' | 'private';
 

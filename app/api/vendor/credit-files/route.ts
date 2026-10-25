@@ -25,7 +25,7 @@ export async function POST(request: Request) {
   }
   const file = form.get('file');
   if (!(file instanceof File)) return NextResponse.json({ ok: false, error: 'Choose a file.' }, { status: 400 });
-  const result = await portal('upload_credit_file', async (me) => await getContainer().creditMemoPortal.addFile(me, me.companyId, { originalName: file.name, data: Buffer.from(await file.arrayBuffer()) }));
+  const result = await portal('upload_credit_file', async (me) => await getContainer().creditMemoPortal.addFile(me, me.companyId, { originalName: file.name, data: Buffer.from(await file.arrayBuffer()) }), 'vendor_upload');
   let status = 200;
   if (!result.ok) status = result.signedOut === true ? 401 : 400;
   return NextResponse.json(result, { status, headers: { 'Cache-Control': 'no-store' } });

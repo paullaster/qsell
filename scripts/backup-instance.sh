@@ -27,12 +27,21 @@ media_file="$BACKUP_DIR/${project}-media-${stamp}.tar.gz"
 docker run --rm -v "${project}_media_data:/media:ro" -v "$BACKUP_DIR":/backup alpine \
   tar czf "/backup/$(basename "$media_file")" -C /media .
 
-find "$BACKUP_DIR" -maxdepth 1 -type f \( -name "${project}-db-*" -o -name "${project}-media-*" \) \
+# The bundled object store (compose profile `storage`), when this instance uses it. This copies the
+# files as they are on disk, so run it when uploads are quiet, or stop the rustfs service first.
+store_file=""
+if docker volume inspect "${project}_rustfs_data" >/dev/null 2>&1; then
+  store_file="$BACKUP_DIR/${project}-objects-${stamp}.tar.gz"
+  docker run --rm -v "${project}_rustfs_data:/objects:ro" -v "$BACKUP_DIR":/backup alpine \
+    tar czf "/backup/$(basename "$store_file")" -C /objects .
+fi
+
+find "$BACKUP_DIR" -maxdepth 1 -type f \( -name "${project}-db-*" -o -name "${project}-media-*" -o -name "${project}-objects-*" \) \
   -mtime "+${KEEP_DAYS}" -delete
 
 if [[ -n "${BACKUP_REMOTE:-}" ]]; then
-  rsync -a --chmod=F600 "$db_file" "$media_file" "$BACKUP_REMOTE"
+  rsync -a --chmod=F600 "$db_file" "$media_file" ${store_file:+"$store_file"} "$BACKUP_REMOTE"
 else
   echo "WARNING: BACKUP_REMOTE not set; backups exist only on this host." >&2
 fi
-echo "Backup complete: $db_file, $media_file"
+echo "Backup complete: $db_file, $media_file${store_file:+, $store_file}"

@@ -89,7 +89,7 @@ export interface Product {
 /** A media-library asset as the UI sees it. Private assets expose the authorised route, never a provider URL. */
 export interface MediaAssetView {
   id: string;
-  provider: 'local' | 'cloudinary' | 'external';
+  provider: 's3' | 'local' | 'cloudinary' | 'external';
   visibility: 'public' | 'private';
   purpose: string;
   url: string;
@@ -118,7 +118,7 @@ export interface ProductMediaItem extends ProductMediaInput {
   /** The text screen readers get: this product's override, else the asset's. */
   altText: string;
   originalName: string;
-  provider: 'local' | 'cloudinary' | 'external';
+  provider: 's3' | 'local' | 'cloudinary' | 'external';
   width: number | null;
   height: number | null;
   isPrimary: boolean;
@@ -198,6 +198,7 @@ export interface CurrencyConfig {
 export type InventoryChangeType =
   | 'purchase_order_receipt'
   | 'purchase_receipt_reversal'
+  | 'purchase_return'
   | 'damage_writeoff'
   | 'loss_shrinkage'
   | 'physical_audit'

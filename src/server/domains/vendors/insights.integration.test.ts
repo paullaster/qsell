@@ -165,4 +165,19 @@ describe.skipIf(!has(url))('vendor reports (database)', () => {
     const other = await c.vendorInsights.watchList(randomUUID(), range);
     expect([other.sharedBankAccounts, other.overriddenOrders, other.duplicateInvoices, other.newVendorPayments].map((x) => x.length)).toEqual([0, 0, 0, 0]);
   });
+
+  it('keeps its thresholds in the company settings, and the other reports read cleanly', async () => {
+    expect(await c.vendorInsights.watchSettings(randomUUID())).toMatchObject({ duplicateWindowDays: 7, newVendorDays: 30, newVendorAmountCents: 10_000_000, holdFlagged: true });
+    await c.purchaseOrders.saveSettings(staff('admin'), { rfqRequiredAbove: '', amendmentTolerancePercent: '0', watchDuplicateWindowDays: '3', watchNewVendorDays: '10', watchNewVendorAmount: '2500.50', holdFlaggedPayments: false });
+    expect(await c.vendorInsights.watchSettings(companyId)).toEqual({ duplicateWindowDays: 3, newVendorDays: 10, newVendorAmountCents: 250_050, holdFlagged: false });
+    expect((await c.vendorInsights.watchList(companyId, range)).settings.newVendorDays).toBe(10);
+    await c.purchaseOrders.saveSettings(staff('admin'), { rfqRequiredAbove: '', amendmentTolerancePercent: '0', watchDuplicateWindowDays: '7', watchNewVendorDays: '30', watchNewVendorAmount: '100000', holdFlaggedPayments: true });
+    const sourcing = await c.vendorInsights.sourcing(companyId, range);
+    expect(sourcing.range).toEqual(range);
+    expect(Array.isArray((await c.vendorInsights.withholding(companyId, range)).lines)).toBe(true);
+    expect(Array.isArray((await c.vendorInsights.qualification(companyId)).lines)).toBe(true);
+    const petty = await c.vendorInsights.pettyCash(companyId, range);
+    expect(petty.lines).toEqual([]);
+    expect((await c.vendorInsights.sourcing(randomUUID(), range)).lines).toEqual([]);
+  });
 });
