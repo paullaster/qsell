@@ -11,7 +11,6 @@ import {
   Lock,
   MapPin,
   User,
-  Mail,
   Phone,
   ArrowRight,
   Building,
@@ -20,9 +19,7 @@ import {
   UserPlus,
 } from 'lucide-react';
 import {
-  Product,
   type PaymentProvider,
-  Order,
   type CustomerAccount,
   type CustomerAddress,
   type CurrencyConfig,
@@ -37,6 +34,8 @@ import {
 import type { PaymentProviderCode } from '@/server/domains/payments/types';
 import { cartTaxRows, cartTotals, formatCartAmount } from '@/lib/cartMoney';
 import { AppImage } from '@/components/ui/AppImage';
+import { readOptionalEmail } from '@/lib/guest-contact';
+import { has, nth, orElse } from '@/lib/values';
 
 interface CheckoutModalProps {
   isOpen: boolean;
@@ -60,6 +59,18 @@ interface CheckoutModalProps {
   isLoading: boolean;
 }
 
+function addressToggleLabel(hasSaved: boolean, addingNew: boolean): string {
+  if (!hasSaved) return 'Add your first delivery address';
+  return addingNew ? 'Cancel — use a saved address' : 'Deliver to a new address';
+}
+
+function ProviderIcon({ code }: { code: PaymentProviderCode }) {
+  if (code === 'mpesa_daraja' || code === 'kcb_buni')
+    return <Smartphone className="h-4 w-4 text-emerald-600" />;
+  if (code === 'jenga_hq') return <Building className="h-4 w-4 text-amber-600" />;
+  return <CreditCard className="h-4 w-4 text-indigo-400" />;
+}
+
 export function CheckoutModal({
   isOpen,
   onClose,
@@ -78,14 +89,14 @@ export function CheckoutModal({
   const [city, setCity] = useState('');
   const [countyOrState, setCountyOrState] = useState('');
   const [country, setCountry] = useState(defaultCountry);
-  const [paymentMethod, setPaymentMethod] = useState<PaymentProvider | ''>('');
+  const [chosenMethod, setPaymentMethod] = useState<PaymentProvider | ''>('');
   const [enabledProviders, setEnabledProviders] = useState<
     { code: PaymentProviderCode; label: string; description: string }[]
   >([]);
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
   const [useNewAddress, setUseNewAddress] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const [accountCustomer, setAccountCustomer] = useState<{
+  const [lookedUp, setAccountCustomer] = useState<{
     found: boolean;
     accountType: 'cash' | 'credit' | null;
     name: string | null;
@@ -95,15 +106,14 @@ export function CheckoutModal({
     transmitInvoicesToKra: boolean;
   } | null>(null);
 
-  const isSignedIn = Boolean(customer?.email);
+  const isSignedIn = customer !== null && has(customer.email);
+  // A lookup answer only counts while the email field still holds an address.
+  const accountCustomer = customerEmail.includes('@') ? lookedUp : null;
 
   useEffect(() => {
     if (!isOpen) return;
     const email = customerEmail.trim();
-    if (!email.includes('@')) {
-      setAccountCustomer(null);
-      return;
-    }
+    if (!email.includes('@')) return;
     const handle = window.setTimeout(() => {
       lookupCheckoutCustomerAction(email)
         .then(setAccountCustomer)
@@ -111,22 +121,6 @@ export function CheckoutModal({
     }, 300);
     return () => window.clearTimeout(handle);
   }, [isOpen, customerEmail]);
-
-  useEffect(() => {
-    if (paymentMethod !== 'on_account') return;
-    const available =
-      accountCustomer?.accountType === 'credit'
-        ? accountCustomer.creditLimit - accountCustomer.balance
-        : 0;
-    const allowed =
-      accountCustomer?.found === true &&
-      accountCustomer.accountType === 'credit' &&
-      !accountCustomer.blocked &&
-      available >= cartTotals(items).totalAmount;
-    if (!allowed) {
-      setPaymentMethod((enabledProviders[0]?.code as PaymentProvider) || '');
-    }
-  }, [accountCustomer, paymentMethod, items, enabledProviders]);
 
   // Load customer profile to autofill addresses and payment rails
   useEffect(() => {
@@ -139,9 +133,9 @@ export function CheckoutModal({
           setCustomerName(account.name);
           setCustomerEmail(account.email);
           setCustomerPhone(account.phone);
-          setBuyerKraPin(account.buyerKraPin || '');
-          if (account.addresses && account.addresses.length > 0) {
-            const def = account.addresses.find((a) => a.isDefault) || account.addresses[0];
+          setBuyerKraPin(account.buyerKraPin ?? '');
+          if (account.addresses.length > 0) {
+            const def = account.addresses.find((a) => a.isDefault) ?? nth(account.addresses, 0);
             setSelectedAddressId(def.id);
             setUseNewAddress(false);
             setStreet(def.street);
@@ -166,8 +160,8 @@ export function CheckoutModal({
       .then((providers) => {
         setEnabledProviders(providers);
         setPaymentMethod((current) => {
-          if (current && providers.some((p) => p.code === current)) return current;
-          return (providers[0]?.code as PaymentProvider) || '';
+          if (current !== '' && providers.some((p) => p.code === current)) return current;
+          return providers[0]?.code ?? '';
         });
       })
       .catch(() => setEnabledProviders([]));
@@ -182,14 +176,13 @@ export function CheckoutModal({
     setCity(addr.city);
     setCountyOrState(addr.countyOrState);
     setCountry(addr.country);
-    if (addr.recipientName) setCustomerName(addr.recipientName);
-    if (addr.recipientPhone) setCustomerPhone(addr.recipientPhone);
+    if (has(addr.recipientName)) setCustomerName(addr.recipientName);
+    if (has(addr.recipientPhone)) setCustomerPhone(addr.recipientPhone);
   };
 
   const totals = cartTotals(items);
   const taxRows = cartTaxRows(items);
   const money = (amount: number) => formatCartAmount(amount, currency);
-  const selectedProvider = enabledProviders.find((provider) => provider.code === paymentMethod);
   const creditAvailable =
     accountCustomer?.accountType === 'credit'
       ? accountCustomer.creditLimit - accountCustomer.balance
@@ -199,15 +192,22 @@ export function CheckoutModal({
     accountCustomer.accountType === 'credit' &&
     !accountCustomer.blocked &&
     creditAvailable >= totals.totalAmount;
+  // On account is only open to a credit customer with room; otherwise the first enabled provider stands.
+  const paymentMethod: PaymentProvider | '' =
+    chosenMethod === 'on_account' && !canPayOnAccount
+      ? (enabledProviders[0]?.code ?? '')
+      : chosenMethod;
+  const selectedProvider = enabledProviders.find((provider) => provider.code === paymentMethod);
   const payLabel = paymentMethod === 'on_account' ? 'On account' : selectedProvider?.label;
-  const hasSavedAddresses = Boolean(customer?.addresses && customer.addresses.length > 0);
+  const savedAddresses = customer?.addresses ?? [];
+  const hasSavedAddresses = savedAddresses.length > 0;
   const showAddressFields = !isSignedIn || useNewAddress || !hasSavedAddresses;
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.SyntheticEvent) => {
     e.preventDefault();
     setFormError(null);
 
-    if (!customerName || !customerEmail || !customerPhone || !street || !city) {
+    if (!has(customerName) || !has(customerPhone) || !has(street) || !has(city)) {
       setFormError(
         isSignedIn && !hasSavedAddresses
           ? 'Add a delivery address to continue.'
@@ -215,13 +215,18 @@ export function CheckoutModal({
       );
       return;
     }
-    if (!paymentMethod) {
+    const emailProblem = readOptionalEmail(customerEmail);
+    if (!emailProblem.ok) {
+      setFormError(emailProblem.error);
+      return;
+    }
+    if (paymentMethod === '') {
       setFormError('No payment method is available. Enable a provider in Settings → Payments.');
       return;
     }
 
     try {
-      if (isSignedIn && customer && (useNewAddress || !hasSavedAddresses)) {
+      if (isSignedIn && (useNewAddress || !hasSavedAddresses)) {
         const { customer: updated } = await addCustomerAddressAction(customer.id, {
           label: hasSavedAddresses ? 'Delivery' : 'Primary',
           recipientName: customerName,
@@ -237,9 +242,9 @@ export function CheckoutModal({
 
       await onSubmitCheckout({
         customerName,
-        customerEmail,
+        customerEmail: emailProblem.email,
         customerPhone,
-        buyerKraPin: buyerKraPin.trim() || undefined,
+        buyerKraPin: orElse(buyerKraPin.trim(), undefined),
         shippingAddress: {
           street,
           city,
@@ -248,8 +253,8 @@ export function CheckoutModal({
         },
         paymentMethod,
       });
-    } catch (err: any) {
-      setFormError(err.message || 'Checkout failed');
+    } catch (err: unknown) {
+      setFormError(err instanceof Error && has(err.message) ? err.message : 'Checkout failed');
     }
   };
 
@@ -286,7 +291,7 @@ export function CheckoutModal({
         >
           {/* Left Column: Shipping & Customer Info */}
           <div className="space-y-6 lg:col-span-7">
-            {formError && (
+            {formError !== null && (
               <div className="rounded-lg border border-red-800 bg-red-50/80 p-3.5 text-xs text-red-800">
                 {formError}
               </div>
@@ -304,7 +309,9 @@ export function CheckoutModal({
                       <UserPlus className="h-5 w-5" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <h4 className="text-sm font-bold text-fg-strong">Faster checkout next time</h4>
+                      <h4 className="text-sm font-bold text-fg-strong">
+                        Faster checkout next time
+                      </h4>
                       <p className="mt-1 text-xs leading-relaxed text-fg-muted">
                         Sign in to use saved details, or create an account to keep your addresses
                         and order history together. Your cart will be here when you return.
@@ -340,7 +347,7 @@ export function CheckoutModal({
                       <p className="mt-0.5 text-xs text-fg-muted">{customerEmail}</p>
                       <p className="mt-0.5 font-mono text-xs text-fg">{customerPhone}</p>
                     </div>
-                    {customer?.customerNumber ? (
+                    {has(customer.customerNumber) ? (
                       <span className="rounded-md border border-line-strong bg-surface-raised px-2 py-1 font-mono text-[11px] text-fg">
                         {customer.customerNumber}
                       </span>
@@ -373,12 +380,13 @@ export function CheckoutModal({
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-fg">Email</label>
+                    <label className="mb-1 block text-xs font-medium text-fg">
+                      Email (optional)
+                    </label>
                     <input
                       type="email"
                       value={customerEmail}
                       onChange={(e) => setCustomerEmail(e.target.value)}
-                      required
                       className="w-full rounded-lg border border-line bg-surface px-3.5 py-2 text-xs text-fg-strong placeholder-fg-subtle focus:border-indigo-500 focus:outline-none"
                       placeholder="you@example.com"
                     />
@@ -419,14 +427,14 @@ export function CheckoutModal({
                 </h3>
                 {hasSavedAddresses ? (
                   <span className="text-[11px] text-fg-muted">
-                    {customer!.addresses.length} saved addresses
+                    {savedAddresses.length} saved addresses
                   </span>
                 ) : null}
               </div>
 
               {hasSavedAddresses ? (
                 <div className="mb-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  {customer!.addresses.map((addr) => (
+                  {savedAddresses.map((addr) => (
                     <button
                       key={addr.id}
                       type="button"
@@ -468,9 +476,9 @@ export function CheckoutModal({
                   onClick={() => {
                     if (useNewAddress && hasSavedAddresses) {
                       const fallback =
-                        customer!.addresses.find((a) => a.id === selectedAddressId) ||
-                        customer!.addresses.find((a) => a.isDefault) ||
-                        customer!.addresses[0]!;
+                        savedAddresses.find((a) => a.id === selectedAddressId) ??
+                        savedAddresses.find((a) => a.isDefault) ??
+                        nth(savedAddresses, 0);
                       handleSelectSavedAddress(fallback);
                       return;
                     }
@@ -487,11 +495,7 @@ export function CheckoutModal({
                       : 'border-line bg-surface/60 text-fg hover:border-line-strong'
                   }`}
                 >
-                  {useNewAddress && hasSavedAddresses
-                    ? 'Cancel — use a saved address'
-                    : hasSavedAddresses
-                      ? 'Deliver to a new address'
-                      : 'Add your first delivery address'}
+                  {addressToggleLabel(hasSavedAddresses, useNewAddress)}
                 </button>
               ) : null}
 
@@ -568,8 +572,8 @@ export function CheckoutModal({
                       <div>
                         <div className="text-xs font-semibold text-fg-strong">On account</div>
                         <p className="mt-0.5 text-[11px] text-fg-muted">
-                          {accountCustomer?.name} · credit available {money(creditAvailable)}
-                          {accountCustomer?.transmitInvoicesToKra
+                          {accountCustomer.name} · credit available {money(creditAvailable)}
+                          {accountCustomer.transmitInvoicesToKra
                             ? ' · invoice will be marked for KRA'
                             : ' · invoice will not be sent to KRA'}
                         </p>
@@ -597,13 +601,7 @@ export function CheckoutModal({
                         />
                         <div className="flex-1">
                           <div className="flex items-center gap-2">
-                            {provider.code === 'mpesa_daraja' || provider.code === 'kcb_buni' ? (
-                              <Smartphone className="h-4 w-4 text-emerald-600" />
-                            ) : provider.code === 'jenga_hq' ? (
-                              <Building className="h-4 w-4 text-amber-600" />
-                            ) : (
-                              <CreditCard className="h-4 w-4 text-indigo-400" />
-                            )}
+                            <ProviderIcon code={provider.code} />
                             <span className="text-xs font-bold text-fg-strong">
                               {provider.label}
                             </span>
@@ -643,7 +641,8 @@ export function CheckoutModal({
                           {product.name}
                         </div>
                         <div className="text-[10px] text-fg-subtle">
-                          Qty: {cartQuantityWords(quantity, product)} × {money(product.price ?? 0)}{perUnitSuffix(product)}
+                          Qty: {cartQuantityWords(quantity, product)} × {money(product.price ?? 0)}
+                          {perUnitSuffix(product)}
                         </div>
                       </div>
                     </div>
@@ -687,12 +686,12 @@ export function CheckoutModal({
                 {isLoading ? (
                   <>
                     <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                    Sending {payLabel || 'payment'}...
+                    Sending {orElse(payLabel, 'payment')}...
                   </>
                 ) : (
                   <>
                     Pay {money(totals.totalAmount)}
-                    {payLabel ? ` with ${payLabel}` : ''}
+                    {has(payLabel) ? ` with ${payLabel}` : ''}
                     <ArrowRight className="h-4 w-4" />
                   </>
                 )}

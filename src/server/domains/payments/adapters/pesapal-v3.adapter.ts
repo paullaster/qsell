@@ -75,7 +75,7 @@ export class PesapalV3Adapter implements PaymentPort {
         callback_url: input.callbackUrl,
         notification_id: orElse(notificationId, undefined),
         billing_address: {
-          email_address: input.customerEmail,
+          ...(input.customerEmail.trim() === '' ? {} : { email_address: input.customerEmail }),
           phone_number: input.customerPhone,
           first_name: orElse(input.customerName.split(' ')[0], input.customerName),
           last_name: orElse(input.customerName.split(' ').slice(1).join(' '), input.customerName),

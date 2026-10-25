@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterCursor, matching, pageOf, PAGE_SIZE, searchText, type PageInput } from '@/server/domains/settings/paging';
-import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   customerAddresses,
@@ -491,6 +491,18 @@ export class CustomerMasterService {
     return row ?? null;
   }
 
+  /** A guest who gave no email is the same person when the phone matches a card that has no email. */
+  async lookupGuestByPhone(companyId: string, phone: string): Promise<CustomerRow | null> {
+    const normalized = phone.trim();
+    if (!normalized) return null;
+    const [row] = await this.db
+      .select()
+      .from(customers)
+      .where(and(eq(customers.companyId, companyId), eq(customers.phone, normalized), isNull(customers.email)))
+      .limit(1);
+    return row ?? null;
+  }
+
   /**
    * Find or create the customer for a sale and reject blocked or over-limit credit sales.
    * Does not post the ledger — call postInvoice after the order is saved.
@@ -513,7 +525,10 @@ export class CustomerMasterService {
     /** Let an order over the credit limit through; the caller must then get it approved. */
     allowOverLimit?: boolean;
   }): Promise<CustomerRow> {
-    let customer = await this.lookupByEmail(input.companyId, input.email);
+    let customer =
+      input.email.trim() === ''
+        ? await this.lookupGuestByPhone(input.companyId, input.phone)
+        : await this.lookupByEmail(input.companyId, input.email);
     const pin = input.buyerKraPin?.trim().toUpperCase() || null;
     if (!customer) {
       customer = await this.saveCustomer(input.companyId, {

@@ -1,5 +1,6 @@
 'use client';
 
+import { has } from '@/lib/values';
 import { useState } from 'react';
 import {
   CheckCircle2,
@@ -57,7 +58,7 @@ export function OrderSuccessModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-stretch justify-center overflow-y-auto bg-backdrop/85 p-0 backdrop-blur-md sm:items-center sm:p-4">
-      <div className="relative flex min-h-dvh w-full max-w-2xl flex-col overflow-hidden border border-line bg-surface-raised shadow-2xl sm:my-4 sm:min-h-0 sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl lg:max-h-[90vh]">
+      <div className="relative flex min-h-dvh w-full max-w-2xl flex-col overflow-hidden border border-line bg-surface-raised shadow-2xl sm:my-4 sm:max-h-[calc(100dvh-2rem)] sm:min-h-0 sm:rounded-2xl lg:max-h-[90vh]">
         <div className="relative border-b border-line bg-surface p-4 text-center sm:p-8">
           <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full border border-emerald-500/20 bg-emerald-500/10 text-emerald-600 shadow-lg sm:h-16 sm:w-16">
             <CheckCircle2 className="h-7 w-7 sm:h-9 sm:w-9" />
@@ -111,12 +112,12 @@ export function OrderSuccessModal({
             </div>
           </div>
 
-          {notice ? (
+          {has(notice) ? (
             <div className="rounded-lg border border-emerald-800 bg-emerald-50/50 px-3 py-2 text-sm text-emerald-800">
               {notice}
             </div>
           ) : null}
-          {error ? (
+          {has(error) ? (
             <div className="rounded-lg border border-red-800 bg-red-50/50 px-3 py-2 text-sm text-red-800">
               {error}
             </div>
@@ -132,15 +133,17 @@ export function OrderSuccessModal({
               <Printer className="h-4 w-4" />
               {busy ? 'Working…' : 'Download Tax Invoice'}
             </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void runTaxInvoice('email')}
-              className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-indigo-600 bg-indigo-50 px-4 py-3 text-xs font-semibold text-indigo-600 dark:text-indigo-400 transition-colors hover:bg-indigo-100 dark:hover:bg-indigo-900/30 disabled:opacity-50"
-            >
-              <Mail className="h-4 w-4" />
-              Email Tax Invoice
-            </button>
+            {order.customerEmail.trim() === '' ? null : (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void runTaxInvoice('email')}
+                className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-indigo-600 bg-indigo-50 px-4 py-3 text-xs font-semibold text-indigo-600 transition-colors hover:bg-indigo-100 disabled:opacity-50 dark:text-indigo-400 dark:hover:bg-indigo-900/30"
+              >
+                <Mail className="h-4 w-4" />
+                Email Tax Invoice
+              </button>
+            )}
           </div>
 
           <button
