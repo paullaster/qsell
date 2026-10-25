@@ -374,6 +374,7 @@ describe.skipIf(!has(url))('vendor controls: bank change, standing, expiry, invi
       await c.accounts.resetPassword(token, 'Str0ng-Passw0rd!z');
       const person = required((await invites.team(a.vendorId)).find((t) => t.email === email));
       const owner = required((await invites.team(a.vendorId)).find((t) => t.role === 'owner'));
+      await db.update(schema.users).set({ emailVerifiedAt: new Date() }).where(eq(schema.users.id, a.userId));
       expect(await codeOf(invites.remove(a.vendorId, owner.id, { type: 'user', id: 'someone' }, {}))).toBe('NOT_ALLOWED');
       await invites.remove(a.vendorId, person.id, { type: 'user', id: a.userId }, {});
       const { findPortalAccess } = await import('./portal-access');
@@ -391,6 +392,10 @@ describe.skipIf(!has(url))('vendor controls: bank change, standing, expiry, invi
       expect(outbox.sent.some((m) => m.to === email)).toBe(true);
       expect(await codeOf(invites.inviteOwner(ctx, added.id, { email: `second.${run}@example.test`, name: 'Second Owner' }))).toBe('HAS_OWNER');
       expect(await codeOf(invites.inviteOwner({ ...ctx, companyId: randomUUID() }, added.id, { email: `x.${run}@example.test`, name: 'Xavier X' }))).toBe('NOT_FOUND');
+      // An owner invitation nobody used can be cancelled, and then a new owner can be invited.
+      const pending = required((await invites.team(added.id)).find((t) => t.email === email));
+      await invites.remove(added.id, pending.id, { type: 'user', id: 'staff' }, {});
+      expect(await codeOf(invites.inviteOwner(ctx, added.id, { email, name: 'Wally Walkin' }))).toBe('OK');
     });
   });
 

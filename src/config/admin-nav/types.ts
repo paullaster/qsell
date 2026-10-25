@@ -47,7 +47,8 @@ export type AdminNavIconName =
   | 'ClipboardCheck'
   | 'Landmark'
   | 'CalendarClock'
-  | 'FileCheck';
+  | 'FileCheck'
+  | 'FileText';
 
 export interface AdminNavItem {
   /** Stable unique id across the whole tree */

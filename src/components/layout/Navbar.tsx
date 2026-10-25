@@ -4,7 +4,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ChevronDown,
-  CreditCard,
   HelpCircle,
   LogOut,
   MapPin,
@@ -180,14 +179,6 @@ export function Navbar({
                       className="flex min-h-11 items-center gap-2 rounded-lg px-3 py-2 text-sm text-fg hover:bg-hover"
                     >
                       <Truck className="h-4 w-4" /> My Orders
-                    </Link>
-                    <Link
-                      href="/profile/payment"
-                      role="menuitem"
-                      onClick={() => setIsAccountMenuOpen(false)}
-                      className="flex min-h-11 items-center gap-2 rounded-lg px-3 py-2 text-sm text-fg hover:bg-hover"
-                    >
-                      <CreditCard className="h-4 w-4" /> Payment Methods
                     </Link>
                     <hr className="my-1 border-line" />
                     <form action={logoutAction}>

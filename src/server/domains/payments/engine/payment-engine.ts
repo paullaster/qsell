@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { paymentAttempts, paymentMethods, type ProviderOperationRow } from '@/server/db/drizzle/schema';
 import type { C2bConsumer, DarajaC2b } from '../daraja/c2b';
@@ -405,6 +405,28 @@ export class PaymentEngine {
     await this.events.record({ companyId: ctx.companyId, providerId: ctx.provider.id, kind: 'manual_confirmation', sourceIp: null, headers: {}, rawText: JSON.stringify({ by: input.userId, reference, reason: input.reason.trim() }), attemptId: attempt.id });
     const done = await this.payments.succeed(attempt.id, { reference, verifiedBy: 'manual', transactionId: claimed.row.id });
     if (done.settled) await this.txs.consume(claimed.row.id, 'payment_attempt', attempt.id);
+    return { ok: true };
+  }
+
+  /**
+   * A payment the platform confirmed but whose receipt never reached us: a person adds the platform's own
+   * transaction number to the order, with the reason. The number is claimed so it can count only once.
+   */
+  async attachOrderReference(input: { orderId: string; reference: string; reason: string; userId: string }): Promise<{ ok: true } | { ok: false; error: string }> {
+    const reference = input.reference.trim();
+    if (reference.length < 4 || reference.length > 40 || reference.startsWith('ws_CO_')) return { ok: false, error: "Enter the platform's own transaction number (for M-Pesa, the receipt such as NLJ7RT61SV)." };
+    if (input.reason.trim().length < 10) return { ok: false, error: 'Say why you are adding it (at least a sentence): this is kept with your name.' };
+    const [attempt] = await this.db.select().from(paymentAttempts).where(and(eq(paymentAttempts.orderId, input.orderId), eq(paymentAttempts.status, 'successful'))).orderBy(desc(paymentAttempts.createdAt)).limit(1);
+    if (!attempt) return { ok: false, error: 'This order has no confirmed online payment to add a reference to.' };
+    const ctx = await this.contexts.forProvider(attempt.providerConfigId);
+    const claimed = await this.txs.claim({ companyId: ctx.companyId, providerId: ctx.provider.id, kind: 'gateway', platformReference: reference, amount: (Math.round(Number(attempt.amount) * 100) / 100).toFixed(2), currency: attempt.currency });
+    if (!claimed.created && claimed.row.consumedAt && claimed.row.consumedId !== attempt.id) return { ok: false, error: `${reference} has already been counted for something else.` };
+    if (claimed.amountDiffers) return { ok: false, error: `${reference} is already recorded for a different amount.` };
+    await this.txs.addEvidence(claimed.row.id, { manual: true, by: input.userId, reason: input.reason.trim() }, 'manual');
+    await this.txs.setState(claimed.row.id, 'verified', { verifiedBy: 'manual' });
+    await this.events.record({ companyId: ctx.companyId, providerId: ctx.provider.id, kind: 'manual_confirmation', sourceIp: null, headers: {}, rawText: JSON.stringify({ by: input.userId, reference, reason: input.reason.trim(), orderId: input.orderId }), attemptId: attempt.id });
+    await this.payments.attachReference(attempt.id, reference);
+    if (claimed.row.consumedAt === null) await this.txs.consume(claimed.row.id, 'payment_attempt', attempt.id);
     return { ok: true };
   }
 

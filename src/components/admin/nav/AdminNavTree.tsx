@@ -38,6 +38,7 @@ import {
   Landmark,
   CalendarClock,
   FileCheck,
+  FileText,
   type LucideIcon,
 } from 'lucide-react';
 import { hasSubLinks, type AdminNavIconName, type AdminNavItem } from '@/config/admin-nav';
@@ -77,6 +78,7 @@ const ICONS: Record<AdminNavIconName, LucideIcon> = {
   Landmark,
   CalendarClock,
   FileCheck,
+  FileText,
 };
 
 function NavIcon({ name }: { name?: AdminNavIconName }) {

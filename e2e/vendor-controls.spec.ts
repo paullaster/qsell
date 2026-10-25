@@ -28,7 +28,6 @@ test.describe('staff control a vendor’s standing', () => {
     const block = page.getByRole('form', { name: 'Block this vendor' });
     await pick(page, block.getByRole('combobox', { name: 'Block' }), 'Pay', /Payments only/);
     await pick(page, block.getByRole('combobox', { name: 'Reason' }), 'dispute', /open dispute/i);
-    await block.getByLabel('Comment (optional)').fill('');
     await expect(block.getByLabel('Explain (required)')).toBeVisible();
     await block.getByLabel('Explain (required)').fill('Invoice 123 is disputed');
     await block.getByRole('button', { name: 'Block this vendor' }).click();
@@ -174,7 +173,7 @@ test.describe('changing where a vendor is paid', () => {
       await signInAsVendor(w.page, vendor);
       await w.page.goto('/vendor/profile/financial');
       await expect(w.page.getByText(/It will be used after a short waiting period/)).toBeVisible({ timeout: 60_000 });
-      await expect(w.page.getByText('KCB, Moi Avenue')).toBeVisible();
+      await expect(w.page.getByText('KCB, Moi Avenue').first()).toBeVisible();
     } finally {
       await w.close();
     }
@@ -196,7 +195,7 @@ test.describe('changing where a vendor is paid', () => {
     try {
       await signInAsVendor(w.page, vendor);
       await w.page.goto('/vendor/profile/financial');
-      await expect(w.page.getByText('KCB, Moi Avenue')).toBeVisible({ timeout: 60_000 });
+      await expect(w.page.getByText('KCB, Moi Avenue').first()).toBeVisible({ timeout: 60_000 });
       await expect(w.page.getByText('Waiting', { exact: true })).toHaveCount(0);
       await expect(w.page.getByRole('button', { name: 'Change my bank details…' })).toBeVisible();
     } finally {
@@ -260,6 +259,6 @@ test.describe('vendor worklists and settings', () => {
     await edit.getByLabel('Name').fill('Health and safety permit');
     await edit.getByLabel('In use').uncheck();
     await edit.getByRole('button', { name: 'Save' }).click();
-    await expect(page.getByRole('listitem').filter({ hasText: 'Health and safety permit' }).getByText('Not in use')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('listitem').filter({ hasText: code }).getByText('Not in use')).toBeVisible({ timeout: 30_000 });
   });
 });

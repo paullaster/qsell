@@ -46,7 +46,7 @@ export default defineConfig({
     command: `pnpm exec drizzle-kit migrate && exec pnpm exec next dev -p ${String(E2E_PORT)}`,
     port: E2E_PORT,
     timeout: 240_000,
-    reuseExistingServer: false,
+    reuseExistingServer: process.env.E2E_REUSE_SERVER === '1',
     env: e2eEnvironment(),
   },
 });

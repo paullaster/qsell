@@ -526,6 +526,55 @@
       "when": 1792824923584,
       "tag": "0074_vendor_bank_change_and_reminders",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1792826246488,
+      "tag": "0075_prequalification",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1792832514664,
+      "tag": "0076_rfq",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1792841857499,
+      "tag": "0077_purchase_orders",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1792845675246,
+      "tag": "0078_rgn",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1792848000513,
+      "tag": "0079_orders_user_created_idx",
+      "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1792911550385,
+      "tag": "0080_supplier_invoices",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1792918459469,
+      "tag": "0081_vendor_payments",
+      "breakpoints": true
     }
   ]
 }

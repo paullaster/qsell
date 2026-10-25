@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { emptyToNull, has, nth, orElse, required } from '@/lib/values';
 import { afterCursor, matching, pageOf, PAGE_SIZE, searchText, type PageInput } from '@/server/domains/settings/paging';
-import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   customerAddresses,
@@ -89,8 +90,8 @@ export class CustomerMasterService {
   ): Promise<CustomerProfileRow> {
     const code = input.code.trim().toUpperCase();
     const name = input.name.trim();
-    if (!code) throw new Error('Profile code is required.');
-    if (!name) throw new Error('Profile name is required.');
+    if (!has(code)) throw new Error('Profile code is required.');
+    if (!has(name)) throw new Error('Profile name is required.');
     this.assertAccountType(input.accountType);
     const normalized = this.normalizeTerms(
       input.accountType,
@@ -101,7 +102,7 @@ export class CustomerMasterService {
     const values = {
       code,
       name,
-      description: input.description?.trim() || null,
+      description: emptyToNull(input.description?.trim()),
       accountType: input.accountType,
       creditLimit: money(normalized.creditLimit),
       paymentTermDays: normalized.paymentTermDays,
@@ -111,7 +112,7 @@ export class CustomerMasterService {
       updatedAt: new Date(),
     };
 
-    if (input.id) {
+    if (has(input.id)) {
       const [updated] = await this.db
         .update(customerProfiles)
         .set(values)
@@ -125,7 +126,7 @@ export class CustomerMasterService {
       .insert(customerProfiles)
       .values({ companyId, ...values })
       .returning();
-    return created!;
+    return required(created, 'the saved profile');
   }
 
   async listCustomers(companyId: string): Promise<CustomerRow[]> {
@@ -203,12 +204,12 @@ export class CustomerMasterService {
     },
   ): Promise<CustomerRow> {
     const name = input.name.trim();
-    if (!name) throw new Error('Customer name is required.');
+    if (!has(name)) throw new Error('Customer name is required.');
     this.assertAccountType(input.accountType);
     const terms = this.normalizeTerms(input.accountType, input.creditLimit, input.paymentTermDays);
-    const email = input.email?.trim().toLowerCase() || null;
-    const phone = input.phone?.trim() || null;
-    if (email) await this.assertUniqueEmail(companyId, email, input.id);
+    const email = emptyToNull(input.email?.trim().toLowerCase());
+    const phone = emptyToNull(input.phone?.trim());
+    if (has(email)) await this.assertUniqueEmail(companyId, email, input.id);
 
     const assignment = await this.dimensionSets.resolveAssignment(
       companyId,
@@ -216,29 +217,29 @@ export class CustomerMasterService {
     );
 
     const values = {
-      profileId: input.profileId || null,
+      profileId: emptyToNull(input.profileId),
       name,
       email,
       phone,
-      street: input.street?.trim() || null,
-      city: input.city?.trim() || null,
-      countyOrState: input.countyOrState?.trim() || null,
-      postalCode: input.postalCode?.trim() || null,
-      country: input.country?.trim() || null,
+      street: emptyToNull(input.street?.trim()),
+      city: emptyToNull(input.city?.trim()),
+      countyOrState: emptyToNull(input.countyOrState?.trim()),
+      postalCode: emptyToNull(input.postalCode?.trim()),
+      country: emptyToNull(input.country?.trim()),
       accountType: input.accountType,
       creditLimit: money(terms.creditLimit),
       paymentTermDays: terms.paymentTermDays,
-      blocked: input.blocked || 'none',
+      blocked: orElse(input.blocked, 'none'),
       transmitInvoicesToKra: input.transmitInvoicesToKra,
-      buyerKraPin: input.buyerKraPin?.trim().toUpperCase() || null,
+      buyerKraPin: emptyToNull(input.buyerKraPin?.trim().toUpperCase()),
       dimensionSetId: assignment.dimensionSetId,
       dimensionCodes: assignment.dimensionCodes,
       isActive: input.isActive !== false,
-      notes: input.notes?.trim() || null,
+      notes: emptyToNull(input.notes?.trim()),
       updatedAt: new Date(),
     };
 
-    if (input.id) {
+    if (has(input.id)) {
       const [updated] = await this.db
         .update(customers)
         .set(values)
@@ -263,8 +264,8 @@ export class CustomerMasterService {
         .values({ id: customerId, companyId, number, balance: '0', ...values })
         .returning();
     });
-    await this.syncDefaultAddressFromCard(created!);
-    return created!;
+    await this.syncDefaultAddressFromCard(required(created, 'the saved customer'));
+    return required(created, 'the saved record');
   }
 
   async listAddresses(customerId: string): Promise<CustomerAddressRow[]> {
@@ -300,14 +301,14 @@ export class CustomerMasterService {
       .insert(customerAddresses)
       .values({
         customerId,
-        label: input.label.trim() || 'Address',
+        label: orElse(input.label.trim(), 'Address'),
         recipientName: input.recipientName.trim(),
         recipientPhone: input.recipientPhone.trim(),
         street: input.street.trim(),
         city: input.city.trim(),
         countyOrState: input.countyOrState.trim(),
-        postalCode: input.postalCode?.trim() || null,
-        country: input.country.trim() || 'Kenya',
+        postalCode: emptyToNull(input.postalCode?.trim()),
+        country: orElse(input.country.trim(), 'Kenya'),
         isDefault: makeDefault,
       })
       .returning();
@@ -341,7 +342,7 @@ export class CustomerMasterService {
     const [updated] = await this.db
       .update(customerAddresses)
       .set({
-        label: input.label !== undefined ? input.label.trim() || existing.label : existing.label,
+        label: input.label !== undefined ? orElse(input.label.trim(), existing.label) : existing.label,
         recipientName:
           input.recipientName !== undefined ? input.recipientName.trim() : existing.recipientName,
         recipientPhone:
@@ -353,7 +354,7 @@ export class CustomerMasterService {
         countyOrState:
           input.countyOrState !== undefined ? input.countyOrState.trim() : existing.countyOrState,
         postalCode:
-          input.postalCode !== undefined ? input.postalCode?.trim() || null : existing.postalCode,
+          input.postalCode !== undefined ? emptyToNull(input.postalCode?.trim()) : existing.postalCode,
         country: input.country !== undefined ? input.country.trim() : existing.country,
         isDefault: input.isDefault === true ? true : existing.isDefault,
         updatedAt: new Date(),
@@ -384,7 +385,7 @@ export class CustomerMasterService {
 
     if (target.isDefault) {
       const remaining = rows.filter((row) => row.id !== addressId);
-      const next = remaining[0]!;
+      const next = nth(remaining, 0);
       await this.db
         .update(customerAddresses)
         .set({ isDefault: true, updatedAt: new Date() })
@@ -410,7 +411,7 @@ export class CustomerMasterService {
       .set({ isDefault: true, updatedAt: new Date() })
       .where(eq(customerAddresses.id, addressId))
       .returning();
-    await this.mirrorDefaultOntoCustomer(customerId, updated!);
+    await this.mirrorDefaultOntoCustomer(customerId, required(updated, 'the address'));
     return await this.listAddresses(customerId);
   }
 
@@ -426,8 +427,8 @@ export class CustomerMasterService {
     if (!email.includes('@')) throw new Error('A valid email is required.');
     const existing = await this.lookupByEmail(companyId, email);
     if (existing) {
-      const nextName = input.name.trim() || existing.name;
-      const nextPhone = input.phone?.trim() || existing.phone;
+      const nextName = orElse(input.name.trim(), existing.name);
+      const nextPhone = orElse(input.phone?.trim(), existing.phone);
       if (nextName !== existing.name || nextPhone !== existing.phone) {
         return await this.saveCustomer(companyId, {
           id: existing.id,
@@ -443,7 +444,7 @@ export class CustomerMasterService {
           accountType: existing.accountType === 'credit' ? 'credit' : 'cash',
           creditLimit: num(existing.creditLimit),
           paymentTermDays: existing.paymentTermDays,
-          blocked: (existing.blocked as CustomerBlock) || 'none',
+          blocked: orElse(existing.blocked, 'none') as CustomerBlock,
           transmitInvoicesToKra: existing.transmitInvoicesToKra,
           buyerKraPin: existing.buyerKraPin,
           dimensionCodes: existing.dimensionCodes,
@@ -454,9 +455,9 @@ export class CustomerMasterService {
       return existing;
     }
     return await this.saveCustomer(companyId, {
-      name: input.name.trim() || email.split('@')[0] || 'Customer',
+      name: orElse(input.name.trim(), orElse(email.split('@')[0], 'Customer')),
       email,
-      phone: input.phone?.trim() || null,
+      phone: emptyToNull(input.phone?.trim()),
       accountType: 'cash',
       creditLimit: 0,
       paymentTermDays: 0,
@@ -482,11 +483,23 @@ export class CustomerMasterService {
 
   async lookupByEmail(companyId: string, email: string): Promise<CustomerRow | null> {
     const normalized = email.trim().toLowerCase();
-    if (!normalized) return null;
+    if (!has(normalized)) return null;
     const [row] = await this.db
       .select()
       .from(customers)
       .where(and(eq(customers.companyId, companyId), eq(customers.email, normalized)))
+      .limit(1);
+    return row ?? null;
+  }
+
+  /** A guest who gave no email is the same person when the phone matches a card that has no email. */
+  async lookupGuestByPhone(companyId: string, phone: string): Promise<CustomerRow | null> {
+    const normalized = phone.trim();
+    if (!has(normalized)) return null;
+    const [row] = await this.db
+      .select()
+      .from(customers)
+      .where(and(eq(customers.companyId, companyId), eq(customers.phone, normalized), isNull(customers.email)))
       .limit(1);
     return row ?? null;
   }
@@ -513,8 +526,11 @@ export class CustomerMasterService {
     /** Let an order over the credit limit through; the caller must then get it approved. */
     allowOverLimit?: boolean;
   }): Promise<CustomerRow> {
-    let customer = await this.lookupByEmail(input.companyId, input.email);
-    const pin = input.buyerKraPin?.trim().toUpperCase() || null;
+    let customer =
+      input.email.trim() === ''
+        ? await this.lookupGuestByPhone(input.companyId, input.phone)
+        : await this.lookupByEmail(input.companyId, input.email);
+    const pin = emptyToNull(input.buyerKraPin?.trim().toUpperCase());
     if (!customer) {
       customer = await this.saveCustomer(input.companyId, {
         name: input.name,
@@ -536,9 +552,9 @@ export class CustomerMasterService {
       customer = await this.saveCustomer(input.companyId, {
         id: customer.id,
         profileId: customer.profileId,
-        name: input.name.trim() || customer.name,
+        name: orElse(input.name.trim(), customer.name),
         email: customer.email,
-        phone: input.phone.trim() || customer.phone,
+        phone: orElse(input.phone.trim(), customer.phone),
         street: customer.street,
         city: customer.city,
         countyOrState: customer.countyOrState,
@@ -547,15 +563,15 @@ export class CustomerMasterService {
         accountType: customer.accountType === 'credit' ? 'credit' : 'cash',
         creditLimit: num(customer.creditLimit),
         paymentTermDays: customer.paymentTermDays,
-        blocked: (customer.blocked as CustomerBlock) || 'none',
+        blocked: orElse(customer.blocked, 'none') as CustomerBlock,
         transmitInvoicesToKra: customer.transmitInvoicesToKra,
-        buyerKraPin: pin || customer.buyerKraPin,
+        buyerKraPin: orElse(pin, customer.buyerKraPin),
         dimensionCodes: customer.dimensionCodes,
         isActive: customer.isActive,
         notes: customer.notes,
       });
       const addresses = await this.listAddresses(customer.id);
-      if (addresses.length === 0 && input.address.street.trim() && input.address.city.trim()) {
+      if (addresses.length === 0 && has(input.address.street.trim()) && has(input.address.city.trim())) {
         try {
           await this.addAddress(customer.id, {
             label: 'Delivery',
@@ -585,7 +601,7 @@ export class CustomerMasterService {
 
     if (customer.accountType === 'credit') {
       const nextBalance = num(customer.balance) + input.amount;
-      if (nextBalance > num(customer.creditLimit) && !input.allowOverLimit) {
+      if (nextBalance > num(customer.creditLimit) && input.allowOverLimit !== true) {
         throw new Error(
           `${customer.name} would exceed the credit limit of ${num(customer.creditLimit).toLocaleString()}.`,
         );
@@ -633,7 +649,7 @@ export class CustomerMasterService {
         {
           companyId: input.customer.companyId,
           customerId: input.customer.id,
-          ledgerEntryId: entry!.id,
+          ledgerEntryId: required(entry, 'the invoice entry').id,
           entryType: 'initial',
           amount: money(amount),
           postingDate: businessDate(),
@@ -644,7 +660,7 @@ export class CustomerMasterService {
         history.push({
           companyId: input.customer.companyId,
           customerId: input.customer.id,
-          ledgerEntryId: entry!.id,
+          ledgerEntryId: required(entry, 'the invoice entry').id,
           entryType: 'application',
           amount: money(-amount),
           postingDate: businessDate(),
@@ -666,7 +682,7 @@ export class CustomerMasterService {
           companyId: input.customer.companyId,
           customerId: input.customer.id,
           currency: input.currency.trim().toUpperCase(),
-          invoiceEntryId: entry!.id,
+          invoiceEntryId: required(entry, 'the invoice entry').id,
           invoiceCents: Math.round(amount * 100),
         });
         await getContainer().finance.salesPosting.enqueue(tx, {
@@ -726,7 +742,7 @@ export class CustomerMasterService {
       .where(eq(orders.id, orderId))
       .limit(1);
     const reference = shownPaymentReference(order ?? {});
-    if (!reference) {
+    if (!has(reference)) {
       throw new Error(
         'Cannot post this payment. The provider transaction reference was not captured.',
       );
@@ -750,12 +766,12 @@ export class CustomerMasterService {
     if (!Number.isFinite(amount) || amount <= 0)
       throw new Error('Payment amount must be greater than 0.');
 
-    const documentNo = input.reference?.trim() || '';
-    if (!documentNo) {
+    const documentNo = orElse(input.reference?.trim(), '');
+    if (!has(documentNo)) {
       throw new Error('A payment needs the provider transaction reference.');
     }
 
-    if (!input.orderId && (await getContainer().finance.salesPosting.isLive(companyId))) {
+    if (!has(input.orderId) && (await getContainer().finance.salesPosting.isLive(companyId))) {
       // Money taken by hand needs a payment method and a bank account; the books are live, so it
       // goes through Finance → Receipts, where those are recorded.
       throw new Error('Sales now post to the general ledger. Record this payment under Finance → Receipts so it reaches the bank account and the books.');
@@ -780,7 +796,7 @@ export class CustomerMasterService {
       }
       const currency = await this.currencyForPosting(
         input.currency,
-        input.orderId || open.find((entry) => entry.orderId)?.orderId,
+        orElse(input.orderId, open.find((entry) => has(entry.orderId))?.orderId),
       );
 
       const [payment] = await tx
@@ -788,7 +804,7 @@ export class CustomerMasterService {
         .values({
           companyId,
           customerId,
-          orderId: input.orderId || null,
+          orderId: emptyToNull(input.orderId),
           documentType: 'payment',
           documentNo,
           description: 'Customer payment',
@@ -800,15 +816,15 @@ export class CustomerMasterService {
         })
         .returning({ id: customerLedgerEntries.id });
 
-      if (input.orderId) {
-        await getContainer().finance.salesPosting.enqueue(tx, { companyId, kind: 'credit_payment', subjectId: payment!.id });
+      if (has(input.orderId)) {
+        await getContainer().finance.salesPosting.enqueue(tx, { companyId, kind: 'credit_payment', subjectId: required(payment, 'the payment entry').id });
       }
 
       const history: (typeof customerDetailedEntries.$inferInsert)[] = [
         {
           companyId,
           customerId,
-          ledgerEntryId: payment!.id,
+          ledgerEntryId: required(payment, 'the payment entry').id,
           entryType: 'initial',
           amount: money(-amount),
           postingDate: businessDate(),
@@ -825,8 +841,8 @@ export class CustomerMasterService {
           .where(eq(customerLedgerEntries.id, entry.id));
         const base = { companyId, customerId, entryType: 'application' as const, postingDate: businessDate() };
         history.push(
-          { ...base, ledgerEntryId: entry.id, amount: money(-applied), appliedToEntryId: payment!.id },
-          { ...base, ledgerEntryId: payment!.id, amount: money(applied), appliedToEntryId: entry.id },
+          { ...base, ledgerEntryId: entry.id, amount: money(-applied), appliedToEntryId: required(payment, 'the payment entry').id },
+          { ...base, ledgerEntryId: required(payment, 'the payment entry').id, amount: money(applied), appliedToEntryId: entry.id },
         );
         left -= applied;
       }
@@ -836,7 +852,7 @@ export class CustomerMasterService {
         {
           companyId,
           customerId,
-          orderId: input.orderId || null,
+          orderId: emptyToNull(input.orderId),
           documentType: 'payment',
           documentNo,
           description: 'Customer payment',
@@ -844,7 +860,7 @@ export class CustomerMasterService {
           amount,
           currency,
           transactionReference: documentNo,
-          idempotencyKey: input.orderId
+          idempotencyKey: has(input.orderId)
             ? `payment:${input.orderId}:${documentNo}:${money(amount)}`
             : `payment:${customerId}:${documentNo}:${money(amount)}:${open.map((entry) => entry.id).join(',')}`,
         },
@@ -859,7 +875,7 @@ export class CustomerMasterService {
         })
         .where(eq(customers.id, customerId))
         .returning();
-      return updated!;
+      return required(updated, 'the customer');
     });
   }
 
@@ -868,15 +884,15 @@ export class CustomerMasterService {
     orderId?: string | null,
   ): Promise<string> {
     const given = explicit?.trim();
-    if (given) return given.toUpperCase();
-    if (orderId) {
+    if (has(given)) return given.toUpperCase();
+    if (has(orderId)) {
       const [order] = await this.db
         .select({ currency: orders.currency })
         .from(orders)
         .where(eq(orders.id, orderId))
         .limit(1);
-      const fromOrder = order?.currency?.trim();
-      if (fromOrder) return fromOrder.toUpperCase();
+      const fromOrder = order?.currency.trim();
+      if (has(fromOrder)) return fromOrder.toUpperCase();
     }
     throw new Error('A currency is required to post the transaction ledger.');
   }
@@ -929,7 +945,7 @@ export class CustomerMasterService {
    * Skips when the card has no usable address yet.
    */
   private async syncDefaultAddressFromCard(customer: CustomerRow) {
-    if (!customer.street?.trim() || !customer.city?.trim()) return;
+    if (!has(customer.street?.trim()) || !has(customer.city?.trim())) return;
     const rows = await this.db
       .select()
       .from(customerAddresses)
@@ -939,17 +955,17 @@ export class CustomerMasterService {
         customerId: customer.id,
         label: 'Primary',
         recipientName: customer.name,
-        recipientPhone: customer.phone || '',
+        recipientPhone: orElse(customer.phone, ''),
         street: customer.street.trim(),
         city: customer.city.trim(),
-        countyOrState: customer.countyOrState?.trim() || '',
-        postalCode: customer.postalCode?.trim() || null,
-        country: customer.country?.trim() || 'Kenya',
+        countyOrState: orElse(customer.countyOrState?.trim(), ''),
+        postalCode: emptyToNull(customer.postalCode?.trim()),
+        country: orElse(customer.country?.trim(), 'Kenya'),
         isDefault: true,
       });
       return;
     }
-    const def = rows.find((row) => row.isDefault) || rows[0]!;
+    const def = rows.find((row) => row.isDefault) ?? nth(rows, 0);
     if (!def.isDefault) {
       await this.db
         .update(customerAddresses)
@@ -961,9 +977,9 @@ export class CustomerMasterService {
       .set({
         street: customer.street.trim(),
         city: customer.city.trim(),
-        countyOrState: customer.countyOrState?.trim() || def.countyOrState,
-        postalCode: customer.postalCode?.trim() || null,
-        country: customer.country?.trim() || def.country,
+        countyOrState: orElse(customer.countyOrState?.trim(), def.countyOrState),
+        postalCode: emptyToNull(customer.postalCode?.trim()),
+        country: orElse(customer.country?.trim(), def.country),
         isDefault: true,
         updatedAt: new Date(),
       })
@@ -982,17 +998,17 @@ export class CustomerMasterService {
       .from(customers)
       .where(eq(customers.id, customerId))
       .limit(1);
-    if (!customer?.street?.trim() || !customer.city?.trim()) return;
+    if (!has(customer?.street?.trim()) || !has(customer.city?.trim())) return;
     await this.db.insert(customerAddresses).values({
       customerId,
       label: 'Primary',
       recipientName: customer.name,
-      recipientPhone: customer.phone || '',
+      recipientPhone: orElse(customer.phone, ''),
       street: customer.street.trim(),
       city: customer.city.trim(),
-      countyOrState: customer.countyOrState?.trim() || '',
-      postalCode: customer.postalCode?.trim() || null,
-      country: customer.country?.trim() || 'Kenya',
+      countyOrState: orElse(customer.countyOrState?.trim(), ''),
+      postalCode: emptyToNull(customer.postalCode?.trim()),
+      country: orElse(customer.country?.trim(), 'Kenya'),
       isDefault: true,
     });
   }

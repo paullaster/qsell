@@ -185,6 +185,36 @@ export const DOCUMENT_KINDS = {
     fiscal: false,
     suggested: { code: 'VND', prefix: 'V-', digits: 6, reset: 'never', blockSize: 20 },
   },
+  purchase_order: {
+    label: 'Purchase order',
+    fiscal: false,
+    suggested: { code: 'PO', prefix: 'PO-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
+  },
+  rgn: {
+    label: 'Received goods note',
+    fiscal: false,
+    suggested: { code: 'RGN', prefix: 'RGN-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
+  },
+  supplier_invoice: {
+    label: 'Supplier invoice',
+    fiscal: false,
+    suggested: { code: 'SINV', prefix: 'SINV-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
+  },
+  purchase_invoice: {
+    label: 'Purchase invoice (booked)',
+    fiscal: false,
+    suggested: { code: 'PINV', prefix: 'PINV-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
+  },
+  vendor_payment: {
+    label: 'Vendor payment voucher',
+    fiscal: false,
+    suggested: { code: 'VPV', prefix: 'VPV-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
+  },
+  rfq: {
+    label: 'Request for quotation',
+    fiscal: false,
+    suggested: { code: 'RFQ', prefix: 'RFQ-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
+  },
   project: {
     label: 'Project',
     fiscal: false,

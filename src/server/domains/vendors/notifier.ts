@@ -193,4 +193,164 @@ export class VendorNotifier {
       details: [['Reason', reason]],
     }, 'vendor');
   }
+
+  async prequalSubmitted(vendorId: string, categoryName: string): Promise<void> {
+    const { legalName } = await this.vendorAddresses(vendorId);
+    await this.send(await this.staffAddress(), 'A prequalification application is waiting', {
+      heading: `${legalName} applied to be qualified`,
+      body: `${legalName} applied for ${categoryName}. Take it for evaluation from the prequalification queue.`,
+      cta: 'Open the queue',
+      path: '/admin/vendors/prequalification',
+    }, 'staff');
+  }
+
+  async prequalDecided(vendorId: string, categoryName: string, outcome: 'approved' | 'rejected' | 'revision' | 'suspended' | 'revoked' | 'reinstated' | 'expired', note: string | null, until: string | null): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId);
+    const words = {
+      approved: ['You are qualified', 'Your application was approved.'],
+      rejected: ['Your application was not accepted', 'Your application was reviewed and was not accepted.'],
+      revision: ['We need changes to your application', 'Please update your answers and send the application again.'],
+      suspended: ['Your qualification is suspended', 'Your qualification is paused until the reason below is resolved.'],
+      revoked: ['Your qualification was withdrawn', 'We have withdrawn your qualification.'],
+      reinstated: ['Your qualification is back', 'Your qualification is active again.'],
+      expired: ['Your qualification has expired', 'Apply again to renew it: your earlier answers are filled in for you.'],
+    } as const;
+    const [heading, body] = words[outcome];
+    const details: [string, string][] = [['Category', categoryName]];
+    if (until !== null) details.push(['Qualified until', until]);
+    if (note !== null) details.push(['Note', note]);
+    await this.send(addresses, `${heading}: ${categoryName}`, { heading, body, cta: 'Open prequalification', path: '/vendor/prequalification', details }, 'vendor');
+  }
+
+  /** Every vendor's own contacts, separately: one invitation each, never a shared list of who else was invited. */
+  private async eachVendor(vendorIds: string[], make: (vendorId: string, addresses: string[]) => Promise<void>): Promise<void> {
+    for (const id of vendorIds) {
+      const { addresses } = await this.vendorAddresses(id);
+      await make(id, addresses);
+    }
+  }
+
+  async rfqInvited(vendorIds: string[], number: string, title: string, deadline: Date): Promise<void> {
+    await this.eachVendor(vendorIds, async (_id, addresses) => {
+      await this.send(addresses, `You are invited to quote: ${number}`, {
+        heading: `You are invited to quote for ${title}`,
+        body: 'Open the request in the vendor portal to read what is wanted and send your quote before the deadline.',
+        cta: 'Open the request',
+        path: '/vendor/rfqs',
+        details: [['Request', number], ['Quotes are due', `${deadline.toISOString().replace('T', ' ').slice(0, 16)  } UTC`]],
+      }, 'vendor');
+    });
+  }
+
+  async rfqAddendum(vendorIds: string[], number: string, title: string, text: string, deadline: Date | null): Promise<void> {
+    const details: [string, string][] = [['Request', number === '' ? title : `${number} · ${title}`]];
+    if (deadline !== null) details.push(['New deadline', `${deadline.toISOString().replace('T', ' ').slice(0, 16)  } UTC`]);
+    await this.eachVendor(vendorIds, async (_id, addresses) => {
+      await this.send(addresses, `Update to ${number === '' ? title : number}`, { heading: 'An update to a request you were invited to', body: text, cta: 'Open the request', path: '/vendor/rfqs', details }, 'vendor');
+    });
+  }
+
+  async rfqClosed(vendorIds: string[], number: string, title: string, reason: string): Promise<void> {
+    await this.eachVendor(vendorIds, async (_id, addresses) => {
+      await this.send(addresses, `${number} is closed`, { heading: `${title} is closed to new quotes`, body: `The buyer closed this request early: ${reason}`, cta: 'Open the request', path: '/vendor/rfqs', details: [['Request', number]] }, 'vendor');
+    });
+  }
+
+  async rfqCancelled(vendorIds: string[], number: string, title: string, reason: string): Promise<void> {
+    await this.eachVendor(vendorIds, async (_id, addresses) => {
+      await this.send(addresses, `${number} is cancelled`, { heading: `${title} is cancelled`, body: `The buyer cancelled this request: ${reason}`, cta: 'Open the request', path: '/vendor/rfqs', details: [['Request', number]] }, 'vendor');
+    });
+  }
+
+  async rfqReminder(vendorId: string, number: string, title: string, deadline: Date, hours: number): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId);
+    await this.send(addresses, `Quotes for ${number} are due in ${String(hours)} hours`, { heading: `Quotes for ${title} are due soon`, body: 'You have not sent a quote yet. Send it before the deadline, or tell us you are not bidding.', cta: 'Open the request', path: '/vendor/rfqs', details: [['Request', number], ['Quotes are due', `${deadline.toISOString().replace('T', ' ').slice(0, 16)  } UTC`]] }, 'vendor');
+  }
+
+  async quoteReceived(vendorId: string, number: string, version: number): Promise<void> {
+    const { legalName } = await this.vendorAddresses(vendorId);
+    await this.send(await this.staffAddress(), `A quote came in for ${number}`, { heading: `${legalName} sent a quote`, body: `Version ${String(version)} of a quote for ${number} was received. Sealed quotes stay closed until the deadline.`, cta: 'Open the request', path: '/admin/vendors/rfqs', details: [['Request', number]] }, 'staff');
+  }
+
+  async quoteRevisionRequested(vendorId: string, number: string, title: string, comment: string, due: Date): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId);
+    await this.send(addresses, `Please revise your quote for ${number}`, { heading: `The buyer asks you to revise your quote for ${title}`, body: comment, cta: 'Revise my quote', path: '/vendor/rfqs', details: [['Request', number], ['Send the revision by', `${due.toISOString().replace('T', ' ').slice(0, 16)  } UTC`]] }, 'vendor');
+  }
+
+  async quoteRejected(vendorId: string, number: string, title: string, reason: string): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId);
+    await this.send(addresses, `Your quote for ${number} was not accepted`, { heading: `Your quote for ${title} was not accepted`, body: 'Thank you for quoting.', cta: 'See why', path: '/vendor/rfqs', details: [['Request', number], ['Reason', reason]] }, 'vendor');
+  }
+
+  async rfqResult(vendorId: string, number: string, title: string, awarded: boolean): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId);
+    await this.send(addresses, awarded ? `You were awarded ${number}` : `Result of ${number}`, {
+      heading: awarded ? `You were awarded work on ${title}` : `${title} was awarded to another vendor`,
+      body: awarded ? 'Congratulations. A purchase order will follow.' : 'Thank you for quoting. We do not share other vendors’ details or prices.',
+      cta: 'Open the request',
+      path: '/vendor/rfqs',
+      details: [['Request', number]],
+    }, 'vendor');
+  }
+
+  async poSent(vendorId: string, number: string, total: string, currency: string, expected: string | null): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId);
+    await this.send(addresses, `Purchase order ${number}`, {
+      heading: `You have a purchase order: ${number}`,
+      body: 'Open it in the vendor portal, check it, and confirm that you accept it.',
+      cta: 'Open the order',
+      path: '/vendor/orders',
+      details: [['Order', number], ['Total', `${total} ${currency}`], ['Expected delivery', expected ?? 'to be agreed']],
+    }, 'vendor');
+  }
+
+  async poAmended(vendorId: string, number: string, version: number, changes: string[], reason: string): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId);
+    await this.send(addresses, `Purchase order ${number} was changed`, {
+      heading: `Purchase order ${number} was changed`,
+      body: `Version ${String(version)} replaces the earlier one. Please read the changes and confirm again. Reason: ${reason}`,
+      cta: 'Review and confirm',
+      path: '/vendor/orders',
+      details: changes.slice(0, 8).map((c, i) => [`Change ${String(i + 1)}`, c] as const),
+    }, 'vendor');
+  }
+
+  async poCancelled(vendorId: string, number: string, reason: string): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId);
+    await this.send(addresses, `Purchase order ${number} is cancelled`, { heading: `Purchase order ${number} is cancelled`, body: `The buyer cancelled this order: ${reason}`, cta: 'Open my orders', path: '/vendor/orders', details: [['Order', number]] }, 'vendor');
+  }
+
+  async poConfirmed(vendorId: string, number: string): Promise<void> {
+    const { legalName } = await this.vendorAddresses(vendorId);
+    await this.send(await this.staffAddress(), `${legalName} confirmed ${number}`, { heading: `${legalName} confirmed purchase order ${number}`, body: 'The vendor accepted the order.', cta: 'Open the order', path: '/admin/vendors/orders', details: [['Order', number]] }, 'staff');
+  }
+
+  async advanceApproved(vendorId: string, number: string, amount: string, currency: string): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId, 'finance');
+    await this.send(addresses, `Advance payment approved for ${number}`, { heading: `An advance payment was approved for order ${number}`, body: 'It will be paid into your bank account on record. You will get a remittance when it is paid.', cta: 'Open the order', path: '/vendor/orders', details: [['Order', number], ['Advance', `${amount} ${currency}`]] }, 'vendor');
+  }
+  async invoiceSubmitted(vendorId: string, number: string): Promise<void> {
+    const { legalName } = await this.vendorAddresses(vendorId);
+    await this.send(await this.staffAddress(), `${legalName} sent invoice ${number}`, { heading: `${legalName} sent a supplier invoice: ${number}`, body: 'It is waiting in the supplier invoices queue.', cta: 'Open the queue', path: '/admin/vendors/invoices', details: [['Invoice', number]] }, 'staff');
+  }
+
+  async invoiceReturned(vendorId: string, number: string, reason: string, note: string): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId, 'finance');
+    await this.send(addresses, `Invoice ${number} was returned`, { heading: `Your invoice ${number} was returned`, body: 'Please correct what we ask for and send it again.', cta: 'Open the invoice', path: '/vendor/invoices', details: [['Invoice', number], ['Reason', reason], ['What to fix', note === '' ? 'See the invoice' : note]] }, 'vendor');
+  }
+
+  async invoiceRefused(vendorId: string, number: string, reason: string, note: string): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId, 'finance');
+    await this.send(addresses, `Invoice ${number} was refused`, { heading: `We cannot accept invoice ${number}`, body: 'You can make a new invoice if this was a mistake.', cta: 'Open my invoices', path: '/vendor/invoices', details: [['Invoice', number], ['Reason', reason], ['Note', note === '' ? '-' : note]] }, 'vendor');
+  }
+
+  async invoiceBooked(vendorId: string, number: string, vendorNo: string, total: string, currency: string): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId, 'finance');
+    await this.send(addresses, `Invoice ${number} was approved`, { heading: `Your invoice ${vendorNo} was approved`, body: 'It has been booked for payment. You will get a remittance when it is paid.', cta: 'Open my invoices', path: '/vendor/invoices', details: [['Our number', number], ['Your number', vendorNo], ['Amount', `${total} ${currency}`]] }, 'vendor');
+  }
+
+  async paymentMade(vendorId: string, number: string, amount: string, currency: string, reference: string, invoiceNos: string[]): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId, 'finance');
+    await this.send(addresses, `Payment ${number} was made`, { heading: `We paid you: ${number}`, body: 'This is your remittance advice. You can see it again in the vendor portal.', cta: 'Open my payments', path: '/vendor/payments', details: [['Payment', number], ['Amount', `${amount} ${currency}`], ['Reference', reference], ['For', invoiceNos.length === 0 ? 'An advance payment' : invoiceNos.join(', ')]] }, 'vendor');
+  }
 }

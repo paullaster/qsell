@@ -37,6 +37,8 @@ export async function startWorker(): Promise<void> {
       // Vendors: documents past their date, and bank changes whose cool-off has passed.
       '22 5 * * * vendor-document-expiry',
       '41 * * * * vendor-bank-promote',
+      // Requests for quotation: close at the deadline and remind (48 h, 4 h); every five minutes so a deadline is honoured closely.
+      '*/5 * * * * rfq-deadlines',
     ].join('\n'),
   });
 

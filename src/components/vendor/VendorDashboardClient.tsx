@@ -55,6 +55,51 @@ export function VendorDashboardClient({ overviewPromise }: { overviewPromise: Re
           </ol>
         )}
       </section>
+      {v.status === 'active' ? (
+        <section aria-label="Prequalification" className={cardClass}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-bold text-fg-strong">Prequalification</h2>
+            <Link href="/vendor/prequalification" className={buttonClass}>Open prequalification</Link>
+          </div>
+          <p className="mt-1 text-sm text-fg-muted">Apply to be qualified for the kinds of work you do, and follow your applications.</p>
+        </section>
+      ) : null}
+      {v.status === 'active' ? (
+        <section aria-label="Requests for quotation" className={cardClass}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-bold text-fg-strong">Requests for quotation</h2>
+            <Link href="/vendor/rfqs" className={buttonClass}>Open my requests</Link>
+          </div>
+          <p className="mt-1 text-sm text-fg-muted">Requests you were invited to, your quotes, and the results.</p>
+        </section>
+      ) : null}
+      {v.status === 'active' ? (
+        <section aria-label="Purchase orders" className={cardClass}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-bold text-fg-strong">Purchase orders</h2>
+            <Link href="/vendor/orders" className={buttonClass}>Open my orders</Link>
+          </div>
+          <p className="mt-1 text-sm text-fg-muted">Orders sent to you, to read and confirm.</p>
+        </section>
+      ) : null}
+      {v.status === 'active' ? (
+        <section aria-label="Invoices" className={cardClass}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-bold text-fg-strong">Invoices</h2>
+            <Link href="/vendor/invoices" className={buttonClass}>Open my invoices</Link>
+          </div>
+          <p className="mt-1 text-sm text-fg-muted">Invoice us for what was delivered, and follow each invoice until it is paid.</p>
+        </section>
+      ) : null}
+      {v.status === 'active' ? (
+        <section aria-label="Payments" className={cardClass}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-bold text-fg-strong">Payments</h2>
+            <Link href="/vendor/payments" className={buttonClass}>Open my payments</Link>
+          </div>
+          <p className="mt-1 text-sm text-fg-muted">What we have paid you, with the invoices each payment covers.</p>
+        </section>
+      ) : null}
       {v.yourRole === 'owner' ? (
         <section aria-label="Your team" className={cardClass}>
           <div className="flex flex-wrap items-center justify-between gap-2">

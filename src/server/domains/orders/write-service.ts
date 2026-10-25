@@ -18,10 +18,33 @@ import type {
   PricedItem,
   RuleApplication,
 } from '@/server/domains/pricing/discount-service';
+import { readOptionalEmail } from '@/lib/guest-contact';
+import { has, nth, orElse, required } from '@/lib/values';
 import { expandKits, KitError } from '@/server/domains/pricing/kit-service';
 
-export class OrderWriteService {
-  static async createOrder(params: {
+/** What one line costs: the quote's own figure, else what the price lists gave, else the standard price. */
+function lineAmounts(
+  quoted: { lineAmount: number; quantity: number } | undefined,
+  priced: PriceResult | undefined,
+  standardPrice: number | null | undefined,
+  quantity: number,
+): { unitPrice: number; total: number } {
+  if (quoted !== undefined) {
+    return {
+      unitPrice: quoted.lineAmount / (quoted.quantity > 0 ? quoted.quantity : 1),
+      total: quoted.lineAmount,
+    };
+  }
+  if (priced !== undefined) {
+    const total = priced.lineTotal ?? 0;
+    return { unitPrice: total / (quantity > 0 ? quantity : 1), total };
+  }
+  const unitPrice = standardPrice ?? 0;
+  return { unitPrice, total: unitPrice * quantity };
+}
+
+export const OrderWriteService = {
+  async createOrder(raw: {
     userId?: string | null;
     branchId?: string | null;
     customerName: string;
@@ -86,6 +109,10 @@ export class OrderWriteService {
           shortcut: Record<string, string>;
         };
   }): Promise<{ success: boolean; order?: Order; error?: string }> {
+    // A shopper may leave the email out; whatever is given is checked here, not trusted from the browser.
+    const contact = readOptionalEmail(raw.customerEmail);
+    if (!contact.ok) return { success: false, error: contact.error };
+    const params = { ...raw, customerEmail: contact.email };
     const orderItems: OrderItem[] = [];
     const pricedLines: {
       productId: string;
@@ -108,7 +135,10 @@ export class OrderWriteService {
       const prod = catalogProducts.get(item.productId);
       if (prod === undefined) continue;
       const what = `Quantity of "${prod.name}"`;
-      const problem = item.quantity > 0 ? quantityProblem(item.quantity, prod.baseUnitDecimals, prod.baseUnitName, what) : `${what} must be above zero.`;
+      const problem =
+        item.quantity > 0
+          ? quantityProblem(item.quantity, prod.baseUnitDecimals, prod.baseUnitName, what)
+          : `${what} must be above zero.`;
       if (problem !== null) return { success: false, error: problem };
     }
 
@@ -128,7 +158,8 @@ export class OrderWriteService {
       const toPrice: number[] = [];
       params.items.forEach((item, i) => {
         const prod = catalogProducts.get(item.productId);
-        if (prod && prod.isSellable !== false && !quotedItems.has(item.productId)) toPrice.push(i);
+        if (prod !== undefined && prod.isSellable && !quotedItems.has(item.productId))
+          toPrice.push(i);
       });
       const priced = await pricing.priceLines(
         company.id,
@@ -139,8 +170,8 @@ export class OrderWriteService {
           channel,
         },
         toPrice.map((i) => {
-          const item = params.items[i]!;
-          const prod = catalogProducts.get(item.productId)!;
+          const item = nth(params.items, i);
+          const prod = required(catalogProducts.get(item.productId), 'the product');
           const inclusive = prod.isTaxInclusive !== false;
           return {
             productId: item.productId,
@@ -152,11 +183,11 @@ export class OrderWriteService {
           };
         }),
       );
-      toPrice.forEach((i, n) => engine.set(i, priced[n]!));
+      toPrice.forEach((i, n) => engine.set(i, nth(priced, n)));
     }
 
     /** Lines the price lists priced: discounts apply to them, then they are checked against floors. */
-    const guarded: Array<{
+    const guarded: {
       itemIndex: number;
       productId: string;
       label: string;
@@ -164,7 +195,7 @@ export class OrderWriteService {
       taxRate: number;
       inclusive: boolean;
       priced: PriceResult;
-    }> = [];
+    }[] = [];
 
     for (const [index, item] of params.items.entries()) {
       const prod = catalogProducts.get(item.productId);
@@ -172,7 +203,7 @@ export class OrderWriteService {
         return { success: false, error: `Product ID ${item.productId} does not exist.` };
       }
       const quoted = quotedItems.get(item.productId);
-      if (prod.isSellable === false && !quoted) {
+      if (!prod.isSellable && !quoted) {
         return { success: false, error: `${prod.name} is not sellable and cannot be ordered.` };
       }
       const priced = engine.get(index);
@@ -189,16 +220,12 @@ export class OrderWriteService {
       ) {
         return { success: false, error: `${prod.name} has no valid selling price.` };
       }
-      const unitPrice = quoted
-        ? quoted.lineAmount / (quoted.quantity > 0 ? quoted.quantity : 1)
-        : priced
-          ? (priced.lineTotal ?? 0) / (item.quantity > 0 ? item.quantity : 1)
-          : prod.price!;
-      const itemTotal = quoted
-        ? quoted.lineAmount
-        : priced
-          ? priced.lineTotal!
-          : unitPrice * item.quantity;
+      const { unitPrice, total: itemTotal } = lineAmounts(
+        quoted,
+        priced,
+        prod.price,
+        item.quantity,
+      );
       if (priced && !quoted) {
         guarded.push({
           itemIndex: orderItems.length,
@@ -241,13 +268,13 @@ export class OrderWriteService {
     let discountApplications: RuleApplication[] = [...(params.discountApplications ?? [])];
     let discountSummary: Record<string, unknown> | null = params.discountSummary ?? null;
     let gifts: GiftLine[] = [];
-    if (guarded.length > 0 && saleCompanyId) {
+    if (guarded.length > 0 && has(saleCompanyId)) {
       const { discounts } = getContainer();
       const items: PricedItem[] = guarded.map((g) => ({
         productId: g.productId,
         quantity: g.quantity,
-        unitPrice: orderItems[g.itemIndex]!.unitPrice,
-        lineTotal: orderItems[g.itemIndex]!.totalPrice,
+        unitPrice: nth(orderItems, g.itemIndex).unitPrice,
+        lineTotal: nth(orderItems, g.itemIndex).totalPrice,
         taxRate: g.taxRate,
         lineTaxInclusive: g.inclusive,
         explicitFloorUnit: g.priced.trace.floorPrice ?? null,
@@ -266,16 +293,16 @@ export class OrderWriteService {
         { couponCodes: params.couponCodes },
       );
       if (basket.couponProblems.length > 0) {
-        const bad = basket.couponProblems[0]!;
+        const bad = nth(basket.couponProblems, 0);
         return { success: false, error: `Coupon ${bad.code}: ${bad.reason}` };
       }
       guarded.forEach((g, n) => {
-        const b = basket.lines[n]!;
-        const item = orderItems[g.itemIndex]!;
+        const b = nth(basket.lines, n);
+        const item = nth(orderItems, g.itemIndex);
         if (b.lineDiscount + b.orderDiscount > 0) {
           item.unitPrice = b.unitPriceAfter;
           item.totalPrice = b.lineTotalAfter;
-          pricedLines[g.itemIndex]!.unitPrice = b.unitPriceAfter;
+          nth(pricedLines, g.itemIndex).unitPrice = b.unitPriceAfter;
         }
         if (item.priceTrace && (b.trace.applied.length > 0 || b.trace.considered.length > 0))
           item.priceTrace = { ...item.priceTrace, discounts: b.trace };
@@ -310,7 +337,7 @@ export class OrderWriteService {
           productId: g.productId,
           label: g.label,
           quantity: g.quantity,
-          netUnit: toNet(orderItems[g.itemIndex]!.unitPrice),
+          netUnit: toNet(nth(orderItems, g.itemIndex).unitPrice),
           explicitFloorNet:
             g.priced.trace.floorPrice != null ? toNet(g.priced.trace.floorPrice) : null,
         };
@@ -321,12 +348,15 @@ export class OrderWriteService {
         guardLines,
       );
       guarded.forEach((g, n) => {
-        const item = orderItems[g.itemIndex]!;
-        if (item.priceTrace) item.priceTrace = { ...item.priceTrace, guard: verdict.lines[n]! };
+        const item = nth(orderItems, g.itemIndex);
+        if (item.priceTrace) item.priceTrace = { ...item.priceTrace, guard: nth(verdict.lines, n) };
       });
-      if (verdict.blocked.length > 0) return { success: false, error: verdict.blocked[0]! };
+      if (verdict.blocked.length > 0) return { success: false, error: nth(verdict.blocked, 0) };
       if (verdict.belowFloor) {
-        const first = guarded.find((_, n) => verdict.lines[n]!.belowFloor)!;
+        const first = required(
+          guarded.find((_, n) => nth(verdict.lines, n).belowFloor),
+          'the line below its floor',
+        );
         const text = `${first.label} is priced below its floor.`;
         if (!needsApprovalCheck(channel, params.requestedBy))
           return {
@@ -379,8 +409,8 @@ export class OrderWriteService {
         const expansion = expandKits(
           orderItems.map((item, i) => ({
             ...item,
-            taxRate: pricedLines[i]!.taxRate,
-            isTaxInclusive: pricedLines[i]!.isTaxInclusive,
+            taxRate: nth(pricedLines, i).taxRate,
+            isTaxInclusive: nth(pricedLines, i).isTaxInclusive,
           })),
           kitDefs,
           params.currency,
@@ -442,7 +472,7 @@ export class OrderWriteService {
     // delivery address. The old code kept a second, parallel CustomerAccount
     // Map here purely so db.getCustomerOrders() could find the order; that map
     // is gone, and order history is read from the orders table instead.
-    let resolvedUserId = params.userId || '';
+    let resolvedUserId = orElse(params.userId, '');
 
     const order: Order = {
       id: orderId,
@@ -491,7 +521,7 @@ export class OrderWriteService {
         tradeCustomer.accountType === 'credit' &&
         Number(tradeCustomer.balance) + totalAmount > Number(tradeCustomer.creditLimit);
       // The trade customer is the durable identity for this order.
-      if (!resolvedUserId) resolvedUserId = tradeCustomer.id;
+      if (!has(resolvedUserId)) resolvedUserId = tradeCustomer.id;
       const callerDimensions = params.dimensionFields;
       const hasCallerDimensions = (() => {
         if (!callerDimensions) return false;
@@ -508,7 +538,7 @@ export class OrderWriteService {
       })();
       const assignment = await dimensionSets.resolveAssignment(
         company.id,
-        hasCallerDimensions ? callerDimensions! : tradeCustomer.dimensionCodes,
+        hasCallerDimensions ? required(callerDimensions) : tradeCustomer.dimensionCodes,
       );
       order.dimensionSetId = assignment.dimensionSetId;
       order.dimensionCodes = assignment.dimensionCodes;
@@ -537,7 +567,7 @@ export class OrderWriteService {
       await orderRepo.create(
         order,
         params.branchId,
-        explicitOrderNumber
+        has(explicitOrderNumber)
           ? undefined
           : async (tx) =>
               (
@@ -588,7 +618,7 @@ export class OrderWriteService {
               trigger: 'sales_order.submitted',
               documentId: saved.id,
               branchId: params.branchId ?? null,
-              requestedBy: params.requestedBy!,
+              requestedBy: required(params.requestedBy, 'the staff member placing the order'),
               amount: totalAmount,
               snapshot: {
                 salesModule: order.salesModule,
@@ -649,5 +679,5 @@ export class OrderWriteService {
     void broadcastRealtime('order_event', { type: 'order_created', order });
 
     return { success: true, order };
-  }
-}
+  },
+};

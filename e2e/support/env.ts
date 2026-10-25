@@ -1,5 +1,5 @@
 import { e2eDatabaseUrl } from './database';
-import { E2E_ADMIN_EMAIL, E2E_ADMIN_PASSWORD, E2E_URL } from './constants';
+import { E2E_ADMIN_EMAIL, E2E_ADMIN_PASSWORD, E2E_SUFFIX, E2E_URL } from './constants';
 
 /**
  * The environment the end-to-end server (and the seed) run with: the end-to-end database, its own
@@ -19,7 +19,7 @@ export function e2eEnvironment(): Record<string, string> {
     AUTH_URL: E2E_URL,
     NEXTAUTH_URL: E2E_URL,
     AUTH_TRUST_HOST: 'true',
-    NEXT_DIST_DIR: '.next-e2e',
+    NEXT_DIST_DIR: `.next-e2e${E2E_SUFFIX}`,
     SUPER_ADMIN_EMAIL: E2E_ADMIN_EMAIL,
     SUPER_ADMIN_PASSWORD: E2E_ADMIN_PASSWORD,
     SUPER_ADMIN_NAME: 'E2E Admin',

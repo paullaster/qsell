@@ -107,7 +107,7 @@ export class VendorInvitationService {
   async remove(vendorId: string, vendorUserId: string, by: { type: 'user'; id: string }, origin: Record<string, unknown>): Promise<void> {
     const row = await this.pendingOf(vendorId, vendorUserId);
     if (row === undefined) throw new FinanceError('NOT_FOUND', 'That person is not on this vendor account.');
-    if (row.vu.portalRole === 'owner') throw new FinanceError('NOT_ALLOWED', 'The owner cannot be removed. Ask us to transfer the account first.');
+    if (row.vu.portalRole === 'owner' && row.verified !== null) throw new FinanceError('NOT_ALLOWED', 'The owner cannot be removed. Ask us to transfer the account first.');
     if (row.vu.userId === by.id) throw new FinanceError('NOT_ALLOWED', 'You cannot remove yourself.');
     await this.db.transaction(async (tx) => {
       if (row.verified === null) {

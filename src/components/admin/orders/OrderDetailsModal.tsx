@@ -8,6 +8,7 @@ import { InlineConfirm } from '@/components/ui/InlineConfirm';
 import { Field, fieldClass, primaryClass } from '@/components/ui/screen-kit';
 import { OrderApprovalBanner } from '@/components/admin/approvals/OrderApprovalBanner';
 import { OrderCreditNotesPanel } from '@/components/admin/OrderCreditNotesPanel';
+import { OrderReferencePanel } from './OrderReferencePanel';
 import { OrderTenderPanel } from '@/components/admin/pricing/OrderTenderPanel';
 import {
   FULFILMENT_STATUSES,
@@ -17,6 +18,7 @@ import {
   money,
   statusChoice,
 } from '@/lib/order-admin';
+import { orElse } from '@/lib/values';
 import { lineDisplay, lineFromRow, quantityWords } from '@/lib/unit-rules';
 import { shownPaymentReference } from '@/lib/paymentReference';
 import type { Choice } from '@/lib/payment-options';
@@ -177,7 +179,7 @@ export function OrderDetailsModal({
               </div>
               <div className="flex items-center gap-2 text-[11px] text-fg-muted">
                 <Mail className="h-3 w-3 text-fg-subtle" aria-hidden />
-                {order.customerEmail}
+                {orElse(order.customerEmail, 'No email given')}
               </div>
               <div className="flex items-start gap-2 pt-1 text-[11px] text-fg">
                 <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-fg-subtle" aria-hidden />
@@ -369,6 +371,9 @@ export function OrderDetailsModal({
           </div>
         </form>
 
+        {isOrderPaid(order) && shownPaymentReference(order) === null ? (
+          <OrderReferencePanel orderId={order.id} onChanged={onChanged} />
+        ) : null}
         <OrderTenderPanel orderId={order.id} onChanged={onChanged} />
         <OrderCreditNotesPanel key={order.id} orderId={order.id} />
       </div>
