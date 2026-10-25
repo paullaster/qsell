@@ -90,14 +90,16 @@ describe.skipIf(url === '')('number series settings (database)', () => {
         { companyId, code: `${tag}B`, description: `${tag} other area`, appliesTo: ['inventory'], requiresComment: true },
         { companyId, code: `${tag}C`, description: `${tag} anywhere` },
         { companyId, code: `${tag}D`, description: `${tag} retired`, isActive: false },
+        { companyId, code: `${tag}E`, description: `${tag} anywhere, explain`, requiresComment: true },
       ]);
+      // A reason tied to one area is not offered where it would be refused: the general pickers list only reasons that apply anywhere.
       const numbering = await search('numbering-reasons', { query: tag });
-      expect(numbering.options.map((o) => o.id).sort()).toEqual([`${tag}A`, `${tag}B`, `${tag}C`]);
-      expect(numbering.options.find((o) => o.id === `${tag}B`)?.meta).toEqual({ requiresComment: '1' });
+      expect(numbering.options.map((o) => o.id).sort()).toEqual([`${tag}C`, `${tag}E`]);
+      expect(numbering.options.find((o) => o.id === `${tag}E`)?.meta).toEqual({ requiresComment: '1' });
       const pricing = await search('pricing-reasons', { query: tag });
-      expect(pricing.options.map((o) => o.id).sort()).toEqual([`${tag}A`, `${tag}C`]);
-      expect((await search('approval-config-reasons', { query: tag })).options).toHaveLength(3);
-      expect((await search('approval-reasons', { query: tag })).options).toHaveLength(3);
+      expect(pricing.options.map((o) => o.id).sort()).toEqual([`${tag}A`, `${tag}C`, `${tag}E`]);
+      expect((await search('approval-config-reasons', { query: tag })).options).toHaveLength(2);
+      expect((await search('approval-reasons', { query: tag })).options).toHaveLength(2);
     });
 
     it('every one of them names the permission it needs', () => {
