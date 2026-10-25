@@ -16,6 +16,7 @@ export function QuoteDetails({
   canRevise,
   onTemplate,
   busy,
+  error,
   onClose,
   onApprove,
   onResubmit,
@@ -33,6 +34,8 @@ export function QuoteDetails({
   /** Make a template from this quote; offered to anyone who may create quotes. */
   onTemplate: () => void;
   busy: boolean;
+  /** What went wrong with the last action, shown here because the page behind this dialog cannot be seen. */
+  error: string | null;
   onClose: () => void;
   onApprove: () => void;
   onResubmit: () => void;
@@ -47,6 +50,14 @@ export function QuoteDetails({
   return (
     <Modal title={`${quote.quoteNumber} · ${statusText(quote.status)}`} onClose={onClose} wide>
       <div className="space-y-5">
+        {error !== null && (
+          <p
+            role="alert"
+            className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800"
+          >
+            {error}
+          </p>
+        )}
         <section className="grid gap-3 sm:grid-cols-3">
           <Summary
             label="Customer"
@@ -297,7 +308,7 @@ export function QuoteDetails({
               disabled={busy}
               icon={<FilePlus2 className="h-4 w-4" />}
             >
-              Create revision
+              {busy ? 'Creating revision…' : 'Create revision'}
             </ActionButton>
           )}
           {canDelete &&

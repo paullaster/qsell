@@ -239,7 +239,12 @@ export function AdminSalesQuotes({
             permissions={capabilities}
             busyId={busyId}
             handlers={{
-              view: (row) => void getSalesQuoteAction(row.id).then(setDetails),
+              view: (row) =>
+                void getSalesQuoteAction(row.id).then((quote) => {
+                  setError(null);
+                  setNotice(null);
+                  setDetails(quote);
+                }),
               edit: (row) => void openEdit(row.id),
               template: startTemplate,
               download: (row) => void handleDownload(row),
@@ -424,7 +429,11 @@ export function AdminSalesQuotes({
           canRevise={capabilities.canCreate}
           onTemplate={() => startTemplate(details)}
           busy={busyId === details.id}
-          onClose={() => setDetails(null)}
+          error={error}
+          onClose={() => {
+            setError(null);
+            setDetails(null);
+          }}
           onApprove={() =>
             void withAction(
               details.id,
@@ -463,6 +472,8 @@ export function AdminSalesQuotes({
           onRevise={() =>
             void (async () => {
               try {
+                setBusyId(details.id);
+                setError(null);
                 const revised = unwrapQuoteAction(await reviseSalesQuoteAction(details.id));
                 setDetails(null);
                 await openEdit(revised.id);
@@ -470,6 +481,8 @@ export function AdminSalesQuotes({
                 refresh();
               } catch (err) {
                 setError(err instanceof Error ? err.message : 'Could not revise this quote.');
+              } finally {
+                setBusyId(null);
               }
             })()
           }
