@@ -92,6 +92,15 @@ export function VendorDashboardClient({ overviewPromise }: { overviewPromise: Re
         </section>
       ) : null}
       {v.status === 'active' ? (
+        <section aria-label="Credit notes" className={cardClass}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-bold text-fg-strong">Credit notes</h2>
+            <Link href="/vendor/credits" className={buttonClass}>Open my credit notes</Link>
+          </div>
+          <p className="mt-1 text-sm text-fg-muted">If you billed too much on an invoice, send a credit note for it.</p>
+        </section>
+      ) : null}
+      {v.status === 'active' ? (
         <section aria-label="Payments" className={cardClass}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-bold text-fg-strong">Payments</h2>

@@ -43,12 +43,13 @@ export async function paymentAction(voucherId: string | null, fromInvoiceId: str
     const container = getContainer();
     const found = voucherId === null ? null : await container.vendorPayments.get(ctx.companyId, id(voucherId));
     if (voucherId !== null && found === null) throw new FinanceError('NOT_FOUND', 'That payment voucher does not exist.');
-    const [create, approve, release, reverse, apply] = await Promise.all([
+    const [create, approve, release, reverse, apply, onAccount] = await Promise.all([
       canPermission('vendor_payments:create'),
       canPermission('vendor_payments:approve'),
       canPermission('vendor_payments:release'),
       canPermission('vendor_payments:reverse'),
       canPermission('vendor_payments:apply_advance'),
+      canPermission('vendor_payments:on_account'),
     ]);
     const me = ctx.actor.id;
     const prefill = voucherId === null && fromInvoiceId !== null && UUID.test(fromInvoiceId) ? await container.vendorPayments.prefill(ctx.companyId, fromInvoiceId) : null;
@@ -63,7 +64,7 @@ export async function paymentAction(voucherId: string | null, fromInvoiceId: str
       prefill,
       today: businessDate(),
       thresholdCents: threshold,
-      can: { create, approve, release, reverse, apply },
+      can: { create, approve, release, reverse, apply, onAccount },
       me,
     };
   });
@@ -72,10 +73,16 @@ export async function paymentAction(voucherId: string | null, fromInvoiceId: str
 export async function saveVoucherAction(voucherId: string | null, header: unknown, allocations: unknown) {
   return await run('vendor_payments:create', { surface: 'vendor_payments/edit', action: voucherId === null ? 'create' : 'update' }, async (ctx) => {
     const h = obj(header);
-    const kind = h.kind === 'advance' ? 'advance' : 'invoices';
-    const clean: VoucherHeaderForm = { kind, vendorId: str(h.vendorId, 40), methodId: str(h.methodId, 40), narration: str(h.narration, 600), advanceId: str(h.advanceId, 40) };
+    let kind: VoucherHeaderForm['kind'] = 'invoices';
+    if (h.kind === 'advance') kind = 'advance';
+    if (h.kind === 'on_account') {
+      // A payment with no invoice behind it has a permission of its own.
+      if (!(await canPermission('vendor_payments:on_account'))) throw new FinanceError('FORBIDDEN', 'You are not allowed to prepare a payment on account.');
+      kind = 'on_account';
+    }
+    const clean: VoucherHeaderForm = { kind, vendorId: str(h.vendorId, 40), methodId: str(h.methodId, 40), narration: str(h.narration, 600), advanceId: str(h.advanceId, 40), amount: str(h.amount, 20) };
     for (const [k, v] of [['vendor', clean.vendorId], ['way of paying', clean.methodId]] as const) if (v !== '' && !UUID.test(v)) throw new FinanceError('INVALID', `Choose the ${k} again.`);
-    const rows: AllocationForm[] = (Array.isArray(allocations) ? allocations.slice(0, 200) : []).map((a) => ({ purchaseInvoiceId: str(obj(a).purchaseInvoiceId, 40), amount: str(obj(a).amount, 20) }));
+    const rows: AllocationForm[] = (Array.isArray(allocations) ? allocations.slice(0, 200) : []).map((a) => ({ purchaseInvoiceId: str(obj(a).purchaseInvoiceId, 40), amount: str(obj(a).amount, 20), closeRemainder: obj(a).closeRemainder === true }));
     return await getContainer().vendorPayments.saveDraft(ctx, voucherId === null ? null : id(voucherId), clean, rows);
   }, PATHS);
 }
@@ -116,6 +123,10 @@ export async function applyAdvanceAction(purchaseInvoiceId: string) {
   return await run('vendor_payments:apply_advance', { surface: 'vendor_payments/invoice', action: 'apply_advance' }, async (ctx) => await getContainer().vendorPayments.applyAdvance(ctx, id(purchaseInvoiceId)), PATHS);
 }
 
+export async function applyCreditAction(purchaseInvoiceId: string) {
+  return await run('vendor_payments:apply_advance', { surface: 'vendor_payments/invoice', action: 'apply_credit' }, async (ctx) => await getContainer().vendorPayments.applyCredit(ctx, id(purchaseInvoiceId)), PATHS);
+}
+
 export async function ageingAction(asOf?: string) {
   return await run('vendor_payments:read', { surface: 'vendor_payments/payables', action: 'ageing' }, async (ctx) => {
     const date = has(asOf) && /^\d{4}-\d{2}-\d{2}$/.test(asOf) ? asOf : businessDate();
@@ -129,4 +140,13 @@ export async function statementAction(vendorId: string) {
     if (found === null) throw new FinanceError('NOT_FOUND', 'That vendor does not exist.');
     return found;
   });
+}
+
+/** The last comparison of the vendor ledger with the books, and a way to run it now. */
+export async function payablesCheckAction() {
+  return await run('vendor_payments:read', { surface: 'vendor_payments/payables', action: 'check_view' }, async (ctx) => await getContainer().payablesReports.lastCheck(ctx.companyId));
+}
+
+export async function runPayablesCheckAction() {
+  return await run('vendor_payments:read', { surface: 'vendor_payments/payables', action: 'check_run' }, async (ctx) => await getContainer().payablesReports.runCheck(ctx.companyId, ctx.actor.id ?? 'unknown'), ['/admin/vendors/payables']);
 }

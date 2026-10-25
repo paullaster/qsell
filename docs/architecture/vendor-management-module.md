@@ -1054,3 +1054,87 @@ V-7 is large; this release builds the core that makes the vendor ledger work end
 **Not built in this release (stated plainly).** Payment proposals and batches ("suggest vendor payments"); bank payment files (CSV or pain.001); automated M-Pesa B2B/B2C or bank payout and the in-doubt state; the cheque run; **petty cash** (floats, limits, custodian, replenishment); **withholding tax and certificates**; early-payment discounts and payment tolerance; foreign-currency payments and exchange differences; payment on account and refund of an overpayment; matching bank statement lines to vouchers; credit memos from vendors (V-6 deviation); payables ageing by invoice date, category or posting group; the nightly payables reconciliation against the control account; approval by amount through the approvals engine (own rule instead).
 
 **Tests.** Unit `vendor-payment.test.ts` (5). Integration `payment.integration.test.ts` (8): writing and holds, approval and the frozen account, paying and the ledger (partial and full), the third person and the stops, reversal, the advance paid and applied, an advance reversed, ageing and statement. E2E `e2e/payment.spec.ts` (2, desktop and phone).
+
+## 34. V-7, second release (2026-10-25): payment runs
+
+Migration `0082_vendor_payment_batches.sql`: `vendor_payment_batches` (+ `_events`, append-only), and on the voucher a `batch_id` and a `cheque_no` (a cheque number is used once per way of paying while its voucher is alive). Numbering kind `vendor_payment_batch` (`VPB-{YYYY}-`).
+
+**The proposal** (`PaymentRunService.suggest`, `vendor_payments:create`). For a way of paying and a date, every booked invoice with something to pay that falls due on or before the date (the invoice date stands in when there is no due date), net of what live vouchers already hold, grouped by vendor. Left out, each with its reason: a vendor blocked from payments; for a way of paying that goes to a bank account, a vendor with no active account (none, or a change still waiting); a vendor outside the smallest and largest total asked for.
+
+**The run.** "Make the run" writes one draft voucher per chosen vendor (all in one transaction, up to 500) inside a new run, with a payment date up to 30 days ahead. States: draft → pending approval → approved → released → confirmed (paid), or cancelled. **One approval for the whole run**: the approver ticks the vouchers to approve (each still by someone who did not prepare it); every other voucher needs a reason, is sent back and taken out of the run; if none is approved the run ends. **Release** (`vendor_payments:release`) depends on the way of paying: a **bank file** (CSV, or ISO 20022 pain.001 which also needs the paying account's number), a **cheque run** (cheque numbers in a row from the first one given, keeping zeros, and a cheque list for whoever writes them), or nothing (cash and other hand-paid methods). Where a voucher needs three people, the releaser may be neither its preparer nor its approver.
+
+**The bank file carries vendors' account numbers, so it is never stored.** The sealed number is opened (existing `openBankNumber`) only to build the file, on release and on every download; the database keeps the file's SHA-256 fingerprint and the time it was made, and a download rebuilds the file and refuses (`FILE_ALTERED`) if it no longer matches (for example, an amount changed after release). Each download is counted and written to the run's history. The vendor's bank account rows cannot be edited at all (a database rule), so the file follows the account fixed at approval.
+
+**Confirming** (`vendor_payments:release`): someone other than the releaser (service rule and a check constraint) enters the bank's reference and the date; every voucher in the run is then paid in one transaction, or none is (one blocked vendor stops the whole confirmation). The vouchers' own rules still apply (the person confirming is the payer for the three-person rule). Each voucher's reference is `<bank reference> / <cheque number or voucher number>`. **Cancelling** a run before it is paid: vouchers still being written or waiting for approval are cancelled with it; approved ones stay approved and out of the run, so they can be paid on their own.
+
+**Screens.** *Payment runs* (list, *New run* with the proposal and its exclusions, run page with approve/release/download/confirm/cancel and history), reached from *Payments to vendors*. Lookups `bank-file-formats`. No new permission: create, approve and release are the voucher's.
+
+**Not built here:** the automated M-Pesa and bank payout channels (a run is released as a file or by hand); the bank's own statement of the run is not matched to it yet.
+
+**Tests.** Unit `vendor-payment-run.test.ts` (5). Integration `payment-run.integration.test.ts` (7). E2E `e2e/payment-run.spec.ts` (2, desktop and phone).
+
+## 35. V-7, third release (2026-10-25): withholding tax, early-payment discount, tolerance
+
+Migration `0083_withholding_discount_tolerance.sql`. **What a payment settles is one pure function** (`src/lib/vendor-settlement.ts`, 10 unit tests): for each invoice a voucher clears `gross`, the vendor forgives a `discount`, we withhold `withholding`, and `cash = gross - discount - withholding` leaves the bank; a leftover no larger than the tolerance may be closed (`tolerance`) when the person asks. The journal always balances: `Dr payables (gross + tolerance) = Cr cash + Cr withholding payable + Cr discount received + Cr tolerance`.
+
+**Data, not code.** `withholding_codes` (a code, a name, a rate and what it is taken on: the *net* share of what is paid, or *all* of it); per vendor a code and an early-payment discount (percent, within so many days of the invoice date); the accounts of the vendor group (payables, prepayments, withholding payable, discount received, tolerance) and the largest leftover that may be closed, all edited on *Payment rules* (`vendor_payments:manage_terms`); the chart now has `2350 Withholding tax payable`, and the default group is made with `4420` for discount and tolerance. A vendor's terms are edited on its card.
+
+**When it is worked out.** At save (so the draft shows it) and **again at approval, where it is fixed**: the discount is judged on the approval date (so a bank file made later still agrees with the books), the withholding rate and base are taken as they are then, and the cash amount is written on the voucher and its lines (check constraint: cash = amount − discount − withholding). Bank files and cheque lists carry the **cash** amount. A voucher that was written before this release paid its whole amount in cash (back-filled).
+
+**Paying** writes the journal above; the vendor's payment entry is the cash plus the tax withheld on its behalf (`amount − discount`), applied to each invoice, and the discount and the tolerance are detailed entries on the invoice (`payment_discount`, `payment_tolerance`) that carry the payment's register, so a **reversal** can put them back with the rest (applications undone, journal reversed, invoices open again, certificate cancelled).
+
+**Withholding certificates.** Paying with tax withheld issues a certificate (`WHC-{YYYY}-`, one per voucher): who withheld (the company and its PIN), from whom (the vendor and its PIN), the kind of tax and rate, the amount it was taken on and the amount withheld, the date and the month. It cannot be edited or deleted (trigger); a reversal cancels it. Staff list them by month with the total withheld; the vendor sees its own, opens and prints each, and its payment list says what was withheld or discounted.
+
+**Not built (still):** foreign-currency payments; payment on account and refund of an overpayment; credit memos from vendors; petty cash; automated payout; matching bank statement lines; the nightly payables reconciliation; withholding tax return filing.
+
+**Tests.** Unit `vendor-settlement.test.ts` (10). Integration `payment-terms.integration.test.ts` (6). E2E `e2e/payment-rules.spec.ts` (1, desktop and phone). The full suite passes on a fresh database (219 files, 2,202 tests).
+
+## 36. V-7, fourth release (2026-10-25): the bank, the check against the books, payment on account
+
+Migration `0084_payables_checks.sql`.
+
+**A correction to the first release.** A vendor payment is cash leaving a bank account, but until now it was only in the general ledger: the bank's own sub-ledger (`bank_ledger_entries`, the thing a bank statement is reconciled against) did not see it. Paying now writes the cash movement there (`vendor_payment`, negative), the credit line of the journal carries the bank as its source ledger, and a reversal writes the opposite entry (`vendor_payment_reversal`, linked to the first). Nothing is written when no cash leaves (everything went as tax withheld or discount).
+
+**Statement matching.** The existing matching engine now knows vendor payments: a statement line is matched by itself when it quotes our voucher number, the reference recorded when it was paid, a part of a run's reference (`<bank reference> / <cheque or voucher number>`) or the cheque number, with the same amount; the vendor's name feeds the name rule. A match, and an unmatch, is written to the voucher's history (`bank_matched`).
+
+**The check against the books** (`PayablesReportService.reconcile`, design doc §12.7). For each payables account the vendor groups post to, the vendor ledger's open total (everything but advances) is compared with the account's balance in the general ledger; for each prepayments account, the open advances are compared with the account's debit balance. Plus the ledger's own drift check (an entry whose open amount differs from its detailed entries). A difference is a defect. It runs **every night** (`payables-check`, 03:17), the result is kept (`payables_checks`) and logged as an error when it is not clean, and *What we owe* shows the last result with a *Check now* button. The integration tests assert it agrees after booking, partial and full payments, discounts, withholding, an advance paid and applied, a payment on account, and reversals; and that a ledger entry with no journal behind it is found.
+
+**Payment on account** (voucher kind `on_account`, permission `vendor_payments:on_account`): money paid to a vendor with no invoice yet; it needs an amount and a note saying what it is for, goes through the same approval, three-person and release rules, and is booked as Dr payables / Cr cash with an open credit in the vendor ledger. It shows in the ageing as unapplied. On a booked invoice, "Set payments on account against it" (`vendor_payments:apply_advance`) sets them against the invoice, oldest first, as far as the invoice has something open; only the ledger moves, because the books already took the payment off what is owed. A payment on account that has been used can no longer be reversed; an unused one can.
+
+**Not built here:** a refund of an overpayment (money coming back from a vendor), creating a vendor payment from an unmatched statement line, foreign currency, credit memos from vendors, petty cash, automated payout.
+
+**Tests.** Integration `payment.integration.test.ts` now 11 (bank ledger and statement match, the check, payment on account); unit `vendor-payment.test.ts` 6. E2E `e2e/payment-account.spec.ts` (1, desktop and phone).
+
+## 37. V-7, fifth release (2026-10-25): credit memos from vendors
+
+Migration `0085_vendor_credit_memos.sql`: `vendor_credit_memos` (+ `_lines`, `_events`); numbering kind `vendor_credit_memo` (`VCM-{YYYY}-`, given at the first submission). This closes the V-6 deviation: a correction after booking is a credit memo, not an edit.
+
+**What it is for.** A vendor billed too much on a **booked invoice**: some of the goods billed were not delivered, or a price was too high. A credit memo is always against one booked invoice, with one line at most per invoice line, in one of two modes: **some of the goods** (a quantity, at the price billed) or **a price that was too high** (so much a unit, on the whole quantity). Returned goods (stock going back to the vendor) are a purchase return, which is not built; a credit memo only corrects what was billed.
+
+**Vendor side** (`/vendor/credits`; owner and finance write): *New credit note* (their own number, then the invoice), then the editor: the date and reason, their own credit note attached, and the lines to credit with a live total. The server works out the totals and refuses a quantity above what is left to credit, a price difference above the price billed, and any total above what the line billed. What other credit memos already claim (submitted, approved or booked) counts, so two cannot credit the same goods; a taken-back one frees them. Send, take back while untouched (one conditional update, as for invoices), close with a reason, and resend after a return as the next version with the same number.
+
+**Staff side** (`credit_memos:read | process | approve | reject | post`). Pick up (the moment the vendor can no longer take it back) → approve by **someone other than the person who picked it up** (service rule and check constraint) → book. Staff can return it (reason code and what to fix) or refuse it at any point before booking. The workspace shows each credited line against what the invoice billed.
+
+**Booking** reverses what the invoice booked for the lines credited: Dr payables (the whole, carrying the vendor sub-ledger), Cr *stock received, not yet invoiced* for stock lines, Cr the account the invoice line was booked to for the others, Cr input tax. In the vendor ledger the credit memo is a negative entry, set against the invoice up to what the invoice still has open; **what the invoice no longer has open stays a credit with the vendor** (when it was already paid), listed with payments on account and set against a later invoice with the same button. For a **credited quantity** the goods become uninvoiced again (the received goods lines' invoiced quantity is taken back from the links the invoice made, last link first, and the order's too; an order marked invoiced goes back to partly invoiced), so a corrected invoice can follow. A price credit does not touch the goods. A booked credit memo cannot be changed (trigger) or returned.
+
+**Screens.** Vendor: *Credit notes* list, *New credit note*, editor and read-only view with progress. Staff: *Credit memos* queue and workspace; the vendor statement shows the entries. Mail: submitted (staff), returned, refused, booked (vendor). Staff open the vendor's credit note through `/api/admin/vendors/credit-files/[id]` (only files that belong to a credit memo).
+
+**The nightly check against the books** still agrees (a credit memo is a payables movement on both sides); the tests assert it.
+
+**Not built (still):** purchase returns (stock out to the vendor with the credit); credit memos for an advance, a payment, or a foreign-currency invoice (the last is refused at booking, as for invoices); a credit memo against a payment already reversed.
+
+**Tests.** Unit `vendor-credit-memo.test.ts` (9). Integration `credit-memo.integration.test.ts` (7). E2E `e2e/credit-memo.spec.ts` (1, desktop and phone).
+
+## 38. V-7 release 6: petty cash
+
+**What it is.** A float is a small amount of cash kept for small payments. It has its own cash account (`bank_accounts.kind = cash`, one float per account), a ledger account for the cash, a custodian, a limit for one voucher, a limit for a day, a minimum balance and the level it is topped up to. The cash in the float is the sum of its own bank ledger (`bank_ledger_entries`), so it can never be read from anywhere else.
+
+**Vouchers.** An expense (booked to an open expense account) or a small vendor invoice (set against the vendor ledger). Rules: a receipt picture is required before submission (`finance_attachments`, subject `petty_cash_voucher`); another person approves (database check: approver differs from writer); the number is given at approval; approval checks the day's limit; payment checks the cash in the float and the day's limit again, then posts Dr expense (or vendor payables) / Cr float account with `sourceLedger: bank`, adds the bank ledger entry and, for an invoice, applies the vendor ledger payment. A payment can be reversed with a reason unless a top-up already covers it; a reversal unapplies the invoice, reverses the journal and puts the cash back.
+
+**Top-ups.** A request lists the paid vouchers not yet covered (they are stamped with the request) and asks for up to the room below the float's level. Another person approves; payment needs a reference and posts Dr float account / Cr the way-of-paying account with two bank ledger entries. Cancelling releases the vouchers. Open requests count against the room, so a float cannot be over-filled.
+
+**Safety.** Vouchers, top-ups and events are append-only or guarded by triggers (migration 0086). Permissions: `petty_cash:read|manage|create|approve|pay|reverse`. All lookups are server-searched sources (`petty-cash-accounts`, `petty-cash-gl-accounts`, `petty-custodians`, `petty-cash-floats`, `petty-expense-accounts`, `petty-topup-methods`, `payable-invoices`).
+
+**Verified.** 4 unit tests, 6 integration tests, 1 e2e spec on desktop and phone, ESLint and `tsc` clean on the touched files.
+
+**Not done.** The saved expense account is not shown in the picker when a draft is reopened (it is kept and sent again on save); no cash-count reconciliation screen; no petty cash report yet (V-8).

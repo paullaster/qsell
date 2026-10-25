@@ -262,6 +262,15 @@ export const vendorBankPromote = async (_payload: unknown, helpers: JobHelpers) 
   if (n > 0) helpers.logger.info(`Vendor bank accounts: ${n} put into use after the cool-off`);
 };
 
+/** Worker cron task (nightly): the vendor ledger is compared with the payables and prepayments accounts; a difference is logged as an error. */
+export const payablesCheck = async (_payload: unknown, helpers: JobHelpers) => {
+  const container = getContainer();
+  const company = await container.companySettings.ensureSeeded();
+  const r = await container.payablesReports.runCheck(company.id, 'system');
+  if (r.ok) helpers.logger.info('Payables check: the vendor ledger agrees with the books.');
+  else helpers.logger.error(`Payables check: ${String(r.differences)} difference(s) between the vendor ledger and the books. See What we owe.`);
+};
+
 /** Worker cron task (every few minutes): requests past their deadline close, and vendors that have not quoted are reminded. */
 export const rfqDeadlines = async (_payload: unknown, helpers: JobHelpers) => {
   const container = getContainer();
@@ -297,4 +306,5 @@ export const tasks = {
   'vendor-document-expiry': vendorDocumentExpiry,
   'vendor-bank-promote': vendorBankPromote,
   'rfq-deadlines': rfqDeadlines,
+  'payables-check': payablesCheck,
 };

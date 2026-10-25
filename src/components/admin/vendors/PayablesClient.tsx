@@ -2,18 +2,21 @@
 
 import Link from 'next/link';
 import { use, useId, useState } from 'react';
-import { ageingAction } from '@/server/domains/vendors/payment-actions';
+import { ageingAction, runPayablesCheckAction, type payablesCheckAction } from '@/server/domains/vendors/payment-actions';
 import { AGE_BUCKETS, fromCents } from '@/lib/vendor-payment';
 import { Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, type Notice } from '@/components/ui/screen-kit';
 
 type Report = Extract<Awaited<ReturnType<typeof ageingAction>>, { ok: true }>['data'];
 
-export function PayablesClient({ initialPromise }: { initialPromise: ReturnType<typeof ageingAction> }) {
+export function PayablesClient({ initialPromise, checkPromise }: { initialPromise: ReturnType<typeof ageingAction>; checkPromise: ReturnType<typeof payablesCheckAction> }) {
   const res = use(initialPromise);
-  return res.ok ? <View initial={res.data} /> : <LoadFailed error={res.error} />;
+  const check = use(checkPromise);
+  return res.ok ? <View initial={res.data} lastCheck={check.ok ? check.data : null} /> : <LoadFailed error={res.error} />;
 }
 
-function View({ initial }: { initial: Report }) {
+type Check = NonNullable<Extract<Awaited<ReturnType<typeof payablesCheckAction>>, { ok: true }>['data']>;
+
+function View({ initial, lastCheck }: { initial: Report; lastCheck: Check | null }) {
   const uid = useId();
   const [report, setReport] = useState(initial);
   const [asOf, setAsOf] = useState(initial.asOf);
@@ -34,6 +37,7 @@ function View({ initial }: { initial: Report }) {
     <div className="max-w-6xl space-y-5">
       <PageHeader title="What we owe" intro="Booked invoices that are still unpaid, by how late they are. Payments and advances not yet set against an invoice are shown apart." actions={<Link href="/admin/vendors/payments" className={buttonClass}>Payments</Link>} />
       <Message notice={notice} />
+      <BooksCheck first={lastCheck} />
       <div className={`${cardClass} max-w-xs`}>
         <Field id={`${uid}-d`} label="As of"><input id={`${uid}-d`} type="date" value={asOf} onChange={(e) => { setAsOf(e.target.value); if (e.target.value !== '') void reload(e.target.value); }} className={fieldClass} /></Field>
       </div>
@@ -68,5 +72,48 @@ function View({ initial }: { initial: Report }) {
         </>
       )}
     </div>
+  );
+}
+
+/** The vendor ledger against the payables and prepayments accounts: the last check, and a button to check now. */
+function BooksCheck({ first }: { first: Check | null }) {
+  const [check, setCheck] = useState<Check | null>(first);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState('');
+  const run = async () => {
+    setBusy(true);
+    setProblem('');
+    const res = await attempt(runPayablesCheckAction());
+    setBusy(false);
+    if (!res.ok) {
+      setProblem(res.error);
+      return;
+    }
+    setCheck(res.data);
+  };
+  return (
+    <section className={`${cardClass} space-y-2`} aria-label="Check against the books">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-bold text-fg-strong">Check against the books</h2>
+        <button type="button" className={buttonClass} disabled={busy} onClick={() => void run()}>{busy ? 'Checking…' : 'Check now'}</button>
+      </div>
+      {problem === '' ? null : <p role="alert" className="text-sm text-red-600">{problem}</p>}
+      {check === null ? <p className="text-sm text-fg-muted">It has not been checked yet. It is checked every night.</p> : (
+        <>
+          <p className="text-sm text-fg" role="status">{check.ok ? 'The vendor ledger agrees with the books.' : `${String(check.differences)} ${check.differences === 1 ? 'difference' : 'differences'} found. Each one is a defect to look into.`} <span className="text-xs text-fg-muted">Checked {new Date(check.ranAt).toLocaleString()}{check.ranBy === 'system' ? ' (nightly)' : ''}.</span></p>
+          {check.rows.length === 0 ? null : (
+            <ul className="divide-y divide-line text-sm" aria-label="Accounts checked">
+              {check.rows.map((r) => (
+                <li key={`${r.accountId}-${r.purpose}`} className="flex flex-wrap justify-between gap-2 py-1 text-fg">
+                  <span>{r.accountNo} {r.accountName} <span className="text-xs text-fg-muted">({r.purpose === 'payables' ? 'what we owe' : 'advances paid'})</span></span>
+                  <span className="tabular-nums">Vendor ledger {fromCents(r.ledgerCents)} · books {fromCents(r.glCents)}{r.diffCents === 0 ? '' : ` · difference ${fromCents(r.diffCents)}`}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {check.drift.length === 0 ? null : <ul className="text-xs text-red-700" aria-label="Entries out of step">{check.drift.map((d) => <li key={d.id}>{d.documentNo}: open {d.remaining}, its entries add up to {d.detailed}</li>)}</ul>}
+        </>
+      )}
+    </section>
   );
 }

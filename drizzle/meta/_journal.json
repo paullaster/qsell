@@ -575,6 +575,41 @@
       "when": 1792918459469,
       "tag": "0081_vendor_payments",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1792920935342,
+      "tag": "0082_vendor_payment_batches",
+      "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1792922119847,
+      "tag": "0083_withholding_discount_tolerance",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1792925354530,
+      "tag": "0084_payables_checks",
+      "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "7",
+      "when": 1792927338542,
+      "tag": "0085_vendor_credit_memos",
+      "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1792929413844,
+      "tag": "0086_petty_cash",
+      "breakpoints": true
     }
   ]
 }

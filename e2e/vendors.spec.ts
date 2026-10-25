@@ -11,8 +11,11 @@ test.describe('vendors (admin)', () => {
   test('the list searches and filters on the server, with a picker and no sideways scrolling', async ({ page }) => {
     await open(page, '/admin/vendors', 'Vendors');
     await noNativeSelect(page);
-    await expect(page.getByRole('link', { name: 'E2E Vendor Alpha' }).or(page.getByRole('link', { name: /E2E Vendor Alpha/ })).first()).toBeVisible({ timeout: 30_000 });
-    await page.getByLabel('Search').fill('Waiting');
+    // Earlier tests add vendors of their own, so the seeded ones are found by searching, not by being on the first page.
+    await page.getByLabel('Search').fill('E2E Vendor Alpha');
+    await page.getByRole('button', { name: 'Apply filter' }).click();
+    await expect(page.getByRole('link', { name: /E2E Vendor Alpha/ }).first()).toBeVisible({ timeout: 30_000 });
+    await page.getByLabel('Search').fill('E2E Vendor Waiting');
     await page.getByRole('button', { name: 'Apply filter' }).click();
     await expect(page.getByRole('link', { name: /E2E Vendor Waiting/ }).first()).toBeVisible({ timeout: 30_000 });
     await expect(page.getByRole('link', { name: /E2E Vendor Alpha/ })).toHaveCount(0);

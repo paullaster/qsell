@@ -31,13 +31,14 @@ function ListView({ initial }: { initial: Page }) {
   };
   return (
     <div className="max-w-3xl space-y-5">
-      <PageHeader title="Payments" intro="What we have paid you. Each payment is your remittance advice." actions={<Link href="/vendor" className={buttonClass}>Back</Link>} />
+      <PageHeader title="Payments" intro="What we have paid you. Each payment is your remittance advice." actions={<><Link href="/vendor" className={buttonClass}>Back</Link><Link href="/vendor/certificates" className={buttonClass}>Tax certificates</Link></>} />
       <Message notice={notice} />
       {rows.length === 0 ? <p className="text-sm text-fg-muted">We have not paid you yet through the portal.</p> : (
         <ul className="space-y-2" aria-label="Payments">
           {rows.map((r) => (
             <li key={r.id} className={`${cardClass} space-y-1`}>
               <p className="flex flex-wrap items-center justify-between gap-2 text-sm"><span className="font-bold text-fg-strong">{r.number} · {r.paidOn}</span><span className="font-semibold tabular-nums">{r.amount} {r.currency}</span></p>
+              {Number(r.withheld) + Number(r.discount) === 0 ? null : <p className="text-xs text-fg-muted">For invoices worth {r.settled}{Number(r.discount) > 0 ? `, less an early-payment discount of ${r.discount}` : ''}{Number(r.withheld) > 0 ? `, less tax withheld ${r.withheld}` : ''}.{r.certificateId === null ? '' : <> <Link href={`/vendor/certificates/${r.certificateId}`} className="font-semibold underline">Certificate</Link></>}</p>}
               <p className="text-xs text-fg-muted">Reference {r.reference}{r.destination === null ? '' : ` · to ${r.destination}`}</p>
               {r.invoices.length === 0 ? <p className="text-sm text-fg">{r.kind === 'advance' ? 'An advance payment.' : ''}</p> : <ul className="text-sm text-fg" aria-label="Invoices paid">{r.invoices.map((i) => <li key={i.vendorInvoiceNo}>Invoice {i.vendorInvoiceNo}: {i.amount}</li>)}</ul>}
             </li>

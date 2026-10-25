@@ -1,7 +1,7 @@
 import { has } from '@/lib/values';
 
 export type VoucherStatus = 'draft' | 'pending_approval' | 'approved' | 'paid' | 'reversed' | 'cancelled';
-export type VoucherKind = 'invoices' | 'advance';
+export type VoucherKind = 'invoices' | 'advance' | 'on_account';
 
 type Tone = 'green' | 'amber' | 'red' | 'sky' | 'gray';
 
@@ -14,7 +14,7 @@ export const VOUCHER_STATUS: Record<VoucherStatus, { label: string; tone: Tone }
   cancelled: { label: 'Cancelled', tone: 'gray' },
 };
 
-export const VOUCHER_KIND: Record<VoucherKind, string> = { invoices: 'Payment of invoices', advance: 'Advance payment' };
+export const VOUCHER_KIND: Record<VoucherKind, string> = { invoices: 'Payment of invoices', advance: 'Advance payment', on_account: 'Payment on account' };
 
 /** States in which a voucher still holds a claim on the invoices (or the advance) it names. */
 export const LIVE_VOUCHER: readonly VoucherStatus[] = ['draft', 'pending_approval', 'approved'];
@@ -32,11 +32,15 @@ export interface VoucherHeaderForm {
   narration: string;
   /** For an advance voucher: the advance payment document being paid. */
   advanceId: string;
+  /** For a payment on account: how much, since there is no invoice to say. */
+  amount?: string;
 }
 
 export interface AllocationForm {
   purchaseInvoiceId: string;
   amount: string;
+  /** Close what is left on the invoice after this payment as tolerance (only when small enough). */
+  closeRemainder?: boolean;
 }
 
 export function checkVoucherHeader(h: VoucherHeaderForm): Record<string, string> {
@@ -45,6 +49,10 @@ export function checkVoucherHeader(h: VoucherHeaderForm): Record<string, string>
   if (!has(h.methodId)) p.methodId = 'Choose how it will be paid.';
   if (h.narration.length > 500) p.narration = 'The note is too long (500 characters at most).';
   if (h.kind === 'advance' && !has(h.advanceId)) p.advanceId = 'Choose the advance payment to pay.';
+  if (h.kind === 'on_account') {
+    if (!money(h.amount ?? '')) p.amount = 'Enter the amount to pay, above zero (up to 2 decimals).';
+    if (h.narration.trim() === '') p.narration = 'Say what the payment on account is for.';
+  }
   return p;
 }
 

@@ -10,14 +10,14 @@ import { Chip, LoadFailed, PageHeader, buttonClass, cardClass, money } from '@/c
 
 type View = Extract<Awaited<ReturnType<typeof vendorDetailAction>>, { ok: true }>['data'];
 
-export function VendorDetailClient({ viewPromise, reviewSlot }: { viewPromise: ReturnType<typeof vendorDetailAction>; reviewSlot: ReactNode }) {
+export function VendorDetailClient({ viewPromise, reviewSlot, termsSlot }: { viewPromise: ReturnType<typeof vendorDetailAction>; reviewSlot: ReactNode; termsSlot: ReactNode }) {
   const res = use(viewPromise);
-  return res.ok ? <VendorDetailView view={res.data} reviewSlot={reviewSlot} /> : <LoadFailed error={res.error} />;
+  return res.ok ? <VendorDetailView view={res.data} reviewSlot={reviewSlot} termsSlot={termsSlot} /> : <LoadFailed error={res.error} />;
 }
 
 const dash = (v: string | number | null): string => (v === null || v === '' ? '—' : String(v));
 
-function VendorDetailView({ view, reviewSlot }: { view: View; reviewSlot: ReactNode }) {
+function VendorDetailView({ view, reviewSlot, termsSlot }: { view: View; reviewSlot: ReactNode; termsSlot: ReactNode }) {
   const v = view.vendor;
   const state = VENDOR_STATUS[v.status] ?? { label: v.status, tone: 'gray' as const };
   const type = VENDOR_TYPES.find((t) => t.id === v.vendorType)?.label ?? v.vendorType;
@@ -63,6 +63,8 @@ function VendorDetailView({ view, reviewSlot }: { view: View; reviewSlot: ReactN
           )}
         </section>
       ) : null}
+
+      {termsSlot}
 
       <VendorStandingPanel vendorId={v.id} status={v.status} block={v.block} standing={view.standing} can={view.can} />
 
