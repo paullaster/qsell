@@ -8,7 +8,6 @@ import {
   Mail,
   Phone,
   MapPin,
-  CreditCard,
   Truck,
   History,
   ShieldCheck,
@@ -19,7 +18,7 @@ import {
   Menu,
   X,
   Star,
-  Heart,
+  ArrowLeft,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { logoutAction } from '@/server/domains/auth/actions';
@@ -92,10 +91,17 @@ export function StorefrontProfileClient({ sessionPromise }: StorefrontProfileCli
           <div>
             <h1 className="text-3xl font-bold text-fg-strong">My Account</h1>
             <p className="mt-1 text-sm text-fg-muted">
-              Manage your profile, addresses, orders, and preferences
+              Manage your details, delivery addresses and orders
             </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <Link
+              href="/"
+              className="flex min-h-10 items-center gap-2 rounded-lg border border-line bg-surface-raised px-4 py-2 text-sm font-medium text-fg transition-colors hover:bg-hover hover:text-fg-strong"
+            >
+              <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+              <span>Back to shop</span>
+            </Link>
             <form action={logoutAction}>
               <input type="hidden" name="returnTo" value="/" />
               <button
@@ -249,7 +255,7 @@ export function StorefrontProfileClient({ sessionPromise }: StorefrontProfileCli
         </div>
 
         {/* Quick Navigation */}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-2">
           <Link
             href="/profile/addresses"
             className="flex items-center gap-3 rounded-xl border border-line bg-surface-raised p-4 transition-colors hover:border-indigo-500 hover:bg-indigo-50/50"
@@ -272,27 +278,6 @@ export function StorefrontProfileClient({ sessionPromise }: StorefrontProfileCli
             </div>
           </Link>
 
-          <Link
-            href="/profile/payment"
-            className="flex items-center gap-3 rounded-xl border border-line bg-surface-raised p-4 transition-colors hover:border-indigo-500 hover:bg-indigo-50/50"
-          >
-            <CreditCard className="h-5 w-5 text-emerald-400" />
-            <div>
-              <p className="font-medium text-fg-strong">Payment Methods</p>
-              <p className="text-sm text-fg-muted">Manage payment preferences</p>
-            </div>
-          </Link>
-
-          <Link
-            href="/profile/wishlist"
-            className="flex items-center gap-3 rounded-xl border border-line bg-surface-raised p-4 transition-colors hover:border-indigo-500 hover:bg-indigo-50/50"
-          >
-            <Heart className="h-5 w-5 text-rose-400" />
-            <div>
-              <p className="font-medium text-fg-strong">Wishlist</p>
-              <p className="text-sm text-fg-muted">Saved items</p>
-            </div>
-          </Link>
         </div>
 
         {/* Recent Orders Preview */}
@@ -311,7 +296,7 @@ export function StorefrontProfileClient({ sessionPromise }: StorefrontProfileCli
               {customer.orders.slice(0, 3).map((order) => (
                 <Link
                   key={order.id}
-                  href={`/orders/${order.id}`}
+                  href={`/profile/orders/${order.id}`}
                   className="flex items-center justify-between rounded-xl border border-line bg-surface-raised p-4 transition-colors hover:border-indigo-500 hover:bg-indigo-50/50"
                 >
                   <div className="flex items-center gap-4">

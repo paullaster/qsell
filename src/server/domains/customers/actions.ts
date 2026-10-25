@@ -8,6 +8,7 @@ import { StorefrontCustomerService } from '@/server/domains/customers/storefront
 import type { CustomerAddressRow } from '@/server/db/drizzle/schema';
 import type { CustomerAccount, CustomerAddress, Order } from '@/types/index';
 import type { CustomerAddressInput } from './master-service';
+import { ownsOrder, readAddress, toCustomerOrder, type CustomerOrder, type OrderOwner } from '@/lib/storefront-account';
 
 function mapAddress(row: CustomerAddressRow): CustomerAddress {
   return {
@@ -279,4 +280,110 @@ export async function setDefaultAddressAction(
 export async function listCustomerOrdersAction(customerId?: string): Promise<Order[]> {
   const { account } = await requireOwnAccount(customerId);
   return getContainer().orders.listByUserId(account.id);
+}
+
+/** An answer the storefront screens read: failures come back as data (server-action errors are masked in production). */
+export type AccountResult<T> = { ok: true; data: T } | { ok: false; error: string; code?: string };
+
+const SIGN_IN = 'Sign in to see your account.';
+const NEEDS_SIGN_IN = { ok: false, error: SIGN_IN, code: 'SIGN_IN' } as const;
+
+async function ownerOf(): Promise<{ owner: OrderOwner; tradeCustomerId: string } | null> {
+  const resolved = await resolveLoggedInAccount();
+  if (!resolved) return null;
+  const session = await auth();
+  const email = resolved.account.email.toLowerCase().trim();
+  return {
+    tradeCustomerId: resolved.tradeCustomerId,
+    owner: {
+      ids: [resolved.account.id, session?.user.id ?? '', email, resolved.account.email].filter((id) => id !== ''),
+      email,
+      tradeCustomerId: resolved.tradeCustomerId,
+    },
+  };
+}
+
+/** One page of the signed-in shopper's own orders, newest first. Who they are comes from the session only. */
+export async function myOrdersPageAction(input: {
+  cursor?: string | null;
+}): Promise<AccountResult<{ rows: CustomerOrder[]; nextCursor: string | null }>> {
+  try {
+    const mine = await ownerOf();
+    if (!mine) return NEEDS_SIGN_IN;
+    const page = await getContainer().orders.pageForOwner({
+      ids: mine.owner.ids,
+      tradeCustomerId: mine.owner.tradeCustomerId,
+      cursor: typeof input.cursor === 'string' ? input.cursor : null,
+    });
+    return { ok: true, data: { rows: page.rows.map(toCustomerOrder), nextCursor: page.nextCursor } };
+  } catch (error) {
+    console.error('[storefront] my orders', error);
+    return { ok: false, error: 'Your orders could not be loaded. Please try again.' };
+  }
+}
+
+/** One of the signed-in shopper's own orders; someone else's order is reported as not found, never as forbidden. */
+export async function myOrderAction(id: string): Promise<AccountResult<CustomerOrder>> {
+  try {
+    const mine = await ownerOf();
+    if (!mine) return NEEDS_SIGN_IN;
+    const order = typeof id === 'string' && id !== '' ? await getContainer().orders.getById(id) : null;
+    if (!order || !ownsOrder(order, mine.owner)) return { ok: false, error: 'This order was not found.', code: 'ORDER_NOT_FOUND' };
+    return { ok: true, data: toCustomerOrder(order) };
+  } catch (error) {
+    console.error('[storefront] my order', error);
+    return { ok: false, error: 'This order could not be loaded. Please try again.' };
+  }
+}
+
+/** The signed-in shopper's address book. */
+export async function myAddressesAction(): Promise<AccountResult<CustomerAddress[]>> {
+  try {
+    const resolved = await resolveLoggedInAccount();
+    if (!resolved) return NEEDS_SIGN_IN;
+    return { ok: true, data: resolved.account.addresses };
+  } catch (error) {
+    console.error('[storefront] my addresses', error);
+    return { ok: false, error: 'Your addresses could not be loaded. Please try again.' };
+  }
+}
+
+async function changeAddresses(change: (tradeCustomerId: string) => Promise<void>): Promise<AccountResult<CustomerAddress[]>> {
+  try {
+    const resolved = await resolveLoggedInAccount();
+    if (!resolved) return NEEDS_SIGN_IN;
+    await change(resolved.tradeCustomerId);
+    return { ok: true, data: (await master().listAddresses(resolved.tradeCustomerId)).map(mapAddress) };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    if (/^(Address|Customer) not found\.$/.test(message)) return { ok: false, error: 'That address no longer exists.' };
+    if (message === 'A customer must keep at least one address.') {
+      return { ok: false, error: 'Keep at least one address. Add another one before removing this one.' };
+    }
+    console.error('[storefront] address change', error);
+    return { ok: false, error: 'The address could not be saved. Please try again.' };
+  }
+}
+
+/** Adds an address to the signed-in shopper's book, or changes one of theirs when `id` is given. Validated here, not in the browser. */
+export async function saveMyAddressAction(input: { id?: string | null; address: unknown }): Promise<AccountResult<CustomerAddress[]>> {
+  const read = readAddress(input.address);
+  if (!read.ok) return { ok: false, error: read.error };
+  const { postalCode, ...rest } = read.address;
+  const fields = { ...rest, postalCode: postalCode === '' ? null : postalCode };
+  const id = typeof input.id === 'string' && input.id !== '' ? input.id : null;
+  return changeAddresses(async (tradeCustomerId) => {
+    if (id === null) await master().addAddress(tradeCustomerId, fields);
+    else await master().updateAddress(tradeCustomerId, id, fields);
+  });
+}
+
+export async function removeMyAddressAction(id: string): Promise<AccountResult<CustomerAddress[]>> {
+  return changeAddresses((tradeCustomerId) => master().deleteAddress(tradeCustomerId, id));
+}
+
+export async function makeMyAddressDefaultAction(id: string): Promise<AccountResult<CustomerAddress[]>> {
+  return changeAddresses(async (tradeCustomerId) => {
+    await master().setDefaultAddress(tradeCustomerId, id);
+  });
 }
