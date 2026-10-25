@@ -1,3 +1,5 @@
+import type { PriceTrace } from '@/server/domains/pricing/domain/types';
+
 export interface Category {
   id: string;
   name: string;
@@ -264,7 +266,7 @@ export interface OrderItem {
   totalPrice: number;
   imageUrl: string;
   /** Why the unit price is what it is (the pricing engine's trace). Absent on older orders. */
-  priceTrace?: import('@/server/domains/pricing/domain/types').PriceTrace | null;
+  priceTrace?: PriceTrace | null;
   /** A free gift added by a promotion. */
   isGift?: boolean;
   /** What one unit cost when it was sold. Absent on older orders. */
@@ -345,8 +347,8 @@ export interface TransactionRecord {
   status: 'initiated' | 'pending' | 'successful' | 'failed' | 'flagged';
   customerPhone?: string;
   customerEmail?: string;
-  requestPayload: any;
-  responsePayload: any;
+  requestPayload: Record<string, unknown>;
+  responsePayload: Record<string, unknown>;
   ipnStatus: 'pending' | 'delivered' | 'failed';
   reconciliationStatus: 'pending' | 'reconciled' | 'discrepancy';
   errorMessage?: string;

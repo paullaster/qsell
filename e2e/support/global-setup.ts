@@ -26,7 +26,7 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
       if (attempt === 4) throw error;
     }
   }
-  if (response === null || !response.ok()) throw new Error(`e2e sign-in failed: ${String(response?.status())}`);
+  if (!(response?.ok() ?? false)) throw new Error(`e2e sign-in failed: ${String(response?.status())}`);
   await api.storageState({ path: AUTH_FILE });
   await api.dispose();
   await warmUp();
