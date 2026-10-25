@@ -54,7 +54,7 @@ export async function submitQuoteAction(rfqId: string, quote: unknown) {
     // What is on screen is saved first, so what is sent is what the vendor sees; the server then checks the saved copy in full.
     await container.rfqPortal.saveDraft(me, idOf(rfqId), quoteOf(quote));
     return await container.rfqPortal.submit(me, idOf(rfqId), me.companyId);
-  });
+  }, 'vendor_submit');
 }
 
 export async function withdrawQuoteAction(rfqId: string) {
@@ -72,5 +72,5 @@ export async function declineRfqAction(rfqId: string, reason: string) {
 export async function askRfqQuestionAction(rfqId: string, question: string) {
   return await portal('rfq_ask', async (me) => {
     await getContainer().rfqPortal.ask(me, idOf(rfqId), str(question, 1000));
-  });
+  }, 'vendor_submit');
 }

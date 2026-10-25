@@ -241,6 +241,10 @@ export async function vendorSettingsAction() {
       invoicePriceToleranceAmount: s.invoicePriceToleranceAmount,
       invoiceQuantityTolerancePercent: s.invoiceQuantityTolerancePercent,
       paymentThreeEyesAbove: s.paymentThreeEyesAbove,
+      watchDuplicateWindowDays: s.watchDuplicateWindowDays,
+      watchNewVendorDays: s.watchNewVendorDays,
+      watchNewVendorAmount: s.watchNewVendorAmount,
+      holdFlaggedPayments: s.holdFlaggedPayments,
     };
   });
 }
@@ -248,6 +252,6 @@ export async function vendorSettingsAction() {
 export async function saveVendorSettingsAction(input: unknown) {
   return await run('vendor_settings:manage', { surface: 'vendors/settings', action: 'save' }, async (ctx) => {
     const i = obj(input);
-    await getContainer().purchaseOrders.saveSettings(ctx, { rfqRequiredAbove: str(i.rfqRequiredAbove, 20), amendmentTolerancePercent: str(i.amendmentTolerancePercent, 8), receiptTolerancePercent: str(i.receiptTolerancePercent, 8), inputTaxAccountId: str(i.inputTaxAccountId, 40), invoicePriceTolerancePercent: str(i.invoicePriceTolerancePercent, 8), invoicePriceToleranceAmount: str(i.invoicePriceToleranceAmount, 20), invoiceQuantityTolerancePercent: str(i.invoiceQuantityTolerancePercent, 8), paymentThreeEyesAbove: str(i.paymentThreeEyesAbove, 20) });
+    await getContainer().purchaseOrders.saveSettings(ctx, { rfqRequiredAbove: str(i.rfqRequiredAbove, 20), amendmentTolerancePercent: str(i.amendmentTolerancePercent, 8), receiptTolerancePercent: str(i.receiptTolerancePercent, 8), inputTaxAccountId: str(i.inputTaxAccountId, 40), invoicePriceTolerancePercent: str(i.invoicePriceTolerancePercent, 8), invoicePriceToleranceAmount: str(i.invoicePriceToleranceAmount, 20), invoiceQuantityTolerancePercent: str(i.invoiceQuantityTolerancePercent, 8), paymentThreeEyesAbove: str(i.paymentThreeEyesAbove, 20), watchDuplicateWindowDays: str(i.watchDuplicateWindowDays, 6), watchNewVendorDays: str(i.watchNewVendorDays, 6), watchNewVendorAmount: str(i.watchNewVendorAmount, 20), holdFlaggedPayments: i.holdFlaggedPayments !== false });
   });
 }

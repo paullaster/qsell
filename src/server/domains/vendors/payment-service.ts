@@ -26,6 +26,7 @@ import {
   type VendorVoucherStatus,
 } from '@/server/db/drizzle/schema';
 import { has, trimToNull } from '@/lib/values';
+import { daysBetween, paymentFlags } from '@/lib/vendor-insights';
 import {
   DEFAULT_THREE_EYES_ABOVE_CENTS,
   LIVE_VOUCHER,
@@ -101,6 +102,23 @@ export class VendorPaymentService {
     const [v] = await tx.select().from(vendorPaymentVouchers).where(and(eq(vendorPaymentVouchers.companyId, companyId), eq(vendorPaymentVouchers.id, id))).for('update');
     if (v === undefined) throw new FinanceError('NOT_FOUND', 'That payment voucher does not exist.');
     return v;
+  }
+
+  /** Why this payment deserves a second look (a large payment to a new vendor, a bank account shared with another vendor), and whether the company holds such payments. */
+  private async flagsFor(tx: Tx, companyId: string, vendorId: string, accountId: string | null, amountCents: number, now: Date): Promise<{ reasons: string[]; hold: boolean }> {
+    const [s] = await tx.select().from(vendorSettings).where(eq(vendorSettings.companyId, companyId));
+    const [vendor] = await tx.select({ createdAt: vendors.createdAt }).from(vendors).where(eq(vendors.id, vendorId));
+    let shares = false;
+    if (accountId !== null) {
+      const [own] = await tx.select({ hash: vendorBankAccounts.accountHash }).from(vendorBankAccounts).where(eq(vendorBankAccounts.id, accountId));
+      if (own !== undefined) {
+        const [other] = await tx.select({ id: vendorBankAccounts.id }).from(vendorBankAccounts).innerJoin(vendors, eq(vendors.id, vendorBankAccounts.vendorId)).where(and(eq(vendors.companyId, companyId), eq(vendorBankAccounts.accountHash, own.hash), ne(vendorBankAccounts.vendorId, vendorId), inArray(vendorBankAccounts.status, ['active', 'pending_change']))).limit(1);
+        shares = other !== undefined;
+      }
+    }
+    const age = vendor === undefined ? 0 : daysBetween(vendor.createdAt.toISOString().slice(0, 10), now.toISOString().slice(0, 10));
+    const reasons = paymentFlags({ amountCents, vendorAgeDays: age, sharesBankAccount: shares }, { newVendorDays: s?.watchNewVendorDays ?? 30, newVendorAmountCents: toCents(s?.watchNewVendorAmount ?? '100000') });
+    return { reasons, hold: reasons.length > 0 && (s?.holdFlaggedPayments ?? true) };
   }
 
   async thresholdCents(db: Tx | DrizzleDb, companyId: string): Promise<number> {
@@ -338,10 +356,11 @@ export class VendorPaymentService {
         destination = `${account.bankName} account ending ${account.accountLast4}`;
       }
       const threshold = await this.thresholdCents(tx, ctx.companyId);
-      const three = needsThreePeople(toCents(v.amount), threshold);
+      const flags = await this.flagsFor(tx, ctx.companyId, v.vendorId, accountId, toCents(v.amount), now);
+      const three = needsThreePeople(toCents(v.amount), threshold) || flags.hold;
       const number = v.number ?? (await this.numbering.assign('vendor_payment', { companyId: ctx.companyId, branchId: null, date: businessDate(now), document: { kind: 'vendor_payment', id } }, tx)).number;
       await tx.update(vendorPaymentVouchers).set({ status: 'approved', number, approvedBy: ctx.actor.id, approvedAt: now, needsThree: three, vendorBankAccountId: accountId, destination, ...(plan === null ? {} : { withholdingAmount: fromCents(plan.withholdingCents), discountAmount: fromCents(plan.discountCents), toleranceAmount: fromCents(plan.toleranceCents), cashAmount: fromCents(plan.cashCents) }), updatedAt: now }).where(eq(vendorPaymentVouchers.id, id));
-      await this.event(tx, ctx.actor, id, 'approved', 'pending_approval', 'approved', { data: { number, needsThree: three, destination, cash: fromCents(plan?.cashCents ?? toCents(v.amount)), withholding: fromCents(plan?.withholdingCents ?? 0), discount: fromCents(plan?.discountCents ?? 0) } });
+      await this.event(tx, ctx.actor, id, 'approved', 'pending_approval', 'approved', { data: { number, needsThree: three, flagged: flags.reasons, destination, cash: fromCents(plan?.cashCents ?? toCents(v.amount)), withholding: fromCents(plan?.withholdingCents ?? 0), discount: fromCents(plan?.discountCents ?? 0) } });
       return { number };
     });
   }

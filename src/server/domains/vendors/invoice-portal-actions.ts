@@ -45,7 +45,7 @@ export async function saveInvoiceAction(invoiceId: string, input: unknown) {
 }
 
 export async function submitInvoiceAction(invoiceId: string) {
-  return await portal('invoice_submit', async (me) => await getContainer().invoicePortal.submit(me, me.companyId, idOf(invoiceId)));
+  return await portal('invoice_submit', async (me) => await getContainer().invoicePortal.submit(me, me.companyId, idOf(invoiceId)), 'vendor_submit');
 }
 
 export async function recallInvoiceAction(invoiceId: string) {

@@ -311,6 +311,33 @@ describe.skipIf(!has(url))('vendor payments (database)', () => {
       expect(await codeOf(c.vendorPayments.pay(staff('till'), v.id, { reference: 'T1', paidOn: TODAY }))).toBe('OK');
       await c.purchaseOrders.saveSettings(staff('admin'), { rfqRequiredAbove: '', amendmentTolerancePercent: '0', paymentThreeEyesAbove: '100000' });
     });
+
+    it('holds a flagged payment for three people: a large payment to a new vendor, or a bank account another vendor also uses, unless the rule is off', async () => {
+      const base = { rfqRequiredAbove: '', amendmentTolerancePercent: '0', paymentThreeEyesAbove: '0' };
+      await c.purchaseOrders.saveSettings(staff('admin'), { ...base, watchNewVendorAmount: '400', watchNewVendorDays: '30', holdFlaggedPayments: true });
+      const big = await booked();
+      const flagged = await approvedVoucher(big.v.vendorId, transfer, [alloc(big.pinv.id, '464')]);
+      expect((await voucher(flagged.id)).needsThree).toBe(true);
+      const events = await db.select().from(schema.vendorPaymentEvents).where(eq(schema.vendorPaymentEvents.voucherId, flagged.id));
+      expect(JSON.stringify(events.find((e) => e.event === 'approved')?.data)).toMatch(/a vendor added/);
+      // Small payments to the same new vendor are not flagged.
+      await c.purchaseOrders.saveSettings(staff('admin'), { ...base, watchNewVendorAmount: '1000000' });
+      const small = await booked();
+      expect((await voucher((await approvedVoucher(small.v.vendorId, transfer, [alloc(small.pinv.id, '100')])).id)).needsThree).toBe(false);
+      // A bank account shared with another vendor flags the payment whatever the amount.
+      const [mine] = await db.select().from(schema.vendorBankAccounts).where(eq(schema.vendorBankAccounts.vendorId, small.v.vendorId));
+      const other = await booked();
+      await db.update(schema.vendorBankAccounts).set({ accountHash: required(mine).accountHash }).where(eq(schema.vendorBankAccounts.vendorId, other.v.vendorId));
+      expect((await voucher((await approvedVoucher(other.v.vendorId, transfer, [alloc(other.pinv.id, '100')])).id)).needsThree).toBe(true);
+      // With the rule off nothing is held.
+      await c.purchaseOrders.saveSettings(staff('admin'), { ...base, holdFlaggedPayments: false });
+      const third = await booked();
+      const [theirs] = await db.select().from(schema.vendorBankAccounts).where(eq(schema.vendorBankAccounts.vendorId, third.v.vendorId));
+      await db.update(schema.vendorBankAccounts).set({ accountHash: required(mine).accountHash }).where(eq(schema.vendorBankAccounts.id, required(theirs).id));
+      expect((await voucher((await approvedVoucher(third.v.vendorId, transfer, [alloc(third.pinv.id, '464')])).id)).needsThree).toBe(false);
+      expect(await codeOf(c.purchaseOrders.saveSettings(staff('admin'), { ...base, watchNewVendorDays: '4000' }))).toBe('INVALID');
+      await c.purchaseOrders.saveSettings(staff('admin'), { rfqRequiredAbove: '', amendmentTolerancePercent: '0', paymentThreeEyesAbove: '100000', watchNewVendorAmount: '100000', watchNewVendorDays: '30', holdFlaggedPayments: true });
+    });
   });
 
   describe('the bank', () => {

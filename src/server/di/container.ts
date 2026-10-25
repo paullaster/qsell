@@ -73,6 +73,7 @@ import { PaymentRunService } from '@/server/domains/vendors/payment-run-service'
 import { PaymentTermsService } from '@/server/domains/vendors/payment-terms-service';
 import { CreditMemoPortalService } from '@/server/domains/vendors/credit-memo-portal-service';
 import { CreditMemoService } from '@/server/domains/vendors/credit-memo-service';
+import { RateLimitService } from '@/server/kernel/rate-limit/service';
 import { VendorInsightsService } from '@/server/domains/vendors/insights-service';
 import { PettyCashService } from '@/server/domains/vendors/petty-cash-service';
 import { TransactionLedgerService } from '@/server/domains/transactions/ledger-service';
@@ -187,6 +188,8 @@ export interface AppContainer {
   pettyCash: PettyCashService;
   /** Cross-vendor reports: commitments, performance, purchases and the watch list. */
   vendorInsights: VendorInsightsService;
+  /** Request limits for sign-in, registration, mail forms and vendor uploads and submits. */
+  rateLimits: RateLimitService;
   transactionLedger: TransactionLedgerService;
   transactionReconcile: TransactionReconcileService;
   paymentCallbacks: PaymentCallbackService;
@@ -467,6 +470,7 @@ export function getContainer(): AppContainer {
     paymentTerms: new PaymentTermsService(drizzleDb, vendors),
     creditMemoPortal: new CreditMemoPortalService(drizzleDb, numbering, vendorFiles, vendorNotifier),
     vendorInsights: new VendorInsightsService(drizzleDb),
+    rateLimits: new RateLimitService(drizzleDb),
     pettyCash: new PettyCashService(drizzleDb, numbering, finance.engine, finance.vendorLedger),
     creditMemos: new CreditMemoService(drizzleDb, finance.engine, finance.postingSetup, finance.vendorLedger, vendorNotifier),
     paymentRuns: new PaymentRunService(drizzleDb, numbering, vendorPaymentService, (blob) => vendorProfileService.openBankNumber(blob)),

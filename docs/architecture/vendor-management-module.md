@@ -1160,3 +1160,23 @@ Migration `0085_vendor_credit_memos.sql`: `vendor_credit_memos` (+ `_lines`, `_e
 **Tests.** Unit `vendor-insights.test.ts` (3), guard `portal-isolation.test.ts` (11), integration `insights.integration.test.ts` (3), load (opt-in, passes), e2e `vendor-reports.spec.ts` on desktop and phone.
 
 **Not done in V-8.** RFQ cycle time and savings, expiring-documents, withholding and prequalification-status reports; a settings screen for the watch thresholds; petty cash report; anomaly rules that hold a payment for extra approval (the watch list only reports); rate limiting (above).
+
+## 40. V-8 follow-up (2026-10-25): rate limits, virus scan, more reports, holds
+
+This closes what §39 listed as open, and corrects it.
+
+**Request limits (migration 0087, `RateLimitService`).** Counters live in Postgres (`rate_limit_hits`: key, window start, hits), one atomic upsert per try, so every instance shares them and no new service is needed. Fixed windows; a new window removes windows older than a day. If the database cannot count, the try is allowed and logged (the limiter must not take sign-in down). Rules are data in `src/lib/rate-limit.ts`: sign-in 100 per 15 minutes per address and 8 per account; password reset and verification mail 10 per hour per address and 3 per account; registration 10 per hour per address; a signed-in vendor 60 uploads and 40 submissions per 10 minutes. The address is the proxy's `X-Real-IP` (nginx sets it from the connecting address), else the last `X-Forwarded-For` entry; the first entry is never trusted because the caller can write it. Limits per account hold even when the address is forged. `RATE_LIMIT_SCALE` multiplies the limits on test servers only and is ignored in production (the e2e server sets it). Applied to: `loginAction`, `requestPasswordResetAction`, `resendVerificationEmailAction`, `registerCustomerAction`, `registerVendorAction`, the three vendor upload routes and the invoice, credit memo, quotation, question and profile submits (a third argument to `portal()`). Not covered: staff pages and other customer actions. Behind a shared office address, 100 sign-ins in 15 minutes is the ceiling for everyone there.
+
+**Virus scan.** Set `CLAMD_HOST` (and `CLAMD_PORT`, default 3310) and every vendor file is streamed to ClamAV before it is kept (INSTREAM). Infected files are refused; if the scanner cannot be reached the file is refused too, unless `CLAMD_FAIL_OPEN=1`. With no host set nothing changes. Tested against a stand-in daemon on a real socket; not tested against a real ClamAV, which has to be installed and run on the server.
+
+**Staff downloads are logged.** The §39 note that they were not reviewed was wrong to imply a gap: opening a vendor file, an invoice file or a credit file already writes `file_opened` to the vendor's, invoice's or credit memo's history. Petty cash receipts are served through the media module and are not logged.
+
+**Reports added** (tabs on `/admin/vendors/reports`): quotations (days from issue to award, saved against the dearest submitted quote and against the estimate), tax withheld (by month, vendor and kind), qualification (vendors per state per category) and petty cash (paid out, reversed, topped up, cash now, vouchers not yet covered). Expiring documents are not duplicated: they stay on their own list (`/admin/vendors/expiring`), linked from the page.
+
+**Thresholds and holds (migration 0088).** The watch list limits are company settings, edited under Ordering rules (`watch_duplicate_window_days`, `watch_new_vendor_days`, `watch_new_vendor_amount`). New rule: when `hold_flagged_payments` is on (default), approving a payment voucher that is a large payment to a new vendor, or goes to a bank account another vendor in the company also has, makes it need three different people (the same rule as a high-value payment); the reason is written into the voucher's `approved` event. Nothing is refused: it takes one more person. The watch list no longer accepts thresholds from the browser; it reads the company's.
+
+**Load check with every table filled** (2,000 vendors, 60,000 ledger entries, 12,000 orders, goods notes, matched invoices and booked invoices): ageing 303 ms, commitments 291 ms, performance 315 ms, purchases 46 ms, watch list 29 ms. The watch list's new-vendor payments query had no payment vouchers in that data set.
+
+**Found and fixed on the way:** the shared-bank-account check first compared accounts across companies; it is now scoped to the company.
+
+**Still not done.** Rate limits for staff and other customer actions; ClamAV against a real daemon; logging of petty cash receipt views; payment holds for other anomalies (look-alike invoices are reported but do not hold anything).

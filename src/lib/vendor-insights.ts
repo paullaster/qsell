@@ -44,3 +44,19 @@ export function checkWatchSettings(s: Partial<WatchSettings>): WatchSettings {
     newVendorAmountCents: whole(s.newVendorAmountCents, WATCH_DEFAULTS.newVendorAmountCents, 1_000_000_000_000),
   };
 }
+
+/** Why a payment deserves a second look, in plain words; empty when it does not. */
+export function paymentFlags(input: { amountCents: number; vendorAgeDays: number; sharesBankAccount: boolean }, settings: Pick<WatchSettings, 'newVendorDays' | 'newVendorAmountCents'>): string[] {
+  const reasons: string[] = [];
+  if (settings.newVendorAmountCents > 0 && input.amountCents >= settings.newVendorAmountCents && input.vendorAgeDays <= settings.newVendorDays) reasons.push(`a large payment to a vendor added ${String(Math.max(0, input.vendorAgeDays))} days ago`);
+  if (input.sharesBankAccount) reasons.push('the bank account is also used by another vendor');
+  return reasons;
+}
+
+/** Amount text like 100000 or 2500.50 in cents, or null when it is not an amount. */
+export function amountCentsOrNull(text: string): number | null {
+  const t = text.trim();
+  if (!/^\d{1,12}(\.\d{1,2})?$/.test(t)) return null;
+  const [whole = '0', frac = ''] = t.split('.');
+  return Number(whole) * 100 + Number(frac.padEnd(2, '0'));
+}

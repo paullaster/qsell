@@ -148,5 +148,5 @@ export async function removeDocumentAction(id: unknown) {
 export async function submitProfileAction() {
   return await portal('submit_profile', async (me) => {
     return await getContainer().vendorProfile.submit(me, me.companyId);
-  });
+  }, 'vendor_submit');
 }

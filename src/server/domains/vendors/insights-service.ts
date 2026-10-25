@@ -1,6 +1,15 @@
 import { and, asc, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
+  bankLedgerEntries,
+  pettyCashFloats,
+  pettyCashReplenishments,
+  pettyCashVouchers,
+  prequalEntries,
+  procurementCategories,
+  rfqAwards,
+  rfqs,
+  withholdingCertificates,
   purchaseInvoices,
   purchaseOrderLines,
   purchaseOrders,
@@ -12,6 +21,7 @@ import {
   supplierInvoiceMatches,
   supplierInvoices,
   vendorBankAccounts,
+  vendorSettings,
   vendorPaymentVouchers,
   vendors,
 } from '@/server/db/drizzle/schema';
@@ -28,6 +38,13 @@ const OPEN_ORDERS = ['approved', 'sent', 'confirmed', 'amendment_pending', 'part
  */
 export class VendorInsightsService {
   constructor(private readonly db: DrizzleDb) {}
+
+  /** The watch thresholds this company has chosen (or the defaults), and whether a flagged payment is held. */
+  async watchSettings(companyId: string): Promise<WatchSettings & { holdFlagged: boolean }> {
+    const [s] = await this.db.select().from(vendorSettings).where(eq(vendorSettings.companyId, companyId));
+    if (s === undefined) return { ...WATCH_DEFAULTS, holdFlagged: true };
+    return { duplicateWindowDays: s.watchDuplicateWindowDays, newVendorDays: s.watchNewVendorDays, newVendorAmountCents: toCents(s.watchNewVendorAmount), holdFlagged: s.holdFlaggedPayments };
+  }
 
   /** Open orders per vendor: what was ordered, what has come in, what has been invoiced, and what is still a commitment. */
   async commitments(companyId: string) {
@@ -158,7 +175,8 @@ export class VendorInsightsService {
   }
 
   /** Things worth a second look. It reports; it never blocks or changes anything. */
-  async watchList(companyId: string, range: { from: string; to: string }, settings: WatchSettings = WATCH_DEFAULTS) {
+  async watchList(companyId: string, range: { from: string; to: string }, given?: WatchSettings) {
+    const settings = given ?? (await this.watchSettings(companyId));
     const duplicates = await this.db.execute<{ vendor: string; first: string; second: string; total: string; first_date: string; second_date: string }>(sql`
       SELECT v.legal_name AS vendor, a.number AS first, b.number AS second, a.total::text AS total, a.invoice_date::text AS first_date, b.invoice_date::text AS second_date
       FROM purchase_invoices a
@@ -195,6 +213,129 @@ export class VendorInsightsService {
       sharedBankAccounts: sharedBanks.map((s) => ({ last4: s.last4, vendors: s.vendors })),
       newVendorPayments: newVendors.map((n) => ({ number: n.number, vendor: n.vendor, amountCents: toCents(n.amount), paidOn: n.paidOn, vendorAgeDays: n.paidOn === null ? 0 : daysBetween(n.vendorCreated.toISOString().slice(0, 10), n.paidOn) })),
       overriddenOrders: overrides.map((o) => ({ number: o.number, vendor: o.vendor, totalCents: toCents(o.total), orderDate: o.orderDate, reason: o.noRfqReason ?? o.qualificationOverrideReason ?? '' })),
+    };
+  }
+
+  /** Requests for quotation awarded in the period: days from issue to award, and what the award saved against the dearest quote and the estimate. */
+  async sourcing(companyId: string, range: { from: string; to: string }) {
+    const awarded = sql<string>`COALESCE(SUM(${rfqAwards.quantity} * ${rfqAwards.unitPrice}), 0)::text`;
+    const highest = sql<string>`COALESCE(SUM(${rfqAwards.quantity} * (
+      SELECT max(ql.unit_price) FROM rfq_quote_lines ql JOIN rfq_quotes q ON q.id = ql.quote_id
+      WHERE q.rfq_id = ${rfqAwards.rfqId} AND q.status = 'submitted' AND ql.rfq_line_id = ${rfqAwards.rfqLineId} AND NOT ql.no_bid AND NOT ql.is_alternative)), 0)::text`;
+    const rows = await this.db
+      .select({
+        id: rfqs.id,
+        number: rfqs.number,
+        title: rfqs.title,
+        currency: rfqs.currency,
+        estimated: rfqs.estimatedValue,
+        issuedAt: rfqs.issuedAt,
+        awardedAt: rfqs.awardedAt,
+        awarded,
+        highest,
+      })
+      .from(rfqs)
+      .innerJoin(rfqAwards, eq(rfqAwards.rfqId, rfqs.id))
+      .where(and(eq(rfqs.companyId, companyId), sql`${rfqs.awardedAt}::date BETWEEN ${range.from}::date AND ${range.to}::date`))
+      .groupBy(rfqs.id)
+      .orderBy(desc(rfqs.awardedAt))
+      .limit(200);
+    const lines = rows.map((r) => {
+      const awardedCents = toCents(r.awarded);
+      const highestCents = toCents(r.highest);
+      return {
+        id: r.id,
+        number: r.number,
+        title: r.title,
+        currency: r.currency,
+        cycleDays: r.issuedAt === null || r.awardedAt === null ? null : daysBetween(r.issuedAt.toISOString().slice(0, 10), r.awardedAt.toISOString().slice(0, 10)),
+        awardedCents,
+        savedAgainstHighestCents: Math.max(0, highestCents - awardedCents),
+        savedAgainstEstimateCents: r.estimated === null ? null : toCents(r.estimated) - awardedCents,
+      };
+    });
+    const timed = lines.filter((l) => l.cycleDays !== null);
+    return { range, lines, averageCycleDays: timed.length === 0 ? null : Math.round((timed.reduce((sum, l) => sum + (l.cycleDays ?? 0), 0) / timed.length) * 10) / 10, savedAgainstHighestCents: lines.reduce((sum, l) => sum + l.savedAgainstHighestCents, 0) };
+  }
+
+  /** Tax withheld from vendors in the period by month, vendor and code: what the withholding return is made from. */
+  async withholding(companyId: string, range: { from: string; to: string }) {
+    const rows = await this.db
+      .select({
+        period: withholdingCertificates.period,
+        vendor: vendors.legalName,
+        code: withholdingCertificates.codeName,
+        currency: withholdingCertificates.currency,
+        certificates: sql<number>`count(*)::int`,
+        base: sql<string>`COALESCE(SUM(${withholdingCertificates.baseAmount}), 0)::text`,
+        amount: sql<string>`COALESCE(SUM(${withholdingCertificates.amount}), 0)::text`,
+      })
+      .from(withholdingCertificates)
+      .innerJoin(vendors, eq(vendors.id, withholdingCertificates.vendorId))
+      .where(and(eq(withholdingCertificates.companyId, companyId), eq(withholdingCertificates.status, 'issued'), gte(withholdingCertificates.paidOn, range.from), lte(withholdingCertificates.paidOn, range.to)))
+      .groupBy(withholdingCertificates.period, vendors.legalName, withholdingCertificates.codeName, withholdingCertificates.currency)
+      .orderBy(desc(withholdingCertificates.period), asc(vendors.legalName));
+    const lines = rows.map((r) => ({ period: r.period, vendor: r.vendor, code: r.code, currency: r.currency, certificates: r.certificates, baseCents: toCents(r.base), amountCents: toCents(r.amount) }));
+    return { range, lines, totalCents: lines.reduce((sum, l) => sum + l.amountCents, 0) };
+  }
+
+  /** How many vendors are in each qualification state, per procurement category. */
+  async qualification(companyId: string) {
+    const rows = await this.db
+      .select({ category: procurementCategories.name, status: prequalEntries.status, vendors: sql<number>`count(*)::int` })
+      .from(prequalEntries)
+      .innerJoin(procurementCategories, eq(procurementCategories.id, prequalEntries.categoryId))
+      .where(eq(prequalEntries.companyId, companyId))
+      .groupBy(procurementCategories.name, prequalEntries.status)
+      .orderBy(asc(procurementCategories.name));
+    const by = new Map<string, Record<string, number>>();
+    for (const r of rows) by.set(r.category, { ...(by.get(r.category) ?? {}), [r.status]: r.vendors });
+    return { lines: [...by.entries()].map(([category, counts]) => ({ category, counts })) };
+  }
+
+  /** Petty cash by float for the period: paid out, reversed, topped up, what is in the float and what has not been covered by a top-up. */
+  async pettyCash(companyId: string, range: { from: string; to: string }) {
+    const floats = await this.db.select().from(pettyCashFloats).where(eq(pettyCashFloats.companyId, companyId)).orderBy(asc(pettyCashFloats.code));
+    if (floats.length === 0) return { range, lines: [] };
+    const ids = floats.map((f) => f.id);
+    const paid = await this.db
+      .select({
+        floatId: pettyCashVouchers.floatId,
+        count: sql<number>`count(*) FILTER (WHERE ${pettyCashVouchers.status} IN ('paid','reversed'))::int`,
+        reversed: sql<number>`count(*) FILTER (WHERE ${pettyCashVouchers.status} = 'reversed')::int`,
+        spent: sql<string>`COALESCE(SUM(${pettyCashVouchers.amount}) FILTER (WHERE ${pettyCashVouchers.status} = 'paid'), 0)::text`,
+        uncovered: sql<number>`count(*) FILTER (WHERE ${pettyCashVouchers.status} = 'paid' AND ${pettyCashVouchers.replenishmentId} IS NULL)::int`,
+      })
+      .from(pettyCashVouchers)
+      .where(and(inArray(pettyCashVouchers.floatId, ids), sql`${pettyCashVouchers.paidOn} BETWEEN ${range.from}::date AND ${range.to}::date`))
+      .groupBy(pettyCashVouchers.floatId);
+    const topUps = await this.db
+      .select({ floatId: pettyCashReplenishments.floatId, total: sql<string>`COALESCE(SUM(${pettyCashReplenishments.amount}), 0)::text` })
+      .from(pettyCashReplenishments)
+      .where(and(inArray(pettyCashReplenishments.floatId, ids), eq(pettyCashReplenishments.status, 'paid'), sql`${pettyCashReplenishments.paidOn} BETWEEN ${range.from}::date AND ${range.to}::date`))
+      .groupBy(pettyCashReplenishments.floatId);
+    const balances = await this.db
+      .select({ bankAccountId: bankLedgerEntries.bankAccountId, total: sql<string>`COALESCE(SUM(${bankLedgerEntries.amount}), 0)::text` })
+      .from(bankLedgerEntries)
+      .where(inArray(bankLedgerEntries.bankAccountId, floats.map((f) => f.bankAccountId)))
+      .groupBy(bankLedgerEntries.bankAccountId);
+    return {
+      range,
+      lines: floats.map((f) => {
+        const p = paid.find((x) => x.floatId === f.id);
+        return {
+          floatId: f.id,
+          code: f.code,
+          name: f.name,
+          currency: f.currency,
+          vouchers: p?.count ?? 0,
+          reversed: p?.reversed ?? 0,
+          spentCents: toCents(p?.spent ?? '0'),
+          toppedUpCents: toCents(topUps.find((x) => x.floatId === f.id)?.total ?? '0'),
+          balanceCents: toCents(balances.find((x) => x.bankAccountId === f.bankAccountId)?.total ?? '0'),
+          notYetCoveredVouchers: p?.uncovered ?? 0,
+        };
+      }),
     };
   }
 }
