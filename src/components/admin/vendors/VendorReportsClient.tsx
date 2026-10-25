@@ -1,16 +1,21 @@
 'use client';
 
 import { Suspense, use, useId, useState, type ReactNode } from 'react';
-import { type commitmentsAction, performanceAction, purchasesAction, watchListAction } from '@/server/domains/vendors/insights-actions';
+import Link from 'next/link';
+import { type commitmentsAction, performanceAction, pettyCashReportAction, purchasesAction, qualificationAction, sourcingAction, watchListAction, withholdingReportAction } from '@/server/domains/vendors/insights-actions';
 import { fromCents } from '@/lib/vendor-payment';
 import { showPercent } from '@/lib/vendor-insights';
 import { Field, LoadFailed, PageHeader, attempt, cardClass, fieldClass } from '@/components/ui/screen-kit';
 
-type Tab = 'commitments' | 'performance' | 'purchases' | 'watch';
+type Tab = 'commitments' | 'performance' | 'purchases' | 'sourcing' | 'withholding' | 'qualification' | 'petty' | 'watch';
 const TABS: { key: Tab; label: string }[] = [
   { key: 'commitments', label: 'Commitments' },
   { key: 'performance', label: 'Performance' },
   { key: 'purchases', label: 'Purchases' },
+  { key: 'sourcing', label: 'Quotations' },
+  { key: 'withholding', label: 'Tax withheld' },
+  { key: 'qualification', label: 'Qualification' },
+  { key: 'petty', label: 'Petty cash' },
   { key: 'watch', label: 'Watch list' },
 ];
 
@@ -23,6 +28,7 @@ export function VendorReportsClient({ commitmentsPromise }: { commitmentsPromise
   return (
     <div className="max-w-6xl space-y-5">
       <PageHeader title="Vendor reports" intro="What we have committed to buy, how vendors perform, what was bought, and things worth a second look." />
+      <p className="text-xs text-fg-muted">Documents that are expiring or have expired are on <Link href="/admin/vendors/expiring" className="font-semibold underline">their own list</Link>. What we owe is on <Link href="/admin/vendors/payables" className="font-semibold underline">the payables page</Link>.</p>
       <div role="tablist" aria-label="Reports" className="flex flex-wrap gap-2">
         {TABS.map((t) => (
           <button key={t.key} type="button" role="tab" aria-selected={tab === t.key} className={`min-h-10 rounded-lg border px-3 text-sm font-semibold ${tab === t.key ? 'border-fg-strong bg-fg-strong text-bg' : 'border-line text-fg'}`} onClick={() => setTab(t.key)}>{t.label}</button>
@@ -32,6 +38,10 @@ export function VendorReportsClient({ commitmentsPromise }: { commitmentsPromise
         {tab === 'commitments' ? <CommitmentsView data={first.data} /> : null}
         {tab === 'performance' ? <Ranged load={performanceAction} render={(d) => <PerformanceView data={d} />} /> : null}
         {tab === 'purchases' ? <Ranged load={purchasesAction} render={(d) => <PurchasesView data={d} />} /> : null}
+        {tab === 'sourcing' ? <Ranged load={sourcingAction} render={(d) => <SourcingView data={d} />} /> : null}
+        {tab === 'withholding' ? <Ranged load={withholdingReportAction} render={(d) => <WithholdingView data={d} />} /> : null}
+        {tab === 'qualification' ? <Ranged load={() => qualificationAction()} render={(d) => <QualificationView data={d} />} /> : null}
+        {tab === 'petty' ? <Ranged load={pettyCashReportAction} render={(d) => <PettyView data={d} />} /> : null}
         {tab === 'watch' ? <Ranged load={watchListAction} render={(d) => <WatchView data={d} />} /> : null}
       </div>
     </div>
@@ -168,7 +178,7 @@ function WatchView({ data }: { data: Watch }) {
   const none = data.duplicateInvoices.length + data.sharedBankAccounts.length + data.newVendorPayments.length + data.overriddenOrders.length === 0;
   return (
     <div className="space-y-5">
-      <p className="text-xs text-fg-muted">These are things to look at, not mistakes. Nothing here blocks or changes a document.</p>
+      <p className="text-xs text-fg-muted">These are things to look at, not mistakes. Nothing here blocks or changes a document. The limits are set under <Link href="/admin/vendors/settings" className="font-semibold underline">Ordering rules</Link>; a flagged payment also needs three people to approve and pay it, when that rule is on.</p>
       {none ? <p className="text-sm text-fg-muted" role="status">Nothing needs a second look in this period.</p> : null}
       {data.duplicateInvoices.length === 0 ? null : (
         <section aria-label="Invoices that look alike" className="space-y-2">
@@ -198,5 +208,85 @@ function WatchView({ data }: { data: Watch }) {
         </section>
       )}
     </div>
+  );
+}
+
+type Sourcing = Extract<Awaited<ReturnType<typeof sourcingAction>>, { ok: true }>['data'];
+function SourcingView({ data }: { data: Sourcing }) {
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-fg">Awarded between {data.range.from} and {data.range.to}: {data.averageCycleDays === null ? 'no cycle time to show' : <>on average <span className="font-semibold">{String(data.averageCycleDays)} days</span> from issue to award</>} · saved against the dearest quote <span className="font-semibold">{money(data.savedAgainstHighestCents)}</span></p>
+      <Rows
+        label="Awarded requests for quotation"
+        rows={data.lines}
+        keyOf={(r) => r.id}
+        empty="No request for quotation was awarded in this period."
+        cols={[
+          { head: 'Request', cell: (r) => `${r.number ?? ''} ${r.title}`.trim() },
+          { head: 'Days to award', cell: (r) => (r.cycleDays === null ? '—' : String(r.cycleDays)), right: true },
+          { head: 'Awarded', cell: (r) => `${money(r.awardedCents)} ${r.currency}`, right: true },
+          { head: 'Saved vs dearest quote', cell: (r) => money(r.savedAgainstHighestCents), right: true },
+          { head: 'Under the estimate', cell: (r) => (r.savedAgainstEstimateCents === null ? 'No estimate' : money(r.savedAgainstEstimateCents)), right: true },
+        ]}
+      />
+    </div>
+  );
+}
+
+type Withholding = Extract<Awaited<ReturnType<typeof withholdingReportAction>>, { ok: true }>['data'];
+function WithholdingView({ data }: { data: Withholding }) {
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-fg">Withheld between {data.range.from} and {data.range.to}: <span className="font-semibold">{money(data.totalCents)}</span></p>
+      <Rows
+        label="Tax withheld"
+        rows={data.lines}
+        keyOf={(r) => `${r.period}-${r.vendor}-${r.code}-${r.currency}`}
+        empty="No tax was withheld in this period."
+        cols={[
+          { head: 'Month', cell: (r) => r.period },
+          { head: 'Vendor', cell: (r) => r.vendor },
+          { head: 'Kind', cell: (r) => r.code },
+          { head: 'Certificates', cell: (r) => String(r.certificates), right: true },
+          { head: 'Paid on', cell: (r) => `${money(r.baseCents)} ${r.currency}`, right: true },
+          { head: 'Withheld', cell: (r) => money(r.amountCents), right: true },
+        ]}
+      />
+    </div>
+  );
+}
+
+type Qualification = Extract<Awaited<ReturnType<typeof qualificationAction>>, { ok: true }>['data'];
+const QUALIFICATION_WORDS: [string, string][] = [['approved', 'Qualified'], ['submitted', 'Waiting'], ['in_review', 'In review'], ['revision_requested', 'Sent back'], ['suspended', 'Suspended'], ['rejected', 'Refused'], ['expired', 'Expired'], ['revoked', 'Revoked']];
+function QualificationView({ data }: { data: Qualification }) {
+  return (
+    <Rows
+      label="Qualification by category"
+      rows={data.lines}
+      keyOf={(r) => r.category}
+      empty="No vendor has applied to be qualified yet."
+      cols={[{ head: 'Category', cell: (r) => r.category }, ...QUALIFICATION_WORDS.map(([key, label]): Col<(typeof data.lines)[number]> => ({ head: label, cell: (r) => String(r.counts[key] ?? 0), right: true }))]}
+    />
+  );
+}
+
+type Petty = Extract<Awaited<ReturnType<typeof pettyCashReportAction>>, { ok: true }>['data'];
+function PettyView({ data }: { data: Petty }) {
+  return (
+    <Rows
+      label="Petty cash"
+      rows={data.lines}
+      keyOf={(r) => r.floatId}
+      empty="There are no petty cash floats."
+      cols={[
+        { head: 'Float', cell: (r) => `${r.name} (${r.code})` },
+        { head: 'Vouchers paid', cell: (r) => String(r.vouchers), right: true },
+        { head: 'Reversed', cell: (r) => String(r.reversed), right: true },
+        { head: 'Paid out', cell: (r) => `${money(r.spentCents)} ${r.currency}`, right: true },
+        { head: 'Topped up', cell: (r) => money(r.toppedUpCents), right: true },
+        { head: 'Cash now', cell: (r) => money(r.balanceCents), right: true },
+        { head: 'Not yet covered', cell: (r) => String(r.notYetCoveredVouchers), right: true },
+      ]}
+    />
   );
 }

@@ -2,8 +2,8 @@
  * Live smoke test for the configured media provider. Run it once after setting
  * credentials, and again after changing them:
  *
- *   npx tsx scripts/check-media-provider.ts            # uses MEDIA_DRIVER (default: cloudinary)
- *   npx tsx scripts/check-media-provider.ts cloudinary
+ *   npx tsx scripts/check-media-provider.ts            # uses MEDIA_DRIVER (S3-compatible storage when S3_BUCKET is set)
+ *   npx tsx scripts/check-media-provider.ts s3|cloudinary|local
  *
  * It uploads two tiny test images (one public, one private), checks they can be
  * read the way the app reads them, checks the private one is NOT reachable without
@@ -15,7 +15,7 @@
 /* eslint-disable no-console -- a CLI check: printing the results is its whole job */
 import 'dotenv/config';
 import { deflateSync, crc32 } from 'node:zlib';
-import { MediaPortRegistry } from '@/server/adapters/media/registry';
+import { MediaPortRegistry, configuredMediaDriver } from '@/server/adapters/media/registry';
 import { cloudinaryConfigFromEnv } from '@/server/adapters/media/cloudinary.adapter';
 import type { MediaObjectRef } from '@/server/ports/media';
 
@@ -63,9 +63,10 @@ async function status(url: string): Promise<{ code: number; type: string }> {
 }
 
 async function main(): Promise<void> {
-  const provider = (process.argv.at(2) ?? process.env.MEDIA_DRIVER ?? 'cloudinary').toLowerCase();
-  if (provider !== 'cloudinary' && provider !== 'local') {
-    throw new Error(`Unknown provider "${provider}". Use "cloudinary" or "local".`);
+  const named = process.argv.at(2)?.toLowerCase();
+  const provider = named ?? configuredMediaDriver();
+  if (provider !== 's3' && provider !== 'cloudinary' && provider !== 'local') {
+    throw new Error(`Unknown provider "${provider}". Use "s3", "cloudinary" or "local".`);
   }
   const port = new MediaPortRegistry().forProvider(provider);
   console.log(`Checking provider: ${provider}\n`);
@@ -99,19 +100,27 @@ async function main(): Promise<void> {
       report(guessed.code !== 200, 'private file is NOT readable by guessing its URL', `HTTP ${guessed.code}`);
       const asPublic = await status(`https://res.cloudinary.com/${cloudName}/image/upload/${privateFile.storageKey}.png`);
       report(asPublic.code !== 200, 'private file is NOT reachable as a public asset', `HTTP ${asPublic.code}`);
+    } else if (provider === 's3') {
+      const signed = await status(port.urlFor(privateRef));
+      report(signed.code === 200 && signed.type.startsWith('image/'), 'private file readable through a signed, expiring link', `HTTP ${signed.code} ${signed.type}`);
+      const bare = new URL(port.urlFor(privateRef));
+      bare.search = '';
+      const guessed = await status(bare.href);
+      report(guessed.code !== 200, 'private file is NOT readable without the signed link', `HTTP ${guessed.code}`);
     } else {
       report(true, 'private file checks skipped (local adapter: access is enforced by the app route)');
     }
 
-    // The provider must refuse non-images even though our own validation also does.
-    let refused = false;
+    // The provider must refuse non-images even though our own validation also does. An S3 bucket
+    // stores any bytes, so there the app's own check (the file's signature) is the only gate.
+    let refused = provider === 's3';
     try {
       const junk = await port.put({ data: Buffer.from('this is not an image'), mime: 'image/png', folder: 'smoke-test', visibility: 'public' });
       created.push({ storageKey: junk.storageKey, visibility: 'public' });
     } catch {
       refused = true;
     }
-    report(refused, 'a non-image is refused at the provider');
+    report(refused, provider === 's3' ? 'a non-image is refused by the app’s own check (S3 stores any bytes)' : 'a non-image is refused at the provider');
   } finally {
     // Always clean up, and say so if cleanup itself fails: leftover files cost money.
     for (const ref of created) {

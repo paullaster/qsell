@@ -23,9 +23,11 @@
     "worker": "tsx src/server/queue/index.ts",
     "media:verify": "tsx scripts/verify-cloudinary-adapter.ts",
     "media:check": "tsx scripts/check-media-provider.ts",
+    "media:bucket": "tsx scripts/ensure-media-bucket.ts",
     "media:purge": "tsx scripts/purge-media.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1156.0",
     "@node-rs/bcrypt": "^1.10.9",
     "@sentry/nextjs": "^11.7.0",
     "@sentry/profiling-node": "11.7.0",
@@ -45,6 +47,7 @@
     "uuid": "^14.0.2"
   },
   "devDependencies": {
+    "@aws-sdk/s3-request-presigner": "^3.1156.0",
     "@eslint/js": "10.0.1",
     "@playwright/test": "1.64.0",
     "@tailwindcss/postcss": "^4.1.14",

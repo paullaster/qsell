@@ -40,8 +40,7 @@ export async function POST(request: Request) {
       data: Buffer.from(await file.arrayBuffer()),
       issuedOn: text('issuedOn'),
       expiresOn: text('expiresOn'),
-    }),
-  );
+    }), 'vendor_upload');
   let status = 200;
   if (!result.ok) status = result.signedOut === true ? 401 : 400;
   return NextResponse.json(result, { status, headers: { 'Cache-Control': 'no-store' } });

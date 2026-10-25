@@ -7,16 +7,29 @@ import { getContainer } from '@/server/di/container';
 import type { UserSession, CustomerAccount } from '@/types/index';
 import { SESSION_COOKIE } from './service';
 import { StorefrontCustomerService } from '@/server/domains/customers/storefront-service';
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { after } from 'next/server';
 import { validatePassword } from '@/lib/passwordPolicy';
+import { clientAddress, waitMessage, type RateRuleName } from '@/lib/rate-limit';
 import { randomUUID } from 'node:crypto';
 import * as Sentry from '@sentry/nextjs';
 
 const LOGIN_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 type ActionResult = { ok: true } | { ok: false; error: string };
+
+/** Counts one try against each limit; answers with what to tell the person when one is used up, or null to carry on. */
+async function throttled(tries: { rule: RateRuleName; subject: string }[]): Promise<string | null> {
+  const h = await headers();
+  const address = clientAddress(h.get('x-real-ip'), h.get('x-forwarded-for'));
+  let wait = 0;
+  for (const t of tries) {
+    const verdict = await getContainer().rateLimits.hit(t.rule, t.subject === '' ? address : t.subject);
+    if (!verdict.allowed) wait = Math.max(wait, verdict.retryAfterSeconds);
+  }
+  return wait > 0 ? waitMessage(wait) : null;
+}
 
 function normalizeEmail(value: unknown): string {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -191,6 +204,9 @@ export async function registerCustomerAction(input: {
       return { ok: false, error: passwordProblem };
     }
 
+    const slowDown = await throttled([{ rule: 'register_ip', subject: '' }]);
+    if (slowDown !== null) return { ok: false, error: slowDown };
+
     const users = new UserRepository();
     const existing = await users.findByEmail(email);
     if (existing) {
@@ -296,6 +312,8 @@ export async function loginAction(input: {
   if (!LOGIN_EMAIL_PATTERN.test(email)) {
     return { ok: false, error: 'Enter a valid email address.' };
   }
+  const slowDown = await throttled([{ rule: 'login_ip', subject: '' }, { rule: 'login_account', subject: email }]);
+  if (slowDown !== null) return { ok: false, error: slowDown };
 
   try {
     // The password is checked exactly once, in the Credentials provider's authorize().
@@ -339,6 +357,8 @@ export async function resendVerificationEmailAction(input: {
   if (!LOGIN_EMAIL_PATTERN.test(email)) {
     return { ok: false, error: 'Enter a valid email address.' };
   }
+  const slowDown = await throttled([{ rule: 'mail_ip', subject: '' }, { rule: 'mail_account', subject: email }]);
+  if (slowDown !== null) return { ok: false, error: slowDown };
   afterResponse('resend_verification_email', () =>
     getContainer().accounts.resendVerification(email),
   );
@@ -351,6 +371,8 @@ export async function requestPasswordResetAction(input: { email: string }): Prom
   if (!LOGIN_EMAIL_PATTERN.test(email)) {
     return { ok: false, error: 'Enter a valid email address.' };
   }
+  const slowDown = await throttled([{ rule: 'mail_ip', subject: '' }, { rule: 'mail_account', subject: email }]);
+  if (slowDown !== null) return { ok: false, error: slowDown };
   afterResponse('password_reset_email', () => getContainer().accounts.requestPasswordReset(email));
   return { ok: true };
 }
@@ -505,10 +527,10 @@ export async function ensureAdminSessionAction(): Promise<UserSession> {
   const session = await auth();
   if (session?.user?.isStaff === true) {
     return toSessionShape({
-      id: session!.user.id,
-      email: session!.user.email!,
-      name: session!.user.name || 'Admin',
-      role: session!.user.role,
+      id: session.user.id,
+      email: session.user.email,
+      name: session.user.name || 'Admin',
+      role: session.user.role,
     });
   }
 

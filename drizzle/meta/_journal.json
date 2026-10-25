@@ -610,6 +610,20 @@
       "when": 1792929413844,
       "tag": "0086_petty_cash",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1792934211609,
+      "tag": "0087_rate_limit_hits",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1792934669941,
+      "tag": "0088_watch_settings",
+      "breakpoints": true
     }
   ]
 }

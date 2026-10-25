@@ -1,6 +1,7 @@
 'use server';
 
 import { after } from 'next/server';
+import { headers } from 'next/headers';
 import * as Sentry from '@sentry/nextjs';
 import { randomUUID } from 'node:crypto';
 import { getContainer } from '@/server/di/container';
@@ -8,6 +9,7 @@ import { UserRepository } from '@/server/domains/auth/user-repository';
 import { validatePassword } from '@/lib/passwordPolicy';
 import { checkRegistration, type VendorRegistration } from '@/lib/vendor-forms';
 import { has } from '@/lib/values';
+import { clientAddress, waitMessage } from '@/lib/rate-limit';
 import { isUniqueViolation } from '@/server/domains/settings/errors';
 import { PortalAccessError } from './portal-session';
 import { portal } from './portal-runner';
@@ -36,6 +38,9 @@ export async function registerVendorAction(input: VendorRegistration): Promise<R
     const problems = checkRegistration(form, validatePassword(form.password));
     const first = Object.values(problems)[0];
     if (has(first)) return { ok: false, error: first };
+    const h = await headers();
+    const verdict = await getContainer().rateLimits.hit('register_ip', clientAddress(h.get('x-real-ip'), h.get('x-forwarded-for')));
+    if (!verdict.allowed) return { ok: false, error: waitMessage(verdict.retryAfterSeconds) };
 
     const email = form.email.trim().toLowerCase();
     const users = new UserRepository();

@@ -73,6 +73,10 @@ export class PurchaseOrderService {
       invoicePriceToleranceAmount: s?.invoicePriceToleranceAmount ?? '100',
       invoiceQuantityTolerancePercent: s?.invoiceQuantityTolerancePercent ?? '0',
       paymentThreeEyesAbove: s?.paymentThreeEyesAbove ?? '100000',
+      watchDuplicateWindowDays: String(s?.watchDuplicateWindowDays ?? 7),
+      watchNewVendorDays: String(s?.watchNewVendorDays ?? 30),
+      watchNewVendorAmount: s?.watchNewVendorAmount ?? '100000',
+      holdFlaggedPayments: s?.holdFlaggedPayments ?? true,
     };
   }
 
@@ -84,7 +88,7 @@ export class PurchaseOrderService {
 
   async saveSettings(
     ctx: FinanceContext,
-    input: { rfqRequiredAbove: string; amendmentTolerancePercent: string; receiptTolerancePercent?: string; inputTaxAccountId?: string; invoicePriceTolerancePercent?: string; invoicePriceToleranceAmount?: string; invoiceQuantityTolerancePercent?: string; paymentThreeEyesAbove?: string },
+    input: { rfqRequiredAbove: string; amendmentTolerancePercent: string; receiptTolerancePercent?: string; inputTaxAccountId?: string; invoicePriceTolerancePercent?: string; invoicePriceToleranceAmount?: string; invoiceQuantityTolerancePercent?: string; paymentThreeEyesAbove?: string; watchDuplicateWindowDays?: string; watchNewVendorDays?: string; watchNewVendorAmount?: string; holdFlaggedPayments?: boolean },
   ): Promise<void> {
     const above = trimToNull(input.rfqRequiredAbove);
     if (above !== null && !/^\d{1,12}(\.\d{1,2})?$/.test(above)) throw new FinanceError('INVALID', 'The value above which a request for quotation is required is an amount, like 500000, or empty for never.');
@@ -101,6 +105,16 @@ export class PurchaseOrderService {
     if (!/^\d{1,12}(\.\d{1,2})?$/.test(amountText)) throw new FinanceError('INVALID', 'The invoice price tolerance amount is an amount, like 100.');
     const threeText = (input.paymentThreeEyesAbove ?? '').trim() === '' ? '100000' : (input.paymentThreeEyesAbove ?? '').trim();
     if (!/^\d{1,12}(\.\d{1,2})?$/.test(threeText)) throw new FinanceError('INVALID', 'The value from which a payment needs three people is an amount, like 100000, or 0 for never.');
+    const whole = (value: string | undefined, fallback: number, max: number, what: string): number => {
+      const t = (value ?? '').trim();
+      if (t === '') return fallback;
+      if (!/^\d{1,4}$/.test(t) || Number(t) > max) throw new FinanceError('INVALID', `${what} is a whole number of days from 0 to ${String(max)}.`);
+      return Number(t);
+    };
+    const dupDays = whole(input.watchDuplicateWindowDays, 7, 365, 'The window for look-alike invoices');
+    const newDays = whole(input.watchNewVendorDays, 30, 3650, 'The time a vendor counts as new');
+    const newAmount = (input.watchNewVendorAmount ?? '').trim() === '' ? '100000' : (input.watchNewVendorAmount ?? '').trim();
+    if (!/^\d{1,12}(\.\d{1,2})?$/.test(newAmount)) throw new FinanceError('INVALID', 'The payment value to watch for a new vendor is an amount, like 100000, or 0 for never.');
     let tax: string | null = null;
     if (has(input.inputTaxAccountId)) {
       const [account] = await this.db.select({ id: glAccounts.id }).from(glAccounts).where(and(eq(glAccounts.companyId, ctx.companyId), eq(glAccounts.id, input.inputTaxAccountId), eq(glAccounts.type, 'posting'), eq(glAccounts.blocked, false)));
@@ -117,6 +131,10 @@ export class PurchaseOrderService {
       ...(input.invoicePriceToleranceAmount === undefined ? {} : { invoicePriceToleranceAmount: amountText }),
       ...(input.invoiceQuantityTolerancePercent === undefined ? {} : { invoiceQuantityTolerancePercent: qtyPct }),
       ...(input.paymentThreeEyesAbove === undefined ? {} : { paymentThreeEyesAbove: threeText }),
+      ...(input.watchDuplicateWindowDays === undefined ? {} : { watchDuplicateWindowDays: dupDays }),
+      ...(input.watchNewVendorDays === undefined ? {} : { watchNewVendorDays: newDays }),
+      ...(input.watchNewVendorAmount === undefined ? {} : { watchNewVendorAmount: newAmount }),
+      ...(input.holdFlaggedPayments === undefined ? {} : { holdFlaggedPayments: input.holdFlaggedPayments }),
     };
     await this.db.insert(vendorSettings).values({ companyId: ctx.companyId, ...values }).onConflictDoUpdate({ target: vendorSettings.companyId, set: { ...values, updatedAt: new Date() } });
   }

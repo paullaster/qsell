@@ -26,10 +26,41 @@ test.describe('vendor reports', () => {
     const purchases = page.getByRole('tabpanel', { name: 'Purchases' });
     await expect(purchases.getByText(/Booked between/)).toBeVisible({ timeout: 60_000 });
 
+    for (const [tab, text] of [
+      ['Quotations', /Awarded between/],
+      ['Tax withheld', /Withheld between/],
+      ['Qualification', /Qualified|No vendor has applied/],
+      ['Petty cash', /Vouchers paid|There are no petty cash floats/],
+    ] as const) {
+      await page.getByRole('tab', { name: tab }).dispatchEvent('click');
+      await expect(page.getByRole('tabpanel', { name: tab }).getByText(text).locator('visible=true').first()).toBeVisible({ timeout: 60_000 });
+      await noHorizontalScroll(page);
+    }
+
     await page.getByRole('tab', { name: 'Watch list' }).dispatchEvent('click');
     const watch = page.getByRole('tabpanel', { name: 'Watch list' });
     await expect(watch.getByText('These are things to look at, not mistakes. Nothing here blocks or changes a document.')).toBeVisible({ timeout: 60_000 });
     await noHorizontalScroll(page);
     await noInnerHorizontalScroll(page);
+  });
+
+  test('the watch thresholds are set under Ordering rules and kept', async ({ page }) => {
+    test.slow();
+    await open(page, '/admin/vendors/settings', 'Ordering rules');
+    await noNativeSelect(page);
+    await noHorizontalScroll(page);
+    const days = page.getByLabel('A vendor counts as new for this many days after it is added');
+    await expect(days).toBeVisible({ timeout: 60_000 });
+    await days.fill('45');
+    await page.getByRole('button', { name: 'Save' }).dispatchEvent('click');
+    await expect(page.getByText('Saved.')).toBeVisible({ timeout: 60_000 });
+    await page.reload();
+    await expect(page.getByLabel('A vendor counts as new for this many days after it is added')).toHaveValue('45', { timeout: 60_000 });
+    await page.getByLabel('A vendor counts as new for this many days after it is added').fill('4000');
+    await page.getByRole('button', { name: 'Save' }).dispatchEvent('click');
+    await expect(page.getByRole('alert').filter({ hasText: 'whole number of days' })).toBeVisible({ timeout: 60_000 });
+    await page.getByLabel('A vendor counts as new for this many days after it is added').fill('30');
+    await page.getByRole('button', { name: 'Save' }).dispatchEvent('click');
+    await expect(page.getByText('Saved.')).toBeVisible({ timeout: 60_000 });
   });
 });

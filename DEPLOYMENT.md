@@ -69,7 +69,7 @@ passed as an environment variable (which wins over the file).
 | `COMPOSE_PROJECT_NAME` | no       | `qsell-$INSTANCE_ID`              | Namespaces containers/volumes. Unique per installation on a host. **Never change on a live one.**   |
 | `EDGE_HTTP_PORT`       | no       | `8080`                            | Loopback port for Caddy (1024–65535). Unique per installation on a host.                            |
 | `ADMIN_EMAIL`          | yes      | –                                 | Initial super-admin login.                                                                          |
-| `MEDIA_DRIVER`         | no       | `local`                           | `local` or `cloudinary` (see [section 8](#8-image-uploads-media-storage)).                          |
+| `MEDIA_DRIVER`         | no       | `local`                           | `s3`, `local` or `cloudinary` (see [section 8](#8-image-uploads-media-storage)).                          |
 | `CERT_EMAIL`           | yes      | –                                 | Let's Encrypt expiry notices.                                                                       |
 | `GITHUB_REPO`          | yes\*    | –                                 | `owner/name` of the repository.                                                                     |
 | `GHCR_USERNAME`        | yes\*    | –                                 | GitHub user whose token can read the private images.                                                |
@@ -311,7 +311,8 @@ container healthcheck (`scripts/worker-healthcheck.mjs`).
 | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | `Set this environment's PUBLIC_DOMAIN Actions variable`        | Must be an Environment **variable** (not a secret) on the right Environment, bare hostname. Same for the other six variables.     |
 | `Invalid instance id`                                          | `INSTANCE_ID` allows only `a-z 0-9 -` (no underscore). The folder name may differ; the Environment may not.                       |
-| `Unknown MEDIA_DRIVER '…'`                                     | Typo in `.env.runtime` (`cloudinary`/`local` only). Nothing was deployed.                                                         |
+| `Unknown MEDIA_DRIVER '…'`                                     | Typo in `.env.runtime` (`s3`/`cloudinary`/`local` only). Nothing was deployed.                                                         |
+| `MEDIA_DRIVER=s3 but … missing S3_BUCKET, …`                  | Add `S3_BUCKET`, `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` to `.env.runtime`.                                                 |
 | `MEDIA_DRIVER=cloudinary but … missing Cloudinary credentials` | Add `CLOUDINARY_URL` (or all three parts) to `.env.runtime`.                                                                      |
 | `No successful Release build pipeline exists for …`            | SHA wasn't built on `release` (PR or failed publish). Leave SHA empty or pick one from a green run.                               |
 | Workflow not listed in the Actions UI                          | `deploy-instance.yml` isn't on `main` yet ([section 3](#3-one-time-repository-setup)).                                            |
@@ -325,7 +326,7 @@ container healthcheck (`scripts/worker-healthcheck.mjs`).
 | HTTPS check warns "Nginx does not include …"                   | Expected on the first deploy: run phase H.                                                                                        |
 | `certbot` fails                                                | DNS not pointing here, port 80 blocked, or Cloudflare proxy on during issuance.                                                   |
 | `nginx -t` fails after phase H                                 | Run `setup-nginx-site.sh --dry-run`, compare with `/etc/nginx/sites-available/<id>`; fix and re-run.                              |
-| Run is red after a healthy deploy                              | Look at the _last_ failing step: the media smoke test (Cloudinary credentials) is deliberately last and non-blocking for traffic. |
+| Run is red after a healthy deploy                              | Look at the _last_ failing step: the media smoke test (S3 or Cloudinary credentials) is deliberately last and non-blocking for traffic. |
 
 ## 8. Image uploads (media storage)
 
@@ -334,8 +335,9 @@ provider chosen by `MEDIA_DRIVER` in that installation's `DEPLOY_PATH/.env.runti
 
 | `MEDIA_DRIVER`        | Where files go                                                      | Notes                                                 |
 | --------------------- | ------------------------------------------------------------------- | ----------------------------------------------------- |
+| `s3`                  | An S3-compatible bucket (AWS S3, MinIO, R2, B2, Wasabi, Spaces, bundled RustFS) | Needs the settings below. Recommended for production. |
 | `local` (the default) | The persistent `media_data` volume, mounted at `/app/storage/media` | Single host. Survives releases. Back it up (below).   |
-| `cloudinary`          | Your Cloudinary account                                             | Needs the settings below. Recommended for production. |
+| `cloudinary`          | Your Cloudinary account                                             | Kept so earlier uploads keep working.                 |
 
 ### What a release does for you
 
@@ -343,17 +345,81 @@ provider chosen by `MEDIA_DRIVER` in that installation's `DEPLOY_PATH/.env.runti
   turns every existing product image link into a library asset. Nothing to run.
 - **Storage:** the `media_data` volume is created on first deploy, owned by the
   app user, and mounted on both the app and the worker (the nightly sweep deletes
-  files). It stays mounted after you switch to Cloudinary, so earlier uploads keep
-  working.
+  files). It stays mounted after you switch to S3 or Cloudinary, so earlier uploads
+  keep working: every file is read from the provider it was stored with.
 - **Network:** the worker can reach the internet (needed to delete files from
-  Cloudinary). Before, it sat on an internal-only network.
+  S3 or Cloudinary). Before, it sat on an internal-only network.
 - **Checks:** before touching the selected stack, deployment validates that
   instance's media settings. After deploying it confirms `media.uploadsReady`, and
-  (Cloudinary only) a final non-blocking step uploads and removes two tiny test
+  (S3 and Cloudinary) a final non-blocking step uploads and removes two tiny test
   images to prove the credentials work. A failure is shown as a red step with the
   reason.
 - **Sweep:** a nightly worker job removes uploads that were never attached to a
   product and deleted images past their 30-day retention.
+
+### Using S3-compatible storage
+
+Create a private bucket (block all public access) and a key that may only read, write and delete
+inside it, then add to the selected instance's `.env.runtime` (keep it `chmod 600`) and deploy
+that instance:
+
+```sh
+MEDIA_DRIVER=s3
+S3_BUCKET=my-bucket
+S3_REGION=eu-west-1
+S3_ACCESS_KEY_ID=...
+S3_SECRET_ACCESS_KEY=...
+# Anything other than AWS: the store's address (https:// only). Addressed path-style by default.
+# S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com
+# A folder inside the bucket, so installations can share one bucket (default: qsell).
+# S3_PREFIX=<instance-id>
+# Where public files (product images) are served from: a CDN or a public-read bucket policy
+# limited to <prefix>/public/*. Without it public files use signed links that last a few hours.
+# S3_PUBLIC_URL=https://cdn.example.com
+# S3_SSE=AES256
+```
+
+- **Private files** (vendor documents, evidence) are never public: the app hands out a signed link
+  that expires in minutes, and only after checking the person may see the file.
+- **Public files** are product images. Serve them through `S3_PUBLIC_URL`, never by making the
+  whole bucket public.
+- **Smoke test:** `pnpm media:check` uploads and removes two tiny test images and checks that a
+  private file cannot be read without its signed link.
+- **Policy for the key:** allow `s3:PutObject`, `s3:GetObject` and `s3:DeleteObject` on
+  `arn:aws:s3:::<bucket>/<prefix>/*`, and nothing else.
+
+### Using the bundled RustFS (free, self-hosted)
+
+RustFS is open-source, S3-compatible object storage. `compose.production.yaml` includes it as an
+optional service (the `storage` profile), so an installation can keep its files in a store of its own
+without an outside account. Nothing is started unless you ask for it:
+
+```sh
+MEDIA_DRIVER=s3
+# The app and worker reach the store by its name on the private network.
+S3_ENDPOINT=http://rustfs:9000
+# Browsers load files through this site's own address, which forwards /<bucket>/* to the store.
+S3_PUBLIC_ENDPOINT=https://shop.example.com   # exactly https://<PUBLIC_DOMAIN>
+S3_BUCKET=qsell-media
+S3_REGION=us-east-1
+S3_ACCESS_KEY_ID=...        # choose any; the store is created with this key
+S3_SECRET_ACCESS_KEY=...    # a long random value
+```
+
+When a deploy sees `S3_ENDPOINT=http://rustfs…` it checks `S3_PUBLIC_ENDPOINT`, starts the `rustfs`
+service with that key, creates the bucket (once), and tells Caddy which bucket path to forward.
+Nothing else changes: the store has no published port and no route to the internet, and the host
+Nginx needs no new server block because requests already reach Caddy.
+
+- **Private files** stay private: they are never public, only reachable through a signed link that
+  expires in minutes, handed out after the app checks the person may see the file.
+- **Data:** files live in the `rustfs_data` volume. `backup-instance.sh` archives it next to the
+  database and media backups; run it when uploads are quiet. Restore by extracting the archive into a
+  fresh `rustfs_data` volume before starting the service.
+- **Version:** the image is `rustfs/rustfs:latest` unless `RUSTFS_IMAGE` is set; pin a tag once you have
+  tested one. RustFS is a newer project, so read its release notes before an upgrade.
+- **Reverse proxy:** the signature covers the path and the Host header, so the proxy must pass both
+  unchanged. The bundled Caddy route does; if you put your own proxy in front, do the same.
 
 ### Using Cloudinary
 

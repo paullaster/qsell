@@ -6567,6 +6567,13 @@ export const vendorSettings = pgTable('vendor_settings', {
   paymentThreeEyesAbove: numeric('payment_three_eyes_above', { precision: 14, scale: 2 }).notNull().default('100000'),
   /** A payment may close a leftover on an invoice of no more than this, as tolerance. 0 turns it off. */
   paymentToleranceAmount: numeric('payment_tolerance_amount', { precision: 14, scale: 2 }).notNull().default('0'),
+  /** Watch list (design doc §17.4): invoices with the same vendor and total this many days apart are listed. */
+  watchDuplicateWindowDays: integer('watch_duplicate_window_days').notNull().default(7),
+  /** A payment of at least `watchNewVendorAmount` to a vendor added within this many days is listed, and may be held. */
+  watchNewVendorDays: integer('watch_new_vendor_days').notNull().default(30),
+  watchNewVendorAmount: numeric('watch_new_vendor_amount', { precision: 14, scale: 2 }).notNull().default('100000'),
+  /** A flagged payment (new vendor, or a bank account shared with another vendor) needs three different people. */
+  holdFlaggedPayments: boolean('hold_flagged_payments').notNull().default(true),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -7648,3 +7655,16 @@ export const pettyCashEvents = pgTable(
 export type PettyCashFloatRow = typeof pettyCashFloats.$inferSelect;
 export type PettyCashVoucherRow = typeof pettyCashVouchers.$inferSelect;
 export type PettyCashReplenishmentRow = typeof pettyCashReplenishments.$inferSelect;
+
+// ── Request limits ──
+
+/** One row per key and window; the count rises by one per try. Old windows are removed when a new one starts. */
+export const rateLimitHits = pgTable(
+  'rate_limit_hits',
+  {
+    key: text('key').notNull(),
+    windowStart: timestamp('window_start', { withTimezone: true }).notNull(),
+    hits: integer('hits').notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.key, t.windowStart] }), index('rate_limit_hits_window_idx').on(t.windowStart), check('rate_limit_hits_hits_chk', sql`${t.hits} >= 0`)],
+);

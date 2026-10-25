@@ -43,7 +43,7 @@ export async function saveCreditAction(memoId: string, input: unknown) {
 }
 
 export async function submitCreditAction(memoId: string) {
-  return await portal('credit_submit', async (me) => await getContainer().creditMemoPortal.submit(me, me.companyId, idOf(memoId)));
+  return await portal('credit_submit', async (me) => await getContainer().creditMemoPortal.submit(me, me.companyId, idOf(memoId)), 'vendor_submit');
 }
 
 export async function recallCreditAction(memoId: string) {

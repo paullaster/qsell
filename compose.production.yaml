@@ -66,7 +66,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    networks: [data, edge]
+    networks: [data, edge, storage]
     security_opt:
       - no-new-privileges:true
 
@@ -95,7 +95,29 @@ services:
         condition: service_healthy
     # `data` is internal (no internet). The worker must also reach the outside world: Cloudinary
     # (deleting files), payment gateways and email. `egress` is outbound-only; nothing is published.
-    networks: [data, egress]
+    networks: [data, egress, storage]
+    security_opt:
+      - no-new-privileges:true
+
+  # Optional: S3-compatible object storage that runs next to the app (MEDIA_DRIVER=s3 with
+  # S3_ENDPOINT=http://rustfs:9000). Started only when the `storage` profile is on, which the deploy
+  # does for an instance whose S3_ENDPOINT points here. Reachable only on the private `storage`
+  # network; Caddy forwards `/<bucket>/*` to it so browsers can load signed links.
+  rustfs:
+    image: ${RUSTFS_IMAGE:-rustfs/rustfs:latest}
+    profiles: [storage]
+    restart: unless-stopped
+    init: true
+    # RUSTFS_ACCESS_KEY / RUSTFS_SECRET_KEY, written by the deploy from the instance's S3 key.
+    env_file:
+      - path: ./.env.rustfs
+        required: false
+    command: ['/data']
+    volumes:
+      - rustfs_data:/data
+    mem_limit: ${RUSTFS_MEMORY_LIMIT:-1g}
+    cpus: ${RUSTFS_CPUS:-1}
+    networks: [storage]
     security_opt:
       - no-new-privileges:true
 
@@ -119,6 +141,8 @@ services:
     init: true
     environment:
       PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?Set PUBLIC_DOMAIN for this installation}
+      # The bucket whose path is forwarded to the bundled RustFS; the placeholder never matches a URL.
+      MEDIA_BUCKET: ${MEDIA_BUCKET:-__no_media_bucket__}
     ports:
       # Existing host Nginx retains public 80/443 and forwards to Caddy here.
       # Caddy then routes requests to the web app over the Compose network.
@@ -131,7 +155,7 @@ services:
     depends_on:
       app:
         condition: service_healthy
-    networks: [edge]
+    networks: [edge, storage]
     security_opt:
       - no-new-privileges:true
 
@@ -140,6 +164,7 @@ volumes:
   next_cache:
   uploads_data:
   media_data:
+  rustfs_data:
   caddy_data:
   caddy_config:
 
@@ -152,3 +177,6 @@ networks:
     internal: true
   edge:
   egress:
+  # App, worker, Caddy and the bundled object store; no route to the internet.
+  storage:
+    internal: true
