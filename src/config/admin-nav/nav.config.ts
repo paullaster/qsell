@@ -429,6 +429,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'vendor_payments:read',
       },
       {
+        id: 'vendor-reports',
+        title: 'Vendor reports',
+        name: 'vendor-reports',
+        href: '/admin/vendors/reports',
+        description: 'Commitments, vendor performance, purchases and a watch list',
+        icon: 'Activity',
+        permission: 'vendor_reports:read',
+      },
+      {
         id: 'vendor-petty-cash',
         title: 'Petty cash',
         name: 'vendor-petty-cash',

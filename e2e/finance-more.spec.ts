@@ -48,9 +48,10 @@ test.describe('exchange rates', () => {
 });
 
 test.describe('stock in the books', () => {
-  test('says it is not in the books yet and what stands in the way, on any width', async ({ page }) => {
+  test('says whether stock is in the books and what stands in the way, on any width', async ({ page }) => {
     await open(page, '/admin/finance/inventory-posting', 'Stock in the books');
-    await expect(page.getByText('Not in the books yet')).toBeVisible();
+    // The vendor tests put stock in the books for the whole database, so either state is a right answer here.
+    await expect(page.getByText(/Not in the books yet|In the books since/)).toBeVisible();
     await expect(page.getByRole('list', { name: 'Readiness' })).toBeVisible();
     await noNativeSelect(page);
     await noHorizontalScroll(page);

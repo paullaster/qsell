@@ -1,0 +1,202 @@
+'use client';
+
+import { Suspense, use, useId, useState, type ReactNode } from 'react';
+import { type commitmentsAction, performanceAction, purchasesAction, watchListAction } from '@/server/domains/vendors/insights-actions';
+import { fromCents } from '@/lib/vendor-payment';
+import { showPercent } from '@/lib/vendor-insights';
+import { Field, LoadFailed, PageHeader, attempt, cardClass, fieldClass } from '@/components/ui/screen-kit';
+
+type Tab = 'commitments' | 'performance' | 'purchases' | 'watch';
+const TABS: { key: Tab; label: string }[] = [
+  { key: 'commitments', label: 'Commitments' },
+  { key: 'performance', label: 'Performance' },
+  { key: 'purchases', label: 'Purchases' },
+  { key: 'watch', label: 'Watch list' },
+];
+
+type Commitments = Extract<Awaited<ReturnType<typeof commitmentsAction>>, { ok: true }>['data'];
+
+export function VendorReportsClient({ commitmentsPromise }: { commitmentsPromise: ReturnType<typeof commitmentsAction> }) {
+  const first = use(commitmentsPromise);
+  const [tab, setTab] = useState<Tab>('commitments');
+  if (!first.ok) return <LoadFailed error={first.error} />;
+  return (
+    <div className="max-w-6xl space-y-5">
+      <PageHeader title="Vendor reports" intro="What we have committed to buy, how vendors perform, what was bought, and things worth a second look." />
+      <div role="tablist" aria-label="Reports" className="flex flex-wrap gap-2">
+        {TABS.map((t) => (
+          <button key={t.key} type="button" role="tab" aria-selected={tab === t.key} className={`min-h-10 rounded-lg border px-3 text-sm font-semibold ${tab === t.key ? 'border-fg-strong bg-fg-strong text-bg' : 'border-line text-fg'}`} onClick={() => setTab(t.key)}>{t.label}</button>
+        ))}
+      </div>
+      <div role="tabpanel" aria-label={TABS.find((t) => t.key === tab)?.label}>
+        {tab === 'commitments' ? <CommitmentsView data={first.data} /> : null}
+        {tab === 'performance' ? <Ranged load={performanceAction} render={(d) => <PerformanceView data={d} />} /> : null}
+        {tab === 'purchases' ? <Ranged load={purchasesAction} render={(d) => <PurchasesView data={d} />} /> : null}
+        {tab === 'watch' ? <Ranged load={watchListAction} render={(d) => <WatchView data={d} />} /> : null}
+      </div>
+    </div>
+  );
+}
+
+/** Loads a report for a date range when shown, and again when the range changes. */
+function Ranged<T>({ load, render }: { load: (from?: string, to?: string) => Promise<{ ok: true; data: T } | { ok: false; error: string }>; render: (data: T) => ReactNode }) {
+  const uid = useId();
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [pending, setPending] = useState(() => attempt(load()));
+  const change = (f: string, t: string) => {
+    setFrom(f);
+    setTo(t);
+    setPending(attempt(load(f === '' ? undefined : f, t === '' ? undefined : t)));
+  };
+  return (
+    <div className="space-y-4">
+      <div className={`${cardClass} flex flex-wrap items-end gap-3`}>
+        <Field id={`${uid}-f`} label="From"><input id={`${uid}-f`} type="date" value={from} onChange={(e) => change(e.target.value, to)} className={fieldClass} /></Field>
+        <Field id={`${uid}-t`} label="To"><input id={`${uid}-t`} type="date" value={to} onChange={(e) => change(from, e.target.value)} className={fieldClass} /></Field>
+        <p className="text-xs text-fg-muted">Empty dates mean the last year.</p>
+      </div>
+      <div aria-live="polite">
+        <Suspense fallback={<p className="text-sm text-fg-muted">Loading…</p>}>
+          <Shown pending={pending} render={render} />
+        </Suspense>
+      </div>
+    </div>
+  );
+}
+
+function Shown<T>({ pending, render }: { pending: Promise<{ ok: true; data: T } | { ok: false; error: string }>; render: (data: T) => ReactNode }) {
+  const res = use(pending);
+  return res.ok ? <>{render(res.data)}</> : <p role="alert" className="text-sm text-red-700">{res.error}</p>;
+}
+
+interface Col<R> { head: string; cell: (r: R) => ReactNode; right?: boolean }
+
+/** Cards on a phone, a table from md; the first column names the row. */
+function Rows<R>({ label, rows, cols, keyOf, empty }: { label: string; rows: R[]; cols: Col<R>[]; keyOf: (r: R) => string; empty: string }) {
+  if (rows.length === 0) return <p className="text-sm text-fg-muted">{empty}</p>;
+  const [name, ...rest] = cols;
+  return (
+    <>
+      <ul className="space-y-2 md:hidden" aria-label={label}>
+        {rows.map((r) => (
+          <li key={keyOf(r)} className={cardClass}>
+            <p className="text-sm font-bold text-fg-strong">{name?.cell(r)}</p>
+            <dl className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">{rest.map((c) => <div key={c.head}><dt className="text-fg-muted">{c.head}</dt><dd className="font-medium tabular-nums text-fg">{c.cell(r)}</dd></div>)}</dl>
+          </li>
+        ))}
+      </ul>
+      <div className="hidden md:block">
+        <table className="w-full text-sm" aria-label={label}>
+          <thead><tr className="text-left text-xs text-fg-muted">{cols.map((c) => <th key={c.head} className={`py-2 pr-3 ${c.right === true ? 'text-right' : ''}`}>{c.head}</th>)}</tr></thead>
+          <tbody className="divide-y divide-line">{rows.map((r) => <tr key={keyOf(r)}>{cols.map((c) => <td key={c.head} className={`py-2 pr-3 ${c.right === true ? 'text-right tabular-nums' : ''}`}>{c.cell(r)}</td>)}</tr>)}</tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+const money = (cents: number) => fromCents(cents);
+
+function CommitmentsView({ data }: { data: Commitments }) {
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-fg">Open orders: ordered <span className="font-semibold">{money(data.totals.orderedCents)}</span> · still to come in and be invoiced <span className="font-semibold">{money(data.totals.openCents)}</span> · received, not yet invoiced <span className="font-semibold">{money(data.totals.receivedNotInvoicedCents)}</span></p>
+      <Rows
+        label="Commitments by vendor"
+        rows={data.lines}
+        keyOf={(r) => `${r.vendorId}-${r.currency}`}
+        empty="There are no open orders."
+        cols={[
+          { head: 'Vendor', cell: (r) => `${r.name} (${r.currency})` },
+          { head: 'Orders', cell: (r) => String(r.orders), right: true },
+          { head: 'Ordered', cell: (r) => money(r.orderedCents), right: true },
+          { head: 'Received', cell: (r) => money(r.receivedCents), right: true },
+          { head: 'Invoiced', cell: (r) => money(r.invoicedCents), right: true },
+          { head: 'Received, not invoiced', cell: (r) => money(r.receivedNotInvoicedCents), right: true },
+          { head: 'Still open', cell: (r) => money(r.openCents), right: true },
+        ]}
+      />
+    </div>
+  );
+}
+
+type Performance = Extract<Awaited<ReturnType<typeof performanceAction>>, { ok: true }>['data'];
+function PerformanceView({ data }: { data: Performance }) {
+  return (
+    <Rows
+      label="Vendor performance"
+      rows={data.lines}
+      keyOf={(r) => r.vendorId}
+      empty="Nothing was delivered, invoiced or asked for in this period."
+      cols={[
+        { head: 'Vendor', cell: (r) => r.name },
+        { head: 'Deliveries', cell: (r) => String(r.deliveries), right: true },
+        { head: 'On time', cell: (r) => showPercent(r.onTimePercent), right: true },
+        { head: 'Goods rejected', cell: (r) => showPercent(r.rejectedPercent), right: true },
+        { head: 'Invoice lines that matched', cell: (r) => showPercent(r.accuratePercent), right: true },
+        { head: 'Quotation requests answered', cell: (r) => showPercent(r.respondedPercent), right: true },
+      ]}
+    />
+  );
+}
+
+type Purchases = Extract<Awaited<ReturnType<typeof purchasesAction>>, { ok: true }>['data'];
+function PurchasesView({ data }: { data: Purchases }) {
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-fg">Booked between {data.range.from} and {data.range.to}: <span className="font-semibold">{money(data.totalCents)}</span></p>
+      <Rows
+        label="Purchases by vendor"
+        rows={data.lines}
+        keyOf={(r) => `${r.vendorId}-${r.currency}`}
+        empty="No invoices were booked in this period."
+        cols={[
+          { head: 'Vendor', cell: (r) => `${r.name} (${r.currency})` },
+          { head: 'Invoices', cell: (r) => String(r.invoices), right: true },
+          { head: 'Before tax', cell: (r) => money(r.subtotalCents), right: true },
+          { head: 'Tax', cell: (r) => money(r.taxCents), right: true },
+          { head: 'Total', cell: (r) => money(r.totalCents), right: true },
+        ]}
+      />
+    </div>
+  );
+}
+
+type Watch = Extract<Awaited<ReturnType<typeof watchListAction>>, { ok: true }>['data'];
+function WatchView({ data }: { data: Watch }) {
+  const none = data.duplicateInvoices.length + data.sharedBankAccounts.length + data.newVendorPayments.length + data.overriddenOrders.length === 0;
+  return (
+    <div className="space-y-5">
+      <p className="text-xs text-fg-muted">These are things to look at, not mistakes. Nothing here blocks or changes a document.</p>
+      {none ? <p className="text-sm text-fg-muted" role="status">Nothing needs a second look in this period.</p> : null}
+      {data.duplicateInvoices.length === 0 ? null : (
+        <section aria-label="Invoices that look alike" className="space-y-2">
+          <h2 className="text-sm font-bold text-fg-strong">Invoices that look alike</h2>
+          <p className="text-xs text-fg-muted">Same vendor and same total, dated within {data.settings.duplicateWindowDays} days of each other.</p>
+          <Rows label="Look-alike invoices" rows={data.duplicateInvoices} keyOf={(r) => `${r.first}-${r.second}`} empty="" cols={[{ head: 'Vendor', cell: (r) => r.vendor }, { head: 'Invoices', cell: (r) => `${r.first} and ${r.second}` }, { head: 'Total', cell: (r) => money(r.totalCents), right: true }, { head: 'Days apart', cell: (r) => String(r.daysApart), right: true }]} />
+        </section>
+      )}
+      {data.sharedBankAccounts.length === 0 ? null : (
+        <section aria-label="Bank accounts shared by vendors" className="space-y-2">
+          <h2 className="text-sm font-bold text-fg-strong">Bank accounts shared by vendors</h2>
+          <Rows label="Shared bank accounts" rows={data.sharedBankAccounts} keyOf={(r) => `${r.last4}-${r.vendors.join(',')}`} empty="" cols={[{ head: 'Account ending', cell: (r) => r.last4 }, { head: 'Vendors', cell: (r) => r.vendors.join(', ') }]} />
+        </section>
+      )}
+      {data.newVendorPayments.length === 0 ? null : (
+        <section aria-label="Large payments to new vendors" className="space-y-2">
+          <h2 className="text-sm font-bold text-fg-strong">Large payments to new vendors</h2>
+          <p className="text-xs text-fg-muted">Paid within {data.settings.newVendorDays} days of the vendor being added, {money(data.settings.newVendorAmountCents)} or more.</p>
+          <Rows label="New vendor payments" rows={data.newVendorPayments} keyOf={(r) => r.number ?? r.vendor} empty="" cols={[{ head: 'Vendor', cell: (r) => r.vendor }, { head: 'Voucher', cell: (r) => r.number ?? '' }, { head: 'Paid on', cell: (r) => r.paidOn ?? '' }, { head: 'Vendor age (days)', cell: (r) => String(r.vendorAgeDays), right: true }, { head: 'Amount', cell: (r) => money(r.amountCents), right: true }]} />
+        </section>
+      )}
+      {data.overriddenOrders.length === 0 ? null : (
+        <section aria-label="Orders raised with a rule set aside" className="space-y-2">
+          <h2 className="text-sm font-bold text-fg-strong">Orders raised with a rule set aside</h2>
+          <p className="text-xs text-fg-muted">No request for quotation, or a vendor not qualified for the category.</p>
+          <Rows label="Overridden orders" rows={data.overriddenOrders} keyOf={(r) => r.number ?? r.vendor} empty="" cols={[{ head: 'Order', cell: (r) => `${r.number ?? ''} · ${r.vendor}` }, { head: 'Date', cell: (r) => r.orderDate }, { head: 'Total', cell: (r) => money(r.totalCents), right: true }, { head: 'Reason given', cell: (r) => r.reason }]} />
+        </section>
+      )}
+    </div>
+  );
+}

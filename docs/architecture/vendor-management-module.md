@@ -1138,3 +1138,25 @@ Migration `0085_vendor_credit_memos.sql`: `vendor_credit_memos` (+ `_lines`, `_e
 **Verified.** 4 unit tests, 6 integration tests, 1 e2e spec on desktop and phone, ESLint and `tsc` clean on the touched files.
 
 **Not done.** The saved expense account is not shown in the picker when a draft is reopened (it is kept and sent again on save); no cash-count reconciliation screen; no petty cash report yet (V-8).
+
+## 39. V-8 as built (2026-10-25): reports and hardening
+
+**Reports** (`/admin/vendors/reports`, permission `vendor_reports:read`; `VendorInsightsService`, one grouped query per report, company-scoped, no per-vendor queries):
+* **Commitments**: open orders (approved up to partly invoiced) per vendor and currency: ordered, received, invoiced, received-not-invoiced, still open. Values are the order lines' own totals, pro-rated by quantity.
+* **Performance** for a date range: on-time delivery (posted goods notes received on or before the line's, or else the order's, expected date; deliveries with no expected date are left out of the share), goods refused (refused / delivered quantity), invoice accuracy (supplier invoice lines whose three-way match was ok), requests for quotation answered (quoted or declined / invited). A measure with nothing behind it reads "Not measured", never 0%.
+* **Purchases** for a date range: booked invoices by vendor, before tax, tax, total.
+* **Watch list** (reports, never blocks): invoices with the same vendor and total dated within 7 days; a bank account shared by two or more vendors (compared by hash, never opened); payments of 100,000 or more to a vendor added in the last 30 days; orders raised with no request for quotation or with the qualification rule set aside, with the reason given. The three thresholds are parameters of the service (`WATCH_DEFAULTS`), not yet a settings screen.
+
+**Hardening.**
+* *Vendor isolation guard* (`portal-isolation.test.ts`, runs without a database): reads the source of every portal action file and every `/api/vendor` route; fails when an exported action does not run through `portal()` or takes `vendorId`, `companyId`, `userId`, `actor` or `portalRole` as an argument. `registerVendorAction` is the one allowed public action. The behaviour itself (another vendor's object answers not found) is proven by the portal tests of each slice.
+* *Load check* (`insights.load.test.ts`, opt-in: `LOAD_TEST=1 TEST_DATABASE_URL=...` on a throwaway database): 2,000 vendors, 60,000 ledger entries, 12,000 orders with 36,000 lines. Measured here: ageing 264 ms, commitments 316 ms, the other three about 15 ms or less. Performance, purchases and the watch list ran on that data set with no goods notes or booked invoices, so their timings say little: repeat with those tables filled before relying on them.
+* *Backup and restore rehearsal* (`scripts/backup-restore-rehearsal.sh`): dumps a database read-only, restores into a throwaway copy, compares row counts of every table, trigger, index and constraint counts, and checksums of the vendor ledger and the general ledger, then drops the copy. Run against the test database: 317 figures matched. It proves a dump restores whole; it does not replace a rehearsal on the production server's own backup (`scripts/backup-instance.sh`), which still has to be run there by whoever owns it.
+
+**Security review: what it found.**
+1. **No rate limiting exists anywhere in the application** (registration, sign-in, uploads, submit), although §17.1 promises it. Not built here: it needs a decision on where the counters live (the database, Redis, or the reverse proxy in front). Until then, put limits in the nginx site config for `/login`, the registration route and `/api/vendor/*`.
+2. The vendor comes from the session in every portal action and upload route (now guarded by a test); company scoping holds in every report query (each integration test also asks with another company's id and gets nothing).
+3. Not reviewed again in this slice: antivirus scanning (§17.3 says "when a scanner is configured"; none is) and the log of staff downloads of vendor files.
+
+**Tests.** Unit `vendor-insights.test.ts` (3), guard `portal-isolation.test.ts` (11), integration `insights.integration.test.ts` (3), load (opt-in, passes), e2e `vendor-reports.spec.ts` on desktop and phone.
+
+**Not done in V-8.** RFQ cycle time and savings, expiring-documents, withholding and prequalification-status reports; a settings screen for the watch thresholds; petty cash report; anomaly rules that hold a payment for extra approval (the watch list only reports); rate limiting (above).
