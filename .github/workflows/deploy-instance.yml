@@ -170,6 +170,13 @@ jobs:
           media_driver=$(env_value MEDIA_DRIVER | tr 'A-Z' 'a-z')
           case "${media_driver:-local}" in
             local) echo 'Media storage: per-instance persistent local volumes.' ;;
+            s3)
+              if env_has S3_BUCKET && env_has S3_ACCESS_KEY_ID && env_has S3_SECRET_ACCESS_KEY; then
+                echo 'Media storage: S3-compatible storage settings are present.'
+              else
+                echo 'MEDIA_DRIVER=s3 but this instance is missing S3_BUCKET, S3_ACCESS_KEY_ID or S3_SECRET_ACCESS_KEY. Nothing was deployed.'; exit 1
+              fi
+              ;;
             cloudinary)
               if env_has CLOUDINARY_URL || { env_has CLOUDINARY_CLOUD_NAME && env_has CLOUDINARY_API_KEY && env_has CLOUDINARY_API_SECRET; }; then
                 echo 'Media storage: Cloudinary credentials are present.'
@@ -272,8 +279,8 @@ jobs:
           set -eu
           cd "$DEPLOY_PATH"
           driver=$(sed -n 's/^MEDIA_DRIVER=//p' .env.runtime | tail -n 1 | tr -d "'\"" | tr 'A-Z' 'a-z')
-          if [ "${driver:-local}" != cloudinary ]; then
-            echo 'Media provider smoke test skipped: not using Cloudinary.'
+          if [ "${driver:-local}" != cloudinary ] && [ "${driver:-local}" != s3 ]; then
+            echo 'Media provider smoke test skipped: not using S3 or Cloudinary.'
             exit 0
           fi
           docker compose --env-file .env.deploy -f compose.production.yaml \
