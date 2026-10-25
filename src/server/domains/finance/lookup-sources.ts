@@ -1,4 +1,5 @@
 import { eq, inArray, sql, type SQL } from 'drizzle-orm';
+import { APPLIES_ANYWHERE } from '@/server/kernel/reason-codes/lookup-sources';
 import { LIMIT_MODES } from '@/lib/refund-limits-form';
 import { bankAccounts, customers, glAccounts, paymentMethods, paymentProviderConfigs, reasonCodes } from '@/server/db/drizzle/schema';
 import { ADJUSTMENT_STATUS, CHEQUE_STATUS, RECEIPT_STATUS, REFUND_FILE_STATUS, REFUND_STATUS, statusChoices } from '@/lib/finance-statuses';
@@ -114,7 +115,7 @@ const reasons = (key: string, permission: PermissionKey) =>
     select: { requiresComment: reasonCodes.requiresComment },
     scope: ({ companyId, filters }) => {
       acceptFilters(filters, {});
-      return [eq(reasonCodes.companyId, companyId), eq(reasonCodes.isActive, true)];
+      return [eq(reasonCodes.companyId, companyId), eq(reasonCodes.isActive, true), APPLIES_ANYWHERE];
     },
     toOption: (row) => ({ id: text(row.id), label: text(row.label), description: null, badge: null, meta: { requiresComment: row.requiresComment === true ? '1' : '' } }),
   });
