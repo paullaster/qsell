@@ -54,7 +54,9 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
           return;
         }
         let destination: string;
-        if (res.isStaff) {
+        if (res.role === 'vendor') {
+          destination = safeCallbackUrl?.startsWith('/vendor') === true ? safeCallbackUrl : '/vendor';
+        } else if (res.isStaff) {
           // Staff must land in admin — ignore storefront callback leftovers (e.g. "/").
           destination = safeCallbackUrl?.startsWith('/admin') === true ? safeCallbackUrl : '/admin';
         } else {

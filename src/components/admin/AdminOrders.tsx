@@ -101,7 +101,9 @@ export function AdminOrders({ firstPage, companyPromise }: AdminOrdersProps) {
     setBusy(true);
     setError(null);
     try {
-      changed(await updateOrderStatusAction(order.id, change));
+      const result = await updateOrderStatusAction(order.id, change);
+      if (result.ok) changed(result.data);
+      else setError(result.error);
     } catch (err: unknown) {
       setError(messageOf(err, 'The order could not be updated.'));
     } finally {
@@ -113,7 +115,9 @@ export function AdminOrders({ firstPage, companyPromise }: AdminOrdersProps) {
     setBusy(true);
     setError(null);
     try {
-      changed(await cancelOrderAction(order.id, reason));
+      const result = await cancelOrderAction(order.id, reason);
+      if (result.ok) changed(result.data);
+      else setError(result.error);
     } catch (err: unknown) {
       setError(messageOf(err, 'The order could not be cancelled.'));
     } finally {

@@ -244,6 +244,30 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       expect(tx.platformReference).toBe(a.attempt.providerReference);
     });
 
+    it('a paid order whose receipt never came keeps going, and a person can add the reference later without moving its stage', async () => {
+      const p = await provider();
+      const a = await startPayment(p);
+      stkQuery(0);
+      expect((await engine.verification.verifyAttempt(a.attempt.id)).outcome).toBe('confirmed');
+      const paid = await order(a.orderId);
+      expect(paid).toMatchObject({ paymentStatus: 'paid', status: 'processing', transactionReference: null, mpesaReceiptNumber: null });
+
+      await db.update(schema.orders).set({ status: 'shipped' }).where(eq(schema.orders.id, a.orderId));
+      const ask = (reference: string, reason = 'Checked against the M-Pesa statement') => engine.attachOrderReference({ orderId: a.orderId, reference, reason, userId: 'u1' });
+      expect(await ask('ws_CO_123456789')).toMatchObject({ ok: false });
+      expect(await ask('AB')).toMatchObject({ ok: false });
+      expect(await ask('QWE7RT61SV', 'short')).toMatchObject({ ok: false });
+      expect(await ask('QWE7RT61SV')).toEqual({ ok: true });
+      expect(await order(a.orderId)).toMatchObject({ status: 'shipped', transactionReference: 'QWE7RT61SV', mpesaReceiptNumber: 'QWE7RT61SV' });
+
+      // The same number cannot also pay for another order.
+      const b = await startPayment(p);
+      stkQuery(0);
+      await engine.verification.verifyAttempt(b.attempt.id);
+      expect(await engine.attachOrderReference({ orderId: b.orderId, reference: 'QWE7RT61SV', reason: 'Trying the same number again', userId: 'u2' })).toMatchObject({ ok: false });
+      expect((await order(b.orderId)).transactionReference).toBeNull();
+    });
+
     it('while Safaricom is still processing, it asks again later and never decides early', async () => {
       const p = await provider();
       const a = await startPayment(p);

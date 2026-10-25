@@ -34,6 +34,11 @@ import {
   LifeBuoy,
   Activity,
   FolderKanban,
+  ClipboardCheck,
+  Landmark,
+  CalendarClock,
+  FileCheck,
+  FileText,
   type LucideIcon,
 } from 'lucide-react';
 import { hasSubLinks, type AdminNavIconName, type AdminNavItem } from '@/config/admin-nav';
@@ -69,6 +74,11 @@ const ICONS: Record<AdminNavIconName, LucideIcon> = {
   LifeBuoy,
   Activity,
   FolderKanban,
+  ClipboardCheck,
+  Landmark,
+  CalendarClock,
+  FileCheck,
+  FileText,
 };
 
 function NavIcon({ name }: { name?: AdminNavIconName }) {

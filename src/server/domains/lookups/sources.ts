@@ -29,6 +29,7 @@ import { APPROVAL_LOOKUP_SOURCES } from '@/server/kernel/approvals/lookup-source
 import { REASON_LOOKUP_SOURCES } from '@/server/kernel/reason-codes/lookup-sources';
 import { DIMENSION_LOOKUP_SOURCES } from '@/server/domains/dimensions/lookup-sources';
 import { UNIT_LOOKUP_SOURCES } from '@/server/domains/units/lookup-sources';
+import { VENDOR_LOOKUP_SOURCES } from '@/server/domains/vendors/lookup-sources';
 
 /** The non-empty strings joined with a dot, or null when there are none. */
 function joinText(parts: unknown[]): string | null {
@@ -122,7 +123,7 @@ const tradeCustomers = tableSource({
   }),
 });
 
-const enabledCurrenciesFor = (key: string, permission: 'quotes:read' | 'pricing:read') => tableSource({
+const enabledCurrenciesFor = (key: string, permission: 'quotes:read' | 'pricing:read' | 'rfq:create' | 'purchase_orders:create') => tableSource({
   key,
   permission,
   table: currencies,
@@ -144,6 +145,8 @@ const enabledCurrenciesFor = (key: string, permission: 'quotes:read' | 'pricing:
 
 const enabledCurrencies = enabledCurrenciesFor('currencies', 'quotes:read');
 const pricingCurrencies = enabledCurrenciesFor('pricing-currencies', 'pricing:read');
+const rfqCurrencies = enabledCurrenciesFor('rfq-currencies', 'rfq:create');
+const poCurrencies = enabledCurrenciesFor('po-currencies', 'purchase_orders:create');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -222,6 +225,8 @@ const SOURCES: ReadonlyMap<string, LookupSource> = new Map(
     tradeCustomers,
     enabledCurrencies,
     pricingCurrencies,
+    rfqCurrencies,
+    poCurrencies,
     paymentMethods,
     quoteStatuses,
     templateStatuses,
@@ -229,6 +234,7 @@ const SOURCES: ReadonlyMap<string, LookupSource> = new Map(
     orderFulfilmentStatuses,
     ...PAYMENT_LOOKUP_SOURCES,
     ...FINANCE_LOOKUP_SOURCES,
+    ...VENDOR_LOOKUP_SOURCES,
     ...DIMENSION_LOOKUP_SOURCES,
     ...UNIT_LOOKUP_SOURCES,
     ...REASON_LOOKUP_SOURCES,

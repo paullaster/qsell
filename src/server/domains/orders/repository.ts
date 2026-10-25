@@ -180,6 +180,38 @@ export class OrderRepository {
     };
   }
 
+  /**
+   * One page of a shopper's own orders, newest first. The shopper is matched on every mark an order may carry
+   * (store account, login, email, trade customer); paging uses the same keyset as the admin list.
+   */
+  async pageForOwner(input: {
+    ids: readonly string[];
+    tradeCustomerId: string | null;
+    cursor?: string | null;
+    limit?: number;
+  }): Promise<{ rows: Order[]; nextCursor: string | null }> {
+    const limit = Math.min(Math.max(input.limit ?? 10, 1), 50);
+    const after = typeof input.cursor === 'string' && input.cursor !== '' ? decodeCursor(input.cursor) : null;
+    const marks = input.ids.filter((id) => id !== '');
+    const mine = or(
+      marks.length === 0 ? undefined : inArray(orders.userId, [...marks]),
+      input.tradeCustomerId === null ? undefined : eq(orders.tradeCustomerId, input.tradeCustomerId),
+    );
+    if (mine === undefined) return { rows: [], nextCursor: null };
+    const found = await this.db
+      .select({ row: orders, cursor: sql<string>`${orders.createdAt}::text` })
+      .from(orders)
+      .where(and(mine, after === null ? undefined : sql`(${orders.createdAt}, ${orders.id}) < (${after.k}::timestamptz, ${after.id})`))
+      .orderBy(desc(orders.createdAt), desc(orders.id))
+      .limit(limit + 1);
+    const page = found.slice(0, limit);
+    const last = page.at(-1);
+    return {
+      rows: await this.withItems(page.map((f) => f.row)),
+      nextCursor: found.length > limit && last !== undefined ? encodeCursor({ k: last.cursor, id: last.row.id }) : null,
+    };
+  }
+
   async listByUserId(userId: string): Promise<Order[]> {
     const rows = await this.db
       .select()

@@ -31,6 +31,7 @@ import { CashCountService } from './receivables/cash-count-service';
 import { StatementPullService } from './receivables/statement-pull-service';
 import { BankReconciliationService } from './receivables/bank-reconciliation-service';
 import { BankFeedService } from './receivables/bank-feed-service';
+import { VendorLedgerService } from './payables/vendor-ledger-service';
 
 export interface FinanceServices {
   setup: FinanceSetupService;
@@ -42,6 +43,8 @@ export interface FinanceServices {
   reports: FinanceReportsService;
   /** The customer sub-ledger: detailed entries, apply / unapply, statements, ageing. */
   customerLedger: CustomerLedgerService;
+  /** The vendor sub-ledger: what is owed to vendors (accounts payable). */
+  vendorLedger: VendorLedgerService;
   bankAccounts: BankAccountService;
   paymentMethods: PaymentMethodService;
   receipts: ReceiptService;
@@ -107,6 +110,7 @@ export function createFinanceServices(
     journals: new JournalService(db, engine, decisions),
     reports,
     customerLedger,
+    vendorLedger: new VendorLedgerService(db),
     bankAccounts: new BankAccountService(db, decisions),
     paymentMethods: new PaymentMethodService(db, decisions),
     salesPosting,

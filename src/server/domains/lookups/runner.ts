@@ -13,6 +13,11 @@ import { encodeCursor, escapeLike, type ParsedLookupRequest } from './request';
 export interface LookupSource {
   key: string;
   permission: PermissionKey;
+  /**
+   * Also open to a signed-in vendor portal user, who holds no staff permission. Only for fixed lists that say nothing about
+   * any company's data (kinds of ID, contact roles); everything else stays behind `permission` alone.
+   */
+  vendorPortal?: boolean;
   /** Narrows by the filters a caller may send; unknown filters are an error, not ignored. */
   search: (input: SourceInput) => Promise<LookupPage>;
 }
@@ -100,6 +105,8 @@ export function tableSource(config: TableSourceConfig): LookupSource {
 interface StaticSourceConfig {
   key: string;
   permission: PermissionKey;
+  /** See {@link LookupSource.vendorPortal}. */
+  vendorPortal?: boolean;
   /** The whole list, when it is small and fixed or comes from code; may depend on the filters. */
   items: (input: SourceInput) => Promise<LookupOption[]> | LookupOption[];
 }
@@ -113,6 +120,7 @@ export function staticSource(config: StaticSourceConfig): LookupSource {
   return {
     key: config.key,
     permission: config.permission,
+    vendorPortal: config.vendorPortal,
     async search(input) {
       const needle = input.query.toLowerCase();
       const all = (await config.items(input))

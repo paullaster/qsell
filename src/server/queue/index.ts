@@ -34,6 +34,11 @@ export async function startWorker(): Promise<void> {
       // Payments: pick up anything a lost job left half done, and compare with what Safaricom has received.
       '* * * * * provider-sweep',
       '*/10 * * * * provider-pull-sweep',
+      // Vendors: documents past their date, and bank changes whose cool-off has passed.
+      '22 5 * * * vendor-document-expiry',
+      '41 * * * * vendor-bank-promote',
+      // Requests for quotation: close at the deadline and remind (48 h, 4 h); every five minutes so a deadline is honoured closely.
+      '*/5 * * * * rfq-deadlines',
     ].join('\n'),
   });
 

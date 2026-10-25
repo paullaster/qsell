@@ -136,6 +136,18 @@ export async function batchAdjustStockAction(
   return InventoryDomainService.getProducts(adjustments.map((a) => a.productId));
 }
 
+export type OrderActionResult = { ok: true; data: Order } | { ok: false; error: string };
+
+/** Server-action errors are masked in production, so a refusal (held for approval, not found) comes back as data. */
+async function orderOutcome(work: () => Promise<Order>, fallback: string): Promise<OrderActionResult> {
+  try {
+    return { ok: true, data: await work() };
+  } catch (error) {
+    console.error('[orders] action', error);
+    return { ok: false, error: error instanceof Error && error.message.length > 0 && error.message.length < 200 ? error.message : fallback };
+  }
+}
+
 export async function updateOrderStatusAction(
   orderId: string,
   payload: {
@@ -144,23 +156,27 @@ export async function updateOrderStatusAction(
     trackingNumber?: string;
     internalNotes?: string;
   },
-): Promise<Order> {
+): Promise<OrderActionResult> {
   await requirePermission('orders:update');
-  const order = await InventoryDomainService.updateOrderStatus(
-    orderId,
-    payload.status,
-    payload.shippingCourier,
-    payload.trackingNumber,
-    payload.internalNotes,
+  const result = await orderOutcome(
+    () =>
+      InventoryDomainService.updateOrderStatus(
+        orderId,
+        payload.status,
+        payload.shippingCourier,
+        payload.trackingNumber,
+        payload.internalNotes,
+      ),
+    'The order could not be updated. Please try again.',
   );
   revalidatePath('/admin/orders');
-  return order;
+  return result;
 }
 
-export async function cancelOrderAction(orderId: string, reason: string): Promise<Order> {
+export async function cancelOrderAction(orderId: string, reason: string): Promise<OrderActionResult> {
   await requirePermission('orders:cancel');
-  const order = await InventoryDomainService.cancelOrder(orderId, reason);
+  const result = await orderOutcome(() => InventoryDomainService.cancelOrder(orderId, reason), 'The order could not be cancelled. Please try again.');
   revalidatePath('/admin/orders');
   revalidatePath('/admin/inventory');
-  return order;
+  return result;
 }

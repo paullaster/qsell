@@ -3,6 +3,12 @@
 import { useId, useMemo, useRef, useState } from 'react';
 import { Copy, Plus, X } from 'lucide-react';
 import { buildCatalogueIndex, type CatalogueProduct } from '@/lib/catalogue-entry';
+import {
+  firstUnpricedFixed,
+  priceOnModeChange,
+  readPriceInput,
+  unpricedFixedMessage,
+} from '@/lib/template-line-price';
 import { addCatalogueEntry, lastIndexOfProduct, type CatalogueEntry } from '@/lib/quote-layout';
 import type {
   SectionTemplate,
@@ -426,6 +432,13 @@ function SectionTemplateEditor({
 
   const submit = async (event: React.SyntheticEvent) => {
     event.preventDefault();
+    const unpriced = firstUnpricedFixed(input.lines);
+    if (unpriced >= 0) {
+      setError(
+        unpricedFixedMessage(productById.get(input.lines[unpriced].productId)?.name ?? 'An item'),
+      );
+      return;
+    }
     try {
       setBusy(true);
       setError(null);
@@ -597,7 +610,8 @@ function SectionTemplateEditor({
                     <td className="p-3">
                       <div className="font-medium text-fg-strong">{name}</div>
                       <div className="text-xs text-fg-muted">
-                        {product?.sku} · {amount(product?.price ?? 0)}
+                        {product?.sku} ·{' '}
+                        {product?.price == null ? 'Price list' : amount(product.price)}
                       </div>
                     </td>
                     <td className="p-3">
@@ -616,8 +630,7 @@ function SectionTemplateEditor({
                         onChange={(mode) =>
                           patchLine(index, {
                             priceMode: mode,
-                            unitPrice:
-                              mode === 'catalog' ? null : (line.unitPrice ?? product?.price ?? 0),
+                            unitPrice: priceOnModeChange(mode, line.unitPrice, product?.price),
                           })
                         }
                       />
@@ -634,7 +647,9 @@ function SectionTemplateEditor({
                             : (product?.price ?? '')
                         }
                         onChange={(event) =>
-                          patchLine(index, { unitPrice: Number(event.target.value) })
+                          patchLine(index, {
+                            unitPrice: readPriceInput(event.target.value),
+                          })
                         }
                         className="min-h-9 w-28 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong disabled:opacity-50"
                         aria-label={`Fixed price of ${name}`}

@@ -84,7 +84,7 @@ export function OrderInvoicePreview({ order, company, busy, onClose, onEmail, on
             <strong className="block text-[10px] text-fg-subtle uppercase">Bill / Ship To</strong>
             <p className="text-sm font-bold">{order.customerName}</p>
             <p>{order.customerPhone}</p>
-            <p>{order.customerEmail}</p>
+            {has(order.customerEmail) ? <p>{order.customerEmail}</p> : null}
             <p>{addressLine(order.shippingAddress)}</p>
           </div>
           <div>

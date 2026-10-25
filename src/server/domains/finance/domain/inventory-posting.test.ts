@@ -52,6 +52,13 @@ describe('the value of stock', () => {
   });
 });
 
+describe('reversing a receipt', () => {
+  it('clears what the receipt put in the clearing account, not the adjustment account', () => {
+    expect(move('purchase_receipt_reversal', -120000)).toMatchObject({ debit: 'inventory_clearing', credit: 'inventory', cents: 120000 });
+    expect(move('manual_adjustment', -120000)).toMatchObject({ debit: 'inventory_adjustment', credit: 'inventory' });
+  });
+});
+
 describe('readiness', () => {
   it('blocks until finance is set up and every account is chosen, then only informs', () => {
     const blocked = readinessChecks({ financeSetUp: false, missing: ['inventory', 'cogs'], live: false, failed: 0 });

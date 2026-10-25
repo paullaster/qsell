@@ -43,6 +43,32 @@ import { UnitRepository } from '@/server/domains/units/repository';
 import { UnitWriteService } from '@/server/domains/units/write-service';
 import { DimensionSetService } from '@/server/domains/dimensions/set-service';
 import { CustomerMasterService } from '@/server/domains/customers/master-service';
+import { VendorService } from '@/server/domains/vendors/service';
+import { VendorFileStore } from '@/server/domains/vendors/file-store';
+import { VendorProfileService } from '@/server/domains/vendors/profile-service';
+import { VendorReviewService } from '@/server/domains/vendors/review-service';
+import { VendorNotifier } from '@/server/domains/vendors/notifier';
+import { VendorBankChangeService } from '@/server/domains/vendors/bank-change-service';
+import { VendorLifecycleService } from '@/server/domains/vendors/lifecycle-service';
+import { VendorExpiryService } from '@/server/domains/vendors/expiry-service';
+import { VendorInvitationService } from '@/server/domains/vendors/invitation-service';
+import { VendorDocumentTypeService } from '@/server/domains/vendors/document-type-service';
+import { CategoryService } from '@/server/domains/vendors/category-service';
+import { PrequalService } from '@/server/domains/vendors/prequal-service';
+import { PrequalReviewService } from '@/server/domains/vendors/prequal-review-service';
+import { PrequalLifecycle } from '@/server/domains/vendors/prequal-lifecycle';
+import { RfqService } from '@/server/domains/vendors/rfq-service';
+import { RfqPortalService } from '@/server/domains/vendors/rfq-portal-service';
+import { RfqEvaluationService } from '@/server/domains/vendors/rfq-evaluation-service';
+import { PurchaseOrderService } from '@/server/domains/vendors/po-service';
+import { PurchaseOrderPortalService } from '@/server/domains/vendors/po-portal-service';
+import { AdvancePaymentService } from '@/server/domains/vendors/advance-service';
+import { RgnService } from '@/server/domains/vendors/rgn-service';
+import { SupplierInvoicePortalService } from '@/server/domains/vendors/invoice-portal-service';
+import { SupplierInvoiceService } from '@/server/domains/vendors/invoice-service';
+import { SupplierInvoicePostingService } from '@/server/domains/vendors/invoice-posting-service';
+import { VendorPaymentService } from '@/server/domains/vendors/payment-service';
+import { PayablesReportService } from '@/server/domains/vendors/payables-report-service';
 import { TransactionLedgerService } from '@/server/domains/transactions/ledger-service';
 import { TransactionReconcileService } from '@/server/domains/transactions/reconcile-service';
 import { PaymentCallbackService } from '@/server/domains/payments/callback-service';
@@ -108,6 +134,42 @@ export interface AppContainer {
   unitWriter: UnitWriteService;
   dimensionSets: DimensionSetService;
   customers: CustomerMasterService;
+  /** Vendors: the master record, portal links and events (F-7). */
+  vendors: VendorService;
+  /** A vendor's own profile, documents and submission (portal side). */
+  vendorProfile: VendorProfileService;
+  /** Staff review of a submitted profile: verify documents, approve, send back, refuse. */
+  vendorReview: VendorReviewService;
+  vendorFiles: VendorFileStore;
+  vendorNotifier: VendorNotifier;
+  /** Changes to an approved vendor's bank details, under change control. */
+  vendorBank: VendorBankChangeService;
+  vendorLifecycle: VendorLifecycleService;
+  vendorExpiry: VendorExpiryService;
+  vendorInvitations: VendorInvitationService;
+  vendorDocumentTypes: VendorDocumentTypeService;
+  /** Procurement categories, vendor prequalification, and the question "is this vendor qualified for that category". */
+  categories: CategoryService;
+  prequal: PrequalService;
+  prequalReview: PrequalReviewService;
+  prequalLifecycle: PrequalLifecycle;
+  /** Requests for quotation: the document, the vendor's side, and the buyer's comparison and award. */
+  rfqs: RfqService;
+  rfqPortal: RfqPortalService;
+  rfqEvaluation: RfqEvaluationService;
+  /** Purchase orders, the vendor's view of them, and the advance payment document. */
+  purchaseOrders: PurchaseOrderService;
+  poPortal: PurchaseOrderPortalService;
+  advances: AdvancePaymentService;
+  /** Received goods notes: what arrived against an order, stock in, reversal, and received-not-invoiced. */
+  rgns: RgnService;
+  /** Supplier invoices: the vendor's own side, the staff pipeline, and booking to payables. */
+  invoicePortal: SupplierInvoicePortalService;
+  supplierInvoices: SupplierInvoiceService;
+  invoicePosting: SupplierInvoicePostingService;
+  /** Payment vouchers for invoices and advances, and what we owe (ageing, statements). */
+  vendorPayments: VendorPaymentService;
+  payablesReports: PayablesReportService;
   transactionLedger: TransactionLedgerService;
   transactionReconcile: TransactionReconcileService;
   paymentCallbacks: PaymentCallbackService;
@@ -304,6 +366,14 @@ export function getContainer(): AppContainer {
   const reasonCodes = new ReasonCodes(drizzleDb);
   const numbering = createNumbering(decisionLog, reasonCodes);
   const creditNotes = new CreditNoteService(drizzleDb, kraSigning, numbering);
+  const vendors = new VendorService(drizzleDb, numbering);
+  const vendorFiles = new VendorFileStore(drizzleDb);
+  const vendorNotifier = new VendorNotifier(drizzleDb, email, companySettings);
+  const prequalLifecycle = new PrequalLifecycle(drizzleDb, vendorNotifier);
+  const rfqService = new RfqService(drizzleDb, numbering, prequalLifecycle, vendorNotifier);
+  const rgnService = new RgnService(drizzleDb, numbering);
+  const advancePayments = new AdvancePaymentService(drizzleDb, vendorNotifier);
+  const purchaseOrderService = new PurchaseOrderService(drizzleDb, numbering, prequalLifecycle, vendorNotifier);
   const finance = createFinanceServices(drizzleDb, decisionLog, { numbering, reasons: reasonCodes, paymentConfigs, payments });
   const paymentEngine = createPaymentEngine({ db: drizzleDb, registry: paymentRegistry, payments, consumer: new FinanceC2bConsumer(drizzleDb, finance.receipts) });
   // The finance side asks banks for statements through the payment engine.
@@ -350,6 +420,32 @@ export function getContainer(): AppContainer {
     unitWriter,
     dimensionSets,
     customers,
+    vendors,
+    vendorProfile: new VendorProfileService(drizzleDb, vendorFiles, vendorNotifier),
+    vendorReview: new VendorReviewService(drizzleDb, vendors, reasonCodes, vendorNotifier),
+    vendorFiles,
+    vendorNotifier,
+    vendorBank: new VendorBankChangeService(drizzleDb, vendorNotifier),
+    vendorLifecycle: new VendorLifecycleService(drizzleDb, finance.vendorLedger, reasonCodes, vendorNotifier),
+    vendorExpiry: new VendorExpiryService(drizzleDb, vendorNotifier),
+    vendorInvitations: new VendorInvitationService(drizzleDb, users, authTokens, vendorNotifier),
+    vendorDocumentTypes: new VendorDocumentTypeService(drizzleDb),
+    categories: new CategoryService(drizzleDb),
+    prequal: new PrequalService(drizzleDb, vendorNotifier),
+    prequalReview: new PrequalReviewService(drizzleDb, reasonCodes, vendorNotifier),
+    prequalLifecycle,
+    rfqs: rfqService,
+    rfqPortal: new RfqPortalService(drizzleDb, prequalLifecycle, vendorNotifier),
+    rfqEvaluation: new RfqEvaluationService(drizzleDb, rfqService, reasonCodes, vendorNotifier),
+    purchaseOrders: purchaseOrderService,
+    poPortal: new PurchaseOrderPortalService(drizzleDb, purchaseOrderService, rgnService),
+    advances: advancePayments,
+    rgns: rgnService,
+    invoicePortal: new SupplierInvoicePortalService(drizzleDb, numbering, vendorFiles, advancePayments, vendorNotifier),
+    supplierInvoices: new SupplierInvoiceService(drizzleDb, vendorNotifier),
+    invoicePosting: new SupplierInvoicePostingService(drizzleDb, numbering, finance.engine, finance.postingSetup, finance.vendorLedger, vendorNotifier),
+    vendorPayments: new VendorPaymentService(drizzleDb, numbering, finance.engine, finance.vendorLedger, advancePayments, vendorNotifier),
+    payablesReports: new PayablesReportService(drizzleDb),
     transactionLedger,
     transactionReconcile,
     paymentCallbacks,

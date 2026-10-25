@@ -305,16 +305,37 @@ export class PaymentService implements AttemptSettler {
     // needs the platform's own transaction number and waits for it (the reconcile screen lists it) if none came.
     const real = has(input.reference) && !input.reference.startsWith('ws_CO_') ? input.reference : null;
     const receiptProviders = attempt.providerCode === 'mpesa_daraja' || attempt.providerCode === 'kcb_buni';
-    await this.orderRepo.update(attempt.orderId, {
-      paymentStatus: 'paid',
-      status: 'processing',
-      mpesaReceiptNumber: receiptProviders ? real : null,
-      transactionReference: real,
-    });
+    // Without a receipt the order is still paid and moves on; the reference is added by a person (or the
+    // next check) and must never wipe one that is already there.
+    const patch: Parameters<typeof this.orderRepo.update>[1] = { paymentStatus: 'paid', status: 'processing' };
+    if (has(real)) {
+      patch.transactionReference = real;
+      if (receiptProviders) patch.mpesaReceiptNumber = real;
+    }
+    await this.orderRepo.update(attempt.orderId, patch);
     await InventoryReservationService.fulfilOrder(attempt.orderId);
-    await getContainer().customers.applyOrderPayment(attempt.orderId);
-    if (has(real)) await getContainer().transactionReconcile.reconcileSuccessfulPaymentAttempt(attemptId);
+    // The ledger credit needs the reference; without one it waits instead of failing the payment.
+    if (has(real)) {
+      await getContainer().customers.applyOrderPayment(attempt.orderId);
+      await getContainer().transactionReconcile.reconcileSuccessfulPaymentAttempt(attemptId);
+    }
     return { settled: true };
+  }
+
+  /**
+   * A paid order whose payment came without a receipt gets it now. Only the reference changes: the order's
+   * stage is left alone, so an order already dispatched is not pulled back to processing.
+   */
+  async attachReference(attemptId: string, reference: string): Promise<void> {
+    const [attempt] = await this.db.select().from(paymentAttempts).where(eq(paymentAttempts.id, attemptId));
+    if (!attempt) return;
+    const receiptProviders = attempt.providerCode === 'mpesa_daraja' || attempt.providerCode === 'kcb_buni';
+    await this.orderRepo.update(attempt.orderId, {
+      transactionReference: reference,
+      ...(receiptProviders ? { mpesaReceiptNumber: reference } : {}),
+    });
+    await getContainer().customers.applyOrderPayment(attempt.orderId);
+    await getContainer().transactionReconcile.reconcileSuccessfulPaymentAttempt(attemptId);
   }
 
   /** The platform itself says it did not go through. */

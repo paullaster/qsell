@@ -199,7 +199,7 @@ function buildInvoiceEmailHtml(args: {
         ${escapeHtml(ship.street)}<br/>
         ${escapeHtml([ship.city, ship.countyOrState, ship.postalCode].filter(Boolean).join(', '))}<br/>
         ${escapeHtml(ship.country)}<br/>
-        ${escapeHtml(order.customerPhone)} · ${escapeHtml(order.customerEmail)}
+        ${escapeHtml([order.customerPhone, order.customerEmail].filter((v) => v.trim() !== '').join(' · '))}
       </p>
 
       ${paymentBlock}
@@ -403,6 +403,7 @@ export class InvoiceService {
   ): Promise<GeneratedInvoice> {
     const generated = await this.generatePdf(orderId, documentType);
     const order = await this.resolveOrder(orderId);
+    if (order.customerEmail.trim() === '') throw new Error('This order has no email address to send the invoice to. Download it instead.');
     const company = await this.deps.companySettings.getProfile();
     const labels = documentLabels(documentType);
     const pdfBuffer = Buffer.from(generated.pdfBase64, 'base64');

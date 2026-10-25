@@ -112,7 +112,7 @@ export class JengaHqAdapter implements PaymentPort {
         },
         customer: {
           name: input.customerName,
-          email: input.customerEmail,
+          ...(input.customerEmail.trim() === '' ? {} : { email: input.customerEmail }),
           mobileNumber: input.customerPhone,
         },
       };

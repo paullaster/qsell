@@ -2,6 +2,7 @@ import type { JobHelpers } from 'graphile-worker';
 import { getContainer } from '@/server/di/container';
 import { broadcastRealtime } from '@/server/realtime';
 import { has } from '@/lib/values';
+import { businessDate } from '@/server/kernel/numbering/business-date';
 
 interface ProcessPaymentCallbackPayload {
   auditId: string;
@@ -244,6 +245,32 @@ export const expireGiftCards = async (_payload: unknown, helpers: JobHelpers) =>
   if (r.expired > 0 || r.failed > 0) helpers.logger.info(`Gift card expiry: ${r.expired} written off, ${r.failed} could not be`);
 };
 
+/** Worker cron task: documents past their date are marked expired, and vendors are reminded at the days each type asks for. */
+export const vendorDocumentExpiry = async (_payload: unknown, helpers: JobHelpers) => {
+  const container = getContainer();
+  const today = businessDate();
+  const r = await container.vendorExpiry.run(today);
+  if (r.expired > 0 || r.reminded > 0) helpers.logger.info(`Vendor documents: ${r.expired} expired, ${r.reminded} reminders sent`);
+  // Documents first: a qualification whose blocking document just expired is suspended in the same run.
+  const q = await container.prequalLifecycle.run(today);
+  if (q.expired > 0 || q.suspended > 0 || q.restored > 0) helpers.logger.info(`Prequalification: ${q.expired} expired, ${q.suspended} suspended, ${q.restored} restored`);
+};
+
+/** Worker cron task: a changed vendor bank account starts to be used once its cool-off has passed. */
+export const vendorBankPromote = async (_payload: unknown, helpers: JobHelpers) => {
+  const n = await getContainer().vendorBank.promoteDue(new Date());
+  if (n > 0) helpers.logger.info(`Vendor bank accounts: ${n} put into use after the cool-off`);
+};
+
+/** Worker cron task (every few minutes): requests past their deadline close, and vendors that have not quoted are reminded. */
+export const rfqDeadlines = async (_payload: unknown, helpers: JobHelpers) => {
+  const container = getContainer();
+  const now = new Date();
+  const closed = await container.rfqs.closeDue(now);
+  const reminded = await container.rfqs.remind(now);
+  if (closed > 0 || reminded > 0) helpers.logger.info(`Requests for quotation: ${closed} closed at their deadline, ${reminded} reminders sent`);
+};
+
 export const tasks = {
   'process-payment-callback': processPaymentCallback,
   'process-webhook': processWebhook,
@@ -267,4 +294,7 @@ export const tasks = {
   'provider-send-operation': providerSendOperation,
   'provider-sweep': providerSweep,
   'provider-pull-sweep': providerPullSweep,
+  'vendor-document-expiry': vendorDocumentExpiry,
+  'vendor-bank-promote': vendorBankPromote,
+  'rfq-deadlines': rfqDeadlines,
 };
