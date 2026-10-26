@@ -340,6 +340,55 @@ describe.skipIf(!has(url))('purchase orders and advance payments (database)', ()
     });
   });
 
+  describe('advances outstanding', () => {
+    it('lists an advance that is approved or paid and not yet used, oldest first, and drops it once cancelled', async () => {
+      const v = await approvedVendor();
+      const cat = await qualifiedIn(v);
+      const id = await released(v, cat, { requiresAdvancePayment: true });
+      const adv = await advances.create(staff('buyer'), id, { amount: '1000', dueDate: '', reason: 'Deposit to start' });
+      await advances.submit(staff('buyer'), adv.id);
+      const today = new Date().toISOString().slice(0, 10);
+      const mine = async () => (await c.payablesReports.advancesOutstanding(companyId, today)).lines.find((l) => l.id === adv.id);
+      expect(await mine()).toBeUndefined();
+      await advances.approve(staff('boss'), adv.id);
+      expect(await mine()).toMatchObject({ status: 'approved', amountCents: 100000, currency: 'KES', days: 0 });
+      await advances.recordPayment(companyId, adv.id, randomUUID());
+      expect(await mine()).toMatchObject({ status: 'paid' });
+      const report = await c.payablesReports.advancesOutstanding(companyId, today);
+      expect(report.paidNotAppliedCents).toBeGreaterThanOrEqual(100000);
+      const later = await c.payablesReports.advancesOutstanding(companyId, new Date(Date.now() + 10 * 86_400_000).toISOString().slice(0, 10));
+      expect(later.lines.find((l) => l.id === adv.id)?.days).toBe(10);
+    });
+  });
+
+  describe('an approval workflow for advance payments (the approval engine)', () => {
+    it('holds an advance for the inbox: no direct approval or cancel, a release approves it, a refusal sends it back to draft', async () => {
+      const v = await approvedVendor();
+      const cat = await qualifiedIn(v);
+      const mk = async (label: string) => required((await db.insert(schema.users).values({ email: `${label}-${randomUUID()}@example.test`, passwordHash: 'x', name: label, role: 'manager' }).returning())[0]).id;
+      const [owner, buyer] = await Promise.all([mk('boss'), mk('buyer')]);
+      const actor = { type: 'user' as const, id: 'wf-test' };
+      const reason = { code: 'POLICY_CHANGE' };
+      await c.approvalConfig.saveProfile(companyId, { userId: owner, limits: [] }, actor, reason);
+      const wf = await c.approvalConfig.createWorkflow(companyId, { code: `W-${randomUUID().slice(0, 8)}`, name: 'Advance test', trigger: 'vendor.advance_payment' }, actor);
+      await c.approvalConfig.saveDraft(companyId, wf.id, { conditions: { op: 'eq', field: 'vendor.id', value: v.vendorId }, steps: [{ sequence: 1, name: 'Boss', approver: { type: 'user', userId: owner } }] } as never, actor);
+      await c.approvalConfig.publish(companyId, wf.id, actor, reason);
+      const id = await released(v, cat, { requiresAdvancePayment: true });
+      const status = async (aid: string) => required((await db.select().from(schema.vendorAdvancePayments).where(eq(schema.vendorAdvancePayments.id, aid)))[0]).status;
+      const entryOf = async (aid: string) => required((await c.approvals.forDocument(companyId, 'vendor_advance', aid)).flatMap((r) => r.entries).find((e) => e.status === 'open'));
+      const adv = await advances.create(staff(buyer), id, { amount: '1000', dueDate: '', reason: 'Deposit to start' });
+      await advances.submit(staff(buyer), adv.id);
+      expect(await status(adv.id)).toBe('pending_approval');
+      expect(await codeOf(advances.approve(staff('boss'), adv.id))).toBe('USE_APPROVALS');
+      expect(await codeOf(advances.cancel(staff(buyer), adv.id, 'Changed my mind'))).toBe('USE_APPROVALS');
+      await db.transaction(async (tx) => await c.approvals.reject((await entryOf(adv.id)).id, owner, { reasonCode: 'OTHER', comment: 'Too early' }, tx));
+      expect(await status(adv.id)).toBe('draft');
+      await advances.submit(staff(buyer), adv.id);
+      await db.transaction(async (tx) => await c.approvals.approve((await entryOf(adv.id)).id, owner, null, tx));
+      expect(await status(adv.id)).toBe('approved');
+    });
+  });
+
   describe('making an order from an award', () => {
     async function awarded(vendors: PortalActor[]) {
       catSeq += 1;

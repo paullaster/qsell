@@ -2009,6 +2009,21 @@ export const products = pgTable(
     index('products_item_type_idx').on(t.itemTypeId),
     index('products_active_idx').on(t.isActive),
     index('products_base_unit_idx').on(t.baseUnitId),
+    // The shop reads only live, sellable products, in one of four orders, a page at a time.
+    index('products_shop_name_idx')
+      .on(t.name, t.id)
+      .where(sql`${t.isActive} and ${t.isSellable} and ${t.deletedAt} is null`),
+    index('products_shop_price_idx')
+      .on(sql`coalesce(${t.price}, 0)`, t.id)
+      .where(sql`${t.isActive} and ${t.isSellable} and ${t.deletedAt} is null`),
+    index('products_shop_newest_idx')
+      .on(t.createdAt, t.id)
+      .where(sql`${t.isActive} and ${t.isSellable} and ${t.deletedAt} is null`),
+    // Substring search (`ilike '%word%'`) in the shop's search box.
+    index('products_name_trgm_idx').using('gin', t.name.op('gin_trgm_ops')),
+    index('products_sku_trgm_idx').using('gin', t.sku.op('gin_trgm_ops')),
+    index('products_brand_trgm_idx').using('gin', t.brand.op('gin_trgm_ops')),
+    index('products_category_name_trgm_idx').using('gin', t.categoryName.op('gin_trgm_ops')),
   ],
 );
 
@@ -5799,6 +5814,8 @@ export const vendorLedgerEntries = pgTable(
     amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
     remainingAmount: numeric('remaining_amount', { precision: 14, scale: 2 }).notNull(),
     currency: text('currency').notNull(),
+    /** Base currency per one unit of `currency` when it was booked (1 in the books' own currency). Fixed for the life of the entry. */
+    rate: numeric('rate', { precision: 24, scale: 8 }).notNull().default('1'),
     postingDate: date('posting_date', { mode: 'string' }).notNull(),
     documentDate: date('document_date', { mode: 'string' }),
     dueDate: date('due_date', { mode: 'string' }),
@@ -5948,6 +5965,10 @@ export const vendorBankAccounts = pgTable(
     vendorId: uuid('vendor_id')
       .notNull()
       .references(() => vendors.id, { onDelete: 'cascade' }),
+    /** What the money is sent to: a bank account, or an M-Pesa phone, paybill or till. For the last three the sealed number is that phone or shortcode. */
+    kind: text('kind').$type<'bank' | 'mpesa_phone' | 'mpesa_paybill' | 'mpesa_till'>().notNull().default('bank'),
+    /** The account number a paybill or till payment quotes (what the vendor recognises it by). */
+    reference: text('reference'),
     bankName: text('bank_name').notNull(),
     branch: text('branch').notNull(),
     accountName: text('account_name').notNull(),
@@ -5980,6 +6001,7 @@ export const vendorBankAccounts = pgTable(
     uniqueIndex('vendor_bank_one_pending_uidx').on(t.vendorId).where(sql`${t.status} = 'pending_change'`),
     index('vendor_bank_pending_idx').on(t.effectiveFrom).where(sql`${t.status} = 'pending_change'`),
     check('vendor_bank_four_eyes_chk', sql`(${t.approvedBy} IS NULL OR ${t.approvedBy} IS DISTINCT FROM ${t.proposedBy}) AND (${t.approvedBy} IS NULL OR ${t.approvedBy} IS DISTINCT FROM ${t.callbackBy})`),
+    check('vendor_bank_kind_chk', sql`${t.kind} IN ('bank','mpesa_phone','mpesa_paybill','mpesa_till')`),
     check('vendor_bank_status_chk', sql`${t.status} IN ('draft','active','pending_change','retired')`),
   ],
 );
@@ -6506,6 +6528,22 @@ export const rfqAwards = pgTable(
   (t) => [index('rfq_awards_rfq_idx').on(t.rfqId), check('rfq_awards_qty_chk', sql`${t.quantity} > 0`)],
 );
 
+/** An award waiting for an approval workflow: what was chosen, kept until it is approved (then awarded) or refused (then dropped). */
+export const rfqAwardProposals = pgTable(
+  'rfq_award_proposals',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    rfqId: uuid('rfq_id')
+      .notNull()
+      .references(() => rfqs.id, { onDelete: 'cascade' }),
+    allocations: jsonb('allocations').$type<{ rfqLineId: string; vendorId: string; quantity: string }[]>().notNull(),
+    justification: text('justification'),
+    proposedBy: text('proposed_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('rfq_award_proposals_rfq_uq').on(t.rfqId)],
+);
+
 export const rfqEvents = pgTable(
   'rfq_events',
   {
@@ -6566,6 +6604,8 @@ export const vendorSettings = pgTable('vendor_settings', {
   /** A payment voucher of at least this value needs three different people: to prepare, approve and pay it. 0 turns it off. */
   paymentThreeEyesAbove: numeric('payment_three_eyes_above', { precision: 14, scale: 2 }).notNull().default('100000'),
   /** A payment may close a leftover on an invoice of no more than this, as tolerance. 0 turns it off. */
+  /** A vendor's invoice with tax on it must carry its eTIMS invoice number before it can be sent, so the input tax can be claimed. */
+  requireEtimsForTax: boolean('require_etims_for_tax').notNull().default(false),
   paymentToleranceAmount: numeric('payment_tolerance_amount', { precision: 14, scale: 2 }).notNull().default('0'),
   /** Watch list (design doc §17.4): invoices with the same vendor and total this many days apart are listed. */
   watchDuplicateWindowDays: integer('watch_duplicate_window_days').notNull().default(7),
@@ -6596,6 +6636,8 @@ export const purchaseOrders = pgTable(
       .references(() => procurementCategories.id, { onDelete: 'restrict' }),
     rfqId: uuid('rfq_id').references(() => rfqs.id, { onDelete: 'restrict' }),
     quoteId: uuid('quote_id').references(() => rfqQuotes.id, { onDelete: 'restrict' }),
+    /** The blanket order (contract) this order calls off, when it does. Its prices are the contract's. */
+    contractId: uuid('contract_id').references((): AnyPgColumn => vendorContracts.id, { onDelete: 'restrict' }),
     orderDate: date('order_date', { mode: 'string' }).notNull(),
     expectedDate: date('expected_date', { mode: 'string' }),
     branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
@@ -6660,6 +6702,7 @@ export const purchaseOrderLines = pgTable(
     lineTotal: numeric('line_total', { precision: 14, scale: 2 }).notNull().default('0'),
     expectedDate: date('expected_date', { mode: 'string' }),
     awardId: uuid('award_id').references(() => rfqAwards.id, { onDelete: 'restrict' }),
+    contractLineId: uuid('contract_line_id').references((): AnyPgColumn => vendorContractLines.id, { onDelete: 'restrict' }),
     // Kept by receiving and invoicing (later slices), never edited by hand.
     receivedQuantity: numeric('received_quantity', { precision: 14, scale: 3 }).notNull().default('0'),
     invoicedQuantity: numeric('invoiced_quantity', { precision: 14, scale: 3 }).notNull().default('0'),
@@ -6843,8 +6886,11 @@ export const rgnLines = pgTable(
     unitCost: numeric('unit_cost', { precision: 14, scale: 4 }),
     // Kept by supplier invoices (V-6): how much of the accepted quantity has been invoiced.
     invoicedQuantity: numeric('invoiced_quantity', { precision: 14, scale: 3 }).notNull().default('0'),
+    // Kept by purchase returns: how much of the accepted quantity has gone back to the vendor.
+    returnedQuantity: numeric('returned_quantity', { precision: 14, scale: 3 }).notNull().default('0'),
   },
   (t) => [
+    check('rgn_lines_returned_chk', sql`${t.returnedQuantity} >= 0 AND ${t.returnedQuantity} + ${t.invoicedQuantity} <= ${t.accepted}`),
     index('rgn_lines_rgn_idx').on(t.rgnId),
     index('rgn_lines_po_line_idx').on(t.poLineId),
     uniqueIndex('rgn_lines_uidx').on(t.rgnId, t.poLineId),
@@ -6890,6 +6936,9 @@ export const supplierInvoices = pgTable(
       .notNull()
       .references(() => purchaseOrders.id, { onDelete: 'restrict' }),
     vendorInvoiceNo: text('vendor_invoice_no').notNull(),
+    /** The number KRA's eTIMS gave the vendor's invoice (the control unit invoice number printed on it), and where it can be verified. */
+    etimsInvoiceNo: text('etims_invoice_no'),
+    etimsVerificationUrl: text('etims_verification_url'),
     state: text('state').$type<SupplierInvoiceState>().notNull().default('draft'),
     revision: integer('revision').notNull().default(1),
     currency: text('currency').notNull(),
@@ -7142,10 +7191,19 @@ export const vendorPaymentVouchers = pgTable(
     batchId: uuid('batch_id').references((): AnyPgColumn => vendorPaymentBatches.id, { onDelete: 'set null' }),
     /** The cheque number written for it, when the run is a cheque run. */
     chequeNo: text('cheque_no'),
+    /** The bank statement line this payment was made from: the money had already left the bank, and the line is matched when the payment is recorded. */
+    /** Base currency per one unit of the voucher's currency on the day it was paid. */
+    rate: numeric('rate', { precision: 24, scale: 8 }).notNull().default('1'),
+    /** The journal that books the exchange difference between the invoices' rates and this payment's rate, in the books' currency. */
+    fxRegisterId: uuid('fx_register_id'),
+    /** What the business gained (positive) or lost (negative) on the exchange between the rates, in the books' currency. */
+    fxDifference: numeric('fx_difference', { precision: 14, scale: 2 }).notNull().default('0'),
+    statementLineId: bigint('statement_line_id', { mode: 'number' }).references(() => bankStatementLines.id, { onDelete: 'restrict' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    uniqueIndex('vendor_payment_vouchers_statement_line_uidx').on(t.statementLineId).where(sql`${t.statementLineId} IS NOT NULL AND ${t.status} <> 'cancelled'`),
     index('vendor_payment_vouchers_batch_idx').on(t.batchId).where(sql`${t.batchId} IS NOT NULL`),
     // One cheque number is written once on one way of paying (one cheque book), while the voucher is alive.
     uniqueIndex('vendor_payment_vouchers_cheque_uidx').on(t.methodId, t.chequeNo).where(sql`${t.chequeNo} IS NOT NULL AND ${t.status} IN ('approved','paid')`),
@@ -7667,4 +7725,614 @@ export const rateLimitHits = pgTable(
     hits: integer('hits').notNull().default(0),
   },
   (t) => [primaryKey({ columns: [t.key, t.windowStart] }), index('rate_limit_hits_window_idx').on(t.windowStart), check('rate_limit_hits_hits_chk', sql`${t.hits} >= 0`)],
+);
+
+// ── Refunds received from vendors (V-7 deferred item) ──
+
+export type VendorRefundStatus = 'pending' | 'posted' | 'cancelled' | 'reversed';
+
+/**
+ * Money a vendor pays back to us: an overpayment, a payment on account, an advance or a credit memo that will not be used against
+ * an invoice. It is set against that credit in the vendor ledger and books Dr bank / Cr payables (or prepayments).
+ */
+export const vendorRefunds = pgTable(
+  'vendor_refunds',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    /** Given when the refund is posted. */
+    number: text('number'),
+    status: text('status').$type<VendorRefundStatus>().notNull().default('pending'),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'restrict' }),
+    /** The credit the refund is set against: a vendor ledger entry of a payment, an advance or a credit memo. */
+    creditEntryId: uuid('credit_entry_id')
+      .notNull()
+      .references(() => vendorLedgerEntries.id, { onDelete: 'restrict' }),
+    creditKind: text('credit_kind').$type<'payment' | 'advance' | 'credit_memo'>().notNull(),
+    creditNo: text('credit_no').notNull(),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    currency: text('currency').notNull(),
+    /** The way of paying (and so the bank account) the money came in through. */
+    methodId: uuid('method_id')
+      .notNull()
+      .references(() => paymentMethods.id, { onDelete: 'restrict' }),
+    note: text('note'),
+    reference: text('reference'),
+    receivedOn: date('received_on', { mode: 'string' }),
+    createdBy: text('created_by'),
+    postedBy: text('posted_by'),
+    postedAt: timestamp('posted_at', { withTimezone: true }),
+    registerId: uuid('register_id'),
+    ledgerEntryId: uuid('ledger_entry_id'),
+    bankLedgerEntryId: bigint('bank_ledger_entry_id', { mode: 'number' }),
+    cancelReason: text('cancel_reason'),
+    reversedBy: text('reversed_by'),
+    reversedAt: timestamp('reversed_at', { withTimezone: true }),
+    reverseReason: text('reverse_reason'),
+    reversalRegisterId: uuid('reversal_register_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('vendor_refunds_company_number_uidx').on(t.companyId, t.number).where(sql`${t.number} IS NOT NULL`),
+    index('vendor_refunds_vendor_idx').on(t.vendorId, t.createdAt),
+    index('vendor_refunds_credit_idx').on(t.creditEntryId).where(sql`${t.status} IN ('pending','posted')`),
+    check('vendor_refunds_status_chk', sql`${t.status} IN ('pending','posted','cancelled','reversed')`),
+    check('vendor_refunds_kind_chk', sql`${t.creditKind} IN ('payment','advance','credit_memo')`),
+    check('vendor_refunds_amount_chk', sql`${t.amount} > 0`),
+    check('vendor_refunds_poster_chk', sql`${t.postedBy} IS NULL OR ${t.postedBy} IS DISTINCT FROM ${t.createdBy}`),
+    check('vendor_refunds_posted_chk', sql`${t.status} NOT IN ('posted','reversed') OR (${t.number} IS NOT NULL AND ${t.reference} IS NOT NULL AND ${t.receivedOn} IS NOT NULL AND ${t.registerId} IS NOT NULL)`),
+  ],
+);
+
+export const vendorRefundEvents = pgTable(
+  'vendor_refund_events',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    refundId: uuid('refund_id')
+      .notNull()
+      .references(() => vendorRefunds.id, { onDelete: 'cascade' }),
+    event: text('event').notNull(),
+    reasonText: text('reason_text'),
+    data: jsonb('data').$type<Record<string, unknown>>().notNull().default({}),
+    actorType: text('actor_type').notNull(),
+    actorId: text('actor_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('vendor_refund_events_idx').on(t.refundId, t.id)],
+);
+
+export type VendorRefundRow = typeof vendorRefunds.$inferSelect;
+
+// ── Purchase returns (V-7 deferred item) ──
+
+export type PurchaseReturnStatus = 'draft' | 'posted' | 'cancelled';
+
+/** Goods sent back to the vendor after they were received: the stock goes out at cost, and the vendor's credit memo is expected. */
+export const purchaseReturns = pgTable(
+  'purchase_returns',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    /** Given when the return is posted. */
+    number: text('number'),
+    status: text('status').$type<PurchaseReturnStatus>().notNull().default('draft'),
+    rgnId: uuid('rgn_id')
+      .notNull()
+      .references(() => rgns.id, { onDelete: 'restrict' }),
+    poId: uuid('po_id')
+      .notNull()
+      .references(() => purchaseOrders.id, { onDelete: 'restrict' }),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'restrict' }),
+    returnDate: date('return_date', { mode: 'string' }).notNull(),
+    reason: text('reason').notNull(),
+    notes: text('notes'),
+    /** The vendor's own reference for the return (a return authorisation, or the credit note it sends). */
+    vendorReference: text('vendor_reference'),
+    createdBy: text('created_by'),
+    postedBy: text('posted_by'),
+    postedAt: timestamp('posted_at', { withTimezone: true }),
+    cancelReason: text('cancel_reason'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('purchase_returns_company_number_uidx').on(t.companyId, t.number).where(sql`${t.number} IS NOT NULL`),
+    index('purchase_returns_rgn_idx').on(t.rgnId),
+    index('purchase_returns_vendor_idx').on(t.vendorId, t.createdAt),
+    check('purchase_returns_status_chk', sql`${t.status} IN ('draft','posted','cancelled')`),
+    check('purchase_returns_poster_chk', sql`${t.postedBy} IS NULL OR ${t.postedBy} IS DISTINCT FROM ${t.createdBy}`),
+    check('purchase_returns_posted_chk', sql`${t.status} <> 'posted' OR (${t.number} IS NOT NULL AND ${t.postedAt} IS NOT NULL)`),
+  ],
+);
+
+export const purchaseReturnLines = pgTable(
+  'purchase_return_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    returnId: uuid('return_id')
+      .notNull()
+      .references(() => purchaseReturns.id, { onDelete: 'cascade' }),
+    rgnLineId: uuid('rgn_line_id')
+      .notNull()
+      .references(() => rgnLines.id, { onDelete: 'restrict' }),
+    poLineId: uuid('po_line_id')
+      .notNull()
+      .references(() => purchaseOrderLines.id, { onDelete: 'restrict' }),
+    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    /** What the goods cost per unit, taken from the note when the return is posted. */
+    unitCost: numeric('unit_cost', { precision: 14, scale: 4 }),
+  },
+  (t) => [
+    uniqueIndex('purchase_return_lines_uidx').on(t.returnId, t.rgnLineId),
+    index('purchase_return_lines_rgn_line_idx').on(t.rgnLineId),
+    check('purchase_return_lines_qty_chk', sql`${t.quantity} > 0`),
+  ],
+);
+
+export const purchaseReturnEvents = pgTable(
+  'purchase_return_events',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    returnId: uuid('return_id')
+      .notNull()
+      .references(() => purchaseReturns.id, { onDelete: 'cascade' }),
+    event: text('event').notNull(),
+    reasonText: text('reason_text'),
+    data: jsonb('data').$type<Record<string, unknown>>().notNull().default({}),
+    actorType: text('actor_type').notNull(),
+    actorId: text('actor_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('purchase_return_events_idx').on(t.returnId, t.id)],
+);
+
+export type PurchaseReturnRow = typeof purchaseReturns.$inferSelect;
+
+// ── Purchase requisitions (design doc §23, now built) ──
+
+export type RequisitionStatus = 'draft' | 'submitted' | 'approved' | 'rejected' | 'converted' | 'cancelled';
+
+/** An internal request to buy something: approved by another person, then turned into a request for quotation or an order. */
+export const purchaseRequisitions = pgTable(
+  'purchase_requisitions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    /** Given when it is first submitted, so abandoned drafts leave no gaps. */
+    number: text('number'),
+    status: text('status').$type<RequisitionStatus>().notNull().default('draft'),
+    title: text('title').notNull(),
+    purpose: text('purpose').notNull().default(''),
+    categoryId: uuid('category_id')
+      .notNull()
+      .references(() => procurementCategories.id, { onDelete: 'restrict' }),
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+    neededBy: date('needed_by', { mode: 'string' }),
+    currency: text('currency').notNull(),
+    estimatedTotal: numeric('estimated_total', { precision: 14, scale: 2 }).notNull().default('0'),
+    requesterId: text('requester_id'),
+    submittedAt: timestamp('submitted_at', { withTimezone: true }),
+    decidedBy: text('decided_by'),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    rejectReason: text('reject_reason'),
+    cancelReason: text('cancel_reason'),
+    /** What it became: a request for quotation or an order. */
+    convertedType: text('converted_type').$type<'rfq' | 'purchase_order'>(),
+    convertedId: uuid('converted_id'),
+    convertedAt: timestamp('converted_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('purchase_requisitions_company_number_uidx').on(t.companyId, t.number).where(sql`${t.number} IS NOT NULL`),
+    index('purchase_requisitions_company_status_idx').on(t.companyId, t.status, t.createdAt),
+    index('purchase_requisitions_requester_idx').on(t.requesterId, t.createdAt),
+    check('purchase_requisitions_status_chk', sql`${t.status} IN ('draft','submitted','approved','rejected','converted','cancelled')`),
+    check('purchase_requisitions_decider_chk', sql`${t.decidedBy} IS NULL OR ${t.decidedBy} IS DISTINCT FROM ${t.requesterId}`),
+    check('purchase_requisitions_converted_chk', sql`${t.status} <> 'converted' OR (${t.convertedType} IS NOT NULL AND ${t.convertedId} IS NOT NULL)`),
+  ],
+);
+
+export const purchaseRequisitionLines = pgTable(
+  'purchase_requisition_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    requisitionId: uuid('requisition_id')
+      .notNull()
+      .references(() => purchaseRequisitions.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull(),
+    productId: text('product_id').references(() => products.id, { onDelete: 'set null' }),
+    description: text('description').notNull(),
+    specification: text('specification'),
+    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    unit: text('unit').notNull().default('each'),
+    estimatedUnitPrice: numeric('estimated_unit_price', { precision: 14, scale: 2 }).notNull().default('0'),
+  },
+  (t) => [index('purchase_requisition_lines_idx').on(t.requisitionId, t.position), check('purchase_requisition_lines_qty_chk', sql`${t.quantity} > 0 AND ${t.estimatedUnitPrice} >= 0`)],
+);
+
+export const purchaseRequisitionEvents = pgTable(
+  'purchase_requisition_events',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    requisitionId: uuid('requisition_id')
+      .notNull()
+      .references(() => purchaseRequisitions.id, { onDelete: 'cascade' }),
+    event: text('event').notNull(),
+    reasonText: text('reason_text'),
+    data: jsonb('data').$type<Record<string, unknown>>().notNull().default({}),
+    actorType: text('actor_type').notNull(),
+    actorId: text('actor_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('purchase_requisition_events_idx').on(t.requisitionId, t.id)],
+);
+
+export type PurchaseRequisitionRow = typeof purchaseRequisitions.$inferSelect;
+
+// ── Blanket orders / contracts (design doc §23, now built) ──
+
+export type ContractStatus = 'draft' | 'pending_approval' | 'active' | 'closed' | 'cancelled';
+
+/**
+ * An agreement with a vendor for a period: agreed prices, and optionally the most that may be bought (in quantity per line, and in
+ * value overall). Orders are called off against it; what has been called off is counted from those orders, never kept as a second figure.
+ */
+export const vendorContracts = pgTable(
+  'vendor_contracts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    /** Given when it is approved. */
+    number: text('number'),
+    status: text('status').$type<ContractStatus>().notNull().default('draft'),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'restrict' }),
+    categoryId: uuid('category_id')
+      .notNull()
+      .references(() => procurementCategories.id, { onDelete: 'restrict' }),
+    title: text('title').notNull(),
+    currency: text('currency').notNull(),
+    validFrom: date('valid_from', { mode: 'string' }).notNull(),
+    validTo: date('valid_to', { mode: 'string' }).notNull(),
+    /** The most all orders called off may come to, with tax. Empty means no ceiling. */
+    maxValue: numeric('max_value', { precision: 14, scale: 2 }),
+    terms: text('terms'),
+    createdBy: text('created_by'),
+    submittedAt: timestamp('submitted_at', { withTimezone: true }),
+    approvedBy: text('approved_by'),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    rejectReason: text('reject_reason'),
+    closeReason: text('close_reason'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('vendor_contracts_company_number_uidx').on(t.companyId, t.number).where(sql`${t.number} IS NOT NULL`),
+    index('vendor_contracts_vendor_idx').on(t.vendorId, t.status),
+    index('vendor_contracts_company_status_idx').on(t.companyId, t.status, t.validTo),
+    check('vendor_contracts_status_chk', sql`${t.status} IN ('draft','pending_approval','active','closed','cancelled')`),
+    check('vendor_contracts_period_chk', sql`${t.validFrom} <= ${t.validTo}`),
+    check('vendor_contracts_max_chk', sql`${t.maxValue} IS NULL OR ${t.maxValue} > 0`),
+    check('vendor_contracts_approver_chk', sql`${t.approvedBy} IS NULL OR ${t.approvedBy} IS DISTINCT FROM ${t.createdBy}`),
+    check('vendor_contracts_active_chk', sql`${t.status} NOT IN ('active','closed') OR ${t.number} IS NOT NULL`),
+  ],
+);
+
+export const vendorContractLines = pgTable(
+  'vendor_contract_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    contractId: uuid('contract_id')
+      .notNull()
+      .references(() => vendorContracts.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull(),
+    productId: text('product_id').references(() => products.id, { onDelete: 'set null' }),
+    description: text('description').notNull(),
+    specification: text('specification'),
+    unit: text('unit').notNull().default('each'),
+    unitPrice: numeric('unit_price', { precision: 14, scale: 2 }).notNull(),
+    discountPercent: numeric('discount_percent', { precision: 5, scale: 2 }).notNull().default('0'),
+    taxRate: numeric('tax_rate', { precision: 5, scale: 2 }).notNull().default('0'),
+    /** The most that may be ordered on this line over the whole contract. Empty means no limit on the line. */
+    maxQuantity: numeric('max_quantity', { precision: 14, scale: 3 }),
+  },
+  (t) => [
+    index('vendor_contract_lines_idx').on(t.contractId, t.position),
+    check('vendor_contract_lines_chk', sql`${t.unitPrice} >= 0 AND ${t.discountPercent} BETWEEN 0 AND 100 AND (${t.maxQuantity} IS NULL OR ${t.maxQuantity} > 0)`),
+  ],
+);
+
+export const vendorContractEvents = pgTable(
+  'vendor_contract_events',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    contractId: uuid('contract_id')
+      .notNull()
+      .references(() => vendorContracts.id, { onDelete: 'cascade' }),
+    event: text('event').notNull(),
+    reasonText: text('reason_text'),
+    data: jsonb('data').$type<Record<string, unknown>>().notNull().default({}),
+    actorType: text('actor_type').notNull(),
+    actorId: text('actor_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('vendor_contract_events_idx').on(t.contractId, t.id)],
+);
+
+export type VendorContractRow = typeof vendorContracts.$inferSelect;
+export type VendorContractLineRow = typeof vendorContractLines.$inferSelect;
+
+// ── Landed costs (design doc §23, now built) ──
+
+export type LandedCostStatus = 'draft' | 'posted' | 'cancelled';
+
+/**
+ * A charge on top of what goods cost (freight, duty, insurance), spread over the lines of one received goods note and added to
+ * what the goods in stock cost. Posting changes the products' cost, which the books follow through the existing stock revaluation.
+ */
+export const landedCosts = pgTable(
+  'landed_costs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    /** Given when it is posted. */
+    number: text('number'),
+    status: text('status').$type<LandedCostStatus>().notNull().default('draft'),
+    rgnId: uuid('rgn_id')
+      .notNull()
+      .references(() => rgns.id, { onDelete: 'restrict' }),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'restrict' }),
+    kind: text('kind').notNull(),
+    description: text('description').notNull(),
+    /** The invoice or document the charge came on. */
+    reference: text('reference').notNull(),
+    /** In the books' own currency. */
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    /** How it is spread: by the value of the goods, or by their quantity. */
+    method: text('method').$type<'value' | 'quantity'>().notNull().default('value'),
+    createdBy: text('created_by'),
+    postedBy: text('posted_by'),
+    postedAt: timestamp('posted_at', { withTimezone: true }),
+    cancelReason: text('cancel_reason'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('landed_costs_company_number_uidx').on(t.companyId, t.number).where(sql`${t.number} IS NOT NULL`),
+    // One charge document is added once: the same reference on the same note and kind cannot be posted twice.
+    uniqueIndex('landed_costs_reference_uidx').on(t.rgnId, t.kind, sql`lower(${t.reference})`).where(sql`${t.status} <> 'cancelled'`),
+    index('landed_costs_rgn_idx').on(t.rgnId),
+    check('landed_costs_status_chk', sql`${t.status} IN ('draft','posted','cancelled')`),
+    check('landed_costs_method_chk', sql`${t.method} IN ('value','quantity')`),
+    check('landed_costs_amount_chk', sql`${t.amount} > 0`),
+    check('landed_costs_poster_chk', sql`${t.postedBy} IS NULL OR ${t.postedBy} IS DISTINCT FROM ${t.createdBy}`),
+    check('landed_costs_posted_chk', sql`${t.status} <> 'posted' OR (${t.number} IS NOT NULL AND ${t.postedAt} IS NOT NULL)`),
+  ],
+);
+
+/** What the charge added to each product, fixed when it is posted. */
+export const landedCostLines = pgTable(
+  'landed_cost_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    landedCostId: uuid('landed_cost_id')
+      .notNull()
+      .references(() => landedCosts.id, { onDelete: 'cascade' }),
+    rgnLineId: uuid('rgn_line_id')
+      .notNull()
+      .references(() => rgnLines.id, { onDelete: 'restrict' }),
+    productId: text('product_id').notNull(),
+    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    share: numeric('share', { precision: 14, scale: 2 }).notNull(),
+    costBefore: numeric('cost_before', { precision: 14, scale: 2 }),
+    costAfter: numeric('cost_after', { precision: 14, scale: 2 }),
+    /** What reached the stock value: units in stock times the change in cost (the cost is kept to the cent, so this can differ from the share by a few cents). */
+    capitalised: numeric('capitalised', { precision: 14, scale: 2 }),
+  },
+  (t) => [uniqueIndex('landed_cost_lines_uidx').on(t.landedCostId, t.rgnLineId), index('landed_cost_lines_rgn_line_idx').on(t.rgnLineId)],
+);
+
+export const landedCostEvents = pgTable(
+  'landed_cost_events',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    landedCostId: uuid('landed_cost_id')
+      .notNull()
+      .references(() => landedCosts.id, { onDelete: 'cascade' }),
+    event: text('event').notNull(),
+    reasonText: text('reason_text'),
+    data: jsonb('data').$type<Record<string, unknown>>().notNull().default({}),
+    actorType: text('actor_type').notNull(),
+    actorId: text('actor_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('landed_cost_events_idx').on(t.landedCostId, t.id)],
+);
+
+export type LandedCostRow = typeof landedCosts.$inferSelect;
+
+// ── Vendor scorecards (design doc §23, now built) ──
+
+/** What a scorecard is made of: a measure taken from documents, or a rating a person gives. Weights are the company's. */
+export const scorecardCriteria = pgTable(
+  'scorecard_criteria',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    /** on_time, accepted, invoice_accuracy and rfq_response are measured; rating is given by a person. */
+    source: text('source').$type<'on_time' | 'accepted' | 'invoice_accuracy' | 'rfq_response' | 'rating'>().notNull(),
+    weight: integer('weight').notNull(),
+    active: boolean('active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('scorecard_criteria_code_uidx').on(t.companyId, sql`lower(${t.code})`),
+    check('scorecard_criteria_source_chk', sql`${t.source} IN ('on_time','accepted','invoice_accuracy','rfq_response','rating')`),
+    check('scorecard_criteria_weight_chk', sql`${t.weight} BETWEEN 1 AND 100`),
+  ],
+);
+
+/** One person's rating of a vendor on the day: kept, never changed. */
+export const vendorReviews = pgTable(
+  'vendor_reviews',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'restrict' }),
+    reviewerId: text('reviewer_id'),
+    comment: text('comment'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('vendor_reviews_vendor_idx').on(t.vendorId, t.createdAt)],
+);
+
+export const vendorReviewRatings = pgTable(
+  'vendor_review_ratings',
+  {
+    reviewId: uuid('review_id')
+      .notNull()
+      .references(() => vendorReviews.id, { onDelete: 'cascade' }),
+    criterionId: uuid('criterion_id')
+      .notNull()
+      .references(() => scorecardCriteria.id, { onDelete: 'restrict' }),
+    rating: integer('rating').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.reviewId, t.criterionId] }), index('vendor_review_ratings_criterion_idx').on(t.criterionId), check('vendor_review_ratings_chk', sql`${t.rating} BETWEEN 1 AND 5`)],
+);
+
+export type ScorecardCriterionRow = typeof scorecardCriteria.$inferSelect;
+
+// ── Foreign currency on the payables side ──
+
+/** What open foreign-currency payables were worth at a day's rate against what the books carry them at; undone the next day. */
+export const payablesRevaluations = pgTable(
+  'payables_revaluations',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    asOf: date('as_of', { mode: 'string' }).notNull(),
+    rates: jsonb('rates').$type<Record<string, string>>().notNull(),
+    /** What it added to what is owed, in the books' currency (a loss is positive). */
+    net: numeric('net', { precision: 14, scale: 2 }).notNull(),
+    groups: jsonb('groups').$type<Record<string, { net: string; register: string; reversal: string | null }>>().notNull(),
+    reversedAt: timestamp('reversed_at', { withTimezone: true }),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('payables_revaluations_day_uidx').on(t.companyId, t.asOf), index('payables_revaluations_open_idx').on(t.companyId).where(sql`${t.reversedAt} IS NULL`)],
+);
+
+export type PayablesRevaluationRow = typeof payablesRevaluations.$inferSelect;
+
+/**
+ * A shopper's review of a product. Shown only once a person at the company has approved it (`status = 'approved'`).
+ * One review per person per product (a change goes back to `pending`). The product's `rating` and `review_count` are
+ * kept in step with the approved reviews in the same transaction that approves, rejects, changes or deletes one.
+ */
+export const productReviews = pgTable(
+  'product_reviews',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'cascade' }),
+    /** The signed-in account that wrote it (taken from the session, never from the browser). */
+    reviewerKey: text('reviewer_key').notNull(),
+    /** How the reviewer is shown: a first name and an initial, never an email address. */
+    reviewerName: text('reviewer_name').notNull(),
+    rating: smallint('rating').notNull(),
+    title: text('title').notNull().default(''),
+    body: text('body').notNull(),
+    status: text('status').$type<'pending' | 'approved' | 'rejected'>().notNull().default('pending'),
+    /** Written by someone whose delivered or completed order contains this product. */
+    verifiedPurchase: boolean('verified_purchase').notNull().default(false),
+    orderId: text('order_id'),
+    /** Why it was turned down, shown to the reviewer. */
+    moderationNote: text('moderation_note').notNull().default(''),
+    moderatedBy: text('moderated_by'),
+    moderatedAt: timestamp('moderated_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('product_reviews_one_per_person_uidx').on(t.productId, t.reviewerKey),
+    // The public list: approved reviews of one product, newest first.
+    index('product_reviews_public_idx')
+      .on(t.productId, t.createdAt, t.id)
+      .where(sql`${t.status} = 'approved'`),
+    // The moderation queue, oldest waiting first.
+    index('product_reviews_queue_idx').on(t.status, t.createdAt, t.id),
+    index('product_reviews_reviewer_idx').on(t.reviewerKey),
+    check('product_reviews_rating_chk', sql`${t.rating} BETWEEN 1 AND 5`),
+    check('product_reviews_status_chk', sql`${t.status} IN ('pending', 'approved', 'rejected')`),
+    check('product_reviews_body_chk', sql`char_length(btrim(${t.body})) BETWEEN 10 AND 2000`),
+    check('product_reviews_title_chk', sql`char_length(${t.title}) <= 100`),
+  ],
+);
+
+/** Products a signed-in shopper has saved for later. Guests keep theirs in the browser. */
+export const wishlistItems = pgTable(
+  'wishlist_items',
+  {
+    userId: text('user_id').notNull(),
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.productId] }), index('wishlist_items_user_idx').on(t.userId, t.createdAt)],
+);
+
+/**
+ * People who asked for the shop's news. Double opt-in: a row is `pending` until its link is followed, so nobody can be
+ * signed up by someone else. Every message carries the `token` for a one-click unsubscribe.
+ */
+export const newsletterSubscribers = pgTable(
+  'newsletter_subscribers',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    email: text('email').notNull(),
+    status: text('status').$type<'pending' | 'subscribed' | 'unsubscribed'>().notNull().default('pending'),
+    token: text('token').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+    unsubscribedAt: timestamp('unsubscribed_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('newsletter_subscribers_email_uidx').on(t.email),
+    uniqueIndex('newsletter_subscribers_token_uidx').on(t.token),
+    index('newsletter_subscribers_status_idx').on(t.status, t.createdAt),
+    check('newsletter_subscribers_status_chk', sql`${t.status} IN ('pending', 'subscribed', 'unsubscribed')`),
+    check('newsletter_subscribers_email_chk', sql`${t.email} = lower(btrim(${t.email})) AND char_length(${t.email}) BETWEEN 3 AND 254`),
+  ],
 );

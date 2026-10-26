@@ -29,6 +29,7 @@ const LABELS: Record<string, string> = {
   product_restored: 'Product restored',
   credit_note_restock: 'Goods back from a customer',
   purchase_receipt_reversal: 'Goods receipt reversed',
+  purchase_return: 'Goods returned to the vendor',
   order_fulfillment: 'Goods sold',
   damage_writeoff: 'Stock written off',
   manual_adjustment: 'Stock adjusted',
@@ -54,7 +55,7 @@ export function planChange(c: InventoryChange): Plan | null {
   }
   if (c.changeType === 'order_fulfillment') return { debit: 'cogs', credit: 'inventory', cents, label };
   // Undoing a receipt undoes what it posted: the stock leaves and the clearing account is cleared of it again.
-  if (c.changeType === 'purchase_receipt_reversal') return { debit: 'inventory_clearing', credit: 'inventory', cents, label };
+  if (c.changeType === 'purchase_receipt_reversal' || c.changeType === 'purchase_return') return { debit: 'inventory_clearing', credit: 'inventory', cents, label };
   return { debit: 'inventory_adjustment', credit: 'inventory', cents, label };
 }
 

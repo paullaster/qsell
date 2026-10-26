@@ -271,6 +271,12 @@ export const payablesCheck = async (_payload: unknown, helpers: JobHelpers) => {
   else helpers.logger.error(`Payables check: ${String(r.differences)} difference(s) between the vendor ledger and the books. See What we owe.`);
 };
 
+/** Worker cron task (nightly): a revaluation of what is owed in other currencies stands for a day and is undone the next. */
+export const payablesFxReverse = async (_payload: unknown, helpers: JobHelpers) => {
+  const done = await getContainer().payablesFx.reverseDue();
+  if (done > 0) helpers.logger.info(`Payables: ${String(done)} revaluation(s) of foreign-currency balances undone.`);
+};
+
 /** Worker cron task (every few minutes): requests past their deadline close, and vendors that have not quoted are reminded. */
 export const rfqDeadlines = async (_payload: unknown, helpers: JobHelpers) => {
   const container = getContainer();
@@ -307,4 +313,5 @@ export const tasks = {
   'vendor-bank-promote': vendorBankPromote,
   'rfq-deadlines': rfqDeadlines,
   'payables-check': payablesCheck,
+  'payables-fx-reverse': payablesFxReverse,
 };

@@ -8,11 +8,13 @@ import {
   supplierInvoiceLines,
   supplierInvoices,
   vendorFiles,
+  vendorSettings,
   vendors,
   type PurchaseOrderStatus,
   type SupplierInvoiceRow,
 } from '@/server/db/drizzle/schema';
 import { has, trimToNull } from '@/lib/values';
+import { toCents } from '@/lib/vendor-payment';
 import {
   INVOICE_STATE,
   VENDOR_EDITABLE,
@@ -21,6 +23,7 @@ import {
   checkInvoiceHeader,
   checkInvoiceLine,
   deliveryNoteRule,
+  etimsRefusal,
   invoiceTotals,
   reasonLabel,
   type DeliveryNoteForm,
@@ -173,6 +176,8 @@ export class SupplierInvoicePortalService {
       dueDate: inv.dueDate ?? '',
       notes: inv.notes ?? '',
       declaration: inv.declaration,
+      etimsInvoiceNo: inv.etimsInvoiceNo ?? '',
+      etimsVerificationUrl: inv.etimsVerificationUrl ?? '',
       subtotal: inv.subtotal,
       taxTotal: inv.taxTotal,
       total: inv.total,
@@ -256,7 +261,7 @@ export class SupplierInvoicePortalService {
         const out = { subtotal: money(totals.subtotal), taxTotal: money(totals.tax), total: money(totals.total) };
         await tx
           .update(supplierInvoices)
-          .set({ vendorInvoiceNo: input.header.vendorInvoiceNo.trim(), invoiceDate: input.header.invoiceDate, dueDate: trimToNull(input.header.dueDate), notes: trimToNull(input.header.notes), declaration: input.header.declaration, invoiceFileId: trimToNull(input.invoiceFileId), ...out, updatedAt: now })
+          .set({ vendorInvoiceNo: input.header.vendorInvoiceNo.trim(), invoiceDate: input.header.invoiceDate, dueDate: trimToNull(input.header.dueDate), notes: trimToNull(input.header.notes), declaration: input.header.declaration, etimsInvoiceNo: trimToNull(input.header.etimsInvoiceNo ?? ''), etimsVerificationUrl: trimToNull(input.header.etimsVerificationUrl ?? ''), invoiceFileId: trimToNull(input.invoiceFileId), ...out, updatedAt: now })
           .where(eq(supplierInvoices.id, id));
         return out;
       });
@@ -275,8 +280,11 @@ export class SupplierInvoicePortalService {
       const [v] = await tx.select({ status: vendors.status, block: vendors.block }).from(vendors).where(eq(vendors.id, actor.vendorId));
       if (v?.status !== 'active' || v.block === 'all') throw new ProfileError('VENDOR_NOT_ACTIVE', 'Your account cannot send invoices at the moment. Please contact us.');
       const problems: Record<string, string> = {};
-      const header = { vendorInvoiceNo: inv.vendorInvoiceNo, invoiceDate: inv.invoiceDate, dueDate: inv.dueDate ?? '', notes: inv.notes ?? '', declaration: inv.declaration };
+      const header = { vendorInvoiceNo: inv.vendorInvoiceNo, invoiceDate: inv.invoiceDate, dueDate: inv.dueDate ?? '', notes: inv.notes ?? '', declaration: inv.declaration, etimsInvoiceNo: inv.etimsInvoiceNo ?? '', etimsVerificationUrl: inv.etimsVerificationUrl ?? '' };
       Object.assign(problems, checkInvoiceHeader(header, businessDate(now)));
+      const [etimsRule] = await tx.select({ on: vendorSettings.requireEtimsForTax }).from(vendorSettings).where(eq(vendorSettings.companyId, companyId));
+      const noEtims = etimsRefusal(toCents(inv.taxTotal), etimsRule?.on ?? false, header);
+      if (noEtims !== null) problems.etimsInvoiceNo = noEtims;
       if (!inv.declaration) problems.declaration = 'Confirm that this invoice is for goods and services delivered.';
       if (inv.invoiceFileId === null) problems.invoiceFile = 'Attach your own invoice (a PDF or a picture).';
       const lines = await tx.select().from(supplierInvoiceLines).where(eq(supplierInvoiceLines.invoiceId, id));

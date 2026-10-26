@@ -206,9 +206,18 @@ export class VendorInsightsService {
       .where(and(eq(purchaseOrders.companyId, companyId), gte(purchaseOrders.orderDate, range.from), lte(purchaseOrders.orderDate, range.to), sql`(${purchaseOrders.noRfq} OR ${purchaseOrders.qualificationOverrideReason} IS NOT NULL)`, sql`${purchaseOrders.status} <> 'cancelled'`))
       .orderBy(desc(purchaseOrders.orderDate))
       .limit(100);
+    const noEtims = await this.db
+      .select({ number: purchaseInvoices.number, vendor: vendors.legalName, tax: purchaseInvoices.taxTotal, postingDate: purchaseInvoices.postingDate, vendorInvoiceNo: purchaseInvoices.vendorInvoiceNo })
+      .from(purchaseInvoices)
+      .innerJoin(supplierInvoices, eq(supplierInvoices.id, purchaseInvoices.supplierInvoiceId))
+      .innerJoin(vendors, eq(vendors.id, purchaseInvoices.vendorId))
+      .where(and(eq(purchaseInvoices.companyId, companyId), gte(purchaseInvoices.postingDate, range.from), lte(purchaseInvoices.postingDate, range.to), sql`${purchaseInvoices.taxTotal} > 0`, sql`${supplierInvoices.etimsInvoiceNo} IS NULL`))
+      .orderBy(desc(purchaseInvoices.postingDate))
+      .limit(100);
     return {
       range,
       settings,
+      taxWithoutEtims: noEtims.map((n) => ({ number: n.number, vendor: n.vendor, vendorInvoiceNo: n.vendorInvoiceNo, taxCents: toCents(n.tax), postingDate: n.postingDate })),
       duplicateInvoices: [...duplicates].map((d) => ({ vendor: d.vendor, first: d.first, second: d.second, totalCents: toCents(d.total), firstDate: d.first_date, secondDate: d.second_date, daysApart: Math.abs(daysBetween(d.first_date, d.second_date)) })),
       sharedBankAccounts: sharedBanks.map((s) => ({ last4: s.last4, vendors: s.vendors })),
       newVendorPayments: newVendors.map((n) => ({ number: n.number, vendor: n.vendor, amountCents: toCents(n.amount), paidOn: n.paidOn, vendorAgeDays: n.paidOn === null ? 0 : daysBetween(n.vendorCreated.toISOString().slice(0, 10), n.paidOn) })),

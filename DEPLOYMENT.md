@@ -388,6 +388,30 @@ S3_SECRET_ACCESS_KEY=...
 - **Policy for the key:** allow `s3:PutObject`, `s3:GetObject` and `s3:DeleteObject` on
   `arn:aws:s3:::<bucket>/<prefix>/*`, and nothing else.
 
+### Using Contabo Object Storage
+
+Contabo's object storage speaks the S3 API. Create a **private** bucket in the Contabo panel (leave
+"Public Access" inactive: private files are only ever served by signed links, and product images
+use signed links too). Take the S3 key pair from your Contabo account, then:
+
+```sh
+MEDIA_DRIVER=s3
+# The region's host, not the bucket address: for US-central it is https://usc1.contabostorage.com
+S3_ENDPOINT=https://usc1.contabostorage.com
+# The plain bucket name (not the tenant-prefixed form some panel pages show).
+S3_BUCKET=noels-deliveries
+# Contabo signs with the region name "default", whatever region the bucket is in.
+S3_REGION=default
+# Contabo addresses buckets in the path: https://<host>/<bucket>/<key>.
+S3_FORCE_PATH_STYLE=true
+S3_PREFIX=<instance-id>
+S3_ACCESS_KEY_ID=...
+S3_SECRET_ACCESS_KEY=...
+```
+
+Check it first from any machine with the same variables set: `pnpm media:check` should end with
+"Provider looks good". Do not set `S3_PUBLIC_ENDPOINT`, `S3_SSE`, or `S3_ENDPOINT=http://rustfs…`.
+
 ### Using the bundled RustFS (free, self-hosted)
 
 RustFS is open-source, S3-compatible object storage. `compose.production.yaml` includes it as an

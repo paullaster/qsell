@@ -191,3 +191,29 @@ export function IncomePanel({ lineAmount, busy, onSubmit, onClose }: { lineAmoun
     </form>
   );
 }
+
+/** A payment the bank already made to a vendor: it becomes a voucher that another person approves, and the line is matched when it is recorded. */
+export function VendorPaymentPanel({ accountId, lineAmount, lineDate, busy, onCreate, onClose }: { accountId: string; lineAmount: string; lineDate: string; busy: boolean; onCreate: (input: { vendorId: string; methodId: string; mode: 'oldest_first' | 'on_account' }) => void; onClose: () => void }) {
+  const [vendor, setVendor] = useState<Choice | null>(null);
+  const [method, setMethod] = useState<Choice | null>(null);
+  const [mode, setMode] = useState<Choice | null>({ id: 'oldest_first', label: 'Pay the oldest open invoices' });
+  return (
+    <form
+      className="space-y-3 rounded-lg border border-line p-3"
+      aria-label="Payment to a vendor"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (vendor === null || method === null) return;
+        onCreate({ vendorId: vendor.id, methodId: method.id, mode: mode?.id === 'on_account' ? 'on_account' : 'oldest_first' });
+      }}
+    >
+      <p className="text-xs text-fg-muted">The bank paid {money(lineAmount)} on {lineDate}. This writes the payment voucher and sends it for approval. When it is approved and recorded as paid on that date, this line is matched to it.</p>
+      <ChoicePicker label="Vendor" source="vendors" choice={vendor} onChoice={setVendor} clearable={false} required placeholder="Name or number" />
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <ChoicePicker label="Paid by" source="statement-vendor-methods" filters={{ account: accountId }} choice={method} onChoice={setMethod} clearable={false} required placeholder="Which way of paying?" />
+        <ChoicePicker label="Set against" source="statement-vendor-modes" choice={mode} onChoice={setMode} clearable={false} required />
+      </div>
+      <div className="flex gap-2"><button type="submit" className={primaryClass} disabled={busy || vendor === null || method === null}>Write the payment voucher</button><button type="button" className={buttonClass} onClick={onClose}>Close</button></div>
+    </form>
+  );
+}

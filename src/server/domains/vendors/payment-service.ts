@@ -1,8 +1,11 @@
+import { vendorApprovals } from './approval-gate';
 import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   bankAccounts,
+  bankStatementLines,
+  providerOperations,
   bankLedgerEntries,
   financeSettings,
   paymentMethods,
@@ -22,6 +25,7 @@ import {
   vendors,
   withholdingCertificates,
   withholdingCodes,
+  type VendorBankAccountRow,
   type VendorPaymentVoucherRow,
   type VendorVoucherStatus,
 } from '@/server/db/drizzle/schema';
@@ -47,6 +51,10 @@ import type { PostingEngine } from '@/server/domains/finance/engine';
 import type { VendorLedgerService } from '@/server/domains/finance/payables/vendor-ledger-service';
 import { FinanceError, type FinanceContext } from '@/server/domains/finance/errors';
 import type { AdvancePaymentService } from './advance-service';
+import type { FxService } from '@/server/domains/finance/fx-service';
+import { settlementGain } from '@/lib/vendor-fx';
+import { describeDestination } from '@/lib/vendor-profile';
+import { payoutPlan, wholeShillings } from '@/lib/vendor-payout';
 import type { VendorNotifier } from './notifier';
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
@@ -86,8 +94,16 @@ export class VendorPaymentService {
     private readonly engine: PostingEngine,
     private readonly ledger: VendorLedgerService,
     private readonly advances: AdvancePaymentService,
+    private readonly fx: FxService,
     private readonly notify?: VendorNotifier,
   ) {}
+
+  /** Closes a bank statement line against the bank entry of a payment made from it. Set by the container so this service does not depend on the bank module. */
+  private statementMatcher: ((tx: Tx, ctx: FinanceContext, lineId: number, bankEntryId: number) => Promise<void>) | null = null;
+
+  useStatementMatcher(matcher: (tx: Tx, ctx: FinanceContext, lineId: number, bankEntryId: number) => Promise<void>): void {
+    this.statementMatcher = matcher;
+  }
 
   private async event(tx: Tx | DrizzleDb, actor: Actor, voucherId: string, event: string, from: string | null, to: string | null, extra: { reason?: string | null; data?: Record<string, unknown> } = {}): Promise<void> {
     await tx.insert(vendorPaymentEvents).values({ voucherId, event, fromStatus: from, toStatus: to, reasonText: extra.reason ?? null, data: extra.data ?? {}, actorType: actor.type, actorId: actor.id });
@@ -145,8 +161,7 @@ export class VendorPaymentService {
     if (bank === undefined || bank.blocked) throw new FinanceError('METHOD_INVALID', 'The bank account behind that way of paying is blocked.');
     const [fs] = await tx.select({ base: financeSettings.baseCurrency }).from(financeSettings).where(eq(financeSettings.companyId, companyId));
     if (fs === undefined) throw new FinanceError('FINANCE_NOT_SET_UP', 'Finance has not been set up yet.');
-    if (bank.currency !== fs.base) throw new FinanceError('FOREIGN_CURRENCY', `That way of paying is in ${bank.currency}. Paying in another currency needs an exchange rate, which is not built yet.`);
-    return { method: m, base: fs.base };
+    return { method: m, base: fs.base, currency: bank.currency };
   }
 
   // ── what is open ─────────────────────────────────────────────────────────
@@ -200,9 +215,9 @@ export class VendorPaymentService {
 
   /** A way of paying as the run needs it: its kind, its bank account and the account number the bank file is paid from. */
   async methodForRun(companyId: string, methodId: string) {
-    const { method, base } = await this.method(this.db, companyId, methodId);
+    const { method, currency } = await this.method(this.db, companyId, methodId);
     const [bank] = await this.db.select().from(bankAccounts).where(eq(bankAccounts.id, method.balancingBankAccountId));
-    return { id: method.id, name: method.name, kind: method.kind, currency: base, bankCode: bank?.code ?? '', debtorAccount: (bank?.details.accountNumber ?? '').trim(), needsAccount: NEEDS_ACCOUNT.includes(method.kind) };
+    return { id: method.id, name: method.name, kind: method.kind, currency, bankCode: bank?.code ?? '', debtorAccount: (bank?.details.accountNumber ?? '').trim(), needsAccount: NEEDS_ACCOUNT.includes(method.kind) };
   }
 
   /** Approved advance payments of a vendor that no live voucher is paying yet. */
@@ -262,7 +277,8 @@ export class VendorPaymentService {
     if (has(first)) throw new FinanceError('INVALID', first);
     return await this.inTx(opts.tx, async (tx) => {
       await this.vendorMayBePaid(tx, ctx.companyId, header.vendorId);
-      const { method, base } = await this.method(tx, ctx.companyId, header.methodId);
+      const { method, base, currency } = await this.method(tx, ctx.companyId, header.methodId);
+      if (currency !== base && header.kind !== 'invoices') throw new FinanceError('FOREIGN_CURRENCY', `That way of paying is in ${currency}. In another currency only vendor invoices can be paid for now: not a payment on account or an advance.`);
       let amountCents: number;
       let plan: Settlement | null = null;
       let lines: { purchaseInvoiceId: string; amount: string; closeRemainder: boolean; discount: string; tolerance: string; withholdingBase: string; withholding: string }[] = [];
@@ -271,6 +287,9 @@ export class VendorPaymentService {
         const checked = checkAllocations(items, allocations);
         const problem = Object.values(checked.problems)[0];
         if (has(problem)) throw new FinanceError('INVALID', problem);
+        const chosen = allocations.length === 0 ? [] : await tx.select({ number: purchaseInvoices.number, currency: purchaseInvoices.currency }).from(purchaseInvoices).where(inArray(purchaseInvoices.id, allocations.map((a) => a.purchaseInvoiceId)));
+        const wrong = chosen.find((i) => i.currency !== currency);
+        if (wrong !== undefined) throw new FinanceError('CURRENCY_MISMATCH', `Invoice ${wrong.number} is in ${wrong.currency}, and this way of paying is in ${currency}. Pay it with a way of paying in ${wrong.currency}.`);
         amountCents = checked.totalCents;
         plan = await this.planFor(tx, ctx.companyId, header.vendorId, allocations, businessDate());
         const settled = plan.lines;
@@ -285,7 +304,7 @@ export class VendorPaymentService {
         amountCents = toCents(adv.amount);
       }
       if (amountCents <= 0) throw new FinanceError('INVALID', 'The payment must be for more than zero.');
-      const values = { ...(opts.batchId === undefined ? {} : { batchId: opts.batchId }), vendorId: header.vendorId, kind: header.kind, currency: base, amount: fromCents(amountCents), withholdingAmount: fromCents(plan?.withholdingCents ?? 0), discountAmount: fromCents(plan?.discountCents ?? 0), toleranceAmount: fromCents(plan?.toleranceCents ?? 0), cashAmount: fromCents(plan?.cashCents ?? amountCents), methodId: method.id, advanceId: header.kind === 'advance' ? header.advanceId : null, narration: trimToNull(header.narration), updatedAt: new Date() };
+      const values = { ...(opts.batchId === undefined ? {} : { batchId: opts.batchId }), vendorId: header.vendorId, kind: header.kind, currency, amount: fromCents(amountCents), withholdingAmount: fromCents(plan?.withholdingCents ?? 0), discountAmount: fromCents(plan?.discountCents ?? 0), toleranceAmount: fromCents(plan?.toleranceCents ?? 0), cashAmount: fromCents(plan?.cashCents ?? amountCents), methodId: method.id, advanceId: header.kind === 'advance' ? header.advanceId : null, narration: trimToNull(header.narration), updatedAt: new Date() };
       let voucherId = id;
       try {
         if (id === null) {
@@ -308,6 +327,52 @@ export class VendorPaymentService {
     });
   }
 
+  /**
+   * A payment that already left the bank, seen on the statement. It becomes a voucher for the vendor's oldest open invoices (or a
+   * payment on account), sent for approval like any other; when it is recorded as paid on the day of the line, the line is
+   * matched to its bank entry in the same step. Only an exact match is made, so the cash must equal the line.
+   */
+  async createFromStatementLine(ctx: FinanceContext, lineId: number, input: { vendorId: string; methodId: string; mode: 'oldest_first' | 'on_account' }, now: Date = new Date()): Promise<{ id: string; amount: string }> {
+    return await this.db.transaction(async (tx) => {
+      const [line] = await tx.select().from(bankStatementLines).where(and(eq(bankStatementLines.companyId, ctx.companyId), eq(bankStatementLines.id, lineId))).for('update');
+      if (line === undefined) throw new FinanceError('LINE_NOT_FOUND', 'That statement line does not exist.');
+      if (line.reconciliationId !== null) throw new FinanceError('LINE_RECONCILED', 'This line is part of a posted reconciliation.');
+      if (line.status === 'matched' || line.status === 'ignored') throw new FinanceError('LINE_CLOSED', `This line is already ${line.status}.`);
+      const cents = -toCents(Number(line.amount).toFixed(2));
+      if (cents <= 0) throw new FinanceError('NOT_A_PAYMENT', 'Only money paid out can become a payment to a vendor.');
+      const [taken] = await tx.select({ id: vendorPaymentVouchers.id }).from(vendorPaymentVouchers).where(and(eq(vendorPaymentVouchers.statementLineId, lineId), ne(vendorPaymentVouchers.status, 'cancelled')));
+      if (taken !== undefined) throw new FinanceError('ALREADY_STARTED', 'A payment has already been made from this line.');
+      const { method } = await this.method(tx, ctx.companyId, input.methodId);
+      if (method.balancingBankAccountId !== line.bankAccountId) throw new FinanceError('METHOD_ACCOUNT', 'That way of paying does not pay out of this bank account.');
+      await this.vendorMayBePaid(tx, ctx.companyId, input.vendorId);
+      let allocations: AllocationForm[] = [];
+      let header: VoucherHeaderForm;
+      if (input.mode === 'oldest_first') {
+        const items = await this.openItems(ctx.companyId, input.vendorId, null);
+        let left = cents;
+        allocations = [];
+        for (const item of [...items].sort((a, b) => (a.dueDate ?? a.invoiceDate).localeCompare(b.dueDate ?? b.invoiceDate))) {
+          if (left <= 0) break;
+          const take = Math.min(left, item.availableCents);
+          if (take > 0) {
+            allocations.push({ purchaseInvoiceId: item.purchaseInvoiceId, amount: fromCents(take) });
+            left -= take;
+          }
+        }
+        if (left > 0) throw new FinanceError('NOT_ENOUGH_OPEN', `The vendor’s open invoices come to ${fromCents(cents - left)}, less than the ${fromCents(cents)} the bank paid. Record the rest as a payment on account instead.`);
+        header = { kind: 'invoices', vendorId: input.vendorId, methodId: input.methodId, narration: `Paid on ${line.lineDate}: ${line.description}`.slice(0, 300), advanceId: '' };
+      } else {
+        header = { kind: 'on_account', vendorId: input.vendorId, methodId: input.methodId, narration: `Paid on ${line.lineDate}: ${line.description}`.slice(0, 300), advanceId: '', amount: fromCents(cents) };
+      }
+      const made = await this.saveDraft(ctx, null, header, allocations, { tx });
+      if (toCents(made.cash) !== cents) throw new FinanceError('CASH_DIFFERS', `After tax withheld or a discount, this payment would send ${made.cash}, not the ${fromCents(cents)} the bank paid. Make the payment from Payments instead and match the line to it.`);
+      await tx.update(vendorPaymentVouchers).set({ statementLineId: lineId }).where(eq(vendorPaymentVouchers.id, made.id));
+      await this.event(tx, ctx.actor, made.id, 'from_statement_line', 'draft', 'draft', { data: { lineId, lineDate: line.lineDate, reference: line.reference } });
+      await this.submit(ctx, made.id, now, tx);
+      return { id: made.id, amount: made.amount };
+    });
+  }
+
   async submit(ctx: FinanceContext, id: string, now: Date = new Date(), outer?: Tx): Promise<void> {
     await this.inTx(outer, async (tx) => {
       const v = await this.lock(tx, ctx.companyId, id);
@@ -315,7 +380,9 @@ export class VendorPaymentService {
       await this.vendorMayBePaid(tx, ctx.companyId, v.vendorId);
       if (v.kind === 'invoices') await this.recheckLines(tx, ctx.companyId, v);
       await tx.update(vendorPaymentVouchers).set({ status: 'pending_approval', submittedAt: now, sendBackReason: null, updatedAt: now }).where(eq(vendorPaymentVouchers.id, id));
-      await this.event(tx, ctx.actor, id, 'submitted', 'draft', 'pending_approval');
+      const { method } = await this.method(tx, ctx.companyId, v.methodId);
+      const route = await vendorApprovals.submit(tx, { companyId: ctx.companyId, trigger: 'vendor.payment', documentId: id, requestedBy: ctx.actor.id ?? '', amount: Number(v.amount), snapshot: { vendor: { id: v.vendorId }, voucherKind: v.kind, methodKind: method.kind, currency: v.currency } });
+      await this.event(tx, ctx.actor, id, 'submitted', 'draft', 'pending_approval', route === 'waiting' ? { data: { workflow: true } } : undefined);
     });
   }
 
@@ -330,39 +397,55 @@ export class VendorPaymentService {
 
   async approve(ctx: FinanceContext, id: string, now: Date = new Date(), outer?: Tx): Promise<{ number: string }> {
     return await this.inTx(outer, async (tx) => {
-      const v = await this.lock(tx, ctx.companyId, id);
-      if (v.status !== 'pending_approval') throw new FinanceError('WRONG_STATE', 'This payment voucher is not waiting for approval.');
-      const refusal = approvalRefusal(ctx.actor.id ?? '', v.createdBy);
-      if (refusal !== null) throw new FinanceError('FOUR_EYES', refusal);
-      await this.vendorMayBePaid(tx, ctx.companyId, v.vendorId);
-      if (v.kind === 'invoices') await this.recheckLines(tx, ctx.companyId, v);
-      const { method } = await this.method(tx, ctx.companyId, v.methodId);
-      // What the payment settles is fixed now, on the day it is approved: the discount in time, the tax withheld, the cash.
-      let plan: Settlement | null = null;
-      if (v.kind === 'invoices') {
-        const rows = await tx.select().from(vendorPaymentVoucherLines).where(eq(vendorPaymentVoucherLines.voucherId, id));
-        plan = await this.planFor(tx, ctx.companyId, v.vendorId, rows.map((l) => ({ purchaseInvoiceId: l.purchaseInvoiceId, amount: l.amount, closeRemainder: l.closeRemainder })), businessDate(now));
-        for (const l of plan.lines) {
-          await tx.update(vendorPaymentVoucherLines).set({ discount: fromCents(l.discountCents), tolerance: fromCents(l.toleranceCents), withholdingBase: fromCents(l.withholdingBaseCents), withholding: fromCents(l.withholdingCents) }).where(and(eq(vendorPaymentVoucherLines.voucherId, id), eq(vendorPaymentVoucherLines.purchaseInvoiceId, l.purchaseInvoiceId)));
-        }
-      }
-      let accountId: string | null = null;
-      let destination: string | null = null;
-      if (NEEDS_ACCOUNT.includes(method.kind)) {
-        const active = await tx.select().from(vendorBankAccounts).where(and(eq(vendorBankAccounts.vendorId, v.vendorId), eq(vendorBankAccounts.status, 'active'))).orderBy(desc(vendorBankAccounts.createdAt));
-        const account = active[0];
-        if (account === undefined) throw new FinanceError('NO_BANK_ACCOUNT', 'The vendor has no bank account that can receive money. A new or changed account is usable only after it is approved and its waiting period has passed.');
-        accountId = account.id;
-        destination = `${account.bankName} account ending ${account.accountLast4}`;
-      }
-      const threshold = await this.thresholdCents(tx, ctx.companyId);
-      const flags = await this.flagsFor(tx, ctx.companyId, v.vendorId, accountId, toCents(v.amount), now);
-      const three = needsThreePeople(toCents(v.amount), threshold) || flags.hold;
-      const number = v.number ?? (await this.numbering.assign('vendor_payment', { companyId: ctx.companyId, branchId: null, date: businessDate(now), document: { kind: 'vendor_payment', id } }, tx)).number;
-      await tx.update(vendorPaymentVouchers).set({ status: 'approved', number, approvedBy: ctx.actor.id, approvedAt: now, needsThree: three, vendorBankAccountId: accountId, destination, ...(plan === null ? {} : { withholdingAmount: fromCents(plan.withholdingCents), discountAmount: fromCents(plan.discountCents), toleranceAmount: fromCents(plan.toleranceCents), cashAmount: fromCents(plan.cashCents) }), updatedAt: now }).where(eq(vendorPaymentVouchers.id, id));
-      await this.event(tx, ctx.actor, id, 'approved', 'pending_approval', 'approved', { data: { number, needsThree: three, flagged: flags.reasons, destination, cash: fromCents(plan?.cashCents ?? toCents(v.amount)), withholding: fromCents(plan?.withholdingCents ?? 0), discount: fromCents(plan?.discountCents ?? 0) } });
-      return { number };
+      await vendorApprovals.refuseIfHeld(tx, ctx.companyId, 'vendor_payment', id);
+      return await this.approveIn(tx, ctx, id, now);
     });
+  }
+
+  /** The approval inside the caller's transaction: by a person here, or by the engine when its workflow is complete. */
+  async approveIn(tx: Tx, ctx: FinanceContext, id: string, now: Date = new Date()): Promise<{ number: string }> {
+    const v = await this.lock(tx, ctx.companyId, id);
+    if (v.status !== 'pending_approval') throw new FinanceError('WRONG_STATE', 'This payment voucher is not waiting for approval.');
+    const refusal = approvalRefusal(ctx.actor.id ?? '', v.createdBy);
+    if (refusal !== null) throw new FinanceError('FOUR_EYES', refusal);
+    await this.vendorMayBePaid(tx, ctx.companyId, v.vendorId);
+    if (v.kind === 'invoices') await this.recheckLines(tx, ctx.companyId, v);
+    const { method } = await this.method(tx, ctx.companyId, v.methodId);
+    // What the payment settles is fixed now, on the day it is approved: the discount in time, the tax withheld, the cash.
+    let plan: Settlement | null = null;
+    if (v.kind === 'invoices') {
+      const rows = await tx.select().from(vendorPaymentVoucherLines).where(eq(vendorPaymentVoucherLines.voucherId, id));
+      plan = await this.planFor(tx, ctx.companyId, v.vendorId, rows.map((l) => ({ purchaseInvoiceId: l.purchaseInvoiceId, amount: l.amount, closeRemainder: l.closeRemainder })), businessDate(now));
+      for (const l of plan.lines) {
+        await tx.update(vendorPaymentVoucherLines).set({ discount: fromCents(l.discountCents), tolerance: fromCents(l.toleranceCents), withholdingBase: fromCents(l.withholdingBaseCents), withholding: fromCents(l.withholdingCents) }).where(and(eq(vendorPaymentVoucherLines.voucherId, id), eq(vendorPaymentVoucherLines.purchaseInvoiceId, l.purchaseInvoiceId)));
+      }
+    }
+    let accountId: string | null = null;
+    let destination: string | null = null;
+    if (NEEDS_ACCOUNT.includes(method.kind)) {
+      // A way of paying through M-Pesa pays an M-Pesa destination of the vendor; every other way pays a bank account.
+      const mobile = method.kind === 'mobile_money';
+      const active = await tx.select().from(vendorBankAccounts).where(and(eq(vendorBankAccounts.vendorId, v.vendorId), eq(vendorBankAccounts.status, 'active'), mobile ? inArray(vendorBankAccounts.kind, ['mpesa_phone', 'mpesa_paybill', 'mpesa_till']) : eq(vendorBankAccounts.kind, 'bank'))).orderBy(desc(vendorBankAccounts.createdAt));
+      const account = active[0];
+      if (account === undefined) throw new FinanceError('NO_BANK_ACCOUNT', mobile ? 'The vendor has no M-Pesa number, paybill or till that can receive money. A new or changed destination is usable only after it is approved and its waiting period has passed.' : 'The vendor has no bank account that can receive money. A new or changed account is usable only after it is approved and its waiting period has passed.');
+      accountId = account.id;
+      destination = describeDestination(account.kind, account.bankName, account.branch, account.accountLast4);
+    }
+    const threshold = await this.thresholdCents(tx, ctx.companyId);
+    const flags = await this.flagsFor(tx, ctx.companyId, v.vendorId, accountId, toCents(v.amount), now);
+    const three = needsThreePeople(toCents(v.amount), threshold) || flags.hold;
+    const number = v.number ?? (await this.numbering.assign('vendor_payment', { companyId: ctx.companyId, branchId: null, date: businessDate(now), document: { kind: 'vendor_payment', id } }, tx)).number;
+    await tx.update(vendorPaymentVouchers).set({ status: 'approved', number, approvedBy: ctx.actor.id, approvedAt: now, needsThree: three, vendorBankAccountId: accountId, destination, ...(plan === null ? {} : { withholdingAmount: fromCents(plan.withholdingCents), discountAmount: fromCents(plan.discountCents), toleranceAmount: fromCents(plan.toleranceCents), cashAmount: fromCents(plan.cashCents) }), updatedAt: now }).where(eq(vendorPaymentVouchers.id, id));
+    await this.event(tx, ctx.actor, id, 'approved', 'pending_approval', 'approved', { data: { number, needsThree: three, flagged: flags.reasons, destination, cash: fromCents(plan?.cashCents ?? toCents(v.amount)), withholding: fromCents(plan?.withholdingCents ?? 0), discount: fromCents(plan?.discountCents ?? 0) } });
+    return { number };
+  }
+
+  /** The workflow refused it, was withdrawn or was reopened: back to a draft, with the reason where the writer will see it. */
+  async backFromWorkflow(tx: Tx, id: string, why: string, now: Date = new Date()): Promise<void> {
+    const [v] = await tx.select().from(vendorPaymentVouchers).where(eq(vendorPaymentVouchers.id, id)).for('update');
+    if (v?.status !== 'pending_approval') return;
+    await tx.update(vendorPaymentVouchers).set({ status: 'draft', sendBackReason: why.slice(0, 500), updatedAt: now }).where(eq(vendorPaymentVouchers.id, id));
+    await this.event(tx, { type: 'system', id: null }, id, 'sent_back', 'pending_approval', 'draft', { reason: why.slice(0, 500) });
   }
 
   async sendBack(ctx: FinanceContext, id: string, reason: string, now: Date = new Date(), outer?: Tx): Promise<void> {
@@ -371,6 +454,7 @@ export class VendorPaymentService {
     await this.inTx(outer, async (tx) => {
       const v = await this.lock(tx, ctx.companyId, id);
       if (v.status !== 'pending_approval') throw new FinanceError('WRONG_STATE', 'This payment voucher is not waiting for approval.');
+      await vendorApprovals.refuseIfHeld(tx, ctx.companyId, 'vendor_payment', id);
       await tx.update(vendorPaymentVouchers).set({ status: 'draft', sendBackReason: text.slice(0, 500), updatedAt: now }).where(eq(vendorPaymentVouchers.id, id));
       await this.event(tx, ctx.actor, id, 'sent_back', 'pending_approval', 'draft', { reason: text.slice(0, 500) });
     });
@@ -381,6 +465,7 @@ export class VendorPaymentService {
     if (!has(text)) throw new FinanceError('NOTE_REQUIRED', 'Say why the payment is cancelled.');
     await this.inTx(outer, async (tx) => {
       const v = await this.lock(tx, ctx.companyId, id);
+      await vendorApprovals.refuseIfHeld(tx, ctx.companyId, 'vendor_payment', id);
       if (!(LIVE_VOUCHER as readonly string[]).includes(v.status)) throw new FinanceError('WRONG_STATE', v.status === 'paid' ? 'A paid voucher cannot be cancelled. Reverse it.' : 'This payment voucher is finished.');
       await tx.update(vendorPaymentVouchers).set({ status: 'cancelled', cancelReason: text.slice(0, 500), updatedAt: now }).where(eq(vendorPaymentVouchers.id, id));
       await this.event(tx, ctx.actor, id, 'cancelled', v.status, 'cancelled', { reason: text.slice(0, 500) });
@@ -410,7 +495,13 @@ export class VendorPaymentService {
     const refusal = releaseRefusal(ctx.actor.id ?? '', v.createdBy, v.approvedBy, v.needsThree);
     if (refusal !== null) throw new FinanceError('THREE_PEOPLE', refusal);
     const vendor = await this.vendorMayBePaid(tx, ctx.companyId, v.vendorId);
-    const { method } = await this.method(tx, ctx.companyId, v.methodId);
+    const { method, base } = await this.method(tx, ctx.companyId, v.methodId);
+    // Money in another currency is valued at the rate of the day it was paid.
+    const foreign = v.currency !== base;
+    const rate = foreign ? await this.fx.requireRate(tx, ctx.companyId, v.currency, input.paidOn) : '1';
+    // A payment made from a bank statement line is recorded on the day the bank shows it.
+    const [fromLine] = v.statementLineId === null ? [] : await tx.select().from(bankStatementLines).where(eq(bankStatementLines.id, v.statementLineId));
+    if (fromLine !== undefined && input.paidOn !== fromLine.lineDate) throw new FinanceError('INVALID', `This payment was made from a bank statement line dated ${fromLine.lineDate}. Record it as paid on that date.`);
     if (v.vendorBankAccountId !== null) {
       const [account] = await tx.select({ status: vendorBankAccounts.status }).from(vendorBankAccounts).where(eq(vendorBankAccounts.id, v.vendorBankAccountId));
       if (account?.status !== 'active') throw new FinanceError('DESTINATION_CHANGED', 'The vendor’s bank account this voucher was approved for is no longer in use. Cancel it and make a new voucher.');
@@ -448,8 +539,8 @@ export class VendorPaymentService {
         documentNo: v.number ?? '',
         description,
         currency: v.currency,
-        rate: '1',
-        rateSource: 'base',
+        rate,
+        rateSource: foreign ? 'rate_table' : 'base',
         lines: journal,
         chainKey: 'general',
         origin: ctx.origin,
@@ -461,19 +552,64 @@ export class VendorPaymentService {
     );
     const entryId = randomUUID();
     // The payment entry is what the vendor is paid and credited with: the cash and the tax withheld on its behalf.
-    await this.ledger.addEntry(tx, { id: entryId, companyId: ctx.companyId, vendorId: v.vendorId, documentType: v.kind === 'advance' ? 'advance' : 'payment', documentNo: v.number ?? '', documentId: id, description, amountCents: -(cents - discountCents), currency: v.currency, postingDate: input.paidOn, registerId, idempotencyKey: `vendor-payment:${id}`, createdBy: ctx.actor.id });
+    await this.ledger.addEntry(tx, { id: entryId, companyId: ctx.companyId, vendorId: v.vendorId, documentType: v.kind === 'advance' ? 'advance' : 'payment', documentNo: v.number ?? '', documentId: id, description, amountCents: -(cents - discountCents), currency: v.currency, rate, postingDate: input.paidOn, registerId, idempotencyKey: `vendor-payment:${id}`, createdBy: ctx.actor.id });
     // The money leaves the bank account: the bank's own sub-ledger shows it, so the statement can be matched to it.
     if (cashCents > 0) {
-      await tx.insert(bankLedgerEntries).values({ companyId: ctx.companyId, bankAccountId: method.balancingBankAccountId, glAccountId: method.glAccountId, postingDate: input.paidOn, documentType: 'vendor_payment', documentNo: v.number ?? '', documentId: id, description: `${vendor.legalName}: ${reference}`.slice(0, 200), amount: fromCents(-cashCents), currency: v.currency, registerId, createdBy: ctx.actor.id });
+      const [bankEntry] = await tx.insert(bankLedgerEntries).values({ companyId: ctx.companyId, bankAccountId: method.balancingBankAccountId, glAccountId: method.glAccountId, postingDate: input.paidOn, documentType: 'vendor_payment', documentNo: v.number ?? '', documentId: id, description: `${vendor.legalName}: ${reference}`.slice(0, 200), amount: fromCents(-cashCents), currency: v.currency, registerId, createdBy: ctx.actor.id }).returning({ id: bankLedgerEntries.id });
+      if (fromLine !== undefined && bankEntry !== undefined) {
+        if (this.statementMatcher === null) throw new FinanceError('NOT_AVAILABLE', 'Matching bank statement lines is not set up.');
+        await this.statementMatcher(tx, ctx, fromLine.id, bankEntry.id);
+      }
     }
+    const invoiceRates = new Map<string, string>();
+    if (foreign && invoices.length > 0) {
+      const rows = await tx.select({ id: vendorLedgerEntries.id, rate: vendorLedgerEntries.rate }).from(vendorLedgerEntries).where(inArray(vendorLedgerEntries.id, invoices.map((i) => i.ledgerEntryId)));
+      for (const r of rows) invoiceRates.set(r.id, r.rate);
+    }
+    let gainCents = 0;
     for (const l of lines) {
       const inv = invoices.find((i) => i.id === l.purchaseInvoiceId);
       if (inv === undefined) continue;
       const lineDiscount = toCents(l.discount);
       const lineTolerance = toCents(l.tolerance);
+      // What the invoice was booked at against what it cost to settle: the liability cleared is the amount paid plus what was closed.
+      if (foreign) gainCents += settlementGain(toCents(l.amount) + lineTolerance, invoiceRates.get(inv.ledgerEntryId) ?? '1', rate);
       if (toCents(l.amount) - lineDiscount > 0) await this.ledger.apply(tx, { companyId: ctx.companyId, vendorId: v.vendorId, creditEntryId: entryId, invoiceEntryId: inv.ledgerEntryId, amountCents: toCents(l.amount) - lineDiscount, postingDate: input.paidOn, registerId, createdBy: ctx.actor.id });
       if (lineDiscount > 0) await this.ledger.writeOff(tx, { companyId: ctx.companyId, entryId: inv.ledgerEntryId, entryType: 'payment_discount', amountCents: lineDiscount, postingDate: input.paidOn, registerId, createdBy: ctx.actor.id });
       if (lineTolerance > 0) await this.ledger.writeOff(tx, { companyId: ctx.companyId, entryId: inv.ledgerEntryId, entryType: 'payment_tolerance', amountCents: lineTolerance, postingDate: input.paidOn, registerId, createdBy: ctx.actor.id });
+    }
+    let fxRegisterId: string | null = null;
+    if (gainCents !== 0) {
+      const gain = gainCents > 0;
+      const account = gain ? group?.fxGainAccountId : group?.fxLossAccountId;
+      if (account === null || account === undefined) throw new FinanceError('POSTING_GROUP', `The vendor’s posting group has no exchange ${gain ? 'gain' : 'loss'} account. Choose one in the ordering rules.`);
+      const amount = fromCents(Math.abs(gainCents));
+      // The payables account was cleared at the invoices' rates in the ledger but at today's rate in the books: this journal, in the books' currency, closes the difference.
+      fxRegisterId = (
+        await this.engine.post(
+          {
+            companyId: ctx.companyId,
+            idempotencyKey: `vendor-payment-fx:${id}`,
+            postingDate: input.paidOn,
+            documentType: 'vendor_payment_fx',
+            documentNo: v.number ?? '',
+            description: `Exchange ${gain ? 'gain' : 'loss'} on ${description}`.slice(0, 200),
+            currency: base,
+            rate: '1',
+            rateSource: 'base',
+            lines: [
+              { accountId: gain ? debitAccount : account, debit: amount, credit: '0', description: gain ? 'Liability booked at a higher rate than it cost to pay' : 'Exchange loss on paying a vendor', ...(gain ? { sourceLedger: 'vendor', sourceEntryId: v.vendorId } : {}) },
+              { accountId: gain ? account : debitAccount, debit: '0', credit: amount, description: gain ? 'Exchange gain on paying a vendor' : 'Liability booked at a lower rate than it cost to pay', ...(gain ? {} : { sourceLedger: 'vendor', sourceEntryId: v.vendorId }) },
+            ],
+            chainKey: 'general',
+            origin: ctx.origin,
+            source: { type: 'vendor_payment', id },
+            postedBy: 'engine',
+          },
+          ENGINE,
+          tx,
+        )
+      ).registerId;
     }
     if (withholdingCents > 0) {
       const [code] = await tx.select({ name: withholdingCodes.name, rate: withholdingCodes.ratePercent }).from(withholdingCodes).innerJoin(vendors, eq(vendors.withholdingCodeId, withholdingCodes.id)).where(eq(vendors.id, v.vendorId));
@@ -482,9 +618,69 @@ export class VendorPaymentService {
       await tx.insert(withholdingCertificates).values({ id: certId, companyId: ctx.companyId, number: certNo, vendorId: v.vendorId, voucherId: id, paidOn: input.paidOn, period: input.paidOn.slice(0, 7), codeName: code?.name ?? 'Withholding tax', ratePercent: code?.rate ?? '0.01', baseAmount: fromCents(lines.reduce((n, l) => n + toCents(l.withholdingBase), 0)), amount: fromCents(withholdingCents), currency: v.currency, createdBy: ctx.actor.id });
     }
     if (v.kind === 'advance' && v.advanceId !== null) await this.advances.payIn(tx, ctx.companyId, v.advanceId, id, now);
-    await tx.update(vendorPaymentVouchers).set({ status: 'paid', paidBy: ctx.actor.id, paidAt: now, paidOn: input.paidOn, paymentReference: reference.slice(0, 120), registerId, ledgerEntryId: entryId, updatedAt: now }).where(eq(vendorPaymentVouchers.id, id));
+    await tx.update(vendorPaymentVouchers).set({ status: 'paid', paidBy: ctx.actor.id, paidAt: now, paidOn: input.paidOn, paymentReference: reference.slice(0, 120), registerId, ledgerEntryId: entryId, rate, fxRegisterId, fxDifference: fromCents(gainCents), updatedAt: now }).where(eq(vendorPaymentVouchers.id, id));
     await this.event(tx, ctx.actor, id, 'paid', 'approved', 'paid', { data: { reference, paidOn: input.paidOn, registerId } });
     return { vendorId: v.vendorId, number: v.number ?? '', registerId, amount: v.cashAmount, currency: v.currency, reference, invoiceNos: invoices.map((i) => i.vendorInvoiceNo) };
+  }
+
+  /** Opens a sealed destination number. Set by the container so this service does not depend on the profile module. */
+  private destinationOpener: ((blob: VendorBankAccountRow['accountSealed']) => string) | null = null;
+
+  useDestinationOpener(open: (blob: VendorBankAccountRow['accountSealed']) => string): void {
+    this.destinationOpener = open;
+  }
+
+  /**
+   * What an approved voucher needs to be paid through M-Pesa: the provider and way of paying, the platform operation and its fields,
+   * read from the destination that was fixed when the voucher was approved (never from the browser). Refuses what cannot go: a
+   * voucher that is not approved, a releaser the three-people rule bars, an amount with cents, a destination that is no longer in
+   * use, or a payout already sent. The voucher's own approval is the approval for the money.
+   */
+  async prepareMpesaPayout(ctx: FinanceContext, id: string) {
+    return await this.db.transaction(async (tx) => {
+      const v = await this.lock(tx, ctx.companyId, id);
+      if (v.status !== 'approved') throw new FinanceError('WRONG_STATE', v.status === 'paid' ? 'This voucher has already been paid.' : 'Only an approved voucher can be paid.');
+      const refusal = releaseRefusal(ctx.actor.id ?? '', v.createdBy, v.approvedBy, v.needsThree);
+      if (refusal !== null) throw new FinanceError('THREE_PEOPLE', refusal);
+      const { method, base } = await this.method(tx, ctx.companyId, v.methodId);
+      if (method.kind !== 'mobile_money' || !has(method.providerId)) throw new FinanceError('NOT_MPESA', 'This voucher’s way of paying does not go through an M-Pesa connection. Pay it by hand and record it.');
+      if (v.currency !== base || v.kind === 'advance') throw new FinanceError('NOT_MPESA', 'Only an invoice payment in the books’ own currency can be paid through M-Pesa.');
+      const shillings = wholeShillings(v.cashAmount);
+      if (shillings === null) throw new FinanceError('AMOUNT_NOT_WHOLE', 'M-Pesa pays whole shillings only, from 1 shilling up. Pay this voucher by hand.');
+      const [account] = v.vendorBankAccountId === null ? [] : await tx.select().from(vendorBankAccounts).where(eq(vendorBankAccounts.id, v.vendorBankAccountId));
+      if (account?.status !== 'active' || account.kind === 'bank') throw new FinanceError('DESTINATION_CHANGED', 'The M-Pesa destination this voucher was approved for is not in use. Cancel it and make a new voucher.');
+      if (this.destinationOpener === null) throw new FinanceError('NOT_AVAILABLE', 'Sealed destinations cannot be opened here.');
+      const plan = payoutPlan(account.kind, this.destinationOpener(account.accountSealed), account.reference, shillings, v.number ?? '');
+      if (plan === null) throw new FinanceError('NOT_MPESA', 'That destination is not an M-Pesa one.');
+      const live = await tx.select({ id: providerOperations.id }).from(providerOperations).where(and(eq(providerOperations.subjectType, 'vendor_payment'), eq(providerOperations.subjectId, id), inArray(providerOperations.status, ['queued', 'submitted', 'accepted', 'timed_out', 'in_doubt', 'succeeded'])));
+      if (live.length > 0) throw new FinanceError('PAYOUT_IN_PROGRESS', 'A payment for this voucher has already been sent or is waiting for a check. See Payment activity.');
+      const [count] = await tx.select({ n: sql<number>`count(*)::int` }).from(providerOperations).where(and(eq(providerOperations.subjectType, 'vendor_payment'), eq(providerOperations.subjectId, id)));
+      await this.event(tx, ctx.actor, id, 'auto_payout_requested', 'approved', 'approved', { data: { methodId: method.id, amount: shillings, operation: plan.operation } });
+      return { providerId: method.providerId, methodId: method.id, operation: plan.operation, input: plan.input, amount: shillings, number: v.number ?? '', attempt: (count?.n ?? 0) + 1 };
+    });
+  }
+
+  /** The platform finished a payout for a voucher: if the money went, the voucher is recorded as paid with the receipt; if not, it says so and stays approved. */
+  async onAutomaticPayoutFinished(op: { id: string; companyId: string; subjectId: string | null; status: string; platformReference: string | null; failureCode: string | null; failureReason: string | null }, now: Date = new Date()): Promise<void> {
+    if (op.subjectId === null) return;
+    const ctx: FinanceContext = { companyId: op.companyId, actor: { type: 'system', id: 'mpesa-payout' }, origin: { surface: 'payments/engine', action: 'vendor_auto_payout' } };
+    const [v] = await this.db.select().from(vendorPaymentVouchers).where(eq(vendorPaymentVouchers.id, op.subjectId));
+    if (v?.status !== 'approved') return;
+    if (op.status === 'succeeded' && op.platformReference !== null && op.platformReference !== '') {
+      try {
+        const done = await this.db.transaction(async (tx) => await this.payIn(tx, ctx, v.id, { reference: op.platformReference ?? '', paidOn: businessDate(now) }, now));
+        await this.tellPaid(done);
+      } catch (error) {
+        // The money is out. Say so loudly, so a person records it by hand with this reference.
+        await this.db.transaction(async (tx) => {
+          await this.event(tx, ctx.actor, v.id, 'auto_payout_paid_not_recorded', 'approved', 'approved', { data: { operation: op.id, reference: op.platformReference, reason: error instanceof Error ? error.message : 'unknown' } });
+        });
+      }
+      return;
+    }
+    await this.db.transaction(async (tx) => {
+      await this.event(tx, ctx.actor, v.id, 'auto_payout_not_paid', 'approved', 'approved', { data: { operation: op.id, status: op.status, code: op.failureCode, reason: op.failureReason } });
+    });
   }
 
   /** A mistake in a paid voucher: the journal is reversed, the applications are undone, the invoices are open again. */
@@ -510,6 +706,7 @@ export class VendorPaymentService {
       const afterwards = sent ?? null;
       await tx.update(withholdingCertificates).set({ status: 'cancelled', cancelReason: `Payment reversed: ${text.slice(0, 400)}`, cancelledAt: now }).where(and(eq(withholdingCertificates.voucherId, id), eq(withholdingCertificates.status, 'issued')));
       const reversal = await this.engine.reverse({ companyId: ctx.companyId, registerId: v.registerId, postingDate: today, reasonCode: 'vendor_payment_reversed', reasonText: text.slice(0, 500), origin: ctx.origin, permissions: ENGINE, tx });
+      if (v.fxRegisterId !== null) await this.engine.reverse({ companyId: ctx.companyId, registerId: v.fxRegisterId, postingDate: today, reasonCode: 'vendor_payment_reversed', reasonText: text.slice(0, 500), origin: ctx.origin, permissions: ENGINE, tx });
       if (afterwards !== null) {
         await tx.insert(bankLedgerEntries).values({ companyId: ctx.companyId, bankAccountId: afterwards.bankAccountId, glAccountId: afterwards.glAccountId, postingDate: today, documentType: 'vendor_payment_reversal', documentNo: afterwards.documentNo, documentId: id, description: `Reversed: ${afterwards.description ?? ''}`.slice(0, 200), amount: fromCents(-toCents(afterwards.amount)), currency: afterwards.currency, registerId: reversal.registerId, reversesEntryId: afterwards.id, createdBy: ctx.actor.id });
       }

@@ -412,6 +412,11 @@ export class BankStatementService {
     await this.decisions.record({ companyId: ctx.companyId, subject: { type: 'bank_statement_line', id: String(lineId) }, action: 'finance.statement_line_matched', actor: ctx.actor, from: line.status, to: 'matched', inputs: { origin: ctx.origin, rule }, outcome: { entries: entryIds, amount: line.amount } }, tx);
   }
 
+  /** Closes a line against a bank entry inside the caller's transaction (used when a payment is made from the line). */
+  async matchEntriesIn(tx: Tx, ctx: FinanceContext, lineId: number, entryIds: number[], rule: string) {
+    await this.applyMatchIn(tx, ctx, lineId, entryIds, rule);
+  }
+
   /** Tells the refund or receipt that the bank has shown it (or no longer has). */
   private async noteDocuments(tx: Tx, ctx: FinanceContext, entries: { documentType: string; documentId: string | null; bankAccountId: string }[], event: 'bank_matched' | 'bank_unmatched', lineId: number) {
     for (const e of entries) {
@@ -475,6 +480,12 @@ export class BankStatementService {
   async receiptMethods(companyId: string, bankAccountId: string) {
     const rows = await this.db.select().from(paymentMethods).where(and(eq(paymentMethods.companyId, companyId), eq(paymentMethods.balancingBankAccountId, bankAccountId), eq(paymentMethods.enabled, true)));
     return rows.filter((m) => m.usableFor.includes('customer_receipt')).map((m) => ({ id: m.id, name: m.name, kind: m.kind }));
+  }
+
+  /** The ways of paying that pay out of this bank account and may be used to pay vendors. */
+  async vendorPaymentMethods(companyId: string, bankAccountId: string) {
+    const rows = await this.db.select().from(paymentMethods).where(and(eq(paymentMethods.companyId, companyId), eq(paymentMethods.balancingBankAccountId, bankAccountId), eq(paymentMethods.enabled, true)));
+    return rows.filter((m) => m.usableFor.includes('vendor_payment')).map((m) => ({ id: m.id, name: m.name, kind: m.kind }));
   }
 
   /**

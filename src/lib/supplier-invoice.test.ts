@@ -5,7 +5,9 @@ import {
   canRecall,
   checkDeliveryNote,
   checkInvoiceHeader,
+  checkEtims,
   checkInvoiceLine,
+  etimsRefusal,
   deliveryNoteRule,
   invoiceTotals,
   matchLine,
@@ -109,5 +111,21 @@ describe('links, separation, recall, posting plan', () => {
       { key: 'account:a1', accountId: 'a1', purpose: 'account', cents: 300 },
     ]);
     expect(plan.payableCents).toBe(1500 + 300 + 288);
+  });
+});
+
+describe('eTIMS details on a supplier invoice', () => {
+  it('accepts a number and a secure link, and says plainly what is wrong with others', () => {
+    expect(checkEtims({ etimsInvoiceNo: 'KRAINV-0001/23', etimsVerificationUrl: 'https://itax.kra.go.ke/KRA-Portal/invoiceChk.htm?x=1' })).toEqual({});
+    expect(checkEtims({})).toEqual({});
+    expect(checkEtims({ etimsInvoiceNo: '#1' }).etimsInvoiceNo).toMatch(/eTIMS invoice number/);
+    expect(checkEtims({ etimsVerificationUrl: 'http://example.com' }).etimsVerificationUrl).toMatch(/https/);
+    expect(checkEtims({ etimsVerificationUrl: 'not a link' }).etimsVerificationUrl).toBeDefined();
+  });
+  it('asks for the number only when the rule is on and there is tax', () => {
+    expect(etimsRefusal(1600, false, {})).toBeNull();
+    expect(etimsRefusal(0, true, {})).toBeNull();
+    expect(etimsRefusal(1600, true, { etimsInvoiceNo: ' ' })).toMatch(/eTIMS invoice number/);
+    expect(etimsRefusal(1600, true, { etimsInvoiceNo: 'KRA-1234' })).toBeNull();
   });
 });

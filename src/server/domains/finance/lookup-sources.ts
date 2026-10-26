@@ -333,6 +333,30 @@ const statementChargeAccounts = staticSource({
   },
 });
 
+/** The ways of paying that pay out of one bank account and may be used for vendors: what a payment found on its statement is made through. */
+const statementVendorMethods = staticSource({
+  key: 'statement-vendor-methods',
+  permission: 'bank_statements:match',
+  async items({ companyId, filters }) {
+    const account = accountFilter(filters);
+    const rows = await getContainer().finance.bankStatements.vendorPaymentMethods(companyId, account);
+    return rows.map((m) => ({ id: m.id, label: m.name, description: m.kind.replace('_', ' ') }));
+  },
+});
+
+/** How a payment found on a statement is set against what the vendor is owed. */
+const statementVendorModes = staticSource({
+  key: 'statement-vendor-modes',
+  permission: 'bank_statements:match',
+  items: ({ filters }) => {
+    acceptFilters(filters, {});
+    return [
+      { id: 'oldest_first', label: 'Pay the oldest open invoices', description: 'As far as the amount goes; refused if the open invoices come to less' },
+      { id: 'on_account', label: 'Keep it on account', description: 'Nothing is set against an invoice yet' },
+    ];
+  },
+});
+
 /** The G/L accounts the methods of one cash account post to, which a counted difference is written against. */
 const cashCountGlAccounts = staticSource({
   key: 'cash-count-gl-accounts',
@@ -388,6 +412,8 @@ export const FINANCE_LOOKUP_SOURCES: readonly LookupSource[] = [
   cashCountGlAccounts,
   statementReceiptMethods,
   statementChargeAccounts,
+  statementVendorMethods,
+  statementVendorModes,
   reasons('statement-reasons', 'bank_statements:read'),
   fixedChoices('bank-account-kinds', 'bank_accounts:read', BANK_KINDS),
   fixedChoices('statement-allocation-modes', 'bank_statements:create_receipt', ALLOCATION_CHOICES),

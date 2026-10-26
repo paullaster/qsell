@@ -497,4 +497,96 @@ describe.skipIf(!has(url))('supplier invoices (database)', () => {
       expect(await codeOf(c.invoicePosting.post(staff('finance'), id))).toBe('ADVANCE_INVOICE');
     });
   });
+
+  describe('eTIMS details', () => {
+    it('are asked for when the company’s rule is on and the invoice has tax, kept with the invoice, and listed when missing', async () => {
+      await c.purchaseOrders.saveSettings(staff('admin'), { rfqRequiredAbove: '', amendmentTolerancePercent: '0', requireEtimsForTax: true });
+      const s = await setup();
+      const { id } = await c.invoicePortal.start(s.v, companyId, { poId: s.order.id, vendorInvoiceNo: `ET-${run}-${String(++seq)}` });
+      const loaded = await c.invoicePortal.load(s.v, id);
+      const scan = await file(s.v);
+      const dnFile = await file(s.v);
+      const save = async (etimsInvoiceNo: string, etimsVerificationUrl = '') => await c.invoicePortal.save(s.v, id, { header: { ...emptyInvoiceHeader(TODAY), vendorInvoiceNo: loaded.vendorInvoiceNo, declaration: true, etimsInvoiceNo, etimsVerificationUrl }, lines: lineForms([[s.line, required(loaded.lines[0]).quantity, '100']]), deliveryNotes: [noteForm(s.note, dnFile)], invoiceFileId: scan });
+      await save('');
+      const refused = await c.invoicePortal.submit(s.v, companyId, id).catch((e: unknown) => e as { problems?: Record<string, string> });
+      expect('problems' in refused ? refused.problems?.etimsInvoiceNo : undefined).toMatch(/eTIMS invoice number/);
+      expect(await codeOf(save('#', ''))).toBe('INVALID');
+      expect(await codeOf(save('KRA-INV-0001', 'http://insecure.example'))).toBe('INVALID');
+      await save('KRA-INV-0001', 'https://itax.kra.go.ke/KRA-Portal/invoiceChk.htm?no=1');
+      const sent = await c.invoicePortal.submit(s.v, companyId, id);
+      expect(sent.number).toMatch(/^SINV-/);
+      const seen = required(await c.supplierInvoices.get(companyId, id));
+      expect(seen.invoice).toMatchObject({ etimsInvoiceNo: 'KRA-INV-0001', etimsVerificationUrl: 'https://itax.kra.go.ke/KRA-Portal/invoiceChk.htm?no=1' });
+      // With the rule off, an invoice with tax and no number goes through, and the watch list names it once booked.
+      await c.purchaseOrders.saveSettings(staff('admin'), { rfqRequiredAbove: '', amendmentTolerancePercent: '0', requireEtimsForTax: false });
+      const t = await setup();
+      const plain = await approved(t);
+      await c.invoicePosting.post(staff('finance'), plain.id);
+      const watch = await c.vendorInsights.watchList(companyId, { from: '2000-01-01', to: '2999-12-31' });
+      expect(watch.taxWithoutEtims.length).toBeGreaterThan(0);
+      expect(watch.taxWithoutEtims.every((x) => x.taxCents > 0)).toBe(true);
+    });
+  });
+
+  describe('an approval workflow (the approval engine)', () => {
+    const workflowFor = async (trigger: string, vendorId: string, approverId: string) => {
+      const actor = { type: 'user' as const, id: 'wf-test' };
+      const reason = { code: 'POLICY_CHANGE' };
+      await c.approvalConfig.saveProfile(companyId, { userId: approverId, limits: [] }, actor, reason);
+      const wf = await c.approvalConfig.createWorkflow(companyId, { code: `W-${randomUUID().slice(0, 8)}`, name: 'Vendor test', trigger }, actor);
+      await c.approvalConfig.saveDraft(companyId, wf.id, { conditions: { op: 'eq', field: 'vendor.id', value: vendorId }, steps: [{ sequence: 1, name: 'Boss', approver: { type: 'user', userId: approverId } }] } as never, actor);
+      await c.approvalConfig.publish(companyId, wf.id, actor, reason);
+    };
+    const boss = async () => required((await db.insert(schema.users).values({ email: `wf-${randomUUID()}@example.test`, passwordHash: 'x', name: 'Boss', role: 'manager' }).returning())[0]).id;
+    const entryOf = async (kind: string, id: string) => required((await c.approvals.forDocument(companyId, kind, id)).flatMap((r) => r.entries).find((e) => e.status === 'open'));
+    const withAfterCommit = async <T,>(fn: (tx: Parameters<Parameters<DrizzleDb['transaction']>[0]>[0]) => Promise<T>): Promise<T> => await db.transaction(fn);
+
+    it('holds a supplier invoice for the inbox: no direct approval, a release approves it, a refusal sends it back to be sent again', async () => {
+      const s = await setup();
+      const owner = await boss();
+      const clerkId = await boss();
+      await workflowFor('vendor.invoice', s.v.vendorId, owner);
+      const toApproval = async () => {
+        const inv = await submitted(s);
+        await c.supplierInvoices.pickUp(staff('clerk'), inv.id);
+        await c.supplierInvoices.autoLink(staff('clerk'), inv.id);
+        await c.supplierInvoices.runMatch(staff('checker'), inv.id);
+        await c.supplierInvoices.sendForApproval(staff(clerkId), inv.id);
+        return inv;
+      };
+      const state = async (id: string) => required(await c.supplierInvoices.get(companyId, id)).invoice.state;
+      const first = await toApproval();
+      expect(await state(first.id)).toBe('pending_approval');
+      expect(await codeOf(c.supplierInvoices.approve(staff('boss'), first.id))).toBe('USE_APPROVALS');
+      await withAfterCommit(async (tx) => await c.approvals.reject((await entryOf('vendor_invoice', first.id)).id, owner, { reasonCode: 'OTHER', comment: 'Price looks high' }, tx));
+      expect(await state(first.id)).toBe('matched');
+      await c.supplierInvoices.sendForApproval(staff(clerkId), first.id);
+      expect(await state(first.id)).toBe('pending_approval');
+      await withAfterCommit(async (tx) => await c.approvals.approve((await entryOf('vendor_invoice', first.id)).id, owner, null, tx));
+      expect(await state(first.id)).toBe('approved');
+      const row = required(await c.supplierInvoices.get(companyId, first.id)).invoice;
+      expect(row.approvedBy).toBe(owner);
+    });
+
+    it('does the same for a purchase order: held for the inbox, released by it', async () => {
+      const v = await approvedVendor();
+      const owner = await boss();
+      const buyerId = await boss();
+      await workflowFor('po.release', v.vendorId, owner);
+      catSeq += 1;
+      const cat = await c.categories.save(companyId, null, { ...emptyCategory(), code: `WF${String(catSeq)}_${run}`.toUpperCase(), name: `WF category ${String(catSeq)} ${run}` });
+      await c.categories.setStatus(companyId, cat.id, 'open');
+      const { ids } = await c.prequal.apply(v, companyId, [cat.id], TODAY);
+      await c.prequal.submit(v, required(ids[0]));
+      await c.prequalReview.take(staff('evaluator'), required(ids[0]));
+      await c.prequalReview.approve(staff('decider'), required(ids[0]), { maxOrderValue: '', note: '' }, TODAY);
+      const prod = await product(0, '10');
+      const { id } = await c.purchaseOrders.saveDraft(staff(buyerId), null, { ...emptyPoHeader(TODAY), vendorId: v.vendorId, categoryId: cat.id, currency: 'KES', noRfqReason: 'Test' }, [stockLine(prod, { unitPrice: '50' })], false);
+      await c.purchaseOrders.submit(staff(buyerId), id, NO);
+      expect(await codeOf(c.purchaseOrders.approve(staff('boss'), id))).toBe('USE_APPROVALS');
+      expect(await codeOf(c.purchaseOrders.reject(staff('boss'), id, 'No'))).toBe('USE_APPROVALS');
+      await withAfterCommit(async (tx) => await c.approvals.approve((await entryOf('vendor_po', id)).id, owner, null, tx));
+      expect(required(await c.purchaseOrders.get(companyId, id)).po.status).toBe('approved');
+    });
+  });
 });

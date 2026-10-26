@@ -1,4 +1,7 @@
 import { and, eq, isNull, ne, sql } from 'drizzle-orm';
+import { RETURN_REASONS } from '@/lib/purchase-return';
+import { LANDED_KINDS } from '@/lib/landed-cost';
+import { SOURCE_WORDS } from '@/lib/vendor-scorecard';
 import { bankAccounts, glAccounts, paymentMethods, pettyCashFloats, purchaseInvoices, users, procurementCategories, products, reasonCodes, vendors, withholdingCodes } from '@/server/db/drizzle/schema';
 import { VENDOR_STATUS, VENDOR_TYPES } from '@/lib/vendor-forms';
 import { QUESTION_KINDS, STATUS_WORDS } from '@/lib/prequalification';
@@ -8,7 +11,7 @@ import { REJECT_REASONS, RGN_STATUS } from '@/lib/rgn';
 import { INVOICE_REASONS, INVOICE_STATE } from '@/lib/supplier-invoice';
 import { VOUCHER_STATUS } from '@/lib/vendor-payment';
 import { CREDIT_STATE } from '@/lib/vendor-credit-memo';
-import { CONTACT_ROLES, ID_TYPES, TURNOVER_BANDS } from '@/lib/vendor-profile';
+import { CONTACT_ROLES, DESTINATION_KINDS, ID_TYPES, TURNOVER_BANDS } from '@/lib/vendor-profile';
 import { acceptFilters, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
 
 const text = (v: unknown): string => (typeof v === 'string' ? v : '');
@@ -68,6 +71,29 @@ export const VENDOR_LOOKUP_SOURCES: LookupSource[] = [
       return [eq(reasonCodes.companyId, companyId), eq(reasonCodes.isActive, true), sql`${reasonCodes.appliesTo} @> '["vendor_standing"]'::jsonb`];
     },
     toOption: (row) => ({ id: text(row.id), label: text(row.label), description: null, badge: null, meta: { requiresComment: row.requiresComment === true ? '1' : '' } }),
+  }),
+  staticSource({
+    key: 'ageing-bases',
+    permission: 'vendor_payments:read',
+    items: ({ filters }) => {
+      acceptFilters(filters, {});
+      return [
+        { id: 'due', label: 'By due date', description: 'How late it is past the date it was due to be paid' },
+        { id: 'invoice', label: 'By invoice date', description: 'How old the invoice is, whatever its terms' },
+      ];
+    },
+  }),
+  staticSource({
+    key: 'ageing-groups',
+    permission: 'vendor_payments:read',
+    items: ({ filters }) => {
+      acceptFilters(filters, {});
+      return [
+        { id: 'vendor', label: 'Each vendor' },
+        { id: 'category', label: 'Each category', description: 'The category of the order the invoice was for' },
+        { id: 'posting_group', label: 'Each vendor posting group', description: 'The group that decides which accounts a vendor posts to' },
+      ];
+    },
   }),
   staticSource({
     key: 'vendor-block-kinds',
@@ -231,6 +257,7 @@ export const VENDOR_LOOKUP_SOURCES: LookupSource[] = [
       ['vendor-id-types', ID_TYPES],
       ['vendor-turnover-bands', TURNOVER_BANDS],
       ['vendor-contact-roles', CONTACT_ROLES],
+      ['vendor-destination-kinds', DESTINATION_KINDS],
     ] as const
   ).map(([key, list]) =>
     staticSource({
@@ -494,5 +521,52 @@ export const VENDOR_LOOKUP_SOURCES: LookupSource[] = [
       return [eq(purchaseInvoices.companyId, companyId), sql`exists (select 1 from vendor_ledger_entries e where e.id = ${purchaseInvoices.ledgerEntryId} and e.remaining_amount > 0)`];
     },
     toOption: (row) => ({ id: text(row.id), label: `${text(row.label)} · ${text(row.vendor)}`, description: `Open ${text(row.open)} · ${text(row.number)}`, badge: null, meta: { vendor: text(row.vendor), open: text(row.open) } }),
+  }),
+  /** The ways of paying money can come back through: any open one with a usable bank account. */
+  tableSource({
+    key: 'vendor-refund-methods',
+    permission: 'vendor_refunds:create',
+    table: paymentMethods,
+    id: paymentMethods.id,
+    label: paymentMethods.name,
+    searchColumns: [paymentMethods.name, paymentMethods.code],
+    select: { kind: paymentMethods.kind },
+    scope: ({ companyId, filters }) => {
+      acceptFilters(filters, {});
+      return [eq(paymentMethods.companyId, companyId), eq(paymentMethods.enabled, true), sql`exists (select 1 from ${bankAccounts} where ${bankAccounts.id} = ${paymentMethods.balancingBankAccountId} and ${bankAccounts.blocked} = false)`];
+    },
+    toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.kind).replace('_', ' '), badge: null }),
+  }),
+  staticSource({
+    key: 'purchase-return-reasons',
+    permission: 'purchase_returns:create',
+    items: ({ filters }) => {
+      acceptFilters(filters, {});
+      return RETURN_REASONS.map((r) => ({ id: r.id, label: r.label }));
+    },
+  }),
+  staticSource({
+    key: 'landed-cost-kinds',
+    permission: 'landed_costs:create',
+    items: ({ filters }) => {
+      acceptFilters(filters, {});
+      return LANDED_KINDS.map((k) => ({ id: k.id, label: k.label }));
+    },
+  }),
+  staticSource({
+    key: 'landed-cost-methods',
+    permission: 'landed_costs:create',
+    items: ({ filters }) => {
+      acceptFilters(filters, {});
+      return [{ id: 'value', label: 'By the value of the goods' }, { id: 'quantity', label: 'By the quantity of the goods' }];
+    },
+  }),
+  staticSource({
+    key: 'scorecard-sources',
+    permission: 'scorecards:manage',
+    items: ({ filters }) => {
+      acceptFilters(filters, {});
+      return Object.entries(SOURCE_WORDS).map(([id, label]) => ({ id, label }));
+    },
   }),
 ];

@@ -23,6 +23,8 @@ export interface NewVendorEntry {
   /** Signed: positive when we owe the vendor (invoices, refunds received), negative for payments, credits and advances paid. */
   amountCents: number;
   currency: string;
+  /** Base currency per one unit of `currency` (text); "1" in the books' own currency. */
+  rate?: string;
   postingDate: string;
   documentDate?: string | null;
   dueDate?: string | null;
@@ -66,6 +68,7 @@ export class VendorLedgerService {
       amount: fromCents(e.amountCents),
       remainingAmount: fromCents(e.amountCents),
       currency: e.currency,
+      rate: e.rate ?? '1',
       postingDate: e.postingDate,
       documentDate: e.documentDate ?? null,
       dueDate: e.dueDate ?? null,

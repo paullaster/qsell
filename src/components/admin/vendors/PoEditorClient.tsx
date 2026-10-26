@@ -102,7 +102,7 @@ function Editor({ view, today }: { view: View | null; today: string }) {
       <PageHeader
         title={view?.number ?? (view === null ? 'New purchase order' : 'Draft order')}
         intro={<span className="flex flex-wrap items-center gap-2">{view === null ? 'Not saved yet' : view.vendor.label}<Chip tone={status.tone}>{status.label}</Chip>{view !== null && view.version > 1 ? <span>Version {view.version}</span> : null}</span>}
-        actions={<Link href="/admin/vendors/orders" className={buttonClass}>All orders</Link>}
+        actions={<><Link href="/admin/vendors/orders" className={buttonClass}>All orders</Link>{view?.number != null ? <a href={`/api/admin/vendors/order-xml/${view.id}`} className={buttonClass}>Download as UBL XML</a> : null}</>}
       />
       <Message notice={notice} />
       {view?.cancelReason == null ? null : <p role="status" className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-fg">Cancelled: {view.cancelReason}</p>}
@@ -113,7 +113,7 @@ function Editor({ view, today }: { view: View | null; today: string }) {
 
       <form onSubmit={(e) => { e.preventDefault(); void save(); }} className={`${cardClass} space-y-3`} aria-label="Order details">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <ChoicePicker label="Vendor" source="vendors" choice={vendor} onChoice={setVendor} disabled={!draft} required clearable={false} placeholder="Choose the vendor…" />
+          <ChoicePicker label="Vendor" source="vendors" createHref="/admin/vendors/new" createLabel="Add a vendor" listHref="/admin/vendors/browse" listLabel="View all vendors" choice={vendor} onChoice={setVendor} disabled={!draft} required clearable={false} placeholder="Choose the vendor…" />
           <ChoicePicker label="Category" source="procurement-categories" choice={category} onChoice={setCategory} disabled={!draft} required clearable={false} placeholder="Choose the category…" />
           <ChoicePicker label="Currency" source="po-currencies" choice={currency} onChoice={setCurrency} disabled={!draft} required clearable={false} placeholder="Choose the currency…" />
           <Field id={`${uid}-od`} label="Order date"><input id={`${uid}-od`} type="date" value={f.orderDate} onChange={(e) => set('orderDate', e.target.value)} className={fieldClass} disabled={!draft} required /></Field>
@@ -157,7 +157,8 @@ function Editor({ view, today }: { view: View | null; today: string }) {
                   <button type="button" className={primaryClass} disabled={busy} onClick={() => void submit()}>Save and send for approval</button>
                 </>
               ) : null}
-              {view.status === 'pending_approval' && view.can.approve && !view.createdByMe ? (
+              {view.status === 'pending_approval' && view.inWorkflow ? <p role="status" className="text-sm text-fg-muted">Waiting in the Approvals inbox: an approval workflow covers this, so it is approved there.</p> : null}
+              {view.status === 'pending_approval' && view.can.approve && !view.createdByMe && !view.inWorkflow ? (
                 <>
                   <button type="button" className={primaryClass} disabled={busy} onClick={() => void act(approvePoAction(view.id).then((r) => (r.ok ? { ok: true as const } : r)), 'Approved. The order has its number.')}>Approve</button>
                   <button type="button" className={dangerClass} disabled={busy} onClick={() => setPanel('reject')}>Send back…</button>
@@ -214,7 +215,8 @@ function Editor({ view, today }: { view: View | null; today: string }) {
                     <p className="text-xs text-fg-muted">{a.reason}{a.decisionNote === null ? '' : ` — ${a.decisionNote}`}</p>
                     <div className="flex flex-wrap gap-2">
                       {a.status === 'draft' && view.can.advanceCreate && a.mine ? <button type="button" className={primaryClass} disabled={busy} onClick={() => void act(submitAdvanceAction(a.id), 'Sent for approval.')}>Send for approval</button> : null}
-                      {a.status === 'pending_approval' && view.can.advanceApprove && !a.mine ? (
+                      {a.status === 'pending_approval' && a.inWorkflow ? <p role="status" className="text-sm text-fg-muted">Waiting in the Approvals inbox: an approval workflow covers this, so it is approved there.</p> : null}
+                      {a.status === 'pending_approval' && view.can.advanceApprove && !a.mine && !a.inWorkflow ? (
                         <>
                           <button type="button" className={primaryClass} disabled={busy} onClick={() => void act(approveAdvanceAction(a.id), 'The advance payment is approved.')}>Approve the advance</button>
                           <button type="button" className={buttonClass} disabled={busy} onClick={() => void act(rejectAdvanceAction(a.id, 'Sent back for changes'), 'Sent back.')}>Send back</button>

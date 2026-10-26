@@ -1,6 +1,9 @@
-import { and, asc, count, eq, getTableColumns, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, getTableColumns, gte, ilike, inArray, isNull, lte, ne, or, sql, type SQL } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { afterCursor, matching, pageOf, PAGE_SIZE, searchText, type PageInput } from '@/server/domains/settings/paging';
+import { required } from '@/lib/values';
+import { decodeCursor, escapeLike } from '@/server/domains/lookups/request';
+import type { StorefrontQuery } from '@/lib/storefront-search';
 import {
   categories,
   currencies,
@@ -386,6 +389,126 @@ export class CatalogRepository {
         and(eq(products.isActive, true), eq(products.isSellable, true), isNull(products.deletedAt)),
       )
       .orderBy(asc(products.name));
+  }
+
+  // ── Storefront reads: live (active, sellable, not deleted) products only ──
+
+  /** Products a shopper may see. Every storefront read starts from this. */
+  private liveProducts(): SQL {
+    return required(and(eq(products.isActive, true), eq(products.isSellable, true), isNull(products.deletedAt)), 'the live-product conditions');
+  }
+
+  /** What the shop's filters ask for, apart from where the page begins. */
+  private shopFilters(query: StorefrontQuery, categoryIds: string[] | null): SQL {
+    const conditions: (SQL | undefined)[] = [this.liveProducts()];
+    // Every word has to be found somewhere, so "red shoes" finds a red pair in the shoes category.
+    for (const word of query.q.split(/\s+/).filter((w) => w !== '').slice(0, 6)) {
+      const pattern = `%${escapeLike(word)}%`;
+      // A word that is only punctuation has no lexeme; it can still match a name or SKU as written.
+      const lexeme = word.replace(/[^\p{L}\p{N}]+/gu, '');
+      conditions.push(
+        or(
+          ilike(products.name, pattern),
+          ilike(products.sku, pattern),
+          ilike(products.brand, pattern),
+          ilike(products.categoryName, pattern),
+          // Description and tags: the word, or a word that starts with it ("ric" finds "rice").
+          lexeme === '' ? undefined : sql`products.search_vector @@ to_tsquery('simple', ${`${lexeme}:*`})`,
+        ),
+      );
+    }
+    if (categoryIds !== null) conditions.push(categoryIds.length === 0 ? sql`false` : inArray(products.categoryId, categoryIds));
+    if (query.minPrice !== null) conditions.push(gte(products.price, String(query.minPrice)));
+    if (query.maxPrice !== null) conditions.push(lte(products.price, String(query.maxPrice)));
+    if (query.inStock) conditions.push(sql`${products.stockQuantity} - ${products.reservedQuantity} > 0`);
+    return required(and(...conditions), 'the shop filters');
+  }
+
+  /**
+   * One page of the shop, in the order asked for, with the number of products that match in all.
+   * Paging is by key (the sort value, then the id), so a page costs the same however far down it is
+   * and nothing is skipped or repeated when products change between pages.
+   */
+  async searchStorefront(
+    query: StorefrontQuery,
+    categoryIds: string[] | null,
+    limit: number,
+  ): Promise<{ rows: ProductJoined[]; nextCursor: string | null; total: number }> {
+    const filters = this.shopFilters(query, categoryIds);
+    const after = query.cursor === null ? null : decodeCursor(query.cursor);
+    const price = sql`coalesce(${products.price}, 0)`;
+    const created = sql`to_char(${products.createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+    const spec = {
+      name: { key: sql<string>`${products.name}`, order: [asc(products.name), asc(products.id)], from: after && sql`(${products.name}, ${products.id}) > (${after.k}, ${after.id})` },
+      price_asc: { key: sql<string>`${price}::text`, order: [asc(price), asc(products.id)], from: after && sql`(${price}, ${products.id}) > (${after.k}::numeric, ${after.id})` },
+      price_desc: { key: sql<string>`${price}::text`, order: [desc(price), desc(products.id)], from: after && sql`(${price}, ${products.id}) < (${after.k}::numeric, ${after.id})` },
+      newest: { key: sql<string>`${created}`, order: [desc(products.createdAt), desc(products.id)], from: after && sql`(${products.createdAt}, ${products.id}) < (${after.k}::timestamptz, ${after.id})` },
+    }[query.sort];
+
+    const [rows, totals] = await Promise.all([
+      this.db
+        .select({ ...getTableColumns(products), ...productRelations, sortKey: spec.key.as('sort_key') })
+        .from(products)
+        .leftJoin(itemTypes, eq(products.itemTypeId, itemTypes.id))
+        .leftJoin(taxCategories, eq(products.taxCategoryId, taxCategories.id))
+        .leftJoin(categories, eq(products.categoryId, categories.id))
+        .leftJoin(unitsOfMeasure, eq(products.baseUnitId, unitsOfMeasure.id))
+        .where(spec.from ? and(filters, spec.from) : filters)
+        .orderBy(...spec.order)
+        .limit(limit + 1),
+      this.db.select({ value: count() }).from(products).where(filters),
+    ]);
+    const page = pageOf(rows, limit, (row) => ({ k: row.sortKey, id: row.id }));
+    return { rows: page.rows, nextCursor: page.nextCursor, total: totals[0]?.value ?? 0 };
+  }
+
+  /** Active categories with how many live products sit directly in each. */
+  async listShopCategories(): Promise<{ id: string; name: string; slug: string; parentId: string | null; displayOrder: number; imageUrl: string | null; direct: number }[]> {
+    const counts = await this.db
+      .select({ categoryId: products.categoryId, value: count() })
+      .from(products)
+      .where(this.liveProducts())
+      .groupBy(products.categoryId);
+    const direct = new Map(counts.map((row) => [row.categoryId, row.value]));
+    const rows = await this.db
+      .select({ id: categories.id, name: categories.name, slug: categories.slug, parentId: categories.parentId, displayOrder: categories.displayOrder, imageUrl: categories.imageUrl })
+      .from(categories)
+      .where(eq(categories.isActive, true))
+      .orderBy(asc(categories.displayOrder), asc(categories.name));
+    return rows.map((row) => ({ ...row, direct: direct.get(row.id) ?? 0 }));
+  }
+
+  /** The lowest and highest price among live products, for the price filter's hint. */
+  async shopPriceRange(): Promise<{ min: number; max: number } | null> {
+    const [row] = await this.db
+      .select({ min: sql<string | null>`min(${products.price})`, max: sql<string | null>`max(${products.price})` })
+      .from(products)
+      .where(and(this.liveProducts(), sql`${products.price} is not null`));
+    return row?.min == null || row.max == null ? null : { min: Number(row.min), max: Number(row.max) };
+  }
+
+  /** Live products among these ids (the cart checks its lines against this). */
+  async listLiveProductsByIds(ids: string[]): Promise<ProductJoined[]> {
+    if (ids.length === 0) return [];
+    return await this.productQuery().where(and(this.liveProducts(), inArray(products.id, ids)));
+  }
+
+  /** Other live products in the same category, best stocked first. */
+  async listRelatedLive(productId: string, categoryId: string, limit: number): Promise<ProductJoined[]> {
+    return await this.productQuery()
+      .where(and(this.liveProducts(), eq(products.categoryId, categoryId), ne(products.id, productId)))
+      .orderBy(desc(sql`${products.stockQuantity} - ${products.reservedQuantity} > 0`), asc(products.name))
+      .limit(limit);
+  }
+
+  /** Address (slug) and last change of live products, for the sitemap. */
+  async listLiveForSitemap(limit: number): Promise<{ id: string; slug: string; updatedAt: Date }[]> {
+    return await this.db
+      .select({ id: products.id, slug: products.slug, updatedAt: products.updatedAt })
+      .from(products)
+      .where(this.liveProducts())
+      .orderBy(asc(products.id))
+      .limit(limit);
   }
 
   async listLowStock(): Promise<ProductJoined[]> {

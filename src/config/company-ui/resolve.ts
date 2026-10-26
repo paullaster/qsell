@@ -1,4 +1,6 @@
 import { DEFAULT_COMPANY_UI_CONFIG } from './defaults';
+import { resolveBanners } from './banners';
+import { resolvePolicies } from './policies';
 import { resolveSupportConfig } from './support';
 import {
   PRODUCT_GRID_DESKTOP_COLUMNS,
@@ -52,6 +54,8 @@ export function resolveCompanyUiConfig(raw: unknown): CompanyUiConfig {
     },
     moduleLabels: sanitizeModuleLabels(source.moduleLabels),
     support: resolveSupportConfig(source.support),
+    policies: resolvePolicies(source.policies),
+    banners: resolveBanners(source.banners),
   };
 }
 
@@ -63,5 +67,7 @@ export function toCompanyUiConfigRaw(config: CompanyUiConfig): CompanyUiConfigRa
     },
     moduleLabels: { ...config.moduleLabels },
     support: config.support,
+    policies: config.policies,
+    banners: config.banners,
   };
 }

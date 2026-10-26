@@ -35,18 +35,21 @@ const GENERAL_COLUMNS: Record<GeneralPurpose, keyof typeof generalPostingSetup.$
   inventory_clearing: 'inventoryClearingAccountId',
 };
 
+/** Where a read goes: the service's own connection, or the caller's open transaction (so a read made inside a transaction does not take a second connection). */
+type Reader = DrizzleDb | Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
+
 export class PostingSetupService {
   constructor(
     private readonly db: DrizzleDb,
     private readonly decisions: DecisionLog,
   ) {}
 
-  async overview(companyId: string) {
+  async overview(companyId: string, reader: Reader = this.db) {
     const [business, product, general, customer] = await Promise.all([
-      this.db.select().from(businessPostingGroups).where(eq(businessPostingGroups.companyId, companyId)),
-      this.db.select().from(productPostingGroups).where(eq(productPostingGroups.companyId, companyId)),
-      this.db.select().from(generalPostingSetup).where(eq(generalPostingSetup.companyId, companyId)),
-      this.db.select().from(customerPostingGroups).where(eq(customerPostingGroups.companyId, companyId)),
+      reader.select().from(businessPostingGroups).where(eq(businessPostingGroups.companyId, companyId)),
+      reader.select().from(productPostingGroups).where(eq(productPostingGroups.companyId, companyId)),
+      reader.select().from(generalPostingSetup).where(eq(generalPostingSetup.companyId, companyId)),
+      reader.select().from(customerPostingGroups).where(eq(customerPostingGroups.companyId, companyId)),
     ]);
     return { business, product, general, customer };
   }
@@ -132,8 +135,8 @@ export class PostingSetupService {
     });
   }
 
-  async loadGeneral(companyId: string): Promise<GeneralSetupRow[]> {
-    const { business, product, general } = await this.overview(companyId);
+  async loadGeneral(companyId: string, reader: Reader = this.db): Promise<GeneralSetupRow[]> {
+    const { business, product, general } = await this.overview(companyId, reader);
     const biz = new Map(business.map((b) => [b.id, b.code]));
     const prod = new Map(product.map((p) => [p.id, p.code]));
     return general.map((r) => ({
@@ -154,8 +157,8 @@ export class PostingSetupService {
     }));
   }
 
-  async resolveGeneral(companyId: string, business: string, product: string, purpose: GeneralPurpose, date: string) {
-    return resolveGeneral(await this.loadGeneral(companyId), business, product, purpose, date);
+  async resolveGeneral(companyId: string, business: string, product: string, purpose: GeneralPurpose, date: string, reader: Reader = this.db) {
+    return resolveGeneral(await this.loadGeneral(companyId, reader), business, product, purpose, date);
   }
 
   async resolveCustomer(companyId: string, group: string, purpose: CustomerPurpose) {

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  describeDestination,
+  numberOf,
   allStatuses, checkBanks, checkBusiness, checkContacts, checkDirectors, checkProfile, emptyBusiness, emptyFinancial, emptyProfile,
   mayEditProfile, mayEditSection, missingIn, profileComplete, sectionStatus, type ProfileState,
 } from './vendor-profile';
@@ -104,3 +106,26 @@ describe('who may change what', () => {
     expect(mayEditSection('readonly', 'attachments')).toBe(false);
   });
 });
+
+describe('M-Pesa destinations', () => {
+  const base = { bankName: '', branch: '', accountName: 'Wanjiru Kamau', swift: '' };
+  it('accepts a phone, a paybill with its account and a till, in their own shapes', () => {
+    expect(checkBanks([{ ...base, kind: 'mpesa_phone', accountNumber: '0712 345 678' }])).toEqual({});
+    expect(checkBanks([{ ...base, kind: 'mpesa_paybill', accountNumber: '400200', reference: 'ACC-77' }])).toEqual({});
+    expect(checkBanks([{ ...base, kind: 'mpesa_till', accountNumber: '123456' }])).toEqual({});
+  });
+  it('refuses a wrong number, a paybill with no account to quote, and an unknown kind', () => {
+    expect(checkBanks([{ ...base, kind: 'mpesa_phone', accountNumber: '12345' }])['banks.0.accountNumber']).toMatch(/phone/);
+    expect(checkBanks([{ ...base, kind: 'mpesa_paybill', accountNumber: '400200', reference: '' }])['banks.0.reference']).toBeDefined();
+    expect(checkBanks([{ ...base, kind: 'mpesa_till', accountNumber: 'abc' }])['banks.0.accountNumber']).toMatch(/till/);
+    expect(checkBanks([{ ...base, kind: 'cash' as never, accountNumber: '123456' }])['banks.0.kind']).toBeDefined();
+  });
+  it('keeps a phone with the country code, and says where the money goes without its number', () => {
+    expect(numberOf({ kind: 'mpesa_phone', accountNumber: '0712 345 678' })).toBe('254712345678');
+    expect(numberOf({ kind: 'mpesa_phone', accountNumber: '+254712345678' })).toBe('254712345678');
+    expect(numberOf({ kind: 'bank', accountNumber: '01 23-ab' })).toBe('0123AB');
+    expect(describeDestination('mpesa_paybill', 'M-Pesa', 'Paybill', '0200')).toBe('M-Pesa paybill ending 0200');
+    expect(describeDestination('bank', 'KCB', 'Moi Avenue', '6789')).toBe('KCB, Moi Avenue account ending 6789');
+  });
+});
+

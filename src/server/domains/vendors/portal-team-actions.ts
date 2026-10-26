@@ -1,6 +1,7 @@
 'use server';
 
 import { getContainer } from '@/server/di/container';
+import { DESTINATION_KINDS, type DestinationKind } from '@/lib/vendor-profile';
 import { portal } from './portal-runner';
 import { ProfileError } from './profile-service';
 
@@ -56,12 +57,14 @@ export async function bankStatusAction() {
     return {
       active: loaded.vendor.status === 'active',
       canPropose: loaded.vendor.status === 'active' && (me.portalRole === 'owner' || me.portalRole === 'finance'),
-      accounts: loaded.banks.filter((b) => b.status === 'active').map((b) => ({ id: b.id, bankName: b.bankName, branch: b.branch, accountName: b.accountName, last4: b.accountLast4 })),
+      accounts: loaded.banks.filter((b) => b.status === 'active').map((b) => ({ id: b.id, kind: b.kind, bankName: b.bankName, branch: b.branch, accountName: b.accountName, last4: b.accountLast4 })),
       pending,
       bankLetters: letters.map((d) => ({ id: d.doc.id, fileName: d.fileName })),
     };
   });
 }
+
+const kindFrom = (value: unknown): DestinationKind => (DESTINATION_KINDS.some((k) => k.id === value) ? (value as DestinationKind) : 'bank');
 
 export async function proposeBankChangeAction(raw: unknown) {
   return await portal('bank_propose', async (me) => {
@@ -72,6 +75,8 @@ export async function proposeBankChangeAction(raw: unknown) {
       accountName: str(f.accountName),
       accountNumber: str(f.accountNumber, 40),
       swift: str(f.swift, 20),
+      kind: kindFrom(f.kind),
+      reference: str(f.reference, 20),
       replacesId: str(f.replacesId, 40) === '' ? '' : idOf(f.replacesId),
       evidenceDocumentId: idOf(f.evidenceDocumentId),
     });

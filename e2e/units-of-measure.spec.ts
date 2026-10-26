@@ -342,7 +342,7 @@ test.describe('the shop sells fish by the kilogram', () => {
     await expect(async () => {
       await page.getByRole('button', { name: 'Add Fish kg Shop to cart' }).click();
       await page.getByRole('button', { name: 'Shopping Cart' }).click();
-      await expect(page.getByRole('heading', { name: 'Your Cart' })).toBeVisible({ timeout: 3000 });
+      await expect(page.getByRole('heading', { name: 'Your Cart', exact: true })).toBeVisible({ timeout: 3000 });
     }).toPass({ timeout: 60_000 });
     const cart = page;
     const quantity = cart.getByRole('textbox', { name: 'quantity of Fish kg Shop' });

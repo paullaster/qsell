@@ -1,12 +1,13 @@
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { reasonCodes, rfqAwards, rfqInvitations, rfqLines, rfqQuoteLines, rfqQuotes, rfqs, vendors } from '@/server/db/drizzle/schema';
+import { reasonCodes, rfqAwardProposals, rfqAwards, rfqInvitations, rfqLines, rfqQuoteLines, rfqQuotes, rfqs, vendors } from '@/server/db/drizzle/schema';
 import { has, trimToNull } from '@/lib/values';
 import { compare, type CompareCell, type CompareInput } from '@/lib/rfq';
 import type { ReasonCodes } from '@/server/kernel/reason-codes/service';
 import { FinanceError, type FinanceContext } from '@/server/domains/finance/errors';
 import type { RfqService } from './rfq-service';
 import type { VendorNotifier } from './notifier';
+import { vendorApprovals } from './approval-gate';
 
 export const RFQ_REJECTION = 'rfq_rejection';
 
@@ -134,6 +135,7 @@ export class RfqEvaluationService {
       if (Number.isNaN(due.getTime()) || due.getTime() < now.getTime() + HOUR) throw new FinanceError('INVALID', 'Give a date and time for the revision at least an hour from now.');
     }
     await this.db.transaction(async (tx) => {
+      if (await this.awardWaiting(tx, rfqId)) throw new FinanceError('AWARD_PENDING', 'An award is waiting for approval, so the quotes cannot be decided now.');
       const [inv] = await tx.select().from(rfqInvitations).where(and(eq(rfqInvitations.rfqId, rfqId), eq(rfqInvitations.vendorId, vendorId))).for('update');
       if (inv === undefined) throw new FinanceError('NOT_FOUND', 'That vendor was not invited.');
       const [sent] = await tx.select({ id: rfqQuotes.id }).from(rfqQuotes).where(and(eq(rfqQuotes.rfqId, rfqId), eq(rfqQuotes.vendorId, vendorId), eq(rfqQuotes.status, 'submitted'))).limit(1);
@@ -150,53 +152,102 @@ export class RfqEvaluationService {
    * Awards quantities line by line to one or several vendors, at the price and quantity each quote gave. Choosing a price that is
    * not the lowest bid for a line needs a written justification. Nothing here moves money: the purchase order is made from this.
    */
-  async award(ctx: FinanceContext, rfqId: string, allocations: Allocation[], justification: string, now: Date = new Date()): Promise<{ awarded: number }> {
+  async award(ctx: FinanceContext, rfqId: string, allocations: Allocation[], justification: string, now: Date = new Date()): Promise<{ awarded: number; pending: boolean }> {
     if (allocations.length === 0) throw new FinanceError('INVALID', 'Choose what to award, and to whom.');
     const r = await this.rfqOf(ctx.companyId, rfqId);
     if (r.status !== 'closed') throw new FinanceError('NOT_CLOSED', 'A request is awarded once it is closed.');
     if (!(await this.isOpen(rfqId))) throw new FinanceError('SEALED', 'These quotes cannot be opened yet.');
-    const note = trimToNull(justification);
-    const done = await this.db.transaction(async (tx) => {
-      const locked = await this.lockRfq(tx, rfqId);
-      if (locked.status !== 'closed') throw new FinanceError('NOT_CLOSED', 'This request was already awarded or changed.');
-      const lines = await tx.select().from(rfqLines).where(eq(rfqLines.rfqId, rfqId));
-      const invitations = await tx.select().from(rfqInvitations).where(eq(rfqInvitations.rfqId, rfqId));
-      const quotes = await tx.select().from(rfqQuotes).where(and(eq(rfqQuotes.rfqId, rfqId), eq(rfqQuotes.status, 'submitted'))).orderBy(desc(rfqQuotes.version));
-      const latest = new Map<string, (typeof quotes)[number]>();
-      for (const q of quotes) if (!latest.has(q.vendorId)) latest.set(q.vendorId, q);
-      const qlines = latest.size === 0 ? [] : await tx.select().from(rfqQuoteLines).where(inArray(rfqQuoteLines.quoteId, [...latest.values()].map((q) => q.id)));
-      const perLine = new Map<string, number>();
-      const bids = (lineId: string) => [...latest.entries()].flatMap(([vendorId, q]) => {
-        if (invitations.find((i) => i.vendorId === vendorId)?.decision === 'rejected') return [];
-        const l = qlines.find((x) => x.quoteId === q.id && x.rfqLineId === lineId && !x.isAlternative && !x.noBid);
-        return l === undefined || l.unitPrice === null ? [] : [{ vendorId, line: l }];
-      });
-      const costly: boolean[] = [];
-      const rows = allocations.map((a) => {
-        const line = lines.find((l) => l.id === a.rfqLineId);
-        if (line === undefined) throw new FinanceError('NOT_FOUND', 'One of those lines is not part of this request.');
-        const mine = bids(a.rfqLineId).find((b) => b.vendorId === a.vendorId);
-        if (mine === undefined || mine.line.unitPrice === null || mine.line.quantity === null) throw new FinanceError('NO_BID', `That vendor has no standing bid on “${line.description}”.`);
-        const qty = Number(a.quantity);
-        if (!Number.isFinite(qty) || qty <= 0) throw new FinanceError('INVALID', `Give the quantity to award for “${line.description}”.`);
-        if (qty > Number(mine.line.quantity)) throw new FinanceError('INVALID', `That vendor offered only ${mine.line.quantity} of “${line.description}”.`);
-        const given = (perLine.get(a.rfqLineId) ?? 0) + qty;
-        if (given > Number(line.quantity)) throw new FinanceError('INVALID', `More than the ${line.quantity} wanted of “${line.description}” is awarded.`);
-        perLine.set(a.rfqLineId, given);
-        const lowest = Math.min(...bids(a.rfqLineId).map((b) => toCents(b.line.unitPrice ?? '0')));
-        costly.push(toCents(mine.line.unitPrice) > lowest);
-        return { rfqId, rfqLineId: a.rfqLineId, vendorId: a.vendorId, quoteLineId: mine.line.id, quantity: String(qty), unitPrice: mine.line.unitPrice, justification: note?.slice(0, 1000) ?? null, awardedBy: ctx.actor.id };
-      });
-      if (costly.includes(true) && !has(note)) throw new FinanceError('JUSTIFICATION_REQUIRED', 'You chose a vendor who is not the lowest bid on a line. Write why.');
-      await tx.insert(rfqAwards).values(rows);
-      const awardedVendors = [...new Set(rows.map((x) => x.vendorId))];
-      await tx.update(rfqs).set({ status: 'awarded', awardedAt: now, awardNote: note?.slice(0, 1000) ?? null, updatedAt: now }).where(eq(rfqs.id, rfqId));
-      await tx.update(rfqInvitations).set({ decision: 'accepted', decidedBy: ctx.actor.id, decidedAt: now }).where(and(eq(rfqInvitations.rfqId, rfqId), inArray(rfqInvitations.vendorId, awardedVendors)));
-      await this.rfqService.event(tx, ctx, rfqId, 'awarded', { reason: note, data: { lines: rows.length, vendors: awardedVendors.length } });
-      return { awardedVendors, quoted: [...latest.keys()], count: rows.length };
-    });
+    const done = await this.db.transaction(async (tx) => await this.awardIn(tx, ctx, rfqId, allocations, trimToNull(justification), now, true));
+    if (done.pending) return { awarded: 0, pending: true };
+    await this.tellAward(r, done);
+    return { awarded: done.count, pending: false };
+  }
+
+  private async tellAward(r: { number: string | null; title: string }, done: { awardedVendors: string[]; quoted: string[] }): Promise<void> {
     for (const v of done.quoted) await this.notify?.rfqResult(v, r.number ?? '', r.title, done.awardedVendors.includes(v));
-    return { awarded: done.count };
+  }
+
+  /**
+   * The award inside the caller's transaction. `ask` is true for a person's award, which a workflow may hold as a proposal; the
+   * workflow's release calls it again with `ask` false, as the approver, to make the award itself.
+   */
+  async awardIn(tx: Parameters<Parameters<DrizzleDb['transaction']>[0]>[0], ctx: FinanceContext, rfqId: string, allocations: Allocation[], note: string | null, now: Date, ask: boolean): Promise<{ awardedVendors: string[]; quoted: string[]; count: number; pending: boolean }> {
+    const locked = await this.lockRfq(tx, rfqId);
+    if (locked.status !== 'closed') throw new FinanceError('NOT_CLOSED', 'This request was already awarded or changed.');
+    const lines = await tx.select().from(rfqLines).where(eq(rfqLines.rfqId, rfqId));
+    const invitations = await tx.select().from(rfqInvitations).where(eq(rfqInvitations.rfqId, rfqId));
+    const quotes = await tx.select().from(rfqQuotes).where(and(eq(rfqQuotes.rfqId, rfqId), eq(rfqQuotes.status, 'submitted'))).orderBy(desc(rfqQuotes.version));
+    const latest = new Map<string, (typeof quotes)[number]>();
+    for (const q of quotes) if (!latest.has(q.vendorId)) latest.set(q.vendorId, q);
+    const qlines = latest.size === 0 ? [] : await tx.select().from(rfqQuoteLines).where(inArray(rfqQuoteLines.quoteId, [...latest.values()].map((q) => q.id)));
+    const perLine = new Map<string, number>();
+    const bids = (lineId: string) => [...latest.entries()].flatMap(([vendorId, q]) => {
+      if (invitations.find((i) => i.vendorId === vendorId)?.decision === 'rejected') return [];
+      const l = qlines.find((x) => x.quoteId === q.id && x.rfqLineId === lineId && !x.isAlternative && !x.noBid);
+      return l === undefined || l.unitPrice === null ? [] : [{ vendorId, line: l }];
+    });
+    const costly: boolean[] = [];
+    const rows = allocations.map((a) => {
+      const line = lines.find((l) => l.id === a.rfqLineId);
+      if (line === undefined) throw new FinanceError('NOT_FOUND', 'One of those lines is not part of this request.');
+      const mine = bids(a.rfqLineId).find((b) => b.vendorId === a.vendorId);
+      if (mine === undefined || mine.line.unitPrice === null || mine.line.quantity === null) throw new FinanceError('NO_BID', `That vendor has no standing bid on “${line.description}”.`);
+      const qty = Number(a.quantity);
+      if (!Number.isFinite(qty) || qty <= 0) throw new FinanceError('INVALID', `Give the quantity to award for “${line.description}”.`);
+      if (qty > Number(mine.line.quantity)) throw new FinanceError('INVALID', `That vendor offered only ${mine.line.quantity} of “${line.description}”.`);
+      const given = (perLine.get(a.rfqLineId) ?? 0) + qty;
+      if (given > Number(line.quantity)) throw new FinanceError('INVALID', `More than the ${line.quantity} wanted of “${line.description}” is awarded.`);
+      perLine.set(a.rfqLineId, given);
+      const lowest = Math.min(...bids(a.rfqLineId).map((b) => toCents(b.line.unitPrice ?? '0')));
+      costly.push(toCents(mine.line.unitPrice) > lowest);
+      return { rfqId, rfqLineId: a.rfqLineId, vendorId: a.vendorId, quoteLineId: mine.line.id, quantity: String(qty), unitPrice: mine.line.unitPrice, justification: note?.slice(0, 1000) ?? null, awardedBy: ctx.actor.id };
+    });
+    if (costly.includes(true) && !has(note)) throw new FinanceError('JUSTIFICATION_REQUIRED', 'You chose a vendor who is not the lowest bid on a line. Write why.');
+    if (ask) {
+      const [waiting] = await tx.select({ id: rfqAwardProposals.id }).from(rfqAwardProposals).where(eq(rfqAwardProposals.rfqId, rfqId));
+      if (waiting !== undefined) throw new FinanceError('AWARD_PENDING', 'An award for this request is already waiting for approval.');
+      await tx.insert(rfqAwardProposals).values({ rfqId, allocations: allocations.map((a) => ({ rfqLineId: a.rfqLineId, vendorId: a.vendorId, quantity: a.quantity })), justification: note?.slice(0, 1000) ?? null, proposedBy: ctx.actor.id ?? '' });
+      const total = rows.reduce((sum, x) => sum + Number(x.quantity) * Number(x.unitPrice), 0);
+      const route = await vendorApprovals.submit(tx, { companyId: ctx.companyId, trigger: 'rfq.award', documentId: rfqId, requestedBy: ctx.actor.id ?? '', amount: total, snapshot: { vendors: new Set(rows.map((x) => x.vendorId)).size, lines: rows.length, notLowest: costly.includes(true) } });
+      if (route === 'waiting') {
+        await this.rfqService.event(tx, ctx, rfqId, 'award_proposed', { reason: note, data: { lines: rows.length } });
+        return { awardedVendors: [], quoted: [], count: 0, pending: true };
+      }
+      await tx.delete(rfqAwardProposals).where(eq(rfqAwardProposals.rfqId, rfqId));
+    }
+    await tx.insert(rfqAwards).values(rows);
+    const awardedVendors = [...new Set(rows.map((x) => x.vendorId))];
+    await tx.update(rfqs).set({ status: 'awarded', awardedAt: now, awardNote: note?.slice(0, 1000) ?? null, updatedAt: now }).where(eq(rfqs.id, rfqId));
+    await tx.update(rfqInvitations).set({ decision: 'accepted', decidedBy: ctx.actor.id, decidedAt: now }).where(and(eq(rfqInvitations.rfqId, rfqId), inArray(rfqInvitations.vendorId, awardedVendors)));
+    await this.rfqService.event(tx, ctx, rfqId, 'awarded', { reason: note, data: { lines: rows.length, vendors: awardedVendors.length } });
+    return { awardedVendors, quoted: [...latest.keys()], count: rows.length, pending: false };
+  }
+
+  /** The workflow approved the award: make it, as the approver, from what was proposed. */
+  async releaseAward(tx: Parameters<Parameters<DrizzleDb['transaction']>[0]>[0], ctx: FinanceContext, rfqId: string, now: Date = new Date()): Promise<{ number: string | null; title: string; awardedVendors: string[]; quoted: string[] }> {
+    const [p] = await tx.select().from(rfqAwardProposals).where(eq(rfqAwardProposals.rfqId, rfqId)).for('update');
+    if (p === undefined) throw new FinanceError('NOT_PENDING', 'No award is waiting for approval on this request.');
+    const [r] = await tx.select({ number: rfqs.number, title: rfqs.title }).from(rfqs).where(eq(rfqs.id, rfqId));
+    const done = await this.awardIn(tx, ctx, rfqId, p.allocations, p.justification, now, false);
+    await tx.delete(rfqAwardProposals).where(eq(rfqAwardProposals.rfqId, rfqId));
+    return { number: r?.number ?? null, title: r?.title ?? '', awardedVendors: done.awardedVendors, quoted: done.quoted };
+  }
+
+  /** Tells the vendors who quoted what the award decided, once the approving transaction has committed. */
+  async tellReleased(done: { number: string | null; title: string; awardedVendors: string[]; quoted: string[] }): Promise<void> {
+    await this.tellAward(done, done);
+  }
+
+  /** The workflow refused the award, was withdrawn or was reopened: the proposal is dropped and the request is ready to be awarded again. */
+  async dropProposal(tx: Parameters<Parameters<DrizzleDb['transaction']>[0]>[0], ctx: FinanceContext, rfqId: string, why: string): Promise<void> {
+    const dropped = await tx.delete(rfqAwardProposals).where(eq(rfqAwardProposals.rfqId, rfqId)).returning({ id: rfqAwardProposals.id });
+    if (dropped.length > 0) await this.rfqService.event(tx, ctx, rfqId, 'award_not_approved', { reason: why.slice(0, 500), data: {} });
+  }
+
+  /** Whether an award waits for approval, which freezes the quote decisions and the deadline. */
+  async awardWaiting(db: DrizzleDb | Parameters<Parameters<DrizzleDb['transaction']>[0]>[0], rfqId: string): Promise<boolean> {
+    const [p] = await db.select({ id: rfqAwardProposals.id }).from(rfqAwardProposals).where(eq(rfqAwardProposals.rfqId, rfqId));
+    return p !== undefined;
   }
 
   private async lockRfq(tx: Parameters<Parameters<DrizzleDb['transaction']>[0]>[0], rfqId: string) {

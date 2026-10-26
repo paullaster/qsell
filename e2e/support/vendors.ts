@@ -90,7 +90,7 @@ export interface PoFixture {
 }
 
 /** A purchase order (or an awarded request) for one test, written by another person so the signed-in test user may approve it (see po-fixture.ts). */
-export function makePo(tag: string, vendorId: string, mode: 'pending' | 'sent' | 'sent_flagged' | 'amendment' | 'advance_pending' | 'awarded' | 'stocked' | 'received'): PoFixture {
+export function makePo(tag: string, vendorId: string, mode: 'pending' | 'sent' | 'sent_flagged' | 'amendment' | 'advance_pending' | 'awarded' | 'stocked' | 'received' | 'workflow'): PoFixture {
   const output = execFileSync('pnpm', ['exec', 'tsx', 'e2e/support/po-fixture.ts', tag, vendorId, mode], { env: { ...process.env, ...e2eEnvironment() }, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
   const line = output.split('\n').find((l) => l.startsWith('FIXTURE '));
   if (line === undefined) throw new Error(`the purchase order fixture printed nothing usable: ${output.slice(-500)}`);
@@ -125,7 +125,7 @@ export async function signInAsShopper(page: Page, shopper: Pick<ShopperFixture, 
 }
 
 /** Steps of the invoice and payment tests that need a second staff member or the books set up (see invoice-fixture.ts). Returns the fixture's answer. */
-export function invoiceTool(action: 'prepare' | 'approve' | 'payments-prepare' | 'book' | 'approve-voucher' | 'run' | 'approve-run' | 'approve-credit' | 'petty-float' | 'petty-receipt' | 'petty-approve' | 'petty-approve-topup', arg?: string): Record<string, string> {
+export function invoiceTool(action: 'prepare' | 'approve' | 'payments-prepare' | 'book' | 'approve-voucher' | 'run' | 'approve-run' | 'approve-credit' | 'petty-float' | 'petty-receipt' | 'petty-approve' | 'petty-approve-topup' | 'refund-credit' | 'refund-post' | 'statement-line' | 'statement-voucher' | 'return-note' | 'return-post' | 'requisition-approve' | 'contract-approve' | 'landed-post' | 'scorecard-review', arg?: string): Record<string, string> {
   const args = ['exec', 'tsx', 'e2e/support/invoice-fixture.ts', action, ...(arg === undefined ? [] : [arg])];
   const output = execFileSync('pnpm', args, { env: { ...process.env, ...e2eEnvironment() }, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
   const line = output.split('\n').find((l) => l.startsWith('FIXTURE '));

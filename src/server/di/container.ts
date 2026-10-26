@@ -73,6 +73,14 @@ import { PaymentRunService } from '@/server/domains/vendors/payment-run-service'
 import { PaymentTermsService } from '@/server/domains/vendors/payment-terms-service';
 import { CreditMemoPortalService } from '@/server/domains/vendors/credit-memo-portal-service';
 import { CreditMemoService } from '@/server/domains/vendors/credit-memo-service';
+import { PayablesFxService } from '@/server/domains/vendors/payables-fx-service';
+import { EdiService } from '@/server/domains/vendors/edi-service';
+import { ScorecardService } from '@/server/domains/vendors/scorecard-service';
+import { LandedCostService } from '@/server/domains/vendors/landed-cost-service';
+import { ContractService } from '@/server/domains/vendors/contract-service';
+import { RequisitionService } from '@/server/domains/vendors/requisition-service';
+import { PurchaseReturnService } from '@/server/domains/vendors/purchase-return-service';
+import { VendorRefundService } from '@/server/domains/vendors/refund-service';
 import { RateLimitService } from '@/server/kernel/rate-limit/service';
 import { VendorInsightsService } from '@/server/domains/vendors/insights-service';
 import { PettyCashService } from '@/server/domains/vendors/petty-cash-service';
@@ -190,6 +198,22 @@ export interface AppContainer {
   vendorInsights: VendorInsightsService;
   /** Request limits for sign-in, registration, mail forms and vendor uploads and submits. */
   rateLimits: RateLimitService;
+  /** Money vendors pay back to us. */
+  vendorRefunds: VendorRefundService;
+  /** Goods sent back to vendors after they were received. */
+  purchaseReturns: PurchaseReturnService;
+  /** Internal requests to buy, approved and turned into quotation requests or orders. */
+  requisitions: RequisitionService;
+  /** Contracts (blanket orders): agreed prices for a period, with limits, that orders are called off against. */
+  contracts: ContractService;
+  /** Freight, duty and similar charges added to what received goods cost. */
+  landedCosts: LandedCostService;
+  /** The vendor scorecard: weighted measures and people's ratings. */
+  scorecards: ScorecardService;
+  /** UBL documents: orders out, invoices in. */
+  edi: EdiService;
+  /** Foreign-currency payables: revaluation at today's rate, undone the next day. */
+  payablesFx: PayablesFxService;
   transactionLedger: TransactionLedgerService;
   transactionReconcile: TransactionReconcileService;
   paymentCallbacks: PaymentCallbackService;
@@ -391,16 +415,26 @@ export function getContainer(): AppContainer {
   const vendorNotifier = new VendorNotifier(drizzleDb, email, companySettings);
   const prequalLifecycle = new PrequalLifecycle(drizzleDb, vendorNotifier);
   const rfqService = new RfqService(drizzleDb, numbering, prequalLifecycle, vendorNotifier);
-  const rgnService = new RgnService(drizzleDb, numbering);
   const advancePayments = new AdvancePaymentService(drizzleDb, vendorNotifier);
   const vendorProfileService = new VendorProfileService(drizzleDb, vendorFiles, vendorNotifier);
   const purchaseOrderService = new PurchaseOrderService(drizzleDb, numbering, prequalLifecycle, vendorNotifier);
   const finance = createFinanceServices(drizzleDb, decisionLog, { numbering, reasons: reasonCodes, paymentConfigs, payments });
-  const vendorPaymentService = new VendorPaymentService(drizzleDb, numbering, finance.engine, finance.vendorLedger, advancePayments, vendorNotifier);
+  const rgnService = new RgnService(drizzleDb, numbering, finance.fx);
+  const invoicePortal = new SupplierInvoicePortalService(drizzleDb, numbering, vendorFiles, advancePayments, vendorNotifier);
+  const payablesFx = new PayablesFxService(drizzleDb, finance.engine, finance.fx);
+  const vendorInsights = new VendorInsightsService(drizzleDb);
+  const vendorPaymentService = new VendorPaymentService(drizzleDb, numbering, finance.engine, finance.vendorLedger, advancePayments, finance.fx, vendorNotifier);
+  vendorPaymentService.useDestinationOpener((blob) => vendorProfileService.openBankNumber(blob));
+  vendorPaymentService.useStatementMatcher(async (tx, ctx, lineId, entryId) => await finance.bankStatements.matchEntriesIn(tx, ctx, lineId, [entryId], 'vendor_payment'));
   const paymentEngine = createPaymentEngine({ db: drizzleDb, registry: paymentRegistry, payments, consumer: new FinanceC2bConsumer(drizzleDb, finance.receipts) });
   // The finance side asks banks for statements through the payment engine.
   finance.statementPulls.source = paymentEngine;
-  paymentEngine.payoutConsumer = { finished: async (op) => { if (op.subjectType === 'refund') await finance.refunds.onAutomaticPayoutFinished(op); } };
+  paymentEngine.payoutConsumer = {
+    finished: async (op) => {
+      if (op.subjectType === 'refund') await finance.refunds.onAutomaticPayoutFinished(op);
+      if (op.subjectType === 'vendor_payment') await vendorPaymentService.onAutomaticPayoutFinished(op);
+    },
+  };
 
   const approvals = new ApprovalEngine(drizzleDb, decisionLog, reasonCodes);
   const approvalGate = new ParkedActions(drizzleDb, approvals);
@@ -463,18 +497,26 @@ export function getContainer(): AppContainer {
     poPortal: new PurchaseOrderPortalService(drizzleDb, purchaseOrderService, rgnService),
     advances: advancePayments,
     rgns: rgnService,
-    invoicePortal: new SupplierInvoicePortalService(drizzleDb, numbering, vendorFiles, advancePayments, vendorNotifier),
+    invoicePortal,
     supplierInvoices: new SupplierInvoiceService(drizzleDb, vendorNotifier),
-    invoicePosting: new SupplierInvoicePostingService(drizzleDb, numbering, finance.engine, finance.postingSetup, finance.vendorLedger, vendorNotifier),
+    invoicePosting: new SupplierInvoicePostingService(drizzleDb, numbering, finance.engine, finance.postingSetup, finance.vendorLedger, finance.fx, vendorNotifier),
     vendorPayments: vendorPaymentService,
     paymentTerms: new PaymentTermsService(drizzleDb, vendors),
     creditMemoPortal: new CreditMemoPortalService(drizzleDb, numbering, vendorFiles, vendorNotifier),
-    vendorInsights: new VendorInsightsService(drizzleDb),
+    vendorInsights,
     rateLimits: new RateLimitService(drizzleDb),
+    purchaseReturns: new PurchaseReturnService(drizzleDb, numbering, vendorNotifier),
+    contracts: new ContractService(drizzleDb, numbering, vendorNotifier),
+    landedCosts: new LandedCostService(drizzleDb, numbering),
+    scorecards: new ScorecardService(drizzleDb, vendorInsights),
+    edi: new EdiService(drizzleDb, invoicePortal),
+    payablesFx,
+    requisitions: new RequisitionService(drizzleDb, numbering, rfqService, purchaseOrderService, vendorNotifier),
+    vendorRefunds: new VendorRefundService(drizzleDb, numbering, finance.engine, finance.vendorLedger, vendorNotifier),
     pettyCash: new PettyCashService(drizzleDb, numbering, finance.engine, finance.vendorLedger),
     creditMemos: new CreditMemoService(drizzleDb, finance.engine, finance.postingSetup, finance.vendorLedger, vendorNotifier),
     paymentRuns: new PaymentRunService(drizzleDb, numbering, vendorPaymentService, (blob) => vendorProfileService.openBankNumber(blob)),
-    payablesReports: new PayablesReportService(drizzleDb, finance.vendorLedger),
+    payablesReports: new PayablesReportService(drizzleDb, finance.vendorLedger, payablesFx),
     transactionLedger,
     transactionReconcile,
     paymentCallbacks,

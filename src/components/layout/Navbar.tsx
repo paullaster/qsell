@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import { Suspense, useCallback, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ChevronDown,
   HelpCircle,
+  Heart,
   LogOut,
   MapPin,
   Search,
@@ -17,59 +18,22 @@ import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { useCompanyUiConfig } from '@/components/company/CompanyUiConfigProvider';
 import { hasSupportContent } from '@/config/company-ui';
 import { logoutAction } from '@/server/domains/auth/actions';
-import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
+import { useStore } from '@/components/store/StoreContext';
+import { useCart } from '@/components/store/cart/CartProvider';
+import { useWishlist } from '@/components/store/wishlist/WishlistProvider';
+import { useDismiss } from '@/components/ui/useDismiss';
+import { CategoryMenu } from './CategoryMenu';
+import { StoreSearch } from './StoreSearch';
 
-interface NavbarProps {
-  company: Pick<CompanySettingsRow, 'tradingName' | 'tagline' | 'logoUrl' | 'accentColor'>;
-  cartItemCount?: number;
-  onOpenCart: () => void;
-  onOpenTrackOrder: () => void;
-  onOpenHelp: () => void;
-  onOpenAccount?: () => void;
-  activeCustomerName?: string;
-  searchQuery?: string;
-  onSearchChange?: (q: string) => void;
-  onSelectCategory?: (category: string) => void;
-  selectedCategory?: string;
-}
-
-export function Navbar({
-  company,
-  cartItemCount = 0,
-  onOpenCart,
-  onOpenTrackOrder,
-  onOpenHelp,
-  onOpenAccount,
-  activeCustomerName,
-  searchQuery = '',
-  onSearchChange,
-}: NavbarProps) {
+export function Navbar() {
+  const { company, categories, sessionName: activeCustomerName, openCart, openTrackOrder, openHelp } = useStore();
+  const { count: cartItemCount } = useCart();
+  const wishlist = useWishlist();
   const { support } = useCompanyUiConfig();
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!isAccountMenuOpen) return;
-
-    const closeOnOutsidePointer = (event: PointerEvent) => {
-      const root = accountMenuRef.current;
-      if (root && !root.contains(event.target as Node)) {
-        setIsAccountMenuOpen(false);
-      }
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setIsAccountMenuOpen(false);
-    };
-
-    // pointerdown covers mouse, pen, and real touchscreen taps. Use capture so
-    // the menu closes even if the outside target stops bubbling click events.
-    document.addEventListener('pointerdown', closeOnOutsidePointer, true);
-    document.addEventListener('keydown', closeOnEscape);
-    return () => {
-      document.removeEventListener('pointerdown', closeOnOutsidePointer, true);
-      document.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [isAccountMenuOpen]);
+  const closeAccountMenu = useCallback(() => setIsAccountMenuOpen(false), []);
+  useDismiss(isAccountMenuOpen, accountMenuRef, closeAccountMenu);
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-line bg-surface/95 backdrop-blur-md">
@@ -77,7 +41,8 @@ export function Navbar({
         <div className="order-1 max-w-[42vw] min-w-0 shrink sm:max-w-56 sm:flex-none">
           <Link
             href="/"
-            className="group block min-w-0 cursor-pointer text-left focus:outline-none"
+            aria-label="Home"
+            className="group block min-w-0 cursor-pointer rounded-lg text-left focus-visible:outline-2 focus-visible:outline-indigo-500"
           >
             <CompanyBrand
               tradingName={company.tradingName}
@@ -88,26 +53,11 @@ export function Navbar({
           </Link>
         </div>
 
-        <div className="order-3 basis-full sm:order-2 sm:mx-2 sm:flex sm:max-w-md sm:min-w-0 sm:flex-1 sm:items-center lg:mx-6">
-          <div className="relative w-full">
-            <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-fg-subtle sm:left-3.5" />
-            <input
-              type="text"
-              placeholder="Search products, brands, or SKU..."
-              value={searchQuery}
-              onChange={(e) => onSearchChange?.(e.target.value)}
-              aria-label="Search products, brands, or SKU"
-              className="h-10 w-full rounded-xl border border-line bg-surface-raised py-2 pr-9 pl-9 text-sm text-fg-strong placeholder-fg-subtle transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 focus:outline-none sm:h-9 sm:pl-10 sm:text-xs"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => onSearchChange?.('')}
-                className="absolute top-1/2 right-3 -translate-y-1/2 cursor-pointer text-xs text-fg-muted hover:text-fg-strong"
-              >
-                Clear
-              </button>
-            )}
-          </div>
+        <div className="order-3 flex basis-full items-center gap-2 sm:order-2 sm:mx-2 sm:max-w-xl sm:min-w-0 sm:flex-1 lg:mx-6">
+          <CategoryMenu categories={categories} />
+          <Suspense fallback={<div className="h-11 w-full rounded-xl border border-line bg-surface-raised" />}>
+            <StoreSearch />
+          </Suspense>
         </div>
 
         <div className="order-2 ml-auto flex shrink-0 items-center gap-1 sm:order-3 sm:gap-2">
@@ -151,19 +101,6 @@ export function Navbar({
                     >
                       <User className="h-4 w-4" /> My Profile
                     </Link>
-                    {onOpenAccount ? (
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          setIsAccountMenuOpen(false);
-                          onOpenAccount();
-                        }}
-                        className="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg hover:bg-hover"
-                      >
-                        <User className="h-4 w-4" /> Account overview
-                      </button>
-                    ) : null}
                     <Link
                       href="/profile/addresses"
                       role="menuitem"
@@ -207,7 +144,7 @@ export function Navbar({
                   role="menuitem"
                   onClick={() => {
                     setIsAccountMenuOpen(false);
-                    onOpenTrackOrder();
+                    openTrackOrder();
                   }}
                   className="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg hover:bg-hover"
                 >
@@ -219,7 +156,7 @@ export function Navbar({
                     role="menuitem"
                     onClick={() => {
                       setIsAccountMenuOpen(false);
-                      onOpenHelp();
+                      openHelp();
                     }}
                     className="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg hover:bg-hover"
                   >
@@ -236,7 +173,7 @@ export function Navbar({
 
           <button
             type="button"
-            onClick={onOpenTrackOrder}
+            onClick={openTrackOrder}
             aria-label="Track order"
             title="Track order"
             className="hidden h-10 cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-line bg-surface-raised px-3 text-fg transition-all hover:border-line-strong hover:text-fg-strong lg:flex"
@@ -245,16 +182,26 @@ export function Navbar({
             <span className="hidden text-xs lg:inline">Track Order</span>
           </button>
 
+          <Link
+            href="/wishlist"
+            aria-label={wishlist.ids.length === 0 ? 'Saved products' : `Saved products, ${String(wishlist.ids.length)}`}
+            title="Saved products"
+            className="relative flex h-10 w-10 cursor-pointer items-center justify-center rounded-xl border border-line bg-surface-raised text-fg transition-colors hover:border-line-strong hover:bg-hover"
+          >
+            <Heart className="h-4 w-4 text-rose-500" aria-hidden="true" />
+            {wishlist.ids.length > 0 ? <span aria-hidden="true" className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1 text-xs font-bold text-white">{wishlist.ids.length}</span> : null}
+          </Link>
+
           <button
             type="button"
-            onClick={onOpenCart}
+            onClick={openCart}
             className="group relative flex h-10 w-10 cursor-pointer items-center justify-center rounded-xl bg-indigo-600 text-white shadow-md shadow-indigo-600/20 transition-all hover:bg-indigo-500 sm:w-auto sm:px-3.5"
             aria-label="Shopping Cart"
           >
             <ShoppingBag className="h-4 w-4 transition-transform group-hover:scale-105" />
             <span className="ml-2 hidden text-xs font-semibold sm:inline">Cart</span>
             {cartItemCount > 0 && (
-              <span className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-white px-1 text-[10px] font-extrabold text-indigo-600 shadow sm:static sm:ml-1.5 sm:h-5 sm:w-5 sm:px-0">
+              <span className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-white px-1 text-xs font-extrabold text-indigo-600 shadow sm:static sm:ml-1.5 sm:h-5 sm:w-5 sm:px-0">
                 {cartItemCount}
               </span>
             )}

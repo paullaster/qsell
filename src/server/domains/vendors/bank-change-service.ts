@@ -2,7 +2,7 @@ import { and, desc, eq, inArray, isNotNull, lte, ne } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { vendorBankAccounts, vendorDocuments, vendorDocumentTypes, vendorEvents, vendors } from '@/server/db/drizzle/schema';
 import { has, trimToNull } from '@/lib/values';
-import { checkBanks, type BankInput } from '@/lib/vendor-profile';
+import { checkBanks, kindOf, mpesaWord, numberOf, type BankInput } from '@/lib/vendor-profile';
 import { addBusinessDays } from '@/lib/vendor-schedule';
 import { encryptCredentials, fingerprintSecret } from '@/server/domains/payments/crypto';
 import { FinanceError, type FinanceContext } from '@/server/domains/finance/errors';
@@ -43,13 +43,15 @@ export class VendorBankChangeService {
     if (actor.portalRole !== 'owner' && actor.portalRole !== 'finance') throw new ProfileError('NOT_ALLOWED', 'Only the owner or the finance person can ask to change bank details.');
     const problems = checkBanks([input]);
     if (Object.keys(problems).length > 0) throw new ProfileError('INVALID', Object.values(problems)[0] ?? 'Check the form.', problems);
-    const number = input.accountNumber.replace(/[\s-]+/g, '').toUpperCase();
+    const number = numberOf(input);
+    const kind = kindOf(input);
     const made = await this.db.transaction(async (tx) => {
       const [v] = await tx.select().from(vendors).where(eq(vendors.id, actor.vendorId)).for('update');
       if (v?.status !== 'active') throw new ProfileError('NOT_EDITABLE', 'Bank details change through the profile until your business is approved. After approval, ask here.');
       const live = await tx.select().from(vendorBankAccounts).where(and(eq(vendorBankAccounts.vendorId, v.id), ne(vendorBankAccounts.status, 'retired')));
       if (live.some((b) => b.status === 'pending_change')) throw new ProfileError('PENDING', 'A bank change is already waiting. Withdraw it or wait for the decision before asking again.');
       if (input.replacesId !== '' && !live.some((b) => b.id === input.replacesId && b.status === 'active')) throw new ProfileError('NOT_FOUND', 'Choose one of your current bank accounts to replace.');
+      if (input.replacesId !== '' && live.find((b) => b.id === input.replacesId)?.kind !== kind) throw new ProfileError('INVALID', 'A new destination replaces one of the same kind: a bank account a bank account, an M-Pesa number an M-Pesa number. Add it instead of replacing.');
       if (input.replacesId === '' && live.length >= MAX_ACCOUNTS) throw new ProfileError('TOO_MANY', 'That is more bank accounts than we can keep (5 at most). Replace one instead.');
       const [evidence] = await tx
         .select({ id: vendorDocuments.id, code: vendorDocumentTypes.code, status: vendorDocuments.status })
@@ -65,13 +67,15 @@ export class VendorBankChangeService {
         .insert(vendorBankAccounts)
         .values({
           vendorId: v.id,
-          bankName: input.bankName.trim(),
-          branch: input.branch.trim(),
+          kind,
+          reference: kind === 'bank' || !has(input.reference) ? null : (input.reference ?? '').trim(),
+          bankName: kind === 'bank' ? input.bankName.trim() : 'M-Pesa',
+          branch: kind === 'bank' ? input.branch.trim() : mpesaWord(kind),
           accountName: input.accountName.trim(),
           accountSealed: encryptCredentials({ number }),
           accountLast4: number.slice(-4),
           accountHash: hash,
-          swift: has(input.swift) ? input.swift.trim().toUpperCase() : null,
+          swift: kind === 'bank' && has(input.swift) ? input.swift.trim().toUpperCase() : null,
           status: 'pending_change',
           replacesId: input.replacesId === '' ? null : input.replacesId,
           proposedBy: actor.userId,

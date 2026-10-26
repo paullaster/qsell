@@ -125,6 +125,66 @@ export const TRIGGERS: TriggerDefinition[] = [
     ],
   },
   {
+    code: 'po.release',
+    module: 'vendors',
+    documentKind: 'vendor_po',
+    label: 'Purchase order released',
+    fields: [
+      ...common,
+      { path: 'vendor.id', label: 'Vendor', type: 'text' },
+      { path: 'categoryId', label: 'Category', type: 'text' },
+      { path: 'currency', label: 'Currency', type: 'text' },
+      { path: 'noRfq', label: 'Ordered without a request for quotation', type: 'boolean' },
+      { path: 'qualificationOverride', label: 'Vendor not qualified; override used', type: 'boolean' },
+      { path: 'requiresAdvancePayment', label: 'Needs an advance payment', type: 'boolean' },
+    ],
+  },
+  {
+    code: 'rfq.award',
+    module: 'vendors',
+    documentKind: 'rfq_award',
+    label: 'Request for quotation awarded',
+    fields: [
+      ...common,
+      { path: 'vendors', label: 'Number of vendors awarded', type: 'number' },
+      { path: 'lines', label: 'Number of lines awarded', type: 'number' },
+      { path: 'notLowest', label: 'A vendor who is not the lowest bid was chosen on a line', type: 'boolean' },
+    ],
+  },
+  {
+    code: 'vendor.invoice',
+    module: 'vendors',
+    documentKind: 'vendor_invoice',
+    label: 'Supplier invoice sent for approval',
+    fields: [
+      ...common,
+      { path: 'vendor.id', label: 'Vendor', type: 'text' },
+      { path: 'matchOverridden', label: 'The check found differences and they were accepted', type: 'boolean' },
+      { path: 'isAdvance', label: 'An advance (proforma) invoice', type: 'boolean' },
+      { path: 'currency', label: 'Currency', type: 'text' },
+    ],
+  },
+  {
+    code: 'vendor.payment',
+    module: 'vendors',
+    documentKind: 'vendor_payment',
+    label: 'Vendor payment voucher sent for approval',
+    fields: [
+      ...common,
+      { path: 'vendor.id', label: 'Vendor', type: 'text' },
+      { path: 'voucherKind', label: 'What it pays (invoices, on account, advance)', type: 'text' },
+      { path: 'methodKind', label: 'How it is paid (cash, mobile money, bank, cheque)', type: 'text' },
+      { path: 'currency', label: 'Currency', type: 'text' },
+    ],
+  },
+  {
+    code: 'vendor.advance_payment',
+    module: 'vendors',
+    documentKind: 'vendor_advance',
+    label: 'Advance payment to a vendor',
+    fields: [...common, { path: 'vendor.id', label: 'Vendor', type: 'text' }, { path: 'currency', label: 'Currency', type: 'text' }],
+  },
+  {
     code: 'stock_adjustment.submitted',
     module: 'inventory',
     documentKind: 'stock_adjustment',
@@ -223,12 +283,18 @@ export const DOCUMENT_KIND_LABELS: Record<string, string> = {
   discount_rule: 'Discount rules',
   rebate_settlement: 'Rebate payments',
   provider_operation: 'Payments sent out through a provider',
+  rfq_award: 'Awards of requests for quotation',
+  vendor_po: 'Purchase orders',
+  vendor_invoice: 'Supplier invoices',
+  vendor_payment: 'Vendor payments',
+  vendor_advance: 'Vendor advance payments',
 };
 
 export const MODULE_LABELS: Record<string, string> = {
   sales: 'Sales',
   finance: 'Finance',
   inventory: 'Inventory',
+  vendors: 'Vendors and payables',
 };
 
 export function triggerByCode(code: string): TriggerDefinition | undefined {

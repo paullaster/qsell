@@ -33,7 +33,7 @@ export function formatPriceWithCurrency(
 
   const converted = baseAmountKes * currConfig.exchangeRate;
 
-  const formattedNumber = converted.toLocaleString(undefined, {
+  const formattedNumber = converted.toLocaleString('en', {
     minimumFractionDigits: currConfig.decimalDigits,
     maximumFractionDigits: currConfig.decimalDigits,
   });

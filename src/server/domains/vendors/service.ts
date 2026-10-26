@@ -77,6 +77,8 @@ export class VendorService {
         paymentDiscountAccountId: byNo.get('4420') ?? null,
         paymentToleranceAccountId: byNo.get('4420') ?? null,
         withholdingPayableAccountId: byNo.get('2350') ?? null,
+        fxGainAccountId: byNo.get('4410') ?? null,
+        fxLossAccountId: byNo.get('6700') ?? null,
       })
       .onConflictDoNothing()
       .returning({ id: vendorPostingGroups.id });

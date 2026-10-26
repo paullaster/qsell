@@ -50,7 +50,8 @@ describe('saving a product answers as data (a thrown error is masked in producti
     updateProduct.mockResolvedValue({ id: 'p1' });
     await actions.updateProductAction('p1', {});
     expect(requirePermission).toHaveBeenCalledWith('products:update');
-    expect(revalidatePath).toHaveBeenCalledWith('/product/p1');
+    // Product pages are drawn on every request, so nothing but the shop's home needs refreshing.
+    expect(revalidatePath).toHaveBeenCalledWith('/');
   });
 
   it('says in words why a unit rule refused the save', async () => {

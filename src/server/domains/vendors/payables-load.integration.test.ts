@@ -1,0 +1,301 @@
+import { randomUUID } from 'node:crypto';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { eq, inArray, sql } from 'drizzle-orm';
+import { fromCents, toCents } from '@/server/domains/finance/domain/receivables';
+
+import { has, isRecord, readText, required } from '@/lib/values';
+import { emptyBusiness, emptyFinancial, emptyProfile, type ProfileData } from '@/lib/vendor-profile';
+import { emptyCategory } from '@/lib/prequalification';
+import { emptyPoHeader, emptyPoLine, type PoLineForm } from '@/lib/purchase-order';
+import type { RgnHeaderForm, RgnLineForm } from '@/lib/rgn';
+import { emptyInvoiceHeader, type DeliveryNoteForm, type InvoiceLineForm } from '@/lib/supplier-invoice';
+import type { DrizzleDb } from '@/server/db/drizzle/client';
+import type * as mod_schema from '@/server/db/drizzle/schema';
+import type { AppContainer } from '@/server/di/container';
+import type { FinanceContext } from '@/server/domains/finance/errors';
+import type { PortalActor } from './profile-service';
+
+/** Needs a Postgres built from the migrations:  TEST_DATABASE_URL=postgres://... pnpm test */
+const url = process.env.TEST_DATABASE_URL;
+
+const PDF = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n');
+const TODAY = new Date().toISOString().slice(0, 10);
+const NO = { maySkipRfq: false, mayOverrideQualification: false };
+
+describe.skipIf(!has(url))('payables under load (database)', () => {
+  let db: DrizzleDb;
+  let schema: typeof mod_schema;
+  let c: AppContainer;
+  let companyId: string;
+  let unit: { code: string; name: string };
+  let inputTax = '';
+  let transfer = '';
+  const run = randomUUID().slice(0, 6);
+  let seq = 0;
+  let catSeq = 0;
+  let prodSeq = 0;
+
+  const staff = (id: string): FinanceContext => ({ companyId, actor: { type: 'user', id }, origin: { surface: 'test', action: 'run' } });
+  const codeOf = async (p: Promise<unknown>) => {
+    try {
+      await p;
+      return 'OK';
+    } catch (e) {
+      if (isRecord(e) && typeof e.code === 'string') return e.code;
+      const cause = isRecord(e) && isRecord(e.cause) ? readText(e.cause.code) : '';
+      return cause === '' ? `OTHER:${(e as Error).message}` : cause;
+    }
+  };
+
+  async function approvedVendor(): Promise<PortalActor> {
+    seq += 1;
+    const [u] = await db.insert(schema.users).values({ email: `vp${String(seq)}.${run}@example.test`, passwordHash: 'x', name: 'Owner', role: 'vendor' }).returning();
+    const vendorId = await c.vendors.registerBusiness({ companyId, userId: required(u).id, legalName: `VP Vendor ${run} ${String(seq)}`, email: `vp${String(seq)}.${run}@example.test`, phone: null });
+    const a: PortalActor = { vendorId, userId: required(u).id, portalRole: 'owner' };
+    const p = c.vendorProfile;
+    const profile: ProfileData = { ...emptyProfile(), country: 'Kenya', description: 'We supply solar panels and inverters to businesses.', physicalStreet: '1 Mombasa Road', physicalCity: 'Nairobi', phone: '+254 700 000 000' };
+    await p.saveProfile(a, profile);
+    await p.saveBusiness(a, { ...emptyBusiness(), registrationNo: 'CPR/2012/12345', registrationDate: '2012-03-04', taxId: `G${String(Date.now()).slice(-9)}${String(seq % 10)}` });
+    await p.addDirector(a, { name: 'Wanjiru Kamau', idType: 'national_id', idNumber: '12345678', sharePercent: '100' });
+    await p.addBank(a, { bankName: 'KCB', branch: 'Moi Avenue', accountName: 'Acme Ltd', accountNumber: `0123${String(seq).padStart(6, '0')}`, swift: '' });
+    await p.saveFinancial(a, { ...emptyFinancial(), offeredPaymentTermDays: '30' });
+    await p.saveContacts(a, [{ name: 'Wanjiru Kamau', role: 'management', email: `vw${String(seq)}.${run}@acme.test`, phone: '0700000000', isPrimary: true }]);
+    for (const type of (await p.documentTypes(companyId)).filter((t) => t.requiredForAll)) {
+      await p.addDocument(a, companyId, { documentTypeId: type.id, originalName: `${type.code}.pdf`, data: PDF, issuedOn: '2026-01-01', expiresOn: type.needsExpiry ? '2031-01-01' : '' });
+    }
+    await p.submit(a, companyId);
+    const docs = await db.select().from(schema.vendorDocuments).where(eq(schema.vendorDocuments.vendorId, vendorId));
+    for (const d of docs) await c.vendorReview.verifyDocument(staff('reviewer'), d.id, 'valid', '');
+    await c.vendorReview.approve(staff('reviewer'), vendorId);
+    return a;
+  }
+
+  async function product(stock: number, cost: string): Promise<string> {
+    prodSeq += 1;
+    const itemTypeId = `it_${run}_${String(prodSeq)}`;
+    await db.insert(schema.itemTypes).values({ id: itemTypeId, code: Math.floor(Math.random() * 1e9), name: itemTypeId });
+    const id = `prod_${randomUUID()}`;
+    await db.insert(schema.products).values({ id, sku: `VP-${run}-${String(prodSeq)}`.toUpperCase(), stockCode: `VPS-${run}-${String(prodSeq)}`.toUpperCase(), name: `Receiving ${String(prodSeq)}`, slug: `vp-${randomUUID()}`, itemTypeId, price: '999', costPrice: cost, stockQuantity: stock });
+    return id;
+  }
+
+  /** A sent order with the lines given, for a qualified vendor; returns the order and its line ids. */
+  async function sentOrder(v: PortalActor, lines: PoLineForm[], over: { currency?: string; confirm?: boolean; advance?: boolean } = {}) {
+    catSeq += 1;
+    const cat = await c.categories.save(companyId, null, { ...emptyCategory(), code: `VP${String(catSeq)}_${run}`.toUpperCase(), name: `VP category ${String(catSeq)} ${run}` });
+    await c.categories.setStatus(companyId, cat.id, 'open');
+    const { ids } = await c.prequal.apply(v, companyId, [cat.id], TODAY);
+    await c.prequal.submit(v, required(ids[0]));
+    await c.prequalReview.take(staff('evaluator'), required(ids[0]));
+    await c.prequalReview.approve(staff('decider'), required(ids[0]), { maxOrderValue: '', note: '' }, TODAY);
+    const { id } = await c.purchaseOrders.saveDraft(staff('buyer'), null, { ...emptyPoHeader(TODAY), vendorId: v.vendorId, categoryId: cat.id, currency: over.currency ?? 'KES', noRfqReason: 'Test', requiresAdvancePayment: over.advance === true }, lines, over.advance === true);
+    await c.purchaseOrders.submit(staff('buyer'), id, NO);
+    await c.purchaseOrders.approve(staff('boss'), id);
+    await c.purchaseOrders.send(staff('buyer'), id);
+    if (over.confirm === true) await c.purchaseOrders.recordConfirmation(staff('buyer'), id, 'Phone', new Date());
+    const got = required(await c.purchaseOrders.get(companyId, id));
+    return { id, lines: got.lines.map((l) => l.id), number: required(got.po.number) };
+  }
+
+  const stockLine = (productId: string, over: Partial<PoLineForm> = {}): PoLineForm => ({ ...emptyPoLine(), productId, description: 'Solar panel 450W', quantity: '10', unit: unit.code, unitPrice: '100', discountPercent: '10', taxRate: '16', ...over });
+  const header = (dn: string, date = TODAY): RgnHeaderForm => ({ receivedDate: date, deliveryNoteNo: dn, vehicle: 'KDA 123A', notes: '' });
+  const rl = (poLineId: string, delivered: string, rejected = '', rejectReason = ''): RgnLineForm => ({ poLineId, delivered, rejected, rejectReason });
+  const dn = () => `DN-${run}-${String(++seq)}`;
+  const receive = async (poId: string, lines: RgnLineForm[], note = dn()) => {
+    const { id } = await c.rgns.saveDraft(staff('storeman'), null, poId, header(note), lines);
+    return { id, ...(await c.rgns.post(staff('storeman'), id)) };
+  };
+
+  const lineForms = (rows: [string, string, string][]): InvoiceLineForm[] => rows.map(([poLineId, quantity, unitPrice]) => ({ poLineId, quantity, unitPrice }));
+  const noteForm = (noteNo: string, fileId: string): DeliveryNoteForm => ({ noteNo, noteDate: TODAY, fileId });
+
+  async function file(v: PortalActor): Promise<string> {
+    return (await c.invoicePortal.addFile(v, companyId, { originalName: 'scan.pdf', data: PDF })).id;
+  }
+
+  /** An order received in full for a stock product, with a draft invoice started from it. */
+  async function setup(over: { qty?: string; receive?: string; discount?: string } = {}) {
+    const v = await approvedVendor();
+    const prod = await product(0, '10');
+    const order = await sentOrder(v, [stockLine(prod, { quantity: over.qty ?? '10', discountPercent: over.discount ?? '0', unitPrice: '100' })], { confirm: true });
+    const line = required(order.lines[0]);
+    const note = dn();
+    await receive(order.id, [rl(line, over.receive ?? over.qty ?? '10')], note);
+    return { v, prod, order, line, note };
+  }
+
+  async function submitted(s: Awaited<ReturnType<typeof setup>>, no = `INV-${run}-${String(++seq)}`, price = '100', qty?: string) {
+    const { id } = await c.invoicePortal.start(s.v, companyId, { poId: s.order.id, vendorInvoiceNo: no });
+    const loaded = await c.invoicePortal.load(s.v, id);
+    const scan = await file(s.v);
+    const dnFile = await file(s.v);
+    await c.invoicePortal.save(s.v, id, {
+      header: { ...emptyInvoiceHeader(TODAY), vendorInvoiceNo: no, declaration: true },
+      lines: lineForms([[s.line, qty ?? required(loaded.lines[0]).quantity, price]]),
+      deliveryNotes: [noteForm(s.note, dnFile)],
+      invoiceFileId: scan,
+    });
+    const { number } = await c.invoicePortal.submit(s.v, companyId, id);
+    return { id, number, no };
+  }
+
+  /** Through every stage up to approved. */
+  async function approved(s: Awaited<ReturnType<typeof setup>>, price = '100') {
+    const inv = await submitted(s, undefined, price);
+    await c.supplierInvoices.pickUp(staff('clerk'), inv.id);
+    const linked = await c.supplierInvoices.autoLink(staff('clerk'), inv.id);
+    expect(linked.complete).toBe(true);
+    expect(await c.supplierInvoices.runMatch(staff('checker'), inv.id)).toMatchObject({ ok: true });
+    await c.supplierInvoices.sendForApproval(staff('checker'), inv.id);
+    await c.supplierInvoices.approve(staff('boss'), inv.id);
+    return inv;
+  }
+
+  beforeAll(async () => {
+    process.env.DATABASE_URL = url;
+    process.env.DATA_ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString('base64');
+    ({ drizzleDb: db } = await import('@/server/db/drizzle/client'));
+    schema = await import('@/server/db/drizzle/schema');
+    const { getContainer } = await import('@/server/di/container');
+    c = getContainer();
+    const [company] = await db
+      .insert(schema.companySettings)
+      .values({ legalName: 'VP', tradingName: 'VP', email: 'buyer@vp.test', phone: '1', streetAddress: 's', city: 'c', countyOrState: 'x', postalCode: '1', kraPin: 'P' })
+      .returning();
+    companyId = required(company).id;
+    await c.reasonCodes.ensureSystemReasons(companyId);
+    await c.finance.setup.applyTemplate(staff('reviewer'), 'kenya', { fiscalYearStart: '2026-01-01' });
+    await db.insert(schema.currencies).values({ code: 'KES', name: 'Kenyan shilling', symbol: 'KSh', isBaseCurrency: true }).onConflictDoNothing();
+    await c.finance.paymentMethods.seedStandard(staff('reviewer'));
+    const methods = await db.select().from(schema.paymentMethods).where(eq(schema.paymentMethods.companyId, companyId));
+    for (const m of methods) await db.update(schema.paymentMethods).set({ usableFor: ['customer_receipt', 'vendor_payment'] }).where(eq(schema.paymentMethods.id, m.id));
+    transfer = required(methods.find((m) => m.kind === 'bank_transfer')).id;
+    await db.update(schema.financeSettings).set({ inventoryGlGoLive: '2026-01-01' }).where(eq(schema.financeSettings.companyId, companyId));
+    const accounts = await db.select().from(schema.glAccounts).where(eq(schema.glAccounts.companyId, companyId));
+    inputTax = required(accounts.find((a) => a.no === '1410')).id;
+    await db.insert(schema.vendorSettings).values({ companyId, inputTaxAccountId: inputTax }).onConflictDoUpdate({ target: schema.vendorSettings.companyId, set: { inputTaxAccountId: inputTax } });
+    const probe = await product(0, '1');
+    const [p] = await db.select({ unitId: schema.products.baseUnitId }).from(schema.products).where(eq(schema.products.id, probe));
+    const [u] = await db.select({ code: schema.unitsOfMeasure.code, name: schema.unitsOfMeasure.name }).from(schema.unitsOfMeasure).where(eq(schema.unitsOfMeasure.id, required(p).unitId));
+    unit = required(u);
+  });
+
+
+
+  /** A booked invoice for 4 units at the price given (tax 16%): the amount owed is 4 × price × 1.16. */
+  async function booked(price = '100') {
+    const s = await setup({ qty: '4', discount: '0' });
+    const inv = await approved(s, price);
+    await c.invoicePosting.post(staff('finance'), inv.id);
+    const [p] = await db.select().from(schema.purchaseInvoices).where(eq(schema.purchaseInvoices.supplierInvoiceId, inv.id));
+    return { ...s, inv, pinv: required(p) };
+  }
+
+
+  /**
+   * A smoke run at a small size, and the same code as a load test when the size is raised:
+   *   LOAD_VENDORS=100 LOAD_INVOICES=5 LOAD_CONCURRENCY=16 TEST_DATABASE_URL=... pnpm exec vitest run src/server/domains/vendors/payables-load.integration.test.ts
+   * It measures the three paths that matter (booking invoices, applying payments, building a payment run), prints the latencies,
+   * and checks what must hold at any speed: every invoice booked once, nothing applied twice, the ledger agrees with its detail.
+   */
+  const VENDORS = Number(process.env.LOAD_VENDORS ?? 4);
+  const INVOICES = Number(process.env.LOAD_INVOICES ?? 3);
+  const CONCURRENCY = Number(process.env.LOAD_CONCURRENCY ?? 16);
+  const percentile = (xs: number[], p: number): number => [...xs].sort((a, b) => a - b)[Math.min(xs.length - 1, Math.floor((p / 100) * xs.length))] ?? 0;
+  const report = (label: string, ms: number[], wall: number): string => `${label}: ${String(ms.length)} in ${String(Math.round(wall))} ms (${String(Math.round((ms.length / wall) * 1000))}/s), p50 ${String(Math.round(percentile(ms, 50)))} ms, p95 ${String(Math.round(percentile(ms, 95)))} ms, max ${String(Math.round(Math.max(...ms)))} ms`;
+  /** Runs the jobs `width` at a time, timing each. */
+  async function pool<T>(jobs: (() => Promise<T>)[], width: number): Promise<{ times: number[]; wall: number; results: T[] }> {
+    const times: number[] = [];
+    const results: T[] = new Array<T>(jobs.length);
+    let next = 0;
+    const started = performance.now();
+    await Promise.all(Array.from({ length: Math.min(width, jobs.length) }, async () => {
+      for (;;) {
+        const i = next++;
+        const job = jobs[i];
+        if (job === undefined) return;
+        const t0 = performance.now();
+        results[i] = await job();
+        times.push(performance.now() - t0);
+      }
+    }));
+    return { times, wall: performance.now() - started, results };
+  }
+
+  it('books many approved invoices at once, each exactly once, with the ledger and its detail in agreement', async () => {
+    const vendors: Awaited<ReturnType<typeof setup>>[] = [];
+    for (let i = 0; i < VENDORS; i += 1) vendors.push(await setup({ qty: String(INVOICES * 2), discount: '0' }));
+    const prepared: { id: string; vendorId: string }[] = [];
+    for (const s of vendors) {
+      // One order per vendor, invoiced in INVOICES parts of 2 units: each part is a separate invoice to book.
+      for (let i = 0; i < INVOICES; i += 1) {
+        const inv = await submitted(s, undefined, '100', '2');
+        await c.supplierInvoices.pickUp(staff('clerk'), inv.id);
+        await c.supplierInvoices.autoLink(staff('clerk'), inv.id);
+        await c.supplierInvoices.runMatch(staff('checker'), inv.id);
+        await c.supplierInvoices.sendForApproval(staff('checker'), inv.id);
+        await c.supplierInvoices.approve(staff('boss'), inv.id);
+        prepared.push({ id: inv.id, vendorId: s.v.vendorId });
+      }
+    }
+    const { times, wall, results } = await pool(prepared.map((p) => async () => await c.invoicePosting.post(staff('finance'), p.id)), CONCURRENCY);
+    process.stderr.write(`${report('invoice posting', times, wall)}\n`);
+    expect(results).toHaveLength(prepared.length);
+    const booked = await db.select().from(schema.purchaseInvoices).where(inArray(schema.purchaseInvoices.supplierInvoiceId, prepared.map((p) => p.id)));
+    expect(booked).toHaveLength(prepared.length);
+    expect(new Set(booked.map((b) => b.ledgerEntryId)).size).toBe(prepared.length);
+    expect(await c.finance.vendorLedger.drift(companyId)).toEqual([]);
+    // A second posting of the same invoice, even all at once, books nothing more.
+    const again = await Promise.all(prepared.slice(0, 4).map(async (p) => await codeOf(c.invoicePosting.post(staff('finance'), p.id))));
+    expect(again.every((x) => x !== 'OK')).toBe(true);
+    expect(await db.select({ n: sql<number>`count(*)::int` }).from(schema.purchaseInvoices).where(inArray(schema.purchaseInvoices.supplierInvoiceId, prepared.map((p) => p.id)))).toEqual([{ n: prepared.length }]);
+  }, 900_000);
+
+  it('applies payments to a vendor’s invoices from many callers at once without applying more than was paid or owed', async () => {
+    const s = await setup({ qty: '40', discount: '0' });
+    const invoices: string[] = [];
+    for (let i = 0; i < 8; i += 1) {
+      const inv = await submitted(s, undefined, '100', '2');
+      await c.supplierInvoices.pickUp(staff('clerk'), inv.id);
+      await c.supplierInvoices.autoLink(staff('clerk'), inv.id);
+      await c.supplierInvoices.runMatch(staff('checker'), inv.id);
+      await c.supplierInvoices.sendForApproval(staff('checker'), inv.id);
+      await c.supplierInvoices.approve(staff('boss'), inv.id);
+      await c.invoicePosting.post(staff('finance'), inv.id);
+      invoices.push(inv.id);
+    }
+    const owed = await db.select().from(schema.purchaseInvoices).where(inArray(schema.purchaseInvoices.supplierInvoiceId, invoices));
+    expect(owed).toHaveLength(8);
+    const today = new Date().toISOString().slice(0, 10);
+    // A payment worth five of the eight invoices, applied by eight callers racing for it: exactly five can win.
+    const each = toCents(required(owed[0]).total);
+    const credit = await db.transaction(async (tx) => await c.finance.vendorLedger.addEntry(tx, { companyId, vendorId: s.v.vendorId, documentType: 'payment', documentNo: `LOAD-PAY-${run}`, amountCents: -each * 5, currency: 'KES', postingDate: today }));
+    const { times, wall, results } = await pool(owed.map((o) => async () => await codeOf(db.transaction(async (tx) => await c.finance.vendorLedger.apply(tx, { companyId, vendorId: s.v.vendorId, creditEntryId: credit.id, invoiceEntryId: o.ledgerEntryId, amountCents: each, postingDate: today })))), 8);
+    process.stderr.write(`${report('ledger application', times, wall)}\n`);
+    expect(results.filter((r) => r === 'OK')).toHaveLength(5);
+    expect(results.filter((r) => r === 'NOT_ENOUGH_PAYMENT')).toHaveLength(3);
+    const [left] = await db.select().from(schema.vendorLedgerEntries).where(eq(schema.vendorLedgerEntries.id, credit.id));
+    expect(Number(left?.remainingAmount)).toBe(0);
+    expect(await c.finance.vendorLedger.drift(companyId)).toEqual([]);
+  }, 900_000);
+
+  it('suggests and builds a payment run for every vendor with something due', async () => {
+    const mine: string[] = [];
+    for (let i = 0; i < VENDORS; i += 1) {
+      const b = await booked('100');
+      mine.push(b.v.vendorId);
+    }
+    const dueOn = new Date(Date.now() + 90 * 86_400_000).toISOString().slice(0, 10);
+    const t0 = performance.now();
+    const suggestion = await c.paymentRuns.suggest(companyId, { methodId: transfer, dueOn });
+    process.stderr.write(`${`payment run suggestion: ${String(suggestion.vendors.length)} vendors in ${String(Math.round(performance.now() - t0))} ms`}\n`);
+    const ours = suggestion.vendors.filter((v) => mine.includes(v.vendorId));
+    expect(ours).toHaveLength(VENDORS);
+    const t1 = performance.now();
+    const run1 = await c.paymentRuns.create(staff('clerk'), { methodId: transfer, executionDate: new Date().toISOString().slice(0, 10), note: 'load', selections: ours.map((v) => ({ vendorId: v.vendorId, allocations: v.items.map((i) => ({ purchaseInvoiceId: i.purchaseInvoiceId, amount: fromCents(i.availableCents) })) })) });
+    process.stderr.write(`${`payment run built: ${String(run1.count)} vouchers in ${String(Math.round(performance.now() - t1))} ms`}\n`);
+    expect(run1.count).toBe(VENDORS);
+    // The invoices are now claimed: the same selection cannot be built a second time.
+    expect(await codeOf(c.paymentRuns.create(staff('clerk'), { methodId: transfer, executionDate: new Date().toISOString().slice(0, 10), note: 'again', selections: ours.map((v) => ({ vendorId: v.vendorId, allocations: v.items.map((i) => ({ purchaseInvoiceId: i.purchaseInvoiceId, amount: fromCents(i.availableCents) })) })) }))).not.toBe('OK');
+  }, 900_000);
+});

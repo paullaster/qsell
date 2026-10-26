@@ -1,5 +1,7 @@
 'use server';
 
+import { vendorApprovals } from './approval-gate';
+import { drizzleDb } from '@/server/db/drizzle/client';
 import { canPermission } from '@/server/domains/access-control/guard';
 import { getContainer } from '@/server/di/container';
 import { run } from '@/server/domains/finance/action-runner';
@@ -76,6 +78,8 @@ export async function poAction(poId: string) {
       container.purchaseOrders.settings(ctx.companyId),
     ]);
     const p = got.po;
+    const held = await vendorApprovals.heldSet(drizzleDb, ctx.companyId, 'vendor_po', [p.id]);
+    const heldAdvances = await vendorApprovals.heldSet(drizzleDb, ctx.companyId, 'vendor_advance', got.advances.map((a) => a.id));
     const qualified = (await container.prequalLifecycle.qualificationOf(ctx.companyId, p.vendorId, p.categoryId, businessDate())) !== null;
     return {
       id: p.id,
@@ -91,6 +95,7 @@ export async function poAction(poId: string) {
       qualified,
       qualificationOverrideReason: p.qualificationOverrideReason,
       createdByMe: p.createdBy === ctx.actor.id,
+      inWorkflow: held.has(p.id),
       form: {
         vendorId: p.vendorId,
         categoryId: p.categoryId,
@@ -108,7 +113,7 @@ export async function poAction(poId: string) {
       lines: got.lines.map((l) => ({ id: l.id, productId: l.productId ?? '', productLabel: l.productName ?? undefined, description: l.description, specification: l.specification ?? '', quantity: l.quantity, unit: l.unit, unitPrice: l.unitPrice, discountPercent: l.discountPercent, taxRate: l.taxRate, expectedDate: l.expectedDate ?? '', received: l.receivedQuantity, invoiced: l.invoicedQuantity })),
       versions: got.versions.map((v) => ({ version: v.version, reason: v.reason, at: v.createdAt.toISOString() })),
       amendments: got.amendments.map((a) => ({ id: a.id, status: a.status, reason: a.reason, needsApproval: a.needsApproval, mine: a.proposedBy === ctx.actor.id, decisionNote: a.decisionNote, at: a.createdAt.toISOString() })),
-      advances: got.advances.map((a) => ({ id: a.id, status: a.status, amount: a.amount, currency: a.currency, dueDate: a.dueDate, reason: a.reason, mine: a.createdBy === ctx.actor.id, decisionNote: a.decisionNote })),
+      advances: got.advances.map((a) => ({ id: a.id, status: a.status, amount: a.amount, currency: a.currency, dueDate: a.dueDate, reason: a.reason, mine: a.createdBy === ctx.actor.id, inWorkflow: heldAdvances.has(a.id), decisionNote: a.decisionNote })),
       events: got.events.map((e) => ({ id: String(e.id), event: e.event, reason: e.reasonText, at: e.createdAt.toISOString(), actor: e.actorType })),
       cancelReason: p.cancelReason,
       confirmationNote: p.confirmationNote,
@@ -245,6 +250,7 @@ export async function vendorSettingsAction() {
       watchNewVendorDays: s.watchNewVendorDays,
       watchNewVendorAmount: s.watchNewVendorAmount,
       holdFlaggedPayments: s.holdFlaggedPayments,
+      requireEtimsForTax: s.requireEtimsForTax,
     };
   });
 }
@@ -252,6 +258,6 @@ export async function vendorSettingsAction() {
 export async function saveVendorSettingsAction(input: unknown) {
   return await run('vendor_settings:manage', { surface: 'vendors/settings', action: 'save' }, async (ctx) => {
     const i = obj(input);
-    await getContainer().purchaseOrders.saveSettings(ctx, { rfqRequiredAbove: str(i.rfqRequiredAbove, 20), amendmentTolerancePercent: str(i.amendmentTolerancePercent, 8), receiptTolerancePercent: str(i.receiptTolerancePercent, 8), inputTaxAccountId: str(i.inputTaxAccountId, 40), invoicePriceTolerancePercent: str(i.invoicePriceTolerancePercent, 8), invoicePriceToleranceAmount: str(i.invoicePriceToleranceAmount, 20), invoiceQuantityTolerancePercent: str(i.invoiceQuantityTolerancePercent, 8), paymentThreeEyesAbove: str(i.paymentThreeEyesAbove, 20), watchDuplicateWindowDays: str(i.watchDuplicateWindowDays, 6), watchNewVendorDays: str(i.watchNewVendorDays, 6), watchNewVendorAmount: str(i.watchNewVendorAmount, 20), holdFlaggedPayments: i.holdFlaggedPayments !== false });
+    await getContainer().purchaseOrders.saveSettings(ctx, { rfqRequiredAbove: str(i.rfqRequiredAbove, 20), amendmentTolerancePercent: str(i.amendmentTolerancePercent, 8), receiptTolerancePercent: str(i.receiptTolerancePercent, 8), inputTaxAccountId: str(i.inputTaxAccountId, 40), invoicePriceTolerancePercent: str(i.invoicePriceTolerancePercent, 8), invoicePriceToleranceAmount: str(i.invoicePriceToleranceAmount, 20), invoiceQuantityTolerancePercent: str(i.invoiceQuantityTolerancePercent, 8), paymentThreeEyesAbove: str(i.paymentThreeEyesAbove, 20), watchDuplicateWindowDays: str(i.watchDuplicateWindowDays, 6), watchNewVendorDays: str(i.watchNewVendorDays, 6), watchNewVendorAmount: str(i.watchNewVendorAmount, 20), holdFlaggedPayments: i.holdFlaggedPayments !== false, requireEtimsForTax: i.requireEtimsForTax === true });
   });
 }

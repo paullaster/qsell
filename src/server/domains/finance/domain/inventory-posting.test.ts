@@ -4,6 +4,9 @@ import { changeLabel, planChange, purposeName, readinessChecks, stockValueCents 
 const move = (changeType: string, valueCents: number) => planChange({ kind: 'movement', changeType, valueCents });
 
 describe('where a change in stock goes', () => {
+  it('takes goods returned to a vendor out of stock against the clearing account, like a reversed receipt', () => {
+    expect(move('purchase_return', -4000)).toMatchObject({ debit: 'inventory_clearing', credit: 'inventory', cents: 4000, label: 'Goods returned to the vendor' });
+  });
   it('goods received build stock up against stock received but not invoiced', () => {
     for (const t of ['purchase_order_receipt', 'restock', 'product_restored']) expect(move(t, 120000)).toMatchObject({ debit: 'inventory', credit: 'inventory_clearing', cents: 120000 });
   });

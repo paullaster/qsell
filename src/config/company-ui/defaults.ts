@@ -21,4 +21,6 @@ export const DEFAULT_COMPANY_UI_CONFIG: CompanyUiConfig = {
   },
   moduleLabels: {},
   support: DEFAULT_COMPANY_SUPPORT_CONFIG,
+  policies: [],
+  banners: [],
 };

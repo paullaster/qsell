@@ -1,5 +1,7 @@
 'use server';
 
+import { vendorApprovals } from './approval-gate';
+import { drizzleDb } from '@/server/db/drizzle/client';
 import { canPermission } from '@/server/domains/access-control/guard';
 import { getContainer } from '@/server/di/container';
 import { run } from '@/server/domains/finance/action-runner';
@@ -50,7 +52,8 @@ export async function invoiceAction(invoiceId: string) {
     ]);
     const me = ctx.actor.id;
     const separate = me === null || (me !== found.invoice.linkedBy && me !== found.invoice.matchedBy);
-    return { ...found, can: { process, override, return: ret, reject, approve: approve && separate, approveBlockedBySeparation: approve && !separate, post, pay, applyAdvance } };
+    const inWorkflow = (await vendorApprovals.heldSet(drizzleDb, ctx.companyId, 'vendor_invoice', [found.invoice.id])).has(found.invoice.id);
+    return { ...found, inWorkflow, can: { process, override, return: ret, reject, approve: approve && separate && !inWorkflow, approveBlockedBySeparation: approve && !separate, post, pay, applyAdvance } };
   });
 }
 

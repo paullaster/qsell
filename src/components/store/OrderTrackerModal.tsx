@@ -1,5 +1,6 @@
 'use client';
 
+import { useModalKeys } from '@/components/ui/useModalKeys';
 import { lineDisplay, lineFromRow, quantityWords } from '@/lib/unit-rules';
 import React, { useState } from 'react';
 import {
@@ -33,14 +34,18 @@ interface OrderTrackerModalProps {
  * was placed with, so a visitor only ever sees an order they can already identify.
  */
 export function OrderTrackerModal({ isOpen, onClose }: OrderTrackerModalProps) {
+  // Opened fresh each time: nothing typed or found before is still there.
+  return isOpen ? <OpenTracker onClose={onClose} /> : null;
+}
+
+function OpenTracker({ onClose }: { onClose: () => void }) {
+  const dialogRef = useModalKeys<HTMLDivElement>(onClose);
   const [searchTerm, setSearchTerm] = useState('');
   const [contact, setContact] = useState('');
   const [hasSearched, setHasSearched] = useState(false);
   const [matchedOrder, setMatchedOrder] = useState<Order | null>(null);
   const [searchError, setSearchError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-
-  if (!isOpen) return null;
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -113,7 +118,13 @@ export function OrderTrackerModal({ isOpen, onClose }: OrderTrackerModalProps) {
 
   return (
     <div className="animate-fade-in fixed inset-0 z-50 flex items-stretch justify-center overflow-y-auto bg-backdrop/85 p-0 backdrop-blur-md sm:items-center sm:p-4">
-      <div className="relative flex min-h-dvh w-full max-w-2xl flex-col overflow-hidden border border-line bg-surface-raised shadow-2xl sm:my-4 sm:min-h-0 sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl lg:max-h-[90vh]">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tracker-title"
+        className="relative flex min-h-dvh w-full max-w-2xl flex-col overflow-hidden border border-line bg-surface-raised shadow-2xl sm:my-4 sm:min-h-0 sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl lg:max-h-[90vh]"
+      >
         {/* Header */}
         <div className="flex items-center justify-between gap-2 border-b border-line bg-surface p-4 sm:p-6">
           <div className="flex min-w-0 items-center gap-3">
@@ -121,17 +132,19 @@ export function OrderTrackerModal({ isOpen, onClose }: OrderTrackerModalProps) {
               <Truck className="h-4 w-4 sm:h-5 sm:w-5" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-fg-strong sm:text-base">Track Your Order</h2>
-              <p className="line-clamp-1 text-[11px] text-fg-muted sm:text-xs">
+              <h2 id="tracker-title" className="text-base font-bold text-fg-strong">Track your order</h2>
+              <p className="line-clamp-1 text-xs text-fg-muted sm:text-xs">
                 Real-time status, dispatch timeline & eTIMS receipt
               </p>
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="cursor-pointer rounded-lg border border-line bg-surface-raised p-2 text-fg-muted transition-colors hover:text-fg-strong"
+            aria-label="Close"
+            className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-lg border border-line bg-surface-raised text-fg-muted transition-colors hover:text-fg-strong"
           >
-            <X className="h-5 w-5" />
+            <X className="h-5 w-5" aria-hidden="true" />
           </button>
         </div>
 
@@ -181,7 +194,7 @@ export function OrderTrackerModal({ isOpen, onClose }: OrderTrackerModalProps) {
                 {isLoading ? 'Searching...' : 'Track Order'}
               </button>
             </div>
-            <p className="text-[11px] text-fg-subtle">
+            <p className="text-xs text-fg-subtle">
               Your order number is in your order confirmation. We ask for your email or phone
               too so nobody else can look up your order.
             </p>
@@ -218,7 +231,7 @@ export function OrderTrackerModal({ isOpen, onClose }: OrderTrackerModalProps) {
               {/* Order Meta Header Banner */}
               <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-line bg-surface p-4">
                 <div>
-                  <span className="block font-mono text-[10px] text-fg-subtle uppercase">
+                  <span className="block font-mono text-xs text-fg-subtle uppercase">
                     Order Reference
                   </span>
                   <span className="font-mono text-base font-bold text-fg-strong">
@@ -227,7 +240,7 @@ export function OrderTrackerModal({ isOpen, onClose }: OrderTrackerModalProps) {
                 </div>
 
                 <div>
-                  <span className="block font-mono text-[10px] text-fg-subtle uppercase">
+                  <span className="block font-mono text-xs text-fg-subtle uppercase">
                     Payment Status
                   </span>
                   <span
@@ -243,7 +256,7 @@ export function OrderTrackerModal({ isOpen, onClose }: OrderTrackerModalProps) {
                 </div>
 
                 <div>
-                  <span className="block font-mono text-[10px] text-fg-subtle uppercase">
+                  <span className="block font-mono text-xs text-fg-subtle uppercase">
                     Order Total
                   </span>
                   <span className="font-mono text-sm font-bold text-fg-strong">
@@ -287,9 +300,9 @@ export function OrderTrackerModal({ isOpen, onClose }: OrderTrackerModalProps) {
                           >
                             {step.title}
                           </h5>
-                          <span className="font-mono text-[10px] text-fg-muted">{step.time}</span>
+                          <span className="font-mono text-xs text-fg-muted">{step.time}</span>
                         </div>
-                        <p className="mt-0.5 text-[11px] text-fg-muted">{step.desc}</p>
+                        <p className="mt-0.5 text-xs text-fg-muted">{step.desc}</p>
                       </div>
                     </div>
                   ))}
@@ -302,7 +315,7 @@ export function OrderTrackerModal({ isOpen, onClose }: OrderTrackerModalProps) {
                   <div className="flex items-center gap-1.5 font-semibold text-fg">
                     <MapPin className="h-3.5 w-3.5 text-indigo-400" /> Delivery Address
                   </div>
-                  <p className="text-[11px] leading-relaxed text-fg-muted">
+                  <p className="text-xs leading-relaxed text-fg-muted">
                     {matchedOrder.customerName}
                     <br />
                     {matchedOrder.shippingAddress.street}, {matchedOrder.shippingAddress.city}
@@ -321,7 +334,7 @@ export function OrderTrackerModal({ isOpen, onClose }: OrderTrackerModalProps) {
                     )}
                     Payment Reconciliation
                   </div>
-                  <p className="text-[11px] leading-relaxed text-fg-muted">
+                  <p className="text-xs leading-relaxed text-fg-muted">
                     Method:{' '}
                     <span className="font-medium text-fg-strong">
                       {matchedOrder.paymentMethod === 'mpesa_daraja'
@@ -362,7 +375,7 @@ export function OrderTrackerModal({ isOpen, onClose }: OrderTrackerModalProps) {
                         />
                         <div>
                           <div className="font-medium text-fg-strong">{item.productName}</div>
-                          <div className="font-mono text-[10px] text-fg-subtle">
+                          <div className="font-mono text-xs text-fg-subtle">
                             Qty: {quantityWords(lineFromRow(item))} × KES {lineDisplay(lineFromRow(item)).unitPrice.toLocaleString()}
                           </div>
                         </div>
@@ -380,7 +393,7 @@ export function OrderTrackerModal({ isOpen, onClose }: OrderTrackerModalProps) {
 
         {/* Footer */}
         <div className="flex items-center justify-between border-t border-line bg-surface p-4 sm:p-5">
-          <div className="flex items-center gap-1.5 text-[11px] text-fg-subtle">
+          <div className="flex items-center gap-1.5 text-xs text-fg-subtle">
             <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
             eTIMS Compliant Tax Invoicing • Nairobi Fast Dispatch
           </div>
