@@ -1,3 +1,4 @@
+import { vendorApprovals } from './approval-gate';
 import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
@@ -379,7 +380,9 @@ export class VendorPaymentService {
       await this.vendorMayBePaid(tx, ctx.companyId, v.vendorId);
       if (v.kind === 'invoices') await this.recheckLines(tx, ctx.companyId, v);
       await tx.update(vendorPaymentVouchers).set({ status: 'pending_approval', submittedAt: now, sendBackReason: null, updatedAt: now }).where(eq(vendorPaymentVouchers.id, id));
-      await this.event(tx, ctx.actor, id, 'submitted', 'draft', 'pending_approval');
+      const { method } = await this.method(tx, ctx.companyId, v.methodId);
+      const route = await vendorApprovals.submit(tx, { companyId: ctx.companyId, trigger: 'vendor.payment', documentId: id, requestedBy: ctx.actor.id ?? '', amount: Number(v.amount), snapshot: { vendor: { id: v.vendorId }, voucherKind: v.kind, methodKind: method.kind, currency: v.currency } });
+      await this.event(tx, ctx.actor, id, 'submitted', 'draft', 'pending_approval', route === 'waiting' ? { data: { workflow: true } } : undefined);
     });
   }
 
@@ -394,41 +397,55 @@ export class VendorPaymentService {
 
   async approve(ctx: FinanceContext, id: string, now: Date = new Date(), outer?: Tx): Promise<{ number: string }> {
     return await this.inTx(outer, async (tx) => {
-      const v = await this.lock(tx, ctx.companyId, id);
-      if (v.status !== 'pending_approval') throw new FinanceError('WRONG_STATE', 'This payment voucher is not waiting for approval.');
-      const refusal = approvalRefusal(ctx.actor.id ?? '', v.createdBy);
-      if (refusal !== null) throw new FinanceError('FOUR_EYES', refusal);
-      await this.vendorMayBePaid(tx, ctx.companyId, v.vendorId);
-      if (v.kind === 'invoices') await this.recheckLines(tx, ctx.companyId, v);
-      const { method } = await this.method(tx, ctx.companyId, v.methodId);
-      // What the payment settles is fixed now, on the day it is approved: the discount in time, the tax withheld, the cash.
-      let plan: Settlement | null = null;
-      if (v.kind === 'invoices') {
-        const rows = await tx.select().from(vendorPaymentVoucherLines).where(eq(vendorPaymentVoucherLines.voucherId, id));
-        plan = await this.planFor(tx, ctx.companyId, v.vendorId, rows.map((l) => ({ purchaseInvoiceId: l.purchaseInvoiceId, amount: l.amount, closeRemainder: l.closeRemainder })), businessDate(now));
-        for (const l of plan.lines) {
-          await tx.update(vendorPaymentVoucherLines).set({ discount: fromCents(l.discountCents), tolerance: fromCents(l.toleranceCents), withholdingBase: fromCents(l.withholdingBaseCents), withholding: fromCents(l.withholdingCents) }).where(and(eq(vendorPaymentVoucherLines.voucherId, id), eq(vendorPaymentVoucherLines.purchaseInvoiceId, l.purchaseInvoiceId)));
-        }
-      }
-      let accountId: string | null = null;
-      let destination: string | null = null;
-      if (NEEDS_ACCOUNT.includes(method.kind)) {
-        // A way of paying through M-Pesa pays an M-Pesa destination of the vendor; every other way pays a bank account.
-        const mobile = method.kind === 'mobile_money';
-        const active = await tx.select().from(vendorBankAccounts).where(and(eq(vendorBankAccounts.vendorId, v.vendorId), eq(vendorBankAccounts.status, 'active'), mobile ? inArray(vendorBankAccounts.kind, ['mpesa_phone', 'mpesa_paybill', 'mpesa_till']) : eq(vendorBankAccounts.kind, 'bank'))).orderBy(desc(vendorBankAccounts.createdAt));
-        const account = active[0];
-        if (account === undefined) throw new FinanceError('NO_BANK_ACCOUNT', mobile ? 'The vendor has no M-Pesa number, paybill or till that can receive money. A new or changed destination is usable only after it is approved and its waiting period has passed.' : 'The vendor has no bank account that can receive money. A new or changed account is usable only after it is approved and its waiting period has passed.');
-        accountId = account.id;
-        destination = describeDestination(account.kind, account.bankName, account.branch, account.accountLast4);
-      }
-      const threshold = await this.thresholdCents(tx, ctx.companyId);
-      const flags = await this.flagsFor(tx, ctx.companyId, v.vendorId, accountId, toCents(v.amount), now);
-      const three = needsThreePeople(toCents(v.amount), threshold) || flags.hold;
-      const number = v.number ?? (await this.numbering.assign('vendor_payment', { companyId: ctx.companyId, branchId: null, date: businessDate(now), document: { kind: 'vendor_payment', id } }, tx)).number;
-      await tx.update(vendorPaymentVouchers).set({ status: 'approved', number, approvedBy: ctx.actor.id, approvedAt: now, needsThree: three, vendorBankAccountId: accountId, destination, ...(plan === null ? {} : { withholdingAmount: fromCents(plan.withholdingCents), discountAmount: fromCents(plan.discountCents), toleranceAmount: fromCents(plan.toleranceCents), cashAmount: fromCents(plan.cashCents) }), updatedAt: now }).where(eq(vendorPaymentVouchers.id, id));
-      await this.event(tx, ctx.actor, id, 'approved', 'pending_approval', 'approved', { data: { number, needsThree: three, flagged: flags.reasons, destination, cash: fromCents(plan?.cashCents ?? toCents(v.amount)), withholding: fromCents(plan?.withholdingCents ?? 0), discount: fromCents(plan?.discountCents ?? 0) } });
-      return { number };
+      await vendorApprovals.refuseIfHeld(tx, ctx.companyId, 'vendor_payment', id);
+      return await this.approveIn(tx, ctx, id, now);
     });
+  }
+
+  /** The approval inside the caller's transaction: by a person here, or by the engine when its workflow is complete. */
+  async approveIn(tx: Tx, ctx: FinanceContext, id: string, now: Date = new Date()): Promise<{ number: string }> {
+    const v = await this.lock(tx, ctx.companyId, id);
+    if (v.status !== 'pending_approval') throw new FinanceError('WRONG_STATE', 'This payment voucher is not waiting for approval.');
+    const refusal = approvalRefusal(ctx.actor.id ?? '', v.createdBy);
+    if (refusal !== null) throw new FinanceError('FOUR_EYES', refusal);
+    await this.vendorMayBePaid(tx, ctx.companyId, v.vendorId);
+    if (v.kind === 'invoices') await this.recheckLines(tx, ctx.companyId, v);
+    const { method } = await this.method(tx, ctx.companyId, v.methodId);
+    // What the payment settles is fixed now, on the day it is approved: the discount in time, the tax withheld, the cash.
+    let plan: Settlement | null = null;
+    if (v.kind === 'invoices') {
+      const rows = await tx.select().from(vendorPaymentVoucherLines).where(eq(vendorPaymentVoucherLines.voucherId, id));
+      plan = await this.planFor(tx, ctx.companyId, v.vendorId, rows.map((l) => ({ purchaseInvoiceId: l.purchaseInvoiceId, amount: l.amount, closeRemainder: l.closeRemainder })), businessDate(now));
+      for (const l of plan.lines) {
+        await tx.update(vendorPaymentVoucherLines).set({ discount: fromCents(l.discountCents), tolerance: fromCents(l.toleranceCents), withholdingBase: fromCents(l.withholdingBaseCents), withholding: fromCents(l.withholdingCents) }).where(and(eq(vendorPaymentVoucherLines.voucherId, id), eq(vendorPaymentVoucherLines.purchaseInvoiceId, l.purchaseInvoiceId)));
+      }
+    }
+    let accountId: string | null = null;
+    let destination: string | null = null;
+    if (NEEDS_ACCOUNT.includes(method.kind)) {
+      // A way of paying through M-Pesa pays an M-Pesa destination of the vendor; every other way pays a bank account.
+      const mobile = method.kind === 'mobile_money';
+      const active = await tx.select().from(vendorBankAccounts).where(and(eq(vendorBankAccounts.vendorId, v.vendorId), eq(vendorBankAccounts.status, 'active'), mobile ? inArray(vendorBankAccounts.kind, ['mpesa_phone', 'mpesa_paybill', 'mpesa_till']) : eq(vendorBankAccounts.kind, 'bank'))).orderBy(desc(vendorBankAccounts.createdAt));
+      const account = active[0];
+      if (account === undefined) throw new FinanceError('NO_BANK_ACCOUNT', mobile ? 'The vendor has no M-Pesa number, paybill or till that can receive money. A new or changed destination is usable only after it is approved and its waiting period has passed.' : 'The vendor has no bank account that can receive money. A new or changed account is usable only after it is approved and its waiting period has passed.');
+      accountId = account.id;
+      destination = describeDestination(account.kind, account.bankName, account.branch, account.accountLast4);
+    }
+    const threshold = await this.thresholdCents(tx, ctx.companyId);
+    const flags = await this.flagsFor(tx, ctx.companyId, v.vendorId, accountId, toCents(v.amount), now);
+    const three = needsThreePeople(toCents(v.amount), threshold) || flags.hold;
+    const number = v.number ?? (await this.numbering.assign('vendor_payment', { companyId: ctx.companyId, branchId: null, date: businessDate(now), document: { kind: 'vendor_payment', id } }, tx)).number;
+    await tx.update(vendorPaymentVouchers).set({ status: 'approved', number, approvedBy: ctx.actor.id, approvedAt: now, needsThree: three, vendorBankAccountId: accountId, destination, ...(plan === null ? {} : { withholdingAmount: fromCents(plan.withholdingCents), discountAmount: fromCents(plan.discountCents), toleranceAmount: fromCents(plan.toleranceCents), cashAmount: fromCents(plan.cashCents) }), updatedAt: now }).where(eq(vendorPaymentVouchers.id, id));
+    await this.event(tx, ctx.actor, id, 'approved', 'pending_approval', 'approved', { data: { number, needsThree: three, flagged: flags.reasons, destination, cash: fromCents(plan?.cashCents ?? toCents(v.amount)), withholding: fromCents(plan?.withholdingCents ?? 0), discount: fromCents(plan?.discountCents ?? 0) } });
+    return { number };
+  }
+
+  /** The workflow refused it, was withdrawn or was reopened: back to a draft, with the reason where the writer will see it. */
+  async backFromWorkflow(tx: Tx, id: string, why: string, now: Date = new Date()): Promise<void> {
+    const [v] = await tx.select().from(vendorPaymentVouchers).where(eq(vendorPaymentVouchers.id, id)).for('update');
+    if (v?.status !== 'pending_approval') return;
+    await tx.update(vendorPaymentVouchers).set({ status: 'draft', sendBackReason: why.slice(0, 500), updatedAt: now }).where(eq(vendorPaymentVouchers.id, id));
+    await this.event(tx, { type: 'system', id: null }, id, 'sent_back', 'pending_approval', 'draft', { reason: why.slice(0, 500) });
   }
 
   async sendBack(ctx: FinanceContext, id: string, reason: string, now: Date = new Date(), outer?: Tx): Promise<void> {
@@ -437,6 +454,7 @@ export class VendorPaymentService {
     await this.inTx(outer, async (tx) => {
       const v = await this.lock(tx, ctx.companyId, id);
       if (v.status !== 'pending_approval') throw new FinanceError('WRONG_STATE', 'This payment voucher is not waiting for approval.');
+      await vendorApprovals.refuseIfHeld(tx, ctx.companyId, 'vendor_payment', id);
       await tx.update(vendorPaymentVouchers).set({ status: 'draft', sendBackReason: text.slice(0, 500), updatedAt: now }).where(eq(vendorPaymentVouchers.id, id));
       await this.event(tx, ctx.actor, id, 'sent_back', 'pending_approval', 'draft', { reason: text.slice(0, 500) });
     });
@@ -447,6 +465,7 @@ export class VendorPaymentService {
     if (!has(text)) throw new FinanceError('NOTE_REQUIRED', 'Say why the payment is cancelled.');
     await this.inTx(outer, async (tx) => {
       const v = await this.lock(tx, ctx.companyId, id);
+      await vendorApprovals.refuseIfHeld(tx, ctx.companyId, 'vendor_payment', id);
       if (!(LIVE_VOUCHER as readonly string[]).includes(v.status)) throw new FinanceError('WRONG_STATE', v.status === 'paid' ? 'A paid voucher cannot be cancelled. Reverse it.' : 'This payment voucher is finished.');
       await tx.update(vendorPaymentVouchers).set({ status: 'cancelled', cancelReason: text.slice(0, 500), updatedAt: now }).where(eq(vendorPaymentVouchers.id, id));
       await this.event(tx, ctx.actor, id, 'cancelled', v.status, 'cancelled', { reason: text.slice(0, 500) });

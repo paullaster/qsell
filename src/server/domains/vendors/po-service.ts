@@ -4,6 +4,7 @@ import {
   glAccounts, vendorContractLines, vendorContracts, procurementCategories, products, purchaseOrderAmendments, purchaseOrderEvents, purchaseOrderLines, purchaseOrderVersions, purchaseOrders, rfqAwards, rfqLines, rfqQuoteLines, rfqQuotes, rfqs, vendorAdvancePayments, vendorSettings, vendors,
   type PurchaseOrderRow, type PurchaseOrderStatus,
 } from '@/server/db/drizzle/schema';
+import { vendorApprovals } from './approval-gate';
 import { has, trimToNull } from '@/lib/values';
 import { amendmentNeedsApproval, checkPoHeader, checkPoLine, describeChanges, lineAmounts, orderTotals, toMoney, type PoHeaderForm, type PoLineForm, type Snapshot } from '@/lib/purchase-order';
 import type { NumberSeriesService } from '@/server/kernel/numbering/service';
@@ -333,7 +334,8 @@ export class PurchaseOrderService {
         throw new FinanceError('RFQ_REQUIRED', `An order above ${settings.rfqRequiredAbove} needs a request for quotation. Someone allowed to skip it must send this one.`);
       }
       await tx.update(purchaseOrders).set({ status: 'pending_approval', submittedAt: new Date(), qualificationOverrideReason: override, updatedAt: new Date() }).where(eq(purchaseOrders.id, id));
-      await this.event(tx, ctx.actor, id, 'submitted', 'draft', 'pending_approval', { reason: override, data: override === null ? {} : { qualificationOverride: true } });
+      const route = await vendorApprovals.submit(tx, { companyId: ctx.companyId, trigger: 'po.release', documentId: id, requestedBy: ctx.actor.id ?? '', amount: Number(po.total), snapshot: { vendor: { id: po.vendorId }, categoryId: po.categoryId, currency: po.currency, noRfq: po.noRfq, qualificationOverride: override !== null, requiresAdvancePayment: po.requiresAdvancePayment } });
+      await this.event(tx, ctx.actor, id, 'submitted', 'draft', 'pending_approval', { reason: override, data: { ...(override === null ? {} : { qualificationOverride: true }), ...(route === 'waiting' ? { workflow: true } : {}) } });
     });
   }
 
@@ -344,16 +346,30 @@ export class PurchaseOrderService {
   /** A person other than the writer approves; the order gets its number and its first version. */
   async approve(ctx: FinanceContext, id: string, now: Date = new Date()): Promise<{ number: string }> {
     return await this.db.transaction(async (tx) => {
-      const po = await this.lock(tx, ctx.companyId, id);
-      if (po.status !== 'pending_approval') throw new FinanceError('NOT_PENDING', 'This order is not waiting for approval.');
-      if (po.createdBy === ctx.actor.id) throw new FinanceError('FOUR_EYES', 'You wrote this order, so someone else must approve it.');
-      const number = po.number ?? (await this.numbering.assign('purchase_order', { companyId: ctx.companyId, branchId: null, date: businessDate(now), document: { kind: 'purchase_order', id } }, tx)).number;
-      await tx.update(purchaseOrders).set({ status: 'approved', number, approvedBy: ctx.actor.id, approvedAt: now, updatedAt: now }).where(eq(purchaseOrders.id, id));
-      const lines = await tx.select().from(purchaseOrderLines).where(eq(purchaseOrderLines.poId, id)).orderBy(asc(purchaseOrderLines.position));
-      await tx.insert(purchaseOrderVersions).values({ poId: id, version: po.version, snapshot: this.snapshot(po, lines), reason: 'First release', createdBy: ctx.actor.id }).onConflictDoNothing();
-      await this.event(tx, ctx.actor, id, 'approved', 'pending_approval', 'approved', { data: { number } });
-      return { number };
+      await vendorApprovals.refuseIfHeld(tx, ctx.companyId, 'vendor_po', id);
+      return await this.approveIn(tx, ctx, id, now);
     });
+  }
+
+  /** The approval inside the caller's transaction: by a person here, or by the engine when its workflow is complete. */
+  async approveIn(tx: Parameters<Parameters<DrizzleDb['transaction']>[0]>[0], ctx: FinanceContext, id: string, now: Date = new Date()): Promise<{ number: string }> {
+    const po = await this.lock(tx, ctx.companyId, id);
+    if (po.status !== 'pending_approval') throw new FinanceError('NOT_PENDING', 'This order is not waiting for approval.');
+    if (po.createdBy === ctx.actor.id) throw new FinanceError('FOUR_EYES', 'You wrote this order, so someone else must approve it.');
+    const number = po.number ?? (await this.numbering.assign('purchase_order', { companyId: ctx.companyId, branchId: null, date: businessDate(now), document: { kind: 'purchase_order', id } }, tx)).number;
+    await tx.update(purchaseOrders).set({ status: 'approved', number, approvedBy: ctx.actor.id, approvedAt: now, updatedAt: now }).where(eq(purchaseOrders.id, id));
+    const lines = await tx.select().from(purchaseOrderLines).where(eq(purchaseOrderLines.poId, id)).orderBy(asc(purchaseOrderLines.position));
+    await tx.insert(purchaseOrderVersions).values({ poId: id, version: po.version, snapshot: this.snapshot(po, lines), reason: 'First release', createdBy: ctx.actor.id }).onConflictDoNothing();
+    await this.event(tx, ctx.actor, id, 'approved', 'pending_approval', 'approved', { data: { number } });
+    return { number };
+  }
+
+  /** The workflow refused it, was withdrawn or was reopened: back to a draft the writer can change and send again. */
+  async backFromWorkflow(tx: Parameters<Parameters<DrizzleDb['transaction']>[0]>[0], id: string, why: string): Promise<void> {
+    const [po] = await tx.select().from(purchaseOrders).where(eq(purchaseOrders.id, id)).for('update');
+    if (po?.status !== 'pending_approval') return;
+    await tx.update(purchaseOrders).set({ status: 'draft', updatedAt: new Date() }).where(eq(purchaseOrders.id, id));
+    await this.event(tx, { type: 'system', id: null }, id, 'rejected', 'pending_approval', 'draft', { reason: why.slice(0, 500) });
   }
 
   async reject(ctx: FinanceContext, id: string, reason: string): Promise<void> {
@@ -362,6 +378,7 @@ export class PurchaseOrderService {
     await this.db.transaction(async (tx) => {
       const po = await this.lock(tx, ctx.companyId, id);
       if (po.status !== 'pending_approval') throw new FinanceError('NOT_PENDING', 'This order is not waiting for approval.');
+      await vendorApprovals.refuseIfHeld(tx, ctx.companyId, 'vendor_po', id);
       if (po.createdBy === ctx.actor.id) throw new FinanceError('FOUR_EYES', 'You wrote this order; take it back instead.');
       await tx.update(purchaseOrders).set({ status: 'draft', updatedAt: new Date() }).where(eq(purchaseOrders.id, id));
       await this.event(tx, ctx.actor, id, 'rejected', 'pending_approval', 'draft', { reason: text.slice(0, 500) });
@@ -375,6 +392,7 @@ export class PurchaseOrderService {
     await this.db.transaction(async (tx) => {
       const po = await this.lock(tx, ctx.companyId, id);
       if (po.status !== 'pending_approval' && po.status !== 'approved') throw new FinanceError('NOT_ALLOWED', 'Only an order that has not gone to the vendor can be reopened. Use an amendment after that.');
+      await vendorApprovals.refuseIfHeld(tx, ctx.companyId, 'vendor_po', id);
       await tx.update(purchaseOrders).set({ status: 'draft', approvedBy: null, approvedAt: null, updatedAt: new Date() }).where(eq(purchaseOrders.id, id));
       await this.event(tx, ctx.actor, id, 'reopened', po.status, 'draft', { reason: text.slice(0, 500) });
     });

@@ -21,6 +21,7 @@ import {
   type SupplierInvoiceState,
 } from '@/server/db/drizzle/schema';
 import { has, trimToNull } from '@/lib/values';
+import { vendorApprovals } from './approval-gate';
 import {
   INVOICE_REASONS,
   IN_QUEUE,
@@ -408,19 +409,34 @@ export class SupplierInvoiceService {
       const inv = await this.lock(tx, ctx.companyId, id);
       if (inv.state !== 'matched') throw new FinanceError('WRONG_STATE', 'Only a checked invoice can be sent for approval.');
       await tx.update(supplierInvoices).set({ state: 'pending_approval', sentForApprovalBy: ctx.actor.id, sentForApprovalAt: now, updatedAt: now }).where(eq(supplierInvoices.id, id));
-      await writeEvent(tx, ctx.actor, id, 'sent_for_approval', 'matched', 'pending_approval');
+      const route = await vendorApprovals.submit(tx, { companyId: ctx.companyId, trigger: 'vendor.invoice', documentId: id, requestedBy: ctx.actor.id ?? '', amount: Number(inv.total), snapshot: { vendor: { id: inv.vendorId }, matchOverridden: has(inv.matchOverrideReason), isAdvance: inv.advanceBasis, currency: inv.currency } });
+      await writeEvent(tx, ctx.actor, id, 'sent_for_approval', 'matched', 'pending_approval', route === 'waiting' ? { data: { workflow: true } } : undefined);
     });
   }
 
   async approve(ctx: FinanceContext, id: string, now: Date = new Date()): Promise<void> {
     await this.db.transaction(async (tx) => {
-      const inv = await this.lock(tx, ctx.companyId, id);
-      if (inv.state !== 'pending_approval') throw new FinanceError('WRONG_STATE', 'This invoice is not waiting for approval.');
-      const refusal = approvalSeparation(ctx.actor.id ?? '', inv.linkedBy, inv.matchedBy);
-      if (refusal !== null) throw new FinanceError('FOUR_EYES', refusal);
-      await tx.update(supplierInvoices).set({ state: 'approved', approvedBy: ctx.actor.id, approvedAt: now, updatedAt: now }).where(eq(supplierInvoices.id, id));
-      await writeEvent(tx, ctx.actor, id, 'approved', 'pending_approval', 'approved');
+      await vendorApprovals.refuseIfHeld(tx, ctx.companyId, 'vendor_invoice', id);
+      await this.approveIn(tx, ctx, id, now);
     });
+  }
+
+  /** The approval itself, inside the caller's transaction: by a person here, or by the engine when its workflow is complete. */
+  async approveIn(tx: Tx, ctx: FinanceContext, id: string, now: Date = new Date()): Promise<void> {
+    const inv = await this.lock(tx, ctx.companyId, id);
+    if (inv.state !== 'pending_approval') throw new FinanceError('WRONG_STATE', 'This invoice is not waiting for approval.');
+    const refusal = approvalSeparation(ctx.actor.id ?? '', inv.linkedBy, inv.matchedBy);
+    if (refusal !== null) throw new FinanceError('FOUR_EYES', refusal);
+    await tx.update(supplierInvoices).set({ state: 'approved', approvedBy: ctx.actor.id, approvedAt: now, updatedAt: now }).where(eq(supplierInvoices.id, id));
+    await writeEvent(tx, ctx.actor, id, 'approved', 'pending_approval', 'approved');
+  }
+
+  /** The workflow refused it, was withdrawn or was reopened: back to "checked", so it can be sent again. */
+  async backFromWorkflow(tx: Tx, id: string, why: string, now: Date = new Date()): Promise<void> {
+    const [inv] = await tx.select().from(supplierInvoices).where(eq(supplierInvoices.id, id)).for('update');
+    if (inv?.state !== 'pending_approval') return;
+    await tx.update(supplierInvoices).set({ state: 'matched', updatedAt: now }).where(eq(supplierInvoices.id, id));
+    await writeEvent(tx, { type: 'system', id: null }, id, 'workflow_returned', 'pending_approval', 'matched', { reason: why.slice(0, 500) });
   }
 
   /** Back to the vendor to be corrected. Links, checks and approvals are cleared: the corrected invoice starts again. */

@@ -11,6 +11,7 @@ import {
 import { quoteApprovalHandler } from '@/server/domains/quotes/approval';
 import { refundApprovalHandler } from '@/server/domains/finance/refund-approval';
 import { creditAdjustmentApprovalHandler } from '@/server/domains/finance/credit-adjustment-approval';
+import { vendorApprovalHandlers } from '@/server/domains/vendors/approval';
 import type { CreditNoteReason } from '@/server/domains/credit-notes/reasons';
 import type { StockOp } from '@/server/domains/inventory/service';
 
@@ -39,6 +40,8 @@ export function registerApprovalHandlers(engine: ApprovalEngine, gate: ParkedAct
     onCanceled: async (id, tx) => await (await payouts()).handler().onCanceled?.(id, tx),
     describe: async (id) => (await (await payouts()).handler().describe?.(id)) ?? null,
   });
+
+  for (const [kind, handler] of Object.entries(vendorApprovalHandlers(drizzleDb))) engine.registerDocument(kind, handler);
 
   gate.attach('price_list_change', priceChangeExecutors());
 
