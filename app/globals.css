@@ -137,13 +137,13 @@
 }
 
 @layer utilities {
-  /* Near-full viewport; only caps on ultra-wide / TV sizes */
+  /* The shop's column: full width on phones with a 16px gutter, centred and capped on large screens so cards never stretch. */
   .storefront-shell {
     box-sizing: border-box;
-    width: 99%;
-    max-width: 2560px;
+    width: 100%;
+    max-width: 1600px;
     margin-inline: auto;
-    padding-inline: clamp(0.35rem, 0.5vw, 0.75rem);
+    padding-inline: clamp(1rem, 2.5vw, 2rem);
   }
 
   /*

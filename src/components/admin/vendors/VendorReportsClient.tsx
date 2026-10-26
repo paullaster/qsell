@@ -175,7 +175,7 @@ function PurchasesView({ data }: { data: Purchases }) {
 
 type Watch = Extract<Awaited<ReturnType<typeof watchListAction>>, { ok: true }>['data'];
 function WatchView({ data }: { data: Watch }) {
-  const none = data.duplicateInvoices.length + data.sharedBankAccounts.length + data.newVendorPayments.length + data.overriddenOrders.length === 0;
+  const none = data.duplicateInvoices.length + data.sharedBankAccounts.length + data.newVendorPayments.length + data.overriddenOrders.length === 0 && data.taxWithoutEtims.length === 0;
   return (
     <div className="space-y-5">
       <p className="text-xs text-fg-muted">These are things to look at, not mistakes. Nothing here blocks or changes a document. The limits are set under <Link href="/admin/vendors/settings" className="font-semibold underline">Ordering rules</Link>; a flagged payment also needs three people to approve and pay it, when that rule is on.</p>
@@ -198,6 +198,13 @@ function WatchView({ data }: { data: Watch }) {
           <h2 className="text-sm font-bold text-fg-strong">Large payments to new vendors</h2>
           <p className="text-xs text-fg-muted">Paid within {data.settings.newVendorDays} days of the vendor being added, {money(data.settings.newVendorAmountCents)} or more.</p>
           <Rows label="New vendor payments" rows={data.newVendorPayments} keyOf={(r) => r.number ?? r.vendor} empty="" cols={[{ head: 'Vendor', cell: (r) => r.vendor }, { head: 'Voucher', cell: (r) => r.number ?? '' }, { head: 'Paid on', cell: (r) => r.paidOn ?? '' }, { head: 'Vendor age (days)', cell: (r) => String(r.vendorAgeDays), right: true }, { head: 'Amount', cell: (r) => money(r.amountCents), right: true }]} />
+        </section>
+      )}
+      {data.taxWithoutEtims.length === 0 ? null : (
+        <section aria-label="Invoices with tax and no eTIMS number" className="space-y-2">
+          <h2 className="text-sm font-bold text-fg-strong">Invoices with tax and no eTIMS number</h2>
+          <p className="text-xs text-fg-muted">The input tax on these may not be claimable. Ask the vendor for an eTIMS invoice.</p>
+          <Rows label="Tax without eTIMS" rows={data.taxWithoutEtims} keyOf={(r) => r.number} empty="" cols={[{ head: 'Booked invoice', cell: (r) => `${r.number} · ${r.vendor}` }, { head: 'Vendor’s number', cell: (r) => r.vendorInvoiceNo }, { head: 'Posted', cell: (r) => r.postingDate }, { head: 'Tax', cell: (r) => money(r.taxCents), right: true }]} />
         </section>
       )}
       {data.overriddenOrders.length === 0 ? null : (

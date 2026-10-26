@@ -1,0 +1,3 @@
+ALTER TABLE "vendor_payment_vouchers" ADD COLUMN "statement_line_id" bigint;--> statement-breakpoint
+ALTER TABLE "vendor_payment_vouchers" ADD CONSTRAINT "vendor_payment_vouchers_statement_line_id_bank_statement_lines_id_fk" FOREIGN KEY ("statement_line_id") REFERENCES "public"."bank_statement_lines"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+CREATE UNIQUE INDEX "vendor_payment_vouchers_statement_line_uidx" ON "vendor_payment_vouchers" USING btree ("statement_line_id") WHERE "vendor_payment_vouchers"."statement_line_id" IS NOT NULL AND "vendor_payment_vouchers"."status" <> 'cancelled';

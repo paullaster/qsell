@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, lt, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { procurementCategories, rfqAddenda, rfqEvents, rfqInvitations, rfqLines, rfqQuestions, rfqQuotes, rfqs, vendors, type RfqStatus } from '@/server/db/drizzle/schema';
+import { procurementCategories, rfqAddenda, rfqAwardProposals, rfqEvents, rfqInvitations, rfqLines, rfqQuestions, rfqQuotes, rfqs, vendors, type RfqStatus } from '@/server/db/drizzle/schema';
 import { has, trimToNull } from '@/lib/values';
 import { checkRfqHeader, checkRfqLine, type RfqHeaderForm, type RfqLineForm } from '@/lib/rfq';
 import type { NumberSeriesService } from '@/server/kernel/numbering/service';
@@ -189,6 +189,8 @@ export class RfqService {
     const d = await this.db.transaction(async (tx) => {
       const r = await this.lock(tx, ctx.companyId, rfqId);
       if (r.status !== 'issued' && r.status !== 'closed') throw new FinanceError('NOT_ISSUED', 'Only an open or closed request can have its deadline moved.');
+      const [waiting] = await tx.select({ id: rfqAwardProposals.id }).from(rfqAwardProposals).where(eq(rfqAwardProposals.rfqId, rfqId));
+      if (waiting !== undefined) throw new FinanceError('AWARD_PENDING', 'An award is waiting for approval, so the deadline cannot move now.');
       if (r.status === 'closed') {
         const [seen] = await tx.select({ id: rfqQuotes.id }).from(rfqQuotes).where(and(eq(rfqQuotes.rfqId, rfqId), eq(rfqQuotes.status, 'submitted'))).limit(1);
         if (r.sealed && seen !== undefined) throw new FinanceError('ALREADY_OPENED', 'Quotes were already opened, so this request cannot be reopened. Cancel it and issue a new one.');

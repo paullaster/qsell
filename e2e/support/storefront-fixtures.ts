@@ -1,0 +1,89 @@
+/**
+ * Set-up for the shop's end-to-end tests that a person could not do from the screens, printed as one line of JSON. Run with the
+ * end-to-end environment:
+ *   tsx e2e/support/storefront-fixtures.ts reviewer <tag> <product name>   a shopper who has been delivered that product
+ *   tsx e2e/support/storefront-fixtures.ts product <tag>                    a new product for sale with no reviews, named "Reviewed <tag>"
+ *   tsx e2e/support/storefront-fixtures.ts newsletter-token <email>         the token behind a confirmation link
+ */
+import { execFileSync } from 'node:child_process';
+import { sql } from 'drizzle-orm';
+import { e2eEnvironment } from './env';
+import { E2E_SHOPPER_PASSWORD } from './constants';
+
+async function reviewer(tag: string, productName: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const { UserRepository } = await import('@/server/domains/auth/user-repository');
+  const { StorefrontCustomerService } = await import('@/server/domains/customers/storefront-service');
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const container = getContainer();
+  const company = await container.companySettings.ensureSeeded();
+  const branch = await container.branches.getDefault(company.id);
+  if (branch === null) throw new Error('e2e fixture: the company has no default branch');
+  const email = `reviewer-${tag}@example.test`;
+  const name = `Wanjiru Reviewer ${tag}`;
+  const customer = await StorefrontCustomerService.ensure({ name, email, phone: '0711000222' });
+  const user = await new UserRepository().create({ email, password: E2E_SHOPPER_PASSWORD, name, role: 'customer', customerStoreId: customer.id, emailVerified: true });
+  const [product] = await db.execute<{ id: string; name: string }>(sql`SELECT id, name FROM products WHERE name = ${productName} AND deleted_at IS NULL LIMIT 1`);
+  if (product === undefined) throw new Error(`e2e fixture: no product called ${productName}`);
+  const id = `rv_${tag}`;
+  await db.execute(sql`INSERT INTO orders (id, order_number, user_id, branch_id, customer_name, customer_email, customer_phone, shipping_address, subtotal, tax, shipping_fee, total_amount, payment_method, status, payment_status)
+    VALUES (${id}, ${`RV-${tag}`}, ${user.id}, ${branch.id}::uuid, ${name}, ${email}, '0711000222', '{"street":"1 Moi Avenue","city":"Nairobi","countyOrState":"Nairobi","country":"Kenya"}'::jsonb, 100, 0, 0, 100, 'mpesa_daraja', 'delivered', 'paid')`);
+  await db.execute(sql`INSERT INTO order_items (order_id, product_id, product_name, sku, quantity, unit_price, total_price, image_url) VALUES (${id}, ${product.id}, ${product.name}, 'x', 1, 100, 100, '')`);
+  return { email, password: E2E_SHOPPER_PASSWORD, productName };
+}
+
+async function product(tag: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { products } = await import('@/server/db/drizzle/schema');
+  const [template] = await db.execute<{ item_type_id: string }>(sql`SELECT item_type_id FROM products WHERE name = 'Rice 5kg' AND deleted_at IS NULL LIMIT 1`);
+  if (template === undefined) throw new Error('e2e fixture: the seed has no product to copy');
+  const name = `Reviewed ${tag}`;
+  await db.insert(products).values({ id: `prod_rv_${tag}`, sku: `RVW-${tag}`.toUpperCase(), stockCode: `RVWS-${tag}`.toUpperCase(), name, slug: `reviewed-${tag}`.toLowerCase(), itemTypeId: template.item_type_id, price: '250', taxRate: '0', isTaxInclusive: true, stockQuantity: 20, categoryName: 'E2E Pantry' });
+  return { name };
+}
+
+async function newsletterToken(email: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const [row] = await db.execute<{ token: string }>(sql`SELECT token FROM newsletter_subscribers WHERE email = ${email.toLowerCase()}`);
+  if (row === undefined) throw new Error(`e2e fixture: nobody asked for the newsletter with ${email}`);
+  return { token: row.token };
+}
+
+async function main(): Promise<void> {
+  const [command, a, b] = process.argv.slice(2);
+  let result: Record<string, string>;
+  if (command === 'reviewer' && a !== undefined && b !== undefined) result = await reviewer(a, b);
+  else if (command === 'product' && a !== undefined) result = await product(a);
+  else if (command === 'newsletter-token' && a !== undefined) result = await newsletterToken(a);
+  else throw new Error('usage: storefront-fixtures reviewer <tag> <product> | newsletter-token <email>');
+  process.stdout.write(`FIXTURE ${JSON.stringify(result)}\n`);
+}
+
+/** Runs one of the tools above from a test and returns its answer. */
+export function storefrontTool(...args: string[]): Record<string, string> {
+  const output = execFileSync('pnpm', ['exec', 'tsx', 'e2e/support/storefront-fixtures.ts', ...args], { env: { ...process.env, ...e2eEnvironment() }, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+  const line = output.split('\n').find((l) => l.startsWith('FIXTURE '));
+  if (line === undefined) throw new Error(`the storefront tool printed nothing usable: ${output.slice(-500)}`);
+  return JSON.parse(line.slice('FIXTURE '.length)) as Record<string, string>;
+}
+
+/** A new product for sale with no reviews; its name is returned. */
+export function makeProduct(tag: string): string {
+  return storefrontTool('product', tag).name ?? '';
+}
+
+/** A shopper whose order for this product was delivered, ready to sign in. */
+export function makeReviewer(tag: string, productName: string): { email: string; password: string } {
+  const made = storefrontTool('reviewer', tag, productName);
+  return { email: made.email ?? '', password: made.password ?? '' };
+}
+
+if (process.argv[1]?.endsWith('storefront-fixtures.ts') === true) {
+  main().then(
+    () => process.exit(0),
+    (error: unknown) => {
+      console.error(error);
+      process.exit(1);
+    },
+  );
+}

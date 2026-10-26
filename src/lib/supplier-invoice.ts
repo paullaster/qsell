@@ -58,6 +58,9 @@ export interface InvoiceHeaderForm {
   dueDate: string;
   notes: string;
   declaration: boolean;
+  /** The eTIMS invoice number printed on the vendor's invoice, and the link or code that verifies it. */
+  etimsInvoiceNo?: string;
+  etimsVerificationUrl?: string;
 }
 
 export const emptyInvoiceHeader = (today: string): InvoiceHeaderForm => ({ vendorInvoiceNo: '', invoiceDate: today, dueDate: '', notes: '', declaration: false });
@@ -93,6 +96,7 @@ export function checkInvoiceHeader(h: InvoiceHeaderForm, today: string): Record<
     else if (validDate(h.invoiceDate) && h.dueDate < h.invoiceDate) p.dueDate = 'The due date cannot be before the invoice date.';
   }
   if (h.notes.length > 1000) p.notes = 'Notes are too long (1000 characters at most).';
+  Object.assign(p, checkEtims(h));
   return p;
 }
 
@@ -252,4 +256,30 @@ export function postingPlan(lines: readonly PostingLine[], taxCents: number): Po
   const debits = [...byKey.values()];
   const net = debits.reduce((s, d) => s + d.cents, 0);
   return { debits, taxCents, payableCents: net + taxCents };
+}
+
+const ETIMS_NO = /^[A-Za-z0-9][A-Za-z0-9\-/ ]{3,39}$/;
+
+function isSecureLink(url: string): boolean {
+  try {
+    return new URL(url).protocol === 'https:' && url.length <= 300;
+  } catch {
+    return false;
+  }
+}
+
+/** What is wrong with the eTIMS details on an invoice, if anything: both are optional here; the company's rule says when they are needed. */
+export function checkEtims(h: Pick<InvoiceHeaderForm, 'etimsInvoiceNo' | 'etimsVerificationUrl'>): Record<string, string> {
+  const p: Record<string, string> = {};
+  const no = (h.etimsInvoiceNo ?? '').trim();
+  const url = (h.etimsVerificationUrl ?? '').trim();
+  if (no !== '' && !ETIMS_NO.test(no)) p.etimsInvoiceNo = 'Enter the eTIMS invoice number printed on the invoice (4 to 40 letters, digits, dashes or slashes).';
+  if (url !== '' && !isSecureLink(url)) p.etimsVerificationUrl = 'The verification link must be a web address starting with https:// (300 characters at most).';
+  return p;
+}
+
+/** Whether the invoice may be sent as far as eTIMS goes: with tax on it and the company's rule on, it needs the eTIMS invoice number. */
+export function etimsRefusal(taxCents: number, ruleOn: boolean, h: Pick<InvoiceHeaderForm, 'etimsInvoiceNo'>): string | null {
+  if (!ruleOn || taxCents <= 0) return null;
+  return (h.etimsInvoiceNo ?? '').trim() === '' ? 'An invoice with tax needs its eTIMS invoice number, so the input tax can be claimed. Enter the number printed on your invoice.' : null;
 }

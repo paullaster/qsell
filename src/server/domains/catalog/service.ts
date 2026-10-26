@@ -67,6 +67,13 @@ export class CatalogService {
     return toPublicProduct(toProduct(row));
   }
 
+  /** A product for sale by its readable address (slug) or, for older links, its id. */
+  static async getPublicProductByKey(key: string): Promise<PublicProduct | undefined> {
+    const row = (await repo().getProductBySlug(key)) ?? (await repo().getProductById(key));
+    if (!row || !row.isActive || !row.isSellable) return undefined;
+    return toPublicProduct(toProduct(row));
+  }
+
   static async getProductById(id: string): Promise<Product | undefined> {
     const row = await repo().getProductById(id);
     return row ? toProduct(row) : undefined;

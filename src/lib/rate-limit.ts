@@ -16,6 +16,10 @@ export const RATE_RULES = {
   mail_account: { limit: 3, seconds: 3600 },
   /** Making an account. */
   register_ip: { limit: 10, seconds: 3600 },
+  /** A shopper writing a product review, and anyone asking for the newsletter. */
+  review_submit: { limit: 10, seconds: 3600 },
+  newsletter_ip: { limit: 10, seconds: 3600 },
+  newsletter_email: { limit: 3, seconds: 3600 },
   /** A signed-in vendor sending files or documents. */
   vendor_upload: { limit: 60, seconds: 600 },
   /** A signed-in vendor submitting an invoice, credit note or quotation, or asking a question. */

@@ -1,8 +1,10 @@
 import { and, asc, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { glAccounts, glAccountBalances, payablesChecks, vendorLedgerEntries, vendorPostingGroups, vendors } from '@/server/db/drizzle/schema';
+import { businessDate } from '@/server/kernel/numbering/business-date';
+import { glAccounts, glAccountBalances, payablesChecks, procurementCategories, purchaseInvoices, purchaseOrders, supplierInvoices, vendorAdvancePayments, vendorLedgerEntries, vendorPostingGroups, vendors } from '@/server/db/drizzle/schema';
 import type { VendorLedgerService } from '@/server/domains/finance/payables/vendor-ledger-service';
 import { has } from '@/lib/values';
+import type { PayablesFxService } from './payables-fx-service';
 import { AGE_BUCKETS, toCents, type AgeBucket } from '@/lib/vendor-payment';
 
 /**
@@ -14,16 +16,37 @@ export class PayablesReportService {
   constructor(
     private readonly db: DrizzleDb,
     private readonly ledger: VendorLedgerService,
+    private readonly fx: PayablesFxService,
   ) {}
 
-  async ageing(companyId: string, asOf: string) {
-    const days = sql`(${asOf}::date - COALESCE(${vendorLedgerEntries.dueDate}, ${vendorLedgerEntries.postingDate}))`;
+  /**
+   * What is owed by how late it is. `basis` says what "late" counts from: the due date (the default; the invoice date when none was
+   * given) or the invoice date. `groupBy` says what a line is: a vendor (the default), the category of the order it was bought on, or
+   * the vendor posting group. Payments and credits that are not tied to an order fall under "No category".
+   */
+  async ageing(companyId: string, asOf: string, opts: { basis?: 'due' | 'invoice'; groupBy?: 'vendor' | 'category' | 'posting_group' } = {}) {
+    const basis = opts.basis ?? 'due';
+    const groupBy = opts.groupBy ?? 'vendor';
+    const from = basis === 'invoice' ? sql`COALESCE(${vendorLedgerEntries.documentDate}, ${vendorLedgerEntries.postingDate})` : sql`COALESCE(${vendorLedgerEntries.dueDate}, ${vendorLedgerEntries.postingDate})`;
+    const days = sql`(${asOf}::date - ${from})`;
     const amount = (cond: ReturnType<typeof sql>) => sql<string>`COALESCE(SUM(CASE WHEN ${vendorLedgerEntries.documentType} = 'invoice' AND ${vendorLedgerEntries.remainingAmount} > 0 AND ${cond} THEN ${vendorLedgerEntries.remainingAmount} ELSE 0 END), 0)::text`;
+    const keys = {
+      category: sql<string>`COALESCE(${procurementCategories.id}::text, 'none')`,
+      posting_group: sql<string>`COALESCE(${vendorPostingGroups.id}::text, 'none')`,
+      vendor: sql<string>`${vendors.id}::text`,
+    };
+    const labels = {
+      category: sql<string>`COALESCE(${procurementCategories.name}, 'No category')`,
+      posting_group: sql<string>`COALESCE(${vendorPostingGroups.name}, 'No posting group')`,
+      vendor: sql<string>`${vendors.legalName}`,
+    };
+    const key = keys[groupBy];
+    const label = labels[groupBy];
     const rows = await this.db
       .select({
-        vendorId: vendors.id,
-        name: vendors.legalName,
-        number: vendors.number,
+        key,
+        name: label,
+        number: sql<string | null>`MIN(${vendors.number})`,
         currency: vendorLedgerEntries.currency,
         not_due: amount(sql`${days} <= 0`),
         d1_30: amount(sql`${days} BETWEEN 1 AND 30`),
@@ -34,17 +57,45 @@ export class PayablesReportService {
       })
       .from(vendorLedgerEntries)
       .innerJoin(vendors, eq(vendors.id, vendorLedgerEntries.vendorId))
+      .leftJoin(vendorPostingGroups, eq(vendorPostingGroups.id, vendors.postingGroupId))
+      .leftJoin(purchaseInvoices, eq(purchaseInvoices.ledgerEntryId, vendorLedgerEntries.id))
+      .leftJoin(supplierInvoices, eq(supplierInvoices.id, purchaseInvoices.supplierInvoiceId))
+      .leftJoin(purchaseOrders, eq(purchaseOrders.id, supplierInvoices.poId))
+      .leftJoin(procurementCategories, eq(procurementCategories.id, purchaseOrders.categoryId))
       .where(and(eq(vendorLedgerEntries.companyId, companyId), sql`${vendorLedgerEntries.remainingAmount} <> 0`))
-      .groupBy(vendors.id, vendors.legalName, vendors.number, vendorLedgerEntries.currency)
-      .orderBy(asc(vendors.legalName));
+      .groupBy(key, label, vendorLedgerEntries.currency)
+      .orderBy(asc(label));
     const lines = rows.map((r) => {
       const buckets = Object.fromEntries(AGE_BUCKETS.map((b) => [b.key, toCents(r[b.key])])) as Record<AgeBucket, number>;
       const owed = Object.values(buckets).reduce((s, c) => s + c, 0);
       const unapplied = toCents(r.unapplied);
-      return { vendorId: r.vendorId, name: r.name, number: r.number, currency: r.currency, buckets, owedCents: owed, unappliedCents: unapplied, netCents: owed + unapplied };
+      return { vendorId: r.key, name: r.name, number: groupBy === 'vendor' ? r.number : null, currency: r.currency, buckets, owedCents: owed, unappliedCents: unapplied, netCents: owed + unapplied };
     });
     const totals = Object.fromEntries(AGE_BUCKETS.map((b) => [b.key, lines.reduce((s, l) => s + l.buckets[b.key], 0)])) as Record<AgeBucket, number>;
-    return { asOf, lines, totals, owedCents: lines.reduce((s, l) => s + l.owedCents, 0), unappliedCents: lines.reduce((s, l) => s + l.unappliedCents, 0) };
+    return { asOf, basis, groupBy, lines, totals, owedCents: lines.reduce((s, l) => s + l.owedCents, 0), unappliedCents: lines.reduce((s, l) => s + l.unappliedCents, 0) };
+  }
+
+  /**
+   * Advance payments that have not been used up: approved and waiting to be paid, or paid and not yet set against an invoice, oldest
+   * first, with how many days each has been waiting. This is money out of the door (or about to leave) that still has no invoice.
+   */
+  async advancesOutstanding(companyId: string, asOf: string, limit = 500) {
+    const rows = await this.db
+      .select({ id: vendorAdvancePayments.id, vendorId: vendors.id, vendor: vendors.legalName, poNumber: purchaseOrders.number, status: vendorAdvancePayments.status, amount: vendorAdvancePayments.amount, currency: vendorAdvancePayments.currency, approvedAt: vendorAdvancePayments.approvedAt, paidAt: vendorAdvancePayments.paidAt })
+      .from(vendorAdvancePayments)
+      .innerJoin(vendors, eq(vendors.id, vendorAdvancePayments.vendorId))
+      .innerJoin(purchaseOrders, eq(purchaseOrders.id, vendorAdvancePayments.poId))
+      .where(and(eq(vendorAdvancePayments.companyId, companyId), inArray(vendorAdvancePayments.status, ['approved', 'paid'])))
+      .orderBy(asc(sql`COALESCE(${vendorAdvancePayments.paidAt}, ${vendorAdvancePayments.approvedAt})`))
+      .limit(Math.min(Math.max(limit, 1), 1000));
+    const day = 86_400_000;
+    const asOfMs = Date.parse(`${asOf}T00:00:00Z`);
+    const lines = rows.map((r) => {
+      const since = r.paidAt ?? r.approvedAt;
+      return { id: r.id, vendorId: r.vendorId, vendor: r.vendor, poNumber: r.poNumber, status: r.status as 'approved' | 'paid', amountCents: toCents(r.amount), currency: r.currency, since: since === null ? null : businessDate(since), days: since === null ? 0 : Math.max(0, Math.round((asOfMs - Date.parse(`${businessDate(since)}T00:00:00Z`)) / day)) };
+    });
+    const total = (status: 'approved' | 'paid') => lines.filter((l) => l.status === status).reduce((n, l) => n + l.amountCents, 0);
+    return { asOf, lines, paidNotAppliedCents: total('paid'), approvedNotPaidCents: total('approved') };
   }
 
   /** A vendor's entries, newest first, with what is still open on each. */
@@ -80,7 +131,7 @@ export class PayablesReportService {
     const owed = await this.db
       .select({
         accountId: vendorPostingGroups.payablesAccountId,
-        total: sql<string>`COALESCE(SUM(CASE WHEN ${vendorLedgerEntries.documentType} <> 'advance' THEN ${vendorLedgerEntries.remainingAmount} ELSE 0 END), 0)::text`,
+        total: sql<string>`COALESCE(SUM(CASE WHEN ${vendorLedgerEntries.documentType} <> 'advance' THEN ROUND(${vendorLedgerEntries.remainingAmount} * ${vendorLedgerEntries.rate}, 2) ELSE 0 END), 0)::text`,
       })
       .from(vendorLedgerEntries)
       .innerJoin(vendors, eq(vendors.id, vendorLedgerEntries.vendorId))
@@ -90,7 +141,7 @@ export class PayablesReportService {
     const advances = await this.db
       .select({
         accountId: vendorPostingGroups.prepaymentsAccountId,
-        total: sql<string>`COALESCE(SUM(CASE WHEN ${vendorLedgerEntries.documentType} = 'advance' THEN ${vendorLedgerEntries.remainingAmount} ELSE 0 END), 0)::text`,
+        total: sql<string>`COALESCE(SUM(CASE WHEN ${vendorLedgerEntries.documentType} = 'advance' THEN ROUND(${vendorLedgerEntries.remainingAmount} * ${vendorLedgerEntries.rate}, 2) ELSE 0 END), 0)::text`,
       })
       .from(vendorLedgerEntries)
       .innerJoin(vendors, eq(vendors.id, vendorLedgerEntries.vendorId))
@@ -121,6 +172,12 @@ export class PayablesReportService {
       rows.push({ accountId, accountNo: a?.no ?? '', accountName: a?.name ?? '', purpose, ledgerCents, glCents, diffCents: glCents - ledgerCents });
     };
     for (const o of owed) add(o.accountId, 'payables', toCents(Number(o.total).toFixed(2)));
+    // A revaluation that is still standing has moved the books' payables off the rates the ledger carries; it is part of what the books say.
+    const standing = await this.fx.standingByGroup(companyId);
+    if (standing.size > 0) {
+      const groups = await this.db.select({ id: vendorPostingGroups.id, accountId: vendorPostingGroups.payablesAccountId }).from(vendorPostingGroups).where(inArray(vendorPostingGroups.id, [...standing.keys()].filter((k) => k !== '')));
+      for (const g of groups) add(g.accountId, 'payables', standing.get(g.id) ?? 0);
+    }
     for (const a of advances) add(a.accountId, 'prepayments', -toCents(Number(a.total).toFixed(2)));
     const drift = await this.ledger.drift(companyId);
     const differences = rows.filter((r) => r.diffCents !== 0).length + drift.length;

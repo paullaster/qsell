@@ -235,6 +235,31 @@ export const DOCUMENT_KINDS = {
     fiscal: false,
     suggested: { code: 'PCR', prefix: 'PCR-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
   },
+  landed_cost: {
+    label: 'Landed cost allocation',
+    fiscal: false,
+    suggested: { code: 'LCA', prefix: 'LCA-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
+  },
+  vendor_contract: {
+    label: 'Vendor contract (blanket order)',
+    fiscal: false,
+    suggested: { code: 'CTR', prefix: 'CTR-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
+  },
+  purchase_requisition: {
+    label: 'Purchase requisition',
+    fiscal: false,
+    suggested: { code: 'PRQ', prefix: 'PRQ-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
+  },
+  purchase_return: {
+    label: 'Purchase return',
+    fiscal: false,
+    suggested: { code: 'PRT', prefix: 'PRT-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
+  },
+  vendor_refund: {
+    label: 'Vendor refund received',
+    fiscal: false,
+    suggested: { code: 'VRF', prefix: 'VRF-{YYYY}-', digits: 5, reset: 'yearly', blockSize: 20 },
+  },
   rfq: {
     label: 'Request for quotation',
     fiscal: false,

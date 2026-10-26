@@ -1,7 +1,7 @@
 'use server';
 
 import { getContainer } from '@/server/di/container';
-import { mayEditProfileNow, sectionLabel, SECTIONS, isSection, type BusinessData, type ContactInput, type ReferenceInput, type Section } from '@/lib/vendor-profile';
+import { mayEditProfileNow, sectionLabel, SECTIONS, isSection, type BankInput, type BusinessData, type ContactInput, type ReferenceInput, type Section } from '@/lib/vendor-profile';
 import { portal } from './portal-runner';
 import { ProfileError } from './profile-service';
 
@@ -60,7 +60,7 @@ export async function profileFormAction(section: string) {
       contacts: state.contacts,
       directors: loaded.directors.map((d) => ({ id: d.id, name: d.name, idType: d.idType, idLast4: d.idLast4, sharePercent: d.sharePercent ?? '' })),
       references: state.references,
-      banks: loaded.banks.map((b) => ({ id: b.id, bankName: b.bankName, branch: b.branch, accountName: b.accountName, last4: b.accountLast4, swift: b.swift ?? '', status: b.status })),
+      banks: loaded.banks.map((b) => ({ id: b.id, kind: b.kind, reference: b.reference ?? '', bankName: b.bankName, branch: b.branch, accountName: b.accountName, last4: b.accountLast4, swift: b.swift ?? '', status: b.status })),
       documents: loaded.types
         .filter((t) => t.isActive)
         .map((t) => {
@@ -118,7 +118,7 @@ export async function saveFinancialAction(raw: unknown) {
 
 export async function addBankAction(raw: unknown) {
   return await portal('add_bank', async (me) => {
-    await getContainer().vendorProfile.addBank(me, strings(raw, ['bankName', 'branch', 'accountName', 'accountNumber', 'swift'] as const));
+    await getContainer().vendorProfile.addBank(me, strings(raw, ['bankName', 'branch', 'accountName', 'accountNumber', 'swift', 'kind', 'reference'] as const) as BankInput);
   });
 }
 

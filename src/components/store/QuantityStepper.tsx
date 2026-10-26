@@ -110,7 +110,7 @@ export function QuantityStepper({
         ) : null}
       </div>
       <div role="status" aria-live="polite">
-        {note === null ? null : <p className="mt-1 text-[11px] text-amber-700">{note}</p>}
+        {note === null ? null : <p className="mt-1 text-xs text-amber-700">{note}</p>}
       </div>
     </div>
   );

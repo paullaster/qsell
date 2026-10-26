@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { vendorContacts, vendors } from '@/server/db/drizzle/schema';
+import { users, vendorContacts, vendors } from '@/server/db/drizzle/schema';
 import type { CompanySettingsRepository } from '@/server/domains/company/repository';
 import type { EmailMessage, EmailPort } from '@/server/ports/communications';
 import { resolvePublicBaseUrl } from '@/server/domains/auth/account-service';
@@ -329,6 +329,35 @@ export class VendorNotifier {
     const { addresses } = await this.vendorAddresses(vendorId, 'finance');
     await this.send(addresses, `Advance payment approved for ${number}`, { heading: `An advance payment was approved for order ${number}`, body: 'It will be paid into your bank account on record. You will get a remittance when it is paid.', cta: 'Open the order', path: '/vendor/orders', details: [['Order', number], ['Advance', `${amount} ${currency}`]] }, 'vendor');
   }
+  async returnPosted(vendorId: string, number: string, orderNumber: string, reason: string): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId);
+    await this.send(addresses, `Goods returned to you: ${number}`, { heading: `We returned goods to you on order ${orderNumber}`, body: `Return ${number}. Reason: ${reason}. Please collect or arrange the goods, and send a credit memo if the invoice was already booked.`, cta: 'Open my orders', path: '/vendor/orders', details: [['Return', number], ['Order', orderNumber]] }, 'vendor');
+  }
+
+  async refundRecorded(vendorId: string, number: string, amount: string, currency: string, reference: string): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId, 'finance');
+    await this.send(addresses, `Refund received: ${number}`, { heading: 'We recorded your refund', body: 'Thank you. The refund has been set against what we had paid or credited you.', cta: 'Open my statement', path: '/vendor/payments', details: [['Refund', number], ['Amount', `${amount} ${currency}`], ['Your reference', reference]] }, 'vendor');
+  }
+
+  async contractApproved(vendorId: string, number: string, title: string, validFrom: string, validTo: string): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId);
+    await this.send(addresses, `Contract ${number} is in force`, { heading: `A contract with you is in force: ${title}`, body: 'Orders called off under it will use the prices agreed in it.', cta: 'Open my orders', path: '/vendor/orders', details: [['Contract', number], ['From', validFrom], ['To', validTo]] }, 'vendor');
+  }
+
+  async contractEnded(vendorId: string, number: string, reason: string): Promise<void> {
+    const { addresses } = await this.vendorAddresses(vendorId);
+    await this.send(addresses, `Contract ${number} has ended`, { heading: `Contract ${number} has ended`, body: `No more orders will be called off under it. Orders already placed stand. Reason: ${reason}`, cta: 'Open my orders', path: '/vendor/orders', details: [['Contract', number]] }, 'vendor');
+  }
+
+  /** Tells the person who wrote a requisition what was decided, at the address on their account. */
+  async requisitionDecided(userId: string | null, number: string, title: string, outcome: 'approved' | 'refused' | 'sent_back' | 'converted', note: string | null): Promise<void> {
+    if (userId === null || !/^[0-9a-f-]{36}$/i.test(userId)) return;
+    const [u] = await this.db.select({ email: users.email }).from(users).where(eq(users.id, userId));
+    if (u === undefined) return;
+    const words = { approved: 'was approved', refused: 'was refused', sent_back: 'was sent back to you', converted: 'has been turned into an order or a request for quotation' }[outcome];
+    await this.send([u.email], `Requisition ${number} ${words}`, { heading: `Your requisition ${number} ${words}`, body: `${title}.${note === null ? '' : ` ${note}`}`, cta: 'Open the requisition', path: '/admin/vendors/requisitions', details: [['Requisition', number]] }, 'staff');
+  }
+
   async invoiceSubmitted(vendorId: string, number: string): Promise<void> {
     const { legalName } = await this.vendorAddresses(vendorId);
     await this.send(await this.staffAddress(), `${legalName} sent invoice ${number}`, { heading: `${legalName} sent a supplier invoice: ${number}`, body: 'It is waiting in the supplier invoices queue.', cta: 'Open the queue', path: '/admin/vendors/invoices', details: [['Invoice', number]] }, 'staff');

@@ -1,14 +1,14 @@
 /**
  * Makes purchase orders for one test, written by `e2e-buyer` so that the signed-in test user is a different person and may approve.
- *   tsx e2e/support/po-fixture.ts <tag> <vendorId> pending|sent|sent_flagged|amendment|advance_pending|awarded|stocked|received
+ *   tsx e2e/support/po-fixture.ts <tag> <vendorId> pending|sent|sent_flagged|amendment|advance_pending|awarded|stocked|received|workflow
  * `stocked` is a sent, confirmed order for 10 of a new stock item; `received` adds a posted note for 4 of them (delivery note DN-<tag>).
  * `pending` is waiting for approval; `sent` is approved and sent; `sent_flagged` requires an advance; `amendment` is a sent order with a
  * price change waiting; `advance_pending` is a flagged order with an advance waiting for approval; `awarded` is a closed, awarded request
- * with no order made yet. The vendor is made qualified in a new category first. Prints one JSON line.
+ * with no order made yet; `workflow` is an order held by an approval workflow for this vendor that only the signed-in test user can approve, from the inbox. The vendor is made qualified in a new category first. Prints one JSON line.
  */
 export {};
 
-const MODES = ['pending', 'sent', 'sent_flagged', 'amendment', 'advance_pending', 'awarded', 'stocked', 'received'];
+const MODES = ['pending', 'sent', 'sent_flagged', 'amendment', 'advance_pending', 'awarded', 'stocked', 'received', 'workflow'];
 
 async function main(): Promise<void> {
   const [tag, vendorId, mode] = process.argv.slice(2);
@@ -85,10 +85,26 @@ async function main(): Promise<void> {
   const flagged = mode === 'sent_flagged' || mode === 'advance_pending';
   const header = { vendorId, categoryId: cat.id, orderDate: today, expectedDate: '', currency: 'KES', paymentTerms: '30 days', deliveryTerms: '', notesToVendor: '', internalNotes: '', requiresAdvancePayment: flagged, noRfqReason: 'Fixture order' };
   const lines = [{ productId: '', description: 'Inverter 5kW', specification: '', quantity: '4', unit: 'each', unitPrice: '1000', discountPercent: '0', taxRate: '16', expectedDate: '' }, { productId: '', description: 'Cable 6mm', specification: '', quantity: '100', unit: 'm', unitPrice: '2.50', discountPercent: '0', taxRate: '0', expectedDate: '' }];
-  const draft = await container.purchaseOrders.saveDraft(staff('e2e-buyer'), null, header, lines, true);
-  await container.purchaseOrders.submit(staff('e2e-buyer'), draft.id, { maySkipRfq: false, mayOverrideQualification: false });
+  let buyer = 'e2e-buyer';
+  if (mode === 'workflow') {
+    // The engine records who asked, so the writer is a real person here, not a label.
+    const [writer] = await db.insert(schema.users).values({ email: `e2e-wf-${tag}@e2e.test`, passwordHash: 'x', name: 'E2E Writer', role: 'manager' }).returning();
+    if (writer === undefined) throw new Error('the writer was not made');
+    buyer = writer.id;
+    const { E2E_ADMIN_EMAIL } = await import('./constants');
+    const [admin] = await db.select().from(schema.users).where(eq(schema.users.email, E2E_ADMIN_EMAIL));
+    if (admin === undefined) throw new Error('the e2e admin does not exist');
+    const actor = { type: 'user' as const, id: 'e2e-fixture' };
+    const reason = { code: 'POLICY_CHANGE' };
+    await container.approvalConfig.saveProfile(company.id, { userId: admin.id, limits: [] }, actor, reason);
+    const wf = await container.approvalConfig.createWorkflow(company.id, { code: `W-${tag}`.slice(0, 30), name: `Order approvals ${tag}`, trigger: 'po.release' }, actor);
+    await container.approvalConfig.saveDraft(company.id, wf.id, { conditions: { op: 'eq', field: 'vendor.id', value: vendorId }, steps: [{ sequence: 1, name: 'Admin', approver: { type: 'user', userId: admin.id } }] } as never, actor);
+    await container.approvalConfig.publish(company.id, wf.id, actor, reason);
+  }
+  const draft = await container.purchaseOrders.saveDraft(staff(buyer), null, header, lines, true);
+  await container.purchaseOrders.submit(staff(buyer), draft.id, { maySkipRfq: false, mayOverrideQualification: false });
   out.poId = draft.id;
-  if (mode !== 'pending') {
+  if (mode !== 'pending' && mode !== 'workflow') {
     const approved = await container.purchaseOrders.approve(staff('e2e-boss'), draft.id);
     out.number = approved.number;
     await container.purchaseOrders.send(staff('e2e-buyer'), draft.id);

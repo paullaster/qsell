@@ -11,7 +11,7 @@ import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, car
 
 type View = Extract<Awaited<ReturnType<typeof rfqQuotesAction>>, { ok: true }>['data'];
 type Open = Extract<View, { sealed: false }>;
-type Result = { ok: true } | { ok: false; error: string };
+type Result = { ok: true; pending?: boolean } | { ok: false; error: string };
 
 const noteLabel = (kind: 'reject' | 'revise', needsComment: boolean): string => {
   if (kind === 'revise') return 'What must change';
@@ -114,7 +114,7 @@ function Quotes({ rfqId, view }: { rfqId: string; view: Open }) {
   const needsComment = reason?.meta?.requiresComment === '1';
   const nameOf = (id: string) => view.vendors.find((v) => v.vendorId === id)?.name ?? '';
 
-  const act = async (call: Promise<Result>, done: string) => {
+  const act = async (call: Promise<Result>, done: string, pendingText?: string) => {
     setBusy(true);
     setNotice(null);
     const res = await attempt(call);
@@ -123,7 +123,7 @@ function Quotes({ rfqId, view }: { rfqId: string; view: Open }) {
       setNotice({ kind: 'error', text: res.error });
       return;
     }
-    setNotice({ kind: 'ok', text: done });
+    setNotice({ kind: 'ok', text: res.pending === true && pendingText !== undefined ? pendingText : done });
     setMode(null);
     setReason(null);
     setText('');
@@ -223,6 +223,7 @@ function Quotes({ rfqId, view }: { rfqId: string; view: Open }) {
           <MakeOrders rfqId={rfqId} />
         </section>
       ) : null}
+      {!awarded && view.awardWaiting ? <p role="status" className="rounded-lg border border-line p-3 text-sm text-fg-muted">An award is waiting in the Approvals inbox. The quotes cannot be decided and the deadline cannot move until it is decided.</p> : null}
       {!awarded && view.canAward ? (
         <section className={`${cardClass} space-y-3`} aria-label="Award">
           <h3 className="text-sm font-bold text-fg-strong">Award</h3>
@@ -243,7 +244,7 @@ function Quotes({ rfqId, view }: { rfqId: string; view: Open }) {
             </fieldset>
           ))}
           <Field id={`${uid}-j`} label="Why (required when you do not choose the lowest price)"><input id={`${uid}-j`} value={why} onChange={(e) => setWhy(e.target.value)} className={fieldClass} maxLength={1000} autoComplete="off" /></Field>
-          <button type="button" className={primaryClass} disabled={busy || allocations.length === 0} onClick={() => void act(awardRfqAction(rfqId, allocations, why).then((r) => (r.ok ? { ok: true as const } : r)), 'Awarded. The vendors were told the result.')}>Award{allocations.length === 0 ? '' : ` (${String(new Set(allocations.map((a) => a.vendorId)).size)} ${new Set(allocations.map((a) => a.vendorId)).size === 1 ? 'vendor' : 'vendors'}: ${[...new Set(allocations.map((a) => nameOf(a.vendorId)))].join(', ')})`}</button>
+          <button type="button" className={primaryClass} disabled={busy || allocations.length === 0} onClick={() => void act(awardRfqAction(rfqId, allocations, why).then((r) => (r.ok ? { ok: true as const, pending: r.data.pending } : r)), 'Awarded. The vendors were told the result.', 'Sent for approval. The award is made, and the vendors are told, when the approval workflow completes.')}>Award{allocations.length === 0 ? '' : ` (${String(new Set(allocations.map((a) => a.vendorId)).size)} ${new Set(allocations.map((a) => a.vendorId)).size === 1 ? 'vendor' : 'vendors'}: ${[...new Set(allocations.map((a) => nameOf(a.vendorId)))].join(', ')})`}</button>
         </section>
       ) : null}
     </div>

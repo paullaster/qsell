@@ -33,7 +33,7 @@ const TONE: Record<ToastMessage['type'], { bgBorder: string; Icon: typeof Info; 
 
 export function ToastContainer({ toasts, onDismiss }: ToastProps) {
   return (
-    <div className="pointer-events-none fixed right-5 bottom-5 z-50 flex w-full max-w-md flex-col gap-3 px-4 sm:px-0">
+    <div className="pointer-events-none fixed inset-x-0 bottom-3 z-[70] flex w-full flex-col gap-3 px-3 sm:inset-x-auto sm:bottom-5 sm:left-5 sm:max-w-md sm:px-0">
       <AnimatePresence>
         {toasts.map((toast) => {
           // A neutral shadow reads correctly on the light tint; the original
@@ -57,10 +57,12 @@ export function ToastContainer({ toasts, onDismiss }: ToastProps) {
                 </p>
               </div>
               <button
+                type="button"
                 onClick={() => onDismiss(toast.id)}
-                className="-mt-1 -mr-1 rounded-lg p-1 text-fg-muted transition-colors hover:text-fg-strong"
+                aria-label="Dismiss message"
+                className="-mt-1 -mr-1 flex h-9 w-9 items-center justify-center rounded-lg text-fg-muted transition-colors hover:text-fg-strong"
               >
-                <X className="h-4 w-4" />
+                <X className="h-4 w-4" aria-hidden="true" />
               </button>
             </motion.div>
           );

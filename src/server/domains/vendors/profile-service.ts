@@ -30,6 +30,9 @@ import {
   missingIn,
   profileComplete,
   type BankInput,
+  kindOf,
+  mpesaWord,
+  numberOf,
   type BusinessData,
   type ContactInput,
   type DirectorInput,
@@ -309,20 +312,23 @@ export class VendorProfileService {
   async addBank(actor: PortalActor, b: BankInput): Promise<void> {
     const problems = checkBanks([b]);
     if (Object.keys(problems).length > 0) throw new ProfileError('INVALID', Object.values(problems)[0] ?? 'Check the form.', problems);
-    const number = b.accountNumber.replace(/[\s-]+/g, '').toUpperCase();
+    const number = numberOf(b);
     await this.db.transaction(async (tx) => {
       const v = await this.guard(tx, actor, 'financial');
       const existing = await tx.select({ id: vendorBankAccounts.id }).from(vendorBankAccounts).where(and(eq(vendorBankAccounts.vendorId, v.id), ne(vendorBankAccounts.status, 'retired')));
       if (existing.length >= 5) throw new ProfileError('TOO_MANY', 'That is more bank accounts than we can keep (5 at most).');
+      const kind = kindOf(b);
       await tx.insert(vendorBankAccounts).values({
         vendorId: v.id,
-        bankName: b.bankName.trim(),
-        branch: b.branch.trim(),
+        kind,
+        reference: kind === 'bank' ? null : (t(b.reference ?? '') ?? null),
+        bankName: kind === 'bank' ? b.bankName.trim() : 'M-Pesa',
+        branch: kind === 'bank' ? b.branch.trim() : mpesaWord(kind),
         accountName: b.accountName.trim(),
         accountSealed: encryptCredentials({ number }),
         accountLast4: number.slice(-4),
         accountHash: fingerprintSecret(number),
-        swift: t(b.swift)?.toUpperCase() ?? null,
+        swift: kind === 'bank' ? (t(b.swift)?.toUpperCase() ?? null) : null,
         status: 'draft',
         createdBy: actor.userId,
       });

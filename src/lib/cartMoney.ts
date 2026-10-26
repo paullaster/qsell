@@ -67,7 +67,7 @@ export function cartTaxRows(items: { product: PublicProduct; quantity: number }[
 
 export function formatCartAmount(amount: number, currency: CurrencyConfig | null): string {
   if (!currency) {
-    return amount.toLocaleString(undefined, {
+    return amount.toLocaleString('en', {
       minimumFractionDigits: 0,
       maximumFractionDigits: 2,
     });

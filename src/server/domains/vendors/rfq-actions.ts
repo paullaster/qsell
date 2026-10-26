@@ -1,5 +1,6 @@
 'use server';
 
+import { drizzleDb } from '@/server/db/drizzle/client';
 import { canPermission } from '@/server/domains/access-control/guard';
 import { getContainer } from '@/server/di/container';
 import { run } from '@/server/domains/finance/action-runner';
@@ -166,7 +167,8 @@ export async function rfqQuotesAction(rfqId: string) {
     const container = getContainer();
     await container.rfqEvaluation.ensureReasons(ctx.companyId);
     const [q, awards, award] = await Promise.all([container.rfqEvaluation.quotes(ctx.companyId, id(rfqId)), container.rfqEvaluation.awards(ctx.companyId, id(rfqId)), canPermission('rfq:award')]);
-    return { ...q, awards, canAward: award };
+    const awardWaiting = await container.rfqEvaluation.awardWaiting(drizzleDb, id(rfqId));
+    return { ...q, awards, awardWaiting, canAward: award && !awardWaiting };
   });
 }
 

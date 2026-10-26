@@ -206,6 +206,31 @@ describe.skipIf(!has(url))('vendor payments (database)', () => {
     return { id, number };
   }
 
+  describe('an approval workflow (the approval engine)', () => {
+    it('holds a payment voucher for the inbox: no direct approval or cancel, a release approves it', async () => {
+      const b = await booked();
+      const actor = { type: 'user' as const, id: 'wf-test' };
+      const reason = { code: 'POLICY_CHANGE' };
+      const mk = async (label: string) => required((await db.insert(schema.users).values({ email: `${label}-${randomUUID()}@example.test`, passwordHash: 'x', name: label, role: 'manager' }).returning())[0]).id;
+      const [owner, clerk] = await Promise.all([mk('boss'), mk('clerk')]);
+      await c.approvalConfig.saveProfile(companyId, { userId: owner, limits: [] }, actor, reason);
+      const wf = await c.approvalConfig.createWorkflow(companyId, { code: `W-${randomUUID().slice(0, 8)}`, name: 'Payment test', trigger: 'vendor.payment' }, actor);
+      await c.approvalConfig.saveDraft(companyId, wf.id, { conditions: { op: 'eq', field: 'vendor.id', value: b.v.vendorId }, steps: [{ sequence: 1, name: 'Boss', approver: { type: 'user', userId: owner } }] } as never, actor);
+      await c.approvalConfig.publish(companyId, wf.id, actor, reason);
+      const { id } = await c.vendorPayments.saveDraft(staff(clerk), null, voucherHeader(b.v.vendorId, transfer), [alloc(b.pinv.id, '200')]);
+      await c.vendorPayments.submit(staff(clerk), id);
+      expect((await voucher(id)).status).toBe('pending_approval');
+      expect(await codeOf(c.vendorPayments.approve(staff('boss'), id))).toBe('USE_APPROVALS');
+      expect(await codeOf(c.vendorPayments.cancel(staff(clerk), id, 'Changed my mind'))).toBe('USE_APPROVALS');
+      const entry = required((await c.approvals.forDocument(companyId, 'vendor_payment', id)).flatMap((r) => r.entries).find((e) => e.status === 'open'));
+      await db.transaction(async (tx) => await c.approvals.approve(entry.id, owner, null, tx));
+      const done = await voucher(id);
+      expect(done.status).toBe('approved');
+      expect(done.approvedBy).toBe(owner);
+      expect(done.number).toMatch(/\d/);
+    });
+  });
+
   describe('writing a voucher', () => {
     it('is for open invoices of a vendor within what is open, with a way of paying set up for vendors', async () => {
       const b = await booked();
@@ -450,6 +475,25 @@ describe.skipIf(!has(url))('vendor payments (database)', () => {
   });
 
   describe('what we owe', () => {
+    it('ages by invoice date as well as by due date, and can make one line for a category or a posting group', async () => {
+      const b = await booked();
+      const later = new Date(Date.now() + 100 * 86_400_000).toISOString().slice(0, 10);
+      // The invoice was due in 30 days at the earliest, so by due date it is younger than by invoice date.
+      const byDue = (await c.payablesReports.ageing(companyId, later)).lines.find((l) => l.vendorId === b.v.vendorId);
+      const byInvoice = (await c.payablesReports.ageing(companyId, later, { basis: 'invoice' })).lines.find((l) => l.vendorId === b.v.vendorId);
+      expect(byInvoice?.owedCents).toBe(46400);
+      expect(byInvoice?.buckets.d90_plus).toBe(46400);
+      expect(byDue?.owedCents).toBe(46400);
+      const byCategory = await c.payablesReports.ageing(companyId, TODAY, { groupBy: 'category' });
+      expect(byCategory.groupBy).toBe('category');
+      expect(byCategory.lines.some((l) => l.name.includes('VP category'))).toBe(true);
+      expect(byCategory.lines.reduce((n, l) => n + l.owedCents, 0)).toBe(byCategory.owedCents);
+      const byGroup = await c.payablesReports.ageing(companyId, TODAY, { groupBy: 'posting_group' });
+      expect(byGroup.lines.length).toBeGreaterThan(0);
+      expect(byGroup.owedCents).toBe((await c.payablesReports.ageing(companyId, TODAY)).owedCents);
+      expect(byGroup.owedCents).toBe(byCategory.owedCents);
+    });
+
     it('ages open invoices by due date and lists a vendor’s statement', async () => {
       const b = await booked();
       const asOf = TODAY;

@@ -1,3 +1,4 @@
+import { vendorApprovals } from './approval-gate';
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { purchaseOrders, vendorAdvancePayments, vendorBankAccounts, type VendorAdvancePaymentRow } from '@/server/db/drizzle/schema';
@@ -53,24 +54,41 @@ export class AdvancePaymentService {
       if (a.status !== 'draft') throw new FinanceError('NOT_DRAFT', 'This advance payment was already sent for approval.');
       if (a.createdBy !== ctx.actor.id) throw new FinanceError('NOT_YOURS', 'Only the person who wrote it sends it for approval.');
       await tx.update(vendorAdvancePayments).set({ status: 'pending_approval', updatedAt: new Date() }).where(eq(vendorAdvancePayments.id, id));
+      await vendorApprovals.submit(tx, { companyId: ctx.companyId, trigger: 'vendor.advance_payment', documentId: id, requestedBy: ctx.actor.id ?? '', amount: Number(a.amount), snapshot: { vendor: { id: a.vendorId }, currency: a.currency } });
     });
   }
 
   /** A person other than the writer approves; the vendor's bank account that will be paid is fixed here. */
   async approve(ctx: FinanceContext, id: string, now: Date = new Date()): Promise<void> {
     const d = await this.db.transaction(async (tx) => {
-      const a = await this.lock(tx, ctx.companyId, id);
-      if (a.status !== 'pending_approval') throw new FinanceError('NOT_PENDING', 'This advance payment is not waiting for approval.');
-      if (a.createdBy === ctx.actor.id) throw new FinanceError('FOUR_EYES', 'You wrote this advance payment, so someone else must approve it.');
-      const [bank] = await tx.select().from(vendorBankAccounts).where(and(eq(vendorBankAccounts.vendorId, a.vendorId), eq(vendorBankAccounts.status, 'active'))).orderBy(asc(vendorBankAccounts.createdAt)).limit(1);
-      if (bank === undefined) throw new FinanceError('NO_BANK_ACCOUNT', 'The vendor has no bank account in use to be paid into.');
-      const [po] = await tx.select({ number: purchaseOrders.number, status: purchaseOrders.status, total: purchaseOrders.total }).from(purchaseOrders).where(eq(purchaseOrders.id, a.poId));
-      if (po === undefined || !(RELEASED as readonly string[]).includes(po.status)) throw new FinanceError('NOT_RELEASED', 'The order is no longer open for an advance.');
-      if (Number(a.amount) > Number(po.total)) throw new FinanceError('INVALID', 'The advance is now more than the order total.');
-      await tx.update(vendorAdvancePayments).set({ status: 'approved', approvedBy: ctx.actor.id, approvedAt: now, bankAccountId: bank.id, updatedAt: now }).where(eq(vendorAdvancePayments.id, id));
-      return { vendorId: a.vendorId, number: po.number ?? '', amount: a.amount, currency: a.currency };
+      await vendorApprovals.refuseIfHeld(tx, ctx.companyId, 'vendor_advance', id);
+      return await this.approveIn(tx, ctx, id, now);
     });
+    await this.tellApproved(d);
+  }
+
+  /** The approval inside the caller's transaction (a person here, or the engine when its workflow is complete); the caller tells the vendor once it has committed. */
+  async approveIn(tx: Parameters<Parameters<DrizzleDb['transaction']>[0]>[0], ctx: FinanceContext, id: string, now: Date = new Date()): Promise<{ vendorId: string; number: string; amount: string; currency: string }> {
+    const a = await this.lock(tx, ctx.companyId, id);
+    if (a.status !== 'pending_approval') throw new FinanceError('NOT_PENDING', 'This advance payment is not waiting for approval.');
+    if (a.createdBy === ctx.actor.id) throw new FinanceError('FOUR_EYES', 'You wrote this advance payment, so someone else must approve it.');
+    const [bank] = await tx.select().from(vendorBankAccounts).where(and(eq(vendorBankAccounts.vendorId, a.vendorId), eq(vendorBankAccounts.status, 'active'))).orderBy(asc(vendorBankAccounts.createdAt)).limit(1);
+    if (bank === undefined) throw new FinanceError('NO_BANK_ACCOUNT', 'The vendor has no bank account in use to be paid into.');
+    const [po] = await tx.select({ number: purchaseOrders.number, status: purchaseOrders.status, total: purchaseOrders.total }).from(purchaseOrders).where(eq(purchaseOrders.id, a.poId));
+    if (po === undefined || !(RELEASED as readonly string[]).includes(po.status)) throw new FinanceError('NOT_RELEASED', 'The order is no longer open for an advance.');
+    if (Number(a.amount) > Number(po.total)) throw new FinanceError('INVALID', 'The advance is now more than the order total.');
+    await tx.update(vendorAdvancePayments).set({ status: 'approved', approvedBy: ctx.actor.id, approvedAt: now, bankAccountId: bank.id, updatedAt: now }).where(eq(vendorAdvancePayments.id, id));
+    return { vendorId: a.vendorId, number: po.number ?? '', amount: a.amount, currency: a.currency };
+  }
+
+  /** Tells the vendor an advance was approved. */
+  async tellApproved(d: { vendorId: string; number: string; amount: string; currency: string }): Promise<void> {
     await this.notify?.advanceApproved(d.vendorId, d.number, d.amount, d.currency);
+  }
+
+  /** The workflow refused it, was withdrawn or was reopened: back to a draft. */
+  async backFromWorkflow(tx: Parameters<Parameters<DrizzleDb['transaction']>[0]>[0], id: string, why: string): Promise<void> {
+    await tx.update(vendorAdvancePayments).set({ status: 'draft', decisionNote: why.slice(0, 500), updatedAt: new Date() }).where(and(eq(vendorAdvancePayments.id, id), eq(vendorAdvancePayments.status, 'pending_approval')));
   }
 
   async reject(ctx: FinanceContext, id: string, reason: string): Promise<void> {
@@ -79,6 +97,7 @@ export class AdvancePaymentService {
     await this.db.transaction(async (tx) => {
       const a = await this.lock(tx, ctx.companyId, id);
       if (a.status !== 'pending_approval') throw new FinanceError('NOT_PENDING', 'This advance payment is not waiting for approval.');
+      await vendorApprovals.refuseIfHeld(tx, ctx.companyId, 'vendor_advance', id);
       if (a.createdBy === ctx.actor.id) throw new FinanceError('FOUR_EYES', 'You wrote this advance payment; withdraw it instead.');
       await tx.update(vendorAdvancePayments).set({ status: 'draft', decisionNote: text.slice(0, 500), updatedAt: new Date() }).where(eq(vendorAdvancePayments.id, id));
     });
@@ -89,6 +108,7 @@ export class AdvancePaymentService {
     if (!has(text)) throw new FinanceError('NOTE_REQUIRED', 'Say why it is cancelled.');
     await this.db.transaction(async (tx) => {
       const a = await this.lock(tx, ctx.companyId, id);
+      await vendorApprovals.refuseIfHeld(tx, ctx.companyId, 'vendor_advance', id);
       if (a.status === 'paid') throw new FinanceError('ALREADY_PAID', 'It was paid. Ask the vendor to refund it, or apply it to an invoice.');
       if (!(['draft', 'pending_approval', 'approved'] as string[]).includes(a.status)) throw new FinanceError('NOT_ALLOWED', 'This advance payment cannot be cancelled.');
       await tx.update(vendorAdvancePayments).set({ status: 'cancelled', decisionNote: text.slice(0, 500), updatedAt: new Date() }).where(eq(vendorAdvancePayments.id, id));

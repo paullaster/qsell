@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { noHorizontalScroll, noNativeSelect, open } from './support/page';
+import { clickUntilVisible, noHorizontalScroll, noNativeSelect, open } from './support/page';
 import { pick } from './support/quotes';
 import { attemptTag, makePo, makeRfq, makeVendor, signedOutPage, signInAsVendor } from './support/vendors';
 
@@ -158,5 +158,31 @@ test.describe('making orders from an award', () => {
     await expect(page.getByLabel('Unit price').first()).toHaveValue('950.00');
     await expect(page.getByLabel('Quantity').first()).toHaveValue('4.000');
     await noHorizontalScroll(page);
+  });
+});
+
+test.describe('an approval workflow', () => {
+  test('an order held by a workflow cannot be approved on its own screen, only from the Approvals inbox', async ({ page }, testInfo) => {
+    test.slow();
+    const tag = attemptTag(testInfo.project.name, testInfo.retry);
+    const vendor = makeVendor(tag, 'approved');
+    const po = makePo(tag, vendor.vendorId, 'workflow');
+    await open(page, `/admin/vendors/orders/${po.poId ?? ''}`, 'Draft order');
+    await expect(page.getByText(/Waiting in the Approvals inbox/)).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0);
+    await noHorizontalScroll(page);
+
+    await open(page, '/admin/approvals/inbox', 'Approvals waiting on you');
+    await page.getByLabel('Search').fill(po.poId ?? '');
+    const card = page.getByRole('list', { name: 'Requests waiting on you' }).getByRole('listitem').first();
+    await expect(card).toContainText('Purchase orders', { timeout: 60_000 });
+    await card.getByRole('button', { name: 'Review' }).click();
+    await clickUntilVisible(card.getByRole('button', { name: 'Approve', exact: true }), card.getByRole('button', { name: 'Confirm approval' }));
+    await card.getByRole('button', { name: 'Confirm approval' }).click();
+    await expect(page.getByText('No requests match')).toBeVisible({ timeout: 60_000 });
+
+    await page.goto(`/admin/vendors/orders/${po.poId ?? ''}`);
+    await expect(page.getByRole('button', { name: 'Send to the vendor' })).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText(/Waiting in the Approvals inbox/)).toHaveCount(0);
   });
 });

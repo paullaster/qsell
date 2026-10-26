@@ -624,6 +624,111 @@
       "when": 1792934669941,
       "tag": "0088_watch_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1792941697699,
+      "tag": "0089_vendor_refunds",
+      "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1792942549398,
+      "tag": "0090_voucher_statement_line",
+      "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1792943433969,
+      "tag": "0091_purchase_returns",
+      "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1792944399932,
+      "tag": "0092_purchase_requisitions",
+      "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1792945946283,
+      "tag": "0093_vendor_contracts",
+      "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1792946830151,
+      "tag": "0094_landed_costs",
+      "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1792950315866,
+      "tag": "0095_scorecards",
+      "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "7",
+      "when": 1792953243272,
+      "tag": "0096_vendor_foreign_currency",
+      "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "7",
+      "when": 1792953740348,
+      "tag": "0097_payables_revaluations",
+      "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1792954553581,
+      "tag": "0098_vendor_destinations",
+      "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1792957231122,
+      "tag": "0099_etims_purchase",
+      "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1792994672737,
+      "tag": "0100_rfq_award_proposals",
+      "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1793011502495,
+      "tag": "0101_storefront_search_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "7",
+      "when": 1793020954760,
+      "tag": "0102_product_full_text",
+      "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "7",
+      "when": 1793021050079,
+      "tag": "0103_reviews_wishlist_newsletter",
+      "breakpoints": true
     }
   ]
 }

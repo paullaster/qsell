@@ -1,11 +1,12 @@
 'use client';
 
 import Link from 'next/link';
+import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { use, useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { proposeBankChangeAction, withdrawBankChangeAction, type bankStatusAction } from '@/server/domains/vendors/portal-team-actions';
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
-import { maskAccount } from '@/lib/vendor-profile';
+import { DESTINATION_KINDS, numberLabel, maskAccount } from '@/lib/vendor-profile';
 import { Chip, Field, LoadFailed, Message, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
 
 type Status = Extract<Awaited<ReturnType<typeof bankStatusAction>>, { ok: true }>['data'];
@@ -17,7 +18,7 @@ const STAGE_WORDS = {
   cooling_off: 'Approved. It will be used after a short waiting period.',
 } as const;
 
-const blank = { bankName: '', branch: '', accountName: '', accountNumber: '', swift: '', replacesId: '', evidenceDocumentId: '' };
+const blank = { bankName: '', branch: '', accountName: '', accountNumber: '', swift: '', kind: 'bank', reference: '', replacesId: '', evidenceDocumentId: '' };
 
 /** For an approved vendor: where it is paid now, any change waiting, and the request to change it. */
 export function BankChangeClient({ statusPromise }: { statusPromise: ReturnType<typeof bankStatusAction> }) {
@@ -82,11 +83,13 @@ function BankChangeView({ status }: { status: Status }) {
         <form noValidate aria-label="Request a change of bank details" className="space-y-3 rounded-lg border border-line p-3" onSubmit={(e) => { e.preventDefault(); void act(proposeBankChangeAction(form), 'Your request was sent. We will phone you to confirm it.').then((ok) => { if (ok) { setForm(blank); setOpen(false); } }); }}>
             <p className="text-sm text-fg">To protect you from fraud, a change is never used straight away: we phone you on the number we already hold, a second person approves, and the new account starts after a short waiting period. Payments keep going to your current account until then.</p>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Field id={`${uid}-bn`} label="Bank" hint={p('bankName')}><input id={`${uid}-bn`} value={form.bankName} onChange={(e) => set('bankName', e.target.value)} className={fieldClass} required autoComplete="off" /></Field>
-              <Field id={`${uid}-bb`} label="Branch" hint={p('branch')}><input id={`${uid}-bb`} value={form.branch} onChange={(e) => set('branch', e.target.value)} className={fieldClass} required autoComplete="off" /></Field>
-              <Field id={`${uid}-ba`} label="Account name" hint={p('accountName')}><input id={`${uid}-ba`} value={form.accountName} onChange={(e) => set('accountName', e.target.value)} className={fieldClass} required autoComplete="off" /></Field>
-              <Field id={`${uid}-bu`} label="Account number" hint={p('accountNumber') ?? 'Kept sealed. Only the last four digits are shown afterwards.'}><input id={`${uid}-bu`} value={form.accountNumber} onChange={(e) => set('accountNumber', e.target.value)} className={fieldClass} required autoComplete="off" inputMode="numeric" /></Field>
-              <Field id={`${uid}-bs`} label="SWIFT code (foreign banks)" hint={p('swift')}><input id={`${uid}-bs`} value={form.swift} onChange={(e) => set('swift', e.target.value)} className={fieldClass} autoComplete="off" /></Field>
+              <ChoicePicker label="Where we pay" source="vendor-destination-kinds" choice={DESTINATION_KINDS.find((k) => k.id === form.kind) ?? null} onChoice={(c) => set('kind', c?.id ?? 'bank')} clearable={false} />
+              {form.kind === 'bank' ? <Field id={`${uid}-bn`} label="Bank" hint={p('bankName')}><input id={`${uid}-bn`} value={form.bankName} onChange={(e) => set('bankName', e.target.value)} className={fieldClass} required autoComplete="off" /></Field> : null}
+              {form.kind === 'bank' ? <Field id={`${uid}-bb`} label="Branch" hint={p('branch')}><input id={`${uid}-bb`} value={form.branch} onChange={(e) => set('branch', e.target.value)} className={fieldClass} required autoComplete="off" /></Field> : null}
+              <Field id={`${uid}-ba`} label={form.kind === 'bank' ? 'Account name' : 'Name registered with M-Pesa'} hint={p('accountName')}><input id={`${uid}-ba`} value={form.accountName} onChange={(e) => set('accountName', e.target.value)} className={fieldClass} required autoComplete="off" /></Field>
+              <Field id={`${uid}-bu`} label={numberLabel(form.kind)} hint={p('accountNumber') ?? 'Kept sealed. Only the last four digits are shown afterwards.'}><input id={`${uid}-bu`} value={form.accountNumber} onChange={(e) => set('accountNumber', e.target.value)} className={fieldClass} required autoComplete="off" inputMode="numeric" /></Field>
+              {form.kind === 'mpesa_paybill' || form.kind === 'mpesa_till' ? <Field id={`${uid}-br`} label={form.kind === 'mpesa_paybill' ? 'Account number to quote' : 'Reference (optional)'} hint={p('reference')}><input id={`${uid}-br`} value={form.reference} onChange={(e) => set('reference', e.target.value)} className={fieldClass} autoComplete="off" /></Field> : null}
+              {form.kind === 'bank' ? <Field id={`${uid}-bs`} label="SWIFT code (foreign banks)" hint={p('swift')}><input id={`${uid}-bs`} value={form.swift} onChange={(e) => set('swift', e.target.value)} className={fieldClass} autoComplete="off" /></Field> : null}
             </div>
             <fieldset className="space-y-1">
               <legend className="text-sm font-semibold text-fg-strong">What does this account do?</legend>

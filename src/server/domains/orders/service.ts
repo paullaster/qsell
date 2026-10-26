@@ -1,8 +1,12 @@
+import { orElse } from '@/lib/values';
 import { AuthService } from '@/server/domains/auth/service';
 import type { Order, PaymentProvider } from '@/types/index';
 import { OrderWriteService } from './write-service';
 import { auth } from '@/auth';
 import { getContainer } from '@/server/di/container';
+
+/** A checkout the shop turned down for a reason it wrote for the shopper (out of stock, a missing field...). Safe to show as it is. */
+export class CheckoutRefused extends Error {}
 
 export class OrdersService {
   static async createCheckout(params: {
@@ -52,7 +56,7 @@ export class OrdersService {
     });
 
     if (!result.success || !result.order) {
-      throw new Error(result.error || 'Checkout failed');
+      throw new CheckoutRefused(orElse(result.error, 'Checkout failed'));
     }
     return result.order;
   }

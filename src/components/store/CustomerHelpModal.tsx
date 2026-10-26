@@ -74,7 +74,7 @@ export function CustomerHelpModal({ isOpen, onClose }: CustomerHelpModalProps) {
                 {support.name}
               </h2>
               {support.subtitle ? (
-                <p className="text-[11px] text-fg-muted sm:text-xs">{support.subtitle}</p>
+                <p className="text-xs text-fg-muted sm:text-xs">{support.subtitle}</p>
               ) : null}
             </div>
           </div>
@@ -117,7 +117,7 @@ export function CustomerHelpModal({ isOpen, onClose }: CustomerHelpModalProps) {
                       <p className="text-xs break-words text-fg-muted">{channel.value}</p>
                     )}
                     {channel.detail ? (
-                      <span className="block text-[11px] text-fg-subtle">{channel.detail}</span>
+                      <span className="block text-xs text-fg-subtle">{channel.detail}</span>
                     ) : null}
                   </li>
                 );

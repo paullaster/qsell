@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { use, useId, useState } from 'react';
-import { type invoiceableOrdersAction, startInvoiceAction } from '@/server/domains/vendors/invoice-portal-actions';
+import { type invoiceableOrdersAction, startInvoiceAction, startInvoiceFromUblAction } from '@/server/domains/vendors/invoice-portal-actions';
 import { PO_STATUS } from '@/lib/purchase-order';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
 
@@ -32,6 +32,23 @@ function View({ orders }: { orders: Extract<Awaited<ReturnType<typeof invoiceabl
     }
     router.push(`/vendor/invoices/${res.data.id}`);
   };
+  const fromFile = async (file: File | undefined) => {
+    if (file === undefined) return;
+    setBusy('file');
+    setNotice(null);
+    if (file.size > 1_000_000) {
+      setBusy(null);
+      setNotice({ kind: 'error', text: 'That file is too large. A UBL invoice is a small text file.' });
+      return;
+    }
+    const res = await attempt(startInvoiceFromUblAction(await file.text()));
+    setBusy(null);
+    if (!res.ok) {
+      setNotice({ kind: 'error', text: res.error });
+      return;
+    }
+    router.push(`/vendor/invoices/${res.data.id}`);
+  };
   return (
     <div className="max-w-3xl space-y-5">
       <PageHeader title="New invoice" intro="Type the number printed on your invoice, then choose the order it is for. We fill in what was received and not yet invoiced, at the order’s prices." actions={<Link href="/vendor/invoices" className={buttonClass}>Cancel</Link>} />
@@ -40,6 +57,11 @@ function View({ orders }: { orders: Extract<Awaited<ReturnType<typeof invoiceabl
         <Field id={`${uid}-no`} label="Your invoice number" hint={problem === '' ? 'As printed on your own invoice.' : problem}>
           <input id={`${uid}-no`} value={no} onChange={(e) => setNo(e.target.value)} maxLength={60} className={fieldClass} autoComplete="off" aria-invalid={problem !== ''} />
         </Field>
+      </div>
+      <div className={cardClass}>
+        <label className="block text-xs font-semibold text-fg" htmlFor={`${uid}-ubl`}>Or start from a UBL 2.1 invoice file</label>
+        <input id={`${uid}-ubl`} type="file" accept=".xml,application/xml,text/xml" className="block w-full text-sm" disabled={busy !== null} onChange={(e) => void fromFile(e.target.files?.[0])} />
+        <p className="mt-1 text-xs text-fg-muted">The file must name our order number. You still add the delivery note and its scan before sending.</p>
       </div>
       {orders.length === 0 ? <p className="text-sm text-fg-muted">There is nothing to invoice yet. Orders can be invoiced once they have been sent to you.</p> : (
         <ul className="space-y-2" aria-label="Orders you can invoice">
