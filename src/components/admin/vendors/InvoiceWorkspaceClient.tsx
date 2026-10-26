@@ -200,6 +200,7 @@ function Workspace({ view }: { view: View }) {
           {inv.state === 'pending_approval' && view.can.approve ? <button type="button" className={primaryClass} disabled={busy} onClick={() => void act(approveInvoiceAction(inv.id), 'Approved.')}>Approve</button> : null}
           {inv.state === 'approved' && view.can.post ? <button type="button" className={primaryClass} disabled={busy} onClick={() => void act(postInvoiceAction(inv.id), (d) => `Booked as ${(d as { number: string }).number}.`)}>Book this invoice</button> : null}
         </div>
+        {inv.state === 'pending_approval' && view.inWorkflow ? <p role="status" className="text-sm text-fg-muted">Waiting in the Approvals inbox: an approval workflow covers this, so it is approved there.</p> : null}
         {inv.state === 'pending_approval' && view.can.approveBlockedBySeparation ? <p className="text-xs text-amber-700">You linked or checked this invoice, so another person has to approve it.</p> : null}
         {inv.state === 'rgn_linked' && exceptions > 0 && view.can.override ? <button type="button" className={buttonClass} onClick={() => setPanel('override')}>Accept the differences…</button> : null}
         {inv.state === 'rgn_linked' && exceptions > 0 && !view.can.override ? <p className="text-xs text-fg-muted">The differences can be accepted only by someone allowed to, or the invoice can be returned to the vendor.</p> : null}

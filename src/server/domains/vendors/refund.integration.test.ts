@@ -151,6 +151,7 @@ describe.skipIf(!has(url))('vendor refunds (database)', () => {
     return inv;
   }
 
+  const noticed: string[][] = [];
   beforeAll(async () => {
     process.env.DATABASE_URL = url;
     process.env.DATA_ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString('base64');
@@ -158,6 +159,13 @@ describe.skipIf(!has(url))('vendor refunds (database)', () => {
     schema = await import('@/server/db/drizzle/schema');
     const { getContainer } = await import('@/server/di/container');
     c = getContainer();
+    // The service tells people through its notifier; here it is replaced by a recorder, so each test can see who was told what.
+    const stub: Record<string, unknown> = {};
+    for (const name of ['refundRecorded']) stub[name] = (...args: unknown[]) => {
+      noticed.push([name, ...args.map(String)]);
+      return Promise.resolve();
+    };
+    (c.vendorRefunds as unknown as { notify?: unknown }).notify = stub;
     const [company] = await db
       .insert(schema.companySettings)
       .values({ legalName: 'RF', tradingName: 'RF', email: 'buyer@rf.test', phone: '1', streetAddress: 's', city: 'c', countyOrState: 'x', postalCode: '1', kraPin: 'P' })
@@ -223,6 +231,7 @@ describe.skipIf(!has(url))('vendor refunds (database)', () => {
     expect(await codeOf(c.vendorRefunds.post(staff('boss'), asked.id, { reference: 'TT-1', receivedOn: '2999-01-01' }))).toBe('INVALID');
     const out = await c.vendorRefunds.post(staff('boss'), asked.id, { reference: 'TT-1', receivedOn: today });
     expect(out.number).toMatch(/^VRF-\d{4}-\d{5}$/);
+    expect(noticed.find((n) => n[2] === out.number)).toEqual(['refundRecorded', b.v.vendorId, out.number, '120.00', 'KES', 'TT-1']);
     expect(await remainingOf(required(paid.ledgerEntryId))).toBe('-180.00');
     expect(await balance(cash)).toBe(before + 120);
     const accounts = await db.select().from(schema.glAccounts).where(eq(schema.glAccounts.companyId, companyId));

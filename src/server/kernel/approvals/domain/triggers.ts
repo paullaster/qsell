@@ -140,6 +140,18 @@ export const TRIGGERS: TriggerDefinition[] = [
     ],
   },
   {
+    code: 'rfq.award',
+    module: 'vendors',
+    documentKind: 'rfq_award',
+    label: 'Request for quotation awarded',
+    fields: [
+      ...common,
+      { path: 'vendors', label: 'Number of vendors awarded', type: 'number' },
+      { path: 'lines', label: 'Number of lines awarded', type: 'number' },
+      { path: 'notLowest', label: 'A vendor who is not the lowest bid was chosen on a line', type: 'boolean' },
+    ],
+  },
+  {
     code: 'vendor.invoice',
     module: 'vendors',
     documentKind: 'vendor_invoice',
@@ -271,6 +283,7 @@ export const DOCUMENT_KIND_LABELS: Record<string, string> = {
   discount_rule: 'Discount rules',
   rebate_settlement: 'Rebate payments',
   provider_operation: 'Payments sent out through a provider',
+  rfq_award: 'Awards of requests for quotation',
   vendor_po: 'Purchase orders',
   vendor_invoice: 'Supplier invoices',
   vendor_payment: 'Vendor payments',

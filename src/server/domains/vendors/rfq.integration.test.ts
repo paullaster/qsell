@@ -441,6 +441,41 @@ describe.skipIf(!has(url))('requests for quotation (database)', () => {
       await evaluation.decide(staff('buyer'), r.id, a.vendorId, 'reject', { reasonCode: 'RFQ_PRICE' });
       expect(await codeOf(evaluation.award(staff('buyer'), r.id, [{ rfqLineId: r.lineA, vendorId: a.vendorId, quantity: '1' }], 'x'))).toBe('NO_BID');
     });
+
+    it('holds an award for an approval workflow: nothing is awarded until it is approved, a refusal drops the proposal', async () => {
+      const mk = async (label: string) => required((await db.insert(schema.users).values({ email: `${label}-${randomUUID()}@example.test`, passwordHash: 'x', name: label, role: 'manager' }).returning())[0]).id;
+      const [owner, buyer] = await Promise.all([mk('boss'), mk('buyer')]);
+      const actor = { type: 'user' as const, id: 'wf-test' };
+      const reason = { code: 'POLICY_CHANGE' };
+      await c.approvalConfig.saveProfile(companyId, { userId: owner, limits: [] }, actor, reason);
+      const wf = await c.approvalConfig.createWorkflow(companyId, { code: `W-${randomUUID().slice(0, 8)}`, name: 'Award test', trigger: 'rfq.award' }, actor);
+      await c.approvalConfig.saveDraft(companyId, wf.id, { conditions: { op: 'eq', field: 'vendors', value: 1 }, steps: [{ sequence: 1, name: 'Boss', approver: { type: 'user', userId: owner } }] } as never, actor);
+      await c.approvalConfig.publish(companyId, wf.id, actor, reason);
+      try {
+        const { b, r } = await threeQuotes();
+        const choice = [{ rfqLineId: r.lineA, vendorId: b.vendorId, quantity: '2' }];
+        const entryOf = async () => required((await c.approvals.forDocument(companyId, 'rfq_award', r.id)).flatMap((x) => x.entries).find((e) => e.status === 'open'));
+        const status = async () => required(await rfqs.get(companyId, r.id)).rfq.status;
+        outbox.sent = [];
+        expect(await evaluation.award(staff(buyer), r.id, choice, '')).toEqual({ awarded: 0, pending: true });
+        expect(await status()).toBe('closed');
+        expect(await evaluation.awards(companyId, r.id)).toHaveLength(0);
+        expect(outbox.sent.filter((m) => m.subject.startsWith('You were awarded'))).toHaveLength(0);
+        expect(await codeOf(evaluation.award(staff(buyer), r.id, choice, ''))).toBe('AWARD_PENDING');
+        expect(await codeOf(evaluation.decide(staff(buyer), r.id, b.vendorId, 'accept', {}))).toBe('AWARD_PENDING');
+        await db.transaction(async (tx) => await c.approvals.reject((await entryOf()).id, owner, { reasonCode: 'OTHER', comment: 'Ask for a better price' }, tx));
+        expect(await evaluation.awardWaiting(db, r.id)).toBe(false);
+        expect(await status()).toBe('closed');
+        expect(await evaluation.award(staff(buyer), r.id, choice, '')).toEqual({ awarded: 0, pending: true });
+        const { withAfterCommit } = await import('@/server/kernel/after-commit');
+        await withAfterCommit(db, async (tx) => await c.approvals.approve((await entryOf()).id, owner, null, tx));
+        expect(await status()).toBe('awarded');
+        expect(await evaluation.awards(companyId, r.id)).toHaveLength(1);
+        expect((await evaluation.awards(companyId, r.id))[0]).toMatchObject({ vendorId: b.vendorId, quantity: '2.000' });
+      } finally {
+        await c.approvalConfig.setWorkflowStatus(companyId, wf.id, 'disabled', actor, reason);
+      }
+    });
   });
 
   describe('cancelling and reminders', () => {

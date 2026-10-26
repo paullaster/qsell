@@ -1,11 +1,11 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { approvalEntries, approvalRequests } from '@/server/db/drizzle/schema';
 import { FinanceError } from '@/server/domains/finance/errors';
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
-export type VendorApprovalKind = 'vendor_po' | 'vendor_invoice' | 'vendor_payment' | 'vendor_advance';
+export type VendorApprovalKind = 'rfq_award' | 'vendor_po' | 'vendor_invoice' | 'vendor_payment' | 'vendor_advance';
 
 export interface GateInput {
   companyId: string;
@@ -37,6 +37,16 @@ export class VendorApprovalGate {
       tx,
     );
     return outcome.required && !outcome.released ? 'waiting' : 'fixed';
+  }
+
+  /** Which of these documents an open engine request holds, for screens that show a list. */
+  async heldSet(db: Tx | DrizzleDb, companyId: string, kind: VendorApprovalKind, ids: string[]): Promise<Set<string>> {
+    if (ids.length === 0) return new Set();
+    const rows = await db
+      .select({ id: approvalRequests.documentId })
+      .from(approvalRequests)
+      .where(and(eq(approvalRequests.companyId, companyId), eq(approvalRequests.documentKind, kind), eq(approvalRequests.status, 'pending'), inArray(approvalRequests.documentId, ids)));
+    return new Set(rows.map((r) => r.id));
   }
 
   /** Whether an open engine request holds this document. */

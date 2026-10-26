@@ -75,7 +75,7 @@ function NewRefund({ onDone }: { onDone: (id: string) => void }) {
   return (
     <form className={`${cardClass} space-y-3`} aria-label="New refund" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
       <Message notice={notice} />
-      <ChoicePicker label="Vendor" source="vendors" choice={vendor} onChoice={(c) => void chooseVendor(c)} placeholder="Search by name or number" />
+      <ChoicePicker label="Vendor" source="vendors" createHref="/admin/vendors/new" createLabel="Add a vendor" listHref="/admin/vendors/browse" listLabel="View all vendors" choice={vendor} onChoice={(c) => void chooseVendor(c)} placeholder="Search by name or number" />
       {credits !== null && credits.length === 0 ? <p className="text-sm text-fg-muted" role="status">This vendor has nothing that can be refunded.</p> : null}
       {credits !== null && credits.length > 0 ? (
         <fieldset className="space-y-2">

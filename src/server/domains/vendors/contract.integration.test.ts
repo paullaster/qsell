@@ -73,6 +73,7 @@ describe.skipIf(!has(url))('vendor contracts (database)', () => {
     return id;
   }
 
+  const noticed: string[][] = [];
   beforeAll(async () => {
     process.env.DATABASE_URL = url;
     process.env.DATA_ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString('base64');
@@ -80,6 +81,13 @@ describe.skipIf(!has(url))('vendor contracts (database)', () => {
     schema = await import('@/server/db/drizzle/schema');
     const { getContainer } = await import('@/server/di/container');
     c = getContainer();
+    // The service tells people through its notifier; here it is replaced by a recorder, so each test can see who was told what.
+    const stub: Record<string, unknown> = {};
+    for (const name of ['contractApproved', 'contractEnded']) stub[name] = (...args: unknown[]) => {
+      noticed.push([name, ...args.map(String)]);
+      return Promise.resolve();
+    };
+    (c.contracts as unknown as { notify?: unknown }).notify = stub;
     const [company] = await db
       .insert(schema.companySettings)
       .values({ legalName: 'CT', tradingName: 'CT', email: 'buyer@ct.test', phone: '1', streetAddress: 's', city: 'c', countyOrState: 'x', postalCode: '1', kraPin: 'P' })
@@ -127,6 +135,7 @@ describe.skipIf(!has(url))('vendor contracts (database)', () => {
     expect(await codeOf(c.contracts.approve(staff('buyer'), id))).toBe('FOUR_EYES');
     const out = await c.contracts.approve(staff('boss'), id);
     expect(out.number).toMatch(/^CTR-\d{4}-\d{5}$/);
+    expect(noticed.find((n) => n[0] === 'contractApproved' && n[2] === out.number)?.[1]).toBe(v.vendorId);
     expect(await codeOf(c.contracts.saveDraft(staff('buyer'), id, cHeader(v.vendorId, cat), [cLine()]))).toBe('NOT_DRAFT');
     expect(await codeOf(db.update(schema.vendorContracts).set({ validTo: '2999-01-01' }).where(eq(schema.vendorContracts.id, id)))).toBe('23001');
     expect(await codeOf(db.update(schema.vendorContractLines).set({ unitPrice: '1.00' }).where(eq(schema.vendorContractLines.contractId, id)))).toBe('23001');
@@ -183,6 +192,7 @@ describe.skipIf(!has(url))('vendor contracts (database)', () => {
     await c.purchaseOrders.saveSettings(staff('admin'), { rfqRequiredAbove: '', amendmentTolerancePercent: '0' });
     expect(required(await c.contracts.get(companyId, k.id)).lines[0]?.usedQuantity).toBe(12);
     await c.contracts.close(staff('boss'), k.id, 'Vendor changed its prices');
+    expect(noticed.some((n) => n[0] === 'contractEnded' && n[3] === 'Vendor changed its prices')).toBe(true);
     expect(await codeOf(callOff(k.id, required(k.lines[0]), '1'))).toBe('OVER_CONTRACT');
     expect((await c.contracts.list(companyId, { status: 'closed' })).some((x) => x.id === k.id)).toBe(true);
   });

@@ -1,3 +1,4 @@
+import type { VendorNotifier } from './notifier';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
@@ -37,6 +38,7 @@ export class PurchaseReturnService {
   constructor(
     private readonly db: DrizzleDb,
     private readonly numbering: NumberSeriesService,
+    private readonly notify?: VendorNotifier,
   ) {}
 
   private async event(tx: Tx | DrizzleDb, ctx: FinanceContext, returnId: string, event: string, extra: { reason?: string | null; data?: Record<string, unknown> } = {}): Promise<void> {
@@ -122,10 +124,12 @@ export class PurchaseReturnService {
 
   async post(ctx: FinanceContext, id: string, now: Date = new Date()): Promise<{ number: string }> {
     const { applyStockDelta } = await import('@/server/domains/inventory/service');
-    return await this.postIn(ctx, id, now, applyStockDelta);
+    const done = await this.postIn(ctx, id, now, applyStockDelta);
+    await this.notify?.returnPosted(done.vendorId, done.number, done.orderNumber, done.reason);
+    return { number: done.number };
   }
 
-  private async postIn(ctx: FinanceContext, id: string, now: Date, applyStockDelta: ApplyStockDelta): Promise<{ number: string }> {
+  private async postIn(ctx: FinanceContext, id: string, now: Date, applyStockDelta: ApplyStockDelta): Promise<{ number: string; vendorId: string; orderNumber: string; reason: string }> {
     return await this.db.transaction(async (tx) => {
       const r = await this.lock(tx, ctx.companyId, id);
       if (r.status !== 'draft') throw new FinanceError('NOT_DRAFT', 'This return was already posted or cancelled.');
@@ -165,7 +169,7 @@ export class PurchaseReturnService {
       }
       await tx.insert(purchaseOrderEvents).values({ poId: po.id, event: 'goods_returned', fromStatus: po.status, toStatus: status, reasonText: r.reason, data: { return: number }, actorType: ctx.actor.type, actorId: ctx.actor.id });
       await this.event(tx, ctx, id, 'posted', { data: { number } });
-      return { number };
+      return { number, vendorId: r.vendorId, orderNumber: po.number ?? '', reason: r.reason };
     });
   }
 

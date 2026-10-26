@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { purchaseOrders, supplierInvoices, vendorAdvancePayments, vendorPaymentVouchers, vendors } from '@/server/db/drizzle/schema';
+import { rfqs, purchaseOrders, supplierInvoices, vendorAdvancePayments, vendorPaymentVouchers, vendors } from '@/server/db/drizzle/schema';
 import type { DocumentHandler } from '@/server/kernel/approvals/engine';
 import type { FinanceContext } from '@/server/domains/finance/errors';
 import { vendorApprovals, type VendorApprovalKind } from './approval-gate';
@@ -23,8 +23,30 @@ async function released(tx: Tx, kind: VendorApprovalKind, id: string, companyId:
  */
 export function vendorApprovalHandlers(db: DrizzleDb): Record<VendorApprovalKind, DocumentHandler> {
   const services = async () => (await import('@/server/di/container')).getContainer();
+  const dropProposal = async (tx: Tx, id: string, why: string): Promise<void> => {
+    const [r] = await tx.select({ companyId: rfqs.companyId }).from(rfqs).where(eq(rfqs.id, id));
+    if (r === undefined) return;
+    await (await services()).rfqEvaluation.dropProposal(tx, { companyId: r.companyId, actor: { type: 'system', id: null }, origin: { surface: 'approvals', action: 'drop_award' } }, id, why);
+  };
   const vendorName = async (vendorId: string): Promise<string> => (await db.select({ n: vendors.legalName }).from(vendors).where(eq(vendors.id, vendorId)))[0]?.n ?? 'the vendor';
   return {
+    rfq_award: {
+      onReleased: async (id, tx) => {
+        const [r] = await tx.select({ companyId: rfqs.companyId }).from(rfqs).where(eq(rfqs.id, id));
+        if (r === undefined) return;
+        const c = await services();
+        const done = await c.rfqEvaluation.releaseAward(tx, await released(tx, 'rfq_award', id, r.companyId, 'approve_award'), id);
+        await c.rfqEvaluation.tellReleased(done);
+      },
+      onRejected: async (id, tx, info) => await dropProposal(tx, id, info.comment),
+      onReopened: async (id, tx) => await dropProposal(tx, id, 'The approval was reopened.'),
+      onCanceled: async (id, tx) => await dropProposal(tx, id, 'The approval request was withdrawn.'),
+      describe: async (id) => {
+        const [r] = await db.select().from(rfqs).where(eq(rfqs.id, id));
+        if (r === undefined) return null;
+        return { title: `Award of request ${r.number ?? ''} ${r.title}.`, lines: [] };
+      },
+    },
     vendor_po: {
       onReleased: async (id, tx) => {
         const [po] = await tx.select({ companyId: purchaseOrders.companyId }).from(purchaseOrders).where(eq(purchaseOrders.id, id));

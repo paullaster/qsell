@@ -145,7 +145,7 @@ function View({ data }: { data: Data }) {
           ) : null}
           {data.can.toOrder ? (
             <div className="flex flex-wrap items-end gap-2">
-              <div className="min-w-64"><ChoicePicker label="Order from" source="vendors" choice={vendor} onChoice={setVendor} placeholder="Search by name or number" /></div>
+              <div className="min-w-64"><ChoicePicker label="Order from" source="vendors" createHref="/admin/vendors/new" createLabel="Add a vendor" listHref="/admin/vendors/browse" listLabel="View all vendors" choice={vendor} onChoice={setVendor} placeholder="Search by name or number" /></div>
               <button type="button" className={buttonClass} disabled={busy || vendor === null} onClick={() => void act(convertToOrderAction(r.id, vendor?.id ?? ''), 'The order is written as a draft.', (d) => `/admin/vendors/orders/${(d as { orderId: string }).orderId}`)}>An order</button>
             </div>
           ) : null}

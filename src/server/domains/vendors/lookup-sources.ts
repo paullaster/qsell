@@ -73,6 +73,29 @@ export const VENDOR_LOOKUP_SOURCES: LookupSource[] = [
     toOption: (row) => ({ id: text(row.id), label: text(row.label), description: null, badge: null, meta: { requiresComment: row.requiresComment === true ? '1' : '' } }),
   }),
   staticSource({
+    key: 'ageing-bases',
+    permission: 'vendor_payments:read',
+    items: ({ filters }) => {
+      acceptFilters(filters, {});
+      return [
+        { id: 'due', label: 'By due date', description: 'How late it is past the date it was due to be paid' },
+        { id: 'invoice', label: 'By invoice date', description: 'How old the invoice is, whatever its terms' },
+      ];
+    },
+  }),
+  staticSource({
+    key: 'ageing-groups',
+    permission: 'vendor_payments:read',
+    items: ({ filters }) => {
+      acceptFilters(filters, {});
+      return [
+        { id: 'vendor', label: 'Each vendor' },
+        { id: 'category', label: 'Each category', description: 'The category of the order the invoice was for' },
+        { id: 'posting_group', label: 'Each vendor posting group', description: 'The group that decides which accounts a vendor posts to' },
+      ];
+    },
+  }),
+  staticSource({
     key: 'vendor-block-kinds',
     permission: 'vendors:read',
     items: ({ filters }) => {

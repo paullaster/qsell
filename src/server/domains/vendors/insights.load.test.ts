@@ -77,6 +77,10 @@ describe.skipIf(!enabled)('vendor reports under load (database)', () => {
       timed[name] = Math.round(performance.now() - start);
     };
     await time('ageing', () => payables.ageing(companyId, '2026-10-25'));
+    await time('ageing by invoice date', () => payables.ageing(companyId, '2026-10-25', { basis: 'invoice' }));
+    await time('ageing by category', () => payables.ageing(companyId, '2026-10-25', { groupBy: 'category' }));
+    await time('ageing by posting group', () => payables.ageing(companyId, '2026-10-25', { groupBy: 'posting_group' }));
+    await time('advances outstanding', () => payables.advancesOutstanding(companyId, '2026-10-25'));
     await time('commitments', () => insights.commitments(companyId));
     await time('performance', () => insights.performance(companyId, range));
     await time('purchases', () => insights.purchases(companyId, range));

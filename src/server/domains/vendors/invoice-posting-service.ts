@@ -91,7 +91,7 @@ export class SupplierInvoicePostingService {
         let accountId = d.accountId;
         if (d.purpose === 'inventory_clearing') {
           try {
-            accountId = (await this.setup.resolveGeneral(ctx.companyId, fs.defaultBusinessGroup, fs.defaultProductGroup, 'inventory_clearing', date)).accountId;
+            accountId = (await this.setup.resolveGeneral(ctx.companyId, fs.defaultBusinessGroup, fs.defaultProductGroup, 'inventory_clearing', date, tx)).accountId;
           } catch (error) {
             throw new FinanceError('POSTING_SETUP_MISSING', error instanceof Error ? error.message : 'Posting setup is incomplete.');
           }

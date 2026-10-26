@@ -72,6 +72,7 @@ describe.skipIf(!has(url))('purchase requisitions (database)', () => {
     return id;
   }
 
+  const noticed: string[][] = [];
   beforeAll(async () => {
     process.env.DATABASE_URL = url;
     process.env.DATA_ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString('base64');
@@ -79,6 +80,13 @@ describe.skipIf(!has(url))('purchase requisitions (database)', () => {
     schema = await import('@/server/db/drizzle/schema');
     const { getContainer } = await import('@/server/di/container');
     c = getContainer();
+    // The service tells people through its notifier; here it is replaced by a recorder, so each test can see who was told what.
+    const stub: Record<string, unknown> = {};
+    for (const name of ['requisitionDecided']) stub[name] = (...args: unknown[]) => {
+      noticed.push([name, ...args.map(String)]);
+      return Promise.resolve();
+    };
+    (c.requisitions as unknown as { notify?: unknown }).notify = stub;
     const [company] = await db
       .insert(schema.companySettings)
       .values({ legalName: 'RQ', tradingName: 'RQ', email: 'buyer@rq.test', phone: '1', streetAddress: 's', city: 'c', countyOrState: 'x', postalCode: '1', kraPin: 'P' })
@@ -127,6 +135,7 @@ describe.skipIf(!has(url))('purchase requisitions (database)', () => {
     expect(await codeOf(db.delete(schema.purchaseRequisitionLines).where(eq(schema.purchaseRequisitionLines.requisitionId, id)))).toBe('23001');
     await c.requisitions.approve(staff('boss'), id);
     expect((await row(id)).status).toBe('approved');
+    expect(noticed.find((n) => n[0] === 'requisitionDecided' && n[1] === 'asker' && n[2] === sent.number && n[4] === 'approved')).toBeDefined();
     expect(await codeOf(db.update(schema.purchaseRequisitions).set({ decidedBy: 'asker' }).where(eq(schema.purchaseRequisitions.id, id)))).toBe('23514');
     expect(required(await c.requisitions.get(companyId, id)).lines).toHaveLength(2);
   });
@@ -142,6 +151,8 @@ describe.skipIf(!has(url))('purchase requisitions (database)', () => {
     await c.requisitions.submit(staff('asker'), a.id);
     await c.requisitions.reject(staff('boss'), a.id, 'Not this quarter', false);
     expect((await row(a.id)).status).toBe('rejected');
+    expect(noticed.filter((n) => n[0] === 'requisitionDecided' && n[4] === 'sent_back' && n[5] === 'Say how many desks too')).toHaveLength(1);
+    expect(noticed.filter((n) => n[0] === 'requisitionDecided' && n[4] === 'refused' && n[5] === 'Not this quarter')).toHaveLength(1);
     expect(await codeOf(c.requisitions.cancel(staff('asker'), a.id, 'whatever'))).toBe('WRONG_STATE');
     const b = await c.requisitions.saveDraft(staff('asker'), null, reqHeader(cat), [lineOf()]);
     expect(await codeOf(c.requisitions.cancel(staff('other'), b.id, 'mine now'))).toBe('NOT_YOURS');
@@ -161,6 +172,7 @@ describe.skipIf(!has(url))('purchase requisitions (database)', () => {
     expect(rfq).toMatchObject({ status: 'draft', categoryId: one.cat, currency: 'KES' });
     expect(await db.select().from(schema.rfqLines).where(eq(schema.rfqLines.rfqId, made.rfqId))).toHaveLength(2);
     expect(await row(one.id)).toMatchObject({ status: 'converted', convertedType: 'rfq', convertedId: made.rfqId });
+    expect(noticed.some((n) => n[0] === 'requisitionDecided' && n[4] === 'converted')).toBe(true);
     expect(await codeOf(c.requisitions.convertToRfq(staff('buyer'), one.id, { deadline: '2999-01-01T10:00' }))).toBe('WRONG_STATE');
     const two = await approved();
     const vendor = await approvedVendor();

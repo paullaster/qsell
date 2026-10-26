@@ -1,3 +1,4 @@
+import type { VendorNotifier } from './notifier';
 import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
@@ -37,6 +38,7 @@ export class VendorRefundService {
     private readonly numbering: NumberSeriesService,
     private readonly engine: PostingEngine,
     private readonly ledger: VendorLedgerService,
+    private readonly notify?: VendorNotifier,
   ) {}
 
   private async event(tx: Tx | DrizzleDb, ctx: FinanceContext, refundId: string, event: string, extra: { reason?: string | null; data?: Record<string, unknown> } = {}): Promise<void> {
@@ -116,7 +118,7 @@ export class VendorRefundService {
     const today = businessDate(now);
     const first = Object.values(checkRefundReceipt(receipt, today))[0];
     if (has(first)) throw new FinanceError('INVALID', first);
-    return await this.db.transaction(async (tx) => {
+    const done = await this.db.transaction(async (tx) => {
       const [r] = await tx.select().from(vendorRefunds).where(and(eq(vendorRefunds.companyId, ctx.companyId), eq(vendorRefunds.id, id))).for('update');
       if (r === undefined) throw new FinanceError('NOT_FOUND', 'That refund does not exist.');
       if (r.status !== 'pending') throw new FinanceError('WRONG_STATE', r.status === 'posted' ? 'This refund has already been booked.' : 'Only a refund that is waiting can be booked.');
@@ -162,8 +164,10 @@ export class VendorRefundService {
       const [bank] = await tx.insert(bankLedgerEntries).values({ companyId: ctx.companyId, bankAccountId: method.balancingBankAccountId, glAccountId: method.glAccountId, postingDate: receipt.receivedOn, documentType: 'vendor_refund', documentNo: number, documentId: id, description, amount: r.amount, currency: r.currency, registerId, createdBy: ctx.actor.id }).returning({ id: bankLedgerEntries.id });
       await tx.update(vendorRefunds).set({ status: 'posted', number, reference: receipt.reference.trim().slice(0, 120), receivedOn: receipt.receivedOn, postedBy: ctx.actor.id, postedAt: now, registerId, ledgerEntryId: entryId, bankLedgerEntryId: bank?.id ?? null, updatedAt: now }).where(eq(vendorRefunds.id, id));
       await this.event(tx, ctx, id, 'posted', { data: { number, reference: receipt.reference.trim(), registerId } });
-      return { number, registerId };
+      return { number, registerId, vendorId: r.vendorId, amount: r.amount, currency: r.currency, reference: receipt.reference.trim() };
     });
+    await this.notify?.refundRecorded(done.vendorId, done.number, done.amount, done.currency, done.reference);
+    return { number: done.number, registerId: done.registerId };
   }
 
   /** Takes a booked refund back: the credit it returned is open again and the money is out of the bank's ledger. */

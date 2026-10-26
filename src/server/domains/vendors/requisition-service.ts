@@ -1,3 +1,4 @@
+import type { VendorNotifier } from './notifier';
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { procurementCategories, purchaseRequisitionEvents, purchaseRequisitionLines, purchaseRequisitions, users, type PurchaseRequisitionRow } from '@/server/db/drizzle/schema';
@@ -25,6 +26,7 @@ export class RequisitionService {
     private readonly numbering: NumberSeriesService,
     private readonly rfqs: RfqService,
     private readonly orders: PurchaseOrderService,
+    private readonly notify?: VendorNotifier,
   ) {}
 
   private async event(tx: Tx | DrizzleDb, ctx: FinanceContext, id: string, event: string, extra: { reason?: string | null; data?: Record<string, unknown> } = {}): Promise<void> {
@@ -82,26 +84,30 @@ export class RequisitionService {
   }
 
   async approve(ctx: FinanceContext, id: string, now: Date = new Date()): Promise<void> {
-    await this.db.transaction(async (tx) => {
+    const done = await this.db.transaction(async (tx) => {
       const r = await this.lock(tx, ctx.companyId, id);
       if (r.status !== 'submitted') throw new FinanceError('WRONG_STATE', 'This requisition is not waiting for approval.');
       if (r.requesterId !== null && r.requesterId === ctx.actor.id) throw new FinanceError('FOUR_EYES', 'Another person has to approve this requisition: you wrote it.');
       await tx.update(purchaseRequisitions).set({ status: 'approved', decidedBy: ctx.actor.id, decidedAt: now, updatedAt: now }).where(eq(purchaseRequisitions.id, id));
       await this.event(tx, ctx, id, 'approved');
+      return r;
     });
+    await this.notify?.requisitionDecided(done.requesterId, done.number ?? '', done.title, 'approved', null);
   }
 
   /** Sent back to the writer as a draft with the reason, or refused for good. */
   async reject(ctx: FinanceContext, id: string, reason: string, sendBack: boolean, now: Date = new Date()): Promise<void> {
     const text = trimToNull(reason);
     if (!has(text)) throw new FinanceError('NOTE_REQUIRED', 'Say why.');
-    await this.db.transaction(async (tx) => {
+    const done = await this.db.transaction(async (tx) => {
       const r = await this.lock(tx, ctx.companyId, id);
       if (r.status !== 'submitted') throw new FinanceError('WRONG_STATE', 'This requisition is not waiting for approval.');
       if (r.requesterId !== null && r.requesterId === ctx.actor.id) throw new FinanceError('FOUR_EYES', 'Another person has to decide this requisition: you wrote it.');
       await tx.update(purchaseRequisitions).set(sendBack ? { status: 'draft', rejectReason: text.slice(0, 500), updatedAt: now } : { status: 'rejected', decidedBy: ctx.actor.id, decidedAt: now, rejectReason: text.slice(0, 500), updatedAt: now }).where(eq(purchaseRequisitions.id, id));
       await this.event(tx, ctx, id, sendBack ? 'sent_back' : 'rejected', { reason: text.slice(0, 500) });
+      return r;
     });
+    await this.notify?.requisitionDecided(done.requesterId, done.number ?? '', done.title, sendBack ? 'sent_back' : 'refused', text.slice(0, 500));
   }
 
   async cancel(ctx: FinanceContext, id: string, reason: string): Promise<void> {
@@ -143,6 +149,7 @@ export class RequisitionService {
     try {
       const made = await this.rfqs.saveDraft(ctx, null, { ...emptyRfqHeader(), title: `${r.number ?? ''} ${r.title}`.trim().slice(0, 150), categoryId: r.categoryId, description: r.purpose, requiredBy: r.neededBy ?? '', deadline: input.deadline, currency: r.currency, estimatedValue: Number(r.estimatedTotal) > 0 ? r.estimatedTotal : '' }, lines.map((l) => ({ productId: l.productId ?? '', description: l.description, specification: l.specification ?? '', quantity: l.quantity, unit: l.unit, requiredDate: r.neededBy ?? '' })));
       await this.finish(ctx, id, 'rfq', made.id);
+      await this.notify?.requisitionDecided(r.requesterId, r.number ?? '', r.title, 'converted', 'It is now a request for quotation.');
       return { rfqId: made.id };
     } catch (error) {
       await this.release(id);
@@ -161,6 +168,7 @@ export class RequisitionService {
         false,
       );
       await this.finish(ctx, id, 'purchase_order', made.id);
+      await this.notify?.requisitionDecided(r.requesterId, r.number ?? '', r.title, 'converted', 'It is now a draft purchase order.');
       return { orderId: made.id };
     } catch (error) {
       await this.release(id);

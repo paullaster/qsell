@@ -6513,6 +6513,22 @@ export const rfqAwards = pgTable(
   (t) => [index('rfq_awards_rfq_idx').on(t.rfqId), check('rfq_awards_qty_chk', sql`${t.quantity} > 0`)],
 );
 
+/** An award waiting for an approval workflow: what was chosen, kept until it is approved (then awarded) or refused (then dropped). */
+export const rfqAwardProposals = pgTable(
+  'rfq_award_proposals',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    rfqId: uuid('rfq_id')
+      .notNull()
+      .references(() => rfqs.id, { onDelete: 'cascade' }),
+    allocations: jsonb('allocations').$type<{ rfqLineId: string; vendorId: string; quantity: string }[]>().notNull(),
+    justification: text('justification'),
+    proposedBy: text('proposed_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('rfq_award_proposals_rfq_uq').on(t.rfqId)],
+);
+
 export const rfqEvents = pgTable(
   'rfq_events',
   {

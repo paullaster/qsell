@@ -95,7 +95,7 @@ function View({ data }: { data: Data }) {
       <form className={`${cardClass} space-y-4`} aria-label="Contract" onSubmit={(e) => e.preventDefault()}>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field id={`${uid}-t`} label="Title"><input id={`${uid}-t`} value={title} maxLength={150} disabled={!editing} onChange={(e) => setTitle(e.target.value)} className={fieldClass} autoComplete="off" /></Field>
-          <ChoicePicker label="Vendor" source="vendors" choice={vendor} onChoice={setVendor} disabled={!editing} required clearable={false} placeholder="Search by name or number" />
+          <ChoicePicker label="Vendor" source="vendors" createHref="/admin/vendors/new" createLabel="Add a vendor" listHref="/admin/vendors/browse" listLabel="View all vendors" choice={vendor} onChoice={setVendor} disabled={!editing} required clearable={false} placeholder="Search by name or number" />
           <ChoicePicker label="Category" source="procurement-categories" choice={category} onChoice={setCategory} disabled={!editing} required clearable={false} placeholder="Choose the category…" />
           <ChoicePicker label="Currency" source="rfq-currencies" choice={currency} onChoice={setCurrency} disabled={!editing} required clearable={false} placeholder="Choose the currency…" />
           <Field id={`${uid}-f`} label="First day"><input id={`${uid}-f`} type="date" value={validFrom} disabled={!editing} onChange={(e) => setValidFrom(e.target.value)} className={fieldClass} /></Field>

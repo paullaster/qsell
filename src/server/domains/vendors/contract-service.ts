@@ -1,3 +1,4 @@
+import type { VendorNotifier } from './notifier';
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { procurementCategories, users, vendorContractEvents, vendorContractLines, vendorContracts, vendors, type VendorContractRow } from '@/server/db/drizzle/schema';
@@ -21,6 +22,7 @@ export class ContractService {
   constructor(
     private readonly db: DrizzleDb,
     private readonly numbering: NumberSeriesService,
+    private readonly notify?: VendorNotifier,
   ) {}
 
   private async event(tx: Tx | DrizzleDb, ctx: FinanceContext, id: string, event: string, extra: { reason?: string | null; data?: Record<string, unknown> } = {}): Promise<void> {
@@ -77,15 +79,17 @@ export class ContractService {
   }
 
   async approve(ctx: FinanceContext, id: string, now: Date = new Date()): Promise<{ number: string }> {
-    return await this.db.transaction(async (tx) => {
+    const done = await this.db.transaction(async (tx) => {
       const c = await this.lock(tx, ctx.companyId, id);
       if (c.status !== 'pending_approval') throw new FinanceError('WRONG_STATE', 'This contract is not waiting for approval.');
       if (c.createdBy === ctx.actor.id) throw new FinanceError('FOUR_EYES', 'Another person has to approve this contract: you wrote it.');
       const number = (await this.numbering.assign('vendor_contract', { companyId: ctx.companyId, branchId: null, date: businessDate(now), document: { kind: 'vendor_contract', id } }, tx)).number;
       await tx.update(vendorContracts).set({ status: 'active', number, approvedBy: ctx.actor.id, approvedAt: now, updatedAt: now }).where(eq(vendorContracts.id, id));
       await this.event(tx, ctx, id, 'approved', { data: { number } });
-      return { number };
+      return { number, vendorId: c.vendorId, title: c.title, validFrom: c.validFrom, validTo: c.validTo };
     });
+    await this.notify?.contractApproved(done.vendorId, done.number, done.title, done.validFrom, done.validTo);
+    return { number: done.number };
   }
 
   async sendBack(ctx: FinanceContext, id: string, reason: string, now: Date = new Date()): Promise<void> {
@@ -104,12 +108,14 @@ export class ContractService {
   async close(ctx: FinanceContext, id: string, reason: string, now: Date = new Date()): Promise<void> {
     const text = trimToNull(reason);
     if (!has(text)) throw new FinanceError('NOTE_REQUIRED', 'Say why the contract is closed.');
-    await this.db.transaction(async (tx) => {
+    const ended = await this.db.transaction(async (tx) => {
       const c = await this.lock(tx, ctx.companyId, id);
       if (c.status !== 'active') throw new FinanceError('WRONG_STATE', 'Only a contract in force can be closed.');
       await tx.update(vendorContracts).set({ status: 'closed', closeReason: text.slice(0, 500), updatedAt: now }).where(eq(vendorContracts.id, id));
       await this.event(tx, ctx, id, 'closed', { reason: text.slice(0, 500) });
+      return { vendorId: c.vendorId, number: c.number ?? '' };
     });
+    await this.notify?.contractEnded(ended.vendorId, ended.number, text.slice(0, 500));
   }
 
   async cancel(ctx: FinanceContext, id: string, reason: string, now: Date = new Date()): Promise<void> {

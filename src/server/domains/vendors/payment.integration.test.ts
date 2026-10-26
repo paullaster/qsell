@@ -475,6 +475,25 @@ describe.skipIf(!has(url))('vendor payments (database)', () => {
   });
 
   describe('what we owe', () => {
+    it('ages by invoice date as well as by due date, and can make one line for a category or a posting group', async () => {
+      const b = await booked();
+      const later = new Date(Date.now() + 100 * 86_400_000).toISOString().slice(0, 10);
+      // The invoice was due in 30 days at the earliest, so by due date it is younger than by invoice date.
+      const byDue = (await c.payablesReports.ageing(companyId, later)).lines.find((l) => l.vendorId === b.v.vendorId);
+      const byInvoice = (await c.payablesReports.ageing(companyId, later, { basis: 'invoice' })).lines.find((l) => l.vendorId === b.v.vendorId);
+      expect(byInvoice?.owedCents).toBe(46400);
+      expect(byInvoice?.buckets.d90_plus).toBe(46400);
+      expect(byDue?.owedCents).toBe(46400);
+      const byCategory = await c.payablesReports.ageing(companyId, TODAY, { groupBy: 'category' });
+      expect(byCategory.groupBy).toBe('category');
+      expect(byCategory.lines.some((l) => l.name.includes('VP category'))).toBe(true);
+      expect(byCategory.lines.reduce((n, l) => n + l.owedCents, 0)).toBe(byCategory.owedCents);
+      const byGroup = await c.payablesReports.ageing(companyId, TODAY, { groupBy: 'posting_group' });
+      expect(byGroup.lines.length).toBeGreaterThan(0);
+      expect(byGroup.owedCents).toBe((await c.payablesReports.ageing(companyId, TODAY)).owedCents);
+      expect(byGroup.owedCents).toBe(byCategory.owedCents);
+    });
+
     it('ages open invoices by due date and lists a vendor’s statement', async () => {
       const b = await booked();
       const asOf = TODAY;

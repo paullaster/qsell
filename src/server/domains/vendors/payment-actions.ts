@@ -1,5 +1,7 @@
 'use server';
 
+import { vendorApprovals } from './approval-gate';
+import { drizzleDb } from '@/server/db/drizzle/client';
 import { canPermission } from '@/server/domains/access-control/guard';
 import { getContainer } from '@/server/di/container';
 import { run } from '@/server/domains/finance/action-runner';
@@ -58,8 +60,10 @@ export async function paymentAction(voucherId: string | null, fromInvoiceId: str
     const candidates = forVendor === null
       ? { items: [], advances: [] }
       : { items: await container.vendorPayments.openItems(ctx.companyId, forVendor, found?.voucher.id ?? null), advances: await container.vendorPayments.advancesToPay(ctx.companyId, forVendor) };
+    const inWorkflow = found !== null && (await vendorApprovals.heldSet(drizzleDb, ctx.companyId, 'vendor_payment', [found.voucher.id])).has(found.voucher.id);
     return {
       found,
+      inWorkflow,
       candidates,
       prefill,
       today: businessDate(),
@@ -154,10 +158,17 @@ export async function applyCreditAction(purchaseInvoiceId: string) {
   return await run('vendor_payments:apply_advance', { surface: 'vendor_payments/invoice', action: 'apply_credit' }, async (ctx) => await getContainer().vendorPayments.applyCredit(ctx, id(purchaseInvoiceId)), PATHS);
 }
 
-export async function ageingAction(asOf?: string) {
+export async function ageingAction(asOf?: string, basis?: string, groupBy?: string) {
   return await run('vendor_payments:read', { surface: 'vendor_payments/payables', action: 'ageing' }, async (ctx) => {
     const date = has(asOf) && /^\d{4}-\d{2}-\d{2}$/.test(asOf) ? asOf : businessDate();
-    return await getContainer().payablesReports.ageing(ctx.companyId, date);
+    return await getContainer().payablesReports.ageing(ctx.companyId, date, { basis: basis === 'invoice' ? 'invoice' : 'due', groupBy: groupBy === 'category' || groupBy === 'posting_group' ? groupBy : 'vendor' });
+  });
+}
+
+export async function advancesOutstandingAction(asOf?: string) {
+  return await run('vendor_payments:read', { surface: 'vendor_payments/payables', action: 'advances_outstanding' }, async (ctx) => {
+    const date = has(asOf) && /^\d{4}-\d{2}-\d{2}$/.test(asOf) ? asOf : businessDate();
+    return await getContainer().payablesReports.advancesOutstanding(ctx.companyId, date);
   });
 }
 

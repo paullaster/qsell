@@ -105,6 +105,7 @@ describe.skipIf(!has(url))('purchase returns (database)', () => {
     return { id, ...(await c.rgns.post(staff('storeman'), id)) };
   };
 
+  const noticed: string[][] = [];
   beforeAll(async () => {
     process.env.DATABASE_URL = url;
     process.env.DATA_ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString('base64');
@@ -112,6 +113,13 @@ describe.skipIf(!has(url))('purchase returns (database)', () => {
     schema = await import('@/server/db/drizzle/schema');
     const { getContainer } = await import('@/server/di/container');
     c = getContainer();
+    // The service tells people through its notifier; here it is replaced by a recorder, so each test can see who was told what.
+    const stub: Record<string, unknown> = {};
+    for (const name of ['returnPosted']) stub[name] = (...args: unknown[]) => {
+      noticed.push([name, ...args.map(String)]);
+      return Promise.resolve();
+    };
+    (c.purchaseReturns as unknown as { notify?: unknown }).notify = stub;
     const [company] = await db
       .insert(schema.companySettings)
       .values({ legalName: 'PR', tradingName: 'PR', email: 'buyer@pr.test', phone: '1', streetAddress: 's', city: 'c', countyOrState: 'x', postalCode: '1', kraPin: 'P' })
@@ -146,6 +154,8 @@ describe.skipIf(!has(url))('purchase returns (database)', () => {
     expect(await codeOf(c.purchaseReturns.post(staff('storeman'), out.id))).toBe('FOUR_EYES');
     const posted = await c.purchaseReturns.post(staff('boss'), out.id);
     expect(posted.number).toMatch(/^PRT-\d{4}-\d{5}$/);
+    expect(noticed.filter((n) => n[0] === 'returnPosted' && n[2] === posted.number)).toHaveLength(1);
+    expect(noticed.find((n) => n[2] === posted.number)?.[3]).toBe(r.order.number);
     expect(await stockOf(r.prod)).toMatchObject({ stockQuantity: 6 });
     const move = (await db.select().from(schema.inventoryMovements).where(eq(schema.inventoryMovements.productId, r.prod))).find((m) => m.changeType === 'purchase_return');
     expect(move).toMatchObject({ referenceId: posted.number, changeAmount: -4 });

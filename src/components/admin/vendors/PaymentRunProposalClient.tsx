@@ -60,7 +60,7 @@ export function PaymentRunProposalClient({ today }: { today: string }) {
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <ChoicePicker label="How it will be paid" source="vendor-payment-methods" choice={method} onChoice={(c) => { setMethod(c); setProposal(null); }} placeholder="Choose a way of paying" />
           <Field id={`${uid}-due`} label="Pay invoices due on or before"><input id={`${uid}-due`} type="date" value={dueOn} onChange={(e) => { setDueOn(e.target.value); setProposal(null); }} className={fieldClass} /></Field>
-          <ChoicePicker label="Only this vendor (optional)" source="vendors" choice={vendor} onChoice={(c) => { setVendor(c); setProposal(null); }} placeholder="All vendors" />
+          <ChoicePicker label="Only this vendor (optional)" source="vendors" createHref="/admin/vendors/new" createLabel="Add a vendor" listHref="/admin/vendors/browse" listLabel="View all vendors" choice={vendor} onChoice={(c) => { setVendor(c); setProposal(null); }} placeholder="All vendors" />
           <div className="grid grid-cols-2 gap-3">
             <Field id={`${uid}-min`} label="Smallest total"><input id={`${uid}-min`} inputMode="decimal" value={min} onChange={(e) => setMin(e.target.value)} className={fieldClass} autoComplete="off" /></Field>
             <Field id={`${uid}-max`} label="Largest total"><input id={`${uid}-max`} inputMode="decimal" value={max} onChange={(e) => setMax(e.target.value)} className={fieldClass} autoComplete="off" /></Field>

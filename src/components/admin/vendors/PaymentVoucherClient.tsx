@@ -126,7 +126,7 @@ function Editor({ view }: { view: View }) {
           ))}
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <ChoicePicker label="Vendor" source="vendors" choice={vendor} onChoice={(c) => { setVendor(c); setAmounts({}); setAdvanceId(''); setCand({ items: [], advances: [] }); void loadCandidates(c); }} placeholder="Search by name or number" disabled={found !== null} />
+          <ChoicePicker label="Vendor" source="vendors" createHref="/admin/vendors/new" createLabel="Add a vendor" listHref="/admin/vendors/browse" listLabel="View all vendors" choice={vendor} onChoice={(c) => { setVendor(c); setAmounts({}); setAdvanceId(''); setCand({ items: [], advances: [] }); void loadCandidates(c); }} placeholder="Search by name or number" disabled={found !== null} />
           <ChoicePicker label="How it will be paid" source="vendor-payment-methods" choice={method} onChoice={setMethod} placeholder="Choose a way of paying" />
         </div>
         <Field id={`${uid}-n`} label="Note (optional)"><input id={`${uid}-n`} value={narration} maxLength={500} onChange={(e) => setNarration(e.target.value)} className={fieldClass} autoComplete="off" /></Field>
@@ -249,7 +249,8 @@ function Reader({ view, found }: { view: View; found: NonNullable<View['found']>
         )}
       </div>
 
-      {v.status === 'pending_approval' && view.can.approve ? (
+      {v.status === 'pending_approval' && view.inWorkflow ? <div className={cardClass}><p role="status" className="text-sm text-fg-muted">Waiting in the Approvals inbox: an approval workflow covers this, so it is approved there.</p></div> : null}
+      {v.status === 'pending_approval' && view.can.approve && !view.inWorkflow ? (
         <div className={`${cardClass} space-y-2`} aria-label="Approve">
           {iPrepared ? <p className="text-xs text-amber-700">You prepared this payment, so another person has to approve it.</p> : <button type="button" className={primaryClass} disabled={busy} onClick={() => void act(approveVoucherAction(v.id), 'Approved. It can be paid now.')}>Approve</button>}
           <button type="button" className={`${buttonClass} ml-2`} onClick={() => setPanel('back')}>Send back…</button>

@@ -108,6 +108,7 @@ export class AdvancePaymentService {
     if (!has(text)) throw new FinanceError('NOTE_REQUIRED', 'Say why it is cancelled.');
     await this.db.transaction(async (tx) => {
       const a = await this.lock(tx, ctx.companyId, id);
+      await vendorApprovals.refuseIfHeld(tx, ctx.companyId, 'vendor_advance', id);
       if (a.status === 'paid') throw new FinanceError('ALREADY_PAID', 'It was paid. Ask the vendor to refund it, or apply it to an invoice.');
       if (!(['draft', 'pending_approval', 'approved'] as string[]).includes(a.status)) throw new FinanceError('NOT_ALLOWED', 'This advance payment cannot be cancelled.');
       await tx.update(vendorAdvancePayments).set({ status: 'cancelled', decisionNote: text.slice(0, 500), updatedAt: new Date() }).where(eq(vendorAdvancePayments.id, id));
