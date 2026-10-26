@@ -18,7 +18,10 @@ test.describe('a shopper’s account', () => {
     // The account page links only to screens that exist.
     await expect(page.getByRole('link', { name: /Payment Methods/ })).toHaveCount(0);
     await expect(page.getByRole('link', { name: /Wishlist/ })).toHaveCount(0);
-    await expect(page.getByRole('link', { name: 'Back to shop' })).toBeVisible();
+    // The account is drawn inside the shop's own frame: the same header (with search) and footer as every other page.
+    await expect(page.getByRole('link', { name: 'Home' })).toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'Search products, brands, or SKU' })).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Account and policies' })).toBeVisible();
     await noHorizontalScroll(page);
 
     // Orders: a page at a time, newest first, with a way back.
@@ -64,7 +67,7 @@ test.describe('a shopper’s account', () => {
 
     // Somebody else's order is simply not found.
     await page.goto(`/profile/orders/${shopper.otherId}`);
-    await expect(page.getByRole('heading', { name: /not found/i }).first()).toBeVisible({
+    await expect(page.getByRole('heading', { name: /not found|could not find that page/i }).first()).toBeVisible({
       timeout: 60_000,
     });
     await expect(page.getByText(shopper.otherNumber)).toHaveCount(0);
@@ -119,7 +122,8 @@ test.describe('a shopper’s account', () => {
   }) => {
     for (const path of ['/profile/orders', '/profile/addresses']) {
       await page.goto(path);
-      await expect(page.getByRole('link', { name: 'Sign in' })).toBeVisible({ timeout: 60_000 });
+      // The page's own prompt (the header and footer have a sign-in link too).
+      await expect(page.getByRole('main').getByRole('link', { name: 'Sign in' })).toBeVisible({ timeout: 60_000 });
       await expect(page.getByRole('link', { name: /Back to My account/ })).toBeVisible();
       await noHorizontalScroll(page);
     }

@@ -262,6 +262,18 @@ export const PERMISSIONS = {
     category: 'Products & Inventory',
     description: 'Edit products',
   },
+  'newsletter:manage': {
+    resource: 'newsletter',
+    action: 'manage',
+    category: 'Customers',
+    description: 'See and export the shop’s newsletter subscribers',
+  },
+  'reviews:moderate': {
+    resource: 'reviews',
+    action: 'moderate',
+    category: 'Products & Inventory',
+    description: 'Approve or turn down shoppers’ product reviews',
+  },
   'products:delete': {
     resource: 'products',
     action: 'delete',

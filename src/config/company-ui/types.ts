@@ -58,6 +58,36 @@ export const SUPPORT_LIMITS = {
   answer: 2000,
 } as const;
 
+/** A page of the shop's policies (privacy, delivery, returns...), written by the company in plain text. */
+export interface PolicyPage {
+  id: string;
+  /** The page's address: /policies/<slug>. */
+  slug: string;
+  title: string;
+  /** Plain text: blank lines separate paragraphs, "# " starts a heading, "- " starts a list item. */
+  body: string;
+}
+
+export const POLICY_LIMITS = { pages: 12, title: 80, slug: 60, body: 20000 } as const;
+
+/** A notice shown across the top of the shop's front page for a stretch of days (a sale, a holiday closing...). */
+export interface PromoBanner {
+  id: string;
+  title: string;
+  text: string;
+  /** Where the button goes: a page of the shop ("/?category=…") or an http(s) address. Empty for no button. */
+  href: string;
+  /** The button's words. */
+  cta: string;
+  /** First day shown, `YYYY-MM-DD`; empty for from now. */
+  startsOn: string;
+  /** Last day shown, `YYYY-MM-DD`; empty for until removed. */
+  endsOn: string;
+  active: boolean;
+}
+
+export const BANNER_LIMITS = { banners: 5, title: 80, text: 240, cta: 30, href: 500 } as const;
+
 /**
  * Raw / partial UI config as stored in DB (JSONB).
  * All fields optional — missing or invalid values resolve to defaults.
@@ -74,6 +104,10 @@ export type CompanyUiConfigRaw = {
   moduleLabels?: Record<string, string>;
   /** Storefront help & support content; see {@link CompanySupportConfig}. */
   support?: Partial<CompanySupportConfig>;
+  /** Policy pages shown under /policies and linked from the footer. */
+  policies?: Partial<PolicyPage>[];
+  /** Front-page notices; see {@link PromoBanner}. */
+  banners?: Partial<PromoBanner>[];
 };
 
 /** Fully resolved UI config — safe to consume anywhere without null checks. */
@@ -83,6 +117,8 @@ export type CompanyUiConfig = {
   };
   moduleLabels: Record<string, string>;
   support: CompanySupportConfig;
+  policies: PolicyPage[];
+  banners: PromoBanner[];
 };
 
 export const PRODUCT_GRID_DESKTOP_COLUMNS = [

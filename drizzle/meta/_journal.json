@@ -708,6 +708,27 @@
       "when": 1792994672737,
       "tag": "0100_rfq_award_proposals",
       "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1793011502495,
+      "tag": "0101_storefront_search_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "7",
+      "when": 1793020954760,
+      "tag": "0102_product_full_text",
+      "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "7",
+      "when": 1793021050079,
+      "tag": "0103_reviews_wishlist_newsletter",
+      "breakpoints": true
     }
   ]
 }

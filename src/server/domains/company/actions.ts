@@ -8,7 +8,7 @@ import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
 import { runSetting } from '@/server/domains/settings/action-runner';
 import { SettingsError } from '@/server/domains/settings/errors';
 import { getAdminNav } from '@/config/admin-nav';
-import { flattenModuleLabelOptions, resolveCompanyUiConfig, resolveSupportConfig, type CompanySupportConfig, type CompanyUiConfig } from '@/config/company-ui';
+import { flattenModuleLabelOptions, resolveCompanyUiConfig, resolveBanners, resolvePolicies, resolveSupportConfig, type CompanySupportConfig, type CompanyUiConfig, type PolicyPage, type PromoBanner } from '@/config/company-ui';
 import {
   appearancePayload,
   moduleLabelsPayload,
@@ -124,8 +124,47 @@ export async function saveCompanySupportAction(support: Partial<CompanySupportCo
   );
 }
 
-/**
- * Stores a new logo. What the file is comes from its own bytes, not from its name or the type the
+export async function companyPoliciesAction() {
+  return runSetting('company:manage', async (): Promise<PolicyPage[]> => {
+    const row = await getContainer().companySettings.ensureSeeded();
+    return resolveCompanyUiConfig(row.uiConfig).policies;
+  });
+}
+
+/** Replaces the shop's policy pages; pages without a title or text are dropped and addresses are made unique. */
+export async function saveCompanyPoliciesAction(policies: Partial<PolicyPage>[]) {
+  return runSetting(
+    'company:manage',
+    async (): Promise<PolicyPage[]> => {
+      const clean = resolvePolicies(policies);
+      const updated = await getContainer().companySettings.setUiConfigSection('policies', clean);
+      return resolveCompanyUiConfig(updated.uiConfig).policies;
+    },
+    { paths: [...PAGES, '/admin/company/policies', '/sitemap.xml'] },
+  );
+}
+
+export async function companyBannersAction() {
+  return runSetting('company:manage', async (): Promise<PromoBanner[]> => {
+    const row = await getContainer().companySettings.ensureSeeded();
+    return resolveCompanyUiConfig(row.uiConfig).banners;
+  });
+}
+
+/** Replaces the front-page banners; ones without a title are dropped, and a link that is not a shop page or an http(s) address is removed. */
+export async function saveCompanyBannersAction(banners: Partial<PromoBanner>[]) {
+  return runSetting(
+    'company:manage',
+    async (): Promise<PromoBanner[]> => {
+      const clean = resolveBanners(banners);
+      const updated = await getContainer().companySettings.setUiConfigSection('banners', clean);
+      return resolveCompanyUiConfig(updated.uiConfig).banners;
+    },
+    { paths: [...PAGES, '/admin/company/banners'] },
+  );
+}
+
+/** Stores a new logo. What the file is comes from its own bytes, not from its name or the type the
  * browser reported; a picture that could run anything is refused.
  */
 export async function uploadCompanyLogoAction(formData: FormData) {

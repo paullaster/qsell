@@ -2009,6 +2009,21 @@ export const products = pgTable(
     index('products_item_type_idx').on(t.itemTypeId),
     index('products_active_idx').on(t.isActive),
     index('products_base_unit_idx').on(t.baseUnitId),
+    // The shop reads only live, sellable products, in one of four orders, a page at a time.
+    index('products_shop_name_idx')
+      .on(t.name, t.id)
+      .where(sql`${t.isActive} and ${t.isSellable} and ${t.deletedAt} is null`),
+    index('products_shop_price_idx')
+      .on(sql`coalesce(${t.price}, 0)`, t.id)
+      .where(sql`${t.isActive} and ${t.isSellable} and ${t.deletedAt} is null`),
+    index('products_shop_newest_idx')
+      .on(t.createdAt, t.id)
+      .where(sql`${t.isActive} and ${t.isSellable} and ${t.deletedAt} is null`),
+    // Substring search (`ilike '%word%'`) in the shop's search box.
+    index('products_name_trgm_idx').using('gin', t.name.op('gin_trgm_ops')),
+    index('products_sku_trgm_idx').using('gin', t.sku.op('gin_trgm_ops')),
+    index('products_brand_trgm_idx').using('gin', t.brand.op('gin_trgm_ops')),
+    index('products_category_name_trgm_idx').using('gin', t.categoryName.op('gin_trgm_ops')),
   ],
 );
 
@@ -8238,3 +8253,86 @@ export const payablesRevaluations = pgTable(
 );
 
 export type PayablesRevaluationRow = typeof payablesRevaluations.$inferSelect;
+
+/**
+ * A shopper's review of a product. Shown only once a person at the company has approved it (`status = 'approved'`).
+ * One review per person per product (a change goes back to `pending`). The product's `rating` and `review_count` are
+ * kept in step with the approved reviews in the same transaction that approves, rejects, changes or deletes one.
+ */
+export const productReviews = pgTable(
+  'product_reviews',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'cascade' }),
+    /** The signed-in account that wrote it (taken from the session, never from the browser). */
+    reviewerKey: text('reviewer_key').notNull(),
+    /** How the reviewer is shown: a first name and an initial, never an email address. */
+    reviewerName: text('reviewer_name').notNull(),
+    rating: smallint('rating').notNull(),
+    title: text('title').notNull().default(''),
+    body: text('body').notNull(),
+    status: text('status').$type<'pending' | 'approved' | 'rejected'>().notNull().default('pending'),
+    /** Written by someone whose delivered or completed order contains this product. */
+    verifiedPurchase: boolean('verified_purchase').notNull().default(false),
+    orderId: text('order_id'),
+    /** Why it was turned down, shown to the reviewer. */
+    moderationNote: text('moderation_note').notNull().default(''),
+    moderatedBy: text('moderated_by'),
+    moderatedAt: timestamp('moderated_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('product_reviews_one_per_person_uidx').on(t.productId, t.reviewerKey),
+    // The public list: approved reviews of one product, newest first.
+    index('product_reviews_public_idx')
+      .on(t.productId, t.createdAt, t.id)
+      .where(sql`${t.status} = 'approved'`),
+    // The moderation queue, oldest waiting first.
+    index('product_reviews_queue_idx').on(t.status, t.createdAt, t.id),
+    index('product_reviews_reviewer_idx').on(t.reviewerKey),
+    check('product_reviews_rating_chk', sql`${t.rating} BETWEEN 1 AND 5`),
+    check('product_reviews_status_chk', sql`${t.status} IN ('pending', 'approved', 'rejected')`),
+    check('product_reviews_body_chk', sql`char_length(btrim(${t.body})) BETWEEN 10 AND 2000`),
+    check('product_reviews_title_chk', sql`char_length(${t.title}) <= 100`),
+  ],
+);
+
+/** Products a signed-in shopper has saved for later. Guests keep theirs in the browser. */
+export const wishlistItems = pgTable(
+  'wishlist_items',
+  {
+    userId: text('user_id').notNull(),
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.productId] }), index('wishlist_items_user_idx').on(t.userId, t.createdAt)],
+);
+
+/**
+ * People who asked for the shop's news. Double opt-in: a row is `pending` until its link is followed, so nobody can be
+ * signed up by someone else. Every message carries the `token` for a one-click unsubscribe.
+ */
+export const newsletterSubscribers = pgTable(
+  'newsletter_subscribers',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    email: text('email').notNull(),
+    status: text('status').$type<'pending' | 'subscribed' | 'unsubscribed'>().notNull().default('pending'),
+    token: text('token').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+    unsubscribedAt: timestamp('unsubscribed_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('newsletter_subscribers_email_uidx').on(t.email),
+    uniqueIndex('newsletter_subscribers_token_uidx').on(t.token),
+    index('newsletter_subscribers_status_idx').on(t.status, t.createdAt),
+    check('newsletter_subscribers_status_chk', sql`${t.status} IN ('pending', 'subscribed', 'unsubscribed')`),
+    check('newsletter_subscribers_email_chk', sql`${t.email} = lower(btrim(${t.email})) AND char_length(${t.email}) BETWEEN 3 AND 254`),
+  ],
+);

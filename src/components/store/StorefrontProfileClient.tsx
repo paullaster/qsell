@@ -18,7 +18,6 @@ import {
   Menu,
   X,
   Star,
-  ArrowLeft,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { logoutAction } from '@/server/domains/auth/actions';
@@ -84,8 +83,8 @@ export function StorefrontProfileClient({ sessionPromise }: StorefrontProfileCli
   };
 
   return (
-    <div className="storefront-shell min-h-screen bg-canvas text-fg">
-      <div className="mx-auto max-w-4xl space-y-6 px-4 py-8">
+    <div className="text-fg">
+      <div className="mx-auto max-w-4xl space-y-6 py-4 sm:py-8">
         {/* Header */}
         <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -95,13 +94,6 @@ export function StorefrontProfileClient({ sessionPromise }: StorefrontProfileCli
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <Link
-              href="/"
-              className="flex min-h-10 items-center gap-2 rounded-lg border border-line bg-surface-raised px-4 py-2 text-sm font-medium text-fg transition-colors hover:bg-hover hover:text-fg-strong"
-            >
-              <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-              <span>Back to shop</span>
-            </Link>
             <form action={logoutAction}>
               <input type="hidden" name="returnTo" value="/" />
               <button

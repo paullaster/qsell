@@ -64,7 +64,7 @@ export async function createProductAction(productData: ProductWrite) {
 }
 
 export async function updateProductAction(id: string, updates: ProductPatch) {
-  return runSetting('products:update', async () => CatalogService.updateProduct(id, updates), { paths: [...PRODUCT_PATHS, `/product/${id}`], friendly: productFriendly });
+  return runSetting('products:update', async () => CatalogService.updateProduct(id, updates), { paths: PRODUCT_PATHS, friendly: productFriendly });
 }
 
 export async function deleteProductAction(id: string): Promise<boolean> {
