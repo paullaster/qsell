@@ -115,6 +115,78 @@ async function main(): Promise<void> {
     process.stdout.write(`FIXTURE ${JSON.stringify({ floatId: made.id, name: `Front office ${arg}` })}\n`);
     return;
   }
+  if (action === 'statement-line' && arg !== undefined) {
+    // arg = <tag>:<amount>: a payment of that amount on the statement of the account E2E Cash pays out of.
+    const [tag, amount] = arg.split(':');
+    const [method] = await db.select().from(schema.paymentMethods).where(and(eq(schema.paymentMethods.companyId, company.id), eq(schema.paymentMethods.code, 'E2ECASH')));
+    if (method === undefined || tag === undefined || amount === undefined) throw new Error('the e2e books are not set up');
+    const [imp] = await db.insert(schema.bankStatementImports).values({ companyId: company.id, bankAccountId: method.balancingBankAccountId, fileName: `e2e-${tag}.csv`, fileHash: `e2e-${tag}-${Date.now()}`, format: 'csv', lineCount: 1, totalIn: '0', totalOut: amount, importedBy: 'e2e' }).returning();
+    const today = new Date().toISOString().slice(0, 10);
+    const description = `TRANSFER ${tag}`;
+    const [line] = await db.insert(schema.bankStatementLines).values({ companyId: company.id, importId: imp?.id ?? '', bankAccountId: method.balancingBankAccountId, lineNo: 1, lineDate: today, description, reference: `E2E-BANK-${tag}`, amount: `-${amount}`, lineHash: `e2e-${tag}-${Date.now()}` }).returning();
+    process.stdout.write(`FIXTURE ${JSON.stringify({ lineId: line?.id ?? 0, bankAccountId: method.balancingBankAccountId, description })}\n`);
+    return;
+  }
+  if (action === 'statement-voucher' && arg !== undefined) {
+    // arg = <lineId>: approves the voucher written from that line, as another person, and gives its id.
+    const [v] = await db.select().from(schema.vendorPaymentVouchers).where(eq(schema.vendorPaymentVouchers.statementLineId, Number(arg)));
+    if (v === undefined) throw new Error('no voucher was written from that line');
+    await container.vendorPayments.approve({ companyId: company.id, actor: { type: 'user', id: 'e2e-boss' }, origin: { surface: 'e2e', action: 'fixture' } }, v.id);
+    process.stdout.write(`FIXTURE ${JSON.stringify({ id: v.id })}\n`);
+    return;
+  }
+  if (action === 'requisition-approve' && arg !== undefined) {
+    await container.requisitions.approve({ companyId: company.id, actor: { type: 'user', id: 'e2e-boss' }, origin: { surface: 'e2e', action: 'fixture' } }, arg);
+    process.stdout.write(`FIXTURE ${JSON.stringify({ id: arg })}\n`);
+    return;
+  }
+  if (action === 'contract-approve' && arg !== undefined) {
+    await container.contracts.approve({ companyId: company.id, actor: { type: 'user', id: 'e2e-boss' }, origin: { surface: 'e2e', action: 'fixture' } }, arg);
+    process.stdout.write(`FIXTURE ${JSON.stringify({ id: arg })}\n`);
+    return;
+  }
+  if (action === 'landed-post' && arg !== undefined) {
+    await container.landedCosts.post({ companyId: company.id, actor: { type: 'user', id: 'e2e-boss' }, origin: { surface: 'e2e', action: 'fixture' } }, arg);
+    process.stdout.write(`FIXTURE ${JSON.stringify({ id: arg })}\n`);
+    return;
+  }
+  if (action === 'scorecard-review' && arg !== undefined) {
+    const ctx = { companyId: company.id, actor: { type: 'user' as const, id: 'e2e-buyer' }, origin: { surface: 'e2e', action: 'fixture' } };
+    const service = (await container.scorecards.criteria(company.id, false)).find((c) => c.code === 'service');
+    if (service === undefined) throw new Error('the scorecard has no service criterion');
+    await container.scorecards.addReview(ctx, arg, { [service.id]: 3 }, 'Fixture review');
+    process.stdout.write(`FIXTURE ${JSON.stringify({ id: arg })}\n`);
+    return;
+  }
+  if (action === 'return-note' && arg !== undefined) {
+    // arg = <poId>: the posted received goods note of that order.
+    const [note] = await db.select().from(schema.rgns).where(and(eq(schema.rgns.poId, arg), eq(schema.rgns.status, 'posted')));
+    if (note === undefined) throw new Error('that order has no posted goods note');
+    process.stdout.write(`FIXTURE ${JSON.stringify({ rgnId: note.id })}\n`);
+    return;
+  }
+  if (action === 'return-post' && arg !== undefined) {
+    await container.purchaseReturns.post({ companyId: company.id, actor: { type: 'user', id: 'e2e-boss' }, origin: { surface: 'e2e', action: 'fixture' } }, arg);
+    process.stdout.write(`FIXTURE ${JSON.stringify({ id: arg })}\n`);
+    return;
+  }
+  if (action === 'refund-credit' && arg !== undefined) {
+    // arg = <vendorId>: a payment of 300 on account, prepared, approved and paid by other people.
+    const staff = (id: string) => ({ companyId: company.id, actor: { type: 'user' as const, id }, origin: { surface: 'e2e', action: 'fixture' } });
+    const [method] = await db.select().from(schema.paymentMethods).where(and(eq(schema.paymentMethods.companyId, company.id), eq(schema.paymentMethods.code, 'E2ECASH')));
+    if (method === undefined) throw new Error('the e2e books are not set up');
+    const { id } = await container.vendorPayments.saveDraft(staff('e2e-clerk'), null, { kind: 'on_account', vendorId: arg, methodId: method.id, advanceId: '', narration: 'Deposit', amount: '300' }, []);
+    await container.vendorPayments.submit(staff('e2e-clerk'), id);
+    await container.vendorPayments.approve(staff('e2e-boss'), id);
+    await container.vendorPayments.pay(staff('e2e-till'), id, { reference: `E2E-OA-${id.slice(0, 6)}`, paidOn: new Date().toISOString().slice(0, 10) });
+    process.stdout.write(`FIXTURE ${JSON.stringify({ id })}\n`);
+    return;
+  }
+  if (action === 'refund-post' && arg !== undefined) {
+    await container.vendorRefunds.post({ companyId: company.id, actor: { type: 'user', id: 'e2e-boss' }, origin: { surface: 'e2e', action: 'fixture' } }, arg, { reference: `E2E-RF-${arg.slice(0, 6)}`, receivedOn: new Date().toISOString().slice(0, 10) });
+    process.stdout.write(`FIXTURE ${JSON.stringify({ id: arg })}\n`);
+    return;
+  }
   if (action === 'petty-receipt' && arg !== undefined) {
     await container.pettyCash.attach({ companyId: company.id, actor: { type: 'user', id: 'e2e-clerk' }, origin: { surface: 'e2e', action: 'fixture' } }, arg, { mediaAssetId: `media_e2e_${arg}`, fileName: 'receipt.jpg' });
     process.stdout.write(`FIXTURE ${JSON.stringify({ id: arg })}\n`);

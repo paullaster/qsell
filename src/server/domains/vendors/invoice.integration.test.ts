@@ -497,4 +497,34 @@ describe.skipIf(!has(url))('supplier invoices (database)', () => {
       expect(await codeOf(c.invoicePosting.post(staff('finance'), id))).toBe('ADVANCE_INVOICE');
     });
   });
+
+  describe('eTIMS details', () => {
+    it('are asked for when the company’s rule is on and the invoice has tax, kept with the invoice, and listed when missing', async () => {
+      await c.purchaseOrders.saveSettings(staff('admin'), { rfqRequiredAbove: '', amendmentTolerancePercent: '0', requireEtimsForTax: true });
+      const s = await setup();
+      const { id } = await c.invoicePortal.start(s.v, companyId, { poId: s.order.id, vendorInvoiceNo: `ET-${run}-${String(++seq)}` });
+      const loaded = await c.invoicePortal.load(s.v, id);
+      const scan = await file(s.v);
+      const dnFile = await file(s.v);
+      const save = async (etimsInvoiceNo: string, etimsVerificationUrl = '') => await c.invoicePortal.save(s.v, id, { header: { ...emptyInvoiceHeader(TODAY), vendorInvoiceNo: loaded.vendorInvoiceNo, declaration: true, etimsInvoiceNo, etimsVerificationUrl }, lines: lineForms([[s.line, required(loaded.lines[0]).quantity, '100']]), deliveryNotes: [noteForm(s.note, dnFile)], invoiceFileId: scan });
+      await save('');
+      const refused = await c.invoicePortal.submit(s.v, companyId, id).catch((e: unknown) => e as { problems?: Record<string, string> });
+      expect('problems' in refused ? refused.problems?.etimsInvoiceNo : undefined).toMatch(/eTIMS invoice number/);
+      expect(await codeOf(save('#', ''))).toBe('INVALID');
+      expect(await codeOf(save('KRA-INV-0001', 'http://insecure.example'))).toBe('INVALID');
+      await save('KRA-INV-0001', 'https://itax.kra.go.ke/KRA-Portal/invoiceChk.htm?no=1');
+      const sent = await c.invoicePortal.submit(s.v, companyId, id);
+      expect(sent.number).toMatch(/^SINV-/);
+      const seen = required(await c.supplierInvoices.get(companyId, id));
+      expect(seen.invoice).toMatchObject({ etimsInvoiceNo: 'KRA-INV-0001', etimsVerificationUrl: 'https://itax.kra.go.ke/KRA-Portal/invoiceChk.htm?no=1' });
+      // With the rule off, an invoice with tax and no number goes through, and the watch list names it once booked.
+      await c.purchaseOrders.saveSettings(staff('admin'), { rfqRequiredAbove: '', amendmentTolerancePercent: '0', requireEtimsForTax: false });
+      const t = await setup();
+      const plain = await approved(t);
+      await c.invoicePosting.post(staff('finance'), plain.id);
+      const watch = await c.vendorInsights.watchList(companyId, { from: '2000-01-01', to: '2999-12-31' });
+      expect(watch.taxWithoutEtims.length).toBeGreaterThan(0);
+      expect(watch.taxWithoutEtims.every((x) => x.taxCents > 0)).toBe(true);
+    });
+  });
 });

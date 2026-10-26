@@ -23,6 +23,7 @@ import type { PostingSetupService } from '@/server/domains/finance/posting-setup
 import type { VendorLedgerService } from '@/server/domains/finance/payables/vendor-ledger-service';
 import { fromCents, toCents } from '@/server/domains/finance/domain/receivables';
 import { FinanceError, type FinanceContext } from '@/server/domains/finance/errors';
+import type { FxService } from '@/server/domains/finance/fx-service';
 import { writeEvent } from './invoice-support';
 import type { VendorNotifier } from './notifier';
 
@@ -41,6 +42,7 @@ export class SupplierInvoicePostingService {
     private readonly engine: PostingEngine,
     private readonly setup: PostingSetupService,
     private readonly ledger: VendorLedgerService,
+    private readonly fx: FxService,
     private readonly notify?: VendorNotifier,
   ) {}
 
@@ -59,7 +61,6 @@ export class SupplierInvoicePostingService {
       if (group?.payablesAccountId == null) throw new FinanceError('POSTING_GROUP', 'The vendor’s posting group has no payables account.');
       const [fs] = await tx.select().from(financeSettings).where(eq(financeSettings.companyId, ctx.companyId));
       if (fs === undefined) throw new FinanceError('FINANCE_NOT_SET_UP', 'Finance has not been set up yet.');
-      if (inv.currency !== fs.baseCurrency) throw new FinanceError('FOREIGN_CURRENCY', `This invoice is in ${inv.currency}. Booking in another currency needs an exchange rate, which comes with the payment vouchers.`);
 
       const lines = await tx.select().from(supplierInvoiceLines).where(eq(supplierInvoiceLines.invoiceId, id)).orderBy(asc(supplierInvoiceLines.position));
       const links = await tx.select().from(supplierInvoiceLineRgn).where(inArray(supplierInvoiceLineRgn.invoiceLineId, lines.map((l) => l.id)));
@@ -76,6 +77,9 @@ export class SupplierInvoicePostingService {
       if (built.payableCents !== toCents(inv.total)) throw new FinanceError('TOTAL_MISMATCH', 'The lines do not add up to the invoice total. Return the invoice to the vendor.');
 
       const date = businessDate(now);
+      // An invoice in another currency is booked at the rate of the day it is booked.
+      const foreign = inv.currency !== fs.baseCurrency;
+      const rate = foreign ? await this.fx.requireRate(tx, ctx.companyId, inv.currency, date) : '1';
       const [settings] = await tx.select().from(vendorSettings).where(eq(vendorSettings.companyId, ctx.companyId));
       if (taxCents > 0 && (settings?.inputTaxAccountId ?? null) === null) throw new FinanceError('TAX_ACCOUNT_MISSING', 'This invoice has tax and no input tax account is set. Choose one in the ordering rules.');
       if (built.debits.some((d) => d.purpose === 'inventory_clearing') && fs.inventoryGlGoLive === null) {
@@ -103,7 +107,7 @@ export class SupplierInvoicePostingService {
         const claimed = await tx
           .update(rgnLines)
           .set({ invoicedQuantity: sql`${rgnLines.invoicedQuantity} + ${k.quantity}::numeric` })
-          .where(and(eq(rgnLines.id, k.rgnLineId), sql`${rgnLines.invoicedQuantity} + ${k.quantity}::numeric <= ${rgnLines.accepted}`))
+          .where(and(eq(rgnLines.id, k.rgnLineId), sql`${rgnLines.invoicedQuantity} + ${k.quantity}::numeric <= ${rgnLines.accepted} - ${rgnLines.returnedQuantity}`))
           .returning({ id: rgnLines.id });
         if (claimed.length === 0) throw new FinanceError('ALREADY_INVOICED', 'Some of these goods were invoiced by another invoice in the meantime. Link them again.');
       }
@@ -132,9 +136,9 @@ export class SupplierInvoicePostingService {
           documentType: 'purchase_invoice',
           documentNo: number,
           description: `${vendor.legalName}: invoice ${inv.vendorInvoiceNo}`,
-          currency: fs.baseCurrency,
-          rate: '1',
-          rateSource: 'base',
+          currency: inv.currency,
+          rate,
+          rateSource: foreign ? 'rate_table' : 'base',
           lines: journal.map((j) => ({ ...j, sourceEntryId: j.sourceEntryId })),
           chainKey: 'general',
           origin: ctx.origin,
@@ -155,6 +159,7 @@ export class SupplierInvoicePostingService {
         description: `Invoice ${inv.vendorInvoiceNo}`,
         amountCents: built.payableCents,
         currency: inv.currency,
+        rate,
         postingDate: date,
         documentDate: inv.invoiceDate,
         dueDate: inv.dueDate,

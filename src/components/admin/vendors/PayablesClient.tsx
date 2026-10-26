@@ -1,22 +1,26 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { use, useId, useState } from 'react';
-import { ageingAction, runPayablesCheckAction, type payablesCheckAction } from '@/server/domains/vendors/payment-actions';
+import { ageingAction, lastPayablesRevaluationAction, revalueForeignPayablesAction, runPayablesCheckAction, type payablesCheckAction } from '@/server/domains/vendors/payment-actions';
 import { AGE_BUCKETS, fromCents } from '@/lib/vendor-payment';
 import { Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, type Notice } from '@/components/ui/screen-kit';
 
 type Report = Extract<Awaited<ReturnType<typeof ageingAction>>, { ok: true }>['data'];
 
-export function PayablesClient({ initialPromise, checkPromise }: { initialPromise: ReturnType<typeof ageingAction>; checkPromise: ReturnType<typeof payablesCheckAction> }) {
+export function PayablesClient({ initialPromise, checkPromise, revaluationPromise }: { initialPromise: ReturnType<typeof ageingAction>; checkPromise: ReturnType<typeof payablesCheckAction>; revaluationPromise: ReturnType<typeof lastPayablesRevaluationAction> }) {
   const res = use(initialPromise);
   const check = use(checkPromise);
-  return res.ok ? <View initial={res.data} lastCheck={check.ok ? check.data : null} /> : <LoadFailed error={res.error} />;
+  const reval = use(revaluationPromise);
+  return res.ok ? <View initial={res.data} lastCheck={check.ok ? check.data : null} revaluation={reval.ok ? reval.data : null} /> : <LoadFailed error={res.error} />;
 }
 
 type Check = NonNullable<Extract<Awaited<ReturnType<typeof payablesCheckAction>>, { ok: true }>['data']>;
 
-function View({ initial, lastCheck }: { initial: Report; lastCheck: Check | null }) {
+type Revaluation = Extract<Awaited<ReturnType<typeof lastPayablesRevaluationAction>>, { ok: true }>['data'];
+
+function View({ initial, lastCheck, revaluation }: { initial: Report; lastCheck: Check | null; revaluation: Revaluation | null }) {
   const uid = useId();
   const [report, setReport] = useState(initial);
   const [asOf, setAsOf] = useState(initial.asOf);
@@ -38,6 +42,7 @@ function View({ initial, lastCheck }: { initial: Report; lastCheck: Check | null
       <PageHeader title="What we owe" intro="Booked invoices that are still unpaid, by how late they are. Payments and advances not yet set against an invoice are shown apart." actions={<Link href="/admin/vendors/payments" className={buttonClass}>Payments</Link>} />
       <Message notice={notice} />
       <BooksCheck first={lastCheck} />
+      {revaluation === null ? null : <ForeignBalances first={revaluation} />}
       <div className={`${cardClass} max-w-xs`}>
         <Field id={`${uid}-d`} label="As of"><input id={`${uid}-d`} type="date" value={asOf} onChange={(e) => { setAsOf(e.target.value); if (e.target.value !== '') void reload(e.target.value); }} className={fieldClass} /></Field>
       </div>
@@ -114,6 +119,36 @@ function BooksCheck({ first }: { first: Check | null }) {
           {check.drift.length === 0 ? null : <ul className="text-xs text-red-700" aria-label="Entries out of step">{check.drift.map((d) => <li key={d.id}>{d.documentNo}: open {d.remaining}, its entries add up to {d.detailed}</li>)}</ul>}
         </>
       )}
+    </section>
+  );
+}
+
+function ForeignBalances({ first }: { first: Revaluation }) {
+  const router = useRouter();
+  const [last, setLast] = useState(first.last);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<Notice>(null);
+  const run = async () => {
+    setBusy(true);
+    setNotice(null);
+    const res = await attempt(revalueForeignPayablesAction());
+    setBusy(false);
+    if (!res.ok) {
+      setNotice({ kind: 'error', text: res.error });
+      return;
+    }
+    setNotice({ kind: 'ok', text: `Revalued: ${res.data.netCents >= 0 ? 'loss' : 'gain'} of ${(Math.abs(res.data.netCents) / 100).toFixed(2)}. It is undone tomorrow, so the real difference is booked when each invoice is paid.` });
+    const again = await attempt(lastPayablesRevaluationAction());
+    if (again.ok) setLast(again.data.last);
+    router.refresh();
+  };
+  return (
+    <section className={`${cardClass} space-y-2`} aria-label="What is owed in other currencies">
+      <h2 className="text-sm font-bold text-fg-strong">What is owed in other currencies</h2>
+      <p className="text-xs text-fg-muted">Invoices in a foreign currency are carried at the rate of the day they were booked. Revaluing values them at today’s rate for the books; the next day it is undone.</p>
+      <Message notice={notice} />
+      {last === null ? <p className="text-sm text-fg-muted">Not revalued yet.</p> : <p className="text-sm text-fg">Last revalued on {last.asOf}: {last.netCents >= 0 ? 'loss' : 'gain'} of {(Math.abs(last.netCents) / 100).toFixed(2)}{last.reversed ? ' (undone)' : ' (standing)'}.</p>}
+      {first.can ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void run()}>Revalue at today’s rate</button> : null}
     </section>
   );
 }

@@ -34,7 +34,7 @@ function Detail({ view }: { view: View }) {
   };
   return (
     <div className="max-w-3xl space-y-5">
-      <PageHeader title={`Order ${view.number ?? ''}`} intro={<span className="flex flex-wrap items-center gap-2"><Chip tone={s.tone}>{s.label}</Chip>{view.version > 1 ? <span>Version {view.version}</span> : null}</span>} actions={<Link href="/vendor/orders" className={buttonClass}>All orders</Link>} />
+      <PageHeader title={`Order ${view.number ?? ''}`} intro={<span className="flex flex-wrap items-center gap-2"><Chip tone={s.tone}>{s.label}</Chip>{view.version > 1 ? <span>Version {view.version}</span> : null}</span>} actions={<><Link href="/vendor/orders" className={buttonClass}>All orders</Link><a href={`/api/vendor/order-xml/${view.id}`} className={buttonClass}>Download as UBL XML</a></>} />
       <Message notice={notice} />
       {view.cancelReason === null ? null : <p role="status" className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-fg">This order was cancelled: {view.cancelReason}</p>}
       {view.status === 'sent' ? (

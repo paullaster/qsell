@@ -5,6 +5,7 @@ import { has, trimToNull } from '@/lib/values';
 import { acceptedOf, checkRgnHeader, checkRgnLine, mostAcceptable, receiptStatus, sameUnit, type RgnHeaderForm, type RgnLineForm } from '@/lib/rgn';
 import type { NumberSeriesService } from '@/server/kernel/numbering/service';
 import { businessDate } from '@/server/kernel/numbering/business-date';
+import type { FxService } from '@/server/domains/finance/fx-service';
 import { isUniqueViolation } from '@/server/domains/settings/errors';
 import { FinanceError, type FinanceContext } from '@/server/domains/finance/errors';
 import type { applyStockDelta as applyStockDeltaFn } from '@/server/domains/inventory/service';
@@ -25,6 +26,7 @@ export class RgnService {
   constructor(
     private readonly db: DrizzleDb,
     private readonly numbering: NumberSeriesService,
+    private readonly fx: FxService,
   ) {}
 
   private async lock(tx: Tx, companyId: string, id: string): Promise<RgnRow> {
@@ -132,8 +134,9 @@ export class RgnService {
           const [p] = await tx.select({ unitId: products.baseUnitId, name: products.name }).from(products).where(eq(products.id, pl.productId));
           const [u] = p === undefined ? [] : await tx.select({ code: unitsOfMeasure.code, name: unitsOfMeasure.name, symbol: unitsOfMeasure.symbol }).from(unitsOfMeasure).where(eq(unitsOfMeasure.id, p.unitId));
           if (u !== undefined && !sameUnit(pl.unit, u)) throw new FinanceError('UNIT_MISMATCH', `“${pl.description}” is ordered in ${pl.unit}, but ${p?.name ?? 'the product'} is counted in ${u.name}. Amend the order line to the same unit first.`);
-          if (po.currency !== base) throw new FinanceError('FOREIGN_COST', `This order is in ${po.currency}, not ${base}. Receiving stock from a foreign-currency order needs an exchange rate, which is not set up yet.`);
-          const net = Number(pl.unitPrice) * (1 - Number(pl.discountPercent) / 100);
+          // Stock from an order in another currency costs what it is worth in the books' currency on the day it arrived.
+          const rate = po.currency === base ? '1' : await this.fx.requireRate(tx, ctx.companyId, po.currency, r.receivedDate);
+          const net = Number(pl.unitPrice) * (1 - Number(pl.discountPercent) / 100) * Number(rate);
           unitCost = net.toFixed(4);
           await applyStockDelta(tx, { productId: pl.productId, delta: Number(l.accepted), costPrice: Number(unitCost), changeType: 'purchase_order_receipt', referenceId: number, actor: ctx.actor.id ?? 'system', note: `Received on ${number} against ${po.number ?? 'an order'}; vendor delivery note ${r.deliveryNoteNo}` });
         }
@@ -179,6 +182,7 @@ export class RgnService {
       if (r.status !== 'posted') throw new FinanceError('NOT_POSTED', 'Only a posted note can be reversed.');
       const [po] = await tx.select().from(purchaseOrders).where(eq(purchaseOrders.id, r.poId)).for('update');
       const lines = await tx.select().from(rgnLines).where(eq(rgnLines.rgnId, id));
+      if (lines.some((l) => Number(l.returnedQuantity) > 0)) throw new FinanceError('ALREADY_RETURNED', 'Part of this note was sent back to the vendor, so it can no longer be reversed.');
       if (lines.some((l) => Number(l.invoicedQuantity) > 0)) throw new FinanceError('ALREADY_INVOICED', 'Part of this note was invoiced. Reverse it by a purchase return and a credit memo instead.');
       const poLines = await tx.select().from(purchaseOrderLines).where(eq(purchaseOrderLines.poId, r.poId)).for('update');
       for (const l of lines) {
@@ -252,12 +256,12 @@ export class RgnService {
   async notInvoiced(companyId: string, today: string = businessDate()) {
     const rows = await this.db.execute<{ rgn: string; po: string | null; vendor: string; description: string; unit: string; open_qty: string; unit_cost: string | null; value: string; received_date: string; age_days: number }>(sql`
       SELECT r.number AS rgn, p.number AS po, v.legal_name AS vendor, pl.description, pl.unit,
-        (l.accepted - l.invoiced_quantity)::text AS open_qty, l.unit_cost::text AS unit_cost,
-        ROUND((l.accepted - l.invoiced_quantity) * COALESCE(l.unit_cost, pl.unit_price * (1 - pl.discount_percent / 100)), 2)::text AS value,
+        (l.accepted - l.returned_quantity - l.invoiced_quantity)::text AS open_qty, l.unit_cost::text AS unit_cost,
+        ROUND((l.accepted - l.returned_quantity - l.invoiced_quantity) * COALESCE(l.unit_cost, pl.unit_price * (1 - pl.discount_percent / 100)), 2)::text AS value,
         r.received_date::text AS received_date, (${today}::date - r.received_date)::int AS age_days
       FROM rgn_lines l JOIN rgns r ON r.id = l.rgn_id JOIN purchase_orders p ON p.id = r.po_id JOIN vendors v ON v.id = r.vendor_id
       JOIN purchase_order_lines pl ON pl.id = l.po_line_id
-      WHERE r.company_id = ${companyId}::uuid AND r.status = 'posted' AND l.accepted > l.invoiced_quantity
+      WHERE r.company_id = ${companyId}::uuid AND r.status = 'posted' AND l.accepted - l.returned_quantity > l.invoiced_quantity
       ORDER BY r.received_date, r.number LIMIT 500`);
     const list = [...rows].map((x) => ({ rgn: x.rgn, po: x.po, vendor: x.vendor, description: x.description, unit: x.unit, openQuantity: x.open_qty, unitCost: x.unit_cost, value: x.value, receivedDate: x.received_date, ageDays: x.age_days }));
     return { rows: list, totalValue: list.reduce((s, x) => s + Math.round(Number(x.value) * 100), 0) / 100 };

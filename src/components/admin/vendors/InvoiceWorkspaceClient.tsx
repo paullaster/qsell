@@ -53,6 +53,7 @@ function Workspace({ view }: { view: View }) {
   const uid = useId();
   const router = useRouter();
   const inv = view.invoice;
+  const etimsMissing = Number(inv.taxTotal) > 0 ? 'None given' : '—';
   const state = INVOICE_STATE[inv.state];
   const [notice, setNotice] = useState<Notice>(null);
   const [busy, setBusy] = useState(false);
@@ -112,6 +113,7 @@ function Workspace({ view }: { view: View }) {
           <div><dt className="text-xs text-fg-muted">Due</dt><dd className="font-medium text-fg-strong">{inv.dueDate ?? '—'}</dd></div>
           <div><dt className="text-xs text-fg-muted">Net</dt><dd className="font-medium text-fg-strong">{inv.subtotal} {inv.currency}</dd></div>
           <div><dt className="text-xs text-fg-muted">Total with tax</dt><dd className="font-medium text-fg-strong">{inv.total} {inv.currency}</dd></div>
+          <div><dt className="text-xs text-fg-muted">eTIMS invoice number</dt><dd className="font-medium text-fg-strong">{inv.etimsInvoiceNo ?? etimsMissing}{inv.etimsVerificationUrl === null ? null : <> · <a className="underline" href={inv.etimsVerificationUrl} target="_blank" rel="noreferrer noopener">Verify</a></>}</dd></div>
         </dl>
         <p className="text-sm text-fg">
           {view.invoiceFile === null ? 'No invoice file.' : <>Their invoice: <a className="font-semibold underline" href={`/api/admin/vendors/invoice-files/${view.invoiceFile.id}`} target="_blank" rel="noreferrer">{view.invoiceFile.name}</a></>}

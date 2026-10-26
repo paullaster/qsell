@@ -12,6 +12,7 @@ import {
   saveVoucherAction,
   sendBackVoucherAction,
   submitVoucherAction,
+  payVoucherThroughMpesaAction,
   type paymentAction,
 } from '@/server/domains/vendors/payment-actions';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
@@ -237,6 +238,7 @@ function Reader({ view, found }: { view: View; found: NonNullable<View['found']>
         {v.destination === null ? null : <p className="text-sm text-fg">Goes to: {v.destination}</p>}
         {v.narration === null ? null : <p className="text-sm text-fg">{v.narration}</p>}
         {v.status === 'paid' ? <p className="text-sm text-fg">Paid on {v.paidOn}, reference <span className="font-semibold">{v.paymentReference}</span>.</p> : null}
+        {v.status === 'paid' && Number(v.rate) !== 1 ? <p className="text-sm text-fg">Valued at {Number(v.rate).toString()} to the shilling on the day it was paid. {Number(v.fxDifference) === 0 ? 'No exchange difference.' : `Exchange ${Number(v.fxDifference) > 0 ? 'gain' : 'loss'}: ${Math.abs(Number(v.fxDifference)).toFixed(2)} in the books’ currency, against the rates the invoices were booked at.`}</p> : null}
         {v.status === 'reversed' ? <p className="text-sm text-fg">Reversed: {v.reverseReason}</p> : null}
         {v.status === 'cancelled' ? <p className="text-sm text-fg">Cancelled: {v.cancelReason}</p> : null}
         {found.advance === null ? null : <p className="text-sm text-fg">Advance for order {found.advance.orderNumber}: {found.advance.reason}</p>}
@@ -258,6 +260,14 @@ function Reader({ view, found }: { view: View; found: NonNullable<View['found']>
             </div>
           ) : null}
         </div>
+      ) : null}
+
+      {v.status === 'approved' && view.can.release && view.found?.methodKind === 'mobile_money' ? (
+        <section className={`${cardClass} space-y-2`} aria-label="Pay through M-Pesa">
+          <h2 className="text-sm font-bold text-fg-strong">Pay through M-Pesa</h2>
+          <p className="text-xs text-fg-muted">Sends {v.cashAmount} to {v.destination ?? 'the vendor’s M-Pesa destination'} now. The voucher is recorded as paid when Safaricom confirms it, with its receipt. Whole shillings only.</p>
+          <button type="button" className={primaryClass} disabled={busy} onClick={() => void act(payVoucherThroughMpesaAction(v.id), 'Sent to M-Pesa. It is recorded as paid when Safaricom confirms; see Payment activity.')}>Pay {v.cashAmount} through M-Pesa</button>
+        </section>
       ) : null}
 
       {v.status === 'approved' && view.can.release ? (

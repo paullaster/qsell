@@ -41,6 +41,8 @@ export async function startWorker(): Promise<void> {
       '*/5 * * * * rfq-deadlines',
       // The vendor ledger against the books, every night.
       '17 3 * * * payables-check',
+      // What is owed in other currencies, revalued the day before, is undone.
+      '5 0 * * * payables-fx-reverse',
     ].join('\n'),
   });
 

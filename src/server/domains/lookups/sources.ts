@@ -218,7 +218,17 @@ const orderFulfilmentStatuses = staticSource({
   },
 });
 
-const SOURCES: ReadonlyMap<string, LookupSource> = new Map(
+/** Every source by its key; two sources with one key would silently replace each other, so that stops the server at start-up instead. */
+function registry(list: LookupSource[]): ReadonlyMap<string, LookupSource> {
+  const map = new Map<string, LookupSource>();
+  for (const source of list) {
+    if (map.has(source.key)) throw new Error(`Two lookup sources share the key "${source.key}".`);
+    map.set(source.key, source);
+  }
+  return map;
+}
+
+const SOURCES: ReadonlyMap<string, LookupSource> = registry(
   [
     quoteTemplates,
     sectionTemplates,
@@ -245,7 +255,7 @@ const SOURCES: ReadonlyMap<string, LookupSource> = new Map(
     ...CUSTOMER_LOOKUP_SOURCES,
     ...COMPANY_LOOKUP_SOURCES,
     ...PROJECT_LOOKUP_SOURCES,
-  ].map((source) => [source.key, source]),
+  ],
 );
 
 export const getLookupSource = (key: string): LookupSource | undefined => SOURCES.get(key);

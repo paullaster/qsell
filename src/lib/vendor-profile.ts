@@ -93,12 +93,36 @@ export interface ReferenceInput {
   year: string;
 }
 
+export type DestinationKind = 'bank' | 'mpesa_phone' | 'mpesa_paybill' | 'mpesa_till';
+
+const MPESA_WORDS: Record<DestinationKind, string> = { bank: 'Bank', mpesa_phone: 'Phone', mpesa_paybill: 'Paybill', mpesa_till: 'Till' };
+
+export const DESTINATION_KINDS: { id: DestinationKind; label: string }[] = [
+  { id: 'bank', label: 'A bank account' },
+  { id: 'mpesa_phone', label: 'An M-Pesa phone number' },
+  { id: 'mpesa_paybill', label: 'An M-Pesa paybill' },
+  { id: 'mpesa_till', label: 'An M-Pesa till' },
+];
+
 export interface BankInput {
   bankName: string;
   branch: string;
   accountName: string;
   accountNumber: string;
   swift: string;
+  /** What the money goes to; empty means a bank account. */
+  kind?: DestinationKind;
+  /** For a paybill or till: the account number or reference a payment quotes. */
+  reference?: string;
+}
+
+/** The kind a form says, a bank account when it says nothing. */
+export const kindOf = (b: Pick<BankInput, 'kind'>): DestinationKind => b.kind ?? 'bank';
+
+/** Words for a destination: where the money goes, without its number. */
+export function describeDestination(kind: DestinationKind, bankName: string, branch: string, last4: string): string {
+  if (kind === 'bank') return `${bankName}, ${branch} account ending ${last4}`;
+  return `M-Pesa ${MPESA_WORDS[kind].toLowerCase()} ending ${last4}`;
 }
 
 export type Problems = Record<string, string>;
@@ -199,9 +223,19 @@ export function checkBanks(list: readonly BankInput[]): Problems {
   const p: Problems = {};
   if (list.length > 5) p.banks = 'That is more bank accounts than we can keep (5 at most).';
   list.forEach((b, i) => {
+    const kind = kindOf(b);
+    if (!DESTINATION_KINDS.some((k) => k.id === kind)) p[`banks.${String(i)}.kind`] = 'Choose where the money goes.';
+    if (b.accountName.trim().length < 2) p[`banks.${String(i)}.accountName`] = kind === 'bank' ? 'Enter the name the account is held in.' : 'Enter the name registered with M-Pesa.';
+    if (kind !== 'bank') {
+      const number = b.accountNumber.replace(/[\s-]+/g, '');
+      if (kind === 'mpesa_phone' && !/^(\+?254|0)?[17]\d{8}$/.test(number)) p[`banks.${String(i)}.accountNumber`] = 'Enter the M-Pesa phone number, like 0712 345 678.';
+      if (kind !== 'mpesa_phone' && !/^\d{5,7}$/.test(number)) p[`banks.${String(i)}.accountNumber`] = `Enter the ${kind === 'mpesa_paybill' ? 'paybill' : 'till'} number (5 to 7 digits).`;
+      if (kind === 'mpesa_paybill' && !/^[A-Za-z0-9 ._-]{1,13}$/.test((b.reference ?? '').trim())) p[`banks.${String(i)}.reference`] = 'Enter the account number payments to the paybill quote (up to 13 characters).';
+      if (kind === 'mpesa_till' && has(b.reference) && !/^[A-Za-z0-9 ._-]{1,13}$/.test((b.reference ?? '').trim())) p[`banks.${String(i)}.reference`] = 'The reference is up to 13 letters or digits.';
+      return;
+    }
     if (b.bankName.trim().length < 2) p[`banks.${String(i)}.bankName`] = 'Enter the bank’s name.';
     if (b.branch.trim().length < 2) p[`banks.${String(i)}.branch`] = 'Enter the branch.';
-    if (b.accountName.trim().length < 2) p[`banks.${String(i)}.accountName`] = 'Enter the name the account is held in.';
     if (!/^[A-Za-z0-9 -]{5,34}$/.test(b.accountNumber.trim())) p[`banks.${String(i)}.accountNumber`] = 'Enter the account number (5 to 34 letters and digits).';
     if (has(b.swift) && !/^[A-Za-z0-9]{8}([A-Za-z0-9]{3})?$/.test(b.swift.trim())) p[`banks.${String(i)}.swift`] = 'A SWIFT code has 8 or 11 characters.';
   });
@@ -316,3 +350,21 @@ export function mayEditProfileNow(status: string, decidedAt: Date | null, now: D
   if (status === 'rejected') return `Your application was not accepted. You can apply again ${String(REAPPLY_AFTER_DAYS)} days after the decision.`;
   return 'Your account cannot be changed right now.';
 }
+
+/** The word an M-Pesa destination goes by in the branch column. */
+export const mpesaWord = (kind: DestinationKind): string => MPESA_WORDS[kind];
+
+/** What to call the number of each kind of destination on a form. */
+export const NUMBER_LABELS: Record<DestinationKind, string> = { bank: 'Account number', mpesa_phone: 'M-Pesa phone number', mpesa_paybill: 'Paybill number', mpesa_till: 'Till number' };
+
+/** The number as it is kept: letters upper case, no spaces or dashes; an M-Pesa phone as 2547… or 2541… with the country code. */
+export function numberOf(b: Pick<BankInput, 'accountNumber' | 'kind'>): string {
+  const plain = b.accountNumber.replace(/[\s-]+/g, '').toUpperCase();
+  if (kindOf(b) !== 'mpesa_phone') return plain;
+  const digits = plain.replace(/^\+/, '');
+  if (digits.startsWith('254')) return digits;
+  return `254${digits.replace(/^0/, '')}`;
+}
+
+/** The label for a destination's number, whatever kind a form currently holds (a bank account when it holds none we know). */
+export const numberLabel = (kind: string): string => NUMBER_LABELS[DESTINATION_KINDS.find((k) => k.id === kind)?.id ?? 'bank'];

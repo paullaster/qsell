@@ -68,7 +68,7 @@ describe.skipIf(!enabled)('vendor reports under load (database)', () => {
     for (const table of ['rgns', 'rgn_lines', 'supplier_invoices', 'supplier_invoice_lines', 'supplier_invoice_matches', 'purchase_invoices']) await db.execute(sql.raw(`ANALYZE ${table}`));
 
     const insights = new VendorInsightsService(db);
-    const payables = new PayablesReportService(db, getContainer().finance.vendorLedger);
+    const payables = new PayablesReportService(db, getContainer().finance.vendorLedger, getContainer().payablesFx);
     const range = { from: '2000-01-01', to: '2999-12-31' };
     const timed: Record<string, number> = {};
     const time = async (name: string, fn: () => Promise<unknown>) => {

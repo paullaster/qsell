@@ -33,11 +33,16 @@ export async function startInvoiceAction(poId: string, vendorInvoiceNo: string) 
   return await portal('invoice_start', async (me) => await getContainer().invoicePortal.start(me, me.companyId, { poId: idOf(poId), vendorInvoiceNo: str(vendorInvoiceNo, 60) }));
 }
 
+/** Starts an invoice from a UBL 2.1 invoice file (its text): the draft a person would have made, with the file's quantities and prices. */
+export async function startInvoiceFromUblAction(xml: string) {
+  return await portal('invoice_start_ubl', async (me) => await getContainer().edi.startInvoice(me, me.companyId, str(xml, 1_000_001)), 'vendor_submit');
+}
+
 export async function saveInvoiceAction(invoiceId: string, input: unknown) {
   return await portal('invoice_save', async (me) => {
     const x = obj(input);
     const h = obj(x.header);
-    const header: InvoiceHeaderForm = { vendorInvoiceNo: str(h.vendorInvoiceNo, 60), invoiceDate: str(h.invoiceDate, 12), dueDate: str(h.dueDate, 12), notes: str(h.notes, 1100), declaration: h.declaration === true };
+    const header: InvoiceHeaderForm = { vendorInvoiceNo: str(h.vendorInvoiceNo, 60), invoiceDate: str(h.invoiceDate, 12), dueDate: str(h.dueDate, 12), notes: str(h.notes, 1100), declaration: h.declaration === true, etimsInvoiceNo: str(h.etimsInvoiceNo, 60), etimsVerificationUrl: str(h.etimsVerificationUrl, 320) };
     const lines: InvoiceLineForm[] = list(x.lines, 200).map((l) => ({ poLineId: str(obj(l).poLineId, 40), quantity: str(obj(l).quantity, 20), unitPrice: str(obj(l).unitPrice, 20) }));
     const deliveryNotes: DeliveryNoteForm[] = list(x.deliveryNotes, 30).map((n) => ({ noteNo: str(obj(n).noteNo, 60), noteDate: str(obj(n).noteDate, 12), fileId: str(obj(n).fileId, 40) }));
     return await getContainer().invoicePortal.save(me, idOf(invoiceId), { header, lines, deliveryNotes, invoiceFileId: str(x.invoiceFileId, 40) });

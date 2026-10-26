@@ -70,6 +70,7 @@ export async function statementWorkbenchAction(bankAccountId: string, filter: { 
         ignore: await canPermission('bank_statements:ignore'),
         createReceipt: (await canPermission('bank_statements:create_receipt')) && (await canPermission('receipts:create')),
         recordCharge: await canPermission('bank_statements:record_charge'),
+        payVendor: (await canPermission('bank_statements:match')) && (await canPermission('vendor_payments:create')),
         recordIncome: await canPermission('bank_statements:record_income'),
         pull: await canPermission('bank_statements:pull'),
         reconcile: await canPermission('bank_reconciliation:post'),
@@ -107,6 +108,14 @@ export async function receiptFromStatementLineAction(bankAccountId: string, line
     if (!(await canPermission('receipts:create'))) throw new FinanceError('CANNOT_CREATE_RECEIPT', 'Creating a receipt also needs the permission to create receipts.');
     return await fin().bankStatements.createReceiptFromLine(ctx, lineId, { ...input, permissions: await postingPermissions() });
   }, [`${ROOT}/${bankAccountId}`, '/admin/finance/receipts']);
+}
+
+/** A payment to a vendor the bank already made: it becomes a voucher sent for approval, and the line is matched when the payment is recorded. */
+export async function vendorPaymentFromStatementLineAction(bankAccountId: string, lineId: number, input: { vendorId: string; methodId: string; mode: 'oldest_first' | 'on_account' }) {
+  return await run('bank_statements:match', { surface: 'finance/bank-statements/account', action: 'create_vendor_payment' }, async (ctx) => {
+    if (!(await canPermission('vendor_payments:create'))) throw new FinanceError('CANNOT_CREATE_PAYMENT', 'Creating a vendor payment also needs the permission to create vendor payments.');
+    return await getContainer().vendorPayments.createFromStatementLine(ctx, lineId, { vendorId: input.vendorId, methodId: input.methodId, mode: input.mode === 'on_account' ? 'on_account' : 'oldest_first' });
+  }, [`${ROOT}/${bankAccountId}`, '/admin/vendors/payments']);
 }
 
 export async function chargeFromStatementLineAction(bankAccountId: string, lineId: number, glAccountId?: string, parts?: { glAccountId: string; amount: string; description?: string }[]) {

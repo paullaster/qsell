@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
-  glAccounts, procurementCategories, products, purchaseOrderAmendments, purchaseOrderEvents, purchaseOrderLines, purchaseOrderVersions, purchaseOrders, rfqAwards, rfqLines, rfqQuoteLines, rfqQuotes, rfqs, vendorAdvancePayments, vendorSettings, vendors,
+  glAccounts, vendorContractLines, vendorContracts, procurementCategories, products, purchaseOrderAmendments, purchaseOrderEvents, purchaseOrderLines, purchaseOrderVersions, purchaseOrders, rfqAwards, rfqLines, rfqQuoteLines, rfqQuotes, rfqs, vendorAdvancePayments, vendorSettings, vendors,
   type PurchaseOrderRow, type PurchaseOrderStatus,
 } from '@/server/db/drizzle/schema';
 import { has, trimToNull } from '@/lib/values';
@@ -9,6 +9,9 @@ import { amendmentNeedsApproval, checkPoHeader, checkPoLine, describeChanges, li
 import type { NumberSeriesService } from '@/server/kernel/numbering/service';
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import { FinanceError, type FinanceContext } from '@/server/domains/finance/errors';
+import { callOffProblems, type CallOffLine } from '@/lib/vendor-contract';
+import { toCents } from '@/lib/vendor-payment';
+import { contractUsage } from './contract-support';
 import type { VendorNotifier } from './notifier';
 import type { PrequalLifecycle } from './prequal-lifecycle';
 
@@ -77,6 +80,7 @@ export class PurchaseOrderService {
       watchNewVendorDays: String(s?.watchNewVendorDays ?? 30),
       watchNewVendorAmount: s?.watchNewVendorAmount ?? '100000',
       holdFlaggedPayments: s?.holdFlaggedPayments ?? true,
+      requireEtimsForTax: s?.requireEtimsForTax ?? false,
     };
   }
 
@@ -88,7 +92,7 @@ export class PurchaseOrderService {
 
   async saveSettings(
     ctx: FinanceContext,
-    input: { rfqRequiredAbove: string; amendmentTolerancePercent: string; receiptTolerancePercent?: string; inputTaxAccountId?: string; invoicePriceTolerancePercent?: string; invoicePriceToleranceAmount?: string; invoiceQuantityTolerancePercent?: string; paymentThreeEyesAbove?: string; watchDuplicateWindowDays?: string; watchNewVendorDays?: string; watchNewVendorAmount?: string; holdFlaggedPayments?: boolean },
+    input: { rfqRequiredAbove: string; amendmentTolerancePercent: string; receiptTolerancePercent?: string; inputTaxAccountId?: string; invoicePriceTolerancePercent?: string; invoicePriceToleranceAmount?: string; invoiceQuantityTolerancePercent?: string; paymentThreeEyesAbove?: string; watchDuplicateWindowDays?: string; watchNewVendorDays?: string; watchNewVendorAmount?: string; holdFlaggedPayments?: boolean; requireEtimsForTax?: boolean },
   ): Promise<void> {
     const above = trimToNull(input.rfqRequiredAbove);
     if (above !== null && !/^\d{1,12}(\.\d{1,2})?$/.test(above)) throw new FinanceError('INVALID', 'The value above which a request for quotation is required is an amount, like 500000, or empty for never.');
@@ -135,6 +139,7 @@ export class PurchaseOrderService {
       ...(input.watchNewVendorDays === undefined ? {} : { watchNewVendorDays: newDays }),
       ...(input.watchNewVendorAmount === undefined ? {} : { watchNewVendorAmount: newAmount }),
       ...(input.holdFlaggedPayments === undefined ? {} : { holdFlaggedPayments: input.holdFlaggedPayments }),
+      ...(input.requireEtimsForTax === undefined ? {} : { requireEtimsForTax: input.requireEtimsForTax }),
     };
     await this.db.insert(vendorSettings).values({ companyId: ctx.companyId, ...values }).onConflictDoUpdate({ target: vendorSettings.companyId, set: { ...values, updatedAt: new Date() } });
   }
@@ -187,6 +192,7 @@ export class PurchaseOrderService {
       if (id !== null) {
         existing = await this.lock(tx, ctx.companyId, id);
         if (existing.status !== 'draft') throw new FinanceError('NOT_DRAFT', 'Only a draft can be edited. Change a released order by an amendment.');
+        if (existing.contractId !== null) throw new FinanceError('FROM_CONTRACT', 'This order was called off a contract at the contract’s prices. To change it, cancel it and call off another, or amend it once released.');
       }
       if (header.requiresAdvancePayment !== (existing?.requiresAdvancePayment ?? false) && !mayFlagAdvance) throw new FinanceError('NOT_ALLOWED', 'Only someone allowed to flag advance payments can change that setting.');
       const fromRfq = existing?.rfqId != null;
@@ -222,6 +228,49 @@ export class PurchaseOrderService {
       }
       await tx.insert(purchaseOrderLines).values(this.lineRows(poId, lines));
       return { id: poId };
+    });
+  }
+
+  /**
+   * An order called off a contract: priced from the contract, never from the browser, and refused when it would take more than the
+   * contract allows (per line, or overall), or when the contract is not in force on the order date. The contract row is locked, so
+   * two call-offs cannot both take the last of it.
+   */
+  async createFromContract(ctx: FinanceContext, contractId: string, asked: CallOffLine[], input: { expectedDate: string; notes: string }, today: string = businessDate()): Promise<{ id: string }> {
+    return await this.db.transaction(async (tx) => {
+      const [c] = await tx.select().from(vendorContracts).where(and(eq(vendorContracts.companyId, ctx.companyId), eq(vendorContracts.id, contractId))).for('update');
+      if (c === undefined) throw new FinanceError('NOT_FOUND', 'That contract does not exist.');
+      const cLines = await tx.select().from(vendorContractLines).where(eq(vendorContractLines.contractId, contractId)).orderBy(asc(vendorContractLines.position));
+      const used = await contractUsage(tx, contractId);
+      const problems = callOffProblems({
+        status: c.status,
+        validFrom: c.validFrom,
+        validTo: c.validTo,
+        orderDate: today,
+        maxValueCents: c.maxValue === null ? null : toCents(c.maxValue),
+        usedValueCents: used.valueCents,
+        lines: cLines.map((l) => ({ id: l.id, description: l.description, unitPrice: l.unitPrice, discountPercent: l.discountPercent, taxRate: l.taxRate, maxQuantity: l.maxQuantity, usedQuantity: used.perLine.get(l.id) ?? 0 })),
+        asked,
+      });
+      if (problems[0] !== undefined) throw new FinanceError('OVER_CONTRACT', problems[0]);
+      if (input.expectedDate !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(input.expectedDate)) throw new FinanceError('INVALID', 'Use a date like 2026-12-31.');
+      await this.vendorOf(tx, ctx.companyId, c.vendorId);
+      const lines: (PoLineForm & { contractLineId: string })[] = asked.map((a) => {
+        const l = cLines.find((x) => x.id === a.contractLineId);
+        if (l === undefined) throw new FinanceError('NOT_FOUND', 'One of the lines is not on the contract.');
+        return { contractLineId: l.id, productId: l.productId ?? '', description: l.description, specification: l.specification ?? '', quantity: a.quantity.trim(), unit: l.unit, unitPrice: l.unitPrice, discountPercent: l.discountPercent, taxRate: l.taxRate, expectedDate: input.expectedDate };
+      });
+      this.checkLines(lines);
+      const totals = orderTotals(lines);
+      const [made] = await tx
+        .insert(purchaseOrders)
+        .values({ companyId: ctx.companyId, vendorId: c.vendorId, categoryId: c.categoryId, contractId, orderDate: today, expectedDate: trimToNull(input.expectedDate), currency: c.currency, noRfq: false, internalNotes: trimToNull(`From contract ${c.number ?? ''}. ${input.notes}`.trim()), subtotal: toMoney(totals.subtotal), taxTotal: toMoney(totals.tax), total: toMoney(totals.total), buyerId: ctx.actor.id, createdBy: ctx.actor.id })
+        .returning({ id: purchaseOrders.id });
+      if (made === undefined) throw new FinanceError('NOT_SAVED', 'The order could not be made.');
+      const rows = this.lineRows(made.id, lines).map((r, i) => ({ ...r, contractLineId: lines[i]?.contractLineId ?? null }));
+      await tx.insert(purchaseOrderLines).values(rows);
+      await this.event(tx, ctx.actor, made.id, 'created_from_contract', null, 'draft', { data: { contract: c.number } });
+      return { id: made.id };
     });
   }
 
@@ -414,6 +463,21 @@ export class PurchaseOrderService {
           if (kept === undefined) throw new FinanceError('ALREADY_RECEIVED', `“${l.description}” was received or invoiced, so it cannot be removed.`);
           if (Number(kept.quantity) < Math.max(Number(l.receivedQuantity), Number(l.invoicedQuantity))) throw new FinanceError('ALREADY_RECEIVED', `“${l.description}”: ${l.receivedQuantity} was already received, so the quantity cannot go below that.`);
         }
+      }
+      if (po.contractId !== null) {
+        const used = await contractUsage(tx, po.contractId, po.id);
+        const contractLines = await tx.select().from(vendorContractLines).where(eq(vendorContractLines.contractId, po.contractId));
+        for (const l of input.lines) {
+          const mine = l.id === undefined ? undefined : lines.find((x) => x.id === l.id);
+          if (mine?.contractLineId === null || mine === undefined) throw new FinanceError('FROM_CONTRACT', 'An order called off a contract cannot get lines that are not on the contract.');
+          if (Number(l.unitPrice) !== Number(mine.unitPrice) || Number(l.discountPercent === '' ? '0' : l.discountPercent) !== Number(mine.discountPercent) || Number(l.taxRate === '' ? '0' : l.taxRate) !== Number(mine.taxRate)) throw new FinanceError('FROM_CONTRACT', `“${mine.description}” is at the contract’s price, which an order cannot change.`);
+          const cl = contractLines.find((x) => x.id === mine.contractLineId);
+          const stillUsed = (used.perLine.get(mine.contractLineId) ?? 0) + Number(l.quantity) - Number(mine.cancelledQuantity);
+          if (cl?.maxQuantity != null && Math.round(stillUsed * 1000) > Math.round(Number(cl.maxQuantity) * 1000)) throw new FinanceError('OVER_CONTRACT', `“${mine.description}”: that is more than the contract allows (${cl.maxQuantity}).`);
+        }
+        if (lines.some((x) => !input.lines.some((l) => l.id === x.id))) throw new FinanceError('FROM_CONTRACT', 'A line of an order called off a contract cannot be removed. Cancel its quantity instead.');
+        const [ceiling] = await tx.select({ max: vendorContracts.maxValue }).from(vendorContracts).where(eq(vendorContracts.id, po.contractId));
+        if (ceiling?.max != null && used.valueCents + orderTotals(input.lines).total > toCents(ceiling.max)) throw new FinanceError('OVER_CONTRACT', 'With this change the order would take more than the contract’s ceiling allows.');
       }
       const totals = orderTotals(input.lines);
       const before = this.snapshot(po, lines);

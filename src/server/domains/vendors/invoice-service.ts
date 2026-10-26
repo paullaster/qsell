@@ -205,7 +205,7 @@ export class SupplierInvoiceService {
         receivedDate: r.receivedDate,
         accepted: r.rl.accepted,
         invoiced: r.rl.invoicedQuantity,
-        room: String(Math.max(0, round3(Number(r.rl.accepted) - Number(r.rl.invoicedQuantity) - (held.get(r.rl.id) ?? 0)))),
+        room: String(Math.max(0, round3(Number(r.rl.accepted) - Number(r.rl.invoicedQuantity) - Number(r.rl.returnedQuantity) - (held.get(r.rl.id) ?? 0)))),
       })),
       deliveryNotes: notes.map((x) => ({ id: x.n.id, noteNo: x.n.noteNo, noteDate: x.n.noteDate, fileId: x.n.fileId, fileName: x.fileName, matchedRgnId: x.n.matchedRgnId, matchedRgnNumber: x.rgnNumber })),
       events: events.map((e) => ({ id: e.id, event: e.event, from: e.fromState, to: e.toState, reason: e.reasonText, at: e.createdAt.toISOString(), who: who(e.actorId) })),
@@ -257,7 +257,7 @@ export class SupplierInvoiceService {
     }
     for (const [rgnLineId, q] of perGoods) {
       const g = goodsById.get(rgnLineId);
-      const room = round3(Number(g?.rl.accepted ?? 0) - Number(g?.rl.invoicedQuantity ?? 0) - (held.get(rgnLineId) ?? 0));
+      const room = round3(Number(g?.rl.accepted ?? 0) - Number(g?.rl.invoicedQuantity ?? 0) - Number(g?.rl.returnedQuantity ?? 0) - (held.get(rgnLineId) ?? 0));
       if (q > room) throw new FinanceError('TOO_MUCH', `Only ${String(Math.max(room, 0))} of those goods can still be invoiced; other invoices already hold the rest.`);
     }
     for (const [lineId, q] of perLine) {
@@ -329,7 +329,7 @@ export class SupplierInvoiceService {
         if (inv.advanceBasis) break;
         const candidates = goods
           .filter((g) => g.rl.poLineId === l.poLineId)
-          .map((g) => ({ rgnLineId: g.rl.id, room: round3(Number(g.rl.accepted) - Number(g.rl.invoicedQuantity) - (held.get(g.rl.id) ?? 0) - (used.get(g.rl.id) ?? 0)) }));
+          .map((g) => ({ rgnLineId: g.rl.id, room: round3(Number(g.rl.accepted) - Number(g.rl.invoicedQuantity) - Number(g.rl.returnedQuantity) - (held.get(g.rl.id) ?? 0) - (used.get(g.rl.id) ?? 0)) }));
         for (const k of suggestLinks(Number(l.quantity), candidates).links) {
           used.set(k.rgnLineId, round3((used.get(k.rgnLineId) ?? 0) + k.quantity));
           links.push({ lineId: l.id, rgnLineId: k.rgnLineId, quantity: String(k.quantity) });

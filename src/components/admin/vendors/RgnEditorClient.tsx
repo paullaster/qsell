@@ -128,6 +128,8 @@ function Editor({ view }: { view: View }) {
             </form>
         ) : null}
         {view.status === 'posted' && view.can.reverse && !reversing ? <button type="button" className={dangerClass} onClick={() => setReversing(true)}>Reverse this note…</button> : null}
+        {view.status === 'posted' && view.id !== null ? <Link href={`/admin/vendors/landed-costs/new?rgn=${view.id}`} className={buttonClass}>Add a freight, duty or other charge…</Link> : null}
+        {view.status === 'posted' && view.id !== null ? <Link href={`/admin/vendors/returns/new?rgn=${view.id}`} className={buttonClass}>Send goods back to the vendor…</Link> : null}
         {view.status === 'posted' ? <p className="text-xs text-fg-muted">A posted note cannot be edited. Stock went in at the order’s cost, and the stock accounts follow from it.</p> : null}
       </section>
     </div>

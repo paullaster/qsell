@@ -9,7 +9,7 @@ import {
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, dangerClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
 import { VENDOR_TYPES } from '@/lib/vendor-forms';
-import { CONTACT_ROLES, ID_TYPES, TURNOVER_BANDS, maskAccount, type BusinessData, type ContactInput, type FinancialData, type ProfileData, type ReferenceInput } from '@/lib/vendor-profile';
+import { CONTACT_ROLES, DESTINATION_KINDS, numberLabel, ID_TYPES, TURNOVER_BANDS, maskAccount, type BusinessData, type ContactInput, type FinancialData, type ProfileData, type ReferenceInput } from '@/lib/vendor-profile';
 import type { Choice } from '@/lib/payment-options';
 
 type Form = Extract<Awaited<ReturnType<typeof profileFormAction>>, { ok: true }>['data'];
@@ -190,7 +190,7 @@ function FinancialSection({ form }: { form: Form }) {
   const { busy, notice, problems, save } = useSave();
   const bank = useSave();
   const [d, setD] = useState<FinancialData>(form.financial);
-  const [b, setB] = useState({ bankName: '', branch: '', accountName: '', accountNumber: '', swift: '' });
+  const [b, setB] = useState({ bankName: '', branch: '', accountName: '', accountNumber: '', swift: '', kind: 'bank', reference: '' });
   const set = <K extends keyof FinancialData>(k: K, v: FinancialData[K]) => setD((p) => ({ ...p, [k]: v }));
   const off = !form.canEdit;
   return (
@@ -209,12 +209,14 @@ function FinancialSection({ form }: { form: Form }) {
           </ul>
         )}
         {off ? <p className="text-xs text-fg-muted">To change where you are paid, use the request below.</p> : (
-          <form onSubmit={(e) => { e.preventDefault(); void bank.save(addBankAction(b), 'Bank account added.').then((ok) => { if (ok) setB({ bankName: '', branch: '', accountName: '', accountNumber: '', swift: '' }); }); }} noValidate className="grid grid-cols-1 gap-3 sm:grid-cols-2" aria-label="Add a bank account">
-            <Text id={`${uid}-bn`} label="Bank" value={b.bankName} onChange={(v) => setB((p) => ({ ...p, bankName: v }))} problem={err(bank.problems, 'banks.0.bankName')} disabled={false} required />
-            <Text id={`${uid}-bb`} label="Branch" value={b.branch} onChange={(v) => setB((p) => ({ ...p, branch: v }))} problem={err(bank.problems, 'banks.0.branch')} disabled={false} required />
-            <Text id={`${uid}-ba`} label="Account name" value={b.accountName} onChange={(v) => setB((p) => ({ ...p, accountName: v }))} problem={err(bank.problems, 'banks.0.accountName')} disabled={false} required />
-            <Text id={`${uid}-bu`} label="Account number" value={b.accountNumber} onChange={(v) => setB((p) => ({ ...p, accountNumber: v }))} problem={err(bank.problems, 'banks.0.accountNumber')} disabled={false} required hint="Kept sealed. Only the last four digits are shown afterwards." />
-            <Text id={`${uid}-bs`} label="SWIFT code (foreign banks)" value={b.swift} onChange={(v) => setB((p) => ({ ...p, swift: v }))} problem={err(bank.problems, 'banks.0.swift')} disabled={false} />
+          <form onSubmit={(e) => { e.preventDefault(); void bank.save(addBankAction(b), 'Bank account added.').then((ok) => { if (ok) setB({ bankName: '', branch: '', accountName: '', accountNumber: '', swift: '', kind: 'bank', reference: '' }); }); }} noValidate className="grid grid-cols-1 gap-3 sm:grid-cols-2" aria-label="Add a bank account">
+            <ChoicePicker label="Where we pay" source="vendor-destination-kinds" choice={optionOf(DESTINATION_KINDS, b.kind)} onChoice={(c) => setB((p) => ({ ...p, kind: c?.id ?? 'bank' }))} clearable={false} />
+            {b.kind === 'bank' ? <Text id={`${uid}-bn`} label="Bank" value={b.bankName} onChange={(v) => setB((p) => ({ ...p, bankName: v }))} problem={err(bank.problems, 'banks.0.bankName')} disabled={false} required /> : null}
+            {b.kind === 'bank' ? <Text id={`${uid}-bb`} label="Branch" value={b.branch} onChange={(v) => setB((p) => ({ ...p, branch: v }))} problem={err(bank.problems, 'banks.0.branch')} disabled={false} required /> : null}
+            <Text id={`${uid}-ba`} label={b.kind === 'bank' ? 'Account name' : 'Name registered with M-Pesa'} value={b.accountName} onChange={(v) => setB((p) => ({ ...p, accountName: v }))} problem={err(bank.problems, 'banks.0.accountName')} disabled={false} required />
+            <Text id={`${uid}-bu`} label={numberLabel(b.kind)} value={b.accountNumber} onChange={(v) => setB((p) => ({ ...p, accountNumber: v }))} problem={err(bank.problems, 'banks.0.accountNumber')} disabled={false} required hint="Kept sealed. Only the last four digits are shown afterwards." />
+            {b.kind === 'mpesa_paybill' || b.kind === 'mpesa_till' ? <Text id={`${uid}-br`} label={b.kind === 'mpesa_paybill' ? 'Account number to quote' : 'Reference (optional)'} value={b.reference} onChange={(v) => setB((p) => ({ ...p, reference: v }))} problem={err(bank.problems, 'banks.0.reference')} disabled={false} required={b.kind === 'mpesa_paybill'} /> : null}
+            {b.kind === 'bank' ? <Text id={`${uid}-bs`} label="SWIFT code (foreign banks)" value={b.swift} onChange={(v) => setB((p) => ({ ...p, swift: v }))} problem={err(bank.problems, 'banks.0.swift')} disabled={false} /> : null}
             <div className="flex items-end"><button type="submit" className={buttonClass} disabled={bank.busy}>{bank.busy ? 'Adding…' : 'Add bank account'}</button></div>
           </form>
         )}

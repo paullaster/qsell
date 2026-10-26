@@ -113,6 +113,33 @@ export async function payVoucherAction(voucherId: string, reference: string, pai
   return await run('vendor_payments:release', { surface: 'vendor_payments/edit', action: 'pay' }, async (ctx) => await getContainer().vendorPayments.pay(ctx, id(voucherId), { reference: str(reference, 120), paidOn: str(paidOn, 12) }), PATHS);
 }
 
+/** Sends an approved voucher to the vendor's M-Pesa destination through the platform. The voucher's own approval is the approval for the money. */
+export async function payVoucherThroughMpesaAction(voucherId: string) {
+  return await run('vendor_payments:release', { surface: 'vendor_payments/edit', action: 'pay_through_mpesa' }, async (ctx) => {
+    const c = getContainer();
+    const plan = await c.vendorPayments.prepareMpesaPayout(ctx, id(voucherId));
+    const { OperationRefused } = await import('@/server/domains/payments/daraja/operations');
+    try {
+      const r = await c.paymentEngine.disbursements.request({
+        companyId: ctx.companyId,
+        providerId: plan.providerId,
+        methodId: plan.methodId,
+        operation: plan.operation,
+        preApproved: true,
+        input: plan.input,
+        requestedBy: ctx.actor.id ?? 'system',
+        subject: { type: 'vendor_payment', id: id(voucherId) },
+        idempotencyKey: `vendor-payment:${id(voucherId)}:payout:${String(plan.attempt)}`,
+        origin: ctx.origin,
+      });
+      return { operationId: r.op.id, status: r.status };
+    } catch (error) {
+      if (error instanceof OperationRefused) throw new FinanceError(error.code, error.message);
+      throw error;
+    }
+  }, PATHS);
+}
+
 export async function reverseVoucherAction(voucherId: string, reason: string) {
   return await run('vendor_payments:reverse', { surface: 'vendor_payments/edit', action: 'reverse' }, async (ctx) => {
     await getContainer().vendorPayments.reverse(ctx, id(voucherId), str(reason));
@@ -149,4 +176,13 @@ export async function payablesCheckAction() {
 
 export async function runPayablesCheckAction() {
   return await run('vendor_payments:read', { surface: 'vendor_payments/payables', action: 'check_run' }, async (ctx) => await getContainer().payablesReports.runCheck(ctx.companyId, ctx.actor.id ?? 'unknown'), ['/admin/vendors/payables']);
+}
+
+/** Values what is owed to vendors in other currencies at today's rate; the next day it is undone. */
+export async function revalueForeignPayablesAction() {
+  return await run('vendor_payments:revalue', { surface: 'vendor_payments/payables', action: 'revalue' }, async (ctx) => await getContainer().payablesFx.revalue(ctx), ['/admin/vendors/payables']);
+}
+
+export async function lastPayablesRevaluationAction() {
+  return await run('vendor_payments:read', { surface: 'vendor_payments/payables', action: 'revaluation_view' }, async (ctx) => ({ last: await getContainer().payablesFx.last(ctx.companyId), can: await canPermission('vendor_payments:revalue') }));
 }

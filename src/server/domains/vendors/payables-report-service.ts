@@ -3,6 +3,7 @@ import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { glAccounts, glAccountBalances, payablesChecks, vendorLedgerEntries, vendorPostingGroups, vendors } from '@/server/db/drizzle/schema';
 import type { VendorLedgerService } from '@/server/domains/finance/payables/vendor-ledger-service';
 import { has } from '@/lib/values';
+import type { PayablesFxService } from './payables-fx-service';
 import { AGE_BUCKETS, toCents, type AgeBucket } from '@/lib/vendor-payment';
 
 /**
@@ -14,6 +15,7 @@ export class PayablesReportService {
   constructor(
     private readonly db: DrizzleDb,
     private readonly ledger: VendorLedgerService,
+    private readonly fx: PayablesFxService,
   ) {}
 
   async ageing(companyId: string, asOf: string) {
@@ -80,7 +82,7 @@ export class PayablesReportService {
     const owed = await this.db
       .select({
         accountId: vendorPostingGroups.payablesAccountId,
-        total: sql<string>`COALESCE(SUM(CASE WHEN ${vendorLedgerEntries.documentType} <> 'advance' THEN ${vendorLedgerEntries.remainingAmount} ELSE 0 END), 0)::text`,
+        total: sql<string>`COALESCE(SUM(CASE WHEN ${vendorLedgerEntries.documentType} <> 'advance' THEN ROUND(${vendorLedgerEntries.remainingAmount} * ${vendorLedgerEntries.rate}, 2) ELSE 0 END), 0)::text`,
       })
       .from(vendorLedgerEntries)
       .innerJoin(vendors, eq(vendors.id, vendorLedgerEntries.vendorId))
@@ -90,7 +92,7 @@ export class PayablesReportService {
     const advances = await this.db
       .select({
         accountId: vendorPostingGroups.prepaymentsAccountId,
-        total: sql<string>`COALESCE(SUM(CASE WHEN ${vendorLedgerEntries.documentType} = 'advance' THEN ${vendorLedgerEntries.remainingAmount} ELSE 0 END), 0)::text`,
+        total: sql<string>`COALESCE(SUM(CASE WHEN ${vendorLedgerEntries.documentType} = 'advance' THEN ROUND(${vendorLedgerEntries.remainingAmount} * ${vendorLedgerEntries.rate}, 2) ELSE 0 END), 0)::text`,
       })
       .from(vendorLedgerEntries)
       .innerJoin(vendors, eq(vendors.id, vendorLedgerEntries.vendorId))
@@ -121,6 +123,12 @@ export class PayablesReportService {
       rows.push({ accountId, accountNo: a?.no ?? '', accountName: a?.name ?? '', purpose, ledgerCents, glCents, diffCents: glCents - ledgerCents });
     };
     for (const o of owed) add(o.accountId, 'payables', toCents(Number(o.total).toFixed(2)));
+    // A revaluation that is still standing has moved the books' payables off the rates the ledger carries; it is part of what the books say.
+    const standing = await this.fx.standingByGroup(companyId);
+    if (standing.size > 0) {
+      const groups = await this.db.select({ id: vendorPostingGroups.id, accountId: vendorPostingGroups.payablesAccountId }).from(vendorPostingGroups).where(inArray(vendorPostingGroups.id, [...standing.keys()].filter((k) => k !== '')));
+      for (const g of groups) add(g.accountId, 'payables', standing.get(g.id) ?? 0);
+    }
     for (const a of advances) add(a.accountId, 'prepayments', -toCents(Number(a.total).toFixed(2)));
     const drift = await this.ledger.drift(companyId);
     const differences = rows.filter((r) => r.diffCents !== 0).length + drift.length;

@@ -55,7 +55,7 @@ function Detail({ view }: { view: View }) {
   const [notice, setNotice] = useState<Notice>(null);
   const [problems, setProblems] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
-  const [header, setHeader] = useState({ vendorInvoiceNo: view.vendorInvoiceNo, invoiceDate: view.invoiceDate, dueDate: view.dueDate, notes: view.notes, declaration: view.declaration });
+  const [header, setHeader] = useState({ vendorInvoiceNo: view.vendorInvoiceNo, invoiceDate: view.invoiceDate, dueDate: view.dueDate, notes: view.notes, declaration: view.declaration, etimsInvoiceNo: view.etimsInvoiceNo, etimsVerificationUrl: view.etimsVerificationUrl });
   const [lines, setLines] = useState(view.lines.map((l) => ({ poLineId: l.poLineId, description: l.description, unit: l.unit, quantity: l.quantity, unitPrice: l.unitPrice, taxRate: l.taxRate, orderPrice: l.orderPrice, goodsRoom: l.goodsRoom, advanceRoom: l.advanceRoom })));
   const [notes, setNotes] = useState<NoteRow[]>(view.deliveryNotes.map((n) => ({ noteNo: n.noteNo, noteDate: n.noteDate, fileId: n.fileId, fileName: n.fileName })));
   const [scan, setScan] = useState<{ id: string; name: string } | null>(view.invoiceFile);
@@ -203,6 +203,15 @@ function Detail({ view }: { view: View }) {
               ))}
             </ul>
             <button type="button" className={buttonClass} onClick={() => setNotes((p) => [...p, { noteNo: '', noteDate: view.invoiceDate, fileId: '', fileName: '' }])}>Add a delivery note</button>
+          </section>
+
+          <section className={`${cardClass} space-y-3`} aria-label="eTIMS details">
+            <h3 className="text-sm font-bold text-fg-strong">eTIMS details</h3>
+            <p className="text-xs text-fg-muted">If your invoice has tax on it, KRA needs it to be an eTIMS invoice for us to claim the input tax. Enter the eTIMS invoice number printed on it, and the verification link if it shows one.</p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field id={`${uid}-en`} label="eTIMS invoice number" hint={err('etimsInvoiceNo') === '' ? undefined : err('etimsInvoiceNo')}><input id={`${uid}-en`} value={header.etimsInvoiceNo} maxLength={60} disabled={busy} onChange={(e) => setHeader((h) => ({ ...h, etimsInvoiceNo: e.target.value }))} className={fieldClass} autoComplete="off" /></Field>
+              <Field id={`${uid}-eu`} label="Verification link (optional)" hint={err('etimsVerificationUrl') === '' ? undefined : err('etimsVerificationUrl')}><input id={`${uid}-eu`} value={header.etimsVerificationUrl} maxLength={320} disabled={busy} onChange={(e) => setHeader((h) => ({ ...h, etimsVerificationUrl: e.target.value }))} className={fieldClass} autoComplete="off" /></Field>
+            </div>
           </section>
 
           <section className={`${cardClass} space-y-3`} aria-label="Send">

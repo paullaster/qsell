@@ -211,7 +211,12 @@ describe.skipIf(!has(url))('received goods notes (database)', () => {
       await db.insert(schema.currencies).values({ code: 'USD', name: 'US dollar', symbol: '$', isBaseCurrency: false }).onConflictDoNothing();
       const dollars = await sentOrder(v, [stockLine(prod)], { currency: 'USD' });
       const foreign = await c.rgns.saveDraft(staff('storeman'), null, dollars.id, header(dn()), [rl(required(dollars.lines[0]), '1')]);
-      expect(await codeOf(c.rgns.post(staff('storeman'), foreign.id))).toBe('FOREIGN_COST');
+      // Stock from a foreign-currency order needs the day's rate, and then costs what it is worth in the books' currency.
+      expect(await codeOf(c.rgns.post(staff('storeman'), foreign.id))).toBe('NO_RATE');
+      await c.finance.fx.setRate(staff('reviewer'), { currency: 'USD', effectiveOn: TODAY, rate: '130', note: 'test' });
+      await c.rgns.post(staff('storeman'), foreign.id);
+      const [costed] = await db.select().from(schema.rgnLines).where(eq(schema.rgnLines.rgnId, foreign.id));
+      expect(Number(required(costed).unitCost)).toBe(90 * 130);
       const service = await sentOrder(v, [{ ...emptyPoLine(), description: 'Installation labour', quantity: '3', unit: 'day', unitPrice: '5000' }], { currency: 'USD' });
       await receive(service.id, [rl(required(service.lines[0]), '3')]);
       expect(required(await c.purchaseOrders.get(companyId, service.id)).po.status).toBe('received');

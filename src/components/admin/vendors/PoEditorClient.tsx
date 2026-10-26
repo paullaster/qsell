@@ -102,7 +102,7 @@ function Editor({ view, today }: { view: View | null; today: string }) {
       <PageHeader
         title={view?.number ?? (view === null ? 'New purchase order' : 'Draft order')}
         intro={<span className="flex flex-wrap items-center gap-2">{view === null ? 'Not saved yet' : view.vendor.label}<Chip tone={status.tone}>{status.label}</Chip>{view !== null && view.version > 1 ? <span>Version {view.version}</span> : null}</span>}
-        actions={<Link href="/admin/vendors/orders" className={buttonClass}>All orders</Link>}
+        actions={<><Link href="/admin/vendors/orders" className={buttonClass}>All orders</Link>{view?.number != null ? <a href={`/api/admin/vendors/order-xml/${view.id}`} className={buttonClass}>Download as UBL XML</a> : null}</>}
       />
       <Message notice={notice} />
       {view?.cancelReason == null ? null : <p role="status" className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-fg">Cancelled: {view.cancelReason}</p>}
