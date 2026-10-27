@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { OrderStages, type OrderFields } from '@/server/domains/orders/stages';
+import { moveProblem, stageForStatus } from '@/lib/order-stages';
 import { eq } from 'drizzle-orm';
 import { roundQty } from '@/lib/decimal';
 import { getContainer } from '@/server/di/container';
@@ -137,16 +139,9 @@ function toProducts(rows: ProductJoined[]): Product[] {
 
 /** An order waiting for, or refused, approval cannot be moved along (it can still be cancelled). */
 export function assertNotHeldForApproval(order: Order, next: OrderStatus): void {
-  if (next === 'cancelled') return;
-  const held = order.approvalStatus;
-  if (held === 'pending') {
-    throw new Error('This order is waiting for approval. It can move on once it is approved.');
-  }
-  if (held === 'rejected' || held === 'draft') {
-    throw new Error(
-      'Approval for this order was refused. Reopen it and send it for approval again, or cancel it.',
-    );
-  }
+  const held = moveProblem({ status: order.status, approvalStatus: order.approvalStatus ?? null }, next);
+  // The rule that an order already cancelled cannot be cancelled again is the caller's own check (cancelOrder).
+  if (held !== null && !(next === 'cancelled')) throw new Error(held);
 }
 
 export type StockOp =
@@ -502,22 +497,18 @@ export class InventoryDomainService {
     internalNotes?: string,
   ): Promise<Order> {
     const { orders } = getContainer();
-    const existing = await orders.getById(orderId);
-    if (!existing) throw new Error(`Order ${orderId} not found`);
-    assertNotHeldForApproval(existing, status);
+    const fields: OrderFields = {};
+    if (shippingCourier !== undefined && shippingCourier !== '') fields.shippingCourier = shippingCourier;
+    if (trackingNumber !== undefined && trackingNumber !== '') fields.trackingNumber = trackingNumber;
+    if (internalNotes !== undefined) fields.internalNotes = internalNotes;
 
-    const now = new Date();
-    const patch: Parameters<typeof orders.update>[1] = { status };
-
-    if (shippingCourier) patch.shippingCourier = shippingCourier;
-    if (trackingNumber) patch.trackingNumber = trackingNumber;
-    if (internalNotes !== undefined) patch.internalNotes = internalNotes;
-    if (status === 'shipped' && !existing.shippedAt) patch.shippedAt = now;
-    if ((status === 'delivered' || status === 'completed') && !existing.deliveredAt) {
-      patch.deliveredAt = now;
-    }
-
-    const updated = await orders.update(orderId, patch);
+    // The status moves through the stage writer: it keeps the shipped and delivered times, refuses what an order's approval state
+    // refuses (under the order's lock), and leaves the event with its time.
+    const { stage, outcome } = stageForStatus(status);
+    // A status no specific stage describes (back to pending) is a correction that names the status itself.
+    const moved = await OrderStages.move(drizzleDb, orderId, stage, outcome, { checkHold: true, fields, ...(stage === 'status_corrected' ? { set: { status } } : {}) });
+    if (moved.order === null) throw new Error(`Order ${orderId} not found`);
+    const updated = await orders.getById(orderId);
     if (!updated) throw new Error(`Order ${orderId} not found`);
 
     void broadcastRealtime('order_updated', updated);
@@ -535,10 +526,14 @@ export class InventoryDomainService {
     if (!existing) throw new Error(`Order ${orderId} not found`);
     if (existing.status === 'cancelled') throw new Error('Order is already cancelled');
 
-    const updated = await orders.update(orderId, {
-      status: 'cancelled',
-      internalNotes: `${existing.internalNotes ?? ''}\n[cancelled] ${reason}`.trim(),
+    const moved = await OrderStages.move(drizzleDb, orderId, 'cancelled', 'cancelled', {
+      reasonCode: 'cancelled',
+      message: reason,
+      detail: { by: actor },
+      fields: { internalNotes: `${existing.internalNotes ?? ''}\n[cancelled] ${reason}`.trim() },
     });
+    if (moved.order === null) throw new Error(`Order ${orderId} not found`);
+    const updated = await orders.getById(orderId);
     if (!updated) throw new Error(`Order ${orderId} not found`);
 
     await InventoryReservationService.releaseOrder(orderId, `order cancelled: ${reason}`, actor);

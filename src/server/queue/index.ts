@@ -19,6 +19,9 @@ export async function startWorker(): Promise<void> {
       '17 3 * * * purge-auth-tokens',
       '27 3 * * * purge-product-imports',
       '37 3 * * * purge-media',
+      // Orders that existed before the order timeline get theirs rebuilt, a few at a time, until none are left.
+      '*/5 * * * * order-stage-backfill',
+      '47 4 * * * purge-checkout-attempts',
       '47 3 * * * expire-loyalty-points',
       // Sales reach the ledger within a minute; failures retry with a growing delay.
       '* * * * * finance-post-sales',

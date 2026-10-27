@@ -170,6 +170,27 @@ export const purgeMedia = async (_payload: unknown, helpers: JobHelpers) => {
   );
 };
 
+/** Worker cron task: rebuilds the timeline of orders that existed before the timeline did, a batch at a time (it stops when none are left). */
+export const orderStageBackfill = async (_payload: unknown, helpers: JobHelpers) => {
+  const { OrderStages } = await import('@/server/domains/orders/stages');
+  const { drizzleDb } = await import('@/server/db/drizzle/client');
+  let total = 0;
+  // A bounded number of batches per run, so a large history is rebuilt over a few runs without holding the worker.
+  for (let pass = 0; pass < 20; pass += 1) {
+    const done = await OrderStages.seedBatch(drizzleDb, 200);
+    total += done;
+    if (done === 0) break;
+  }
+  if (total > 0) helpers.logger.info(`Order timelines rebuilt: ${String(total)}`);
+};
+
+/** Worker cron task: removes refused and abandoned checkout attempts past their retention. */
+export const purgeCheckoutAttempts = async (_payload: unknown, helpers: JobHelpers) => {
+  const { CheckoutAttempts } = await import('@/server/domains/orders/checkout-attempts');
+  const removed = await CheckoutAttempts.purge();
+  if (removed > 0) helpers.logger.info(`Checkout attempts purged: ${String(removed)}`);
+};
+
 /** Worker cron task: hand approvals that are past their due time to the approver's own approver. */
 export const sweepOverdueApprovals = async (_payload: unknown, helpers: JobHelpers) => {
   const r = await getContainer().approvals.sweepOverdue();
@@ -294,6 +315,8 @@ export const tasks = {
   'process-product-import': processProductImport,
   'purge-product-imports': purgeProductImports,
   'purge-media': purgeMedia,
+  'order-stage-backfill': orderStageBackfill,
+  'purge-checkout-attempts': purgeCheckoutAttempts,
   'sweep-overdue-approvals': sweepOverdueApprovals,
   'expire-loyalty-points': expireLoyaltyPoints,
   'finance-post-sales': financePostSales,

@@ -1,6 +1,8 @@
 import type { DrizzleDb } from '@/server/db/drizzle/client';
+import { OrderStages, type OrderFields } from '@/server/domains/orders/stages';
+import type { StageSource } from '@/lib/order-stages';
 import { companySettings, paymentAttempts, paymentProviderConfigs, providerTransactions, type BranchRow } from '@/server/db/drizzle/schema';
-import { and, eq, ne } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 import { newSecret } from './engine/redact';
 import type { PaymentEngine } from './engine/payment-engine';
 import type { AttemptSettler } from './engine/verification-service';
@@ -153,6 +155,8 @@ export class PaymentService implements AttemptSettler {
     customerPhone: string;
     /** The number to write on the order as the one this payment is made from. Left out when the payment does not use a phone. */
     recordPhone?: string | null;
+    /** Where the payment was started from, for the order's timeline. */
+    stageSource?: StageSource;
     description?: string;
   }) {
     const resolved = await this.resolveCheckout(params.branch, params.providerCode);
@@ -233,13 +237,21 @@ export class PaymentService implements AttemptSettler {
       await this.engine.jobs.verifyAttempt(attempt.id, engineSettings(config.settings).verification.pollSeconds[0] ?? 15).catch((e: unknown) => console.error('[payments] could not schedule the check', e));
     }
 
-    await this.orderRepo.update(params.orderId, {
-      paymentStatus: status === 'failed' ? 'failed' : 'pending_verification',
-      ...(status === 'failed' ? { status: 'failed' as const } : {}),
-      paymentMethod: params.providerCode,
-      ...(has(params.recordPhone) ? { paymentPhone: params.recordPhone } : {}),
-      // The finance method it goes through decides which bank account and G/L account it posts to.
-      ...(has(resolved.methodId) ? { paymentMethodId: resolved.methodId } : {}),
+    // The order's stage moves through the stage writer: a payment started, or one that could not be started, each with its time.
+    const [counted] = await this.db.select({ n: sql<number>`count(*)::int` }).from(paymentAttempts).where(eq(paymentAttempts.orderId, params.orderId));
+    const attemptNo = counted?.n ?? 1;
+    await OrderStages.move(this.db, params.orderId, status === 'failed' ? 'payment_failed' : 'payment_started', status === 'failed' ? 'failed' : 'entered', {
+      ref: { type: 'payment_attempt', id: attempt.id },
+      attemptNo,
+      ...(params.stageSource === undefined ? {} : { source: params.stageSource }),
+      ...(status === 'failed' ? { reasonCode: 'payment_start_failed', message: result.errorMessage ?? 'The payment could not be started.' } : {}),
+      detail: { provider: params.providerCode, amount: params.amount, currency: params.currency },
+      fields: {
+        paymentMethod: params.providerCode,
+        ...(has(params.recordPhone) ? { paymentPhone: params.recordPhone } : {}),
+        // The finance method it goes through decides which bank account and G/L account it posts to.
+        ...(has(resolved.methodId) ? { paymentMethodId: resolved.methodId } : {}),
+      },
     });
 
     if (status === 'failed') {
@@ -310,12 +322,18 @@ export class PaymentService implements AttemptSettler {
     const receiptProviders = attempt.providerCode === 'mpesa_daraja' || attempt.providerCode === 'kcb_buni';
     // Without a receipt the order is still paid and moves on; the reference is added by a person (or the
     // next check) and must never wipe one that is already there.
-    const patch: Parameters<typeof this.orderRepo.update>[1] = { paymentStatus: 'paid', status: 'processing' };
+    const fields: OrderFields = {};
     if (has(real)) {
-      patch.transactionReference = real;
-      if (receiptProviders) patch.mpesaReceiptNumber = real;
+      fields.transactionReference = real;
+      if (receiptProviders) fields.mpesaReceiptNumber = real;
     }
-    await this.orderRepo.update(attempt.orderId, patch);
+    // Once per payment attempt: running this again saves a receipt that came late but never moves the order back a stage.
+    await OrderStages.move(this.db, attempt.orderId, 'payment_confirmed', 'succeeded', {
+      ref: { type: 'payment_attempt', id: attemptId },
+      fields,
+      detail: { provider: attempt.providerCode, verifiedBy: input.verifiedBy, amount: Number(attempt.amount), currency: attempt.currency },
+      ...(attempt.paidAt === null ? {} : { providerTime: attempt.paidAt }),
+    });
     await InventoryReservationService.fulfilOrder(attempt.orderId);
     // The ledger credit needs the reference; without one it waits instead of failing the payment.
     if (has(real)) {
@@ -346,7 +364,12 @@ export class PaymentService implements AttemptSettler {
     const [attempt] = await this.db.select().from(paymentAttempts).where(eq(paymentAttempts.id, attemptId));
     if (!attempt || attempt.status === 'successful') return { settled: false };
     await this.db.update(paymentAttempts).set({ status: 'failed', errorMessage: input.reason.slice(0, 500), updatedAt: new Date() }).where(eq(paymentAttempts.id, attemptId));
-    await this.orderRepo.update(attempt.orderId, { paymentStatus: 'failed', status: 'failed' });
+    await OrderStages.move(this.db, attempt.orderId, 'payment_failed', 'failed', {
+      ref: { type: 'payment_attempt', id: attemptId },
+      reasonCode: input.code ?? 'payment_failed',
+      message: input.reason,
+      detail: { provider: attempt.providerCode },
+    });
     await InventoryReservationService.releaseOrder(attempt.orderId, 'payment_callback_failed', `payment:${attempt.providerCode}`);
     return { settled: true };
   }

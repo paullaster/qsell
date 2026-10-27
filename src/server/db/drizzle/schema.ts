@@ -1351,6 +1351,24 @@ export const orders = pgTable(
     internalNotes: text('internal_notes'),
     shippedAt: timestamp('shipped_at', { withTimezone: true }),
     deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+    /**
+     * The order's stage times and current stage, maintained by the one stage writer from `order_stage_events`
+     * (docs/architecture/order-stage-timeline.md). The events are the truth; these are for filtering and "why is it stuck".
+     * `shipped_at` and `delivered_at` above are part of the same set.
+     */
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    paymentStartedAt: timestamp('payment_started_at', { withTimezone: true }),
+    paidAt: timestamp('paid_at', { withTimezone: true }),
+    releasedAt: timestamp('released_at', { withTimezone: true }),
+    packedAt: timestamp('packed_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    failedAt: timestamp('failed_at', { withTimezone: true }),
+    refundedAt: timestamp('refunded_at', { withTimezone: true }),
+    currentStage: text('current_stage'),
+    currentStageSince: timestamp('current_stage_since', { withTimezone: true }),
+    /** How many stage events the order has. The writer raises it with every event; a change that did not raise it is caught by a trigger. */
+    stageSeq: integer('stage_seq').notNull().default(0),
     transactionReference: text('transaction_reference'),
     mpesaReceiptNumber: text('mpesa_receipt_number'),
     pesapalTrackingId: text('pesapal_tracking_id'),
@@ -1385,6 +1403,8 @@ export const orders = pgTable(
     uniqueIndex('orders_order_number_uidx').on(t.orderNumber),
     index('orders_customer_email_idx').on(t.customerEmail),
     index('orders_status_idx').on(t.status),
+    // Orders still waiting for their timeline to be rebuilt (the worker's backfill reads only these).
+    index('orders_stage_unseeded_idx').on(t.id).where(sql`${t.stageSeq} = 0`),
     index('orders_created_at_idx').on(t.createdAt),
     index('orders_branch_created_idx').on(t.branchId, t.createdAt),
     index('orders_payment_attention_idx')
@@ -2765,6 +2785,95 @@ export type AccessPolicyRow = typeof accessPolicies.$inferSelect;
 export type AccessPolicyInsert = typeof accessPolicies.$inferInsert;
 export type AuditLogRow = typeof auditLogs.$inferSelect;
 export type AuditLogInsert = typeof auditLogs.$inferInsert;
+/**
+ * Every stage an order goes through, from initiation to success or failure, with its server time, actor, source and reason.
+ * Append-only (a trigger refuses update and delete). Written only by the stage writer (`orders/stages.ts`); a change of the
+ * order's stage columns that did not come through it is recorded here by a trigger with source 'trigger' and the stage
+ * 'unrecorded_change', so a bypass is seen. See docs/architecture/order-stage-timeline.md.
+ */
+export const orderStageEvents = pgTable(
+  'order_stage_events',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    companyId: uuid('company_id'),
+    orderId: text('order_id')
+      .notNull()
+      .references(() => orders.id, { onDelete: 'restrict' }),
+    /** 1, 2, 3 ... per order; assigned under the order's row lock, so it neither gaps nor repeats. */
+    sequence: integer('sequence').notNull(),
+    stage: text('stage').notNull(),
+    outcome: text('outcome').notNull(),
+    fromStatus: text('from_status'),
+    toStatus: text('to_status'),
+    /** Every stage column the event changed: { status: {from, to}, payment_status: {...}, approval_status: {...}, kra_transmission_status: {...} }. */
+    changes: jsonb('changes').$type<Record<string, { from: string | null; to: string | null }>>().notNull().default({}),
+    /** Database time of the transition. */
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+    /** Insert time. Equal to occurred_at except for back-dated entries. */
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull().defaultNow(),
+    backDated: boolean('back_dated').notNull().default(false),
+    /** What a phone or a provider said the time was. Kept beside the server time, never used for order or targets. */
+    clientTime: timestamp('client_time', { withTimezone: true }),
+    providerTime: timestamp('provider_time', { withTimezone: true }),
+    source: text('source').notNull(),
+    actorType: text('actor_type').notNull().default('system'),
+    actorId: text('actor_id'),
+    reasonCode: text('reason_code'),
+    message: text('message'),
+    refType: text('ref_type'),
+    refId: text('ref_id'),
+    attemptNo: integer('attempt_no'),
+    correlationId: text('correlation_id'),
+    detail: jsonb('detail').$type<Record<string, unknown>>().notNull().default({}),
+    /** True for events rebuilt from what an order already held when the timeline was introduced. */
+    approximate: boolean('approximate').notNull().default(false),
+  },
+  (t) => [
+    uniqueIndex('order_stage_events_order_seq_uidx').on(t.orderId, t.sequence),
+    // The same thing (a payment attempt, a refund, an approval) cannot reach the same stage twice.
+    uniqueIndex('order_stage_events_ref_uidx')
+      .on(t.orderId, t.stage, t.outcome, t.refType, t.refId)
+      .where(sql`${t.refId} IS NOT NULL AND ${t.stage} <> 'unrecorded_change'`),
+    index('order_stage_events_stage_idx').on(t.companyId, t.stage, t.outcome, t.occurredAt),
+    index('order_stage_events_failed_idx').on(t.occurredAt).where(sql`${t.outcome} = 'failed'`),
+    index('order_stage_events_recorded_idx').using('brin', t.recordedAt),
+    check(
+      'order_stage_events_outcome_chk',
+      sql`${t.outcome} IN ('entered','succeeded','failed','skipped','cancelled')`,
+    ),
+    check('order_stage_events_seq_chk', sql`${t.sequence} > 0`),
+  ],
+);
+
+/**
+ * A checkout the shopper started. Written before any order exists, so a refusal (a quantity limit, stock short, a rate limit,
+ * input that could not be read) leaves a trace with its time and reason. A guest is a salted hash, never an address or phone.
+ * When the attempt becomes an order, `order_id` is set and the order's own timeline carries on from the same start time.
+ */
+export const checkoutAttempts = pgTable(
+  'checkout_attempts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    channel: text('channel').notNull().default('ecommerce'),
+    customerId: text('customer_id'),
+    sessionRef: text('session_ref'),
+    cartSummary: jsonb('cart_summary').$type<Record<string, unknown>>().notNull().default({}),
+    outcome: text('outcome').notNull().default('started'),
+    refusedStage: text('refused_stage'),
+    reasonCode: text('reason_code'),
+    message: text('message'),
+    orderId: text('order_id'),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('checkout_attempts_started_idx').on(t.startedAt),
+    index('checkout_attempts_outcome_idx').on(t.outcome, t.startedAt),
+    check('checkout_attempts_outcome_chk', sql`${t.outcome} IN ('started','refused','placed','abandoned_after_payment_start')`),
+  ],
+);
+
 export type OrderRow = typeof orders.$inferSelect;
 export type OrderItemRow = typeof orderItems.$inferSelect;
 export type SalesQuoteRow = typeof salesQuotes.$inferSelect;

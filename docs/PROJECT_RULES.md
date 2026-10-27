@@ -95,3 +95,14 @@ The goal is to rank in the top results in Kenya (Nairobi, Mombasa, Kisumu, Nakur
 5. **Honest and clean.** No keyword stuffing, no hidden text, no towns the company does not serve, no fake reviews or ratings, no claims not backed by data. One canonical address per page; filters, searches and later pages are `noindex,follow`; admin, account, checkout and the API are never indexed.
 6. **Technical base on every public page**: `metadataBase`, canonical, `lang`, a title template, descriptions of 70-160 characters, one `h1`, JSON-LD (`Organization`, `WebSite` with search action, `BreadcrumbList`, `Product`, `FAQPage`, `ItemList`), a sitemap with images and last-modified dates, `robots.txt`, correct status codes (404, 308), fast server-rendered HTML.
 7. **Tested.** Pure SEO builders have unit tests; head tags and structured data are checked in e2e on a real page.
+
+## 11. Order stages are timestamped (permanent)
+
+Every stage an order goes through, from the moment a user initiates it until it succeeds or fails, has a **server timestamp**, an actor, a source and (for a failure, refusal, block or cancellation) a reason. This includes a checkout that is refused before any order exists. Design: [`docs/architecture/order-stage-timeline.md`](architecture/order-stage-timeline.md).
+
+1. **Every order state or stage is recorded as an event** in the append-only order timeline; the order's status columns are projections of it. A new stage (a new module, a new status) is not finished until it emits its events with their times and reasons.
+2. **One writer.** Order stages move only through the single stage-recording function, in the same transaction as the change. No code writes `status`, `payment_status`, `approval_status` or `kra_transmission_status` directly; a test enforces it, and a database trigger records and flags any bypass.
+3. **Server time orders everything.** A phone's or a provider's reported time is kept beside it (`client_time`, `provider_time`), never used for order or SLA. Order is given by the per-order sequence number.
+4. **Failures are stages.** A refusal, a declined payment, a failed delivery, a rejected approval are recorded with their time and reason, never left as an absence.
+5. **Tests cover the failure paths** as well as the happy path: each asserts the stage, the time and the reason.
+

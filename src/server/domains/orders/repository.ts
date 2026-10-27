@@ -4,6 +4,8 @@ import { matching } from '@/server/domains/settings/paging';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { orders, orderItems, type OrderRow } from '@/server/db/drizzle/schema';
 import type { Order, OrderItem, OrderStatus, PaymentStatus, PaymentProvider } from '@/types/index';
+import { OrderStages, type StageActor } from './stages';
+import type { StageSource } from '@/lib/order-stages';
 
 function num(v: string | number): number {
   return typeof v === 'number' ? v : Number(v);
@@ -48,6 +50,8 @@ export function mapOrderRow(row: OrderRow, items: OrderItem[]): Order {
     kraTransmissionStatus:
       (row.kraTransmissionStatus as NonNullable<Order['kraTransmissionStatus']>) ||
       'not_applicable',
+    currentStage: row.currentStage,
+    currentStageSince: row.currentStageSince?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -68,6 +72,8 @@ export class OrderRepository {
     assignNumber?: (tx: Tx) => Promise<string>,
     /** Runs after the order and its lines are saved, in the same transaction (e.g. asking for approval). */
     afterSave?: (tx: Tx, order: Order) => Promise<void>,
+    /** Who placed it and from where: the first event of the order's timeline says so. */
+    placed?: { source?: StageSource; actor?: StageActor; startedAt?: Date | null; detail?: Record<string, unknown> },
   ): Promise<Order> {
     return this.db.transaction(async (tx) => {
       if (assignNumber) order.orderNumber = await assignNumber(tx);
@@ -111,7 +117,23 @@ export class OrderRepository {
         kraTransmissionStatus: order.kraTransmissionStatus || 'not_applicable',
         approvalStatus: order.approvalStatus ?? 'none',
         discounts: order.discounts ?? null,
+        // The first event of the order's timeline is written below, in this transaction.
+        stageSeq: 1,
+        currentStage: 'order_placed',
+        currentStageSince: sql`clock_timestamp()`,
       });
+      await OrderStages.placedIn(
+        tx,
+        {
+          id: order.id,
+          status: order.status,
+          paymentStatus: order.paymentStatus,
+          approvalStatus: order.approvalStatus ?? 'none',
+          kraTransmissionStatus: order.kraTransmissionStatus ?? 'not_applicable',
+          branchId: typeof branchId === 'string' && branchId !== '' ? branchId : null,
+        },
+        { ...placed, detail: { salesModule: order.salesModule ?? 'ecommerce', paymentMethod: order.paymentMethod, total: order.totalAmount, currency: order.currency, items: order.items.length, ...placed?.detail } },
+      );
 
       if (order.items.length) {
         await tx.insert(orderItems).values(
@@ -251,9 +273,9 @@ export class OrderRepository {
 
   async update(
     id: string,
+    // The stage columns (status, payment status, approval status, KRA status) are not here: only the order stage writer
+    // (`OrderStages`) changes them, so every change of stage leaves its event.
     patch: Partial<{
-      status: OrderStatus;
-      paymentStatus: PaymentStatus;
       paymentMethod: PaymentProvider;
       paymentMethodId: string | null;
       paymentPhone: string | null;

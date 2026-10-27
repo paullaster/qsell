@@ -1,5 +1,8 @@
 'use server';
 
+import { OrderStages } from './stages';
+import { drizzleDb } from '@/server/db/drizzle/client';
+import { CheckoutAttempts, cartSummaryOf, guestSessionRef } from './checkout-attempts';
 import { headers } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 import { getContainer } from '@/server/di/container';
@@ -46,7 +49,7 @@ async function promptLimited(phone: string): Promise<string | null> {
 
 async function startPayment(orderId: string, providerCode: PaymentProviderCode, payerPhone: string | null): Promise<CheckoutPayment> {
   try {
-    const result = await startOrderPayment({ orderId, providerCode, payerPhone });
+    const result = await startOrderPayment({ orderId, providerCode, payerPhone, source: 'shop' });
     if (result.status === 'failed') return { kind: 'failed', message: orElse(result.errorMessage, 'The payment could not be started.') };
     if (PHONE_PROVIDERS.includes(providerCode)) {
       return { kind: 'stk', attemptId: result.attemptId, message: orElse(result.customerMessage, 'Enter your PIN on your phone to complete the payment.') };
@@ -54,6 +57,13 @@ async function startPayment(orderId: string, providerCode: PaymentProviderCode, 
     return { kind: 'hosted', attemptId: result.attemptId, redirectUrl: result.redirectUrl ?? null, message: orElse(result.customerMessage, 'Complete the payment in the provider window.') };
   } catch (error) {
     console.error('[checkout] payment start', error);
+    // The order is saved and can be tried again; the failed start is on its timeline with its time and what went wrong (for staff).
+    await OrderStages.move(drizzleDb, orderId, 'payment_started', 'failed', {
+      source: 'shop',
+      reasonCode: 'payment_start_failed',
+      message: 'The payment could not be started.',
+      detail: { provider: providerCode, error: error instanceof Error ? error.message.slice(0, 300) : 'unknown' },
+    }).catch((recordError: unknown) => console.error('[checkout] could not record the failed start', recordError));
     return { kind: 'failed', message: 'The payment could not be started.' };
   }
 }
@@ -63,8 +73,17 @@ async function startPayment(orderId: string, providerCode: PaymentProviderCode, 
  * all decided here from the shop's own data; nothing the browser says about money is used.
  */
 export async function placeOrderAction(raw: unknown): Promise<CheckoutResult<CheckoutPlaced>> {
+  // The checkout is on record from the moment the shopper presses pay, so a refusal leaves its time and reason behind.
+  const h = await headers();
+  const attempt = await CheckoutAttempts.start({
+    sessionRef: guestSessionRef(clientAddress(h.get('x-real-ip'), h.get('x-forwarded-for')), h.get('user-agent') ?? ''),
+    cart: cartSummaryOf(raw),
+  });
   const input = parseCheckoutInput(raw);
-  if (!input.ok) return { ok: false, error: input.error };
+  if (!input.ok) {
+    await CheckoutAttempts.refuse(attempt, { stage: 'input', code: 'invalid_input', message: input.error });
+    return { ok: false, error: input.error };
+  }
   // The number the payment is made from: the one the customer chose, else their contact number. Checked before anything is reserved.
   const method = input.value.paymentMethod;
   const payerPhone = paymentUsesPhone(method) ? (input.value.paymentPhone ?? null) : null;
@@ -72,16 +91,24 @@ export async function placeOrderAction(raw: unknown): Promise<CheckoutResult<Che
   const promptTo = resolved.ok ? resolved.phone : null;
   if (promptTo !== null && paymentUsesPhone(method)) {
     const limited = await promptLimited(promptTo);
-    if (limited !== null) return { ok: false, error: limited };
+    if (limited !== null) {
+      await CheckoutAttempts.refuse(attempt, { stage: 'rate_limit', code: 'rate_limited', message: limited });
+      return { ok: false, error: limited };
+    }
   }
   let order: Order;
   try {
-    order = await OrdersService.createCheckout(input.value);
+    order = await OrdersService.createCheckout({ ...input.value, checkoutStartedAt: attempt?.startedAt ?? null });
   } catch (error) {
-    if (error instanceof CheckoutRefused) return { ok: false, error: error.message };
+    if (error instanceof CheckoutRefused) {
+      await CheckoutAttempts.refuse(attempt, { stage: 'placement', code: error.code, message: error.message });
+      return { ok: false, error: error.message };
+    }
     console.error('[checkout] place order', error);
+    await CheckoutAttempts.refuse(attempt, { stage: 'placement', code: 'other', message: GENERIC });
     return { ok: false, error: GENERIC };
   }
+  await CheckoutAttempts.placed(attempt, order.id);
   revalidatePath('/admin/orders');
   revalidatePath('/admin/customers');
   revalidatePath('/admin/inventory');
