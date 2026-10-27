@@ -119,10 +119,14 @@ export class MediaService {
     if (!sniffed) throw new MediaError('Only JPEG, PNG, WebP, GIF or AVIF images are accepted.');
 
     const sha256 = createHash('sha256').update(input.data).digest('hex');
-    const existing = await this.repo.findByHash(sha256, purpose, visibility, input.actor.id);
-    if (existing) return { asset: this.toView(existing), deduplicated: true };
-
     const port = this.ports.active();
+    const existing = await this.repo.findByHash(sha256, purpose, visibility, input.actor.id);
+    // A copy kept by another provider (say, Cloudinary before a move to S3) is not reused: its
+    // provider may no longer be set up, and the new upload belongs where uploads go now.
+    if (existing?.provider === port.provider) {
+      return { asset: this.toView(existing), deduplicated: true };
+    }
+
     const stored = await port.put({ data: input.data, mime: sniffed.mime, folder: purpose, visibility });
 
     try {
@@ -355,10 +359,23 @@ export class MediaService {
 
   // ── View ──────────────────────────────────────────────────────────────────
 
+  /**
+   * The address shown for an asset. One kept by a provider that is no longer set up has no address
+   * (empty), so the library and the pages that list it still load; only that picture is missing.
+   */
+  private viewUrl(row: MediaAssetRow, variant: MediaVariant = 'original'): string {
+    try {
+      return this.deliveryUrl(row, variant);
+    } catch (error) {
+      if (error instanceof MediaConfigError) return '';
+      throw error;
+    }
+  }
+
   toView(row: MediaAssetRow): MediaAssetView {
     const isPrivate = row.visibility === 'private';
-    const url = isPrivate ? `/api/media/${row.id}` : this.deliveryUrl(row);
-    const thumbUrl = isPrivate ? `/api/media/${row.id}?variant=thumb` : this.deliveryUrl(row, 'thumb');
+    const url = isPrivate ? `/api/media/${row.id}` : this.viewUrl(row);
+    const thumbUrl = isPrivate ? `/api/media/${row.id}?variant=thumb` : this.viewUrl(row, 'thumb');
     return {
       id: row.id,
       provider: row.provider,
