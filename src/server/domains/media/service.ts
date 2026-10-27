@@ -119,10 +119,14 @@ export class MediaService {
     if (!sniffed) throw new MediaError('Only JPEG, PNG, WebP, GIF or AVIF images are accepted.');
 
     const sha256 = createHash('sha256').update(input.data).digest('hex');
-    const existing = await this.repo.findByHash(sha256, purpose, visibility, input.actor.id);
-    if (existing) return { asset: this.toView(existing), deduplicated: true };
-
     const port = this.ports.active();
+    const existing = await this.repo.findByHash(sha256, purpose, visibility, input.actor.id);
+    // A copy kept by another provider (say, Cloudinary before a move to S3) is not reused: its
+    // provider may no longer be set up, and the new upload belongs where uploads go now.
+    if (existing?.provider === port.provider) {
+      return { asset: this.toView(existing), deduplicated: true };
+    }
+
     const stored = await port.put({ data: input.data, mime: sniffed.mime, folder: purpose, visibility });
 
     try {
