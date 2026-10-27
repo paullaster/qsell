@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 export default async function robots(): Promise<MetadataRoute.Robots> {
   const base = await siteBaseUrl();
   return {
-    rules: [{ userAgent: '*', allow: '/', disallow: ['/admin', '/api/', '/profile', '/checkout', '/login', '/register', '/forgot-password', '/reset-password', '/change-password', '/verify-email', '/vendor', '/quote/'] }],
+    rules: [{ userAgent: '*', allow: ['/', '/api/media/file/', '/api/company/logo/'], disallow: ['/admin', '/api/', '/profile', '/checkout', '/login', '/register', '/forgot-password', '/reset-password', '/change-password', '/verify-email', '/vendor', '/quote/'] }],
     sitemap: `${base}/sitemap.xml`,
     host: base,
   };

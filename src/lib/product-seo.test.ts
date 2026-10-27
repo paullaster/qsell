@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'vitest';
+
+interface OfferShape {
+  url: string;
+  keywords: string;
+  offers: { itemCondition: string; hasMerchantReturnPolicy: { merchantReturnLink: string } };
+  '@type': string;
+  featureList: string[];
+}
+
 import type { PublicProduct } from '@/types/index';
 import { absoluteUrl, breadcrumbJsonLd, jsonLdText, metaDescription, productImages, productJsonLd } from './product-seo';
 
 const product = (over: Partial<PublicProduct> = {}): PublicProduct =>
-  ({ id: 'p1', sku: 'RICE-5', name: 'Rice 5kg', description: 'Long grain rice', category: 'Grains', brand: 'Pishori', price: 650, stockQuantity: 10, reservedQuantity: 0, lowStockThreshold: 2, imageUrl: '/a.jpg', additionalImages: ['/b.jpg', '/a.jpg', ' '], rating: 4.5, reviewCount: 0, ...over }) as PublicProduct;
+  ({ id: 'p1', sku: 'RICE-5', name: 'Rice 5kg', description: 'Long grain rice', category: 'Grains', brand: 'Pishori', price: 650, stockQuantity: 10, reservedQuantity: 0, lowStockThreshold: 2, imageUrl: '/a.jpg', additionalImages: ['/b.jpg', '/a.jpg', ' '], rating: 4.5, reviewCount: 0, tags: [], ...over }) as PublicProduct;
 const ctx = { baseUrl: 'https://shop.example/', currencyCode: 'KES', storeName: 'Shop' };
 
 describe('metaDescription', () => {
@@ -28,6 +37,13 @@ describe('productImages / absoluteUrl', () => {
 });
 
 describe('productJsonLd', () => {
+  it('adds the address, tags and the returns page to the offer', () => {
+    const data = productJsonLd(product({ slug: 'rice', tags: ['rice', 'grain'] }), { ...ctx, returnPolicyUrl: 'https://shop.example/policies/returns' }) as unknown as OfferShape;
+    expect(data.keywords).toBe('rice, grain');
+    expect(data.offers.itemCondition).toBe('https://schema.org/NewCondition');
+    expect(data.offers.hasMerchantReturnPolicy.merchantReturnLink).toBe('https://shop.example/policies/returns');
+  });
+
   it('describes price, stock, brand and pictures', () => {
     const data = productJsonLd(product(), ctx);
     expect(data).toMatchObject({

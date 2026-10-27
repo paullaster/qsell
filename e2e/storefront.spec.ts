@@ -37,8 +37,11 @@ test.describe('the shop is a real website', () => {
     await page.goto(href ?? '/');
     await expect(page.getByRole('heading', { name: 'Rice 5kg', level: 1 })).toBeVisible({ timeout: 30_000 });
     await expect(page).toHaveTitle(/Rice 5kg/);
-    await expect(page.locator('link[rel="canonical"]')).toHaveAttribute('href', href ?? '');
-    await expect(page.locator('meta[property="og:title"]')).toHaveAttribute('content', 'Rice 5kg');
+    // The canonical address is absolute, built from the shop's own address.
+    await expect(page.locator('link[rel="canonical"]')).toHaveAttribute('href', new RegExp(`^https?://[^/]+${(href ?? '').replaceAll('/', '\\/')}$`));
+    // A shared link leads with the product, then the price, the town and the shop's name.
+    await expect(page.locator('meta[property="og:title"]')).toHaveAttribute('content', /^Rice 5kg – .*600/);
+    await expect(page.locator('meta[property="og:type"]')).toHaveAttribute('content', 'product');
     const ld = await page.locator('script[type="application/ld+json"]').allTextContents();
     const product = ld.map((text) => JSON.parse(text) as { '@type': string; offers?: { price: string; availability: string } }).find((item) => item['@type'] === 'Product');
     expect(product?.offers).toMatchObject({ price: '600.00', availability: 'https://schema.org/InStock' });

@@ -35,7 +35,7 @@ Never downgrade these to suit another package: adapt the other package or the co
 6. **Maintainable**: small focused modules, pure logic apart from UI, match the surrounding code, comments only for the non-obvious why.
 7. **Reusable**: extend existing components instead of copying (`ChoicePicker`, `LookupAutocomplete`, `usePagedList`, `InlineConfirm`, `screen-kit`, `RouteModal`).
 8. **Accessible**: labelled controls, dialog roles with focus management and Escape, `role="alert"` / `aria-live`, keyboard operable, WCAG AA contrast.
-9. **SEO**: public pages have metadata, semantic headings and landmarks; admin stays noindex.
+9. **SEO** (see section 10): public pages have metadata, semantic headings and landmarks; admin stays noindex.
 
 ## 3. Architecture
 
@@ -83,3 +83,15 @@ Every line passes **ESLint 10.12+** (strict-boolean-expressions, no-nested-terna
 - **Never run `pnpm db:push`** on a real database: it does not understand the partitioned `gl_entries` table and proposes dropping its partitions. Never answer yes to a prompt that drops `gl_entries_p*`.
 - Do not touch the development database or the running development server unless asked. Do not drop tables or decrypt stored credentials without an explicit instruction.
 - Stop servers with `fuser -k <port>/tcp`, never `pkill -f` with a pattern that appears in your own command line.
+
+## 10. SEO and sharing (permanent)
+
+The goal is to rank in the top results in Kenya (Nairobi, Mombasa, Kisumu, Nakuru, Nyeri, Murang'a, Eldoret and every other town) for each deployment's own shop and brand, and for the platform's own solutions: e-commerce, point of sale, sales management, inventory management, business management software and every module below them. Nobody can promise a position; we do all the work that is ours: correct, complete, fast, crawlable pages.
+
+1. **Dynamic from the company's own data.** Every deployment sells something different. Titles, descriptions, keywords, structured data and share cards are built from what the company entered: legal and trading name, tagline, city/county/country, location label, contacts, support channels, FAQs, guarantees, policies, categories and products. No name, town or product is ever hard-coded. The trading name leads the title of every public page so a search for the company's name finds it first.
+2. **Use the company's content heavily when it exists**: FAQs become `FAQPage` data and a public help page, contacts and channels become `Organization`/`LocalBusiness` `contactPoint`, `sameAs` and `areaServed`, guarantees and policies appear in product descriptions and offers (`hasMerchantReturnPolicy`). Nothing is invented when the company has not written it, and nothing the page does not show is claimed in structured data.
+3. **Every shareable link is a rich card.** A product link pasted into WhatsApp, Facebook, Instagram, X, TikTok, LinkedIn, Telegram or iMessage must show the product's picture, name, price and shop. Open Graph and Twitter tags are absolute, the picture is a right-sized JPEG (WhatsApp drops large ones), with alt text and `product:*` tags.
+4. **Every module feeds platform SEO.** Each module and sub-module registers its plain-language name, what it does and the words people search for in `src/config/seo/platform-modules.ts`; a test fails when a navigation module has no entry. A new module is not finished until it is registered, described in everyday words (Kenyan English: "point of sale", "stock control", "invoicing", "M-Pesa") and appears on the public platform page.
+5. **Honest and clean.** No keyword stuffing, no hidden text, no towns the company does not serve, no fake reviews or ratings, no claims not backed by data. One canonical address per page; filters, searches and later pages are `noindex,follow`; admin, account, checkout and the API are never indexed.
+6. **Technical base on every public page**: `metadataBase`, canonical, `lang`, a title template, descriptions of 70-160 characters, one `h1`, JSON-LD (`Organization`, `WebSite` with search action, `BreadcrumbList`, `Product`, `FAQPage`, `ItemList`), a sitemap with images and last-modified dates, `robots.txt`, correct status codes (404, 308), fast server-rendered HTML.
+7. **Tested.** Pure SEO builders have unit tests; head tags and structured data are checked in e2e on a real page.

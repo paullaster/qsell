@@ -1,5 +1,7 @@
 # The storefront
 
+Search engines and shared links: see [seo.md](seo.md).
+
 What a shopper sees, how it is built, and the rules it keeps.
 
 ## Pages
@@ -10,6 +12,8 @@ What a shopper sees, how it is built, and the rules it keeps.
 | `/product/<slug>` | One product | The address is the product's slug. An older link by id, or a slug that has since changed, redirects (308) to the current one. Carries its own title, description, canonical address, Open Graph/Twitter data and schema.org `Product` + `BreadcrumbList` JSON-LD. |
 | `/checkout` | Checkout | A page, not a modal: form and order beside each other, then the wait for the payment, then the confirmation. `noindex`. |
 | `/policies/<slug>` | Privacy, delivery, returns... | Written by the company in Admin → Company → Policies. Plain text only (`parsePolicyBody`); nothing in it is ever treated as markup. |
+| `/help` | Contact, guarantees and FAQs | The company's own help content as readable text with `FAQPage`/`ContactPage` data. See [seo.md](seo.md). |
+| `/platform` | The software behind the shop, module by module | See [seo.md](seo.md). |
 | `/sitemap.xml`, `/robots.txt`, `/manifest.webmanifest` | For search engines and phones | Built from the live catalog. Addresses come from the company's public base URL or `APP_URL`, never from the request's Host header. |
 
 All of these live in `app/(store)/`, whose layout draws the header, footer, cart panel and the panels that open from them (`StoreShell`). Its data (company, currency, payment names, categories, session) is read in parallel on the server and handed over as promises.

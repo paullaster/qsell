@@ -1,5 +1,9 @@
 import type { Metadata } from 'next';
 import { getCompanySettingsAction } from '@/server/domains/company/actions';
+import { siteVerification, storefrontSeo } from '@/server/domains/storefront/seo';
+import { countryCode } from '@/lib/seo/jsonld';
+import { homeDescription, homeKeywords, homeTitle } from '@/lib/seo/text';
+import { shareImageUrl } from '@/lib/seo/share';
 import { getThemeModeAction } from '@/server/domains/theme/actions';
 import { CompanyUiConfigProvider } from '@/components/company/CompanyUiConfigProvider';
 import { ThemeProvider } from '@/components/theme/ThemeProvider';
@@ -16,15 +20,34 @@ export const dynamic = 'force-dynamic';
 
 export async function generateMetadata(): Promise<Metadata> {
   try {
-    const company = await getCompanySettingsAction();
-    const title = company.tagline
-      ? `${company.tradingName} — ${company.tagline}`
-      : company.tradingName;
+    const { company, ui, base } = await storefrontSeo();
+    const title = homeTitle(company);
+    const description = homeDescription(company, { guarantee: ui.support.guarantees[0]?.text });
     const logoUrl = resolveCompanyLogoUrl(company.logoUrl);
+    const logoCard = logoUrl === null ? null : shareImageUrl(base, logoUrl);
     return {
-      title,
-      description: `${company.legalName} storefront and commerce console`,
-      icons: logoUrl ? [{ url: logoUrl }] : undefined,
+      metadataBase: new URL(base),
+      title: { default: title, template: `%s | ${company.tradingName}` },
+      description,
+      applicationName: company.tradingName,
+      keywords: homeKeywords(company),
+      authors: [{ name: company.legalName }],
+      creator: company.legalName,
+      publisher: company.legalName,
+      icons: logoUrl === null ? undefined : [{ url: logoUrl }],
+      openGraph: {
+        type: 'website',
+        siteName: company.tradingName,
+        locale: 'en_KE',
+        title,
+        description,
+        url: base,
+        ...(logoCard === null ? {} : { images: [{ url: logoCard, alt: `${company.tradingName} logo` }] }),
+      },
+      twitter: { card: logoCard === null ? 'summary' : 'summary_large_image', title, description, ...(logoCard === null ? {} : { images: [logoCard] }) },
+      robots: { index: true, follow: true, googleBot: { index: true, follow: true, 'max-image-preview': 'large', 'max-snippet': -1, 'max-video-preview': -1 } },
+      verification: siteVerification(),
+      other: { 'geo.region': countryCode(company.country), 'geo.placename': company.city },
     };
   } catch {
     return {
@@ -65,7 +88,7 @@ export default async function RootLayout({
   const serverTheme = resolveThemeForServer(themeMode);
 
   return (
-    <html lang="en" style={themeStyle} data-theme={serverTheme} data-theme-mode={themeMode}>
+    <html lang="en-KE" style={themeStyle} data-theme={serverTheme} data-theme-mode={themeMode}>
       <body className="min-h-screen bg-canvas font-sans text-fg antialiased">
         {/*
           First node in <body> on purpose: the parser runs it before any visible
