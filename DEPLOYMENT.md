@@ -13,6 +13,7 @@ the scripts and GitHub workflows read it.
 - [6. Operations](#6-operations)
 - [7. Troubleshooting](#7-troubleshooting)
 - [8. Image uploads (media storage)](#8-image-uploads-media-storage)
+- [9. Search engines and shared links (SEO)](#9-search-engines-and-shared-links-seo)
 
 ## 1. How it works
 
@@ -487,3 +488,35 @@ the site down. If it is `false`, the app log names the setting that is wrong.
 
 If uploads are not configured, product forms still work and show a clear message;
 pasting an image link always works.
+
+## 9. Search engines and shared links (SEO)
+
+Search text, structured data and shared-link cards are built from each company's own setup (see
+`docs/architecture/seo.md`). After deploying a release that includes them, do these on the server:
+
+1. **Recreate the containers** so `.env.runtime` changes take effect (`env_file` is read only when a
+   container is created, not on a restart):
+
+   ```sh
+   cd $DEPLOY_PATH
+   docker compose --env-file .env.deploy -f compose.production.yaml up -d --force-recreate app worker
+   ```
+
+2. **Set the search settings in `.env.runtime`**, if you have them (keep it `chmod 600`):
+
+   ```sh
+   # The code Google Search Console gives to prove the site is yours
+   GOOGLE_SITE_VERIFICATION=
+   # The same for Bing Webmaster Tools
+   BING_SITE_VERIFICATION=
+   # The platform's own address: the original of the /platform page that every shop carries
+   PLATFORM_CANONICAL_URL=https://example.com/platform
+   ```
+
+3. **Check Company → Profile is filled in**: the town, county, country, tagline, phone and email, and the
+   **public base URL** (the real `https://` address of the shop). Every canonical link, shared-link
+   card and sitemap entry is built from it. Add the company's FAQs, guarantees and policies under
+   Company → Support and Policies; they appear on the public help page and in the search data.
+
+Afterwards, verify the shop in Google Search Console and Bing Webmaster Tools and submit
+`/sitemap.xml`, and create a Google Business Profile with the same name, address and phone as the profile.
