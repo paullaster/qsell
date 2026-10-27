@@ -1,7 +1,6 @@
 import type { MetadataRoute } from 'next';
 import { StorefrontCatalog } from '@/server/domains/catalog/storefront-service';
-import { getCompanyUiConfigAction } from '@/server/domains/company/actions';
-import { siteBaseUrl } from '@/server/domains/storefront/site';
+import { storefrontSeo } from '@/server/domains/storefront/seo';
 import { absoluteUrl } from '@/lib/product-seo';
 import { policyAddress } from '@/config/company-ui';
 import { has } from '@/lib/values';
@@ -13,11 +12,10 @@ export const dynamic = 'force-dynamic';
 
 /** Every page a search engine should know: the shop, each category, each product and each policy. */
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const [base, products, categories, ui] = await Promise.all([
-    siteBaseUrl(),
+  const [{ base, ui }, products, categories] = await Promise.all([
+    storefrontSeo(),
     StorefrontCatalog.sitemapProducts(),
     StorefrontCatalog.categories(),
-    getCompanyUiConfigAction(),
   ]);
   return [
     { url: absoluteUrl(base, '/'), changeFrequency: 'daily', priority: 1 },

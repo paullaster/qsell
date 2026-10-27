@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { getCompanyUiConfigAction } from '@/server/domains/company/actions';
+import { storefrontSeo } from '@/server/domains/storefront/seo';
 import { parsePolicyBody, policyAddress } from '@/config/company-ui';
 import { metaDescription } from '@/lib/product-seo';
 
@@ -10,7 +10,8 @@ interface Props {
 }
 
 async function policyFor(slug: string) {
-  const { policies } = await getCompanyUiConfigAction();
+  const { ui } = await storefrontSeo();
+  const { policies } = ui;
   return { page: policies.find((item) => item.slug === slug) ?? null, policies };
 }
 

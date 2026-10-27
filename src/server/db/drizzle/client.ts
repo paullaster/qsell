@@ -14,7 +14,8 @@ const globalForDb = globalThis as unknown as {
 function createClient() {
   return postgres(connectionString, {
     max: 10,
-    idle_timeout: 20,
+    // A shop that is quiet for a minute must not pay for new connections (each one also fetches the type list) on its next visit.
+    idle_timeout: 300,
     connect_timeout: 10,
   });
 }
