@@ -85,3 +85,12 @@ describe('uploading the same picture twice', () => {
     await expect(upload(service)).rejects.toBeInstanceOf(MediaConfigError);
   });
 });
+
+describe('listing assets of a provider that is no longer set up', () => {
+  it('shows an empty address for that picture instead of failing the list', () => {
+    const { service } = build(null, port('s3'), []);
+    const view = service.toView(row('cloudinary'));
+    expect([view.url, view.thumbUrl]).toEqual(['', '']);
+    expect(service.toView(row('s3')).url).toBe('https://s3.example/old.png');
+  });
+});

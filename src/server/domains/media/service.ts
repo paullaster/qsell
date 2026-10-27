@@ -359,10 +359,23 @@ export class MediaService {
 
   // ── View ──────────────────────────────────────────────────────────────────
 
+  /**
+   * The address shown for an asset. One kept by a provider that is no longer set up has no address
+   * (empty), so the library and the pages that list it still load; only that picture is missing.
+   */
+  private viewUrl(row: MediaAssetRow, variant: MediaVariant = 'original'): string {
+    try {
+      return this.deliveryUrl(row, variant);
+    } catch (error) {
+      if (error instanceof MediaConfigError) return '';
+      throw error;
+    }
+  }
+
   toView(row: MediaAssetRow): MediaAssetView {
     const isPrivate = row.visibility === 'private';
-    const url = isPrivate ? `/api/media/${row.id}` : this.deliveryUrl(row);
-    const thumbUrl = isPrivate ? `/api/media/${row.id}?variant=thumb` : this.deliveryUrl(row, 'thumb');
+    const url = isPrivate ? `/api/media/${row.id}` : this.viewUrl(row);
+    const thumbUrl = isPrivate ? `/api/media/${row.id}?variant=thumb` : this.viewUrl(row, 'thumb');
     return {
       id: row.id,
       provider: row.provider,
