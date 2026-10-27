@@ -4,6 +4,7 @@
  *   tsx e2e/support/storefront-fixtures.ts reviewer <tag> <product name>   a shopper who has been delivered that product
  *   tsx e2e/support/storefront-fixtures.ts product <tag>                    a new product for sale with no reviews, named "Reviewed <tag>"
  *   tsx e2e/support/storefront-fixtures.ts newsletter-token <email>         the token behind a confirmation link
+ *   tsx e2e/support/storefront-fixtures.ts payment-phones <order number>    the contact number, the number the order is paid from and every attempt's number
  */
 import { execFileSync } from 'node:child_process';
 import { sql } from 'drizzle-orm';
@@ -49,13 +50,22 @@ async function newsletterToken(email: string): Promise<Record<string, string>> {
   return { token: row.token };
 }
 
+async function paymentPhones(orderNumber: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const [order] = await db.execute<{ id: string; customer_phone: string; payment_phone: string | null }>(sql`SELECT id, customer_phone, payment_phone FROM orders WHERE order_number = ${orderNumber}`);
+  if (order === undefined) throw new Error(`e2e fixture: no order ${orderNumber}`);
+  const attempts = await db.execute<{ customer_phone: string | null }>(sql`SELECT customer_phone FROM payment_attempts WHERE order_id = ${order.id} ORDER BY created_at`);
+  return { contact: order.customer_phone, paidFrom: order.payment_phone ?? '', attempts: attempts.map((a) => a.customer_phone ?? '').join(',') };
+}
+
 async function main(): Promise<void> {
   const [command, a, b] = process.argv.slice(2);
   let result: Record<string, string>;
   if (command === 'reviewer' && a !== undefined && b !== undefined) result = await reviewer(a, b);
   else if (command === 'product' && a !== undefined) result = await product(a);
   else if (command === 'newsletter-token' && a !== undefined) result = await newsletterToken(a);
-  else throw new Error('usage: storefront-fixtures reviewer <tag> <product> | newsletter-token <email>');
+  else if (command === 'payment-phones' && a !== undefined) result = await paymentPhones(a);
+  else throw new Error('usage: storefront-fixtures reviewer <tag> <product> | newsletter-token <email> | payment-phones <order number>');
   process.stdout.write(`FIXTURE ${JSON.stringify(result)}\n`);
 }
 

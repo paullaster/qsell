@@ -5,6 +5,7 @@ import { CreditCard, RefreshCw, ShieldCheck, Smartphone } from 'lucide-react';
 import type { Order } from '@/types/index';
 import { getPaymentAttemptStatusAction } from '@/server/actions';
 import { firstFilled, orElse } from '@/lib/values';
+import { maskedPhone } from '@/lib/phone';
 import type { CheckoutPayment } from '@/server/domains/orders/checkout-actions';
 
 const POLL_MS = 2500;
@@ -67,6 +68,7 @@ export function PaymentWait({
       </div>
       <h1 className="text-xl font-bold text-fg-strong">{phone ? 'Check your phone' : 'Complete your payment'}</h1>
       <p role="status" aria-live="polite" className="text-sm text-fg">{payment.message}</p>
+      {phone && maskedPhone(order.paymentPhone ?? order.customerPhone) !== '' ? <p className="text-sm text-fg-muted">The prompt was sent to <span className="font-mono text-fg-strong">{maskedPhone(order.paymentPhone ?? order.customerPhone)}</span>.</p> : null}
       {payment.kind === 'hosted' && payment.redirectUrl !== null ? (
         <a href={payment.redirectUrl} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center justify-center rounded-lg bg-indigo-600 px-5 text-sm font-semibold text-white hover:bg-indigo-500">
           Open the payment page

@@ -1,5 +1,6 @@
 import { constants, createPublicKey, publicEncrypt } from 'node:crypto';
 
+import { toKenyanMsisdn } from '@/lib/phone';
 import { has, readText } from '@/lib/values';
 
 /** Daraja timestamps are East Africa Time, yyyyMMddHHmmss. */
@@ -38,13 +39,7 @@ export function securityCredential(initiatorPassword: string, certificatePem: st
 }
 
 /** 07XX, 01XX, 7XX, +254… and 254… all become 2547XXXXXXXX / 2541XXXXXXXX. Null when it cannot be a Kenyan mobile number. */
-export function toMsisdn(raw: string | null | undefined): string | null {
-  if (!has(raw)) return null;
-  let d = raw.replace(/[^0-9]/g, '');
-  if (d.startsWith('0')) d = `254${d.slice(1)}`;
-  else if (d.length === 9 && /^[17]/.test(d)) d = `254${d}`;
-  return /^254[17]\d{8}$/.test(d) ? d : null;
-}
+export const toMsisdn = toKenyanMsisdn;
 
 /** Two numbers are the same person's when their last nine digits agree (masked numbers never match). */
 export function samePhone(a: string | null | undefined, b: string | null | undefined): boolean {

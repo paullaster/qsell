@@ -13,6 +13,7 @@ export class OrdersService {
     customerName: string;
     customerEmail: string;
     customerPhone: string;
+    paymentPhone?: string | null;
     buyerKraPin?: string | null;
     shippingAddress: {
       street: string;
@@ -47,6 +48,7 @@ export class OrdersService {
       customerName: params.customerName,
       customerEmail: params.customerEmail,
       customerPhone: params.customerPhone,
+      paymentPhone: params.paymentPhone,
       buyerKraPin: params.buyerKraPin,
       shippingAddress: params.shippingAddress,
       items: params.items,

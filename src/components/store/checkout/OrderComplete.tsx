@@ -7,6 +7,7 @@ import type { Order } from '@/types/index';
 import { emailInvoiceAction, generateInvoicePdfAction } from '@/server/domains/invoices/actions';
 import { downloadPdfBase64 } from '@/lib/downloadPdf';
 import { useStore } from '@/components/store/StoreContext';
+import { maskedPhone } from '@/lib/phone';
 import { has } from '@/lib/values';
 
 /** The order as the shop has it (read again from the server after payment), with the invoice to keep. */
@@ -52,6 +53,7 @@ export function OrderComplete({ order, receipt, onAccount }: { order: Order; rec
         <div className="rounded-xl border border-line bg-surface p-4">
           <dt className="mb-1 flex items-center gap-2 text-xs font-semibold tracking-wider text-fg-muted uppercase"><Smartphone className="h-3.5 w-3.5" aria-hidden="true" />Payment</dt>
           <dd className="text-sm text-fg-strong capitalize">{order.paymentMethod.replace(/_/g, ' ')}</dd>
+          {maskedPhone(order.paymentPhone) === '' ? null : <dd className="text-xs text-fg-muted">Paid from <span className="font-mono">{maskedPhone(order.paymentPhone)}</span></dd>}
         </div>
         <div className="rounded-xl border border-line bg-surface p-4 sm:col-span-2">
           <dt className="mb-1 flex items-center gap-2 text-xs font-semibold tracking-wider text-fg-muted uppercase"><MapPin className="h-3.5 w-3.5" aria-hidden="true" />Delivering to</dt>

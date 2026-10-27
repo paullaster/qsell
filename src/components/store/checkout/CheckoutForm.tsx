@@ -9,6 +9,8 @@ import type { CartLine } from '@/lib/cart-lines';
 import { cartTotals } from '@/lib/cartMoney';
 import { readOptionalEmail } from '@/lib/guest-contact';
 import { has, nth, orElse } from '@/lib/values';
+import { paymentUsesPhone, resolvePaymentPhone } from '@/lib/payment-phone';
+import { PayFromField } from '@/components/store/checkout/PayFromField';
 import { fetchCustomerAccountAction, listEnabledCheckoutProvidersAction, lookupCheckoutCustomerAction, addCustomerAddressAction } from '@/server/actions';
 import { useStore } from '@/components/store/StoreContext';
 import { OrderSummary } from '@/components/store/checkout/OrderSummary';
@@ -17,6 +19,8 @@ export interface CheckoutSubmission {
   customerName: string;
   customerEmail: string;
   customerPhone: string;
+  /** Set when the customer chose to pay from a number other than the contact number. */
+  paymentPhone?: string;
   buyerKraPin?: string;
   shippingAddress: { street: string; city: string; countyOrState: string; country: string };
   paymentMethod: PaymentProvider;
@@ -82,6 +86,8 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
   const [customerName, setCustomerName] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  // Blank means "pay from my contact number"; anything typed is the number the payment is made from.
+  const [payPhone, setPayPhone] = useState('');
   const [buyerKraPin, setBuyerKraPin] = useState('');
   const [street, setStreet] = useState('');
   const [city, setCity] = useState('');
@@ -224,6 +230,11 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
       setFormError('Online payment is unavailable right now. Please try again later or contact us for help.');
       return;
     }
+    const payFrom = resolvePaymentPhone({ method: paymentMethod, contactPhone: customerPhone, paymentPhone: payPhone });
+    if (!payFrom.ok) {
+      setFormError(payFrom.error);
+      return;
+    }
     try {
       if (isSignedIn && (useNewAddress || !hasSavedAddresses)) {
         const { customer: updated } = await addCustomerAddressAction(customer.id, {
@@ -245,6 +256,7 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
       customerName,
       customerEmail: email.email,
       customerPhone,
+      ...(paymentUsesPhone(paymentMethod) && payPhone.trim() !== '' ? { paymentPhone: payPhone.trim() } : {}),
       buyerKraPin: orElse(buyerKraPin.trim(), undefined),
       shippingAddress: { street, city, countyOrState, country },
       paymentMethod,
@@ -376,6 +388,7 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
         <section aria-label="Payment method" className="space-y-3">
           <SectionTitle number={3} icon={<CreditCard className="h-4 w-4" aria-hidden="true" />}>Payment method</SectionTitle>
           {paymentBody}
+          {paymentUsesPhone(paymentMethod) ? <PayFromField value={payPhone} contactPhone={customerPhone} onChange={setPayPhone} label={`${payLabel ?? 'Mobile'} number to pay from`} /> : null}
         </section>
       </div>
 
