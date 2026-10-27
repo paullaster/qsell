@@ -259,7 +259,7 @@ The aim: **one approval entry per approval step, and that single record, togethe
 
 ### 6.4 Status model (several independent statuses, as in SAP)
 
-Overall (open → confirmed → in delivery → partially delivered → delivered → partially billed → billed → closed; cancelled) plus **separate** approval status, credit status, delivery status, billing status, and block status. Every status has a transition table, a reason requirement, and shows in the UI as a chip so "why is this order stuck?" is one glance.
+Overall (open → confirmed → in delivery → partially delivered → delivered → partially billed → billed → closed; cancelled) plus **separate** approval status, credit status, delivery status, billing status, and block status. Every status has a transition table, a reason requirement, and shows in the UI as a chip so "why is this order stuck?" is one glance. **Every status and stage has a server timestamp, from the moment the user initiates checkout (a refused attempt included) until the order succeeds or fails; the design is in [order-stage-timeline.md](./order-stage-timeline.md).** Stock per location, which this section assumes, is designed in [stock-locations.md](./stock-locations.md); delivery in [delivery-module.md](./delivery-module.md).
 
 ### 6.5 What happens on save (the pipeline)
 
