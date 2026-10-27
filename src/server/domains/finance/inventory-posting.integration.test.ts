@@ -42,9 +42,20 @@ describe.skipIf(!has(process.env.TEST_DATABASE_URL))('stock at cost in the books
     });
   }
   const events = (productId: string) => k.db.select().from(k.schema.financeInventoryEvents).where(and(eq(k.schema.financeInventoryEvents.companyId, k.companyId), eq(k.schema.financeInventoryEvents.productId, productId))).orderBy(k.schema.financeInventoryEvents.id);
+  /**
+   * Posts everything that is due, not just the oldest 1000: the database is shared with the other test files, and by the time this
+   * one runs they can already have left more than that waiting, which would push these events past the first batch.
+   */
   const post = async () => {
-    const out = await k.fin.inventoryPosting.processDue(1000);
-    return out;
+    const batch = 1000;
+    const total = { posted: 0, failed: 0 };
+    for (let pass = 0; pass < 50; pass += 1) {
+      const out = await k.fin.inventoryPosting.processDue(batch);
+      total.posted += out.posted;
+      total.failed += out.failed;
+      if (out.posted + out.failed < batch) break;
+    }
+    return total;
   };
   const linesOf = async (registerId: string) => {
     const no = new Map(Object.entries(k.acct).map(([n, id]) => [id, n]));
