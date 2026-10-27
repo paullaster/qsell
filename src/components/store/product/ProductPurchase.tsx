@@ -3,15 +3,21 @@
 import { useState } from 'react';
 import { ShoppingCart, Zap } from 'lucide-react';
 import type { PublicProduct } from '@/types/index';
-import { availableOf, decimalsOf } from '@/lib/cart-quantity';
+import { availableOf, clampCartQuantity, decimalsOf } from '@/lib/cart-quantity';
+import { limitsHint, limitsOf, startingQuantity } from '@/lib/quantity-limits';
 import { QuantityStepper } from '@/components/store/QuantityStepper';
 import { useCartActions } from '@/components/store/cart/useCartActions';
 
 /** Choose how many and add to the cart, or go straight to checkout. */
 export function ProductPurchase({ product }: { product: PublicProduct }) {
-  const [quantity, setQuantity] = useState(1);
-  const { addToCart, buyNow } = useCartActions();
+  const limits = limitsOf(product);
   const available = availableOf(product);
+  // The quantity starts at the least that may be bought (one when there is no minimum).
+  const [quantity, setQuantity] = useState(() => {
+    const start = clampCartQuantity(startingQuantity(limits), decimalsOf(product), available, limits);
+    return start === 0 ? 1 : start;
+  });
+  const { addToCart, buyNow } = useCartActions();
   if (available <= 0) {
     return <p className="rounded-xl border border-line bg-surface p-4 text-sm font-medium text-fg-muted">This product is sold out right now. Please check back soon.</p>;
   }
@@ -25,9 +31,11 @@ export function ProductPurchase({ product }: { product: PublicProduct }) {
           decimals={decimalsOf(product)}
           unitCode={product.baseUnitCode}
           available={available}
+          limits={limits}
           onChange={setQuantity}
         />
       </div>
+      {limitsHint(limits, product.baseUnitName) === '' ? null : <p className="text-xs text-fg-muted">{limitsHint(limits, product.baseUnitName)}</p>}
       <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
         <button
           type="button"

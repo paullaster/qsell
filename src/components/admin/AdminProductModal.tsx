@@ -1,5 +1,7 @@
 'use client';
 
+import { useAdminNavAccess } from '@/components/admin/nav/AdminNavAccessProvider';
+import { limitsProblem } from '@/lib/quantity-limits';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
@@ -124,6 +126,12 @@ export function AdminProductModal({
   // Pricing & Financials (strings so create form can stay empty with placeholders)
   const [price, setPrice] = useState('');
   const [compareAtPrice, setCompareAtPrice] = useState('');
+  // Empty means "follow the selling price"; setting it needs its own permission.
+  const [standardPrice, setStandardPrice] = useState('');
+  const [minOrderQty, setMinOrderQty] = useState('');
+  const [maxOrderQty, setMaxOrderQty] = useState('');
+  const access = useAdminNavAccess();
+  const maySetStandardPrice = access !== null && (access.superAdmin || access.permissions.includes('products:set_standard_price'));
   const [costPrice, setCostPrice] = useState('');
 
   // Inventory & Logistics
@@ -233,6 +241,9 @@ export function AdminProductModal({
       setBrand(template.brand || '');
       setPrice(template.price != null ? String(template.price) : '');
       setCompareAtPrice(template.compareAtPrice != null ? String(template.compareAtPrice) : '');
+      setStandardPrice(template.standardPrice != null ? String(template.standardPrice) : '');
+      setMinOrderQty(template.minOrderQty != null ? String(template.minOrderQty) : '');
+      setMaxOrderQty(template.maxOrderQty != null ? String(template.maxOrderQty) : '');
       setCostPrice(template.costPrice != null ? String(template.costPrice) : '');
       setSelectedTaxId(template.taxCategoryId || '');
       setStockQuantity(String(template.stockQuantity));
@@ -271,6 +282,9 @@ export function AdminProductModal({
       setItemTypeId('');
       setPrice('');
       setCompareAtPrice('');
+      setStandardPrice('');
+      setMinOrderQty('');
+      setMaxOrderQty('');
       setCostPrice('');
       setSelectedTaxId('');
       setStockQuantity('');
@@ -440,6 +454,25 @@ export function AdminProductModal({
       }
     }
 
+    // Quantity limits and the standard price may each be empty; if given they must make sense for the unit.
+    const unitDecimals = Number(baseUnit?.meta?.decimals ?? 0);
+    const minNumber = minOrderQty.trim() === '' ? null : Number(minOrderQty);
+    const maxNumber = maxOrderQty.trim() === '' ? null : Number(maxOrderQty);
+    const limitIssue = limitsProblem(minNumber, maxNumber, Number.isFinite(unitDecimals) ? unitDecimals : 0, baseUnit?.meta?.code ?? 'unit');
+    if (limitIssue !== null) {
+      setTab('pricing');
+      setError(limitIssue);
+      setIsSubmitting(false);
+      return;
+    }
+    const standardNumber = standardPrice.trim() === '' ? null : Number(standardPrice);
+    if (standardNumber !== null && (!Number.isFinite(standardNumber) || standardNumber < 0)) {
+      setTab('pricing');
+      setError('The standard price must be 0 or more. Leave it empty to use the selling price.');
+      setIsSubmitting(false);
+      return;
+    }
+
     const tags = tagsInput
       .split(',')
       .map((t) => t.trim())
@@ -466,6 +499,9 @@ export function AdminProductModal({
           compareAtPrice.trim() !== '' && Number(compareAtPrice) > 0
             ? Number(compareAtPrice)
             : undefined,
+        standardPrice: standardNumber,
+        minOrderQty: minNumber,
+        maxOrderQty: maxNumber,
         costPrice: Number(costPrice),
         taxCategoryId: activeTax?.id,
         taxCategoryName: activeTax?.name,
@@ -844,7 +880,41 @@ export function AdminProductModal({
                       className={`${fieldClass} font-mono`}
                     />
                   </div>
+                  <div>
+                    <label htmlFor="product-standard-price" className={labelClass}>Standard Price (KES)</label>
+                    <input
+                      id="product-standard-price"
+                      type="number"
+                      min={0}
+                      step="any"
+                      value={standardPrice}
+                      onChange={(e) => setStandardPrice(e.target.value)}
+                      disabled={!maySetStandardPrice}
+                      aria-describedby="product-standard-price-hint"
+                      placeholder={price.trim() === '' ? 'Same as the selling price' : `Same as the selling price (${price})`}
+                      className={`${fieldClass} font-mono disabled:cursor-not-allowed disabled:opacity-60`}
+                    />
+                    <p id="product-standard-price-hint" className="mt-1 text-[11px] text-fg-subtle">
+                      The price the pricing engine starts from when no price list applies. Leave it empty to follow the selling price.
+                      {maySetStandardPrice ? '' : ' Changing it needs the “Set standard price” permission.'}
+                    </p>
+                  </div>
                 </div>
+
+                <fieldset className="grid grid-cols-1 gap-3 rounded-xl border border-line bg-surface p-3 sm:grid-cols-2">
+                  <legend className="px-1 text-[11px] font-semibold text-fg-muted">Quantity that can be bought at once</legend>
+                  <div>
+                    <label htmlFor="product-min-qty" className={labelClass}>Minimum quantity{baseUnit?.meta?.code === undefined ? '' : ` (${baseUnit.meta.code})`}</label>
+                    <input id="product-min-qty" type="number" min={0} step="any" value={minOrderQty} onChange={(e) => setMinOrderQty(e.target.value)} placeholder="No minimum" className={`${fieldClass} font-mono`} />
+                  </div>
+                  <div>
+                    <label htmlFor="product-max-qty" className={labelClass}>Maximum quantity{baseUnit?.meta?.code === undefined ? '' : ` (${baseUnit.meta.code})`}</label>
+                    <input id="product-max-qty" type="number" min={0} step="any" value={maxOrderQty} onChange={(e) => setMaxOrderQty(e.target.value)} placeholder="No maximum" className={`${fieldClass} font-mono`} />
+                  </div>
+                  <p className="text-[11px] text-fg-subtle sm:col-span-2">
+                    Both are empty by default. When set, the shop, orders and quotes all refuse a quantity outside them.
+                  </p>
+                </fieldset>
 
                 <div className="grid grid-cols-2 gap-3 rounded-xl border border-line bg-surface p-3 sm:grid-cols-4">
                   <div>

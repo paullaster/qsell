@@ -7,6 +7,7 @@ import { productDescriptionPlainText } from '@/lib/productDescription';
 import { AppImage } from '@/components/ui/AppImage';
 import { productHref } from '@/lib/product-link';
 import { availableOf } from '@/lib/cart-quantity';
+import { limitsHint, limitsOf } from '@/lib/quantity-limits';
 import { Price } from '@/components/store/Price';
 import { Rating } from '@/components/store/Rating';
 import { StockBadge } from '@/components/store/StockBadge';
@@ -25,6 +26,7 @@ export function ProductCard({ product, preloadImage = false }: ProductCardProps)
   const { addToCart, buyNow } = useCartActions();
   const isOutOfStock = availableOf(product) <= 0;
   const href = productHref(product);
+  const hint = limitsHint(limitsOf(product), product.baseUnitName);
 
   return (
     <article className="group relative flex min-w-0 flex-col overflow-hidden rounded-xl border border-line bg-surface-raised shadow-md transition-all duration-200 hover:border-line-strong hover:shadow-xl">
@@ -62,6 +64,7 @@ export function ProductCard({ product, preloadImage = false }: ProductCardProps)
 
         <div className="space-y-3 border-t border-line pt-3">
           <Price product={product} />
+          {hint === '' ? null : <p className="text-xs text-fg-muted">{hint}</p>}
           <div className="relative z-10 grid grid-cols-2 gap-2">
             <button
               type="button"

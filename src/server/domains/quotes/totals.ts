@@ -1,3 +1,4 @@
+import { effectiveStandardPrice } from '@/lib/standard-price';
 import { kitCost, kitTax, type KitTaxShape } from '@/server/domains/pricing/domain/kits';
 
 /** One line as the totals see it. */
@@ -18,6 +19,7 @@ export interface TotalsLine {
 /** What the totals need to know about a product. */
 export interface TotalsProduct {
   price?: number;
+  standardPrice?: number | null;
   costPrice: number;
   taxRate?: number;
   isTaxInclusive?: boolean;
@@ -65,7 +67,7 @@ export function computeQuoteTotals(
 ): QuoteTotals {
   const lines = input.lines.map((line): LineTotals => {
     const product = products.get(line.productId);
-    const unit = line.unitPrice ?? product?.price ?? 0;
+    const unit = line.unitPrice ?? (product === undefined ? null : effectiveStandardPrice(product)) ?? 0;
     const discount = (1 - line.discountPercent / 100) * (1 - input.discountPercent / 100);
     const gross = (line.exactAmount ?? unit * line.quantity) * discount;
     const rate = product?.taxRate ?? 0;

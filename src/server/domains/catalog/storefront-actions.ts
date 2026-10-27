@@ -24,9 +24,28 @@ export async function storefrontCategoriesAction(): Promise<StorefrontCategory[]
   return await StorefrontCatalog.categories();
 }
 
-/** Public: the current price and stock of these products (a cart, recently viewed). Products no longer for sale are left out. */
+/** One entry of a cart check: an id, or an id with the quantity wanted. Anything else is skipped. */
+function readCartEntry(entry: unknown): { id: string | null; quantity: number | null } {
+  const record = typeof entry === 'object' && entry !== null ? (entry as Record<string, unknown>) : null;
+  const id = typeof entry === 'string' ? entry : record?.id;
+  if (typeof id !== 'string' || id.length === 0 || id.length > 100) return { id: null, quantity: null };
+  const quantity = Number(record?.quantity);
+  return { id, quantity: Number.isFinite(quantity) && quantity > 0 && quantity < 1_000_000 ? quantity : null };
+}
+
+/**
+ * Public: the current price and stock of these products (a cart, recently viewed). Products no longer for sale are left out.
+ * Each entry is an id, or an id with the quantity wanted (a cart), so the price shown is the price at that quantity.
+ */
 export async function productsByIdsAction(raw: unknown): Promise<PublicProduct[]> {
   if (!Array.isArray(raw)) return [];
-  const ids = raw.filter((id): id is string => typeof id === 'string' && id.length > 0 && id.length <= 100).slice(0, MAX_CART_LOOKUP);
-  return await StorefrontCatalog.productsByIds(ids);
+  const ids: string[] = [];
+  const quantities = new Map<string, number>();
+  for (const entry of raw.slice(0, MAX_CART_LOOKUP)) {
+    const { id, quantity } = readCartEntry(entry);
+    if (id === null) continue;
+    ids.push(id);
+    if (quantity !== null) quantities.set(id, quantity);
+  }
+  return await StorefrontCatalog.productsByIds(ids, quantities);
 }

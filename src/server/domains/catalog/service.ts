@@ -15,6 +15,8 @@ import type {
 } from '@/types/index';
 import { SettingsError } from '@/server/domains/settings/errors';
 import { quantityProblem } from '@/lib/unit-rules';
+import { limitsProblem } from '@/lib/quantity-limits';
+import { optionalAmount, standardPriceProblem } from './commercial-rules';
 import { toCategory, toItemType, toProduct, toPublicProduct, productToRow } from './mappers';
 import type { CatalogRepository } from './repository';
 import { inTreeOrder, parentProblem } from './category-tree';
@@ -149,6 +151,15 @@ export class CatalogService {
       throw new SettingsError('Cost of goods is required');
     }
 
+    // The least and most that may be bought at once, and the price the pricing engine starts from. All three may be empty.
+    const minOrderQty = optionalAmount(productData.minOrderQty);
+    const maxOrderQty = optionalAmount(productData.maxOrderQty);
+    const standardPrice = optionalAmount(productData.standardPrice);
+    const limitIssue = limitsProblem(minOrderQty, maxOrderQty, unit.decimals, unit.name);
+    if (limitIssue !== null) throw new SettingsError(limitIssue);
+    const standardIssue = standardPriceProblem(standardPrice, isSellable);
+    if (standardIssue !== null) throw new SettingsError(standardIssue);
+
     const id = newId('prod');
     // Resolve the category by display name — the modal posts a free-text name.
     const category = await catalog.getCategoryByName(productData.category ?? '');
@@ -161,6 +172,9 @@ export class CatalogService {
       sku: (productData.sku ?? '').trim().toUpperCase(),
       stockCode: (productData.stockCode ?? '').trim().toUpperCase(),
       price,
+      standardPrice,
+      minOrderQty,
+      maxOrderQty,
       costPrice: Number(productData.costPrice),
       itemTypeId: itemType.id,
       itemTypeName: itemType.name,
@@ -314,6 +328,23 @@ export class CatalogService {
       throw new SettingsError('Cost of goods is required');
     }
     if (updates.costPrice !== undefined) updates.costPrice = Number(nextCost);
+
+    // Quantity limits are checked together and in the unit the product will be counted in after this save.
+    const nextMin = updates.minOrderQty !== undefined ? optionalAmount(updates.minOrderQty) : (existing.minOrderQty ?? null);
+    const nextMax = updates.maxOrderQty !== undefined ? optionalAmount(updates.maxOrderQty) : (existing.maxOrderQty ?? null);
+    const limitIssue = limitsProblem(nextMin, nextMax, plan.unit.decimals, plan.unit.name);
+    if (limitIssue !== null) throw new SettingsError(limitIssue);
+    if (updates.minOrderQty !== undefined) updates.minOrderQty = nextMin;
+    if (updates.maxOrderQty !== undefined) updates.maxOrderQty = nextMax;
+    if (updates.standardPrice !== undefined) {
+      updates.standardPrice = optionalAmount(updates.standardPrice);
+      const standardIssue = standardPriceProblem(updates.standardPrice, nextSellable);
+      if (standardIssue !== null) throw new SettingsError(standardIssue);
+    } else if (existing.standardPrice != null && nextSellable && !existing.isSellable) {
+      // An item that becomes sellable keeps a standard price only if it is a usable one.
+      const standardIssue = standardPriceProblem(existing.standardPrice, true);
+      if (standardIssue !== null) throw new SettingsError(standardIssue);
+    }
 
     // Stock and reservations are owned by the inventory ledger, never by this patch:
     // writing them from the snapshot read above would revert an adjustment made in the

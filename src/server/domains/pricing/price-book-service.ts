@@ -1,6 +1,7 @@
 import { and, asc, count, eq, ilike, isNull, or } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { categories, products } from '@/server/db/drizzle/schema';
+import { priceItemFor } from './service';
 import { PricingConfigError } from './config-service';
 import type { DiscountService, PricedItem } from './discount-service';
 import type { PriceGuardService } from './guard-service';
@@ -98,6 +99,7 @@ export class PriceBookService {
         brand: products.brand,
         category: categories.name,
         price: products.price,
+        standardPrice: products.standardPrice,
         cost: products.costPrice,
         taxRate: products.taxRate,
         inclusive: products.isTaxInclusive,
@@ -138,6 +140,7 @@ export class PriceBookService {
       brand: string | null;
       category: string | null;
       price: string | null;
+      standardPrice: string | null;
       cost: string;
       taxRate: string | null;
       inclusive: boolean | null;
@@ -154,14 +157,18 @@ export class PriceBookService {
     const results = await this.pricing.priceLines(
       companyId,
       sale,
-      prods.map((p) => ({
-        productId: p.id,
-        quantity: 1,
-        standardPrice: p.price == null ? null : Number(p.price),
-        taxRate: p.taxRate == null ? 0 : Number(p.taxRate),
-        lineTaxInclusive: p.inclusive !== false,
-        standardTaxInclusive: p.inclusive !== false,
-      })),
+      prods.map((p) =>
+        priceItemFor(
+          {
+            id: p.id,
+            price: p.price == null ? null : Number(p.price),
+            standardPrice: p.standardPrice == null ? null : Number(p.standardPrice),
+            taxRate: p.taxRate == null ? null : Number(p.taxRate),
+            isTaxInclusive: p.inclusive,
+          },
+          1,
+        ),
+      ),
     );
     // Line discounts on what was priced; order rules need a whole basket and are left out.
     const items: PricedItem[] = [];

@@ -3,6 +3,7 @@ import type { PublicProduct } from '@/types/index';
 import { STOREFRONT_PAGE_SIZE, type StorefrontCategory, type StorefrontPage, type StorefrontQuery } from '@/lib/storefront-search';
 import { descendantsOf } from './category-tree';
 import { toPublicProduct, toProduct } from './mappers';
+import { withShopPrices } from './shop-prices';
 
 /** The most lines a cart check or a related list will look at. */
 export const MAX_CART_LOOKUP = 100;
@@ -51,7 +52,7 @@ export const StorefrontCatalog = {
     }
     const page = await repo().searchStorefront(query, categoryIds, STOREFRONT_PAGE_SIZE);
     return {
-      products: page.rows.map((row) => toPublicProduct(toProduct(row))),
+      products: await withShopPrices(page.rows.map((row) => toPublicProduct(toProduct(row)))),
       nextCursor: page.nextCursor,
       total: page.total,
       category,
@@ -63,17 +64,17 @@ export const StorefrontCatalog = {
   },
 
   /** The current state of these products as the shop would sell them now; sold-out and withdrawn ones are simply absent from the page they ask for. */
-  async productsByIds(ids: string[]): Promise<PublicProduct[]> {
+  async productsByIds(ids: string[], quantities: ReadonlyMap<string, number> = new Map()): Promise<PublicProduct[]> {
     const unique = [...new Set(ids)].slice(0, MAX_CART_LOOKUP);
     const rows = await repo().listLiveProductsByIds(unique);
-    return rows.map((row) => toPublicProduct(toProduct(row)));
+    return await withShopPrices(rows.map((row) => toPublicProduct(toProduct(row))), quantities);
   },
 
   async related(product: Pick<PublicProduct, 'id'>, limit = 4): Promise<PublicProduct[]> {
     const row = await repo().getProductById(product.id);
     if (row?.categoryId == null) return [];
     const rows = await repo().listRelatedLive(product.id, row.categoryId, limit);
-    return rows.map((item) => toPublicProduct(toProduct(item)));
+    return await withShopPrices(rows.map((item) => toPublicProduct(toProduct(item))));
   },
 
   sitemapProducts(): Promise<{ id: string; slug: string; updatedAt: Date; imageUrl: string }[]> {
