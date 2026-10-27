@@ -501,10 +501,10 @@ export class CatalogRepository {
       .limit(limit);
   }
 
-  /** Address (slug) and last change of live products, for the sitemap. */
-  async listLiveForSitemap(limit: number): Promise<{ id: string; slug: string; updatedAt: Date }[]> {
+  /** Address (slug), main picture and last change of live products, for the sitemap. */
+  async listLiveForSitemap(limit: number): Promise<{ id: string; slug: string; updatedAt: Date; imageUrl: string }[]> {
     return await this.db
-      .select({ id: products.id, slug: products.slug, updatedAt: products.updatedAt })
+      .select({ id: products.id, slug: products.slug, updatedAt: products.updatedAt, imageUrl: products.imageUrl })
       .from(products)
       .where(this.liveProducts())
       .orderBy(asc(products.id))

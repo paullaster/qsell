@@ -3,9 +3,13 @@ import Link from 'next/link';
 import { notFound, permanentRedirect } from 'next/navigation';
 import { Suspense } from 'react';
 import { StorefrontCatalog } from '@/server/domains/catalog/storefront-service';
-import { getCompanySettingsAction } from '@/server/domains/company/actions';
 import { publicProduct } from '@/server/domains/storefront/product-page';
-import { siteBaseUrl } from '@/server/domains/storefront/site';
+import { storefrontSeo } from '@/server/domains/storefront/seo';
+import { ProductSocialMeta } from '@/components/store/product/ProductSocialMeta';
+import { productSocialTags } from '@/lib/seo/social';
+import { SHARE_IMAGE_WIDTH, shareImageUrl } from '@/lib/seo/share';
+import { productDescription, productKeywords, productTitle } from '@/lib/seo/text';
+import { returnPolicyPage } from '@/lib/seo/jsonld';
 import { shopCurrency } from '@/server/domains/storefront/shell';
 import { ProductDescriptionView } from '@/components/ui/ProductDescriptionView';
 import { ProductGallery } from '@/components/store/product/ProductGallery';
@@ -20,11 +24,12 @@ import { ShareButton } from '@/components/store/product/ShareButton';
 import { Price } from '@/components/store/Price';
 import { Rating } from '@/components/store/Rating';
 import { StockBadge } from '@/components/store/StockBadge';
+import { absoluteUrl, breadcrumbJsonLd, jsonLdText, productImages, productJsonLd } from '@/lib/product-seo';
 import { productDescriptionPlainText } from '@/lib/productDescription';
-import { absoluteUrl, breadcrumbJsonLd, jsonLdText, metaDescription, productImages, productJsonLd } from '@/lib/product-seo';
 import { visibleSpecifications } from '@/lib/product-specifications';
 import { storefrontHref } from '@/lib/storefront-search';
 import { productHref } from '@/lib/product-link';
+import { policyAddress } from '@/config/company-ui';
 import { has } from '@/lib/values';
 
 interface Props {
@@ -34,22 +39,27 @@ interface Props {
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const product = await publicProduct((await params).slug);
   if (product === null) return { title: 'Product not found', robots: { index: false } };
-  const written = metaDescription(productDescriptionPlainText(product.description));
-  const description = written === '' ? `Buy ${product.name} online.` : written;
-  const image = productImages(product)[0];
-  const base = await siteBaseUrl();
+  const [{ company, ui, base }, currency] = await Promise.all([storefrontSeo(), shopCurrency()]);
+  const context = { company, currencyCode: currency?.code ?? null, guarantee: ui.support.guarantees[0]?.text };
+  const title = productTitle(product, context);
+  const description = productDescription(product, context);
+  const picture = productImages(product)[0];
+  const card = picture === undefined ? null : shareImageUrl(base, picture);
+  const shareTitle = `${title} | ${company.tradingName}`;
   return {
-    title: product.name,
+    title,
     description,
+    keywords: productKeywords(product, company),
     alternates: { canonical: productHref(product) },
     openGraph: {
-      type: 'website',
-      title: product.name,
+      title: shareTitle,
       description,
       url: absoluteUrl(base, productHref(product)),
-      ...(image === undefined ? {} : { images: [{ url: absoluteUrl(base, image), alt: product.name }] }),
+      siteName: company.tradingName,
+      locale: 'en_KE',
+      ...(card === null ? {} : { images: [{ url: card, width: SHARE_IMAGE_WIDTH, alt: product.name }] }),
     },
-    twitter: { card: image === undefined ? 'summary' : 'summary_large_image', title: product.name, description },
+    twitter: { card: card === null ? 'summary' : 'summary_large_image', title: shareTitle, description, ...(card === null ? {} : { images: [card] }) },
   };
 }
 
@@ -61,7 +71,8 @@ export default async function ProductPage({ params }: Props) {
   // An older link by id, or a name that has since changed, goes to the product's current readable address.
   if (slug !== productHref(product).slice('/product/'.length)) permanentRedirect(productHref(product));
 
-  const [company, currency, base] = await Promise.all([getCompanySettingsAction(), shopCurrency(), siteBaseUrl()]);
+  const [{ company, ui, base }, currency] = await Promise.all([storefrontSeo(), shopCurrency()]);
+  const returns = returnPolicyPage(ui.policies);
   const category = categories.find((item) => item.name === product.category) ?? null;
   const specifications = visibleSpecifications(product.specifications);
   const images = productImages(product);
@@ -73,7 +84,8 @@ export default async function ProductPage({ params }: Props) {
 
   return (
     <article className="space-y-10 pb-24 md:pb-16">
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdText(productJsonLd(product, { baseUrl: base, currencyCode: currency?.code ?? null, storeName: company.tradingName })) }} />
+      <ProductSocialMeta tags={productSocialTags(product, currency?.code ?? null)} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdText(productJsonLd(product, { baseUrl: base, currencyCode: currency?.code ?? null, storeName: company.tradingName, returnPolicyUrl: returns === null ? null : absoluteUrl(base, policyAddress(returns)) })) }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdText(breadcrumbJsonLd(trail)) }} />
 
       <nav aria-label="Breadcrumb">

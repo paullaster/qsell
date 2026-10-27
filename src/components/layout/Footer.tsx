@@ -57,6 +57,7 @@ export function Footer() {
                   <Truck className="h-4 w-4 text-indigo-400" aria-hidden="true" /> Track my order
                 </button>
               </li>
+              <li><Link href="/help" className={linkClass}>{support.name}: contact &amp; FAQs</Link></li>
               {hasHelp ? (
                 <li>
                   <button type="button" onClick={openHelp} className={`${linkClass} cursor-pointer`}>
@@ -116,7 +117,10 @@ export function Footer() {
         </div>
 
         <div className="flex flex-col gap-4 border-t border-line pt-6 text-sm text-fg-muted sm:flex-row sm:items-center sm:justify-between">
-          <p>© {year} {company.tradingName}. All rights reserved.</p>
+          <p>
+            © {year} {company.tradingName}. All rights reserved.{' '}
+            <Link href="/platform" className="underline-offset-2 hover:underline">Powered by qsell business software</Link>
+          </p>
           {paymentLabels.length > 0 ? (
             <ul aria-label="Payment methods we accept" className="flex flex-wrap items-center gap-2">
               {paymentLabels.map((label) => (
