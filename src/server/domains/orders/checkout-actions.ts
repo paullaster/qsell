@@ -1,12 +1,15 @@
 'use server';
 
+import { headers } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 import { getContainer } from '@/server/di/container';
-import { initiateBranchPaymentAction } from '@/server/domains/payments/actions';
+import { startOrderPayment } from '@/server/domains/payments/start-payment';
 import type { PaymentProviderCode } from '@/server/domains/payments/types';
 import { CheckoutRefused, OrdersService } from './service';
 import { parseCheckoutInput } from '@/lib/checkout-input';
 import { orElse } from '@/lib/values';
+import { paymentUsesPhone, resolvePaymentPhone } from '@/lib/payment-phone';
+import { clientAddress, waitMessage } from '@/lib/rate-limit';
 import type { Order } from '@/types/index';
 
 /** Checkout answers as data: the text of a thrown server-action error is masked in production, so a shopper would never see the reason. */
@@ -31,9 +34,19 @@ const GENERIC = 'We could not place your order just now. Please check your detai
 
 const PHONE_PROVIDERS: readonly PaymentProviderCode[] = ['mpesa_daraja', 'kcb_buni'];
 
-async function startPayment(orderId: string, providerCode: PaymentProviderCode): Promise<CheckoutPayment> {
+/** A prompt to a phone is limited per address and per number, so nobody's phone can be flooded with requests. Returns the words to show, or null. */
+async function promptLimited(phone: string): Promise<string | null> {
+  const h = await headers();
+  for (const [rule, subject] of [['payment_prompt_ip', clientAddress(h.get('x-real-ip'), h.get('x-forwarded-for'))], ['payment_prompt_phone', phone]] as const) {
+    const verdict = await getContainer().rateLimits.hit(rule, subject);
+    if (!verdict.allowed) return waitMessage(verdict.retryAfterSeconds);
+  }
+  return null;
+}
+
+async function startPayment(orderId: string, providerCode: PaymentProviderCode, payerPhone: string | null): Promise<CheckoutPayment> {
   try {
-    const result = await initiateBranchPaymentAction({ orderId, providerCode });
+    const result = await startOrderPayment({ orderId, providerCode, payerPhone });
     if (result.status === 'failed') return { kind: 'failed', message: orElse(result.errorMessage, 'The payment could not be started.') };
     if (PHONE_PROVIDERS.includes(providerCode)) {
       return { kind: 'stk', attemptId: result.attemptId, message: orElse(result.customerMessage, 'Enter your PIN on your phone to complete the payment.') };
@@ -52,6 +65,15 @@ async function startPayment(orderId: string, providerCode: PaymentProviderCode):
 export async function placeOrderAction(raw: unknown): Promise<CheckoutResult<CheckoutPlaced>> {
   const input = parseCheckoutInput(raw);
   if (!input.ok) return { ok: false, error: input.error };
+  // The number the payment is made from: the one the customer chose, else their contact number. Checked before anything is reserved.
+  const method = input.value.paymentMethod;
+  const payerPhone = paymentUsesPhone(method) ? (input.value.paymentPhone ?? null) : null;
+  const resolved = resolvePaymentPhone({ method, contactPhone: input.value.customerPhone, paymentPhone: input.value.paymentPhone });
+  const promptTo = resolved.ok ? resolved.phone : null;
+  if (promptTo !== null && paymentUsesPhone(method)) {
+    const limited = await promptLimited(promptTo);
+    if (limited !== null) return { ok: false, error: limited };
+  }
   let order: Order;
   try {
     order = await OrdersService.createCheckout(input.value);
@@ -64,21 +86,34 @@ export async function placeOrderAction(raw: unknown): Promise<CheckoutResult<Che
   revalidatePath('/admin/customers');
   revalidatePath('/admin/inventory');
   revalidatePath('/');
-  const method = input.value.paymentMethod;
   if (method === 'on_account') return { ok: true, data: { order, payment: { kind: 'none' } } };
   // Card payments go through the hosted checkout, as before.
   const provider: PaymentProviderCode = method === 'card_direct' ? 'pesapal_v3' : method;
-  return { ok: true, data: { order, payment: await startPayment(order.id, provider) } };
+  return { ok: true, data: { order, payment: await startPayment(order.id, provider, payerPhone ?? promptTo) } };
 }
 
-/** Public: tries the payment of an order again (a declined prompt, a closed window). */
+/** Public: tries the payment of an order again (a declined prompt, a closed window), optionally from a different phone number. */
 export async function retryPaymentAction(raw: unknown): Promise<CheckoutResult<CheckoutPayment>> {
   const input = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
-  const { orderId, providerCode } = input;
+  const { orderId, providerCode, paymentPhone } = input;
   if (typeof orderId !== 'string' || orderId === '' || orderId.length > 100) return { ok: false, error: 'That order could not be found.' };
   const code = (['mpesa_daraja', 'pesapal_v3', 'jenga_hq', 'kcb_buni'] as const).find((value) => value === providerCode);
   if (code === undefined) return { ok: false, error: 'Please choose how you will pay.' };
-  return { ok: true, data: await startPayment(orderId, code) };
+  let payerPhone: string | null = null;
+  if (paymentUsesPhone(code)) {
+    const order = await getContainer().orders.getById(orderId);
+    if (!order) return { ok: false, error: 'That order could not be found.' };
+    // A number typed now wins; otherwise the one the order was last paid from, else the contact number.
+    const typed = typeof paymentPhone === 'string' && paymentPhone.length <= 40 && paymentPhone.trim() !== '' ? paymentPhone : null;
+    const resolved = resolvePaymentPhone({ method: code, contactPhone: order.customerPhone, paymentPhone: typed ?? order.paymentPhone });
+    if (!resolved.ok) return { ok: false, error: resolved.error };
+    payerPhone = resolved.phone;
+    if (payerPhone !== null) {
+      const limited = await promptLimited(payerPhone);
+      if (limited !== null) return { ok: false, error: limited };
+    }
+  }
+  return { ok: true, data: await startPayment(orderId, code, payerPhone) };
 }
 
 /** Public: the order as the shop has it now, for someone who knows its number and the phone or email it was placed with. */

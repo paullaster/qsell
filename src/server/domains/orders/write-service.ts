@@ -50,6 +50,8 @@ export const OrderWriteService = {
     customerName: string;
     customerEmail: string;
     customerPhone: string;
+    /** The number the customer pays from, when it is not the contact number. */
+    paymentPhone?: string | null;
     buyerKraPin?: string | null;
     shippingAddress: {
       street: string;
@@ -481,6 +483,7 @@ export const OrderWriteService = {
       customerName: params.customerName,
       customerEmail: params.customerEmail,
       customerPhone: params.customerPhone,
+      paymentPhone: params.paymentPhone ?? null,
       shippingAddress: params.shippingAddress,
       items: orderItems,
       subtotal,

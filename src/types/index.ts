@@ -290,6 +290,8 @@ export interface Order {
   customerName: string;
   customerEmail: string;
   customerPhone: string;
+  /** The number the payment was asked of or made from, when it differs from (or is) the contact number. */
+  paymentPhone?: string | null;
   shippingAddress: {
     street: string;
     city: string;

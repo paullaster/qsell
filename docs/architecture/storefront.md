@@ -41,6 +41,15 @@ All of these live in `app/(store)/`, whose layout draws the header, footer, cart
 * The order holds the stock as soon as it is placed, so the cart is cleared then. A payment that fails leaves a saved order and a "try again" button, never a second order.
 * "Paid" is shown only after the provider has told the server so (`PaymentWait` asks the shop; `confirmedOrderAction` reads the order again). The page does not mark an order paid on its own.
 
+### Paying from a different phone
+
+A customer can pay with any Kenyan mobile line, not only the contact number they gave (a spouse's, a work line, a borrowed phone). This applies to every method that works through a phone (`PHONE_PAYMENT_METHODS` in `src/lib/payment-phone.ts`: M-Pesa, KCB Buni, Jenga).
+
+* The checkout shows a **"number to pay from"** field under the payment methods. Empty means the contact number, which is shown inside the box. A different number says it is kept with the order, and a button returns to the contact number. A failed payment offers the same field to **try again from another number**.
+* `resolvePaymentPhone` (pure, shared by the browser and the server) decides the number. A phone method refuses anything that is not a Kenyan mobile number, in words; other methods keep a valid number and ignore a bad one. The server runs it again; the browser's check is a convenience.
+* **What is recorded:** `payment_attempts.customer_phone` keeps the number of every attempt (a retry from another number is a new attempt with its own number), and `orders.payment_phone` keeps the latest, apart from `customer_phone` (the contact number, which is never changed by paying from elsewhere). Admin → Orders shows "Paid from" and flags when it is not the contact number; the order search finds an order by either number. The customer's own pages show it with the middle hidden (`0712 ••• 678`). What Safaricom reports as the payer is still checked against the attempt's number when the payment is verified, so a payment made from a line other than the one asked is not counted blindly.
+* **Safety:** the number is never taken by a public action that only knows an order id. `startOrderPayment` (`src/server/domains/payments/start-payment.ts`) is server code; `initiateBranchPaymentAction` calls it without a phone and always uses the number the order already holds. Only the checkout actions, after validating the number, pass one. A prompt is **rate limited per address and per number** (`payment_prompt_ip`, `payment_prompt_phone`), so nobody's phone can be flooded with prompts.
+
 ## Product pictures
 
 Pictures are always shown whole: `object-contain` on a plain background, never cropped. Cards use a square box; the product page uses a box capped at 70% of the screen height (`ProductGallery`), so the price and buttons stay in view. A tap opens the full-size viewer (`ImageViewer`: zoom, arrow keys, swipe on a phone, Escape closes). The buy panel is sticky beside the gallery on wide screens, and on a phone a price-and-Add bar appears at the foot once the main buttons scroll out of sight (`MobileBuyBar`).

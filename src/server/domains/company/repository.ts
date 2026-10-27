@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import { desc, eq, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
@@ -81,10 +82,29 @@ function dbErrorMessage(err: unknown): string {
   return err.message;
 }
 
+/**
+ * The company's row as read earlier in this request. Many parts of one page need it (layouts, metadata, currency, payments);
+ * each used to run its own query, side by side, on connections of their own. A holder per request keeps one read. A write
+ * empties it, so whatever is read after a save in the same request is the saved row. Outside a request (the worker, a test)
+ * every call gets a fresh holder and reads the database, as before.
+ */
+const readThisRequest = cache(() => ({ row: null as Promise<CompanySettingsRow> | null }));
+
 export class CompanySettingsRepository {
   constructor(private readonly db: DrizzleDb) {}
 
   async ensureSeeded(): Promise<CompanySettingsRow> {
+    const held = readThisRequest();
+    held.row ??= this.loadOrSeed();
+    try {
+      return await held.row;
+    } catch (error) {
+      held.row = null;
+      throw error;
+    }
+  }
+
+  private async loadOrSeed(): Promise<CompanySettingsRow> {
     try {
       const existing = await this.getActive();
       if (existing) return existing;
@@ -132,6 +152,7 @@ export class CompanySettingsRepository {
     if (!updated) {
       throw new Error('Failed to update company settings');
     }
+    readThisRequest().row = null;
     return updated;
   }
 
@@ -153,6 +174,7 @@ export class CompanySettingsRepository {
     if (!updated) {
       throw new Error('Failed to update company settings');
     }
+    readThisRequest().row = null;
     return updated;
   }
 }

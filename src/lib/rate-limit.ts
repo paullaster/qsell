@@ -20,6 +20,9 @@ export const RATE_RULES = {
   review_submit: { limit: 10, seconds: 3600 },
   newsletter_ip: { limit: 10, seconds: 3600 },
   newsletter_email: { limit: 3, seconds: 3600 },
+  /** Payment prompts sent to a phone at checkout: per address, and per number so nobody's phone can be flooded. */
+  payment_prompt_ip: { limit: 20, seconds: 900 },
+  payment_prompt_phone: { limit: 4, seconds: 900 },
   /** A signed-in vendor sending files or documents. */
   vendor_upload: { limit: 60, seconds: 600 },
   /** A signed-in vendor submitting an invoice, credit note or quotation, or asking a question. */

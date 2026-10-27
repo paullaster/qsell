@@ -73,6 +73,17 @@ describe.skipIf(!has(url))('guest checkout without an email (database)', () => {
     });
   });
 
+  it('records the number the customer pays from beside the contact number', async () => {
+    const result = await checkout({ paymentPhone: '254722222222' });
+    expect(result.success).toBe(true);
+    const saved = nth(await db.select().from(schema.orders).where(eq(schema.orders.id, result.order?.id ?? '')), 0);
+    expect(saved.paymentPhone).toBe('254722222222');
+    expect(saved.customerPhone).toBe(phone);
+    const plain = await checkout();
+    const savedPlain = nth(await db.select().from(schema.orders).where(eq(schema.orders.id, plain.order?.id ?? '')), 0);
+    expect(savedPlain.paymentPhone).toBeNull();
+  });
+
   it('places the order with no email and keeps it as an empty string', async () => {
     const result = await checkout();
     expect(result.success).toBe(true);

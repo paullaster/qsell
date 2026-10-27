@@ -30,7 +30,7 @@ describe.skipIf(!has(url))('checkout through payment methods (database)', () => 
   let providerId: string;
   let methodA: string;
   let methodB: string;
-  const seen: { creds: Record<string, string>; baseUrl: string }[] = [];
+  const seen: { creds: Record<string, string>; baseUrl: string; phone: string }[] = [];
   const run = randomUUID().slice(0, 6).toUpperCase();
   let seq = 0;
 
@@ -56,8 +56,8 @@ describe.skipIf(!has(url))('checkout through payment methods (database)', () => 
     const fake = {
       code: 'mpesa_daraja' as const,
       capabilities: ['collect'] as const,
-      initiate(_input: unknown, creds: Record<string, string>, _settings: unknown, baseUrl: string) {
-        seen.push({ creds, baseUrl });
+      initiate(input: { customerPhone: string }, creds: Record<string, string>, _settings: unknown, baseUrl: string) {
+        seen.push({ creds, baseUrl, phone: input.customerPhone });
         return Promise.resolve({ status: 'pending' as const, providerReference: 'CHK1', customerMessage: 'STK sent' });
       },
       handleCallback() {
@@ -97,6 +97,31 @@ describe.skipIf(!has(url))('checkout through payment methods (database)', () => 
     expect(row.paymentMethod).toBe('mpesa_daraja');
   });
 
+  it('a customer who pays from another phone: the prompt goes there, and the attempt and the order keep that number', async () => {
+    const o = await order(branchA.id);
+    const out = await service.initiatePayment({ branch: branchA, providerCode: 'mpesa_daraja', orderId: o.id, orderNumber: o.number, amount: 116, currency: 'KES', customerName: 'n', customerEmail: 'e@x.io', customerPhone: '254722222222', recordPhone: '254722222222' });
+    expect(required(seen.at(-1)).phone).toBe('254722222222');
+    expect(out.attempt.customerPhone).toBe('254722222222');
+    const [row] = await db.select().from(schema.orders).where(eq(schema.orders.id, o.id));
+    expect(row.paymentPhone).toBe('254722222222');
+    // The contact number is untouched.
+    expect(row.customerPhone).toBe('254700000001');
+    // A second try from yet another number is a new attempt with its own number; the order shows the latest.
+    const again = await service.initiatePayment({ branch: branchA, providerCode: 'mpesa_daraja', orderId: o.id, orderNumber: o.number, amount: 116, currency: 'KES', customerName: 'n', customerEmail: 'e@x.io', customerPhone: '254733333333', recordPhone: '254733333333' });
+    expect(again.attempt.id).not.toBe(out.attempt.id);
+    const attempts = await db.select().from(schema.paymentAttempts).where(eq(schema.paymentAttempts.orderId, o.id));
+    expect(attempts.map((a) => a.customerPhone).sort()).toEqual(['254722222222', '254733333333']);
+    const [after] = await db.select().from(schema.orders).where(eq(schema.orders.id, o.id));
+    expect(after.paymentPhone).toBe('254733333333');
+  });
+
+  it('a payment that does not use a phone leaves the order\'s payment number empty', async () => {
+    const o = await order(branchA.id);
+    await service.initiatePayment({ branch: branchA, providerCode: 'mpesa_daraja', orderId: o.id, orderNumber: o.number, amount: 116, currency: 'KES', customerName: 'n', customerEmail: 'e@x.io', customerPhone: '254700000001' });
+    const [row] = await db.select().from(schema.orders).where(eq(schema.orders.id, o.id));
+    expect(row.paymentPhone).toBeNull();
+  });
+
   it('another branch goes through its own method of the same provider, to its own G/L account', async () => {
     const o = await order(branchB.id);
     await service.initiatePayment({ branch: branchB, providerCode: 'mpesa_daraja', orderId: o.id, orderNumber: o.number, amount: 116, currency: 'KES', customerName: 'n', customerEmail: 'e@x.io', customerPhone: '254700000001' });
@@ -129,6 +154,7 @@ describe.skipIf(!has(url))('checkout through payment methods (database)', () => 
     const [a, b] = await Promise.all(rows.map(async (r) => (r instanceof Error ? null : (await db.select().from(schema.orders).where(eq(schema.orders.id, (r as { id: string }).id)))[0] ?? null)));
     expect(rows.filter((r) => r instanceof Error).map((r) => (r).message)).toEqual([]);
     expect(required(a).paymentMethodId).toBe(methodA);
+    expect(required(a).paymentPhone).toBeNull();
     expect(required(b).paymentMethodId).toBe(methodB);
   });
 });

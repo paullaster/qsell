@@ -151,6 +151,8 @@ export class PaymentService implements AttemptSettler {
     customerName: string;
     customerEmail: string;
     customerPhone: string;
+    /** The number to write on the order as the one this payment is made from. Left out when the payment does not use a phone. */
+    recordPhone?: string | null;
     description?: string;
   }) {
     const resolved = await this.resolveCheckout(params.branch, params.providerCode);
@@ -235,6 +237,7 @@ export class PaymentService implements AttemptSettler {
       paymentStatus: status === 'failed' ? 'failed' : 'pending_verification',
       ...(status === 'failed' ? { status: 'failed' as const } : {}),
       paymentMethod: params.providerCode,
+      ...(has(params.recordPhone) ? { paymentPhone: params.recordPhone } : {}),
       // The finance method it goes through decides which bank account and G/L account it posts to.
       ...(has(resolved.methodId) ? { paymentMethodId: resolved.methodId } : {}),
     });
