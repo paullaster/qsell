@@ -1,11 +1,13 @@
 import { cache } from 'react';
-import { getCompanySettingsAction, getCompanyUiConfigAction } from '@/server/domains/company/actions';
+import { resolveCompanyUiConfig } from '@/config/company-ui';
+import { toPublicCompany } from '@/lib/company-view';
+import { readCompanyRow } from '@/server/domains/storefront/company-read';
 import { siteBaseUrl } from '@/server/domains/storefront/site';
 
-/** What every public page needs to describe the business: the company, its help content and the shop's address. Read once per request. */
+/** What every public page needs to describe the business: the company, its help content and the shop's address. One read of the company per request. */
 export const storefrontSeo = cache(async () => {
-  const [company, ui, base] = await Promise.all([getCompanySettingsAction(), getCompanyUiConfigAction(), siteBaseUrl()]);
-  return { company, ui, base };
+  const [row, base] = await Promise.all([readCompanyRow(), siteBaseUrl()]);
+  return { company: toPublicCompany(row), ui: resolveCompanyUiConfig(row.uiConfig), base };
 });
 
 /** Codes Google and Bing give to prove who owns the site (set in the environment, per deployment). */

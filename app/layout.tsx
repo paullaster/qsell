@@ -1,5 +1,4 @@
 import type { Metadata } from 'next';
-import { getCompanySettingsAction } from '@/server/domains/company/actions';
 import { siteVerification, storefrontSeo } from '@/server/domains/storefront/seo';
 import { countryCode } from '@/lib/seo/jsonld';
 import { homeDescription, homeKeywords, homeTitle } from '@/lib/seo/text';
@@ -69,9 +68,9 @@ export default async function RootLayout({
   let themeMode: ThemeMode = 'light';
 
   try {
-    const company = await getCompanySettingsAction();
+    const { company, ui } = await storefrontSeo();
     themeStyle = companyHtmlStyle(company.primaryColor, company.accentColor);
-    uiConfig = resolveCompanyUiConfig(company.uiConfig);
+    uiConfig = ui;
   } catch {
     // Fault-tolerant: missing DB / seed failure must not blank the app.
   }

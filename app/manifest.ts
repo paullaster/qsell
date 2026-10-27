@@ -1,11 +1,11 @@
 import type { MetadataRoute } from 'next';
-import { getCompanySettingsAction } from '@/server/domains/company/actions';
+import { storefrontSeo } from '@/server/domains/storefront/seo';
 
 export const dynamic = 'force-dynamic';
 
 /** Lets a phone add the shop to its home screen, named and coloured as the company set it up. */
 export default async function manifest(): Promise<MetadataRoute.Manifest> {
-  const company = await getCompanySettingsAction();
+  const { company } = await storefrontSeo();
   return {
     name: company.tradingName,
     short_name: company.tradingName.slice(0, 12),

@@ -17,6 +17,7 @@ export function mapOrderRow(row: OrderRow, items: OrderItem[]): Order {
     customerName: row.customerName,
     customerEmail: row.customerEmail,
     customerPhone: row.customerPhone,
+    paymentPhone: row.paymentPhone,
     shippingAddress: row.shippingAddress,
     items,
     subtotal: num(row.subtotal),
@@ -78,6 +79,7 @@ export class OrderRepository {
         customerName: order.customerName,
         customerEmail: order.customerEmail.toLowerCase(),
         customerPhone: order.customerPhone,
+        paymentPhone: order.paymentPhone ?? null,
         shippingAddress: order.shippingAddress,
         subtotal: order.subtotal.toFixed(2),
         tax: order.tax.toFixed(2),
@@ -166,7 +168,7 @@ export class OrderRepository {
       .where(
         and(
           input.status == null ? undefined : eq(orders.status, input.status),
-          matching(text, [orders.orderNumber, orders.customerName, orders.customerPhone, orders.customerEmail, orders.trackingNumber]),
+          matching(text, [orders.orderNumber, orders.customerName, orders.customerPhone, orders.paymentPhone, orders.customerEmail, orders.trackingNumber]),
           after === null ? undefined : sql`(${orders.createdAt}, ${orders.id}) < (${after.k}::timestamptz, ${after.id})`,
         ),
       )
@@ -254,6 +256,7 @@ export class OrderRepository {
       paymentStatus: PaymentStatus;
       paymentMethod: PaymentProvider;
       paymentMethodId: string | null;
+      paymentPhone: string | null;
       transactionReference: string | null;
       mpesaReceiptNumber: string | null;
       pesapalTrackingId: string | null;

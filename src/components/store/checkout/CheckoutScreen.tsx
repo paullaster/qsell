@@ -10,6 +10,8 @@ import { useStore } from '@/components/store/StoreContext';
 import { CheckoutForm, type CheckoutSubmission } from '@/components/store/checkout/CheckoutForm';
 import { OrderComplete } from '@/components/store/checkout/OrderComplete';
 import { PaymentWait } from '@/components/store/checkout/PaymentWait';
+import { PayFromField } from '@/components/store/checkout/PayFromField';
+import { paymentUsesPhone, resolvePaymentPhone } from '@/lib/payment-phone';
 
 type Stage =
   | { name: 'form' }
@@ -24,6 +26,8 @@ export function CheckoutScreen() {
   const [stage, setStage] = useState<Stage>({ name: 'form' });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The number a retried payment is made from; blank keeps the one the order was last asked.
+  const [retryPhone, setRetryPhone] = useState('');
   const { refresh, ready } = cart;
 
   // Prices and stock are read fresh when checkout opens; anything that moved is told to the shopper.
@@ -70,10 +74,18 @@ export function CheckoutScreen() {
   };
 
   const retry = async (order: Order, method: PaymentProvider) => {
+    const chosen = retryPhone.trim();
+    const check = resolvePaymentPhone({ method, contactPhone: order.customerPhone, paymentPhone: chosen === '' ? order.paymentPhone : chosen });
+    if (!check.ok) {
+      setStage({ name: 'payment_failed', order, message: check.error, method });
+      return;
+    }
     setSubmitting(true);
     try {
-      const result = await retryPaymentAction({ orderId: order.id, providerCode: method });
-      setStage(result.ok ? route(order, result.data, method) : { name: 'payment_failed', order, message: result.error, method });
+      const result = await retryPaymentAction({ orderId: order.id, providerCode: method, ...(chosen === '' ? {} : { paymentPhone: chosen }) });
+      // The page follows what the shop now holds as the number the payment is asked of.
+      const asked = paymentUsesPhone(method) ? { ...order, paymentPhone: check.phone } : order;
+      setStage(result.ok ? route(asked, result.data, method) : { name: 'payment_failed', order, message: result.error, method });
     } finally {
       setSubmitting(false);
     }
@@ -89,6 +101,11 @@ export function CheckoutScreen() {
         <h1 className="text-xl font-bold text-fg-strong">The payment did not go through</h1>
         <p role="alert" className="text-sm text-fg">{stage.message}</p>
         <p className="text-sm text-fg-muted">Your order <span className="font-mono text-fg-strong">{stage.order.orderNumber}</span> is saved and nothing has been charged twice. You can try again.</p>
+        {paymentUsesPhone(stage.method) ? (
+          <div className="text-left">
+            <PayFromField value={retryPhone} contactPhone={stage.order.paymentPhone ?? stage.order.customerPhone} onChange={setRetryPhone} label="Try again from a different number" />
+          </div>
+        ) : null}
         <div className="flex flex-col gap-2 sm:flex-row sm:justify-center">
           <button type="button" disabled={submitting} onClick={() => void retry(stage.order, stage.method)} className="min-h-11 cursor-pointer rounded-lg bg-indigo-600 px-5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50">
             {submitting ? 'Starting…' : 'Try the payment again'}

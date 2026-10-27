@@ -18,7 +18,8 @@ import {
   money,
   statusChoice,
 } from '@/lib/order-admin';
-import { orElse } from '@/lib/values';
+import { has, orElse } from '@/lib/values';
+import { nationalPhone, sameMobile } from '@/lib/phone';
 import { lineDisplay, lineFromRow, quantityWords } from '@/lib/unit-rules';
 import { shownPaymentReference } from '@/lib/paymentReference';
 import type { Choice } from '@/lib/payment-options';
@@ -203,6 +204,15 @@ export function OrderDetailsModal({
                   {order.paymentMethod}
                 </dd>
               </div>
+              {has(order.paymentPhone) ? (
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-fg-muted">Paid from:</dt>
+                  <dd className="text-right font-mono text-fg-strong">
+                    {nationalPhone(order.paymentPhone)}
+                    {sameMobile(order.paymentPhone, order.customerPhone) ? null : <span className="block text-xs font-normal text-amber-700 dark:text-amber-300">Not the contact number ({order.customerPhone})</span>}
+                  </dd>
+                </div>
+              ) : null}
               <div className="flex items-center justify-between">
                 <dt className="text-fg-muted">Reference:</dt>
                 <dd className="font-mono text-fg-strong">

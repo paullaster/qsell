@@ -1,5 +1,6 @@
 import type { PaymentProvider } from '@/types/index';
 import { isRecord } from '@/lib/values';
+import { resolvePaymentPhone } from '@/lib/payment-phone';
 
 export const PAYMENT_PROVIDERS = ['mpesa_daraja', 'pesapal_v3', 'jenga_hq', 'kcb_buni', 'card_direct', 'on_account'] as const satisfies readonly PaymentProvider[];
 
@@ -7,6 +8,8 @@ export interface CheckoutInput {
   customerName: string;
   customerEmail: string;
   customerPhone: string;
+  /** The mobile number the payment is made from, in 2547XXXXXXXX form, when the customer pays from a line other than their contact number. */
+  paymentPhone?: string;
   buyerKraPin?: string;
   shippingAddress: { street: string; city: string; countyOrState: string; country: string };
   items: { productId: string; quantity: number }[];
@@ -45,6 +48,8 @@ export function parseCheckoutInput(raw: unknown): Parsed {
   }
   const method = PAYMENT_PROVIDERS.find((provider) => provider === raw.paymentMethod);
   if (method === undefined) return { ok: false, error: 'Please choose how you will pay.' };
+  const payFrom = resolvePaymentPhone({ method, contactPhone: phone, paymentPhone: typeof raw.paymentPhone === 'string' && raw.paymentPhone.length <= 40 ? raw.paymentPhone : null });
+  if (!payFrom.ok) return { ok: false, error: payFrom.error };
   if (!Array.isArray(raw.items) || raw.items.length === 0) return { ok: false, error: 'Your cart is empty.' };
   if (raw.items.length > MAX_ITEMS) return { ok: false, error: 'There are too many different items in your cart.' };
   const items: CheckoutInput['items'] = [];
@@ -66,6 +71,7 @@ export function parseCheckoutInput(raw: unknown): Parsed {
       customerName: name,
       customerEmail: email,
       customerPhone: phone,
+      ...(payFrom.phone === null ? {} : { paymentPhone: payFrom.phone }),
       ...(pin === '' ? {} : { buyerKraPin: pin }),
       shippingAddress: { street, city, countyOrState: county, country },
       items,

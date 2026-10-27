@@ -1324,6 +1324,8 @@ export const orders = pgTable(
     customerName: text('customer_name').notNull(),
     customerEmail: text('customer_email').notNull(),
     customerPhone: text('customer_phone').notNull(),
+    /** The mobile number the latest payment was asked of or made from (2547XXXXXXXX). It can differ from the contact number; each attempt keeps its own in payment_attempts. */
+    paymentPhone: text('payment_phone'),
     shippingAddress: jsonb('shipping_address')
       .$type<{
         street: string;

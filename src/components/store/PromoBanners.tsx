@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { Megaphone } from 'lucide-react';
-import { getCompanyUiConfigAction } from '@/server/domains/company/actions';
+import { storefrontSeo } from '@/server/domains/storefront/seo';
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import { activeBanners } from '@/config/company-ui';
 
@@ -15,7 +15,8 @@ function BannerButton({ href, label }: { href: string; label: string }) {
 
 /** The notices the company switched on for today, across the top of the front page. Nothing at all when there are none. */
 export async function PromoBanners() {
-  const { banners } = await getCompanyUiConfigAction();
+  const { ui } = await storefrontSeo();
+  const { banners } = ui;
   const shown = activeBanners(banners, businessDate());
   if (shown.length === 0) return null;
   return (

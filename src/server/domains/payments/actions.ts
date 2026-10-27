@@ -9,7 +9,7 @@ import {
   type PaymentProviderCode,
 } from '@/server/domains/payments/types';
 import { extractPaymentReference } from '@/server/domains/payments/payment-reference';
-import { amountDue } from '@/server/domains/orders/amount-due';
+import { startOrderPayment, type StartedPayment } from '@/server/domains/payments/start-payment';
 
 import { emptyToNull, has, orElse } from '@/lib/values';
 
@@ -65,39 +65,9 @@ export async function listEnabledCheckoutProvidersAction(): Promise<
 export async function initiateBranchPaymentAction(input: {
   orderId: string;
   providerCode: PaymentProviderCode;
-}): Promise<{
-  attemptId: string;
-  status: string;
-  redirectUrl?: string | null;
-  customerMessage?: string;
-  errorMessage?: string | null;
-}> {
-  const { branch } = await ensureBranchContext();
-  const { payments, orders } = getContainer();
-  const order = await orders.getById(input.orderId);
-  if (!order) throw new Error('Order not found');
-  if (amountDue(order) <= 0) throw new Error('Nothing is left to pay on this order.');
-
-  const { attempt, result } = await payments.initiatePayment({
-    branch,
-    providerCode: input.providerCode,
-    orderId: order.id,
-    orderNumber: order.orderNumber,
-    amount: amountDue(order),
-    currency: order.currency,
-    customerName: order.customerName,
-    customerEmail: order.customerEmail,
-    customerPhone: order.customerPhone,
-    description: `Order ${order.orderNumber}`,
-  });
-
-  return {
-    attemptId: attempt.id,
-    status: attempt.status,
-    redirectUrl: attempt.redirectUrl,
-    customerMessage: result.customerMessage,
-    errorMessage: attempt.errorMessage,
-  };
+}): Promise<StartedPayment> {
+  // The prompt goes to the number the order already holds; the caller cannot name another (see startOrderPayment).
+  return await startOrderPayment({ orderId: input.orderId, providerCode: input.providerCode });
 }
 
 export async function getPaymentAttemptStatusAction(attemptId: string) {
