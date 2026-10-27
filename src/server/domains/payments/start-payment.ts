@@ -1,4 +1,5 @@
 import { getContainer } from '@/server/di/container';
+import type { StageSource } from '@/lib/order-stages';
 import { amountDue } from '@/server/domains/orders/amount-due';
 import { paymentUsesPhone } from '@/lib/payment-phone';
 import { toKenyanMsisdn } from '@/lib/phone';
@@ -20,7 +21,7 @@ export interface StartedPayment {
  *
  * The number used is written on the payment attempt, and on the order when the method works through a phone.
  */
-export async function startOrderPayment(input: { orderId: string; providerCode: PaymentProviderCode; payerPhone?: string | null }): Promise<StartedPayment> {
+export async function startOrderPayment(input: { orderId: string; providerCode: PaymentProviderCode; payerPhone?: string | null; source?: StageSource }): Promise<StartedPayment> {
   const { companySettings, organizations, payments, orders } = getContainer();
   const company = await companySettings.ensureSeeded();
   const { branch } = await organizations.ensureDefaultOrgAndBranch(company.id, orElse(company.tradingName, company.legalName));
@@ -43,6 +44,7 @@ export async function startOrderPayment(input: { orderId: string; providerCode: 
     customerEmail: order.customerEmail,
     customerPhone: phone,
     recordPhone: usesPhone || chosen !== null ? toKenyanMsisdn(phone) : null,
+    ...(input.source === undefined ? {} : { stageSource: input.source }),
     description: `Order ${order.orderNumber}`,
   });
   return {

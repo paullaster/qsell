@@ -333,6 +333,9 @@ export interface Order {
   kraTransmissionStatus?: 'not_applicable' | 'pending' | 'skipped' | 'transmitted' | 'failed';
   /** Waiting for approval, rejected, or reopened for resubmission: the order cannot move on. */
   approvalStatus?: 'none' | 'pending' | 'approved' | 'rejected' | 'draft';
+  /** The stage the order is in and since when (from its stage timeline). */
+  currentStage?: string | null;
+  currentStageSince?: string | null;
   /** Invoicing module this sale belongs to; decides which signing switch applies. */
   salesModule?: 'ecommerce' | 'sales_order' | 'credit_sale' | 'pos_cash_sale';
   createdAt: string;

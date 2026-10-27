@@ -1,4 +1,5 @@
 import { has } from '@/lib/values';
+import { OrderStages } from '@/server/domains/orders/stages';
 import { and, eq, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { giftCards, orderTenders, orders } from '@/server/db/drizzle/schema';
@@ -182,18 +183,18 @@ export class OrderTenderService {
       const paid = due <= 0.004;
       await tx
         .update(orders)
-        .set({
-          tenderedAmount: sql`${orders.tenderedAmount} + ${added.toFixed(2)}::numeric`,
-          ...(paid
-            ? {
-                paymentStatus: 'paid',
-                status: 'processing',
-                transactionReference: `TENDER-${order.orderNumber}`,
-              }
-            : {}),
-          updatedAt: new Date(),
-        })
+        .set({ tenderedAmount: sql`${orders.tenderedAmount} + ${added.toFixed(2)}::numeric`, updatedAt: new Date() })
         .where(eq(orders.id, orderId));
+      // An order the tenders cover is paid: that is a stage, written by the stage writer in the same transaction.
+      if (paid) {
+        await OrderStages.moveIn(tx, orderId, 'payment_confirmed', 'succeeded', {
+          ref: { type: 'order_tender', id: `${orderId}:${added.toFixed(2)}:${String(Date.now())}` },
+          source: 'staff',
+          actor: { type: 'user', id: actorId },
+          fields: { transactionReference: `TENDER-${order.orderNumber}` },
+          detail: { tenders: applied.map((a) => ({ kind: a.kind, amount: a.amount })) },
+        });
+      }
       await this.decisions.record(
         {
           companyId,

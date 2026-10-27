@@ -54,6 +54,10 @@ A customer can pay with any Kenyan mobile line, not only the contact number they
 
 The shop does not read prices off the product: `withShopPrices` asks the pricing engine for each product (see "One engine for sale, invoicing and display" in [pricing-module.md](pricing-module.md)), and checkout prices the order with the same engine, so what is shown is what is charged. An item may have a minimum and a maximum quantity: the card says so ("Buy 3 to 10 at a time."), the product page starts at the minimum and its stepper stops at the limits, adding from a card adds the minimum, and a cart saved outside the limits is brought into range with a notice. The server refuses any order outside them regardless of what the browser sends.
 
+## The order's stages are on record from the first press of "pay"
+
+Every checkout is on record from the moment the shopper presses pay, before any order exists (`checkout_attempts`): a refusal (a quantity limit, stock short, a rate limit, input that could not be read) keeps its time, where it stopped and why; a guest is a keyed hash, never an address or phone. Once there is an order, every stage it goes through, failures included (a payment that could not be started, a prompt that was declined, an approval refused), is an event with its server time on the order's timeline, written by the one stage writer. The shopper sees the plain stages with their times in *Track my order* and on the confirmation page; staff see all of it, with who and why, in Admin → Orders. See [order-stage-timeline.md](order-stage-timeline.md).
+
 ## Product pictures
 
 Pictures are always shown whole: `object-contain` on a plain background, never cropped. Cards use a square box; the product page uses a box capped at 70% of the screen height (`ProductGallery`), so the price and buttons stay in view. A tap opens the full-size viewer (`ImageViewer`: zoom, arrow keys, swipe on a phone, Escape closes). The buy panel is sticky beside the gallery on wide screens, and on a phone a price-and-Add bar appears at the foot once the main buttons scroll out of sight (`MobileBuyBar`).

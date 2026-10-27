@@ -262,6 +262,12 @@ export const PERMISSIONS = {
     category: 'Products & Inventory',
     description: 'Edit products',
   },
+  'orders:timeline': {
+    resource: 'orders',
+    action: 'timeline',
+    category: 'Orders & Sales',
+    description: 'See who did what on an order, and why, in its stage timeline',
+  },
   'products:set_standard_price': {
     resource: 'products',
     action: 'set_standard_price',

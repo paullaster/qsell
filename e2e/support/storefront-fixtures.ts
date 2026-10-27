@@ -4,6 +4,9 @@
  *   tsx e2e/support/storefront-fixtures.ts reviewer <tag> <product name>   a shopper who has been delivered that product
  *   tsx e2e/support/storefront-fixtures.ts product <tag>                    a new product for sale with no reviews, named "Reviewed <tag>"
  *   tsx e2e/support/storefront-fixtures.ts limited-product <tag> <min> <max> a product for sale that may be bought only <min> to <max> at a time, named "Limited <tag>"
+ *   tsx e2e/support/storefront-fixtures.ts set-stock <product id> <quantity>   sets a product's stock (to make a checkout run short)
+ *   tsx e2e/support/storefront-fixtures.ts order-stages <order number>        the stages an order has been through, in order, and its current stage
+ *   tsx e2e/support/storefront-fixtures.ts latest-attempt                     the newest checkout attempt: its outcome, stage and reason
  *   tsx e2e/support/storefront-fixtures.ts newsletter-token <email>         the token behind a confirmation link
  *   tsx e2e/support/storefront-fixtures.ts payment-phones <order number>    the contact number, the number the order is paid from and every attempt's number
  */
@@ -55,6 +58,27 @@ async function limitedProduct(tag: string, min: string, max: string): Promise<Re
   return { name, id };
 }
 
+async function writeStock(productId: string, quantity: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  await db.execute(sql`UPDATE products SET stock_quantity = ${Number(quantity)} WHERE id = ${productId}`);
+  return { productId, quantity };
+}
+
+async function readOrderStages(orderNumber: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const [order] = await db.execute<{ id: string; current_stage: string | null; status: string; payment_status: string }>(sql`SELECT id, current_stage, status, payment_status FROM orders WHERE order_number = ${orderNumber}`);
+  if (order === undefined) throw new Error(`e2e fixture: no order ${orderNumber}`);
+  const events = await db.execute<{ stage: string; outcome: string; source: string }>(sql`SELECT stage, outcome, source FROM order_stage_events WHERE order_id = ${order.id} ORDER BY sequence`);
+  return { stages: events.map((e) => `${e.stage}:${e.outcome}`).join(','), sources: events.map((e) => e.source).join(','), current: order.current_stage ?? '', status: order.status, paymentStatus: order.payment_status };
+}
+
+async function readLatestAttempt(): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const [row] = await db.execute<{ outcome: string; refused_stage: string | null; reason_code: string | null; message: string | null; session_ref: string | null; finished_at: Date | null }>(sql`SELECT outcome, refused_stage, reason_code, message, session_ref, finished_at FROM checkout_attempts ORDER BY started_at DESC LIMIT 1`);
+  if (row === undefined) throw new Error('e2e fixture: no checkout attempt yet');
+  return { outcome: row.outcome, stage: row.refused_stage ?? '', reason: row.reason_code ?? '', message: row.message ?? '', hasSession: row.session_ref === null ? 'no' : 'yes', finished: row.finished_at === null ? 'no' : 'yes' };
+}
+
 async function newsletterToken(email: string): Promise<Record<string, string>> {
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
   const [row] = await db.execute<{ token: string }>(sql`SELECT token FROM newsletter_subscribers WHERE email = ${email.toLowerCase()}`);
@@ -76,6 +100,9 @@ async function main(): Promise<void> {
   if (command === 'reviewer' && a !== undefined && b !== undefined) result = await reviewer(a, b);
   else if (command === 'product' && a !== undefined) result = await product(a);
   else if (command === 'limited-product' && a !== undefined && b !== undefined && process.argv[5] !== undefined) result = await limitedProduct(a, b, process.argv[5]);
+  else if (command === 'set-stock' && a !== undefined && b !== undefined) result = await writeStock(a, b);
+  else if (command === 'order-stages' && a !== undefined) result = await readOrderStages(a);
+  else if (command === 'latest-attempt') result = await readLatestAttempt();
   else if (command === 'newsletter-token' && a !== undefined) result = await newsletterToken(a);
   else if (command === 'payment-phones' && a !== undefined) result = await paymentPhones(a);
   else throw new Error('usage: storefront-fixtures reviewer <tag> <product> | newsletter-token <email> | payment-phones <order number>');
@@ -99,6 +126,23 @@ export function makeProduct(tag: string): string {
 export function makeLimitedProduct(tag: string, min: number, max: number): { name: string; id: string } {
   const made = storefrontTool('limited-product', tag, String(min), String(max));
   return { name: made.name ?? '', id: made.id ?? '' };
+}
+
+/** The stages an order has been through (`stage:outcome`, in order) and where it is now. */
+export function orderStages(orderNumber: string): { stages: string[]; sources: string[]; current: string; status: string; paymentStatus: string } {
+  const made = storefrontTool('order-stages', orderNumber);
+  return { stages: (made.stages ?? '').split(',').filter((x) => x !== ''), sources: (made.sources ?? '').split(',').filter((x) => x !== ''), current: made.current ?? '', status: made.status ?? '', paymentStatus: made.paymentStatus ?? '' };
+}
+
+/** The newest checkout attempt on record. */
+export function latestAttempt(): { outcome: string; stage: string; reason: string; message: string; hasSession: boolean; finished: boolean } {
+  const made = storefrontTool('latest-attempt');
+  return { outcome: made.outcome ?? '', stage: made.stage ?? '', reason: made.reason ?? '', message: made.message ?? '', hasSession: made.hasSession === 'yes', finished: made.finished === 'yes' };
+}
+
+/** Sets a product's stock, to make a checkout in progress run short. */
+export function setStock(productId: string, quantity: number): void {
+  storefrontTool('set-stock', productId, String(quantity));
 }
 
 /** A shopper whose order for this product was delivered, ready to sign in. */

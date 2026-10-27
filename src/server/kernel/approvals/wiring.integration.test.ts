@@ -301,6 +301,10 @@ describe.skipIf(!has(url))('approvals in modules (database)', () => {
 
   // ── sales orders ──
 
+  // The stages an order has been through, in order (the order timeline).
+  const timelineOf = async (orderId: string) => await (await import('@/server/domains/orders/stages')).OrderStages.timeline(db, orderId);
+  const stagesOf = async (orderId: string) => (await timelineOf(orderId)).map((e) => `${e.stage}:${e.outcome}`);
+
   const order = (productId: string, over: Record<string, unknown> = {}) =>
     OrderWriteService.createOrder({
       branchId,
@@ -346,6 +350,11 @@ describe.skipIf(!has(url))('approvals in modules (database)', () => {
     expect(await approve(entry.id, boss)).toMatchObject({ released: true });
     expect(required((await c.orders.getById(o.id))).approvalStatus).toBe('approved');
     expect((await updateOrderStatus(o.id, 'processing')).status).toBe('processing');
+    // Every one of those stages is on the order's timeline, in order, with its time.
+    expect(await stagesOf(o.id)).toEqual(['order_placed:succeeded', 'approval_requested:entered', 'approval_approved:succeeded', 'released_for_fulfilment:succeeded']);
+    const approved = (await timelineOf(o.id)).find((e) => e.stage === 'approval_approved');
+    expect(approved?.occurredAt).toBeInstanceOf(Date);
+    expect((await timelineOf(o.id)).every((e) => e.source !== 'trigger')).toBe(true);
   });
 
   it('a rejected order stays held; reopen then resubmit sends it round again', async () => {
@@ -370,6 +379,14 @@ describe.skipIf(!has(url))('approvals in modules (database)', () => {
     expect(nth(history, 1).attempt).toBe(2);
     await approve((await openEntry('sales_order', o.id)).id, boss);
     expect(required((await c.orders.getById(o.id))).approvalStatus).toBe('approved');
+    expect(await stagesOf(o.id)).toEqual([
+      'order_placed:succeeded',
+      'approval_requested:entered',
+      'approval_rejected:failed',
+      'approval_reopened:entered',
+      'approval_requested:entered',
+      'approval_approved:succeeded',
+    ]);
   });
 
   it('a failed order creation gives back the stock it had set aside', async () => {

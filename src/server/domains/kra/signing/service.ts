@@ -1,4 +1,6 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { OrderStages } from '@/server/domains/orders/stages';
+import { stageForKra } from '@/lib/order-stages';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   branches,
@@ -208,10 +210,9 @@ export class DocumentSigningService {
         },
         // The order and its ledger invoice entry mirror the outcome; nothing else writes it.
         onStatus: async (status) => {
-          await this.db
-            .update(orders)
-            .set({ kraTransmissionStatus: status })
-            .where(eq(orders.id, order.id));
+          const { stage, outcome } = stageForKra(status);
+          // No reference: a stage is recorded when the status really changes, so a retry that fails the same way adds nothing.
+          await OrderStages.move(this.db, order.id, stage, outcome, { source: 'worker', detail: { status } });
           await this.db
             .update(customerLedgerEntries)
             .set({ kraTransmissionStatus: status })
