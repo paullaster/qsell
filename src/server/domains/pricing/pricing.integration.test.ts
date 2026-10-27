@@ -36,7 +36,7 @@ describe.skipIf(!url)('pricing (database)', () => {
         .returning()
     )[0]!;
 
-  const product = async (price: number | null = 1000, taxRate = '0') => {
+  const product = async (price: number | null = 1000, taxRate = '0', extra: Partial<typeof schema.products.$inferInsert> = {}) => {
     const id = `prod_${randomUUID()}`;
     await db.insert(schema.products).values({
       id,
@@ -49,6 +49,7 @@ describe.skipIf(!url)('pricing (database)', () => {
       taxRate,
       isTaxInclusive: true,
       stockQuantity: 100,
+      ...extra,
     });
     return id;
   };
@@ -896,15 +897,70 @@ describe.skipIf(!url)('pricing (database)', () => {
       expect(stored!.items[0]!.priceTrace?.source).toBe('price_list');
     });
 
-    it('the web shop keeps the standard price, so shown and charged prices agree', async () => {
+    it('the web shop is priced by the same engine, for the signed-in customer only', async () => {
       const cust = await customer();
       const p = await product(1000);
-      await withList(cust, p, 800);
-      const res = await order(cust.email!, p); // ecommerce
-      expect(res.success).toBe(true);
-      expect(res.order!.items[0]!.unitPrice).toBe(1000);
-      const stored = await c.orders.getById(res.order!.id);
-      expect(stored!.items[0]!.priceTrace).toBeNull();
+      const pl = await withList(cust, p, 800);
+      // Signed in as that customer: their list applies, and the order explains the price.
+      const own = await order((cust.email ?? ''), p, { customerId: cust.id }); // ecommerce
+      expect(own.success).toBe(true);
+      expect(own.order?.items[0]?.unitPrice).toBe(800);
+      const stored = await c.orders.getById((own.order?.id ?? ''));
+      expect(stored?.items[0]?.priceTrace?.winner?.listId).toBe(pl.id);
+      // A visitor who types that customer's email gets the standard price: an email must not unlock anyone's prices.
+      const guest = await order((cust.email ?? ''), p);
+      expect(guest.success).toBe(true);
+      expect(guest.order?.items[0]?.unitPrice).toBe(1000);
+    });
+
+    it('the standard price is the base the engine starts from, and follows the selling price until it is set', async () => {
+      const follows = await product(1000);
+      const own = await product(1000, '0', { standardPrice: '900' });
+      const a = await order(null, follows, { salesModule: 'sales_order' });
+      const b = await order(null, own, { salesModule: 'sales_order' });
+      const shop = await order(null, own); // the web shop too
+      expect(a.order?.items[0]?.unitPrice).toBe(1000);
+      expect(b.order?.items[0]?.unitPrice).toBe(900);
+      expect(shop.order?.items[0]?.unitPrice).toBe(900);
+      // A list still beats the standard price.
+      const cust = await customer();
+      await withList(cust, own, 700);
+      const listed = await order((cust.email ?? ''), own, { salesModule: 'sales_order' });
+      expect(listed.order?.items[0]?.unitPrice).toBe(700);
+    });
+
+    it('the least and most that can be bought apply on every channel, over the whole order', async () => {
+      const limited = await product(100, '0', { minOrderQty: 3, maxOrderQty: 10 });
+      const unlimited = await product(100);
+      for (const channel of [{}, { salesModule: 'sales_order' }, { salesModule: 'pos_cash_sale' }]) {
+        const low = await order(null, limited, { ...channel, items: [{ productId: limited, quantity: 2 }] });
+        expect(low.success).toBe(false);
+        expect(low.error).toMatch(/The least you can buy of "Pricing product" is 3/);
+        const high = await order(null, limited, { ...channel, items: [{ productId: limited, quantity: 11 }] });
+        expect(high.success).toBe(false);
+        expect(high.error).toMatch(/The most you can buy of "Pricing product" is 10/);
+        for (const quantity of [3, 10]) {
+          expect((await order(null, limited, { ...channel, items: [{ productId: limited, quantity }] })).success).toBe(true);
+        }
+      }
+      // Splitting a quantity over two lines does not get round a limit.
+      const split = await order(null, limited, { items: [{ productId: limited, quantity: 6 }, { productId: limited, quantity: 6 }] });
+      expect(split.success).toBe(false);
+      expect(split.error).toMatch(/most you can buy/);
+      // An item with no limits is untouched, even beside one that has them.
+      const mixed = await order(null, unlimited, { items: [{ productId: unlimited, quantity: 1 }, { productId: limited, quantity: 4 }] });
+      expect(mixed.success).toBe(true);
+      expect((await order(null, unlimited, { items: [{ productId: unlimited, quantity: 1 }, { productId: limited, quantity: 1 }] })).success).toBe(false);
+    });
+
+    it('a quote is held to the limits too', async () => {
+      const { SalesQuoteService } = await import('@/server/domains/quotes/service');
+      const quotes = new SalesQuoteService();
+      const cust = await customer();
+      const limited = await product(100, '0', { minOrderQty: 3 });
+      await expect(quotes.create(requester, quoteInput(cust.id, [{ productId: limited, quantity: 1, discountPercent: 0 }]) as never)).rejects.toThrow(/The least you can buy/);
+      const ok = await quotes.create(requester, quoteInput(cust.id, [{ productId: limited, quantity: 3, discountPercent: 0 }]) as never);
+      expect(Number(ok.lines[0]?.quantity)).toBe(3);
     });
 
     it('a staff order for something that cannot be priced is refused, never priced at zero', async () => {
@@ -918,9 +974,9 @@ describe.skipIf(!url)('pricing (database)', () => {
       const cust = await customer();
       const p = await product(null);
       await withList(cust, p, 640);
-      const res = await order(cust.email!, p, { salesModule: 'sales_order' });
+      const res = await order((cust.email ?? ''), p, { salesModule: 'sales_order' });
       expect(res.success).toBe(true);
-      expect(res.order!.items[0]!.unitPrice).toBe(640);
+      expect(res.order?.items[0]?.unitPrice).toBe(640);
     });
 
     const quoteInput = (customerId: string, lines: unknown[]) => ({

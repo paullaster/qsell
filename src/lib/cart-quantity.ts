@@ -1,4 +1,5 @@
 import { roundQty } from '@/lib/decimal';
+import type { QuantityLimits } from '@/lib/quantity-limits';
 
 /**
  * Quantities in the storefront cart. Goods counted whole (pieces) move by 1; goods sold by weight, length or
@@ -24,10 +25,11 @@ export const availableOf = (product: { stockQuantity: number; reservedQuantity: 
  * A wanted quantity made into one that can be bought: rounded to the unit's decimals, at least the least
  * that can be bought, and at most what is available. 0 when not even the least is available.
  */
-export function clampCartQuantity(wanted: number, decimals: number, available: number): number {
+export function clampCartQuantity(wanted: number, decimals: number, available: number, limits?: QuantityLimits): number {
   const scale = 10 ** Math.min(3, Math.max(0, decimals));
-  const most = Math.floor(available * scale + 1e-9) / scale;
-  const least = minCartQuantity(decimals);
+  // The item's own limits narrow the range: never less than its minimum, never more than its maximum.
+  const most = Math.min(Math.floor(available * scale + 1e-9) / scale, limits?.maxQty ?? Number.POSITIVE_INFINITY);
+  const least = Math.max(minCartQuantity(decimals), limits?.minQty ?? 0);
   if (most < least) return 0;
   if (!Number.isFinite(wanted)) return least;
   return Math.min(most, Math.max(least, Math.round(wanted * scale + 1e-9) / scale));
@@ -39,8 +41,9 @@ export function stepCartQuantity(
   direction: 1 | -1,
   decimals: number,
   available: number,
+  limits?: QuantityLimits,
 ): number {
-  return clampCartQuantity(roundQty(current + direction * cartStep(decimals)), decimals, available);
+  return clampCartQuantity(roundQty(current + direction * cartStep(decimals)), decimals, available, limits);
 }
 
 /** What the person typed, as a quantity; null when it is not a number above zero. */

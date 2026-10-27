@@ -9,6 +9,7 @@ import {
   priceLists,
   priceSpecificityWeights,
 } from '@/server/db/drizzle/schema';
+import { effectiveStandardPrice } from '@/lib/standard-price';
 import { chooseGroup, resolvePrice } from './domain/resolve';
 import {
   DEFAULT_WEIGHTS,
@@ -49,6 +50,31 @@ export const toLine = (r: LineRow): PriceListLine => ({
   validFrom: r.validFrom,
   validTo: r.validTo,
 });
+
+/** What the engine needs to know about a product to price it. */
+export interface PriceableProduct {
+  id: string;
+  price?: number | null;
+  standardPrice?: number | null;
+  taxRate?: number | null;
+  isTaxInclusive?: boolean | null;
+}
+
+/**
+ * The one place that turns a product and a quantity into what the engine prices: its standard price (its own, else the selling
+ * price) in the product's own tax basis. Every channel, the shop's display and the price book build their items here.
+ */
+export function priceItemFor(product: PriceableProduct, quantity: number): PriceItemInput {
+  const inclusive = product.isTaxInclusive !== false;
+  return {
+    productId: product.id,
+    quantity,
+    standardPrice: effectiveStandardPrice(product),
+    taxRate: Math.max(0, product.taxRate ?? 0),
+    lineTaxInclusive: inclusive,
+    standardTaxInclusive: inclusive,
+  };
+}
 
 /** Active list headers, weights and currencies are read often and change rarely. */
 const CACHE_MS = 10_000;

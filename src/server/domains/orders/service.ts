@@ -44,6 +44,7 @@ export class OrdersService {
 
     const result = await OrderWriteService.createOrder({
       userId: params.userId || session?.user?.customerStoreId || session?.user?.id || null,
+      customerId: session?.user.customerStoreId ?? null,
       branchId: sellingBranch.id,
       customerName: params.customerName,
       customerEmail: params.customerEmail,

@@ -1,4 +1,5 @@
 import { and, eq, inArray, isNull, lt, ne, or, sql, type SQL } from 'drizzle-orm';
+import { effectiveStandardPrice } from '@/lib/standard-price';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   etimsItems,
@@ -638,6 +639,7 @@ export class EtimsItemService {
       .select({
         name: products.name,
         price: products.price,
+        standardPrice: products.standardPrice,
         stock: products.stockQuantity,
         itemTypeCode: itemTypes.code,
         taxCode: taxCategories.etimsCode,
@@ -666,7 +668,8 @@ export class EtimsItemService {
     }
     return {
       name: row.name,
-      price: row.price === null ? 0 : Number(row.price),
+      // eTIMS is told the standard price: the price the pricing engine starts from.
+      price: effectiveStandardPrice({ price: row.price === null ? null : Number(row.price), standardPrice: row.standardPrice === null ? null : Number(row.standardPrice) }) ?? 0,
       stock: row.stock,
       itemTypeCode,
       taxCode: row.taxCode,

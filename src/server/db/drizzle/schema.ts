@@ -1958,6 +1958,14 @@ export const products = pgTable(
     /** Denormalized from the item type; drives the storefront sellable filter. */
     isSellable: boolean('is_sellable').notNull().default(true),
     price: numeric('price', { precision: 14, scale: 2 }),
+    /**
+     * The price the pricing engine starts from. Empty means "the selling price"; set by someone with
+     * `products:set_standard_price`, it stands on its own.
+     */
+    standardPrice: numeric('standard_price', { precision: 14, scale: 2 }),
+    /** The least and most that may be bought at once, in the base unit. Empty = no limit. */
+    minOrderQty: quantity('min_order_qty'),
+    maxOrderQty: quantity('max_order_qty'),
     compareAtPrice: numeric('compare_at_price', { precision: 14, scale: 2 }),
     costPrice: numeric('cost_price', { precision: 14, scale: 2 }).notNull().default('0'),
     taxCategoryId: text('tax_category_id').references(() => taxCategories.id, {
@@ -2007,6 +2015,10 @@ export const products = pgTable(
     uniqueIndex('products_slug_uidx')
       .on(t.slug)
       .where(sql`${t.deletedAt} is null`),
+    check('products_min_order_qty_chk', sql`${t.minOrderQty} IS NULL OR ${t.minOrderQty} > 0`),
+    check('products_max_order_qty_chk', sql`${t.maxOrderQty} IS NULL OR ${t.maxOrderQty} > 0`),
+    check('products_order_qty_range_chk', sql`${t.minOrderQty} IS NULL OR ${t.maxOrderQty} IS NULL OR ${t.minOrderQty} <= ${t.maxOrderQty}`),
+    check('products_standard_price_chk', sql`${t.standardPrice} IS NULL OR ${t.standardPrice} >= 0`),
     index('products_category_idx').on(t.categoryId),
     index('products_item_type_idx').on(t.itemTypeId),
     index('products_active_idx').on(t.isActive),

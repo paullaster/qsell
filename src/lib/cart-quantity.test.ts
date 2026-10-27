@@ -75,3 +75,24 @@ describe('cart quantities', () => {
     ).toBe(6);
   });
 });
+
+describe('cart quantities with the limits of an item', () => {
+  const limits = { minQty: 3, maxQty: 10 };
+  it('clamps into the range and to the stock', () => {
+    expect(clampCartQuantity(1, 0, 50, limits)).toBe(3);
+    expect(clampCartQuantity(99, 0, 50, limits)).toBe(10);
+    expect(clampCartQuantity(99, 0, 6, limits)).toBe(6);
+  });
+  it('is zero when the stock cannot reach the minimum', () => {
+    expect(clampCartQuantity(3, 0, 2, limits)).toBe(0);
+  });
+  it('steps within the range', () => {
+    expect(stepCartQuantity(3, -1, 0, 50, limits)).toBe(3);
+    expect(stepCartQuantity(10, 1, 0, 50, limits)).toBe(10);
+    expect(stepCartQuantity(5, 1, 0, 50, limits)).toBe(6);
+  });
+  it('is unchanged without limits', () => {
+    expect(clampCartQuantity(1, 0, 50)).toBe(1);
+    expect(clampCartQuantity(1, 0, 50, { minQty: null, maxQty: null })).toBe(1);
+  });
+});

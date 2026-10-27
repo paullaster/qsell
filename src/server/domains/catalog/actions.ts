@@ -8,6 +8,8 @@ import { auth } from '@/auth';
 import { getContainer } from '@/server/di/container';
 import { buildProductTemplateCsv, MAX_IMPORT_BYTES } from '@/lib/productCsv';
 import { CatalogService } from './service';
+import { optionalAmount } from './commercial-rules';
+import { SettingsError } from '@/server/domains/settings/errors';
 import { runSetting } from '@/server/domains/settings/action-runner';
 import { isUniqueViolation } from '@/server/domains/settings/errors';
 import { unitConflictWords } from '@/server/domains/units/write-service';
@@ -59,12 +61,34 @@ const productFriendly = (error: unknown): string | null =>
 const PRODUCT_PATHS = ['/admin/products', '/admin/inventory', '/'];
 
 /** Failures come back as data: the text of a thrown server action is masked in production. */
+/** Setting or changing the standard price is its own permission: saving the rest of the product does not need it. */
+async function mayChangeStandardPrice(): Promise<void> {
+  try {
+    await requirePermission('products:set_standard_price');
+  } catch (error) {
+    if (error instanceof AccessDeniedError) {
+      throw new SettingsError('Changing the standard price needs the "Set standard price" permission. Ask an administrator, or leave the standard price as it is.');
+    }
+    throw error;
+  }
+}
+
 export async function createProductAction(productData: ProductWrite) {
-  return runSetting('products:create', async () => CatalogService.createProduct(productData), { paths: PRODUCT_PATHS, friendly: productFriendly });
+  return runSetting('products:create', async () => {
+    if (optionalAmount(productData.standardPrice) !== null) await mayChangeStandardPrice();
+    return await CatalogService.createProduct(productData);
+  }, { paths: PRODUCT_PATHS, friendly: productFriendly });
 }
 
 export async function updateProductAction(id: string, updates: ProductPatch) {
-  return runSetting('products:update', async () => CatalogService.updateProduct(id, updates), { paths: PRODUCT_PATHS, friendly: productFriendly });
+  return runSetting('products:update', async () => {
+    if (updates.standardPrice !== undefined) {
+      const current = await CatalogService.getProductById(id);
+      // Only a different value needs the permission, so a form that sends every field back unchanged saves for anyone who may edit.
+      if ((optionalAmount(updates.standardPrice) ?? null) !== (current?.standardPrice ?? null)) await mayChangeStandardPrice();
+    }
+    return await CatalogService.updateProduct(id, updates);
+  }, { paths: PRODUCT_PATHS, friendly: productFriendly });
 }
 
 export async function deleteProductAction(id: string): Promise<boolean> {

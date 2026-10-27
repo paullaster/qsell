@@ -1,4 +1,6 @@
 import { quantityProblem } from '@/lib/unit-rules';
+import { basketQuantityProblems } from '@/lib/quantity-limits';
+import { priceItemFor } from '@/server/domains/pricing/service';
 import { randomUUID } from 'node:crypto';
 import type { Order, OrderItem, PaymentProvider } from '@/types/index';
 import { computeCheckoutTotals } from '@/lib/checkoutPricing';
@@ -50,6 +52,8 @@ export const OrderWriteService = {
     customerName: string;
     customerEmail: string;
     customerPhone: string;
+    /** The customer's own record, when the buyer is signed in: the price lists meant for them apply. */
+    customerId?: string | null;
     /** The number the customer pays from, when it is not the contact number. */
     paymentPhone?: string | null;
     buyerKraPin?: string | null;
@@ -144,19 +148,31 @@ export const OrderWriteService = {
       if (problem !== null) return { success: false, error: problem };
     }
 
-    // Staff channels are priced from the price lists. The web shop keeps the standard price, so
-    // what a shopper is shown is what they are charged, until the storefront shows list prices.
+    // The least and most of an item that may be bought are checked for every channel, over the whole document.
+    const limitProblems = basketQuantityProblems(
+      params.items.flatMap((item) => {
+        const prod = catalogProducts.get(item.productId);
+        return prod === undefined ? [] : [{ productId: item.productId, quantity: item.quantity, item: prod }];
+      }),
+    );
+    if (limitProblems.length > 0) return { success: false, error: limitProblems.join(' ') };
+
+    // Every channel is priced by the pricing engine, the web shop included: what a shopper is shown is priced the same way, so
+    // what they see is what they are charged. Discounts and coupons still apply to the staff channels only.
     const channel =
       params.paymentMethod === 'on_account' ? 'credit_sale' : (params.salesModule ?? 'ecommerce');
     const engine = new Map<number, PriceResult>();
     let saleCompanyId = '';
     let saleCustomerId: string | null = null;
-    if (channel !== 'ecommerce') {
+    {
       const { companySettings, customers, pricing } = getContainer();
       const company = await companySettings.ensureSeeded();
-      const known = await customers.lookupByEmail(company.id, params.customerEmail);
+      // The web shop trusts only the signed-in customer: an email typed into a form must never unlock another customer's prices.
+      const known =
+        params.customerId ??
+        (channel === 'ecommerce' ? null : ((await customers.lookupByEmail(company.id, params.customerEmail))?.id ?? null));
       saleCompanyId = company.id;
-      saleCustomerId = known?.id ?? null;
+      saleCustomerId = known;
       const toPrice: number[] = [];
       params.items.forEach((item, i) => {
         const prod = catalogProducts.get(item.productId);
@@ -166,7 +182,7 @@ export const OrderWriteService = {
       const priced = await pricing.priceLines(
         company.id,
         {
-          customerId: known?.id ?? null,
+          customerId: known,
           branchId: params.branchId ?? null,
           salesType: channel === 'credit_sale' ? 'credit' : 'cash',
           channel,
@@ -174,15 +190,7 @@ export const OrderWriteService = {
         toPrice.map((i) => {
           const item = nth(params.items, i);
           const prod = required(catalogProducts.get(item.productId), 'the product');
-          const inclusive = prod.isTaxInclusive !== false;
-          return {
-            productId: item.productId,
-            quantity: item.quantity,
-            standardPrice: prod.price ?? null,
-            taxRate: prod.taxRate ?? 0,
-            lineTaxInclusive: inclusive,
-            standardTaxInclusive: inclusive,
-          };
+          return priceItemFor(prod, item.quantity);
         }),
       );
       toPrice.forEach((i, n) => engine.set(i, nth(priced, n)));
@@ -228,7 +236,7 @@ export const OrderWriteService = {
         prod.price,
         item.quantity,
       );
-      if (priced && !quoted) {
+      if (priced && !quoted && channel !== 'ecommerce') {
         guarded.push({
           itemIndex: orderItems.length,
           productId: prod.id,

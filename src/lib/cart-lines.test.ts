@@ -73,3 +73,51 @@ describe('reconcileCart', () => {
     expect(reconcileCart([{ productId: 'p1', quantity: 1, price: null }], [product()], money).notices).toEqual([]);
   });
 });
+
+describe('an item that has a least and most to buy', () => {
+  const lot = product({ minOrderQty: 3, maxOrderQty: 8, stockQuantity: 20 });
+
+  it('starts a cart at the minimum even when one is asked for', () => {
+    expect(addToCart([], lot, 1)).toMatchObject({ outcome: 'added', quantity: 3 });
+    expect(addToCart([], lot, 5).lines[0]?.quantity).toBe(5);
+  });
+
+  it('never goes past the maximum, and says it is the maximum and not the stock', () => {
+    const lines = addToCart([], lot, 6).lines;
+    expect(addToCart(lines, lot, 6)).toMatchObject({ outcome: 'at_maximum', quantity: 8 });
+  });
+
+  it('says when the stock is below the least that may be bought', () => {
+    const short = product({ minOrderQty: 3, stockQuantity: 2 });
+    expect(addToCart([], short, 1)).toEqual({ lines: [], outcome: 'short_of_minimum', quantity: 0 });
+  });
+
+  it('sets a typed quantity within the limits', () => {
+    const lines = addToCart([], lot, 4).lines;
+    expect(setCartQuantity(lines, 'p1', 1)[0]?.quantity).toBe(3);
+    expect(setCartQuantity(lines, 'p1', 50)[0]?.quantity).toBe(8);
+    expect(setCartQuantity(lines, 'p1', 0)).toEqual([]);
+  });
+
+  it('raises or cuts a saved cart to the limits and tells the shopper', () => {
+    const raised = reconcileCart([{ productId: 'p1', quantity: 1, price: 100 }], [lot], money);
+    expect(raised.lines[0]?.quantity).toBe(3);
+    expect(raised.notices).toEqual([expect.objectContaining({ kind: 'raised', message: 'The least you can buy of Rice is 3, so the quantity was raised.' })]);
+    const cut = reconcileCart([{ productId: 'p1', quantity: 12, price: 100 }], [lot], money);
+    expect(cut.lines[0]?.quantity).toBe(8);
+    expect(cut.notices).toEqual([expect.objectContaining({ kind: 'limited' })]);
+  });
+
+  it('removes a line when there is less in stock than the minimum, with the reason', () => {
+    const short = product({ minOrderQty: 3, stockQuantity: 2 });
+    const out = reconcileCart([{ productId: 'p1', quantity: 3, price: 100 }], [short], money);
+    expect(out.lines).toEqual([]);
+    expect(out.notices[0]?.message).toContain('less in stock than the least that can be bought');
+  });
+
+  it('leaves an item with no limits exactly as before', () => {
+    const plain = product({ minOrderQty: null, maxOrderQty: null });
+    expect(addToCart([], plain, 1).lines[0]?.quantity).toBe(1);
+    expect(reconcileCart([{ productId: 'p1', quantity: 2, price: 100 }], [plain], money).notices).toEqual([]);
+  });
+});
