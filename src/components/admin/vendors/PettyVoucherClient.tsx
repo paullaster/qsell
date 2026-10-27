@@ -25,17 +25,20 @@ const EVENT_WORDS: Record<string, string> = { created: 'Written', receipt_added:
 
 export function PettyVoucherClient({ viewPromise }: { viewPromise: ReturnType<typeof pettyVoucherAction> }) {
   const res = use(viewPromise);
-  return res.ok ? <Voucher key={res.data.found?.voucher.updatedAt ?? 'new'} data={res.data} /> : <LoadFailed error={res.error} />;
+  // What the last action said is kept here, above the part that is rebuilt whenever the voucher changes: saving a voucher
+  // changes it, the page then reloads and rebuilds the form, and a message held inside it (such as "Attach a picture of the
+  // receipt first.") would vanish before anyone could read it.
+  const [notice, setNotice] = useState<Notice>(null);
+  return res.ok ? <Voucher key={res.data.found?.voucher.updatedAt ?? 'new'} data={res.data} notice={notice} setNotice={setNotice} /> : <LoadFailed error={res.error} />;
 }
 
-function Voucher({ data }: { data: Data }) {
+function Voucher({ data, notice, setNotice }: { data: Data; notice: Notice; setNotice: (notice: Notice) => void }) {
   const uid = useId();
   const router = useRouter();
   const found = data.found;
   const v = found?.voucher ?? null;
   const float = data.float;
   const editing = data.can.create && (v === null || v.status === 'draft');
-  const [notice, setNotice] = useState<Notice>(null);
   const [busy, setBusy] = useState(false);
   const [kind, setKind] = useState<'expense' | 'vendor_invoice'>(v?.kind ?? 'expense');
   const [payee, setPayee] = useState(v?.payeeName ?? '');
