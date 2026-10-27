@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, ilike, inArray, lt, or, sql } from 'drizzle-orm';
+import { OrderStages } from '@/server/domains/orders/stages';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   approvalEntries,
@@ -683,7 +684,7 @@ export class RefundService {
       if (has(r.orderId)) {
         const [o] = await tx.select().from(orders).where(eq(orders.id, r.orderId)).for('update');
         if (o?.paymentStatus === 'refunded' && refundedState(toCents(o.totalAmount), await this.netRefundedForOrder(tx, r.orderId)) !== 'refunded') {
-          await tx.update(orders).set({ paymentStatus: 'partially_refunded', updatedAt: new Date() }).where(eq(orders.id, o.id));
+          await OrderStages.moveIn(tx, o.id, 'refund_failed', 'failed', { ref: { type: 'refund', id: r.id }, set: { paymentStatus: 'partially_refunded' }, reasonCode: 'payout_returned', message: `Refund ${r.number} came back`, source: 'staff' });
           await this.event(tx, ctx, id, 'order_payment_state', null, null, { data: { order: o.orderNumber, state: 'partially_refunded' } });
         }
       }
@@ -782,7 +783,8 @@ export class RefundService {
       const [o] = await tx.select().from(orders).where(eq(orders.id, r.orderId)).for('update');
       if (o && ['paid', 'reconciled', 'refunded', 'partially_refunded'].includes(o.paymentStatus)) {
         order = refundedState(toCents(o.totalAmount), await this.netRefundedForOrder(tx, r.orderId));
-        if (order === 'refunded') await tx.update(orders).set({ paymentStatus: 'refunded', updatedAt: new Date() }).where(eq(orders.id, o.id));
+        // The refund paid is a stage of the order whether it covers the order or part of it; only a full refund changes the payment state.
+        await OrderStages.moveIn(tx, o.id, 'refund_completed', 'succeeded', { ref: { type: 'refund', id: r.id }, ...(order === 'refunded' ? { set: { paymentStatus: 'refunded' } } : {}), detail: { state: order, amount: fromCents(cents) }, source: 'staff' });
         await this.event(tx, ctx, id, 'order_payment_state', null, null, { data: { order: o.orderNumber, state: order } });
       }
     }

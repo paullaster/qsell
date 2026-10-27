@@ -9,6 +9,7 @@ import { Field, fieldClass, primaryClass } from '@/components/ui/screen-kit';
 import { OrderApprovalBanner } from '@/components/admin/approvals/OrderApprovalBanner';
 import { OrderCreditNotesPanel } from '@/components/admin/OrderCreditNotesPanel';
 import { OrderReferencePanel } from './OrderReferencePanel';
+import { OrderTimelinePanel } from './OrderTimelinePanel';
 import { OrderTenderPanel } from '@/components/admin/pricing/OrderTenderPanel';
 import {
   FULFILMENT_STATUSES,
@@ -385,6 +386,7 @@ export function OrderDetailsModal({
           <OrderReferencePanel orderId={order.id} onChanged={onChanged} />
         ) : null}
         <OrderTenderPanel orderId={order.id} onChanged={onChanged} />
+        <OrderTimelinePanel orderId={order.id} />
         <OrderCreditNotesPanel key={order.id} orderId={order.id} />
       </div>
     </Modal>

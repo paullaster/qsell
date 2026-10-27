@@ -67,7 +67,7 @@ export async function initiateBranchPaymentAction(input: {
   providerCode: PaymentProviderCode;
 }): Promise<StartedPayment> {
   // The prompt goes to the number the order already holds; the caller cannot name another (see startOrderPayment).
-  return await startOrderPayment({ orderId: input.orderId, providerCode: input.providerCode });
+  return await startOrderPayment({ orderId: input.orderId, providerCode: input.providerCode, source: 'staff' });
 }
 
 export async function getPaymentAttemptStatusAction(attemptId: string) {

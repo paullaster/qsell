@@ -1,6 +1,6 @@
-# Order Stage Timeline — Requirement and Design (DRAFT, nothing built)
+# Order Stage Timeline — Requirement and Design (T-0 BUILT)
 
-Status: **draft for correction**, written 2026-10-27 from the owner's requirement:
+Status: **T-0 built** (2026-10-27/28); T-1 to T-3 are still to build (§11, and "What T-0 delivers" at the end). Written 2026-10-27 from the owner's requirement:
 
 > *Every stage an order goes through, from when a user initiates it until it succeeds or fails, must have a timestamp. Every order state or stage must have a timestamp.*
 
@@ -158,3 +158,45 @@ Each slice has unit, integration, API and e2e tests (desktop and phone), docs an
 4. **Do SLAs ship in T-0 or T-3?** Recommend T-3: first make the facts exact, then measure against them.
 5. **Back-dated entries**: allowed only for a documented list (rider offline sync, provider callbacks that carry their own time)? Recommend yes, with `client_time`/`provider_time` kept separate and the server time always the ordering key.
 6. **Name of the permission to see staff-only detail** (recommend `orders:timeline`).
+
+---
+
+## 13. What T-0 delivers (built)
+
+The owner accepted every recommendation of §12, and T-0 was built exactly as designed: *customers see* placed, paid, packed, on its way / out for delivery, delivered/collected, cancelled, refunded with their times; refused attempts are kept 13 months and guests are a keyed hash; anonymous refusals are recorded; targets (SLAs) wait for T-3; back-dated entries are possible only through the writer's `backDated`, `clientTime` and `providerTime` options (nothing uses them yet: the rider app will); the permission is `orders:timeline`.
+
+### Where it is
+
+| What | Where |
+|---|---|
+| The stage catalogue, what each stage does to the order (the one table of transitions), the rules for moving an order by hand, the customer's stages, the stuck-order defaults | `src/lib/order-stages.ts` (pure, tested) |
+| **The one writer** | `src/server/domains/orders/stages.ts` (`OrderStages.move`, `moveIn`, `placedIn`, `seedIn`, `seedBatch`, `timeline`) |
+| Rebuilding the history of older orders (pure) | `src/lib/order-stage-backfill.ts` |
+| Checkout attempts (the record from initiation) | `src/server/domains/orders/checkout-attempts.ts` |
+| Reading: an order's timeline, the customer's stages, the flow (funnel, failures, stuck) | `orders/timeline-read.ts`, `orders/timeline-actions.ts` |
+| Tables, triggers, indexes | `drizzle/0106_order_stage_timeline.sql` (`order_stage_events`, `checkout_attempts`, the stage columns and times on `orders`) |
+| Worker jobs | `order-stage-backfill` (every 5 minutes until no order is left), `purge-checkout-attempts` (daily) |
+| Screens | Admin → Orders → *Timeline* in an order and an *Order flow* panel; the shop's *Track my order* and the confirmation page show *Order progress* |
+| Permission | `orders:timeline` (admin and manager roles on new installs; an existing role is given it in Admin → Roles) |
+
+### How the guarantee is kept
+
+1. **Every path that changed an order's stage now goes through the writer**: payments (started, failed, confirmed), reconciliation (matched, cancelled), the administrator's status changes and cancellation, approvals (requested, approved, refused, reopened, withdrawn), KRA status, refunds, tenders (a wallet or gift card that pays an order), and order creation (`order_placed`, with the checkout's start time). The generic order update **no longer accepts the stage columns** (the compiler refuses them).
+2. **A test scans the code base** (`stage-writer-only.test.ts`) and fails when anything outside the writer updates those columns with drizzle or SQL. It found one path that had been missed (tenders) while this was being built.
+3. **The database trigger** (`orders_stage_change_guard`) records any change that goes round the writer as `unrecorded_change` from source `trigger`, and the Order flow panel counts them (it must be zero).
+4. **Events are append-only** (trigger), unique per `(order, sequence)`, and the same thing (a payment attempt, a refund, a reconciliation) reaches the same stage once (a partial unique index), so a retried webhook adds nothing and never pulls an order back a stage.
+5. **A property test** replays random sequences of 40 moves for several seeds and proves: sequence is 1..n, times never go backwards, the recorded changes replay to the order's columns, the last event is the current stage, and the trigger never fired.
+
+### Decisions made while building (and why)
+
+* Changes are stored under the database's column names (`status`, `payment_status`, `approval_status`, `kra_transmission_status`), the same as the placement event and the trigger. (A replay check caught the writer using another key style.)
+* A stage whose effect changes nothing is recorded only if it has a reference not yet seen (a retry has a new payment attempt, so it is recorded) or is a fact (a prompt sent); a status set to what it already is records nothing but still saves the courier or tracking details that came with it.
+* A payment that could not even be started (the provider is off, the credentials are missing) is recorded as `payment_started` with outcome `failed` and its reason, and does **not** change the order: it is still waiting for a payment and can be tried again.
+* Setting an order back to *pending* is recorded as `status_corrected`, naming the status; the tests caught that this had first been silently dropped.
+* Orders that exist already are given their history when anything first happens to them (and by the background job): events marked `approximate`, with a time inferred only from what the order held, capped by the next known time.
+* The shop's *Track my order* had a hard-coded sequence ("Dispatched from Nairobi Warehouse Hub …") with the payment time taken from the order's last-changed time. It now shows the real stages and times.
+
+### What is not built yet
+
+Stock stages (T-1), delivery stages (T-2), per-stage targets with breach tasks and escalation, and the full operations dashboard (T-3). The catalogue already contains their stage names, so the database accepts them when those modules emit them.
+

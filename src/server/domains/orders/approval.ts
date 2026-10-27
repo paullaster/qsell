@@ -1,4 +1,6 @@
 import { eq } from 'drizzle-orm';
+import { OrderStages } from './stages';
+import type { OrderStage, StageOutcome } from '@/lib/order-stages';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { orderItems, orders } from '@/server/db/drizzle/schema';
 import { guardLines } from '@/server/domains/pricing/guard-text';
@@ -22,13 +24,11 @@ export function needsApprovalCheck(
 
 /** What an order's approvals do to the order itself. */
 export function orderApprovalHandler(db: DrizzleDb): DocumentHandler {
+  // What an approval decision does to the order is a stage, written by the stage writer in the approver's transaction.
   const setStatus =
-    (status: 'approved' | 'rejected' | 'draft') =>
+    (status: 'approved' | 'rejected' | 'draft', stage: OrderStage, outcome: StageOutcome) =>
     async (orderId: string, tx: Parameters<DocumentHandler['onReleased']>[1]) => {
-      await tx
-        .update(orders)
-        .set({ approvalStatus: status, updatedAt: new Date() })
-        .where(eq(orders.id, orderId));
+      await OrderStages.moveIn(tx, orderId, stage, outcome);
       afterCommit(
         tx,
         () => void broadcastRealtime('order_updated', { id: orderId, approvalStatus: status }),
@@ -45,11 +45,11 @@ export function orderApprovalHandler(db: DrizzleDb): DocumentHandler {
         .limit(1);
       return { amount: Number(o?.total ?? 0) };
     },
-    onReleased: setStatus('approved'),
-    onRejected: setStatus('rejected'),
+    onReleased: setStatus('approved', 'approval_approved', 'succeeded'),
+    onRejected: setStatus('rejected', 'approval_rejected', 'failed'),
     // Reopened (or withdrawn): the order is editable again but still held until it is sent back.
-    onReopened: setStatus('draft'),
-    onCanceled: setStatus('draft'),
+    onReopened: setStatus('draft', 'approval_reopened', 'entered'),
+    onCanceled: setStatus('draft', 'approval_withdrawn', 'cancelled'),
     describe: async (orderId) => {
       const [o] = await db
         .select({
@@ -134,7 +134,7 @@ export async function resubmitOrderForApproval(
       tx,
     );
     if (outcome.required && !outcome.released) {
-      await tx.update(orders).set({ approvalStatus: 'pending' }).where(eq(orders.id, orderId));
+      await OrderStages.moveIn(tx, orderId, 'approval_requested', 'entered', { source: 'staff', actor: { type: 'user', id: userId }, ref: { type: 'approval_request', id: `${orderId}:${order.updatedAt}` } });
       return 'pending' as const;
     }
     if (!outcome.required && overCreditLimit) {
@@ -143,7 +143,7 @@ export async function resubmitOrderForApproval(
       );
     }
     // Nothing needs approving any more (or every step was skipped, which already approved it).
-    await tx.update(orders).set({ approvalStatus: 'approved' }).where(eq(orders.id, orderId));
+    await OrderStages.moveIn(tx, orderId, 'approval_approved', 'succeeded', { source: 'staff', actor: { type: 'user', id: userId }, message: 'Nothing needed approving any more.' });
     return 'approved' as const;
   });
 }

@@ -1,4 +1,6 @@
 import { getContainer } from '@/server/di/container';
+import { drizzleDb } from '@/server/db/drizzle/client';
+import { OrderStages } from '@/server/domains/orders/stages';
 import { broadcastRealtime } from '@/server/realtime';
 import { toReconciliationLog, toTransaction } from '@/server/domains/catalog/mappers';
 import type { TransactionRecord, Order, ReconciliationLog } from '@/types/index';
@@ -95,7 +97,10 @@ export class ReconciliationEngine {
     });
 
     if (!verdict.discrepancyFound && order.paymentStatus === 'paid') {
-      await container.orders.update(order.id, { paymentStatus: 'reconciled' });
+      await OrderStages.move(drizzleDb, order.id, 'payment_reconciled', 'succeeded', {
+        ref: { type: 'payment_transaction', id: transaction.id },
+        detail: { actor, receivedAmount: String(transaction.amount) },
+      });
     }
 
     void broadcastRealtime('reconciliation_event', {
@@ -198,13 +203,14 @@ export class ReconciliationEngine {
 
     const order = await container.orders.getById(existing.orderId);
     if (order) {
+      const ref = { type: 'reconciliation_log', id: logId };
       if (resolutionAction === 'force_match') {
-        await container.orders.update(order.id, {
-          paymentStatus: 'reconciled',
-          status: 'completed',
+        await drizzleDb.transaction(async (tx) => {
+          await OrderStages.moveIn(tx, order.id, 'payment_reconciled', 'succeeded', { ref, source: 'staff', reasonCode: 'force_match', message: notes });
+          await OrderStages.moveIn(tx, order.id, 'completed', 'succeeded', { ref, source: 'staff', reasonCode: 'force_match', message: notes });
         });
       } else if (resolutionAction === 'cancel_order') {
-        await container.orders.update(order.id, { status: 'cancelled', paymentStatus: 'failed' });
+        await OrderStages.move(drizzleDb, order.id, 'cancelled', 'cancelled', { ref, source: 'staff', reasonCode: 'cancel_order', message: notes, set: { paymentStatus: 'failed' } });
         const { InventoryReservationService } = await import(
           '@/server/domains/inventory/reservation-service'
         );

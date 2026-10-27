@@ -8,6 +8,7 @@ import { emailInvoiceAction, generateInvoicePdfAction } from '@/server/domains/i
 import { downloadPdfBase64 } from '@/lib/downloadPdf';
 import { useStore } from '@/components/store/StoreContext';
 import { maskedPhone } from '@/lib/phone';
+import { OrderProgress } from '@/components/store/OrderProgress';
 import { has } from '@/lib/values';
 
 /** The order as the shop has it (read again from the server after payment), with the invoice to keep. */
@@ -64,6 +65,11 @@ export function OrderComplete({ order, receipt, onAccount }: { order: Order; rec
           <dd className="font-mono text-2xl font-bold text-fg-strong">{money(order.totalAmount)}</dd>
         </div>
       </dl>
+
+      <section aria-label="Progress" className="space-y-2 rounded-xl border border-line bg-surface p-4">
+        <h2 className="text-xs font-semibold tracking-wider text-fg-muted uppercase">Progress</h2>
+        <OrderProgress orderNumber={order.orderNumber} contact={order.customerEmail.trim() === '' ? order.customerPhone : order.customerEmail} />
+      </section>
 
       <p role="status" className="text-sm text-fg-muted">Keep the order number: you can follow this order any time from “Track my order”{sessionName === null ? '' : ' or My orders'}.</p>
       {notice === null ? null : <p role="status" className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{notice}</p>}

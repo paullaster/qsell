@@ -1,4 +1,6 @@
 import { quantityProblem } from '@/lib/unit-rules';
+import type { CheckoutRefusal, StageSource } from '@/lib/order-stages';
+import { OrderStages, type StageActor } from './stages';
 import { basketQuantityProblems } from '@/lib/quantity-limits';
 import { priceItemFor } from '@/server/domains/pricing/service';
 import { randomUUID } from 'node:crypto';
@@ -45,6 +47,19 @@ function lineAmounts(
   return { unitPrice, total: unitPrice * quantity };
 }
 
+/** Who placed an order and from where, for its first event: a shopper at the shop, staff at the till, staff in the office. */
+function placedBy(channel: string, customerId: string | null, requestedBy: string | null): { source: StageSource; actor: StageActor } {
+  if (channel === 'ecommerce') return { source: 'shop', actor: { type: 'customer', id: customerId } };
+  return { source: channel === 'pos_cash_sale' ? 'pos' : 'staff', actor: { type: 'user', id: requestedBy } };
+}
+
+/** The short reason a failed order creation is recorded with, from what went wrong. */
+function refusalCodeOf(message: string): CheckoutRefusal {
+  if (/credit limit/i.test(message)) return 'credit_limit';
+  if (/approval/i.test(message)) return 'approval_needed';
+  return 'other';
+}
+
 export const OrderWriteService = {
   async createOrder(raw: {
     userId?: string | null;
@@ -54,6 +69,8 @@ export const OrderWriteService = {
     customerPhone: string;
     /** The customer's own record, when the buyer is signed in: the price lists meant for them apply. */
     customerId?: string | null;
+    /** When the shopper started this checkout, for the order's timeline. */
+    checkoutStartedAt?: Date | null;
     /** The number the customer pays from, when it is not the contact number. */
     paymentPhone?: string | null;
     buyerKraPin?: string | null;
@@ -114,10 +131,10 @@ export const OrderWriteService = {
           global: Record<string, string>;
           shortcut: Record<string, string>;
         };
-  }): Promise<{ success: boolean; order?: Order; error?: string }> {
+  }): Promise<{ success: boolean; order?: Order; error?: string; /** Why it was refused, for the checkout attempt's record. */ code?: CheckoutRefusal }> {
     // A shopper may leave the email out; whatever is given is checked here, not trusted from the browser.
     const contact = readOptionalEmail(raw.customerEmail);
-    if (!contact.ok) return { success: false, error: contact.error };
+    if (!contact.ok) return { success: false, error: contact.error, code: 'invalid_input' };
     const params = { ...raw, customerEmail: contact.email };
     const orderItems: OrderItem[] = [];
     const pricedLines: {
@@ -145,7 +162,7 @@ export const OrderWriteService = {
         item.quantity > 0
           ? quantityProblem(item.quantity, prod.baseUnitDecimals, prod.baseUnitName, what)
           : `${what} must be above zero.`;
-      if (problem !== null) return { success: false, error: problem };
+      if (problem !== null) return { success: false, error: problem, code: 'invalid_quantity' };
     }
 
     // The least and most of an item that may be bought are checked for every channel, over the whole document.
@@ -155,7 +172,7 @@ export const OrderWriteService = {
         return prod === undefined ? [] : [{ productId: item.productId, quantity: item.quantity, item: prod }];
       }),
     );
-    if (limitProblems.length > 0) return { success: false, error: limitProblems.join(' ') };
+    if (limitProblems.length > 0) return { success: false, error: limitProblems.join(' '), code: 'quantity_limit' };
 
     // Every channel is priced by the pricing engine, the web shop included: what a shopper is shown is priced the same way, so
     // what they see is what they are charged. Discounts and coupons still apply to the staff channels only.
@@ -210,17 +227,18 @@ export const OrderWriteService = {
     for (const [index, item] of params.items.entries()) {
       const prod = catalogProducts.get(item.productId);
       if (!prod) {
-        return { success: false, error: `Product ID ${item.productId} does not exist.` };
+        return { success: false, error: `Product ID ${item.productId} does not exist.`, code: 'not_found' };
       }
       const quoted = quotedItems.get(item.productId);
       if (!prod.isSellable && !quoted) {
-        return { success: false, error: `${prod.name} is not sellable and cannot be ordered.` };
+        return { success: false, error: `${prod.name} is not sellable and cannot be ordered.`, code: 'not_for_sale' };
       }
       const priced = engine.get(index);
       if (priced && priced.unitPrice == null) {
         return {
           success: false,
           error: `${prod.name} cannot be priced. ${priced.trace.steps.at(-1) ?? ''}`.trim(),
+          code: 'cannot_be_priced',
         };
       }
       if (
@@ -228,7 +246,7 @@ export const OrderWriteService = {
         !priced &&
         (prod.price == null || !Number.isFinite(prod.price) || prod.price <= 0)
       ) {
-        return { success: false, error: `${prod.name} has no valid selling price.` };
+        return { success: false, error: `${prod.name} has no valid selling price.`, code: 'cannot_be_priced' };
       }
       const { unitPrice, total: itemTotal } = lineAmounts(
         quoted,
@@ -304,7 +322,7 @@ export const OrderWriteService = {
       );
       if (basket.couponProblems.length > 0) {
         const bad = nth(basket.couponProblems, 0);
-        return { success: false, error: `Coupon ${bad.code}: ${bad.reason}` };
+        return { success: false, error: `Coupon ${bad.code}: ${bad.reason}`, code: 'coupon_refused' };
       }
       guarded.forEach((g, n) => {
         const b = nth(basket.lines, n);
@@ -361,7 +379,7 @@ export const OrderWriteService = {
         const item = nth(orderItems, g.itemIndex);
         if (item.priceTrace) item.priceTrace = { ...item.priceTrace, guard: nth(verdict.lines, n) };
       });
-      if (verdict.blocked.length > 0) return { success: false, error: nth(verdict.blocked, 0) };
+      if (verdict.blocked.length > 0) return { success: false, error: nth(verdict.blocked, 0), code: 'approval_needed' };
       if (verdict.belowFloor) {
         const first = required(
           guarded.find((_, n) => nth(verdict.lines, n).belowFloor),
@@ -372,6 +390,7 @@ export const OrderWriteService = {
           return {
             success: false,
             error: `${text} A sale at the till cannot wait for approval: change the price list, or sell it as a sales order.`,
+            code: 'approval_needed',
           };
         floorBreach = { text, shortfallPercent: verdict.largestShortfallPercent };
       }
@@ -452,7 +471,7 @@ export const OrderWriteService = {
           })),
         );
       } catch (error) {
-        if (error instanceof KitError) return { success: false, error: error.message };
+        if (error instanceof KitError) return { success: false, error: error.message, code: 'kit_error' };
         throw error;
       }
     }
@@ -474,7 +493,7 @@ export const OrderWriteService = {
       params.customerEmail,
     );
     if (!reservation.success) {
-      return { success: false, error: reservation.error };
+      return { success: false, error: reservation.error, code: 'stock_short' };
     }
 
     // Customer persistence is handled by customers.prepareSale() below, which
@@ -646,10 +665,7 @@ export const OrderWriteService = {
             tx,
           );
           if (outcome.required && !outcome.released) {
-            await tx
-              .update(ordersTable)
-              .set({ approvalStatus: 'pending' })
-              .where(eq(ordersTable.id, saved.id));
+            await OrderStages.moveIn(tx, saved.id, 'approval_requested', 'entered', { source: 'staff', actor: { type: 'user', id: params.requestedBy ?? null }, ref: { type: 'approval_request', id: saved.id } });
             order.approvalStatus = 'pending';
           } else if (floorBreach && !outcome.required) {
             // Below a floor and no approval workflow covers it: that is what the floor is for.
@@ -662,6 +678,11 @@ export const OrderWriteService = {
               `${tradeCustomer.name} would exceed the credit limit of ${Number(tradeCustomer.creditLimit).toLocaleString()}.`,
             );
           }
+        },
+        // Who placed it and from where is the first event of the order's timeline; a shop checkout carries the time the shopper started it.
+        {
+          ...placedBy(channel, params.customerId ?? null, params.requestedBy ?? null),
+          startedAt: params.checkoutStartedAt ?? null,
         },
       );
       await customers.postInvoice({
@@ -681,9 +702,11 @@ export const OrderWriteService = {
       ).catch((releaseError: unknown) =>
         console.error('[orders] could not release reservation', releaseError),
       );
+      const message = err instanceof Error ? err.message : 'Customer or dimension assignment failed';
       return {
         success: false,
-        error: err instanceof Error ? err.message : 'Customer or dimension assignment failed',
+        error: message,
+        code: refusalCodeOf(message),
       };
     }
 

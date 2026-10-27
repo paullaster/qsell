@@ -100,6 +100,9 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
   }
   const reload = async (id: string) => (await db.select().from(schema.paymentAttempts).where(eq(schema.paymentAttempts.id, id)))[0];
   const order = async (id: string) => (await db.select().from(schema.orders).where(eq(schema.orders.id, id)))[0];
+  // The stages an order has been through, in order (the order timeline).
+  const timelineOf = async (id: string) => await db.select().from(schema.orderStageEvents).where(eq(schema.orderStageEvents.orderId, id)).orderBy(schema.orderStageEvents.sequence);
+  const stagesOf = async (id: string) => (await timelineOf(id)).map((e) => `${e.stage}:${e.outcome}`);
   const stkBody = (a: { providerReference: string | null; externalReference: string | null }, o: { code?: number; amount?: number; phone?: number | string; receipt?: string } = {}) => ({
     Body: { stkCallback: { MerchantRequestID: a.externalReference, CheckoutRequestID: a.providerReference, ResultCode: o.code ?? 0, ResultDesc: (o.code ?? 0) === 0 ? 'The service request is processed successfully.' : 'Request cancelled by user',
       ...((o.code ?? 0) === 0 ? { CallbackMetadata: { Item: [{ Name: 'Amount', Value: o.amount ?? 100 }, { Name: 'MpesaReceiptNumber', Value: o.receipt ?? rc() }, { Name: 'TransactionDate', Value: 20260113123045 }, { Name: 'PhoneNumber', Value: o.phone ?? 254712345678 }] } } : {}) } },
@@ -179,6 +182,13 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       expect(tx).toMatchObject({ state: 'consumed', consumedType: 'payment_attempt', verifiedBy: 'stk_query', kind: 'gateway', amount: '100.0000' });
       expect(JSON.stringify(tx.evidence)).toContain('stkQuery');
       expect((await events(attempt.id))[0]).toMatchObject({ state: 'consumed', kind: 'stk_callback', sourceIp: '196.201.214.200' });
+      // The payment is on the order's timeline: started when the prompt was sent, confirmed only when the platform said so, once.
+      expect(await stagesOf(orderId)).toEqual(['order_placed:succeeded', 'payment_started:entered', 'payment_confirmed:succeeded']);
+      const line = await timelineOf(orderId);
+      expect(line[1]).toMatchObject({ refType: 'payment_attempt', refId: attempt.id, attemptNo: 1 });
+      expect(line[2]).toMatchObject({ refType: 'payment_attempt', refId: attempt.id, fromStatus: 'pending', toStatus: 'processing' });
+      expect(line[2]?.occurredAt.getTime()).toBeGreaterThanOrEqual(line[1]?.occurredAt.getTime() ?? Number.MAX_SAFE_INTEGER);
+      expect(line.some((e) => e.source === 'trigger')).toBe(false);
       // it is not counted twice
       expect((await engine.verification.verifyAttempt(attempt.id)).outcome).toBe('already_final');
       // what was sent and received is on record, without secrets or phone numbers
@@ -224,6 +234,10 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       expect((await reload(a.attempt.id)).status).toBe('failed');
       expect((await order(a.orderId)).paymentStatus).toBe('failed');
       expect((await db.select().from(schema.providerTransactions).where(eq(schema.providerTransactions.consumedId, a.attempt.id))).length).toBe(0);
+      // A payment that did not go through is a stage too, with its time and the platform's reason.
+      const failed = (await timelineOf(a.orderId)).at(-1);
+      expect(failed).toMatchObject({ stage: 'payment_failed', outcome: 'failed', refId: a.attempt.id, toStatus: 'failed' });
+      expect(failed?.message).toBeTruthy();
     });
 
     it('a callback that says failed is overruled when Safaricom says it succeeded', async () => {

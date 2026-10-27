@@ -23,6 +23,7 @@ import { type Order } from '@/types/index';
 import { AppImage } from '@/components/ui/AppImage';
 import { shownPaymentReference } from '@/lib/paymentReference';
 import { lookupOrderAction } from '@/server/domains/orders/actions';
+import { OrderProgress } from '@/components/store/OrderProgress';
 
 interface OrderTrackerModalProps {
   isOpen: boolean;
@@ -71,49 +72,6 @@ function OpenTracker({ onClose }: { onClose: () => void }) {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const getTimelineSteps = (order: Order) => {
-    const isPaid = order.paymentStatus === 'paid' || order.paymentStatus === 'reconciled';
-    const isCompleted = order.status === 'completed';
-
-    return [
-      {
-        title: 'Order Confirmed & Items Reserved',
-        desc: 'Items allocated and prepared for packing in our warehouse',
-        time: new Date(order.createdAt).toLocaleTimeString([], {
-          hour: '2-digit',
-          minute: '2-digit',
-        }),
-        completed: true,
-        current: false,
-      },
-      {
-        title: isPaid ? 'Payment Confirmed & Verified' : 'Awaiting Payment',
-        desc: isPaid
-          ? `Paid via ${order.paymentMethod === 'mpesa_daraja' ? 'M-Pesa' : 'Card / Bank'} (${shownPaymentReference(order) || 'Confirmed'})`
-          : 'Pending customer payment completion',
-        time: isPaid
-          ? new Date(order.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-          : 'Pending',
-        completed: isPaid,
-        current: !isPaid,
-      },
-      {
-        title: 'Dispatched from Nairobi Warehouse Hub',
-        desc: 'Inspected, quality verified, and packed with invoice',
-        time: isPaid ? 'In Progress' : 'Queued',
-        completed: isPaid || isCompleted,
-        current: isPaid && !isCompleted,
-      },
-      {
-        title: 'Courier Delivery to Your Doorstep',
-        desc: `Delivery to ${order.shippingAddress.street}, ${order.shippingAddress.city}`,
-        time: isCompleted ? 'Delivered' : 'Estimated Today',
-        completed: isCompleted,
-        current: false,
-      },
-    ];
   };
 
   return (
@@ -265,47 +223,13 @@ function OpenTracker({ onClose }: { onClose: () => void }) {
                 </div>
               </div>
 
-              {/* Status Timeline */}
+              {/* What happened to the order and when, from its own timeline */}
               <div className="space-y-3">
                 <h4 className="flex items-center gap-1.5 text-xs font-bold tracking-wider text-indigo-400 uppercase">
-                  <Clock className="h-4 w-4" /> Dispatch & Delivery Progress
+                  <Clock className="h-4 w-4" /> Order progress
                 </h4>
-                <div className="space-y-4 rounded-xl border border-line bg-surface p-4">
-                  {getTimelineSteps(matchedOrder).map((step, idx) => (
-                    <div key={idx} className="flex items-start gap-3.5">
-                      <div className="flex flex-col items-center">
-                        <div
-                          className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
-                            step.completed
-                              ? 'bg-emerald-500 text-black shadow-sm shadow-emerald-500/50'
-                              : step.current
-                                ? 'TW animate-pulse bg-indigo-600'
-                                : 'bg-surface-sunken text-fg-subtle'
-                          }`}
-                        >
-                          {step.completed ? '✓' : idx + 1}
-                        </div>
-                        {idx < 3 && (
-                          <div
-                            className={`my-1 h-8 w-0.5 ${
-                              step.completed ? 'bg-emerald-500/50' : 'bg-surface-sunken'
-                            }`}
-                          />
-                        )}
-                      </div>
-                      <div className="-mt-0.5 flex-1">
-                        <div className="flex items-center justify-between">
-                          <h5
-                            className={`text-xs font-semibold ${step.completed || step.current ? 'text-fg-strong' : 'text-fg-subtle'}`}
-                          >
-                            {step.title}
-                          </h5>
-                          <span className="font-mono text-xs text-fg-muted">{step.time}</span>
-                        </div>
-                        <p className="mt-0.5 text-xs text-fg-muted">{step.desc}</p>
-                      </div>
-                    </div>
-                  ))}
+                <div className="rounded-xl border border-line bg-surface p-4">
+                  <OrderProgress orderNumber={matchedOrder.orderNumber} contact={contact} />
                 </div>
               </div>
 
