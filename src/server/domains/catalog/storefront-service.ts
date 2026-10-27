@@ -76,7 +76,7 @@ export const StorefrontCatalog = {
     return rows.map((item) => toPublicProduct(toProduct(item)));
   },
 
-  sitemapProducts(): Promise<{ id: string; slug: string; updatedAt: Date }[]> {
+  sitemapProducts(): Promise<{ id: string; slug: string; updatedAt: Date; imageUrl: string }[]> {
     return repo().listLiveForSitemap(SITEMAP_LIMIT);
   },
 };

@@ -1,7 +1,11 @@
+import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { auth } from '@/auth';
 import { AdminShell } from '@/components/admin/AdminShell';
 import { myAccessSnapshot } from '@/server/domains/access-control/guard';
+
+/** The console is never listed by search engines. */
+export const metadata: Metadata = { robots: { index: false, follow: false } };
 
 /**
  * Defence in depth behind proxy.ts: never render the admin shell for a

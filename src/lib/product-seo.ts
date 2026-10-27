@@ -26,7 +26,7 @@ export function absoluteUrl(base: string, path: string): string {
 /** What a search engine reads to show price and stock beside the result (schema.org Product). */
 export function productJsonLd(
   product: PublicProduct,
-  context: { baseUrl: string; currencyCode: string | null; storeName: string },
+  context: { baseUrl: string; currencyCode: string | null; storeName: string; returnPolicyUrl?: string | null },
 ): Record<string, unknown> {
   const url = absoluteUrl(context.baseUrl, productHref(product));
   const images = productImages(product).map((image) => absoluteUrl(context.baseUrl, image));
@@ -34,8 +34,12 @@ export function productJsonLd(
   return {
     '@context': 'https://schema.org',
     '@type': 'Product',
+    '@id': `${url}#product`,
     name: product.name,
+    url,
     sku: product.sku,
+    mpn: product.sku,
+    ...(product.tags.length > 0 ? { keywords: product.tags.join(', ') } : {}),
     ...(images.length > 0 ? { image: images } : {}),
     ...(description === '' ? {} : { description }),
     ...(has(product.brand) ? { brand: { '@type': 'Brand', name: product.brand } } : {}),
@@ -48,6 +52,8 @@ export function productJsonLd(
             price: product.price.toFixed(2),
             priceCurrency: context.currencyCode,
             availability: availableOf(product) > 0 ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
+            itemCondition: 'https://schema.org/NewCondition',
+            ...(has(context.returnPolicyUrl) ? { hasMerchantReturnPolicy: { '@type': 'MerchantReturnPolicy', merchantReturnLink: context.returnPolicyUrl } } : {}),
             seller: { '@type': 'Organization', name: context.storeName },
           },
         }

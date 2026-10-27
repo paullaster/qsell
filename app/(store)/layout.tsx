@@ -1,6 +1,9 @@
 import type { ReactNode } from 'react';
-import { getCompanySettingsAction } from '@/server/domains/company/actions';
 import { StoreShell } from '@/components/store/StoreShell';
+import { storefrontSeo } from '@/server/domains/storefront/seo';
+import { organizationJsonLd, websiteJsonLd } from '@/lib/seo/jsonld';
+import { jsonLdText } from '@/lib/product-seo';
+import { resolveCompanyLogoUrl } from '@/lib/companyLogo';
 import { paymentMethodLabels, shopCategories, shopCurrency, signedInName } from '@/server/domains/storefront/shell';
 
 /**
@@ -9,16 +12,21 @@ import { paymentMethodLabels, shopCategories, shopCurrency, signedInName } from 
  * before the first byte is sent. The page's own slow parts still stream behind their own loading states.
  */
 export default async function StoreLayout({ children }: { children: ReactNode }) {
-  const [company, currency, paymentLabels, categories, sessionName] = await Promise.all([
-    getCompanySettingsAction(),
+  const [{ company, ui, base }, currency, paymentLabels, categories, sessionName] = await Promise.all([
+    storefrontSeo(),
     shopCurrency(),
     paymentMethodLabels(),
     shopCategories(),
     signedInName(),
   ]);
+  const logo = resolveCompanyLogoUrl(company.logoUrl);
   return (
-    <StoreShell company={company} currency={currency} paymentLabels={paymentLabels} categories={categories} sessionName={sessionName} year={new Date().getFullYear()}>
-      {children}
-    </StoreShell>
+    <>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdText(organizationJsonLd(company, ui.support, base, logo)) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdText(websiteJsonLd(company, base)) }} />
+      <StoreShell company={company} currency={currency} paymentLabels={paymentLabels} categories={categories} sessionName={sessionName} year={new Date().getFullYear()}>
+        {children}
+      </StoreShell>
+    </>
   );
 }
