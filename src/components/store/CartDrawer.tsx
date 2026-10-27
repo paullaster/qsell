@@ -1,5 +1,6 @@
 'use client';
 
+import { limitsOf } from '@/lib/quantity-limits';
 import { X, Trash2, ShoppingBag, ArrowRight, ShieldCheck, LogIn } from 'lucide-react';
 import Link from 'next/link';
 import { productHref } from '@/lib/product-link';
@@ -136,6 +137,7 @@ function OpenCart({ onClose }: { onClose: () => void }) {
                           decimals={decimalsOf(product)}
                           unitCode={product.baseUnitCode}
                           available={available}
+                          limits={limitsOf(product)}
                           onChange={(next) => setQuantity(product.id, next)}
                         />
 

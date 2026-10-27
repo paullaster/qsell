@@ -20,6 +20,14 @@ export function useCartActions() {
         toast({ type: 'error', title: 'Sold out', message: `${product.name} is out of stock right now.` });
         return false;
       }
+      if (outcome === 'short_of_minimum') {
+        toast({ type: 'error', title: 'Not enough in stock', message: `${product.name} is sold in lots of at least ${cartQuantityWords(product.minOrderQty ?? 1, product)}, and there is less than that in stock.` });
+        return false;
+      }
+      if (outcome === 'at_maximum') {
+        toast({ type: 'warning', title: 'Added, up to the most you can buy', message: `The most you can buy of ${product.name} is ${cartQuantityWords(product.maxOrderQty ?? 1, product)}.` });
+        return true;
+      }
       if (outcome === 'capped') {
         toast({ type: 'warning', title: 'Added, up to what is in stock', message: `Only ${cartQuantityWords(product.stockQuantity - product.reservedQuantity, product)} of ${product.name} available.` });
         return true;

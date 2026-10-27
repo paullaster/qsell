@@ -5,6 +5,7 @@ import { SettingsError } from '@/server/domains/settings/errors';
 const requirePermission = vi.fn();
 const createProduct = vi.fn();
 const updateProduct = vi.fn();
+const getProductById = vi.fn();
 const revalidatePath = vi.fn();
 
 vi.mock('@/server/domains/access-control/guard', () => ({
@@ -28,6 +29,7 @@ vi.mock('./service', () => ({
   CatalogService: {
     createProduct: (...a: unknown[]) => createProduct(...a) as unknown,
     updateProduct: (...a: unknown[]) => updateProduct(...a) as unknown,
+    getProductById: (...a: unknown[]) => getProductById(...a) as unknown,
   },
 }));
 
@@ -36,7 +38,7 @@ const denied = () =>
   new AccessDeniedError('products:create', { allowed: false, reason: 'deny-grant' });
 
 beforeEach(() => {
-  for (const f of [requirePermission, createProduct, updateProduct, revalidatePath]) f.mockReset();
+  for (const f of [requirePermission, createProduct, updateProduct, getProductById, revalidatePath]) f.mockReset();
   requirePermission.mockResolvedValue('user-1');
 });
 
@@ -91,5 +93,57 @@ describe('saving a product answers as data (a thrown error is masked in producti
       forbidden: true,
     });
     expect(createProduct).not.toHaveBeenCalled();
+  });
+});
+
+describe('the standard price has a permission of its own', () => {
+  const noStandardPrice = () => requirePermission.mockImplementation((key: string) => (key === 'products:set_standard_price' ? Promise.reject(new AccessDeniedError('products:set_standard_price', { allowed: false, reason: 'deny-grant' })) : Promise.resolve('user-1')));
+
+  it('lets anyone who may create a product leave it empty (it follows the selling price)', async () => {
+    noStandardPrice();
+    createProduct.mockResolvedValue({ id: 'p1' });
+    expect((await actions.createProductAction({ name: 'Fish', standardPrice: null } as never)).ok).toBe(true);
+    expect((await actions.createProductAction({ name: 'Fish' } as never)).ok).toBe(true);
+  });
+
+  it('refuses a standard price from someone without the permission, saying which one and why', async () => {
+    noStandardPrice();
+    const res = await actions.createProductAction({ name: 'Fish', standardPrice: 900 } as never);
+    expect(res).toMatchObject({ ok: false });
+    expect(!res.ok && res.error).toContain('"Set standard price" permission');
+    expect(createProduct).not.toHaveBeenCalled();
+  });
+
+  it('accepts it from someone who has the permission', async () => {
+    createProduct.mockResolvedValue({ id: 'p1' });
+    expect((await actions.createProductAction({ name: 'Fish', standardPrice: 900 } as never)).ok).toBe(true);
+    expect(requirePermission).toHaveBeenCalledWith('products:set_standard_price');
+  });
+
+  it('does not need it to save a form that sends the unchanged standard price back', async () => {
+    noStandardPrice();
+    getProductById.mockResolvedValue({ id: 'p1', standardPrice: 900 });
+    updateProduct.mockResolvedValue({ id: 'p1' });
+    expect((await actions.updateProductAction('p1', { standardPrice: 900, name: 'Fish' })).ok).toBe(true);
+    getProductById.mockResolvedValue({ id: 'p1', standardPrice: null });
+    expect((await actions.updateProductAction('p1', { standardPrice: null })).ok).toBe(true);
+  });
+
+  it('needs it to change the standard price, to set it, or to put it back to following the selling price', async () => {
+    noStandardPrice();
+    updateProduct.mockResolvedValue({ id: 'p1' });
+    getProductById.mockResolvedValue({ id: 'p1', standardPrice: 900 });
+    expect((await actions.updateProductAction('p1', { standardPrice: 800 })).ok).toBe(false);
+    expect((await actions.updateProductAction('p1', { standardPrice: null })).ok).toBe(false);
+    getProductById.mockResolvedValue({ id: 'p1', standardPrice: null });
+    expect((await actions.updateProductAction('p1', { standardPrice: 800 })).ok).toBe(false);
+    expect(updateProduct).not.toHaveBeenCalled();
+  });
+
+  it('does not ask when the standard price is not part of the save', async () => {
+    noStandardPrice();
+    updateProduct.mockResolvedValue({ id: 'p1' });
+    expect((await actions.updateProductAction('p1', { name: 'Fish' })).ok).toBe(true);
+    expect(getProductById).not.toHaveBeenCalled();
   });
 });

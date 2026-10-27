@@ -1,4 +1,7 @@
 import { required } from '@/lib/values';
+import { basketQuantityProblems } from '@/lib/quantity-limits';
+import { effectiveStandardPrice } from '@/lib/standard-price';
+import { priceItemFor } from '@/server/domains/pricing/service';
 import { repairsFor } from './unit-repair';
 import { and, desc, eq, ilike, inArray, lt, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
@@ -973,6 +976,14 @@ export class SalesQuoteService {
       companyId,
       (await getContainer().companySettings.getProfile()).tradingName,
     );
+    // The least and most of an item that may be bought apply to a quote as to an order, over the whole quote.
+    const limitProblems = basketQuantityProblems(
+      input.lines.flatMap((line) => {
+        const product = products.get(line.productId);
+        return product?.isSellable === true ? [{ productId: line.productId, quantity: line.quantity, item: product }] : [];
+      }),
+    );
+    if (limitProblems.length > 0) throw new Error(limitProblems.join(' '));
     // Lines priced from the price lists, and lines whose saved price is being kept. Amounts are in
     // the base currency, as they were before price lists existed.
     const modes = input.lines.map(
@@ -991,15 +1002,7 @@ export class SalesQuoteService {
     const itemFor = (i: number) => {
       const line = input.lines[i]!;
       const product = products.get(line.productId)!;
-      const inclusive = product.isTaxInclusive !== false;
-      return {
-        productId: line.productId,
-        quantity: line.quantity,
-        standardPrice: product.price ?? null,
-        taxRate: Math.max(0, product.taxRate ?? 0),
-        lineTaxInclusive: inclusive,
-        standardTaxInclusive: inclusive,
-      };
+      return priceItemFor(product, line.quantity);
     };
     const priced = await getContainer().pricing.priceLines(
       companyId,
@@ -1067,7 +1070,8 @@ export class SalesQuoteService {
       if (after) return after.unitPriceAfter;
       const r = engine.get(i);
       if (r?.unitPrice != null) return r.unitPrice;
-      return line.unitPrice ?? products.get(line.productId)?.price ?? 0;
+      const own = products.get(line.productId);
+      return line.unitPrice ?? (own === undefined ? null : effectiveStandardPrice(own)) ?? 0;
     };
     const orderBasket = await discountService.evaluate(
       companyId,
@@ -1132,7 +1136,7 @@ export class SalesQuoteService {
         ? afterRules.unitPriceAfter
         : result
           ? result.unitPrice
-          : (line.unitPrice ?? product.price);
+          : (line.unitPrice ?? effectiveStandardPrice(product));
       if (unitPrice == null || !Number.isFinite(unitPrice) || unitPrice < 0) {
         throw new Error(`${product.name} needs a valid selling price.`);
       }
@@ -1255,7 +1259,8 @@ export class SalesQuoteService {
     };
     const listNets = input.lines.map((line, i) => {
       const product = products.get(line.productId)!;
-      const productPrice = product.price == null ? null : toNetUnit(i, product.price);
+      const standard = effectiveStandardPrice(product);
+      const productPrice = standard === null ? null : toNetUnit(i, standard);
       if (modes[i] === 'catalog') {
         // What the customer would pay with promotions: a promotion is not an override.
         const p = catalogAfter.get(i)?.unitPriceAfter ?? engine.get(i)?.unitPrice;

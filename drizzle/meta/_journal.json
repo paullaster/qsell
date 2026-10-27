@@ -736,6 +736,13 @@
       "when": 1793081383489,
       "tag": "0104_order_payment_phone",
       "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "7",
+      "when": 1793089761949,
+      "tag": "0105_product_quantity_limits_standard_price",
+      "breakpoints": true
     }
   ]
 }

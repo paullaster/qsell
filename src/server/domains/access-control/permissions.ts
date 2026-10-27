@@ -262,6 +262,12 @@ export const PERMISSIONS = {
     category: 'Products & Inventory',
     description: 'Edit products',
   },
+  'products:set_standard_price': {
+    resource: 'products',
+    action: 'set_standard_price',
+    category: 'Products & Inventory',
+    description: 'Set or change the standard price of a product (the price the pricing engine starts from)',
+  },
   'newsletter:manage': {
     resource: 'newsletter',
     action: 'manage',

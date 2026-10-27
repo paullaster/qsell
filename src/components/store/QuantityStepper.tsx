@@ -8,6 +8,7 @@ import {
   parseCartQuantity,
   stepCartQuantity,
 } from '@/lib/cart-quantity';
+import type { QuantityLimits } from '@/lib/quantity-limits';
 
 interface QuantityStepperProps {
   /** What it is a quantity of, for screen readers ("Quantity of Fish"). */
@@ -18,6 +19,8 @@ interface QuantityStepperProps {
   unitCode?: string;
   /** The most that can be bought. */
   available: number;
+  /** The item's own least and most; empty means none. */
+  limits?: QuantityLimits;
   onChange: (quantity: number) => void;
 }
 
@@ -31,18 +34,20 @@ export function QuantityStepper({
   decimals,
   unitCode,
   available,
+  limits,
   onChange,
 }: QuantityStepperProps) {
   const id = useId();
   const [draft, setDraft] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const words = { baseUnitCode: unitCode, baseUnitDecimals: decimals };
-  const least = clampCartQuantity(0, decimals, available);
+  const least = clampCartQuantity(0, decimals, available, limits);
+  const most = clampCartQuantity(Number.MAX_SAFE_INTEGER, decimals, available, limits);
 
   const move = (direction: 1 | -1) => {
     setNote(null);
     setDraft(null);
-    const next = stepCartQuantity(value, direction, decimals, available);
+    const next = stepCartQuantity(value, direction, decimals, available, limits);
     if (next > 0) onChange(next);
   };
 
@@ -54,9 +59,11 @@ export function QuantityStepper({
       setNote('Enter an amount above zero.');
       return;
     }
-    const next = clampCartQuantity(typed, decimals, available);
+    const next = clampCartQuantity(typed, decimals, available, limits);
     if (next === 0) return;
     if (next === typed) setNote(null);
+    else if (limits?.minQty != null && typed < limits.minQty) setNote(`The least you can buy is ${cartQuantityWords(limits.minQty, words)}.`);
+    else if (limits?.maxQty != null && typed > limits.maxQty && limits.maxQty <= available) setNote(`The most you can buy is ${cartQuantityWords(limits.maxQty, words)}.`);
     else if (typed > available) setNote(`Only ${cartQuantityWords(available, words)} available.`);
     else
       setNote(
@@ -100,7 +107,7 @@ export function QuantityStepper({
           type="button"
           aria-label={`More ${label}`}
           onClick={() => move(1)}
-          disabled={value >= available}
+          disabled={value >= most}
           className={buttonClass}
         >
           <Plus className="h-4 w-4" aria-hidden />

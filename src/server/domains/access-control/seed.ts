@@ -56,6 +56,7 @@ const SEED_ROLES: SeedRole[] = [
       'customers:export',
       'products:create',
       'products:update',
+      'products:set_standard_price',
       'reviews:moderate',
       'newsletter:manage',
       'products:delete',

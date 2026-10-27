@@ -70,7 +70,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
       return;
     }
     try {
-      const fresh = await productsByIdsAction(saved.map((line) => line.productId));
+      // The quantity goes with each id so the price shown is the price at that quantity.
+      const fresh = await productsByIdsAction(saved.map((line) => ({ id: line.productId, quantity: line.quantity })));
       const result = reconcileCart(saved, fresh, moneyRef.current);
       commit(result.lines);
       for (const notice of result.notices) {
@@ -95,15 +96,47 @@ export function CartProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('storage', onStorage);
   }, [load]);
 
+  // A price can depend on the quantity (price lists have quantity breaks), so after the shopper changes a quantity the prices are
+  // read again, quietly, a moment later: the shopper changed it themselves, so there is nothing to be told.
+  const repriceTimer = useRef<number | null>(null);
+  const reprice = useCallback(() => {
+    if (repriceTimer.current !== null) window.clearTimeout(repriceTimer.current);
+    repriceTimer.current = window.setTimeout(() => {
+      const current = linesRef.current;
+      if (current.length === 0) return;
+      productsByIdsAction(current.map((line) => ({ id: line.product.id, quantity: line.quantity })))
+        .then((fresh) => {
+          const byId = new Map(fresh.map((product) => [product.id, product]));
+          commit(linesRef.current.map((line) => ({ product: byId.get(line.product.id) ?? line.product, quantity: line.quantity })));
+        })
+        .catch(() => undefined);
+    }, 400);
+  }, [commit]);
+  useEffect(
+    () => () => {
+      if (repriceTimer.current !== null) window.clearTimeout(repriceTimer.current);
+    },
+    [],
+  );
+
   const add = useCallback(
     (product: PublicProduct, quantity = 1): AddOutcome => {
       const result = addToCart(linesRef.current, product, quantity);
-      if (result.outcome !== 'sold_out') commit(result.lines);
+      if (result.outcome !== 'sold_out' && result.outcome !== 'short_of_minimum') {
+        commit(result.lines);
+        reprice();
+      }
       return result.outcome;
     },
-    [commit],
+    [commit, reprice],
   );
-  const setQuantity = useCallback((productId: string, quantity: number) => commit(setCartQuantity(linesRef.current, productId, quantity)), [commit]);
+  const setQuantity = useCallback(
+    (productId: string, quantity: number) => {
+      commit(setCartQuantity(linesRef.current, productId, quantity));
+      reprice();
+    },
+    [commit, reprice],
+  );
   const remove = useCallback((productId: string) => commit(linesRef.current.filter((line) => line.product.id !== productId)), [commit]);
   const clear = useCallback(() => commit([]), [commit]);
   const refresh = useCallback(() => load(savedLines(linesRef.current)), [load]);

@@ -55,6 +55,11 @@ export interface Product {
   isSellable: boolean;
   /** Required when item type is sellable; omit/null when not sellable */
   price?: number;
+  /** The price the pricing engine starts from; empty means the selling price (see `effectiveStandardPrice`). */
+  standardPrice?: number | null;
+  /** The least and most that may be bought at once, in the base unit. Empty = no limit. */
+  minOrderQty?: number | null;
+  maxOrderQty?: number | null;
   compareAtPrice?: number;
   /** Required unit cost of goods (form defaults empty until set) */
   costPrice: number;

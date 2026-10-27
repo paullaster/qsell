@@ -340,7 +340,7 @@ Code: `src/server/domains/pricing/` (pure engine in `domain/`, `service.ts` read
 **Where it is used**
 
 - Staff sales orders, credit sales and POS cash sales are priced from the lists. A product in no list is sold at its standard price, so nothing changes until a list is put in force.
-- **The web shop keeps the standard price**: the storefront shows the standard price, and charging a different one would break "what you see is what you pay". It moves over when the storefront reads prices through the engine.
+- ~~The web shop keeps the standard price~~ **Superseded (2026-10): the web shop is priced by the engine too**, see "One engine for sale, invoicing and display" below.
 - Quotes: each line has a price mode: from the lists (default for added items), typed by hand, or kept as saved. Re-saving a quote does not reprice it; "Reprice" hands lines back to the lists. A quote turned into an order carries each line's explanation.
 - Screens: price lists (create, scopes, quantity breaks, floor and lock, schedule, paste or upload a file, history per product, the list's own timeline), customer groups with members, **Price check** (the real engine on a sale you describe), price rules (weights), and the quote editor showing the price and "Why this price?" as the customer or quantity changes.
 
@@ -430,3 +430,19 @@ Code: `src/server/domains/pricing/` (pure engine in `domain/`, `service.ts` read
 - **What a rule would have cost**: a discount's panel applies it to the last 90 days of real sales (line rules to the lines their target covers, order rules to the orders that reach the minimum, gifts at their cost) and shows the give-away, the yearly equivalent and the margin before and after. Product deals are not estimated (it depends on baskets). The same figures go to approvers as facts of `discount_rule.publish` (`projectedGiveaway`, `projectedYearly`, `marginAfterPercent`), so a workflow can say "above X needs a director".
 - **Price book** (Pricing > Price book): what each product sells for, one unit, for a chosen customer, branch, channel and sale type, worked out live by the engine with line discounts, floor and margin, paged and exportable (up to 5,000 rows; spreadsheet formulas neutralised). Nothing is stored.
 - **Not built**: a stored effective-price index (the engine already caches configuration and there is no measured load that needs one; a stored copy would need a fast path and invalidation that can go stale, so the live price book is the read model instead), and batch- and expiry-aware promotions (they need warehouse batches, which do not exist yet).
+
+
+## One engine for sale, invoicing and display (built 2026-10)
+
+**Standard price.** Every item has an optional `standard_price`: the price the engine starts from when no price list applies. Empty means "the selling price" (`effectiveStandardPrice` in `src/lib/standard-price.ts`), so an item priced the old way behaves exactly as before. Setting or changing it needs its own permission, `products:set_standard_price` (a form that sends the unchanged value back saves for anyone who may edit the item). It is what eTIMS is told as the item's default price, what the price book starts from, and the base in quotes, orders and the shop. New installs give the permission to the admin role; an existing role is given it in Admin → Roles (super admin always has it).
+
+**One place builds the engine's input.** `priceItemFor(product, quantity)` in `src/server/domains/pricing/service.ts` turns a product and a quantity into what the engine prices (standard price in the item's own tax basis). Staff orders, POS, credit sales, quotes, the price book and the web shop all call it. Nothing else reads `products.price` to price a sale.
+
+**The web shop goes through the engine.** `withShopPrices` (`catalog/shop-prices.ts`) puts the engine's price on every product the shop shows (listing, product page, related, cart), for the signed-in shopper's customer record and the `ecommerce` channel, at the quantity in the cart (else the least that can be bought). Checkout prices the order with the same engine, customer and channel, so what is shown is what is charged, including quantity breaks (the cart reprices a moment after a quantity changes). Consequences to know:
+
+* A price list with no channel limit now also applies to the shop; limit it to a channel to keep it off the shop.
+* **Only the signed-in customer's lists apply.** An email typed at checkout never unlocks another customer's prices (a visitor who types a customer's email gets the standard price; covered by a test).
+* Discounts, coupons and floors still apply to the staff channels only: the shop's summary does not yet show them, and charging them would break "what you see is what you pay".
+* The shop's price filter and price sort still use the stored selling price in the database, so with list prices in force they are approximate.
+
+**Quantity limits.** Every item may have a **minimum** and a **maximum** quantity that can be bought at once, in its own unit (both empty by default; the database refuses zero, negative and minimum above maximum, and the form checks them against the unit's decimals). They are **strict everywhere**: the shop's cards, product page, steppers and cart (it starts at the minimum, will not go outside the range, raises or cuts a saved cart with a notice, and removes a line when the stock is below the minimum); orders on every channel, checked over the whole document so splitting a quantity across lines does not get round a limit (`basketQuantityProblems`); and quotes. The pure rules are in `src/lib/quantity-limits.ts`. Vendors' purchase documents are not limited: the limits are for what customers buy.

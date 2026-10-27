@@ -3,6 +3,7 @@
  * end-to-end environment:
  *   tsx e2e/support/storefront-fixtures.ts reviewer <tag> <product name>   a shopper who has been delivered that product
  *   tsx e2e/support/storefront-fixtures.ts product <tag>                    a new product for sale with no reviews, named "Reviewed <tag>"
+ *   tsx e2e/support/storefront-fixtures.ts limited-product <tag> <min> <max> a product for sale that may be bought only <min> to <max> at a time, named "Limited <tag>"
  *   tsx e2e/support/storefront-fixtures.ts newsletter-token <email>         the token behind a confirmation link
  *   tsx e2e/support/storefront-fixtures.ts payment-phones <order number>    the contact number, the number the order is paid from and every attempt's number
  */
@@ -43,6 +44,17 @@ async function product(tag: string): Promise<Record<string, string>> {
   return { name };
 }
 
+async function limitedProduct(tag: string, min: string, max: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { products } = await import('@/server/db/drizzle/schema');
+  const [template] = await db.execute<{ item_type_id: string }>(sql`SELECT item_type_id FROM products WHERE name = 'Rice 5kg' AND deleted_at IS NULL LIMIT 1`);
+  if (template === undefined) throw new Error('e2e fixture: the seed has no product to copy');
+  const name = `Limited ${tag}`;
+  const id = `prod_lim_${tag}`;
+  await db.insert(products).values({ id, sku: `LIM-${tag}`.toUpperCase(), stockCode: `LIMS-${tag}`.toUpperCase(), name, slug: `limited-${tag}`.toLowerCase(), itemTypeId: template.item_type_id, price: '250', taxRate: '0', isTaxInclusive: true, stockQuantity: 50, categoryName: 'E2E Pantry', minOrderQty: Number(min), maxOrderQty: Number(max) });
+  return { name, id };
+}
+
 async function newsletterToken(email: string): Promise<Record<string, string>> {
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
   const [row] = await db.execute<{ token: string }>(sql`SELECT token FROM newsletter_subscribers WHERE email = ${email.toLowerCase()}`);
@@ -63,6 +75,7 @@ async function main(): Promise<void> {
   let result: Record<string, string>;
   if (command === 'reviewer' && a !== undefined && b !== undefined) result = await reviewer(a, b);
   else if (command === 'product' && a !== undefined) result = await product(a);
+  else if (command === 'limited-product' && a !== undefined && b !== undefined && process.argv[5] !== undefined) result = await limitedProduct(a, b, process.argv[5]);
   else if (command === 'newsletter-token' && a !== undefined) result = await newsletterToken(a);
   else if (command === 'payment-phones' && a !== undefined) result = await paymentPhones(a);
   else throw new Error('usage: storefront-fixtures reviewer <tag> <product> | newsletter-token <email> | payment-phones <order number>');
@@ -80,6 +93,12 @@ export function storefrontTool(...args: string[]): Record<string, string> {
 /** A new product for sale with no reviews; its name is returned. */
 export function makeProduct(tag: string): string {
   return storefrontTool('product', tag).name ?? '';
+}
+
+/** A new product that may be bought only `min` to `max` at a time; its name and id are returned. */
+export function makeLimitedProduct(tag: string, min: number, max: number): { name: string; id: string } {
+  const made = storefrontTool('limited-product', tag, String(min), String(max));
+  return { name: made.name ?? '', id: made.id ?? '' };
 }
 
 /** A shopper whose order for this product was delivered, ready to sign in. */
