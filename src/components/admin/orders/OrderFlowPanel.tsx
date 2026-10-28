@@ -4,6 +4,10 @@ import { useEffect, useState } from 'react';
 import { Activity } from 'lucide-react';
 import { orderFlowAction } from '@/server/domains/orders/timeline-actions';
 import type { OrderFlow } from '@/server/domains/orders/timeline-read';
+import { acknowledgeLateOrderAction, lateOrdersAction } from '@/server/domains/orders/sla-actions';
+import type { BreachView } from '@/server/domains/orders/sla-service';
+import { durationWords } from '@/lib/order-sla';
+import { ORDER_STAGES, isOrderStage } from '@/lib/order-stages';
 import { reasonWords, stageTime } from '@/lib/order-timeline-view';
 
 /**
@@ -89,6 +93,74 @@ export function OrderFlowPanel() {
           </section>
         ) : null}
       </div>
+      <LateOrders />
     </details>
+  );
+}
+
+/** Orders that waited longer than their stage's target, oldest first; a person can say they are on it. */
+function LateOrders() {
+  const [rows, setRows] = useState<BreachView[]>([]);
+  const [next, setNext] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const load = (cursor: string | null, replace: boolean) => {
+    void lateOrdersAction(cursor ?? undefined).then((result) => {
+      setLoaded(true);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setError(null);
+      setRows((all) => (replace ? result.data.rows : [...all, ...result.data.rows]));
+      setNext(result.data.nextCursor);
+    });
+  };
+  useEffect(() => {
+    load(null, true);
+  }, []);
+
+  const acknowledge = (id: string) => {
+    setBusyId(id);
+    void acknowledgeLateOrderAction(id, '').then((result) => {
+      setBusyId(null);
+      if (result.ok) load(null, true);
+      else setError(result.error);
+    });
+  };
+
+  if (loaded && rows.length === 0 && error === null) return null;
+  return (
+    <section aria-label="Late orders" className="mt-4 space-y-2 border-t border-line pt-3">
+      <h3 className="text-xs font-bold tracking-wider text-fg-muted uppercase">Late orders</h3>
+      {error === null ? null : (
+        <p role="alert" className="text-xs text-red-700">
+          {error}
+        </p>
+      )}
+      <ul className="space-y-2">
+        {rows.map((r) => (
+          <li key={r.id} className="flex flex-col gap-2 rounded-lg border border-line p-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs text-fg-muted">
+              <span className="font-mono text-fg">{r.orderNumber}</span>: {(isOrderStage(r.stage) ? ORDER_STAGES[r.stage].label : r.stage).toLowerCase()} for {durationWords(r.waitedMinutes)} (target {durationWords(r.targetMinutes)})
+              {r.escalatedAt === null ? null : <span className="ml-2 rounded-full bg-red-500/15 px-2 py-0.5 font-medium text-red-700">escalated</span>}
+              {r.acknowledgedAt === null ? null : <span className="ml-2 rounded-full bg-emerald-500/15 px-2 py-0.5 font-medium text-emerald-700">someone is on it</span>}
+            </p>
+            {r.acknowledgedAt === null ? (
+              <button type="button" disabled={busyId === r.id} onClick={() => acknowledge(r.id)} className="min-h-10 rounded-lg border border-line px-3 text-xs font-semibold text-fg-strong">
+                {busyId === r.id ? 'Saving…' : 'I am on it'}
+              </button>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+      {next === null ? null : (
+        <button type="button" onClick={() => load(next, false)} className="min-h-10 rounded-lg border border-line px-3 text-xs font-semibold text-fg-strong">
+          Show more
+        </button>
+      )}
+    </section>
   );
 }

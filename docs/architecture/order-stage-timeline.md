@@ -1,4 +1,4 @@
-# Order Stage Timeline — Requirement and Design (T-0 BUILT)
+# Order Stage Timeline — Requirement and Design (T-0 and T-3 BUILT)
 
 Status: **T-0 built** (2026-10-27/28); T-1 to T-3 are still to build (§11, and "What T-0 delivers" at the end). Written 2026-10-27 from the owner's requirement:
 
@@ -200,3 +200,42 @@ The owner accepted every recommendation of §12, and T-0 was built exactly as de
 
 Stock stages (T-1), delivery stages (T-2), per-stage targets with breach tasks and escalation, and the full operations dashboard (T-3). The catalogue already contains their stage names, so the database accepts them when those modules emit them.
 
+
+
+---
+
+## 14. T-3 design: targets per stage, breach records, escalation
+
+Chosen 2026-10-28 (owner picked T-3 as the next slice; T-1 and T-2 wait for stock per location and the delivery module). Recommendations of §7 taken as written.
+
+**Targets.** A company sets, for each stage that an order can wait in, a *target* (minutes until it counts as late) and an *escalate after* (minutes after the breach until the second alert). Stored only as overrides in `order_stage_targets` (unique per company and stage); a stage with no row uses the built-in default, which are the old stuck-order rules, so nothing changes until a company edits them. A stage can be switched off. Targets are whole minutes, 5 minutes to 90 days; escalate-after 5 minutes to 30 days.
+*Deferred, with the reason:* targets per payment method or delivery zone. Zones do not exist until the delivery module; the stage scope is the shape that will gain a `scope` column then.
+
+**Breach records.** `order_sla_breaches` holds exactly one row per *episode* of an order waiting in a stage: unique on `(order_id, stage, entered_at)` where `entered_at` is the order's `current_stage_since`. Raising is `insert … on conflict do nothing`, so a sweep that runs twice, or two workers, raise it once. A row has level 0 (raised) or 1 (escalated, with `escalated_at`), may be acknowledged (who, when, a note), and is resolved when the order has left that stage (`resolved_at` = the time of the event that moved it, so a breach has a true duration). Rows are kept for audit; resolved rows older than 13 months are purged with the checkout attempts.
+
+**The sweep** (`order-sla-sweep`, every 5 minutes, worker): (1) raise breaches for orders whose current stage is older than its target, in batches by keyset on `current_stage_since`, using the index on `(current_stage, current_stage_since)`; (2) escalate open level-0 breaches whose escalate-after has passed; (3) resolve open breaches whose order is no longer in that episode. Every step is idempotent and bounded per run; a failure in one order is logged and does not stop the rest.
+
+**Who is told.** Two address lists in `order_sla_settings` (raise, escalate); an empty list falls back to the company email. One digest per sweep and level (the oldest 20 orders and a count of the rest), so a bad hour is one mail and not hundreds. A mail that cannot be sent is logged and never undoes the breach (it is on the screen regardless). No generic task inbox exists in the product, so the breach list on the Order flow panel is the worklist.
+
+**Screens and permissions.** *Admin → Settings → Order targets* edits targets and addresses (`orders:sla_manage`). The Order flow panel lists open breaches (oldest first, escalated ones marked) and lets the person acknowledge one (`orders:update`); the stuck list and the breach list use the same effective targets. Reading needs `orders:timeline`.
+
+**Tests.** Unit: target validation and resolution, the due and escalate rules. Integration: raise once under repeated and concurrent sweeps, escalate once, resolve with true duration, a disabled stage never breaches, company scoping. API/e2e: edit a target on desktop and phone, see the breach, acknowledge it.
+
+### 14.1 What T-3 delivers (built 2026-10-28)
+
+| What | Where |
+|---|---|
+| Waiting stages, defaults (the old stuck rules), validation, breach and escalation rules, words for durations (pure) | `src/lib/order-sla.ts` |
+| Tables `order_stage_targets`, `order_sla_settings`, `order_sla_breaches`; index `orders_stage_since_idx` | migration `0108_order_sla_targets_breaches.sql` |
+| Raise, escalate, resolve, list, acknowledge, purge | `src/server/domains/orders/sla-service.ts` (`container.orderSla`) |
+| The digest mail | `src/server/domains/orders/sla-notifier.ts` |
+| Actions (each with one permission) | `src/server/domains/orders/sla-actions.ts` |
+| Worker | `order-sla-sweep` every 5 minutes; the daily `purge-checkout-attempts` also purges resolved breaches older than 13 months |
+| Screens | Admin → Settings → Order Targets (`orders:sla_manage`); *Late orders* inside the Order flow panel (read `orders:timeline`, acknowledge `orders:update`); the stuck list uses the targets in force |
+| Permission | `orders:sla_manage` (admin and manager roles on new installs; an existing role is given it in Admin → Roles) |
+
+Decisions made while building: a breach's end is the first event after the one that put the order in the stage (the order's stage time is stamped a moment before its event is written); a second visit to a stage is a new wait with its own breach; a company that changes nothing sees exactly the old stuck list; orders carry no company column, so the sweep serves the deployment's one company (the breach rows carry the company id for when that changes).
+
+Not built, with the reason: targets per payment method or delivery zone (zones come with the delivery module), a mail to the person who owns the stage (no stage-owner model exists yet; the address lists are the owners for now), and showing a breach as a line in each order's own timeline.
+
+Existing roles do not get `orders:sla_manage` automatically (only new installs): give it in Admin → Roles. The migration must be applied to a development database by hand with `pnpm db:migrate`.

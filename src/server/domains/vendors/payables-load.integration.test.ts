@@ -1,3 +1,4 @@
+import { businessDate } from '@/server/kernel/numbering/business-date';
 import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { eq, inArray, sql } from 'drizzle-orm';
@@ -19,7 +20,7 @@ import type { PortalActor } from './profile-service';
 const url = process.env.TEST_DATABASE_URL;
 
 const PDF = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n');
-const TODAY = new Date().toISOString().slice(0, 10);
+const TODAY = businessDate();
 const NO = { maySkipRfq: false, mayOverrideQualification: false };
 
 describe.skipIf(!has(url))('payables under load (database)', () => {
@@ -266,7 +267,7 @@ describe.skipIf(!has(url))('payables under load (database)', () => {
     }
     const owed = await db.select().from(schema.purchaseInvoices).where(inArray(schema.purchaseInvoices.supplierInvoiceId, invoices));
     expect(owed).toHaveLength(8);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = businessDate();
     // A payment worth five of the eight invoices, applied by eight callers racing for it: exactly five can win.
     const each = toCents(required(owed[0]).total);
     const credit = await db.transaction(async (tx) => await c.finance.vendorLedger.addEntry(tx, { companyId, vendorId: s.v.vendorId, documentType: 'payment', documentNo: `LOAD-PAY-${run}`, amountCents: -each * 5, currency: 'KES', postingDate: today }));
@@ -285,17 +286,17 @@ describe.skipIf(!has(url))('payables under load (database)', () => {
       const b = await booked('100');
       mine.push(b.v.vendorId);
     }
-    const dueOn = new Date(Date.now() + 90 * 86_400_000).toISOString().slice(0, 10);
+    const dueOn = businessDate(new Date(Date.now() + 90 * 86_400_000));
     const t0 = performance.now();
     const suggestion = await c.paymentRuns.suggest(companyId, { methodId: transfer, dueOn });
     process.stderr.write(`${`payment run suggestion: ${String(suggestion.vendors.length)} vendors in ${String(Math.round(performance.now() - t0))} ms`}\n`);
     const ours = suggestion.vendors.filter((v) => mine.includes(v.vendorId));
     expect(ours).toHaveLength(VENDORS);
     const t1 = performance.now();
-    const run1 = await c.paymentRuns.create(staff('clerk'), { methodId: transfer, executionDate: new Date().toISOString().slice(0, 10), note: 'load', selections: ours.map((v) => ({ vendorId: v.vendorId, allocations: v.items.map((i) => ({ purchaseInvoiceId: i.purchaseInvoiceId, amount: fromCents(i.availableCents) })) })) });
+    const run1 = await c.paymentRuns.create(staff('clerk'), { methodId: transfer, executionDate: businessDate(), note: 'load', selections: ours.map((v) => ({ vendorId: v.vendorId, allocations: v.items.map((i) => ({ purchaseInvoiceId: i.purchaseInvoiceId, amount: fromCents(i.availableCents) })) })) });
     process.stderr.write(`${`payment run built: ${String(run1.count)} vouchers in ${String(Math.round(performance.now() - t1))} ms`}\n`);
     expect(run1.count).toBe(VENDORS);
     // The invoices are now claimed: the same selection cannot be built a second time.
-    expect(await codeOf(c.paymentRuns.create(staff('clerk'), { methodId: transfer, executionDate: new Date().toISOString().slice(0, 10), note: 'again', selections: ours.map((v) => ({ vendorId: v.vendorId, allocations: v.items.map((i) => ({ purchaseInvoiceId: i.purchaseInvoiceId, amount: fromCents(i.availableCents) })) })) }))).not.toBe('OK');
+    expect(await codeOf(c.paymentRuns.create(staff('clerk'), { methodId: transfer, executionDate: businessDate(), note: 'again', selections: ours.map((v) => ({ vendorId: v.vendorId, allocations: v.items.map((i) => ({ purchaseInvoiceId: i.purchaseInvoiceId, amount: fromCents(i.availableCents) })) })) }))).not.toBe('OK');
   }, 900_000);
 });

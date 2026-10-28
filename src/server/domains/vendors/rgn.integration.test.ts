@@ -1,3 +1,4 @@
+import { businessDate } from '@/server/kernel/numbering/business-date';
 import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { and, eq } from 'drizzle-orm';
@@ -17,7 +18,7 @@ import type { PortalActor } from './profile-service';
 const url = process.env.TEST_DATABASE_URL;
 
 const PDF = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n');
-const TODAY = new Date().toISOString().slice(0, 10);
+const TODAY = businessDate();
 const NO = { maySkipRfq: false, mayOverrideQualification: false };
 
 describe.skipIf(!has(url))('received goods notes (database)', () => {
@@ -281,7 +282,7 @@ describe.skipIf(!has(url))('received goods notes (database)', () => {
       const row = report.rows.find((r) => r.rgn === note.number);
       expect(row).toMatchObject({ openQuantity: '5.000', value: '450.00', ageDays: 0, po: order.number });
       expect(report.totalValue).toBeGreaterThanOrEqual(450);
-      const later = await c.rgns.notInvoiced(companyId, new Date(Date.now() + 40 * 86_400_000).toISOString().slice(0, 10));
+      const later = await c.rgns.notInvoiced(companyId, businessDate(new Date(Date.now() + 40 * 86_400_000)));
       expect(later.rows.find((r) => r.rgn === note.number)?.ageDays).toBe(40);
       await db.update(schema.rgnLines).set({ invoicedQuantity: '5' }).where(eq(schema.rgnLines.rgnId, note.id));
       expect((await c.rgns.notInvoiced(companyId, TODAY)).rows.some((r) => r.rgn === note.number)).toBe(false);

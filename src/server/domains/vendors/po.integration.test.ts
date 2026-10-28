@@ -1,3 +1,4 @@
+import { businessDate } from '@/server/kernel/numbering/business-date';
 import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
@@ -21,7 +22,7 @@ import type { AdvancePaymentService } from './advance-service';
 const url = process.env.TEST_DATABASE_URL;
 
 const PDF = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n');
-const TODAY = new Date().toISOString().slice(0, 10);
+const TODAY = businessDate();
 const NO = { maySkipRfq: false, mayOverrideQualification: false };
 
 class Outbox implements EmailPort {
@@ -347,7 +348,7 @@ describe.skipIf(!has(url))('purchase orders and advance payments (database)', ()
       const id = await released(v, cat, { requiresAdvancePayment: true });
       const adv = await advances.create(staff('buyer'), id, { amount: '1000', dueDate: '', reason: 'Deposit to start' });
       await advances.submit(staff('buyer'), adv.id);
-      const today = new Date().toISOString().slice(0, 10);
+      const today = businessDate();
       const mine = async () => (await c.payablesReports.advancesOutstanding(companyId, today)).lines.find((l) => l.id === adv.id);
       expect(await mine()).toBeUndefined();
       await advances.approve(staff('boss'), adv.id);
@@ -356,7 +357,7 @@ describe.skipIf(!has(url))('purchase orders and advance payments (database)', ()
       expect(await mine()).toMatchObject({ status: 'paid' });
       const report = await c.payablesReports.advancesOutstanding(companyId, today);
       expect(report.paidNotAppliedCents).toBeGreaterThanOrEqual(100000);
-      const later = await c.payablesReports.advancesOutstanding(companyId, new Date(Date.now() + 10 * 86_400_000).toISOString().slice(0, 10));
+      const later = await c.payablesReports.advancesOutstanding(companyId, businessDate(new Date(Date.now() + 10 * 86_400_000)));
       expect(later.lines.find((l) => l.id === adv.id)?.days).toBe(10);
     });
   });
@@ -404,7 +405,7 @@ describe.skipIf(!has(url))('purchase orders and advance payments (database)', ()
       const got = required(await c.rfqs.get(companyId, id));
       const [la, lb] = got.lines;
       for (const [i, v] of vendors.entries()) {
-        await c.rfqPortal.saveDraft(v, id, { paymentTerms: '45 days', deliveryTerms: 'DAP Nairobi', validUntil: new Date(Date.now() + 45 * 86_400_000).toISOString().slice(0, 10), notes: '', lines: [{ ...blankQuoteLine(required(la).id, 4), unitPrice: String(1000 - i * 50), taxRate: '16', leadTimeDays: '14' }, { ...blankQuoteLine(required(lb).id, 100), unitPrice: '2.5' }] });
+        await c.rfqPortal.saveDraft(v, id, { paymentTerms: '45 days', deliveryTerms: 'DAP Nairobi', validUntil: businessDate(new Date(Date.now() + 45 * 86_400_000)), notes: '', lines: [{ ...blankQuoteLine(required(la).id, 4), unitPrice: String(1000 - i * 50), taxRate: '16', leadTimeDays: '14' }, { ...blankQuoteLine(required(lb).id, 100), unitPrice: '2.5' }] });
         await c.rfqPortal.submit(v, id, companyId);
       }
       await db.update(schema.rfqs).set({ deadline: new Date(Date.now() - 60_000), opensAt: new Date(Date.now() - 60_000) }).where(eq(schema.rfqs.id, id));
