@@ -70,6 +70,7 @@ describe('uploading the same picture twice', () => {
     expect(out.deduplicated).toBe(false);
     expect(insert).toHaveBeenCalledOnce();
     expect(put).toHaveBeenCalledOnce();
+    expect(put).toHaveBeenCalledWith(expect.objectContaining({ mime: 'image/avif' }));
   });
 
   it('still refuses with a configuration error when no provider is usable', async () => {

@@ -3,6 +3,7 @@ import { AccessDeniedError } from '@/server/domains/access-control/engine';
 import { requirePermission } from '@/server/domains/access-control/guard';
 import type { PermissionKey } from '@/server/domains/access-control/permissions';
 import { getContainer } from '@/server/di/container';
+import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
 import { injectedDelay } from '@/server/domains/finance/action-runner';
 import { isMalformedId, NO_SUCH_RECORD, SettingsError } from './errors';
 
@@ -12,6 +13,7 @@ export type SettingsResult<T> = { ok: true; data: T } | { ok: false; error: stri
 
 export interface SettingsContext {
   companyId: string;
+  company: CompanySettingsRow;
   userId: string;
 }
 
@@ -30,7 +32,7 @@ export async function runSetting<T>(
     await injectedDelay();
     const userId = await requirePermission(permission);
     const company = await getContainer().companySettings.ensureSeeded();
-    const data = await fn({ companyId: company.id, userId });
+    const data = await fn({ companyId: company.id, company, userId });
     for (const path of options.paths ?? []) revalidatePath(path);
     return { ok: true, data };
   } catch (error: unknown) {

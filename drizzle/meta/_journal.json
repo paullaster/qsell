@@ -750,6 +750,13 @@
       "when": 1793109525976,
       "tag": "0106_order_stage_timeline",
       "breakpoints": true
+    },
+    {
+      "idx": 107,
+      "version": "7",
+      "when": 1793163412710,
+      "tag": "0107_company_settings_active_updated",
+      "breakpoints": true
     }
   ]
 }

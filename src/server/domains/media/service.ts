@@ -19,6 +19,7 @@ import {
 } from './product-gallery';
 import { MediaRepository, type MediaAssetRow } from './repository';
 import { maxImageBytes, parseExternalUrl, sniffImage } from './validation';
+import { optimizeUploadedImage } from './optimize-image';
 
 /** Finds the adapter for a provider. Assets keep working after the active provider changes. */
 export interface MediaPortResolver {
@@ -118,7 +119,14 @@ export class MediaService {
     const sniffed = sniffImage(input.data);
     if (!sniffed) throw new MediaError('Only JPEG, PNG, WebP, GIF or AVIF images are accepted.');
 
-    const sha256 = createHash('sha256').update(input.data).digest('hex');
+    let optimized: Awaited<ReturnType<typeof optimizeUploadedImage>>;
+    try {
+      optimized = await optimizeUploadedImage(input.data);
+    } catch {
+      throw new MediaError('This image could not be decoded. Try a valid JPEG, PNG, WebP, GIF or AVIF image.');
+    }
+
+    const sha256 = createHash('sha256').update(optimized.data).digest('hex');
     const port = this.ports.active();
     const existing = await this.repo.findByHash(sha256, purpose, visibility, input.actor.id);
     // A copy kept by another provider (say, Cloudinary before a move to S3) is not reused: its
@@ -127,7 +135,7 @@ export class MediaService {
       return { asset: this.toView(existing), deduplicated: true };
     }
 
-    const stored = await port.put({ data: input.data, mime: sniffed.mime, folder: purpose, visibility });
+    const stored = await port.put({ data: optimized.data, mime: optimized.mime, folder: purpose, visibility });
 
     try {
       const row = await this.repo.insert({
@@ -137,10 +145,10 @@ export class MediaService {
         resourceType: 'image',
         purpose,
         storageKey: stored.storageKey,
-        mime: sniffed.mime,
+        mime: optimized.mime,
         bytes: stored.bytes,
-        width: stored.width ?? sniffed.width ?? null,
-        height: stored.height ?? sniffed.height ?? null,
+        width: stored.width ?? optimized.width,
+        height: stored.height ?? optimized.height,
         sha256,
         originalName: input.originalName.slice(0, 255),
         altText: (input.altText ?? '').trim().slice(0, 300),
