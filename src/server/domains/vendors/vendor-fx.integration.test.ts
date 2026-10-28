@@ -1,3 +1,4 @@
+import { businessDate } from '@/server/kernel/numbering/business-date';
 import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
@@ -18,7 +19,7 @@ import type { PortalActor } from './profile-service';
 const url = process.env.TEST_DATABASE_URL;
 
 const PDF = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n');
-const TODAY = new Date().toISOString().slice(0, 10);
+const TODAY = businessDate();
 const NO = { maySkipRfq: false, mayOverrideQualification: false };
 
 describe.skipIf(!has(url))('foreign-currency vendor payments (database)', () => {
@@ -181,7 +182,7 @@ describe.skipIf(!has(url))('foreign-currency vendor payments (database)', () => 
 
 
 
-  const dayOf = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+  const dayOf = (offset: number) => businessDate(new Date(Date.now() + offset * 86_400_000));
   const setRate = async (date: string, rate: string) => {
     await db.insert(schema.exchangeRates).values({ companyId, currency: 'USD', effectiveOn: date, rate, createdBy: 'test' }).onConflictDoNothing();
   };
