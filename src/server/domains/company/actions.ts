@@ -42,27 +42,24 @@ const knownModuleIds = (): string[] => flattenModuleLabelOptions(getAdminNav()).
 // ── Reading, for the people who manage the company ───────────────────────
 
 export async function companyProfileAction() {
-  return runSetting('company:manage', async (): Promise<ProfileView> => profileFormFrom(await getContainer().companySettings.ensureSeeded()));
+  return runSetting('company:manage', async ({ company }): Promise<ProfileView> => profileFormFrom(company));
 }
 
 export async function companyAppearanceAction() {
-  return runSetting('company:manage', async (): Promise<AppearanceForm> => {
-    const row = await getContainer().companySettings.ensureSeeded();
-    return { primaryColor: row.primaryColor, accentColor: row.accentColor, desktopColumns: resolveCompanyUiConfig(row.uiConfig).productGrid.desktopColumns };
+  return runSetting('company:manage', async ({ company }): Promise<AppearanceForm> => {
+    return { primaryColor: company.primaryColor, accentColor: company.accentColor, desktopColumns: resolveCompanyUiConfig(company.uiConfig).productGrid.desktopColumns };
   });
 }
 
 export async function companyModulesAction() {
-  return runSetting('company:manage', async (): Promise<Record<string, string>> => {
-    const row = await getContainer().companySettings.ensureSeeded();
-    return resolveCompanyUiConfig(row.uiConfig).moduleLabels;
+  return runSetting('company:manage', async ({ company }): Promise<Record<string, string>> => {
+    return resolveCompanyUiConfig(company.uiConfig).moduleLabels;
   });
 }
 
 export async function companySupportAction() {
-  return runSetting('company:manage', async (): Promise<CompanySupportConfig> => {
-    const row = await getContainer().companySettings.ensureSeeded();
-    return resolveCompanyUiConfig(row.uiConfig).support;
+  return runSetting('company:manage', async ({ company }): Promise<CompanySupportConfig> => {
+    return resolveCompanyUiConfig(company.uiConfig).support;
   });
 }
 
@@ -125,9 +122,8 @@ export async function saveCompanySupportAction(support: Partial<CompanySupportCo
 }
 
 export async function companyPoliciesAction() {
-  return runSetting('company:manage', async (): Promise<PolicyPage[]> => {
-    const row = await getContainer().companySettings.ensureSeeded();
-    return resolveCompanyUiConfig(row.uiConfig).policies;
+  return runSetting('company:manage', async ({ company }): Promise<PolicyPage[]> => {
+    return resolveCompanyUiConfig(company.uiConfig).policies;
   });
 }
 
@@ -145,9 +141,8 @@ export async function saveCompanyPoliciesAction(policies: Partial<PolicyPage>[])
 }
 
 export async function companyBannersAction() {
-  return runSetting('company:manage', async (): Promise<PromoBanner[]> => {
-    const row = await getContainer().companySettings.ensureSeeded();
-    return resolveCompanyUiConfig(row.uiConfig).banners;
+  return runSetting('company:manage', async ({ company }): Promise<PromoBanner[]> => {
+    return resolveCompanyUiConfig(company.uiConfig).banners;
   });
 }
 

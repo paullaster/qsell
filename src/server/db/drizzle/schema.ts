@@ -130,7 +130,11 @@ export const companySettings = pgTable('company_settings', {
   isActive: boolean('is_active').notNull().default(true),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [
+  index('company_settings_active_updated_idx')
+    .on(t.updatedAt.desc())
+    .where(sql`${t.isActive}`),
+]);
 
 /**
  * Operating unit under a company. May act independently for tax / banking / paybills.
