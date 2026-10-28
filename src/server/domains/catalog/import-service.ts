@@ -3,7 +3,7 @@ import { businessDate } from '@/server/kernel/numbering/business-date';
 import type { NumberSeriesService } from '@/server/kernel/numbering/service';
 import type { MediaService } from '@/server/domains/media/service';
 import { createHash, randomUUID } from 'node:crypto';
-import { and, asc, count, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   categories,
@@ -552,7 +552,7 @@ export class ProductImportService {
               .assign(
                 kind,
                 { companyId: refs.companyId, date: businessDate(), document: { kind, id } },
-                db as never,
+                db,
               )
           ).number.toUpperCase();
     const values: ProductInsert = {
@@ -688,7 +688,7 @@ export class ProductImportService {
       .where(
         and(
           inArray(productImportJobs.status, ['completed', 'failed']),
-          sql`${productImportJobs.finishedAt} < ${cutoff}`,
+          lt(productImportJobs.finishedAt, cutoff),
         ),
       )
       .returning({ id: productImportJobs.id });

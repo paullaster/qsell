@@ -3,6 +3,7 @@ import { getContainer } from '@/server/di/container';
 import { broadcastRealtime } from '@/server/realtime';
 import { has } from '@/lib/values';
 import { businessDate } from '@/server/kernel/numbering/business-date';
+import { postgresErrorSummary } from './postgres-error';
 
 interface ProcessPaymentCallbackPayload {
   auditId: string;
@@ -156,10 +157,15 @@ export const processProductImport = async (payload: unknown, helpers: JobHelpers
 const PRODUCT_IMPORT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 export const purgeProductImports = async (_payload: unknown, helpers: JobHelpers) => {
-  const removed = await getContainer().productImports.purgeFinishedBefore(
-    new Date(Date.now() - PRODUCT_IMPORT_RETENTION_MS),
-  );
-  helpers.logger.info(`Purged ${removed} finished product imports`);
+  try {
+    const removed = await getContainer().productImports.purgeFinishedBefore(
+      new Date(Date.now() - PRODUCT_IMPORT_RETENTION_MS),
+    );
+    helpers.logger.info(`Purged ${removed} finished product imports`);
+  } catch (error) {
+    helpers.logger.error(`purge-product-imports database diagnostics: ${postgresErrorSummary(error)}`);
+    throw error;
+  }
 };
 
 /** Worker cron task: drop never-attached uploads and long-deleted media files. */

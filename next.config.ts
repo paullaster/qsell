@@ -35,12 +35,14 @@ const nextConfig: NextConfig = {
   // Keeps client/server assets aligned when deployments are rolled forward.
   deploymentId: process.env.DEPLOYMENT_VERSION,
   images: {
+    formats: ['image/avif', 'image/webp'],
+    minimumCacheTTL: 60 * 60 * 24,
     remotePatterns: [
       { protocol: 'https', hostname: '**' },
       { protocol: 'http', hostname: '**' },
     ],
   },
-  async headers() {
+  headers() {
     return [
       {
         source: '/:path*',
@@ -61,7 +63,7 @@ export default withSentryConfig(nextConfig, {
   project: 'omnicommerce-instance',
 
   // Only print logs for uploading source maps in CI
-  silent: !process.env.CI,
+  silent: process.env.CI !== 'true',
 
   // For all available options, see:
   // https://docs.sentry.io/platforms/javascript/guides/nextjs/manual-setup/

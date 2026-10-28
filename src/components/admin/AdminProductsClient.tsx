@@ -2,22 +2,25 @@
 
 import { useRouter } from 'next/navigation';
 import { AdminProducts } from '@/components/admin/AdminProducts';
+import { useAdminNavAccess } from '@/components/admin/nav/AdminNavAccessProvider';
 import type { Product, Category } from '@/types/index';
 
 export function AdminProductsClient({
   productsPromise,
   categoriesPromise,
-  canDelete,
-  canPurge,
   trashCount,
 }: {
   productsPromise: Promise<Product[]>;
   categoriesPromise: Promise<Category[]>;
-  canDelete: boolean;
-  canPurge: boolean;
   trashCount: number;
 }) {
   const router = useRouter();
+  const access = useAdminNavAccess();
+  const canDelete =
+    access !== null && (access.superAdmin || access.permissions.includes('products:delete'));
+  const canPurge =
+    access !== null &&
+    (access.superAdmin || access.permissions.includes('products:delete_permanently'));
   return (
     <AdminProducts
       productsPromise={productsPromise}
