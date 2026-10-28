@@ -1042,6 +1042,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'numbering:manage',
       },
       {
+        id: 'settings-order-targets',
+        title: 'Order Targets',
+        name: 'settings-order-targets',
+        href: '/admin/settings/order-targets',
+        description: 'How long an order may wait in each stage, and who is told when it waits too long',
+        icon: 'Settings',
+        permission: 'orders:sla_manage',
+      },
+      {
         id: 'settings-document-numbering',
         title: 'Document Numbering',
         name: 'settings-document-numbering',

@@ -2,6 +2,7 @@ import { and, asc, desc, eq, gte, inArray, lt, or, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { checkoutAttempts, orderStageEvents, orders } from '@/server/db/drizzle/schema';
 import { ORDER_STAGES, STUCK_RULES, customerTimeline, isOrderStage } from '@/lib/order-stages';
+import { effectiveTargets, type StageTarget } from '@/lib/order-sla';
 
 /** One event of an order's timeline as a screen shows it. The staff-only parts are present only for someone allowed to see them. */
 export interface TimelineEventView {
@@ -107,7 +108,7 @@ export interface OrderFlow {
 const MILESTONES = ['order_placed', 'payment_confirmed', 'dispatched', 'delivered', 'completed'] as const;
 
 /** The funnel, the failures and the stuck orders over the last `days` days. The numbers come from events and attempts, with keyset-free aggregates over an indexed time range. */
-export async function orderFlow(db: DrizzleDb, days = 7, now = new Date()): Promise<OrderFlow> {
+export async function orderFlow(db: DrizzleDb, days = 7, now = new Date(), targets: readonly StageTarget[] = effectiveTargets([])): Promise<OrderFlow> {
   const since = new Date(now.getTime() - days * 86_400_000);
   const attempts = await db
     .select({ outcome: checkoutAttempts.outcome, n: sql<number>`count(*)::int` })
@@ -133,18 +134,22 @@ export async function orderFlow(db: DrizzleDb, days = 7, now = new Date()): Prom
     .groupBy(orderStageEvents.stage, sql`coalesce(${orderStageEvents.reasonCode}, 'unspecified')`)
     .orderBy(desc(sql`count(*)`))
     .limit(20);
-  const stuckRows = await db
-    .select({ id: orders.id, number: orders.orderNumber, stage: orders.currentStage, since: orders.currentStageSince })
-    .from(orders)
-    .where(
-      or(
-        ...STUCK_RULES.map((rule) =>
-          and(eq(orders.currentStage, rule.stage), lt(orders.currentStageSince, new Date(now.getTime() - rule.olderThanMinutes * 60_000))),
-        ),
-      ),
-    )
-    .orderBy(asc(orders.currentStageSince))
-    .limit(50);
+  const watched = targets.filter((target) => target.enabled);
+  const stuckRows =
+    watched.length === 0
+      ? []
+      : await db
+          .select({ id: orders.id, number: orders.orderNumber, stage: orders.currentStage, since: orders.currentStageSince })
+          .from(orders)
+          .where(
+            or(
+              ...watched.map((target) =>
+                and(eq(orders.currentStage, target.stage), lt(orders.currentStageSince, new Date(now.getTime() - target.targetMinutes * 60_000))),
+              ),
+            ),
+          )
+          .orderBy(asc(orders.currentStageSince))
+          .limit(50);
   const [unrecorded] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(orderStageEvents)

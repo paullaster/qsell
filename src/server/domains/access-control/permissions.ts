@@ -268,6 +268,12 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'See who did what on an order, and why, in its stage timeline',
   },
+  'orders:sla_manage': {
+    resource: 'orders',
+    action: 'sla_manage',
+    category: 'Orders & Sales',
+    description: 'Set how long an order may wait in each stage, and who is told when it waits too long',
+  },
   'products:set_standard_price': {
     resource: 'products',
     action: 'set_standard_price',

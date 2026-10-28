@@ -1,19 +1,53 @@
 import { describe, expect, it } from 'vitest';
-import { parseSavedCart, serializeCart } from './cart-storage';
+import { parseCartHandoff, parseSavedCart, serializeCart } from './cart-storage';
+
+describe('parseCartHandoff', () => {
+  it('accepts bounded product ids and quantities without trusting prices', () => {
+    expect(
+      parseCartHandoff(
+        JSON.stringify([
+          { id: 'product-a', quantity: 2 },
+          { id: 'product-b', quantity: 0.5, price: 0.01 },
+        ]),
+      ),
+    ).toEqual([
+      { productId: 'product-a', quantity: 2, price: null },
+      { productId: 'product-b', quantity: 0.5, price: null },
+    ]);
+  });
+
+  it('drops invalid and duplicate lines and limits handoff size', () => {
+    const raw = JSON.stringify([
+      { id: 'same', quantity: 1 },
+      { id: 'same', quantity: 7 },
+      { id: 'bad', quantity: -1 },
+      { id: 'fractional-id', quantity: '2' },
+      null,
+    ]);
+    expect(parseCartHandoff(raw)).toEqual([{ productId: 'same', quantity: 1, price: null }]);
+    expect(parseCartHandoff('x'.repeat(16_001))).toEqual([]);
+  });
+});
 
 describe('parseSavedCart', () => {
   it('reads what it wrote', () => {
-    const lines = [{ productId: 'a', quantity: 2, price: 10 }, { productId: 'b', quantity: 0.5, price: null }];
+    const lines = [
+      { productId: 'a', quantity: 2, price: 10 },
+      { productId: 'b', quantity: 0.5, price: null },
+    ];
     expect(parseSavedCart(serializeCart(lines))).toEqual(lines);
   });
 
-  it('reads the first shop\'s saved cart, which carried the whole product', () => {
-    const old = JSON.stringify([{ product: { id: 'p1', name: 'Rice', price: 120, costPrice: 1 }, quantity: 3 }]);
+  it("reads the first shop's saved cart, which carried the whole product", () => {
+    const old = JSON.stringify([
+      { product: { id: 'p1', name: 'Rice', price: 120, costPrice: 1 }, quantity: 3 },
+    ]);
     expect(parseSavedCart(old)).toEqual([{ productId: 'p1', quantity: 3, price: 120 }]);
   });
 
   it('gives an empty cart for nothing, damage or the wrong shape', () => {
-    for (const raw of [null, undefined, '', '{', 'null', '{"a":1}', '"x"']) expect(parseSavedCart(raw)).toEqual([]);
+    for (const raw of [null, undefined, '', '{', 'null', '{"a":1}', '"x"'])
+      expect(parseSavedCart(raw)).toEqual([]);
   });
 
   it('drops lines that make no sense and repeated products', () => {
@@ -31,7 +65,10 @@ describe('parseSavedCart', () => {
   });
 
   it('keeps at most 100 lines', () => {
-    const many = Array.from({ length: 150 }, (_, i) => ({ productId: `p${String(i)}`, quantity: 1 }));
+    const many = Array.from({ length: 150 }, (_, i) => ({
+      productId: `p${String(i)}`,
+      quantity: 1,
+    }));
     expect(parseSavedCart(JSON.stringify(many))).toHaveLength(100);
   });
 });

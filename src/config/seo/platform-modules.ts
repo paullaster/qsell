@@ -100,9 +100,9 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
     navId: 'settings',
     name: 'Branches, taxes and numbering',
     summary: 'Set up branches, tax rules, payment methods and document numbering once and use them everywhere.',
-    features: ['Multiple branches and business units', 'VAT and tax compliance', 'Payment methods and gateways', 'Automatic invoice and order numbering'],
+    features: ['Multiple branches and business units', 'VAT and tax compliance', 'Payment methods and gateways', 'Automatic invoice and order numbering', 'Time limits for each order stage, with late-order alerts'],
     keywords: ['multi-branch retail software', 'VAT software Kenya', 'tax compliance software', 'business setup software'],
-    subModules: ['Dimensions', 'Branches', 'Payments', 'Number Series', 'Document Numbering', 'Approvals', 'Tax Compliance'],
+    subModules: ['Dimensions', 'Branches', 'Payments', 'Number Series', 'Document Numbering', 'Approvals', 'Tax Compliance', 'Order Targets'],
   },
 ];
 
