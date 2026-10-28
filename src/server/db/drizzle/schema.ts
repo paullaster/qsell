@@ -1409,6 +1409,8 @@ export const orders = pgTable(
     index('orders_status_idx').on(t.status),
     // Orders still waiting for their timeline to be rebuilt (the worker's backfill reads only these).
     index('orders_stage_unseeded_idx').on(t.id).where(sql`${t.stageSeq} = 0`),
+    // The SLA sweep: orders that have waited in a stage since before a cut-off.
+    index('orders_stage_since_idx').on(t.currentStage, t.currentStageSince).where(sql`${t.currentStage} IS NOT NULL`),
     index('orders_created_at_idx').on(t.createdAt),
     index('orders_branch_created_idx').on(t.branchId, t.createdAt),
     index('orders_payment_attention_idx')
@@ -2877,6 +2879,71 @@ export const checkoutAttempts = pgTable(
     check('checkout_attempts_outcome_chk', sql`${t.outcome} IN ('started','refused','placed','abandoned_after_payment_start')`),
   ],
 );
+
+/**
+ * How long an order may wait in a stage before it counts as late, and how long after that before the second alert. Only
+ * overrides are stored; a stage with no row uses the built-in default (src/lib/order-sla.ts).
+ * Design: docs/architecture/order-stage-timeline.md §14.
+ */
+export const orderStageTargets = pgTable(
+  'order_stage_targets',
+  {
+    companyId: uuid('company_id').notNull(),
+    stage: text('stage').notNull(),
+    targetMinutes: integer('target_minutes').notNull(),
+    escalateAfterMinutes: integer('escalate_after_minutes').notNull(),
+    enabled: boolean('enabled').notNull().default(true),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedBy: text('updated_by'),
+  },
+  (t) => [
+    primaryKey({ columns: [t.companyId, t.stage] }),
+    check('order_stage_targets_target_chk', sql`${t.targetMinutes} BETWEEN 5 AND 129600`),
+    check('order_stage_targets_escalate_chk', sql`${t.escalateAfterMinutes} BETWEEN 5 AND 43200`),
+  ],
+);
+
+/** Who is mailed when a target is missed (raise) and when it stays missed (escalate). An empty list means the company email. */
+export const orderSlaSettings = pgTable('order_sla_settings', {
+  companyId: uuid('company_id').primaryKey(),
+  raiseEmails: text('raise_emails').array().notNull().default(sql`'{}'::text[]`),
+  escalateEmails: text('escalate_emails').array().notNull().default(sql`'{}'::text[]`),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedBy: text('updated_by'),
+});
+
+/**
+ * One row per episode of an order waiting in a stage past its target. `entered_at` is the order's `current_stage_since`, so the same
+ * wait is raised once however often the sweep runs. Resolved when the order leaves the stage; `resolved_at` is when it left.
+ */
+export const orderSlaBreaches = pgTable(
+  'order_sla_breaches',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id').notNull(),
+    orderId: text('order_id')
+      .notNull()
+      .references(() => orders.id, { onDelete: 'restrict' }),
+    stage: text('stage').notNull(),
+    enteredAt: timestamp('entered_at', { withTimezone: true }).notNull(),
+    targetMinutes: integer('target_minutes').notNull(),
+    escalateAfterMinutes: integer('escalate_after_minutes').notNull(),
+    raisedAt: timestamp('raised_at', { withTimezone: true }).notNull().defaultNow(),
+    escalatedAt: timestamp('escalated_at', { withTimezone: true }),
+    acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }),
+    acknowledgedBy: text('acknowledged_by'),
+    note: text('note'),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('order_sla_breaches_episode_uidx').on(t.orderId, t.stage, t.enteredAt),
+    index('order_sla_breaches_open_idx').on(t.companyId, t.raisedAt).where(sql`${t.resolvedAt} IS NULL`),
+    index('order_sla_breaches_resolved_idx').on(t.resolvedAt).where(sql`${t.resolvedAt} IS NOT NULL`),
+    check('order_sla_breaches_note_chk', sql`${t.note} IS NULL OR length(${t.note}) <= 500`),
+  ],
+);
+export type OrderStageTargetRow = typeof orderStageTargets.$inferSelect;
+export type OrderSlaBreachRow = typeof orderSlaBreaches.$inferSelect;
 
 export type OrderRow = typeof orders.$inferSelect;
 export type OrderItemRow = typeof orderItems.$inferSelect;

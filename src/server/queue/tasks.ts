@@ -195,6 +195,18 @@ export const purgeCheckoutAttempts = async (_payload: unknown, helpers: JobHelpe
   const { CheckoutAttempts } = await import('@/server/domains/orders/checkout-attempts');
   const removed = await CheckoutAttempts.purge();
   if (removed > 0) helpers.logger.info(`Checkout attempts purged: ${String(removed)}`);
+  const resolved = await getContainer().orderSla.purge(new Date());
+  if (resolved > 0) helpers.logger.info(`Resolved late-order records purged: ${String(resolved)}`);
+};
+
+/** Worker cron task: orders that waited too long in a stage are recorded, mailed, escalated, and closed when they move on. */
+export const orderSlaSweep = async (_payload: unknown, helpers: JobHelpers) => {
+  const container = getContainer();
+  const company = await container.companySettings.ensureSeeded();
+  const r = await container.orderSla.sweep(company.id, new Date());
+  if (r.raised > 0 || r.escalated > 0 || r.resolved > 0) {
+    helpers.logger.info(`Order targets: ${String(r.raised)} late, ${String(r.escalated)} escalated, ${String(r.resolved)} moved on`);
+  }
 };
 
 /** Worker cron task: hand approvals that are past their due time to the approver's own approver. */
@@ -323,6 +335,7 @@ export const tasks = {
   'purge-media': purgeMedia,
   'order-stage-backfill': orderStageBackfill,
   'purge-checkout-attempts': purgeCheckoutAttempts,
+  'order-sla-sweep': orderSlaSweep,
   'sweep-overdue-approvals': sweepOverdueApprovals,
   'expire-loyalty-points': expireLoyaltyPoints,
   'finance-post-sales': financePostSales,

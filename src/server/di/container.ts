@@ -48,6 +48,8 @@ import { VendorFileStore } from '@/server/domains/vendors/file-store';
 import { VendorProfileService } from '@/server/domains/vendors/profile-service';
 import { VendorReviewService } from '@/server/domains/vendors/review-service';
 import { VendorNotifier } from '@/server/domains/vendors/notifier';
+import { OrderSlaService } from '@/server/domains/orders/sla-service';
+import { OrderSlaNotifier } from '@/server/domains/orders/sla-notifier';
 import { VendorBankChangeService } from '@/server/domains/vendors/bank-change-service';
 import { VendorLifecycleService } from '@/server/domains/vendors/lifecycle-service';
 import { VendorExpiryService } from '@/server/domains/vendors/expiry-service';
@@ -140,6 +142,7 @@ export interface AppContainer {
   paymentAttempts: PaymentAttemptRepository;
   payments: PaymentService;
   orders: OrderRepository;
+  orderSla: OrderSlaService;
   users: UserRepository;
   usersAdmin: UsersAdminRepository;
   accessControl: AccessControlService;
@@ -412,6 +415,7 @@ export function getContainer(): AppContainer {
   const creditNotes = new CreditNoteService(drizzleDb, kraSigning, numbering);
   const vendors = new VendorService(drizzleDb, numbering);
   const vendorFiles = new VendorFileStore(drizzleDb);
+  const orderSla = new OrderSlaService(drizzleDb, new OrderSlaNotifier(email, companySettings));
   const vendorNotifier = new VendorNotifier(drizzleDb, email, companySettings);
   const prequalLifecycle = new PrequalLifecycle(drizzleDb, vendorNotifier);
   const rfqService = new RfqService(drizzleDb, numbering, prequalLifecycle, vendorNotifier);
@@ -467,6 +471,7 @@ export function getContainer(): AppContainer {
     paymentAttempts,
     payments,
     orders,
+    orderSla,
     users,
     usersAdmin,
     accessControl,

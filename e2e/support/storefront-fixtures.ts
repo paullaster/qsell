@@ -6,6 +6,7 @@
  *   tsx e2e/support/storefront-fixtures.ts limited-product <tag> <min> <max> a product for sale that may be bought only <min> to <max> at a time, named "Limited <tag>"
  *   tsx e2e/support/storefront-fixtures.ts set-stock <product id> <quantity>   sets a product's stock (to make a checkout run short)
  *   tsx e2e/support/storefront-fixtures.ts order-stages <order number>        the stages an order has been through, in order, and its current stage
+ *   tsx e2e/support/storefront-fixtures.ts late-order <tag> [hours]          an order that has waited in "payment started" for that many hours (default 3), recorded as late by the sweep
  *   tsx e2e/support/storefront-fixtures.ts latest-attempt                     the newest checkout attempt: its outcome, stage and reason
  *   tsx e2e/support/storefront-fixtures.ts newsletter-token <email>         the token behind a confirmation link
  *   tsx e2e/support/storefront-fixtures.ts payment-phones <order number>    the contact number, the number the order is paid from and every attempt's number
@@ -45,6 +46,21 @@ async function product(tag: string): Promise<Record<string, string>> {
   const name = `Reviewed ${tag}`;
   await db.insert(products).values({ id: `prod_rv_${tag}`, sku: `RVW-${tag}`.toUpperCase(), stockCode: `RVWS-${tag}`.toUpperCase(), name, slug: `reviewed-${tag}`.toLowerCase(), itemTypeId: template.item_type_id, price: '250', taxRate: '0', isTaxInclusive: true, stockQuantity: 20, categoryName: 'E2E Pantry' });
   return { name };
+}
+
+async function lateOrder(tag: string, hours: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const container = getContainer();
+  const company = await container.companySettings.ensureSeeded();
+  const branch = await container.branches.getDefault(company.id);
+  if (branch === null) throw new Error('e2e fixture: the company has no default branch');
+  const id = `late_${tag}`;
+  const number = `LATE-${tag}`.toUpperCase();
+  await db.execute(sql`INSERT INTO orders (id, order_number, branch_id, customer_name, customer_email, customer_phone, shipping_address, subtotal, tax, shipping_fee, total_amount, payment_method, status, payment_status, current_stage, current_stage_since, stage_seq)
+    VALUES (${id}, ${number}, ${branch.id}::uuid, 'Late Buyer', ${`late-${tag}@example.test`}, '0711000333', '{"street":"1 Moi Avenue","city":"Nairobi","countyOrState":"Nairobi","country":"Kenya"}'::jsonb, 100, 0, 0, 100, 'mpesa_daraja', 'pending', 'unpaid', 'payment_started', now() - make_interval(hours => ${Number(hours)}), 1)`);
+  await container.orderSla.sweep(company.id, new Date());
+  return { orderNumber: number };
 }
 
 async function limitedProduct(tag: string, min: string, max: string): Promise<Record<string, string>> {
@@ -102,6 +118,7 @@ async function main(): Promise<void> {
   else if (command === 'limited-product' && a !== undefined && b !== undefined && process.argv[5] !== undefined) result = await limitedProduct(a, b, process.argv[5]);
   else if (command === 'set-stock' && a !== undefined && b !== undefined) result = await writeStock(a, b);
   else if (command === 'order-stages' && a !== undefined) result = await readOrderStages(a);
+  else if (command === 'late-order' && a !== undefined) result = await lateOrder(a, b ?? '3');
   else if (command === 'latest-attempt') result = await readLatestAttempt();
   else if (command === 'newsletter-token' && a !== undefined) result = await newsletterToken(a);
   else if (command === 'payment-phones' && a !== undefined) result = await paymentPhones(a);
@@ -143,6 +160,11 @@ export function latestAttempt(): { outcome: string; stage: string; reason: strin
 /** Sets a product's stock, to make a checkout in progress run short. */
 export function setStock(productId: string, quantity: number): void {
   storefrontTool('set-stock', productId, String(quantity));
+}
+
+/** An order that has waited in "payment started" for `hours` hours, with the late-order record the sweep makes for it; its number is returned. */
+export function makeLateOrder(tag: string, hours = 3): string {
+  return storefrontTool('late-order', tag, String(hours)).orderNumber ?? '';
 }
 
 /** A shopper whose order for this product was delivered, ready to sign in. */
