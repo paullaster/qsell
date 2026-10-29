@@ -1,4 +1,5 @@
 import { sql } from 'drizzle-orm';
+import { STOCK_MOVEMENT_TYPES } from '@/lib/stock';
 import {
   pgTable,
   text,
@@ -2249,6 +2250,133 @@ export const inventoryMovements = pgTable(
       .where(sql`${t.changeType} in ('order_fulfillment', 'order_cancellation_release')`),
   ],
 );
+
+/**
+ * Where stock can be held: a warehouse, a shop, a van. Every quantity of stock is held at a location.
+ * Design: docs/architecture/stock-locations.md §4.1.
+ */
+export const stockLocations = pgTable(
+  'stock_locations',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    /** The branch it belongs to: the books' dimension and the access scope. None means company stock. */
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    kind: text('kind').notNull().default('warehouse'),
+    address: text('address').notNull().default(''),
+    isSellable: boolean('is_sellable').notNull().default(true),
+    sellsChannels: text('sells_channels').array().notNull().default(sql`ARRAY['ecommerce','sales_order','credit_sale','pos_cash_sale']::text[]`),
+    fulfilsDelivery: boolean('fulfils_delivery').notNull().default(true),
+    allowNegative: boolean('allow_negative').notNull().default(false),
+    isDefault: boolean('is_default').notNull().default(false),
+    isActive: boolean('is_active').notNull().default(true),
+    /** Reserved for bins and zones inside a location; unused until then. */
+    parentId: uuid('parent_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('stock_locations_company_code_uidx').on(t.companyId, sql`lower(${t.code})`),
+    // Exactly one default location per company.
+    uniqueIndex('stock_locations_one_default_uidx').on(t.companyId).where(sql`${t.isDefault}`),
+    index('stock_locations_branch_idx').on(t.branchId),
+    check('stock_locations_kind_chk', sql`${t.kind} IN ('warehouse','store','van','quarantine','damaged','consignment_in','transit')`),
+    check('stock_locations_default_active_chk', sql`NOT ${t.isDefault} OR ${t.isActive}`),
+  ],
+);
+
+/**
+ * How much of a product is at a location: a projection of the movement ledger (on hand) and of the holds (reserved), kept in the
+ * transaction that changes either. A hot product can have several shards; reads sum them.
+ */
+export const stockBalances = pgTable(
+  'stock_balances',
+  {
+    companyId: uuid('company_id').notNull(),
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'cascade' }),
+    locationId: uuid('location_id')
+      .notNull()
+      .references(() => stockLocations.id, { onDelete: 'restrict' }),
+    shard: smallint('shard').notNull().default(0),
+    onHand: quantity('on_hand').notNull().default(0),
+    reserved: quantity('reserved').notNull().default(0),
+    version: bigint('version', { mode: 'number' }).notNull().default(0),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.productId, t.locationId, t.shard] }),
+    index('stock_balances_location_idx').on(t.locationId, t.productId),
+    check('stock_balances_reserved_chk', sql`${t.reserved} >= 0`),
+    check('stock_balances_shard_chk', sql`${t.shard} >= 0`),
+  ],
+);
+
+/**
+ * The movement ledger: one physical change of stock at one location, append-only. The quantity is signed; the cost is the one in
+ * force at that moment and travels with the movement. `legacy_movement_id` ties a row to the old `inventory_movements` journal it
+ * was copied or mirrored from, so nothing is counted twice while both exist.
+ */
+export const stockMovements = pgTable(
+  'stock_movements',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    companyId: uuid('company_id').notNull(),
+    productId: text('product_id').notNull(),
+    locationId: uuid('location_id')
+      .notNull()
+      .references(() => stockLocations.id, { onDelete: 'restrict' }),
+    shard: smallint('shard').notNull().default(0),
+    movementType: text('movement_type').notNull(),
+    quantity: quantity('quantity').notNull(),
+    unitCost: numeric('unit_cost', { precision: 14, scale: 4 }).notNull().default('0'),
+    documentType: text('document_type'),
+    documentId: text('document_id'),
+    documentLineId: text('document_line_id'),
+    reasonCode: text('reason_code'),
+    actorType: text('actor_type').notNull().default('system'),
+    actorId: text('actor_id'),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull().defaultNow(),
+    correlationId: text('correlation_id'),
+    note: text('note').notNull().default(''),
+    legacyMovementId: text('legacy_movement_id'),
+    migrated: boolean('migrated').notNull().default(false),
+  },
+  (t) => [
+    index('stock_movements_product_idx').on(t.productId, t.locationId, t.id),
+    index('stock_movements_document_idx').on(t.documentType, t.documentId),
+    index('stock_movements_occurred_idx').on(t.occurredAt),
+    index('stock_movements_company_idx').on(t.companyId, t.id),
+    uniqueIndex('stock_movements_legacy_uidx').on(t.legacyMovementId).where(sql`${t.legacyMovementId} IS NOT NULL`),
+    // The same line of the same document moves the same product at the same location once, so a retry changes nothing.
+    uniqueIndex('stock_movements_document_line_uidx')
+      .on(t.documentType, t.documentId, t.documentLineId, t.productId, t.movementType, t.locationId)
+      .where(sql`${t.documentLineId} IS NOT NULL`),
+    check('stock_movements_type_chk', sql`${t.movementType} IN (${sql.raw(STOCK_MOVEMENT_TYPES.map((x) => `'${x}'`).join(','))})`),
+    check('stock_movements_quantity_chk', sql`${t.quantity} <> 0 OR ${t.movementType} = 'cost_revaluation'`),
+  ],
+);
+
+/** Whether the old stock counters are mirrored into the new ledger (the shadow of the migration), and how far the backfill has got. */
+export const stockSettings = pgTable('stock_settings', {
+  companyId: uuid('company_id')
+    .primaryKey()
+    .references(() => companySettings.id, { onDelete: 'cascade' }),
+  shadowWrite: boolean('shadow_write').notNull().default(false),
+  /** Backfill progress: the last product id handled, and when it finished. */
+  backfillCursor: text('backfill_cursor'),
+  backfillDoneAt: timestamp('backfill_done_at', { withTimezone: true }),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+export type StockLocationRow = typeof stockLocations.$inferSelect;
+export type StockBalanceRow = typeof stockBalances.$inferSelect;
+export type StockMovementRow = typeof stockMovements.$inferSelect;
 
 /**
  * Gateway transaction record for a single payment attempt.

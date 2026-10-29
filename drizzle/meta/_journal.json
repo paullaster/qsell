@@ -764,6 +764,13 @@
       "when": 1793169363517,
       "tag": "0108_order_sla_targets_breaches",
       "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "7",
+      "when": 1793268593944,
+      "tag": "0109_stock_locations_ledger",
+      "breakpoints": true
     }
   ]
 }

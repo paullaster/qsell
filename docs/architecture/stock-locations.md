@@ -1,4 +1,4 @@
-# Stock per Location (L-0) — Module Design (DRAFT, nothing built)
+# Stock per Location (L-0) — Module Design (L-0a BUILT)
 
 Status: **draft for correction**, written 2026-10-27. It is the prerequisite of the [delivery module](./delivery-module.md) (a delivery leaves a named location) and the "per-location stock ledger and balances" of Phase 2 in the [sales-order blueprint](./sales-order-blueprint.md) (§ stock, "where the scale fix lands"). It also touches [core-finance-module.md](./core-finance-module.md) (stock at cost in the books), [vendor-management-module.md](./vendor-management-module.md) (goods received, purchase returns), [pricing-module.md](./pricing-module.md) (kits) and [order-stage-timeline.md](./order-stage-timeline.md) (every stock stage of an order is timestamped).
 
@@ -396,4 +396,44 @@ Bins, putaway and zones inside a location (the `parent_id` column is reserved); 
 
 ## 17. Decisions taken
 
-None yet for L-0 beyond what the owner decided for delivery (2026-10-27): **stock per location is built first**.
+Decided by the owner on 2026-10-29: **every recommendation in §16 is accepted as written**, namely:
+
+1. Location kinds as in §4.1 (`warehouse`, `store`, `van`, `quarantine`, `damaged`, `consignment_in`, `transit`).
+2. Negative stock forbidden everywhere except locations marked to allow it (a flag on the movement and a finding).
+3. Costing: company-wide moving average, the cost frozen on each movement (§7.1).
+4. Unpaid shop orders hold stock 30 minutes for card and M-Pesa (configurable per company); cash on delivery holds until dispatch.
+5. One shard per `(product, location)` to start; more shards on measured contention (§5.1).
+6. Location scoping of users by branch, with explicit overrides.
+7. Safety stock: not in the first version.
+8. Stock in transit belongs to the sending branch until received.
+9. A shop order comes from one location unless none can cover the whole order.
+10. All history is migrated into the new ledger.
+
+Earlier, for delivery (2026-10-27): **stock per location is built first**.
+
+
+## 18. L-0a as built (2026-10-29)
+
+Locations, the movement ledger, balances, the stock writer, availability, and the shadow of the old counters. **No screen and no server action yet**, so nothing is visible to a user and no API or e2e test applies; those come with L-0e. The shadow switch ships **off**: a deployment behaves exactly as before until it is switched on.
+
+| What | Where |
+|---|---|
+| Tables `stock_locations`, `stock_balances`, `stock_movements`, `stock_settings`; append-only trigger; the shadow triggers; `stock_movement_kind()`; `stock_default_location()` | migration `0109_stock_locations_ledger.sql` |
+| Pure rules: movement types, journal-to-ledger mapping, location checks | `src/lib/stock.ts` |
+| Locations (default, create, change, hand over the default, stop and restart) | `src/server/domains/stock/locations.ts` (`container.stockLocations`) |
+| The one writer of physical stock in the new ledger (`post`, `postMany`) | `stock/ledger.ts` (`container.stockLedger`) |
+| One definition of available, many products per query | `stock/availability.ts` (`container.stockAvailability`) |
+| Shadow switch, backfill, comparison | `stock/shadow.ts` (`container.stockShadow`) |
+| Worker | `stock-backfill` (every minute, only while the shadow is on and the backfill unfinished), `stock-shadow-check` (daily, logs a mismatch as an error) |
+
+**How the shadow works.** Instead of editing every caller, two database triggers mirror the old paths, so no path can slip past: an insert into `inventory_movements` that moved physical stock becomes a `stock_movements` row at the default location and changes its balance (`stock_mirror_journal`); a change of `products.reserved_quantity` changes the balance's `reserved` (`stock_mirror_reserved`). Holds and cost changes are not movements. A mirror that fails raises a warning and never stops the sale; the comparison reports the difference. The backfill (`backfillProduct`) runs under the product's row lock, copies the product's journal history once (`legacy_movement_id` keeps anything from being counted twice), adds an `opening` movement for whatever the history does not explain, and sets the balance to the product's counters. The comparison checks four things: counters against balances for on hand and for reserved, the movement sum against the balance for each product and location, and negative balances.
+
+**Decisions made while building.**
+* The movement idempotency key is `(document type, document id, line id, product, type, location)`, wider than the draft's, so a line id reused in another document cannot swallow a movement.
+* Movements keep no foreign key to products, so purging a product (which removes its balances) never meets the append-only ledger.
+* `on_hand >= 0` is **not** a table constraint in L-0a: the old path can go below zero and the shadow must not block it. The writer refuses it for locations that do not allow negative stock, and the comparison reports it. The constraint and `reserved <= on_hand` arrive with the cut-over.
+* Reservations are still a counter in this slice; the reservation ledger, sourcing and the expiry job are L-0b.
+
+**Verified.** Unit (`stock.test.ts`, 32), integration (`stock.integration.test.ts`, 26: locations, the ledger under 25 simultaneous sales and opposite-order baskets, conservation over random runs, append-only, availability, every mirrored kind of change, reservations through to a fulfilled order, backfill with a sale landing during it, the comparison finding a planted difference, a failing mirror not stopping a sale).
+
+**Not done / next.** L-0b (reservation ledger, sourcing, order wiring, expiry), then the rest of §14. Before the shadow is switched on in a real deployment: apply migration 0109, switch it on (`stockShadow.setShadow`), let the backfill finish, and watch the daily comparison for a full business cycle (the gate in §10).

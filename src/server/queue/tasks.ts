@@ -199,6 +199,28 @@ export const purgeCheckoutAttempts = async (_payload: unknown, helpers: JobHelpe
   if (resolved > 0) helpers.logger.info(`Resolved late-order records purged: ${String(resolved)}`);
 };
 
+/** Worker cron task: brings every product's stock and history into the per-location ledger, a slice at a time, while the shadow is on. */
+export const stockBackfill = async (_payload: unknown, helpers: JobHelpers) => {
+  const container = getContainer();
+  const company = await container.companySettings.ensureSeeded();
+  const status = await container.stockShadow.status(company.id);
+  if (!status.shadowWrite || status.backfillDoneAt !== null) return;
+  const r = await container.stockShadow.backfillBatch(company.id);
+  helpers.logger.info(`Stock backfill: ${String(r.done)} products${r.finished ? ', finished' : ''}`);
+};
+
+/** Worker cron task: proves the per-location ledger agrees with the old stock counters, and says so loudly when it does not. */
+export const stockShadowCheck = async (_payload: unknown, helpers: JobHelpers) => {
+  const container = getContainer();
+  const company = await container.companySettings.ensureSeeded();
+  const status = await container.stockShadow.status(company.id);
+  if (!status.shadowWrite || status.backfillDoneAt === null) return;
+  const r = await container.stockShadow.compare();
+  const bad = r.onHandDiffers + r.reservedDiffers + r.ledgerDiffers + r.negative;
+  if (bad > 0) helpers.logger.error(`Stock shadow MISMATCH: ${JSON.stringify({ ...r, sample: r.sample.slice(0, 10) })}`);
+  else helpers.logger.info(`Stock shadow agrees for ${String(r.products)} products`);
+};
+
 /** Worker cron task: orders that waited too long in a stage are recorded, mailed, escalated, and closed when they move on. */
 export const orderSlaSweep = async (_payload: unknown, helpers: JobHelpers) => {
   const container = getContainer();
@@ -336,6 +358,8 @@ export const tasks = {
   'order-stage-backfill': orderStageBackfill,
   'purge-checkout-attempts': purgeCheckoutAttempts,
   'order-sla-sweep': orderSlaSweep,
+  'stock-backfill': stockBackfill,
+  'stock-shadow-check': stockShadowCheck,
   'sweep-overdue-approvals': sweepOverdueApprovals,
   'expire-loyalty-points': expireLoyaltyPoints,
   'finance-post-sales': financePostSales,

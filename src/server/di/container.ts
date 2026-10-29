@@ -49,6 +49,10 @@ import { VendorProfileService } from '@/server/domains/vendors/profile-service';
 import { VendorReviewService } from '@/server/domains/vendors/review-service';
 import { VendorNotifier } from '@/server/domains/vendors/notifier';
 import { OrderSlaService } from '@/server/domains/orders/sla-service';
+import { StockLocationService } from '@/server/domains/stock/locations';
+import { StockLedger } from '@/server/domains/stock/ledger';
+import { StockAvailability } from '@/server/domains/stock/availability';
+import { StockShadow } from '@/server/domains/stock/shadow';
 import { OrderSlaNotifier } from '@/server/domains/orders/sla-notifier';
 import { VendorBankChangeService } from '@/server/domains/vendors/bank-change-service';
 import { VendorLifecycleService } from '@/server/domains/vendors/lifecycle-service';
@@ -143,6 +147,10 @@ export interface AppContainer {
   payments: PaymentService;
   orders: OrderRepository;
   orderSla: OrderSlaService;
+  stockLocations: StockLocationService;
+  stockLedger: StockLedger;
+  stockAvailability: StockAvailability;
+  stockShadow: StockShadow;
   users: UserRepository;
   usersAdmin: UsersAdminRepository;
   accessControl: AccessControlService;
@@ -415,6 +423,7 @@ export function getContainer(): AppContainer {
   const creditNotes = new CreditNoteService(drizzleDb, kraSigning, numbering);
   const vendors = new VendorService(drizzleDb, numbering);
   const vendorFiles = new VendorFileStore(drizzleDb);
+  const stockLocations = new StockLocationService(drizzleDb);
   const orderSla = new OrderSlaService(drizzleDb, new OrderSlaNotifier(email, companySettings));
   const vendorNotifier = new VendorNotifier(drizzleDb, email, companySettings);
   const prequalLifecycle = new PrequalLifecycle(drizzleDb, vendorNotifier);
@@ -472,6 +481,10 @@ export function getContainer(): AppContainer {
     payments,
     orders,
     orderSla,
+    stockLocations,
+    stockLedger: new StockLedger(drizzleDb),
+    stockAvailability: new StockAvailability(drizzleDb),
+    stockShadow: new StockShadow(drizzleDb, stockLocations),
     users,
     usersAdmin,
     accessControl,
