@@ -5,6 +5,7 @@ import {
   type SearchParamsInput,
 } from '@/lib/storefront-search';
 import { StorefrontCatalog } from '@/server/domains/catalog/storefront-service';
+import { publicStoreProduct } from '@/server/domains/catalog/public-store-product';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,27 +26,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     const page = await StorefrontCatalog.search(query);
     return Response.json(
       {
-        products: page.products.map((product) => ({
-          id: product.id,
-          sku: product.sku,
-          name: product.name,
-          slug: product.slug,
-          description: product.description,
-          category: product.category,
-          brand: product.brand,
-          price: product.price,
-          compareAtPrice: product.compareAtPrice,
-          taxRate: product.taxRate,
-          isTaxInclusive: product.isTaxInclusive,
-          stockQuantity: product.stockQuantity,
-          baseUnitCode: product.baseUnitCode,
-          baseUnitName: product.baseUnitName,
-          imageUrl: product.imageUrl,
-          additionalImages: product.additionalImages,
-          specifications: product.specifications,
-          tags: product.tags,
-          updatedAt: product.updatedAt,
-        })),
+        products: page.products.map(publicStoreProduct),
         pagination: { limit: STOREFRONT_PAGE_SIZE, total: page.total, nextCursor: page.nextCursor },
       },
       { headers },
