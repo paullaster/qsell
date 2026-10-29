@@ -232,14 +232,12 @@ export class CatalogService {
         newProduct.imageUrl = gallery.imageUrl;
         newProduct.additionalImages = gallery.additionalImages;
       }
-      await tx.insert(inventoryMovements).values({
-        id: newId('ledger'),
+      const { recordOpeningStock } = await import('@/server/domains/inventory/service');
+      await recordOpeningStock(tx, {
         productId: id,
         productName: newProduct.name,
-        changeAmount: newProduct.stockQuantity,
-        previousStock: 0,
-        newStock: newProduct.stockQuantity,
-        changeType: 'restock',
+        quantity: newProduct.stockQuantity,
+        costPrice: newProduct.costPrice,
         referenceId: 'PRODUCT_CREATION',
         actor: 'admin',
         note: `Created new product ${newProduct.sku} with initial inventory of ${newProduct.stockQuantity} units`,

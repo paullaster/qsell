@@ -249,7 +249,7 @@ export const stockShadowCheck = async (_payload: unknown, helpers: JobHelpers) =
   const status = await container.stockShadow.status(company.id);
   if (!status.shadowWrite || status.backfillDoneAt === null) return;
   const r = await container.stockShadow.compare();
-  const bad = r.onHandDiffers + r.reservedDiffers + r.ledgerDiffers + r.negative + r.reservationsDiffer;
+  const bad = r.onHandDiffers + r.reservedDiffers + r.ledgerDiffers + r.negative + r.reservationsDiffer + r.journalDiffers;
   if (bad > 0) helpers.logger.error(`Stock shadow MISMATCH: ${JSON.stringify({ ...r, sample: r.sample.slice(0, 10) })}`);
   else helpers.logger.info(`Stock shadow agrees for ${String(r.products)} products`);
 };

@@ -71,7 +71,7 @@ describe.skipIf(!has(url))('holds on stock per location (database)', () => {
     await db.insert(schema.itemTypes).values({ id: itemTypeId, code: Math.floor(Math.random() * 1e9), name: itemTypeId });
     main = (await c.stockLocations.ensureDefault(companyId)).id;
     await c.stockShadow.setShadow(companyId, false);
-    await c.stockSettings.setLedgerMode(companyId, true);
+    await c.stockSettings.setLedgerMode(companyId, true, { requireCleanShadow: false });
   });
   afterAll(async () => {
     await c.stockSettings.setLedgerMode(companyId, false);

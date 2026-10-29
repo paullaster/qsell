@@ -4,7 +4,8 @@ import { stockBalances, stockLocations, stockMovements } from '@/server/db/drizz
 import { isMovementType, type StockMovementType } from '@/lib/stock';
 import { StockError } from './errors';
 
-type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
+/** A database handle or an open transaction: all the writer needs. */
+export type Queryable = Pick<DrizzleDb, 'select' | 'insert' | 'update' | 'delete' | 'execute'>;
 
 export interface MovementInput {
   companyId: string;
@@ -45,7 +46,15 @@ const isWhole = (q: number): boolean => Number.isFinite(q) && Math.abs(q * QUANT
 export class StockLedger {
   constructor(private readonly db: DrizzleDb) {}
 
-  async post(tx: Tx, m: MovementInput): Promise<PostResult> {
+  /** The default location of the current company, read in the caller's transaction. */
+  async defaultLocationIn(tx: Queryable): Promise<{ locationId: string; companyId: string }> {
+    const rows = [...(await tx.execute<{ loc: string | null; comp: string | null }>(sql`SELECT loc, comp FROM stock_default_location()`))];
+    const row = rows[0];
+    if (row?.loc === null || row?.loc === undefined || row.comp === null) throw new StockError('There is no default stock location. Set one up first.', 'NO_DEFAULT');
+    return { locationId: row.loc, companyId: row.comp };
+  }
+
+  async post(tx: Queryable, m: MovementInput): Promise<PostResult> {
     if (!isMovementType(m.type)) throw new StockError('That kind of stock movement is not known.', 'BAD_TYPE');
     if (!isWhole(m.quantity) || (m.quantity === 0 && m.type !== 'cost_revaluation')) throw new StockError('A stock movement needs a quantity that is not zero, to at most three decimals.', 'BAD_QUANTITY');
     if (m.documentLineId !== undefined && m.documentType === undefined) throw new StockError('A document line needs its document type.', 'BAD_DOCUMENT');

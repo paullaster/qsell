@@ -1,4 +1,4 @@
-# Stock per Location (L-0) — Module Design (L-0a, L-0b BUILT)
+# Stock per Location (L-0) — Module Design (L-0a, L-0b, L-0c BUILT)
 
 Status: **draft for correction**, written 2026-10-27. It is the prerequisite of the [delivery module](./delivery-module.md) (a delivery leaves a named location) and the "per-location stock ledger and balances" of Phase 2 in the [sales-order blueprint](./sales-order-blueprint.md) (§ stock, "where the scale fix lands"). It also touches [core-finance-module.md](./core-finance-module.md) (stock at cost in the books), [vendor-management-module.md](./vendor-management-module.md) (goods received, purchase returns), [pricing-module.md](./pricing-module.md) (kits) and [order-stage-timeline.md](./order-stage-timeline.md) (every stock stage of an order is timestamped).
 
@@ -472,3 +472,27 @@ The reservation ledger, sourcing, the order paths on top of them, and expiry. St
 **Verified.** Unit: `stock-sourcing.test.ts` (9). Integration: `reservations.integration.test.ts` (24: placing, location choice, using and giving back, the order paths end to end, expiry with the task, 200 concurrent baskets, the check), plus the guard in `stock.integration.test.ts`.
 
 **Not done / next.** L-0c (stock documents and the facade over `applyStockDelta`, so ledger mode can be switched on), the order timeline's stock stages (T-1, which needs the order to exist when the stage is written, whereas the hold is placed before the order is saved), then L-0d to L-0f.
+
+
+## 20. L-0c as built (2026-10-29)
+
+Every old way of changing stock now goes through the ledger when the ledger is the truth. Still **no screen and no server action**, and the ledger mode is still **off** by default.
+
+| What | Where |
+|---|---|
+| `applyStockDelta` (the one function every receipt, adjustment, write-off, count, goods received note, purchase return and return receipt already calls) makes the movement at a location, with an optional `locationId` and the default location otherwise | `inventory/service.ts` |
+| Opening stock of a new product (product form and CSV import) becomes an `opening` movement | `recordOpeningStock` in `inventory/service.ts`, used by `catalog/service.ts` and `catalog/import-service.ts` |
+| Switching the ledger on is refused unless the shadow has brought everything across and the comparison finds nothing different | `StockSettingsService.setLedgerMode` |
+| The comparison also proves the old journal and the ledger tell the same story (once the ledger is the truth), and can be limited to chosen products | `StockShadow.compare({ productIds })` |
+
+**How it works in ledger mode.** `applyStockDelta` locks the product row as before, takes the current total from the balances, works out the change (a counted figure, a clamp at zero, or a plain change), and posts one movement to the chosen location. The product's counters then follow the balances through the trigger of L-0b. A write that would take a place below zero is refused in words (`There is not enough stock at <place>: a on hand, b needed.`), as the design's negative-stock decision says; the old code let some callers go negative. A caller that tries to change holds through a stock change is refused, since holds belong to the reservation ledger.
+
+**Deviations from the plan in §14, on purpose.**
+* **The old journal is still written** beside every ledger movement, so the books (which are fed from it by a database trigger) and the old ledger screen keep working with no change. The books' trigger moves to the ledger, and the double write ends, at the cut-over (L-0f) as §10 step 4 says, not here. The comparison proves the two stay equal meanwhile (`journalDiffers`).
+* **No `stock_documents` header and lines tables yet.** Receipts, goods received notes, purchase returns, return receipts, adjustments and write-offs are each already a numbered, single-transaction document in their own module, and the movement carries the document's number (`document_type`, `document_id`). A separate stock-document table earns its place with transfers and counts (L-0d), which have states and several lines; adjustments and write-offs can move onto it then.
+* **No location picker on the documents yet.** The services post to the default location; a `locationId` can already be passed to `applyStockDelta`. The columns on goods received notes, purchase returns and return receipts, and the pickers, arrive with the screens in L-0e, so there is no unused column in the meantime.
+* **Approvals and the new permissions** (`stock:adjust` and the rest) arrive with the screens and actions (L-0e); the existing gates on adjustments are unchanged.
+
+**Verified.** Integration `facade.integration.test.ts` (16): a receipt, a count, a clamp, a change of nothing, a refusal below zero, a refusal to change holds, a piece that cannot be 2.5, every operation people use (receive, adjust, write off, count, bulk adjust), opening stock, the journal-ledger comparison clean and finding a planted difference, the product filter, the refusals and the go-ahead for switching the ledger on, and a rehearsal on a real product from the old way through the shadow to the new path. The full suite is run on a fresh database.
+
+**Next.** L-0d: transfers (a document with stock in transit) and counts, which bring the `stock_documents` tables. Then L-0e (screens, permissions, pickers, the order's stock panel), and L-0f (the cut-over, retiring the double write and the counters).

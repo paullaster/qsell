@@ -15,7 +15,7 @@ interface Row extends Record<string, unknown> {
 const BATCH = 200;
 
 export interface ShadowProblem {
-  kind: 'on_hand_differs' | 'reserved_differs' | 'ledger_differs' | 'negative_on_hand' | 'reservation_differs';
+  kind: 'on_hand_differs' | 'reserved_differs' | 'ledger_differs' | 'negative_on_hand' | 'reservation_differs' | 'journal_differs';
   productId: string;
   locationId?: string;
   expected: number;
@@ -31,6 +31,8 @@ export interface ShadowReport {
   negative: number;
   /** Balances whose reserved quantity is not the sum of the open holds (checked once the ledger holds the reservations). */
   reservationsDiffer: number;
+  /** Products whose old journal says a different total change of stock than the ledger does (checked once the ledger is the truth). */
+  journalDiffers: number;
   /** The first few of each, with the numbers, so a person can find them. */
   sample: ShadowProblem[];
 }
@@ -141,24 +143,35 @@ export class StockShadow {
     return { done, finished };
   }
 
-  /** Proves the new ledger agrees with the old counters. Never changes anything. */
-  async compare(): Promise<ShadowReport> {
+  /**
+   * Proves the new ledger agrees with the old counters. Never changes anything. `productIds` limits the check to those products
+   * (for a spot check and for tests); without it every product is checked.
+   */
+  async compare(options: { productIds?: readonly string[] } = {}): Promise<ShadowReport> {
     const sample: ShadowProblem[] = [];
     const take = (kind: ShadowProblem['kind'], rows: Row[]) => {
       for (const r of rows) {
-        if (sample.length >= SAMPLE * 4) break;
+        if (sample.length >= SAMPLE * 5) break;
         sample.push({ kind, productId: r.product_id, locationId: r.location_id, expected: Number(r.expected), found: Number(r.found) });
       }
     };
-    const [total] = [...(await this.db.execute<Row>(sql`SELECT count(*)::int AS n FROM products`))];
+    const ids = options.productIds;
+    const only = (column: string) => {
+      if (ids === undefined) return sql`TRUE`;
+      if (ids.length === 0) return sql`FALSE`;
+      return sql`${sql.raw(column)} IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`;
+    };
+    const [total] = [...(await this.db.execute<Row>(sql`SELECT count(*)::int AS n FROM products p WHERE ${only('p.id')}`))];
     const onHand = [...(await this.db.execute<Row>(sql`
       SELECT p.id AS product_id, p.stock_quantity AS expected, COALESCE(sum(b.on_hand), 0) AS found
       FROM products p LEFT JOIN stock_balances b ON b.product_id = p.id
+      WHERE ${only('p.id')}
       GROUP BY p.id HAVING p.stock_quantity <> COALESCE(sum(b.on_hand), 0)
       ORDER BY p.id LIMIT 1000`))];
     const reserved = [...(await this.db.execute<Row>(sql`
       SELECT p.id AS product_id, p.reserved_quantity AS expected, COALESCE(sum(b.reserved), 0) AS found
       FROM products p LEFT JOIN stock_balances b ON b.product_id = p.id
+      WHERE ${only('p.id')}
       GROUP BY p.id HAVING p.reserved_quantity <> COALESCE(sum(b.reserved), 0)
       ORDER BY p.id LIMIT 1000`))];
     const ledger = [...(await this.db.execute<Row>(sql`
@@ -169,11 +182,12 @@ export class StockShadow {
         ON b.product_id = m.product_id AND b.location_id = m.location_id
       WHERE COALESCE(m.total, 0) <> COALESCE(b.total, 0)
         AND EXISTS (SELECT 1 FROM products p WHERE p.id = COALESCE(m.product_id, b.product_id))
+        AND ${only('COALESCE(m.product_id, b.product_id)')}
       ORDER BY 1 LIMIT 1000`))];
     const negative = [...(await this.db.execute<Row>(sql`
       SELECT b.product_id, b.location_id, 0 AS expected, sum(b.on_hand) AS found
       FROM stock_balances b JOIN stock_locations l ON l.id = b.location_id
-      WHERE NOT l.allow_negative GROUP BY b.product_id, b.location_id HAVING sum(b.on_hand) < 0
+      WHERE NOT l.allow_negative AND ${only('b.product_id')} GROUP BY b.product_id, b.location_id HAVING sum(b.on_hand) < 0
       ORDER BY 1 LIMIT 1000`))];
     const ledgerMode = (await this.db.select({ l: stockSettings.ledgerMode }).from(stockSettings).where(sql`${stockSettings.companyId} = stock_current_company()`).limit(1))[0]?.l === true;
     const holds = ledgerMode
@@ -183,14 +197,28 @@ export class StockShadow {
           FROM (SELECT product_id, location_id, sum(quantity - consumed - released) AS total FROM stock_reservations WHERE state IN ('held', 'partly_consumed') GROUP BY product_id, location_id) r
           FULL JOIN (SELECT product_id, location_id, sum(reserved) AS total FROM stock_balances GROUP BY product_id, location_id) b
             ON b.product_id = r.product_id AND b.location_id = r.location_id
-          WHERE COALESCE(r.total, 0) <> COALESCE(b.total, 0)
+          WHERE COALESCE(r.total, 0) <> COALESCE(b.total, 0) AND ${only('COALESCE(r.product_id, b.product_id)')}
           ORDER BY 1 LIMIT 1000`))]
       : [];
-    take('reservation_differs', holds.slice(0, SAMPLE));
+    const journal = ledgerMode
+      ? [...(await this.db.execute<Row>(sql`
+          SELECT p.id AS product_id,
+                 COALESCE((SELECT sum(new_stock - previous_stock) FROM inventory_movements j
+                           WHERE j.product_id = p.id AND j.change_type NOT IN ('order_reservation', 'order_cancellation_release', 'cost_change')), 0) AS expected,
+                 COALESCE((SELECT sum(quantity) FROM stock_movements m WHERE m.product_id = p.id), 0) AS found
+          FROM products p
+          WHERE ${only('p.id')}
+            AND COALESCE((SELECT sum(new_stock - previous_stock) FROM inventory_movements j
+                          WHERE j.product_id = p.id AND j.change_type NOT IN ('order_reservation', 'order_cancellation_release', 'cost_change')), 0)
+                <> COALESCE((SELECT sum(quantity) FROM stock_movements m WHERE m.product_id = p.id), 0)
+          ORDER BY p.id LIMIT 1000`))]
+      : [];
     take('on_hand_differs', onHand.slice(0, SAMPLE));
     take('reserved_differs', reserved.slice(0, SAMPLE));
     take('ledger_differs', ledger.slice(0, SAMPLE));
     take('negative_on_hand', negative.slice(0, SAMPLE));
-    return { products: Number(total?.n ?? 0), onHandDiffers: onHand.length, reservedDiffers: reserved.length, ledgerDiffers: ledger.length, negative: negative.length, reservationsDiffer: holds.length, sample };
+    take('reservation_differs', holds.slice(0, SAMPLE));
+    take('journal_differs', journal.slice(0, SAMPLE));
+    return { products: Number(total?.n ?? 0), onHandDiffers: onHand.length, reservedDiffers: reserved.length, ledgerDiffers: ledger.length, negative: negative.length, reservationsDiffer: holds.length, journalDiffers: journal.length, sample };
   }
 }
