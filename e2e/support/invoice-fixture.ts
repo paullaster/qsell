@@ -118,10 +118,11 @@ async function main(): Promise<void> {
   if (action === 'statement-line' && arg !== undefined) {
     // arg = <tag>:<amount>: a payment of that amount on the statement of the account E2E Cash pays out of.
     const [tag, amount] = arg.split(':');
+    const { businessDate } = await import('@/server/kernel/numbering/business-date');
     const [method] = await db.select().from(schema.paymentMethods).where(and(eq(schema.paymentMethods.companyId, company.id), eq(schema.paymentMethods.code, 'E2ECASH')));
     if (method === undefined || tag === undefined || amount === undefined) throw new Error('the e2e books are not set up');
     const [imp] = await db.insert(schema.bankStatementImports).values({ companyId: company.id, bankAccountId: method.balancingBankAccountId, fileName: `e2e-${tag}.csv`, fileHash: `e2e-${tag}-${Date.now()}`, format: 'csv', lineCount: 1, totalIn: '0', totalOut: amount, importedBy: 'e2e' }).returning();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = businessDate();
     const description = `TRANSFER ${tag}`;
     const [line] = await db.insert(schema.bankStatementLines).values({ companyId: company.id, importId: imp?.id ?? '', bankAccountId: method.balancingBankAccountId, lineNo: 1, lineDate: today, description, reference: `E2E-BANK-${tag}`, amount: `-${amount}`, lineHash: `e2e-${tag}-${Date.now()}` }).returning();
     process.stdout.write(`FIXTURE ${JSON.stringify({ lineId: line?.id ?? 0, bankAccountId: method.balancingBankAccountId, description })}\n`);
