@@ -8,7 +8,8 @@ import type { Order, OrderItem, PaymentProvider } from '@/types/index';
 import { computeCheckoutTotals } from '@/lib/checkoutPricing';
 import { getContainer } from '@/server/di/container';
 import { CatalogService } from '@/server/domains/catalog/service';
-import { InventoryReservationService } from '@/server/domains/inventory/reservation-service';
+import { isSalesChannel } from '@/lib/stock';
+import { InventoryReservationService, ONLINE_PAYMENT_METHODS } from '@/server/domains/inventory/reservation-service';
 import { broadcastRealtime } from '@/server/realtime';
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import { eq, inArray } from 'drizzle-orm';
@@ -487,10 +488,16 @@ export const OrderWriteService = {
     // the order. A caller may still pass an explicit one (a typed-in number).
     const explicitOrderNumber = params.orderNumber;
 
+    const salesModule = params.paymentMethod === 'on_account' ? 'credit_sale' : (params.salesModule ?? 'ecommerce');
     const reservation = await InventoryReservationService.reserveForOrder(
       stockItems,
       orderId,
       params.customerEmail,
+      {
+        channel: isSalesChannel(salesModule) ? salesModule : 'ecommerce',
+        branchId: params.branchId ?? null,
+        payNow: (ONLINE_PAYMENT_METHODS as readonly string[]).includes(params.paymentMethod),
+      },
     );
     if (!reservation.success) {
       return { success: false, error: reservation.error, code: 'stock_short' };

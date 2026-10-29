@@ -15,7 +15,7 @@ interface Row extends Record<string, unknown> {
 const BATCH = 200;
 
 export interface ShadowProblem {
-  kind: 'on_hand_differs' | 'reserved_differs' | 'ledger_differs' | 'negative_on_hand';
+  kind: 'on_hand_differs' | 'reserved_differs' | 'ledger_differs' | 'negative_on_hand' | 'reservation_differs';
   productId: string;
   locationId?: string;
   expected: number;
@@ -29,6 +29,8 @@ export interface ShadowReport {
   reservedDiffers: number;
   ledgerDiffers: number;
   negative: number;
+  /** Balances whose reserved quantity is not the sum of the open holds (checked once the ledger holds the reservations). */
+  reservationsDiffer: number;
   /** The first few of each, with the numbers, so a person can find them. */
   sample: ShadowProblem[];
 }
@@ -59,6 +61,9 @@ export class StockShadow {
   /** Switches the mirror on or off. Switching it on starts a new backfill pass, since the mirror alone does not bring old stock across. */
   async setShadow(companyId: string, on: boolean): Promise<void> {
     await this.ensureSettings(companyId);
+    if (on && (await this.db.select({ l: stockSettings.ledgerMode }).from(stockSettings).where(eq(stockSettings.companyId, companyId)))[0]?.l === true) {
+      throw new StockError('The ledger is already the truth, so there is nothing left to mirror.', 'LEDGER_MODE');
+    }
     await this.locations.ensureDefault(companyId);
     await this.db
       .update(stockSettings)
@@ -81,6 +86,9 @@ export class StockShadow {
         .for('update')
         .limit(1);
       if (p === undefined) return false;
+      // A product the ledger already manages (it has movements the ledger itself wrote) is never overwritten from the old counter.
+      const native = [...(await tx.execute<Row>(sql`SELECT 1 AS n FROM stock_movements WHERE product_id = ${productId} AND legacy_movement_id IS NULL AND NOT migrated LIMIT 1`))];
+      if (native.length > 0) return false;
       const cost = p.cost;
       await tx.execute(sql`
         INSERT INTO stock_movements (company_id, product_id, location_id, shard, movement_type, quantity, unit_cost, document_type, document_id,
@@ -91,6 +99,7 @@ export class StockShadow {
         WHERE im.product_id = ${productId}
           AND im.change_type NOT IN ('order_reservation', 'order_cancellation_release', 'cost_change')
           AND im.new_stock <> im.previous_stock
+        ORDER BY im.created_at, im.id
         ON CONFLICT (legacy_movement_id) WHERE legacy_movement_id IS NOT NULL DO NOTHING`);
       const [sum] = [...(await tx.execute<Row>(sql`SELECT COALESCE(sum(quantity), 0)::numeric AS total FROM stock_movements WHERE product_id = ${productId} AND location_id = ${loc.id}::uuid`))];
       const gap = Math.round((p.stock - Number(sum?.total ?? 0)) * 1000) / 1000;
@@ -166,10 +175,22 @@ export class StockShadow {
       FROM stock_balances b JOIN stock_locations l ON l.id = b.location_id
       WHERE NOT l.allow_negative GROUP BY b.product_id, b.location_id HAVING sum(b.on_hand) < 0
       ORDER BY 1 LIMIT 1000`))];
+    const ledgerMode = (await this.db.select({ l: stockSettings.ledgerMode }).from(stockSettings).where(sql`${stockSettings.companyId} = stock_current_company()`).limit(1))[0]?.l === true;
+    const holds = ledgerMode
+      ? [...(await this.db.execute<Row>(sql`
+          SELECT COALESCE(r.product_id, b.product_id) AS product_id, COALESCE(r.location_id, b.location_id) AS location_id,
+                 COALESCE(r.total, 0) AS expected, COALESCE(b.total, 0) AS found
+          FROM (SELECT product_id, location_id, sum(quantity - consumed - released) AS total FROM stock_reservations WHERE state IN ('held', 'partly_consumed') GROUP BY product_id, location_id) r
+          FULL JOIN (SELECT product_id, location_id, sum(reserved) AS total FROM stock_balances GROUP BY product_id, location_id) b
+            ON b.product_id = r.product_id AND b.location_id = r.location_id
+          WHERE COALESCE(r.total, 0) <> COALESCE(b.total, 0)
+          ORDER BY 1 LIMIT 1000`))]
+      : [];
+    take('reservation_differs', holds.slice(0, SAMPLE));
     take('on_hand_differs', onHand.slice(0, SAMPLE));
     take('reserved_differs', reserved.slice(0, SAMPLE));
     take('ledger_differs', ledger.slice(0, SAMPLE));
     take('negative_on_hand', negative.slice(0, SAMPLE));
-    return { products: Number(total?.n ?? 0), onHandDiffers: onHand.length, reservedDiffers: reserved.length, ledgerDiffers: ledger.length, negative: negative.length, sample };
+    return { products: Number(total?.n ?? 0), onHandDiffers: onHand.length, reservedDiffers: reserved.length, ledgerDiffers: ledger.length, negative: negative.length, reservationsDiffer: holds.length, sample };
   }
 }

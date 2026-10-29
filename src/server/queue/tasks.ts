@@ -209,6 +209,39 @@ export const stockBackfill = async (_payload: unknown, helpers: JobHelpers) => {
   helpers.logger.info(`Stock backfill: ${String(r.done)} products${r.finished ? ', finished' : ''}`);
 };
 
+/**
+ * Worker cron task: stock holds whose time has run out are given back, and an order that was still unpaid is marked failed, with the
+ * reason on its timeline. Only holds that were given a time (shop orders paid at once, when the company sets a hold time) can run out.
+ */
+export const stockReservationExpiry = async (_payload: unknown, helpers: JobHelpers) => {
+  const container = getContainer();
+  const company = await container.companySettings.ensureSeeded();
+  const expired = await container.stockReservations.expireDue(company.id, new Date());
+  if (expired.length === 0) return;
+  const { OrderStages } = await import('@/server/domains/orders/stages');
+  const { drizzleDb } = await import('@/server/db/drizzle/client');
+  const { orders } = await import('@/server/db/drizzle/schema');
+  const { eq } = await import('drizzle-orm');
+  let failed = 0;
+  for (const ref of expired) {
+    if (ref.refType !== 'order') continue;
+    try {
+      const [order] = await drizzleDb.select({ status: orders.status, paymentStatus: orders.paymentStatus }).from(orders).where(eq(orders.id, ref.refId)).limit(1);
+      if (order?.status !== 'pending' || !['unpaid', 'pending_verification'].includes(order.paymentStatus)) continue;
+      const moved = await OrderStages.move(drizzleDb, ref.refId, 'payment_failed', 'failed', {
+        source: 'worker',
+        reasonCode: 'hold_expired',
+        message: 'The stock held for this order ran out before it was paid.',
+        detail: { releasedQuantity: ref.quantity },
+      });
+      if (moved.recorded) failed++;
+    } catch (error) {
+      helpers.logger.error(`Stock hold expiry: order ${ref.refId} could not be marked: ${String(error)}`);
+    }
+  }
+  helpers.logger.info(`Stock holds expired: ${String(expired.length)} documents, ${String(failed)} orders marked failed`);
+};
+
 /** Worker cron task: proves the per-location ledger agrees with the old stock counters, and says so loudly when it does not. */
 export const stockShadowCheck = async (_payload: unknown, helpers: JobHelpers) => {
   const container = getContainer();
@@ -216,7 +249,7 @@ export const stockShadowCheck = async (_payload: unknown, helpers: JobHelpers) =
   const status = await container.stockShadow.status(company.id);
   if (!status.shadowWrite || status.backfillDoneAt === null) return;
   const r = await container.stockShadow.compare();
-  const bad = r.onHandDiffers + r.reservedDiffers + r.ledgerDiffers + r.negative;
+  const bad = r.onHandDiffers + r.reservedDiffers + r.ledgerDiffers + r.negative + r.reservationsDiffer;
   if (bad > 0) helpers.logger.error(`Stock shadow MISMATCH: ${JSON.stringify({ ...r, sample: r.sample.slice(0, 10) })}`);
   else helpers.logger.info(`Stock shadow agrees for ${String(r.products)} products`);
 };
@@ -360,6 +393,7 @@ export const tasks = {
   'order-sla-sweep': orderSlaSweep,
   'stock-backfill': stockBackfill,
   'stock-shadow-check': stockShadowCheck,
+  'stock-reservation-expiry': stockReservationExpiry,
   'sweep-overdue-approvals': sweepOverdueApprovals,
   'expire-loyalty-points': expireLoyaltyPoints,
   'finance-post-sales': financePostSales,

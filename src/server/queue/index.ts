@@ -27,6 +27,7 @@ export async function startWorker(): Promise<void> {
       // Stock per location, while its shadow is on: bring old stock across a slice at a time, and prove the two ledgers agree.
       '* * * * * stock-backfill',
       '7 5 * * * stock-shadow-check',
+      '* * * * * stock-reservation-expiry',
       '47 3 * * * expire-loyalty-points',
       // Sales reach the ledger within a minute; failures retry with a growing delay.
       '* * * * * finance-post-sales',

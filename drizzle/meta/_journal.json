@@ -771,6 +771,13 @@
       "when": 1793268593944,
       "tag": "0109_stock_locations_ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "7",
+      "when": 1793269522245,
+      "tag": "0110_stock_reservations",
+      "breakpoints": true
     }
   ]
 }

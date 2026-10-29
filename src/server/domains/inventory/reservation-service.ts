@@ -4,6 +4,17 @@ import { inventoryMovements, orders, orderItems, products } from '@/server/db/dr
 import { roundQty } from '@/lib/decimal';
 import { getContainer } from '@/server/di/container';
 import { broadcastRealtime } from '@/server/realtime';
+import type { SalesChannel } from '@/lib/stock';
+
+/** Payment methods where the shopper pays at once: an unpaid order of these holds stock only for the hold time. */
+export const ONLINE_PAYMENT_METHODS = ['mpesa_daraja', 'pesapal_v3', 'jenga_hq', 'kcb_buni', 'card_direct'] as const;
+
+export interface ReserveOptions {
+  channel?: SalesChannel;
+  branchId?: string | null;
+  /** The shopper pays now, so the hold lapses if they do not (when the company sets a hold time). */
+  payNow?: boolean;
+}
 
 function newId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -41,8 +52,29 @@ export class InventoryReservationService {
     items: { productId: string; quantity: number }[],
     orderId: string,
     actor = 'customer_checkout',
+    options: ReserveOptions = {},
   ): Promise<{ success: boolean; error?: string }> {
     if (items.length === 0) return { success: true };
+
+    // With the per-location ledger as the truth, the hold is placed there (choosing the location); the counters follow it.
+    const container = getContainer();
+    const mode = await container.stockSettings.get();
+    if (mode.ledgerMode) {
+      const company = await container.companySettings.ensureSeeded();
+      const expiresAt = options.payNow === true && mode.unpaidHoldMinutes > 0 ? new Date(Date.now() + mode.unpaidHoldMinutes * 60_000) : null;
+      const result = await container.stockReservations.reserve({
+        companyId: company.id,
+        refType: 'order',
+        refId: orderId,
+        lines: items,
+        channel: options.channel ?? 'ecommerce',
+        branchId: options.branchId ?? null,
+        expiresAt,
+        actor,
+      });
+      if (result.ok) void broadcastRealtime('inventory_update', { type: 'reservation', orderId });
+      return result.ok ? { success: true } : { success: false, error: result.error };
+    }
 
     const outcome = await drizzleDb.transaction(async (tx) => {
       const existingReservations = await tx
@@ -216,6 +248,13 @@ export class InventoryReservationService {
    * No-op if the order was already fulfilled or released.
    */
   static async fulfilOrder(orderId: string): Promise<void> {
+    const container = getContainer();
+    if (await container.stockSettings.isLedgerMode()) {
+      const company = await container.companySettings.ensureSeeded();
+      await container.stockReservations.consume({ companyId: company.id, refType: 'order', refId: orderId, actor: 'payment_reconciliation_engine' });
+      void broadcastRealtime('inventory_update', { type: 'fulfillment', orderId });
+      return;
+    }
     await this.settleLines(orderId, 'payment_reconciliation_engine', async (product, quantity) => {
       const nextStock = Math.max(0, roundQty(product.stockQuantity - quantity));
       return {
@@ -241,19 +280,25 @@ export class InventoryReservationService {
     /** Pass the reserved lines when the order itself was never saved (creation failed). */
     knownItems?: { productId: string; quantity: number }[],
   ): Promise<void> {
-    await this.settleLines(
-      orderId,
-      actor,
-      async (product, quantity) => ({
-        // A release returns held units to available stock; on-hand is unchanged.
-        stockQuantity: product.stockQuantity,
-        reservedQuantity: Math.max(0, roundQty(product.reservedQuantity - quantity)),
-        changeType: 'order_cancellation_release' as const,
-        changeAmount: quantity,
-        note: `Released reservation of ${quantity} units for order ${orderId}. ${reason}`.trim(),
-      }),
-      knownItems,
-    );
+    const container = getContainer();
+    if (await container.stockSettings.isLedgerMode()) {
+      const company = await container.companySettings.ensureSeeded();
+      await container.stockReservations.release({ companyId: company.id, refType: 'order', refId: orderId, actor, reason });
+    } else {
+      await this.settleLines(
+        orderId,
+        actor,
+        async (product, quantity) => ({
+          // A release returns held units to available stock; on-hand is unchanged.
+          stockQuantity: product.stockQuantity,
+          reservedQuantity: Math.max(0, roundQty(product.reservedQuantity - quantity)),
+          changeType: 'order_cancellation_release' as const,
+          changeAmount: quantity,
+          note: `Released reservation of ${quantity} units for order ${orderId}. ${reason}`.trim(),
+        }),
+        knownItems,
+      );
+    }
 
     // A discount the order had used goes back to its budget and limits. Never fails the release.
     try {

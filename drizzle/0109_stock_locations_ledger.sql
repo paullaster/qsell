@@ -89,16 +89,21 @@ INSERT INTO "stock_locations" ("company_id", "code", "name", "kind", "is_default
 SELECT c.id, 'MAIN', 'Main stock', 'warehouse', true FROM "company_settings" c
 ON CONFLICT DO NOTHING;--> statement-breakpoint
 INSERT INTO "stock_settings" ("company_id") SELECT c.id FROM "company_settings" c ON CONFLICT DO NOTHING;--> statement-breakpoint
+-- The company the application is working for: the same one it finds with `companySettings.ensureSeeded()` (the active company updated
+-- last; a deployment has one). Product-level triggers know no company of their own, so they ask this.
+CREATE FUNCTION stock_current_company() RETURNS uuid AS $$
+  SELECT id FROM company_settings WHERE is_active ORDER BY updated_at DESC LIMIT 1
+$$ LANGUAGE sql STABLE;--> statement-breakpoint
 -- The default location, made on the spot if a company that was set up later has none yet.
 CREATE FUNCTION stock_default_location(OUT loc uuid, OUT comp uuid) AS $$
 BEGIN
-  SELECT l.id, l.company_id INTO loc, comp FROM stock_locations l WHERE l.is_default AND l.is_active LIMIT 1;
+  SELECT l.id, l.company_id INTO loc, comp FROM stock_locations l WHERE l.company_id = stock_current_company() AND l.is_default AND l.is_active LIMIT 1;
   IF loc IS NULL THEN
-    SELECT c.id INTO comp FROM company_settings c ORDER BY c.created_at LIMIT 1;
+    comp := stock_current_company();
     IF comp IS NOT NULL THEN
       INSERT INTO stock_locations (company_id, code, name, kind, is_default) VALUES (comp, 'MAIN', 'Main stock', 'warehouse', true)
       ON CONFLICT DO NOTHING;
-      SELECT l.id, l.company_id INTO loc, comp FROM stock_locations l WHERE l.is_default AND l.is_active LIMIT 1;
+      SELECT l.id, l.company_id INTO loc, comp FROM stock_locations l WHERE l.company_id = comp AND l.is_default AND l.is_active LIMIT 1;
     END IF;
   END IF;
 END;
@@ -140,7 +145,7 @@ BEGIN
   IF qty = 0 THEN
     RETURN NEW;
   END IF;
-  SELECT shadow_write INTO on_ FROM stock_settings LIMIT 1;
+  SELECT shadow_write INTO on_ FROM stock_settings WHERE company_id = stock_current_company();
   IF on_ IS NOT TRUE THEN
     RETURN NEW;
   END IF;
@@ -178,7 +183,7 @@ DECLARE
   loc uuid;
   comp uuid;
 BEGIN
-  SELECT shadow_write INTO on_ FROM stock_settings LIMIT 1;
+  SELECT shadow_write INTO on_ FROM stock_settings WHERE company_id = stock_current_company();
   IF on_ IS NOT TRUE THEN
     RETURN NEW;
   END IF;

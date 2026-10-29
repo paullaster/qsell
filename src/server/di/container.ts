@@ -53,6 +53,8 @@ import { StockLocationService } from '@/server/domains/stock/locations';
 import { StockLedger } from '@/server/domains/stock/ledger';
 import { StockAvailability } from '@/server/domains/stock/availability';
 import { StockShadow } from '@/server/domains/stock/shadow';
+import { StockSettingsService } from '@/server/domains/stock/settings';
+import { StockReservations } from '@/server/domains/stock/reservations';
 import { OrderSlaNotifier } from '@/server/domains/orders/sla-notifier';
 import { VendorBankChangeService } from '@/server/domains/vendors/bank-change-service';
 import { VendorLifecycleService } from '@/server/domains/vendors/lifecycle-service';
@@ -151,6 +153,8 @@ export interface AppContainer {
   stockLedger: StockLedger;
   stockAvailability: StockAvailability;
   stockShadow: StockShadow;
+  stockSettings: StockSettingsService;
+  stockReservations: StockReservations;
   users: UserRepository;
   usersAdmin: UsersAdminRepository;
   accessControl: AccessControlService;
@@ -424,6 +428,7 @@ export function getContainer(): AppContainer {
   const vendors = new VendorService(drizzleDb, numbering);
   const vendorFiles = new VendorFileStore(drizzleDb);
   const stockLocations = new StockLocationService(drizzleDb);
+  const stockLedger = new StockLedger(drizzleDb);
   const orderSla = new OrderSlaService(drizzleDb, new OrderSlaNotifier(email, companySettings));
   const vendorNotifier = new VendorNotifier(drizzleDb, email, companySettings);
   const prequalLifecycle = new PrequalLifecycle(drizzleDb, vendorNotifier);
@@ -482,9 +487,11 @@ export function getContainer(): AppContainer {
     orders,
     orderSla,
     stockLocations,
-    stockLedger: new StockLedger(drizzleDb),
+    stockLedger,
     stockAvailability: new StockAvailability(drizzleDb),
     stockShadow: new StockShadow(drizzleDb, stockLocations),
+    stockSettings: new StockSettingsService(drizzleDb, companySettings),
+    stockReservations: new StockReservations(drizzleDb, stockLedger),
     users,
     usersAdmin,
     accessControl,

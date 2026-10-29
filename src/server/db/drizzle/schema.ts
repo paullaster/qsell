@@ -2363,12 +2363,68 @@ export const stockMovements = pgTable(
   ],
 );
 
+/** The states of a hold on stock. `held` and `partly_consumed` are open. */
+export const RESERVATION_STATES = ['held', 'partly_consumed', 'consumed', 'released', 'expired'] as const;
+
+/**
+ * A hold on a quantity of a product at a location, with a life: held, partly or fully used, or given back. The balance's `reserved`
+ * is the sum of what is still open here. Design: docs/architecture/stock-locations.md §4.4.
+ */
+export const stockReservations = pgTable(
+  'stock_reservations',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id').notNull(),
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'cascade' }),
+    locationId: uuid('location_id')
+      .notNull()
+      .references(() => stockLocations.id, { onDelete: 'restrict' }),
+    shard: smallint('shard').notNull().default(0),
+    purpose: text('purpose').notNull().default('order_line'),
+    refType: text('ref_type').notNull(),
+    refId: text('ref_id').notNull(),
+    refLineId: text('ref_line_id').notNull(),
+    quantity: quantity('quantity').notNull(),
+    consumed: quantity('consumed').notNull().default(0),
+    released: quantity('released').notNull().default(0),
+    state: text('state').notNull().default('held'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    /** Why this location: the rule that chose it and what was available where, like a price trace. */
+    sourcing: jsonb('sourcing').$type<Record<string, unknown>>().notNull().default({}),
+    reason: text('reason'),
+    actor: text('actor').notNull().default('system'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    stateChangedAt: timestamp('state_changed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // Holding the same line of the same document at the same place twice is one hold.
+    uniqueIndex('stock_reservations_open_uidx')
+      .on(t.refType, t.refId, t.refLineId, t.productId, t.locationId, t.shard)
+      .where(sql`${t.state} IN ('held','partly_consumed')`),
+    index('stock_reservations_ref_idx').on(t.refType, t.refId),
+    index('stock_reservations_expiry_idx').on(t.expiresAt).where(sql`${t.state} IN ('held','partly_consumed') AND ${t.expiresAt} IS NOT NULL`),
+    index('stock_reservations_balance_idx').on(t.productId, t.locationId, t.shard).where(sql`${t.state} IN ('held','partly_consumed')`),
+    check('stock_reservations_state_chk', sql`${t.state} IN ('held','partly_consumed','consumed','released','expired')`),
+    check('stock_reservations_quantity_chk', sql`${t.quantity} > 0 AND ${t.consumed} >= 0 AND ${t.released} >= 0 AND ${t.consumed} + ${t.released} <= ${t.quantity}`),
+  ],
+);
+export type StockReservationRow = typeof stockReservations.$inferSelect;
+
 /** Whether the old stock counters are mirrored into the new ledger (the shadow of the migration), and how far the backfill has got. */
 export const stockSettings = pgTable('stock_settings', {
   companyId: uuid('company_id')
     .primaryKey()
     .references(() => companySettings.id, { onDelete: 'cascade' }),
   shadowWrite: boolean('shadow_write').notNull().default(false),
+  /**
+   * Whether the per-location ledger is the truth for reservations and for the product counters, which then follow the balances.
+   * Switching it on belongs to the cut-over (design §10, steps 3 and 4); nothing exposes it before the stock documents exist.
+   */
+  ledgerMode: boolean('ledger_mode').notNull().default(false),
+  /** How long an unpaid shop order holds stock, in minutes. 0 holds it until the order is settled or released (today's behaviour). */
+  unpaidHoldMinutes: integer('unpaid_hold_minutes').notNull().default(0),
   /** Backfill progress: the last product id handled, and when it finished. */
   backfillCursor: text('backfill_cursor'),
   backfillDoneAt: timestamp('backfill_done_at', { withTimezone: true }),

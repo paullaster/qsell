@@ -1,4 +1,4 @@
-# Stock per Location (L-0) — Module Design (L-0a BUILT)
+# Stock per Location (L-0) — Module Design (L-0a, L-0b BUILT)
 
 Status: **draft for correction**, written 2026-10-27. It is the prerequisite of the [delivery module](./delivery-module.md) (a delivery leaves a named location) and the "per-location stock ledger and balances" of Phase 2 in the [sales-order blueprint](./sales-order-blueprint.md) (§ stock, "where the scale fix lands"). It also touches [core-finance-module.md](./core-finance-module.md) (stock at cost in the books), [vendor-management-module.md](./vendor-management-module.md) (goods received, purchase returns), [pricing-module.md](./pricing-module.md) (kits) and [order-stage-timeline.md](./order-stage-timeline.md) (every stock stage of an order is timestamped).
 
@@ -437,3 +437,38 @@ Locations, the movement ledger, balances, the stock writer, availability, and th
 **Verified.** Unit (`stock.test.ts`, 32), integration (`stock.integration.test.ts`, 26: locations, the ledger under 25 simultaneous sales and opposite-order baskets, conservation over random runs, append-only, availability, every mirrored kind of change, reservations through to a fulfilled order, backfill with a sale landing during it, the comparison finding a planted difference, a failing mirror not stopping a sale).
 
 **Not done / next.** L-0b (reservation ledger, sourcing, order wiring, expiry), then the rest of §14. Before the shadow is switched on in a real deployment: apply migration 0109, switch it on (`stockShadow.setShadow`), let the backfill finish, and watch the daily comparison for a full business cycle (the gate in §10).
+
+
+## 19. L-0b as built (2026-10-29)
+
+The reservation ledger, sourcing, the order paths on top of them, and expiry. Still **no screen and no server action**; and the new path stays **off** (`stock_settings.ledger_mode = false`) until the cut-over, so a deployment behaves exactly as before.
+
+| What | Where |
+|---|---|
+| Table `stock_reservations` (states, used and given-back quantities, expiry, sourcing trace); `ledger_mode` and `unpaid_hold_minutes` on `stock_settings`; the trigger that keeps the product counters equal to the balances in ledger mode | migration `0110_stock_reservations.sql` |
+| Which location supplies which line (pure) | `src/lib/stock-sourcing.ts` |
+| Reserve, consume (issue), release, expire | `src/server/domains/stock/reservations.ts` (`container.stockReservations`) |
+| The mode and the hold time | `stock/settings.ts` (`container.stockSettings`) |
+| The order paths | `InventoryReservationService.reserveForOrder / fulfilOrder / releaseOrder` choose the old or the new path by the mode; the order write service passes the channel, the branch and whether the shopper pays at once |
+| Expiry | worker `stock-reservation-expiry` (every minute): gives back holds past their end and marks a still-unpaid order failed (`payment_failed`, reason `hold_expired`) on its timeline |
+| Check | `stockShadow.compare()` also proves each balance's reserved quantity equals the sum of its open holds (once ledger mode is on) |
+
+**Behaviour.**
+* **Sourcing (decision 9 of §17):** locations of the order's branch first, then the default, then by code; only active, sellable locations that sell to the order's channel. One location takes the whole order if any can; otherwise each line comes from the first location that covers it; otherwise a line is split over locations; otherwise the order is refused in the words shoppers already see (`Insufficient inventory for "X". Available: a, Requested: q.`) and nothing is held. The rule and the places considered are recorded on each hold.
+* **Locking:** every balance an order could use is locked in one fixed order (product, location, shard), so two baskets cannot wait on each other.
+* **Idempotent:** asking again for the same order holds only the difference; consuming or releasing twice changes nothing; a late release after the sale changes nothing.
+* **Issue never goes below zero:** if stock was written down after the hold, the sale settles for what is on the shelf and the hold records the shortfall (the old code clamped the same way).
+* **Hold time (decision 4):** `unpaid_hold_minutes` (0 = until settled, today's behaviour) applies to orders whose shopper pays at once (M-Pesa, card, Pesapal, Jenga, KCB); cash on delivery and credit orders hold until settled.
+
+**Decisions made while building.**
+* Product counters follow the balances through a trigger while ledger mode is on, so the 32 readers of `stock_quantity`/`reserved_quantity` stay right until they move to `StockAvailability` (§10 step 3). It is retired with them.
+* Ledger mode ends the shadow (the counters follow the ledger, not the other way round), and the shadow cannot be turned on while it is set.
+* The backfill refuses to touch a product the ledger already manages, so it can never double a multi-location product from the old counter.
+* A sort bug the tests found: a location with no branch gave NULL in the branch-first ordering, and Postgres sorts NULL first when descending; fixed with `COALESCE`.
+* Shards: reservations take from the shard with the most free, and the writer already supports several; **no shard is added automatically**.
+
+**Not met: the load gate of §14 (L-0b).** Measured here (one laptop, one Postgres, 10 baskets in flight): a two-line reserve takes p50 11.5 ms / p95 22 ms uncontended without the product-counter projection and p50 27.5 / p95 42 ms with it. With 200 baskets over 5 hot products, zero oversell, zero deadlock and the hold ledger equal to the balances every time, but p95 is 130 to 215 ms; over 3 hot products p95 is about 470 ms (360 ms with the projection off). The cause is that each hot product has one shard, so its baskets queue on one row; the projection adds a second queue on the product row. The remedy is the design's: add shards to hot products and allocate with `SKIP LOCKED` (§5.1), and retire the projection at the cut-over. Neither is in this slice; both are needed before the gate (p95 ≤ 50 ms) can be claimed. The test asserts only the correctness properties and a loose p95 bound, and prints the numbers.
+
+**Verified.** Unit: `stock-sourcing.test.ts` (9). Integration: `reservations.integration.test.ts` (24: placing, location choice, using and giving back, the order paths end to end, expiry with the task, 200 concurrent baskets, the check), plus the guard in `stock.integration.test.ts`.
+
+**Not done / next.** L-0c (stock documents and the facade over `applyStockDelta`, so ledger mode can be switched on), the order timeline's stock stages (T-1, which needs the order to exist when the stage is written, whereas the hold is placed before the order is saved), then L-0d to L-0f.

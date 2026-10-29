@@ -321,6 +321,17 @@ describe.skipIf(!has(url))('stock per location (database)', () => {
       expect(await balance(p)).toMatchObject({ onHand: 50, reserved: 2, rows: 1 });
     });
 
+    it('leaves a product the ledger already manages alone, however much the old counter says', async () => {
+      await c.stockShadow.setShadow(companyId, true);
+      const p = await newProduct(0);
+      await ledgerPost(p, 7, { type: 'receipt' });
+      await db.update(schema.products).set({ stockQuantity: 99 }).where(eq(schema.products.id, p));
+      expect(await c.stockShadow.backfillProduct(companyId, p)).toBe(false);
+      expect(await balance(p)).toMatchObject({ onHand: 7 });
+      expect(await movements(p)).toHaveLength(1);
+      await db.delete(schema.products).where(eq(schema.products.id, p));
+    });
+
     it('does not lose a sale that lands while a product is being brought across', async () => {
       await c.stockShadow.setShadow(companyId, true);
       const p = await newProduct(0);
