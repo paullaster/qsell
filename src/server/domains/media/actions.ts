@@ -3,7 +3,13 @@
 import { auth } from '@/auth';
 import { requirePermission } from '@/server/domains/access-control/guard';
 import { getContainer } from '@/server/di/container';
-import { MediaError, type MediaActor, type MediaAssetView, type MediaPage } from './service';
+import {
+  MediaConfigError,
+  MediaError,
+  type MediaActor,
+  type MediaAssetView,
+  type MediaPage,
+} from './service';
 
 /**
  * Result objects, not thrown errors: Next redacts thrown messages in production,
@@ -21,6 +27,13 @@ async function run<T>(work: () => Promise<T>): Promise<MediaResult<T>> {
     return { ok: true, data: await work() };
   } catch (error) {
     if (error instanceof MediaError) return { ok: false, error: error.message };
+    if (error instanceof MediaConfigError) {
+      return {
+        ok: false,
+        error:
+          'Image storage is not configured for this action. Ask an administrator to restore the provider settings or migrate the image, then try again.',
+      };
+    }
     throw error;
   }
 }
@@ -68,7 +81,9 @@ export async function deleteMediaAction(
  * Safe to call with any ids: each one is skipped unless it is the caller's own
  * unattached upload.
  */
-export async function discardMediaUploadsAction(ids: string[]): Promise<MediaResult<{ removed: number }>> {
+export async function discardMediaUploadsAction(
+  ids: string[],
+): Promise<MediaResult<{ removed: number }>> {
   const userId = await requirePermission('media:upload');
   const actor = await actorFor(userId);
   return run(async () => {
