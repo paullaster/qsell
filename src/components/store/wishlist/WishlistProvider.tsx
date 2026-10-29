@@ -1,7 +1,20 @@
 'use client';
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { mergeWishlistAction, setWishlistAction, wishlistIdsAction } from '@/server/domains/wishlist/actions';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
+import {
+  mergeWishlistAction,
+  setWishlistAction,
+  wishlistIdsAction,
+} from '@/server/domains/wishlist/actions';
 import { mergeWishlists, parseWishlist, WISHLIST_KEY, withProduct } from '@/lib/wishlist';
 import { useStore } from '@/components/store/StoreContext';
 import { useToast } from '@/components/store/ToastProvider';
@@ -42,6 +55,7 @@ export function WishlistProvider({ children }: { children: ReactNode }) {
   const [ids, setIds] = useState<string[]>([]);
   const [ready, setReady] = useState(false);
   const idsRef = useRef<string[]>([]);
+  const accountBacked = useRef(false);
   const commit = useCallback((next: string[]) => {
     idsRef.current = next;
     setIds(next);
@@ -49,7 +63,9 @@ export function WishlistProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
+    const isCancelled = () => cancelled;
     const start = async () => {
+      accountBacked.current = false;
       if (!signedIn) {
         if (!cancelled) commit(readLocal());
         if (!cancelled) setReady(true);
@@ -57,18 +73,28 @@ export function WishlistProvider({ children }: { children: ReactNode }) {
       }
       try {
         const account = await wishlistIdsAction();
+        if (isCancelled()) return;
+        if (!account.ok || account.data === null) {
+          commit(readLocal());
+          return;
+        }
+
         const guest = readLocal();
         // A guest list saved before signing in joins the account's, once.
         const merged = guest.length > 0 ? await mergeWishlistAction(guest) : account;
-        if (cancelled) return;
+        if (isCancelled()) return;
         if (merged.ok && merged.data !== null) {
+          accountBacked.current = true;
           commit(merged.data);
           if (guest.length > 0) writeLocal([]);
-        } else if (account.ok && account.data !== null) {
-          commit(mergeWishlists(account.data, []));
+        } else {
+          // Keep both lists in this browser if an account merge is temporarily unavailable.
+          commit(mergeWishlists(guest, account.data));
+          writeLocal(mergeWishlists(guest, account.data));
         }
       } catch {
-        /* the list simply shows empty until the next visit */
+        // Keep browsing usable with this browser's saved list if account sync is unavailable.
+        if (!cancelled) commit(readLocal());
       } finally {
         if (!cancelled) setReady(true);
       }
@@ -85,25 +111,42 @@ export function WishlistProvider({ children }: { children: ReactNode }) {
       const before = idsRef.current;
       const next = withProduct(before, productId, on);
       commit(next);
-      toast({ type: 'success', title: on ? 'Saved' : 'Removed', message: on ? `${name} is in your saved products.` : `${name} was removed from your saved products.` });
-      if (!signedIn) {
+      toast({
+        type: 'success',
+        title: on ? 'Saved' : 'Removed',
+        message: on
+          ? `${name} is in your saved products.`
+          : `${name} was removed from your saved products.`,
+      });
+      if (!accountBacked.current) {
         writeLocal(next);
         return;
       }
       setWishlistAction({ productId, on })
         .then((result) => {
-          if (!result.ok) throw new Error(result.error);
+          if (!result.ok) {
+            commit(before);
+            toast({ type: 'error', title: 'Could not save', message: result.error });
+            return;
+          }
           commit(result.data);
         })
         .catch(() => {
           commit(before);
-          toast({ type: 'error', title: 'Could not save', message: 'Your saved products were not changed. Please try again.' });
+          toast({
+            type: 'error',
+            title: 'Could not save',
+            message: 'Your saved products were not changed. Please try again.',
+          });
         });
     },
-    [commit, signedIn, toast],
+    [commit, toast],
   );
 
-  const value = useMemo<WishlistValue>(() => ({ ids, ready, has: (productId) => ids.includes(productId), toggle }), [ids, ready, toggle]);
+  const value = useMemo<WishlistValue>(
+    () => ({ ids, ready, has: (productId) => ids.includes(productId), toggle }),
+    [ids, ready, toggle],
+  );
   return <WishlistContext.Provider value={value}>{children}</WishlistContext.Provider>;
 }
 
