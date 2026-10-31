@@ -16,6 +16,7 @@ import type {
 import { SettingsError } from '@/server/domains/settings/errors';
 import { quantityProblem } from '@/lib/unit-rules';
 import { limitsProblem } from '@/lib/quantity-limits';
+import { productSpecificationsProblem, visibleSpecifications } from '@/lib/product-specifications';
 import { optionalAmount, standardPriceProblem } from './commercial-rules';
 import { toCategory, toItemType, toProduct, toPublicProduct, productToRow } from './mappers';
 import type { CatalogRepository } from './repository';
@@ -40,7 +41,8 @@ function slugify(value: string): string {
 
 /** Slugs are URL keys; a title-derived slug can collide, so suffix -2, -3… until free. */
 async function resolveUniqueSlug(base: string, excludeProductId?: string): Promise<string> {
-  const stem = slugify(base) || 'product';
+  const slug = slugify(base);
+  const stem = slug === '' ? 'product' : slug;
   for (let attempt = 1; attempt < 10000; attempt += 1) {
     const candidate = attempt === 1 ? stem : `${stem}-${attempt}`;
     const match = await repo().getProductBySlug(candidate);
@@ -100,20 +102,29 @@ export class CatalogService {
 
   static async createProduct(productData: ProductWrite): Promise<Product> {
     const catalog = repo();
-    const { media: galleryInput, packagings: packagingInput, baseUnitId: requestedUnit, ...fields } = productData;
-    const itemType =
-      (productData.itemTypeId ? await catalog.getItemTypeById(productData.itemTypeId) : null) ??
-      (await catalog.getDefaultItemType());
+    const specificationsProblem = productSpecificationsProblem(productData.specifications);
+    if (specificationsProblem !== null) throw new SettingsError(specificationsProblem);
+    const {
+      media: galleryInput,
+      packagings: packagingInput,
+      baseUnitId: requestedUnit,
+      ...fields
+    } = productData;
+    const requestedItemType =
+      productData.itemTypeId === '' ? null : await catalog.getItemTypeById(productData.itemTypeId);
+    const itemType = requestedItemType ?? (await catalog.getDefaultItemType());
     if (!itemType) {
       throw new SettingsError('Create an item type first, then assign it to this product');
     }
     // A blank SKU or stock code is numbered by its series when the product is saved (below).
-    const { unit, packagings: preparedPackagings } = await getContainer().unitWriter.planForProduct({
-      productId: null,
-      requestedUnitId: requestedUnit,
-      current: null,
-      packagings: packagingInput ?? [],
-    });
+    const { unit, packagings: preparedPackagings } = await getContainer().unitWriter.planForProduct(
+      {
+        productId: null,
+        requestedUnitId: requestedUnit,
+        current: null,
+        packagings: packagingInput ?? [],
+      },
+    );
     const packagings = preparedPackagings ?? [];
     for (const [value, what] of [
       [productData.stockQuantity, 'Stock quantity'],
@@ -129,25 +140,21 @@ export class CatalogService {
 
     if (isSellable) {
       if (
-        productData.price == null ||
-        !Number.isFinite(Number(productData.price)) ||
-        Number(productData.price) <= 0
+        productData.price === undefined ||
+        !Number.isFinite(productData.price) ||
+        productData.price <= 0
       ) {
         throw new SettingsError('Selling price is required for sellable item types');
       }
-      price = Number(productData.price);
-    } else if (productData.price != null) {
-      price = Number(productData.price);
+      price = productData.price;
+    } else if (productData.price !== undefined) {
+      price = productData.price;
       if (!Number.isFinite(price) || price < 0) {
         throw new SettingsError('Selling price must be 0 or greater when provided');
       }
     }
 
-    if (
-      productData.costPrice == null ||
-      !Number.isFinite(Number(productData.costPrice)) ||
-      Number(productData.costPrice) < 0
-    ) {
+    if (!Number.isFinite(productData.costPrice) || productData.costPrice < 0) {
       throw new SettingsError('Cost of goods is required');
     }
 
@@ -162,20 +169,21 @@ export class CatalogService {
 
     const id = newId('prod');
     // Resolve the category by display name — the modal posts a free-text name.
-    const category = await catalog.getCategoryByName(productData.category ?? '');
+    const category = await catalog.getCategoryByName(productData.category);
 
     const now = new Date().toISOString();
     const newProduct: Product = {
       ...fields,
+      specifications: visibleSpecifications(productData.specifications),
       id,
-      slug: await resolveUniqueSlug(productData.slug || productData.name),
-      sku: (productData.sku ?? '').trim().toUpperCase(),
-      stockCode: (productData.stockCode ?? '').trim().toUpperCase(),
+      slug: await resolveUniqueSlug(productData.slug === '' ? productData.name : productData.slug),
+      sku: productData.sku.trim().toUpperCase(),
+      stockCode: productData.stockCode.trim().toUpperCase(),
       price,
       standardPrice,
       minOrderQty,
       maxOrderQty,
-      costPrice: Number(productData.costPrice),
+      costPrice: productData.costPrice,
       itemTypeId: itemType.id,
       itemTypeName: itemType.name,
       itemTypeCode: itemType.code,
@@ -255,6 +263,11 @@ export class CatalogService {
   static async updateProduct(id: string, patchInput: ProductPatch): Promise<Product> {
     const catalog = repo();
     const { media: galleryUpdate, packagings: packagingUpdate, ...updates } = patchInput;
+    if (updates.specifications !== undefined) {
+      const specificationsProblem = productSpecificationsProblem(updates.specifications);
+      if (specificationsProblem !== null) throw new SettingsError(specificationsProblem);
+      updates.specifications = visibleSpecifications(updates.specifications);
+    }
     const existingRow = await catalog.getProductById(id);
     if (!existingRow) throw new SettingsError(`Product ${id} not found`);
     const existing = toProduct(existingRow);
@@ -276,11 +289,16 @@ export class CatalogService {
     if (updates.stockCode !== undefined && updates.stockCode !== existing.stockCode) {
       const clash = await catalog.getProductByStockCode(updates.stockCode);
       if (clash && clash.id !== id) {
-        throw new SettingsError(`Stock code ${updates.stockCode} is already used by "${clash.name}"`);
+        throw new SettingsError(
+          `Stock code ${updates.stockCode} is already used by "${clash.name}"`,
+        );
       }
     }
     if (updates.slug !== undefined && updates.slug !== existing.slug) {
-      updates.slug = await resolveUniqueSlug(updates.slug || existing.name, id);
+      updates.slug = await resolveUniqueSlug(
+        updates.slug === '' ? existing.name : updates.slug,
+        id,
+      );
     }
 
     const plan = await getContainer().unitWriter.planForProduct({
@@ -292,7 +310,7 @@ export class CatalogService {
     updates.baseUnitId = plan.unit.id;
     const packagings = plan.packagings;
 
-    if (updates.itemTypeId) {
+    if (updates.itemTypeId !== undefined && updates.itemTypeId !== '') {
       const itemType = await catalog.getItemTypeById(updates.itemTypeId);
       if (!itemType) throw new SettingsError('Selected item type was not found');
       updates.itemTypeName = itemType.name;
@@ -300,36 +318,37 @@ export class CatalogService {
       updates.isSellable = itemType.isSellable;
     }
 
-    const nextSellable =
-      updates.isSellable !== undefined ? updates.isSellable : existing.isSellable;
-    const nextPrice = updates.price !== undefined ? updates.price : existing.price;
-    const nextCost = updates.costPrice !== undefined ? updates.costPrice : existing.costPrice;
+    const nextSellable = updates.isSellable ?? existing.isSellable;
+    const nextPrice = updates.price ?? existing.price;
+    const nextCost = updates.costPrice ?? existing.costPrice;
 
     if (nextSellable) {
-      if (nextPrice == null || !Number.isFinite(Number(nextPrice)) || Number(nextPrice) <= 0) {
+      if (nextPrice === undefined || !Number.isFinite(nextPrice) || nextPrice <= 0) {
         throw new SettingsError('Selling price is required for sellable item types');
       }
-      if (updates.price !== undefined) updates.price = Number(nextPrice);
+      if (updates.price !== undefined) updates.price = nextPrice;
     } else if (updates.price !== undefined) {
-      if (updates.price == null) {
-        updates.price = undefined;
-      } else {
-        const p = Number(updates.price);
-        if (!Number.isFinite(p) || p < 0) {
-          throw new SettingsError('Selling price must be 0 or greater when provided');
-        }
-        updates.price = p;
+      const p = updates.price;
+      if (!Number.isFinite(p) || p < 0) {
+        throw new SettingsError('Selling price must be 0 or greater when provided');
       }
+      updates.price = p;
     }
 
-    if (nextCost == null || !Number.isFinite(Number(nextCost)) || Number(nextCost) < 0) {
+    if (!Number.isFinite(nextCost) || nextCost < 0) {
       throw new SettingsError('Cost of goods is required');
     }
-    if (updates.costPrice !== undefined) updates.costPrice = Number(nextCost);
+    if (updates.costPrice !== undefined) updates.costPrice = nextCost;
 
     // Quantity limits are checked together and in the unit the product will be counted in after this save.
-    const nextMin = updates.minOrderQty !== undefined ? optionalAmount(updates.minOrderQty) : (existing.minOrderQty ?? null);
-    const nextMax = updates.maxOrderQty !== undefined ? optionalAmount(updates.maxOrderQty) : (existing.maxOrderQty ?? null);
+    const nextMin =
+      updates.minOrderQty !== undefined
+        ? optionalAmount(updates.minOrderQty)
+        : (existing.minOrderQty ?? null);
+    const nextMax =
+      updates.maxOrderQty !== undefined
+        ? optionalAmount(updates.maxOrderQty)
+        : (existing.maxOrderQty ?? null);
     const limitIssue = limitsProblem(nextMin, nextMax, plan.unit.decimals, plan.unit.name);
     if (limitIssue !== null) throw new SettingsError(limitIssue);
     if (updates.minOrderQty !== undefined) updates.minOrderQty = nextMin;
@@ -351,13 +370,17 @@ export class CatalogService {
       updates.stockQuantity !== undefined && updates.stockQuantity !== existing.stockQuantity
         ? updates.stockQuantity
         : undefined;
-    if (stockChange !== undefined && stockChange < 0) throw new SettingsError('Stock quantity must be 0 or more');
+    if (stockChange !== undefined && stockChange < 0)
+      throw new SettingsError('Stock quantity must be 0 or more');
     // Counted in the product's unit (the new one, when this save changes it).
     for (const [value, what] of [
       [stockChange, 'Stock quantity'],
       [updates.lowStockThreshold, 'The low stock threshold'],
     ] as const) {
-      const problem = value === undefined ? null : quantityProblem(value, plan.unit.decimals, plan.unit.name, what);
+      const problem =
+        value === undefined
+          ? null
+          : quantityProblem(value, plan.unit.decimals, plan.unit.name, what);
       if (problem !== null) throw new SettingsError(problem);
     }
 
@@ -386,7 +409,8 @@ export class CatalogService {
         .update(products)
         .set({ ...fieldPatch, updatedAt: new Date() })
         .where(eq(products.id, id));
-      if (packagings !== undefined) await getContainer().units.replacePackagingIn(tx, id, packagings);
+      if (packagings !== undefined)
+        await getContainer().units.replacePackagingIn(tx, id, packagings);
       // After the field update: the gallery refreshes image_url / additional_images itself.
       if (galleryUpdate !== undefined) {
         await mediaService.setProductGallery(tx, id, galleryUpdate);
@@ -484,7 +508,7 @@ export class CatalogService {
 
   private static async assertParent(id: string | null, parentId: string | null) {
     const problem = parentProblem(id, parentId, await repo().categoryParents());
-    if (problem) throw new Error(problem);
+    if (problem !== null) throw new Error(problem);
   }
 
   static async getCategoryById(id: string): Promise<Category | undefined> {
@@ -501,11 +525,11 @@ export class CatalogService {
       id: newId('cat'),
       parentId: data.parentId ?? null,
       name: data.name,
-      slug: data.slug || slugify(data.name),
-      description: data.description ?? '',
+      slug: data.slug === '' ? slugify(data.name) : data.slug,
+      description: data.description,
       imageUrl: data.imageUrl ?? null,
-      isActive: data.isActive ?? true,
-      displayOrder: data.displayOrder ?? 0,
+      isActive: data.isActive,
+      displayOrder: data.displayOrder,
     });
     void broadcastRealtime('category_update', { type: 'created', category: toCategory(row) });
     return toCategory(row);
@@ -516,13 +540,13 @@ export class CatalogService {
     const existing = await catalog.getCategoryById(id);
     if (!existing) throw new Error(`Category ${id} not found`);
 
-    if (updates.name !== undefined && updates.name !== existing.name)
+    if (updates.name !== undefined && updates.name !== '' && updates.name !== existing.name)
       await CatalogService.assertCategoryNameFree(updates.name, id);
     if (updates.parentId !== undefined && (updates.parentId ?? null) !== existing.parentId)
       await CatalogService.assertParent(id, updates.parentId ?? null);
 
     // Keep denormalized product labels in step with a rename.
-    if (updates.name && updates.name !== existing.name) {
+    if (updates.name !== undefined && updates.name !== '' && updates.name !== existing.name) {
       await catalog.renameCategoryLabel(existing.name, updates.name);
     }
 
@@ -587,7 +611,7 @@ export class CatalogService {
     isActive?: boolean;
   }): Promise<ItemType> {
     const catalog = repo();
-    if (data.isDefault) await catalog.clearDefaultItemType('__none__');
+    if (data.isDefault === true) await catalog.clearDefaultItemType('__none__');
     const row = await catalog.insertItemType({
       id: newId('itype'),
       name: data.name,
@@ -605,7 +629,7 @@ export class CatalogService {
     updates: Partial<Pick<ItemType, 'name' | 'code' | 'isSellable' | 'isDefault' | 'isActive'>>,
   ): Promise<ItemType> {
     const catalog = repo();
-    if (updates.isDefault) await catalog.clearDefaultItemType(id);
+    if (updates.isDefault === true) await catalog.clearDefaultItemType(id);
     const row = await catalog.updateItemType(id, updates);
     if (!row) throw new Error(`Item type ${id} not found`);
     void broadcastRealtime('item_type_update', { type: 'updated', itemType: toItemType(row) });
