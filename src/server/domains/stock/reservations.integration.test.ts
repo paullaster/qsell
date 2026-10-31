@@ -193,7 +193,7 @@ describe.skipIf(!has(url))('holds on stock per location (database)', () => {
       const p = await newProduct(10);
       const id = oid();
       await reserve(id, [{ productId: p, quantity: 4 }]);
-      expect(await c.stockReservations.consume(ref(id))).toEqual({ issued: 4 });
+      expect(await c.stockReservations.consume(ref(id))).toMatchObject({ issued: 4 });
       expect(await bal(p)).toEqual({ onHand: 6, reserved: 0 });
       expect(await counters(p)).toEqual({ s: 6, r: 0 });
       expect((await holds(id))[0]).toMatchObject({ state: 'consumed', consumed: 4 });
@@ -217,11 +217,11 @@ describe.skipIf(!has(url))('holds on stock per location (database)', () => {
       const p = await newProduct(10);
       const id = oid();
       await reserve(id, [{ productId: p, quantity: 4 }]);
-      expect(await c.stockReservations.release({ ...ref(id), reason: 'payment failed' })).toEqual({ released: 4 });
-      expect(await c.stockReservations.release({ ...ref(id), reason: 'again' })).toEqual({ released: 0 });
+      expect(await c.stockReservations.release({ ...ref(id), reason: 'payment failed' })).toMatchObject({ released: 4 });
+      expect(await c.stockReservations.release({ ...ref(id), reason: 'again' })).toMatchObject({ released: 0 });
       expect(await bal(p)).toEqual({ onHand: 10, reserved: 0 });
       expect((await holds(id))[0]).toMatchObject({ state: 'released', released: 4, reason: 'payment failed' });
-      expect(await c.stockReservations.consume(ref(id))).toEqual({ issued: 0 });
+      expect(await c.stockReservations.consume(ref(id))).toMatchObject({ issued: 0 });
       expect(await bal(p)).toEqual({ onHand: 10, reserved: 0 });
     });
 
@@ -230,7 +230,7 @@ describe.skipIf(!has(url))('holds on stock per location (database)', () => {
       const id = oid();
       await reserve(id, [{ productId: p, quantity: 6 }]);
       await db.transaction((tx) => c.stockLedger.post(tx, { companyId, productId: p, locationId: main, type: 'write_off', quantity: -7, actor: { type: 'job' } }));
-      expect(await c.stockReservations.consume(ref(id))).toEqual({ issued: 3 });
+      expect(await c.stockReservations.consume(ref(id))).toMatchObject({ issued: 3 });
       expect(await bal(p)).toEqual({ onHand: 0, reserved: 0 });
       expect((await holds(id))[0]?.reason).toContain('short at issue: 3');
     });

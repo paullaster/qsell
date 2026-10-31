@@ -39,6 +39,9 @@ test.describe('where an order’s stock is held', () => {
     await noHorizontalScroll(page);
     await noInnerHorizontalScroll(page);
 
+    // The order's timeline says the stock was set aside, with its time, beside the stages of its journey.
+    await expect(page.getByRole('region', { name: 'Order timeline' })).toContainText('Stock reserved', { timeout: 30_000 });
+
     // Moving it needs a reason and a place that can cover it.
     await line.getByRole('button', { name: `Take ${product.name} from another place` }).click();
     await pick(page, line.getByRole('combobox', { name: `Take ${product.name} from` }), otherCode, new RegExp(otherCode));

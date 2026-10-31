@@ -228,6 +228,7 @@ export const stockReservationExpiry = async (_payload: unknown, helpers: JobHelp
     try {
       const [order] = await drizzleDb.select({ status: orders.status, paymentStatus: orders.paymentStatus }).from(orders).where(eq(orders.id, ref.refId)).limit(1);
       if (order?.status !== 'pending' || !['unpaid', 'pending_verification'].includes(order.paymentStatus)) continue;
+      await OrderStages.move(drizzleDb, ref.refId, 'stock_released', 'succeeded', { ref: { type: 'stock_settlement', id: ref.refId }, source: 'worker', reasonCode: 'hold_expired', message: 'The stock held for this order ran out before it was paid.', detail: { released: ref.quantity } });
       const moved = await OrderStages.move(drizzleDb, ref.refId, 'payment_failed', 'failed', {
         source: 'worker',
         reasonCode: 'hold_expired',

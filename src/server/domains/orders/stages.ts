@@ -9,6 +9,7 @@ import {
   changesFor,
   moveProblem,
   stageEffect,
+  tracksCurrentStage,
   type OrderStage,
   type StageChanges,
   type StageColumns,
@@ -179,10 +180,13 @@ export class OrderStages {
     const set: Record<string, unknown> = {
       ...options.fields,
       stageSeq: sql`${orders.stageSeq} + 1`,
-      currentStage: stage,
-      currentStageSince: sql`clock_timestamp()`,
       updatedAt: sql`clock_timestamp()`,
     };
+    // An event beside the order's journey (what happened to its stock) is on the timeline but is not where the order is.
+    if (tracksCurrentStage(stage)) {
+      set.currentStage = stage;
+      set.currentStageSince = sql`clock_timestamp()`;
+    }
     for (const column of STAGE_COLUMN_NAMES) {
       const next = changes[column]?.to;
       if (next !== undefined && next !== null) set[column] = next;

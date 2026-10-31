@@ -717,6 +717,9 @@ export const OrderWriteService = {
       };
     }
 
+    // The stock was set aside before the order existed; now the order's own timeline says so, and where.
+    await InventoryReservationService.recordReserved(orderId, stockItems);
+
     void broadcastRealtime('order_event', { type: 'order_created', order });
 
     return { success: true, order };

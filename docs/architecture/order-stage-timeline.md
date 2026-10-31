@@ -1,4 +1,4 @@
-# Order Stage Timeline — Requirement and Design (T-0 and T-3 BUILT)
+# Order Stage Timeline — Requirement and Design (T-0, T-1 and T-3 BUILT)
 
 Status: **T-0 built** (2026-10-27/28); T-1 to T-3 are still to build (§11, and "What T-0 delivers" at the end). Written 2026-10-27 from the owner's requirement:
 
@@ -239,3 +239,28 @@ Decisions made while building: a breach's end is the first event after the one t
 Not built, with the reason: targets per payment method or delivery zone (zones come with the delivery module), a mail to the person who owns the stage (no stage-owner model exists yet; the address lists are the owners for now), and showing a breach as a line in each order's own timeline.
 
 Existing roles do not get `orders:sla_manage` automatically (only new installs): give it in Admin → Roles. The migration must be applied to a development database by hand with `pnpm db:migrate`.
+
+
+---
+
+## 15. T-1 as built (2026-10-31): the stock stages of an order
+
+What happens to an order's stock is on the order's own timeline, with its server time, its source and a reason, in **both** ways of keeping stock (the new per-location ledger and the old counters).
+
+| Stage | When | Reason / detail |
+|---|---|---|
+| `stock_reserved` | The order is saved after its stock was set aside | `detail.kept` (`ledger` or `counters`), the number of products, and (ledger) the places and quantities |
+| `stock_issued` | The order is paid and its stock leaves | `detail.kept`; in the ledger the quantity issued and the holds used |
+| `stock_released` | The stock is given back: cancelled, payment failed, or the hold ran out | `reasonCode` `cancelled`, `payment_failed`, `hold_expired` or `released`, and the words the caller gave |
+
+**Where.** `InventoryReservationService.recordReserved` (called by the order write service once the order exists), `fulfilOrder`, `releaseOrder`, and the `stock-reservation-expiry` task. Each is written after the settlement it describes and never stops it: a failure to write the event is logged. Each is said once per order and kind (`ref` = the order's stock settlement), so a retried payment message adds nothing.
+
+**Not where the order is.** A stock event is a place in the order of events, not a step in the order's journey: the writer does not make it the order's current stage (`NON_TRACKING_STAGES` in `src/lib/order-stages.ts`). Otherwise an order whose stock was just issued would look as if it were no longer "paid and waiting to be sent", and the check for orders that wait too long (T-3) would stop seeing it. The sequence numbers and the order's other columns are unaffected. The customer's timeline has no label for these stages, so it never shows them.
+
+**What is not recorded, and why.**
+* `reservation_failed`: a checkout refused for stock has no order yet; it is already on record in `checkout_attempts` with its reason (`stock_short`), which is where rule 11 puts a refusal before any order exists.
+* An order that was never saved (creation failed after the stock was set aside) has no timeline; its release is not recorded.
+* An order already paid and later cancelled records no `stock_released`: its stock was issued; putting it back is a return (`stock_returned`), which belongs to the returns flow and is not emitted yet.
+* A hold moved from one place to another by a person is in the decision log and on the order's Stock panel (with its reason), not on the timeline.
+
+**Verified.** Unit (`order-stages.test.ts`): the non-tracking set. Integration (`stock-stages.integration.test.ts`): in both ways of keeping stock, reserved with the places, issued once, released with each reason once, nothing for an order already paid or never saved, the order's current stage and its time unchanged, the customer's timeline silent, and an expired hold recorded as given back for running out and then the payment as failed, in that order. The existing property test now reads "the last event that moves the order is its current stage".

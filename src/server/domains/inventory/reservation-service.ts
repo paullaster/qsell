@@ -1,13 +1,23 @@
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { drizzleDb } from '@/server/db/drizzle/client';
-import { inventoryMovements, orders, orderItems, products } from '@/server/db/drizzle/schema';
+import { inventoryMovements, orders, orderItems, products, stockLocations, stockReservations } from '@/server/db/drizzle/schema';
 import { roundQty } from '@/lib/decimal';
 import { getContainer } from '@/server/di/container';
+import { OrderStages } from '@/server/domains/orders/stages';
 import { broadcastRealtime } from '@/server/realtime';
 import type { SalesChannel } from '@/lib/stock';
 
 /** Payment methods where the shopper pays at once: an unpaid order of these holds stock only for the hold time. */
 export const ONLINE_PAYMENT_METHODS = ['mpesa_daraja', 'pesapal_v3', 'jenga_hq', 'kcb_buni', 'card_direct'] as const;
+
+/** The code a release is filed under on the timeline, from the words callers give. */
+export function releaseReasonCode(reason: string): string {
+  const text = reason.toLowerCase();
+  if (text.includes('expire') || text.includes('ran out')) return 'hold_expired';
+  if (text.includes('cancel')) return 'cancelled';
+  if (text.includes('fail')) return 'payment_failed';
+  return 'released';
+}
 
 export interface ReserveOptions {
   channel?: SalesChannel;
@@ -187,9 +197,9 @@ export class InventoryReservationService {
     }>,
     /** For an order that was never saved: the lines that were reserved for it. */
     knownItems?: { productId: string; quantity: number }[],
-  ): Promise<void> {
+  ): Promise<boolean> {
     const items = knownItems ?? (await this.orderLines(orderId));
-    if (items.length === 0) return;
+    if (items.length === 0) return false;
 
     // Cheap pre-check to skip the common already-settled case. The unique index
     // below is what actually makes this safe: two concurrent webhooks can both
@@ -198,7 +208,7 @@ export class InventoryReservationService {
       'order_fulfillment',
       'order_cancellation_release',
     ]);
-    if (settled) return;
+    if (settled) return false;
 
     try {
       await drizzleDb.transaction(async (tx) => {
@@ -238,8 +248,48 @@ export class InventoryReservationService {
       });
     } catch (err) {
       // A concurrent/retried webhook already journalled this settlement.
-      if (isSettlementConflict(err)) return;
+      if (isSettlementConflict(err)) return false;
       throw err;
+    }
+    return true;
+  }
+
+  /**
+   * Once the order is saved: its stock was set aside, and where. In the new ledger that is the places and quantities of its holds; the
+   * old way keeps only a count, and says so. The hold was placed before the order existed, so the order's own timeline is told now.
+   * Never stops the order: a failure to write it is logged.
+   */
+  static async recordReserved(orderId: string, lines: { productId: string; quantity: number }[]): Promise<void> {
+    try {
+      const ledger = await getContainer().stockSettings.isLedgerMode();
+      const places = ledger
+        ? await drizzleDb
+            .select({ code: stockLocations.code, quantity: sql<number>`sum(${stockReservations.quantity})::float8` })
+            .from(stockReservations)
+            .innerJoin(stockLocations, eq(stockLocations.id, stockReservations.locationId))
+            .where(and(eq(stockReservations.refType, 'order'), eq(stockReservations.refId, orderId)))
+            .groupBy(stockLocations.code)
+            .orderBy(stockLocations.code)
+        : [];
+      await OrderStages.move(drizzleDb, orderId, 'stock_reserved', 'succeeded', {
+        ref: { type: 'stock_hold', id: orderId },
+        detail: { kept: ledger ? 'ledger' : 'counters', products: lines.length, ...(places.length > 0 ? { places } : {}) },
+      });
+    } catch (error) {
+      console.error('[inventory] could not record the stock stage', orderId, 'stock_reserved', error);
+    }
+  }
+
+  /**
+   * What happened to an order's stock, on the order's own timeline with its time and reason. It is a record beside the settlement and
+   * never stops it: a failure to write it is logged. An order that was never saved has no timeline. Said once per order and kind, so a
+   * retried payment message adds nothing.
+   */
+  private static async recordStockStage(orderId: string, stage: 'stock_issued' | 'stock_released', options: { reasonCode?: string; message?: string; detail?: Record<string, unknown> } = {}): Promise<void> {
+    try {
+      await OrderStages.move(drizzleDb, orderId, stage, 'succeeded', { ref: { type: 'stock_settlement', id: orderId }, ...options });
+    } catch (error) {
+      console.error('[inventory] could not record the stock stage', orderId, stage, error);
     }
   }
 
@@ -251,11 +301,12 @@ export class InventoryReservationService {
     const container = getContainer();
     if (await container.stockSettings.isLedgerMode()) {
       const company = await container.companySettings.ensureSeeded();
-      await container.stockReservations.consume({ companyId: company.id, refType: 'order', refId: orderId, actor: 'payment_reconciliation_engine' });
+      const done = await container.stockReservations.consume({ companyId: company.id, refType: 'order', refId: orderId, actor: 'payment_reconciliation_engine' });
+      if (done.holds > 0) await this.recordStockStage(orderId, 'stock_issued', { detail: { kept: 'ledger', issued: done.issued, holds: done.holds } });
       void broadcastRealtime('inventory_update', { type: 'fulfillment', orderId });
       return;
     }
-    await this.settleLines(orderId, 'payment_reconciliation_engine', async (product, quantity) => {
+    const applied = await this.settleLines(orderId, 'payment_reconciliation_engine', async (product, quantity) => {
       const nextStock = Math.max(0, roundQty(product.stockQuantity - quantity));
       return {
         stockQuantity: nextStock,
@@ -265,6 +316,7 @@ export class InventoryReservationService {
         note: `Fulfilled and finalized stock deduction of ${quantity} units for order ${orderId}`,
       };
     });
+    if (applied) await this.recordStockStage(orderId, 'stock_issued', { detail: { kept: 'counters' } });
 
     void broadcastRealtime('inventory_update', { type: 'fulfillment', orderId });
   }
@@ -283,9 +335,10 @@ export class InventoryReservationService {
     const container = getContainer();
     if (await container.stockSettings.isLedgerMode()) {
       const company = await container.companySettings.ensureSeeded();
-      await container.stockReservations.release({ companyId: company.id, refType: 'order', refId: orderId, actor, reason });
+      const done = await container.stockReservations.release({ companyId: company.id, refType: 'order', refId: orderId, actor, reason });
+      if (done.holds > 0 && knownItems === undefined) await this.recordStockStage(orderId, 'stock_released', { reasonCode: releaseReasonCode(reason), message: reason, detail: { kept: 'ledger', released: done.released, holds: done.holds } });
     } else {
-      await this.settleLines(
+      const applied = await this.settleLines(
         orderId,
         actor,
         async (product, quantity) => ({
@@ -298,6 +351,8 @@ export class InventoryReservationService {
         }),
         knownItems,
       );
+      // An order that was never saved has no timeline; one whose stock was already settled has nothing new to say.
+      if (applied && knownItems === undefined) await this.recordStockStage(orderId, 'stock_released', { reasonCode: releaseReasonCode(reason), message: reason, detail: { kept: 'counters' } });
     }
 
     // A discount the order had used goes back to its budget and limits. Never fails the release.

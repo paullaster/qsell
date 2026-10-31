@@ -192,7 +192,7 @@ export class StockReservations {
    * cost now. If the shelf has less than was held (stock was written down meanwhile) the sale still settles for what is there, never
    * below zero, and the hold says so. Does nothing when the document has no open holds.
    */
-  async consumeIn(tx: Tx, input: SettleInput): Promise<{ issued: number }> {
+  async consumeIn(tx: Tx, input: SettleInput): Promise<{ issued: number; holds: number }> {
     const holds = await this.openHolds(tx, input.refType, input.refId);
     let issued = 0;
     const perProduct = new Map<string, number>();
@@ -235,15 +235,15 @@ export class StockReservations {
       perProduct.set(h.productId, round((perProduct.get(h.productId) ?? 0) + issue));
     }
     if (input.refType === 'order') await this.journalSettlement(tx, input.refId, input.actor, 'order_fulfillment', perProduct, `Fulfilled and finalized stock deduction for order ${input.refId}`);
-    return { issued };
+    return { issued, holds: holds.length };
   }
 
-  async consume(input: SettleInput): Promise<{ issued: number }> {
+  async consume(input: SettleInput): Promise<{ issued: number; holds: number }> {
     return await this.db.transaction((tx) => this.consumeIn(tx, input));
   }
 
   /** Gives the holds of a document back. Safe to repeat. */
-  async releaseIn(tx: Tx, input: SettleInput & { reason: string; expired?: boolean }): Promise<{ released: number }> {
+  async releaseIn(tx: Tx, input: SettleInput & { reason: string; expired?: boolean }): Promise<{ released: number; holds: number }> {
     const holds = await this.openHolds(tx, input.refType, input.refId);
     let released = 0;
     const perProduct = new Map<string, number>();
@@ -262,10 +262,10 @@ export class StockReservations {
       perProduct.set(h.productId, round((perProduct.get(h.productId) ?? 0) + left));
     }
     if (input.refType === 'order') await this.journalSettlement(tx, input.refId, input.actor, 'order_cancellation_release', perProduct, `Released reservation for order ${input.refId}. ${input.reason}`.trim());
-    return { released };
+    return { released, holds: holds.length };
   }
 
-  async release(input: SettleInput & { reason: string; expired?: boolean }): Promise<{ released: number }> {
+  async release(input: SettleInput & { reason: string; expired?: boolean }): Promise<{ released: number; holds: number }> {
     return await this.db.transaction((tx) => this.releaseIn(tx, input));
   }
 
