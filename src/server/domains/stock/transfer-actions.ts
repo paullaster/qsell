@@ -96,7 +96,7 @@ export async function stockTransfersPageAction(input: unknown) {
       .select({
         d: stockDocuments,
         key: sql<string>`to_char(${stockDocuments.createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
-        lines: sql<number>`(SELECT count(*)::int FROM stock_document_lines l WHERE l.document_id = ${stockDocuments.id})`,
+        lines: sql<number>`(SELECT count(*)::int FROM stock_document_lines l WHERE l.document_id = stock_documents.id)`,
         fromCode: sql<string>`(SELECT code FROM stock_locations WHERE id = ${stockDocuments.fromLocationId})`,
         toCode: sql<string>`(SELECT code FROM stock_locations WHERE id = ${stockDocuments.toLocationId})`,
       })

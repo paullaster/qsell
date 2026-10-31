@@ -100,6 +100,18 @@ const transferStates = staticSource({
   },
 });
 
+const countModes = staticSource({
+  key: 'stock-count-modes',
+  permission: 'stock:read',
+  items: ({ filters }) => {
+    acceptFilters(filters, {});
+    return [
+      { id: 'cycle', label: 'Cycle count: some products', description: 'Count the products you choose' },
+      { id: 'full', label: 'Full count: everything the place holds', description: 'Lists every product with stock there' },
+    ];
+  },
+});
+
 const countStates = staticSource({
   key: 'stock-count-states',
   permission: 'stock:read',
@@ -122,4 +134,4 @@ const settlements = staticSource({
   },
 });
 
-export const STOCK_LOOKUP_SOURCES: LookupSource[] = [locations, kinds, stockProducts, transferStates, countStates, settlements];
+export const STOCK_LOOKUP_SOURCES: LookupSource[] = [locations, kinds, stockProducts, transferStates, countStates, countModes, settlements];

@@ -208,6 +208,8 @@ describe.skipIf(!has(url))('stock transfer actions (database)', () => {
     expect(seen.size).toBe(first.rows.length + second.rows.length);
     const times = [...first.rows, ...second.rows].map((r) => r.createdAt);
     expect(times).toEqual([...times].sort().reverse());
+    expect(first.rows[0]?.lines).toBe(1);
+    expect(first.rows[0]?.fromCode).toBe('MAIN');
     const requested = await ok(a.stockTransfersPageAction({ state: 'requested' }));
     expect(requested.rows.map((r) => r.id)).toContain(ids[0]);
     expect(requested.rows.every((r) => r.state === 'requested')).toBe(true);

@@ -354,6 +354,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         icon: 'Layers',
         permission: 'stock:read',
       },
+      {
+        id: 'stock-counts',
+        title: 'Stock counts',
+        name: 'stock-counts',
+        href: '/admin/inventory/counts',
+        description: 'Count what is on the shelves and bring the system in line, while the shop keeps selling',
+        icon: 'ClipboardCheck',
+        permission: 'stock:read',
+      },
     ],
   },
   {
