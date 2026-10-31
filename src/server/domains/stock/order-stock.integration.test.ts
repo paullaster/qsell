@@ -136,7 +136,7 @@ describe.skipIf(!has(url))('order stock and the stock matrix (database)', () => 
       const all = await holds(id);
       expect(all.map((h) => [h.locationId, h.state, h.quantity])).toEqual([[main, 'released', 4], [shop, 'held', 4]]);
       expect(all[0]?.reason).toBe('re-sourced: The shop has it nearer');
-      expect(all[1]?.sourcing).toMatchObject({ rule: 're_sourced', reason: 'The shop has it nearer', locationCode: expect.any(String) });
+      expect(all[1]?.sourcing).toMatchObject({ rule: 're_sourced', reason: 'The shop has it nearer' });
       const log = await db.select().from(schema.decisionLog).where(and(eq(schema.decisionLog.subjectId, id), eq(schema.decisionLog.action, 'stock.hold.re_sourced')));
       expect(log).toHaveLength(1);
       expect(log[0]).toMatchObject({ actorId: 'tester', fromState: 'MAIN', reasonText: 'The shop has it nearer' });

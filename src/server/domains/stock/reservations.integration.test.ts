@@ -414,10 +414,12 @@ describe.skipIf(!has(url))('holds on stock per location (database)', () => {
     it('finds a balance whose reserved quantity is not the sum of its holds', async () => {
       const p = await newProduct(10);
       await reserve(oid(), [{ productId: p, quantity: 2 }]);
-      expect((await c.stockShadow.compare()).sample.some((s) => s.kind === 'reservation_differs' && s.productId === p)).toBe(false);
+      // Only this product is looked at: the database is shared, and other files leave plenty of their own differences about.
+      // (Stock put straight into the ledger has no old journal line, so only the holds are looked at here.)
+      expect((await c.stockShadow.compare({ productIds: [p] })).reservationsDiffer).toBe(0);
       await db.update(schema.stockBalances).set({ reserved: 5 }).where(eq(schema.stockBalances.productId, p));
-      const report = await c.stockShadow.compare();
-      expect(report.reservationsDiffer).toBeGreaterThanOrEqual(1);
+      const report = await c.stockShadow.compare({ productIds: [p] });
+      expect(report.reservationsDiffer).toBe(1);
       expect(report.sample).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'reservation_differs', productId: p, expected: 2, found: 5 })]));
       await db.update(schema.stockBalances).set({ reserved: 2 }).where(eq(schema.stockBalances.productId, p));
     });

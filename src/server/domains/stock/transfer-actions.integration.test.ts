@@ -221,10 +221,12 @@ describe.skipIf(!has(url))('stock transfer actions (database)', () => {
   it('offers only what the sender holds when choosing products, never how much', async () => {
     const [held, other] = [await product(3), await product(0)];
     const src = sources.STOCK_LOOKUP_SOURCES.find((s) => s.key === 'stock-products');
-    const found = await src?.search({ companyId, query: '', limit: 200, after: null, filters: { at: main } });
+    // Searched by name: a database shared with other files holds more products than one page.
+    const nameOf = async (id: string) => (await db.select({ n: schema.products.name }).from(schema.products).where(eq(schema.products.id, id)))[0]?.n ?? '';
+    const found = await src?.search({ companyId, query: await nameOf(held), limit: 50, after: null, filters: { at: main } });
     const ids = found?.options.map((o) => o.id) ?? [];
     expect(ids).toContain(held);
-    expect(ids).not.toContain(other);
+    expect((await src?.search({ companyId, query: await nameOf(other), limit: 50, after: null, filters: { at: main } }))?.options.map((o) => o.id) ?? []).not.toContain(other);
     expect(JSON.stringify(found?.options.find((o) => o.id === held))).not.toMatch(/onHand|on_hand|quantity/);
     await expect(src?.search({ companyId, query: '', limit: 10, after: null, filters: { at: 'x' } }) ?? Promise.reject(new Error('missing'))).rejects.toThrow();
   });
