@@ -495,7 +495,7 @@ export function getContainer(): AppContainer {
     stockAvailability: new StockAvailability(drizzleDb),
     stockShadow: new StockShadow(drizzleDb, stockLocations),
     stockSettings: new StockSettingsService(drizzleDb, companySettings),
-    stockReservations: new StockReservations(drizzleDb, stockLedger),
+    stockReservations: new StockReservations(drizzleDb, stockLedger, decisionLog),
     stockTransfers: new TransferService({ db: drizzleDb, ledger: stockLedger, numbering, decisionLog }),
     stockCounts: new CountService({ db: drizzleDb, ledger: stockLedger, numbering, decisionLog }),
     users,

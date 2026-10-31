@@ -54,7 +54,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
     summary: 'Know what you have, where it is and when to reorder, in the units you actually sell.',
     features: ['Stock levels by branch and low-stock alerts', 'Several warehouses, shops and vans, each with its own stock', 'Transfers between locations with stock tracked while it is on its way', 'Stock counts that carry on while the shop sells', 'Products, categories, bundles and hampers', 'Kilograms, litres, pieces and packs with the right decimals', 'Stock ledger with every movement recorded'],
     keywords: ['inventory management software Kenya', 'stock control system', 'stock management software for shops', 'inventory software for small business', 'warehouse management', 'product catalogue software'],
-    subModules: ['Products', 'Trash', 'Item Types', 'Units of Measure', 'Categories', 'Kits and hampers', 'Product groups', 'Stock levels', 'Stock locations', 'Stock transfers', 'Stock counts'],
+    subModules: ['Products', 'Trash', 'Item Types', 'Units of Measure', 'Categories', 'Kits and hampers', 'Product groups', 'Stock levels', 'Stock by location', 'Stock locations', 'Stock transfers', 'Stock counts'],
   },
   {
     navId: 'users-access',

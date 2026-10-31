@@ -5,6 +5,8 @@
  *   tsx e2e/support/stock-fixtures.ts product <tag> <quantity> [<place code>]  a product with this much stock at a place (the default one if none)
  *   tsx e2e/support/stock-fixtures.ts place <code> <name>                  a stock location, if it is not there yet
  *   tsx e2e/support/stock-fixtures.ts at <product name> <place code>       how much of a product is at a place
+ *   tsx e2e/support/stock-fixtures.ts receive <product id> <quantity> <place code>  more stock of a product at a place
+ *   tsx e2e/support/stock-fixtures.ts order <tag> <product id> <quantity>  an order for a product, placed the way the shop places it (the stock is held)
  */
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -57,6 +59,33 @@ async function at(name: string, code: string): Promise<Record<string, string>> {
   return { quantity: String(Number(row?.total ?? 0)) };
 }
 
+async function receive(productId: string, quantity: string, code: string): Promise<Record<string, string>> {
+  const { c, db, companyId } = await container();
+  const target = (await place(code, code)).id;
+  await db.transaction((tx) => c.stockLedger.post(tx, { companyId, productId, locationId: target, type: 'receipt', quantity: Number(quantity), unitCost: 100, documentType: 'e2e', documentId: randomUUID(), actor: { type: 'job' } }));
+  return { id: productId };
+}
+
+async function order(tag: string, productId: string, quantity: string): Promise<Record<string, string>> {
+  const { c, companyId } = await container();
+  const { OrderWriteService } = await import('@/server/domains/orders/write-service');
+  const branch = await c.branches.getDefault(companyId);
+  const number = `E2E-ST-${tag}`.toUpperCase();
+  const result = await OrderWriteService.createOrder({
+    branchId: branch?.id ?? null,
+    orderNumber: number,
+    customerName: `Stock Buyer ${tag}`,
+    customerEmail: `stock-${tag}@example.test`.toLowerCase(),
+    customerPhone: '0711000555',
+    shippingAddress: { street: '1 Moi Avenue', city: 'Nairobi', countyOrState: 'Nairobi', country: 'Kenya' },
+    items: [{ productId, quantity: Number(quantity) }],
+    currency: 'KES',
+    paymentMethod: 'mpesa_daraja',
+  });
+  if (!result.success) throw new Error(`e2e fixture: the order was refused: ${result.error ?? 'no reason'}`);
+  return { orderNumber: number };
+}
+
 async function main(): Promise<void> {
   const [command, a, b, d] = process.argv.slice(2);
   let result: Record<string, string>;
@@ -64,6 +93,8 @@ async function main(): Promise<void> {
   else if (command === 'product' && a !== undefined && b !== undefined) result = await product(a, b, d ?? '');
   else if (command === 'place' && a !== undefined && b !== undefined) result = await place(a, b);
   else if (command === 'at' && a !== undefined && b !== undefined) result = await at(a, b);
+  else if (command === 'receive' && a !== undefined && b !== undefined && d !== undefined) result = await receive(a, b, d);
+  else if (command === 'order' && a !== undefined && b !== undefined && d !== undefined) result = await order(a, b, d);
   else throw new Error('usage: stock-fixtures ledger on|off | product <tag> <quantity> [<place>] | place <code> <name> | at <product name> <place>');
   process.stdout.write(`FIXTURE ${JSON.stringify(result)}\n`);
 }
@@ -82,6 +113,8 @@ export const stockedProduct = (tag: string, quantity: number, place = ''): { nam
   return { name: made.name ?? '', id: made.id ?? '' };
 };
 export const makePlace = (code: string, name: string): string => stockTool('place', code, name).id ?? '';
+export const receiveStock = (productId: string, quantity: number, place: string): void => void stockTool('receive', productId, String(quantity), place);
+export const placeOrder = (tag: string, productId: string, quantity: number): string => stockTool('order', tag, productId, String(quantity)).orderNumber ?? '';
 export const quantityAt = (productName: string, place: string): number => Number(stockTool('at', productName, place).quantity ?? '0');
 
 if (process.argv[1]?.endsWith('stock-fixtures.ts') === true) {

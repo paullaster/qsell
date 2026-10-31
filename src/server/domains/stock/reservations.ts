@@ -4,6 +4,8 @@ import { products, stockBalances, stockLocations, stockReservations } from '@/se
 import { planSourcing, mergeLines, type SourcingLine } from '@/lib/stock-sourcing';
 import type { SalesChannel } from '@/lib/stock';
 import type { StockLedger } from './ledger';
+import type { DecisionLog } from '@/server/kernel/decision-log/service';
+import { StockError } from './errors';
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 const round = (n: number): number => Math.round(n * 1000) / 1000;
@@ -54,6 +56,7 @@ export class StockReservations {
   constructor(
     private readonly db: DrizzleDb,
     private readonly ledger: StockLedger,
+    private readonly decisionLog?: DecisionLog,
   ) {}
 
   async reserve(input: ReserveInput): Promise<ReserveResult> {
@@ -229,6 +232,97 @@ export class StockReservations {
 
   async release(input: SettleInput & { reason: string; expired?: boolean }): Promise<{ released: number }> {
     return await this.db.transaction((tx) => this.releaseIn(tx, input));
+  }
+
+  /**
+   * Moves a product's open holds on a document to another location, before anything is picked: the holds at the old places are given
+   * back with the reason and the same quantity is held at the new one, in one transaction, only if the new place can cover it. The old
+   * and the new hold both stay on record; the history says who moved it, from where, and why.
+   */
+  async resource(input: { companyId: string; refType: string; refId: string; productId: string; toLocationId: string; reason: string; actor: string }): Promise<{ moved: number }> {
+    const reason = input.reason.trim();
+    if (reason === '') throw new StockError('Say why the stock is being taken from somewhere else.', 'REASON_NEEDED');
+    if (reason.length > 300) throw new StockError('Keep the reason to 300 characters.', 'REASON_TOO_LONG');
+    return await this.db.transaction(async (tx) => {
+      const holds = await tx
+        .select()
+        .from(stockReservations)
+        .where(and(eq(stockReservations.refType, input.refType), eq(stockReservations.refId, input.refId), eq(stockReservations.productId, input.productId), inArray(stockReservations.state, [...OPEN])))
+        .orderBy(asc(stockReservations.locationId), asc(stockReservations.shard))
+        .for('update');
+      const moving = holds.filter((h) => h.locationId !== input.toLocationId);
+      if (holds.length === 0) throw new StockError('That product has no stock held for this order that can be moved.', 'NO_HOLD');
+      if (moving.length === 0) throw new StockError('The stock for that product is already held there.', 'ALREADY_THERE');
+      const [target] = await tx.select().from(stockLocations).where(and(eq(stockLocations.id, input.toLocationId), eq(stockLocations.companyId, input.companyId))).limit(1);
+      if (target === undefined) throw new StockError('That location could not be found.', 'NOT_FOUND');
+      const recorded = (holds[0]?.sourcing as { channel?: unknown } | undefined)?.channel;
+      const channel = typeof recorded === 'string' ? recorded : 'ecommerce';
+      if (!target.isActive || !target.isSellable || !target.sellsChannels.includes(channel)) {
+        throw new StockError(`${target.name} cannot supply this order: it is stopped, or it does not sell to this channel.`, 'CANNOT_SUPPLY');
+      }
+      const amount = round(moving.reduce((sum, h) => sum + (h.quantity - h.consumed - h.released), 0));
+      const places = [...new Set([...moving.map((h) => h.locationId), target.id])];
+      const rows = await tx
+        .select()
+        .from(stockBalances)
+        .where(and(eq(stockBalances.productId, input.productId), inArray(stockBalances.locationId, places)))
+        .orderBy(asc(stockBalances.locationId), asc(stockBalances.shard))
+        .for('update');
+      const shards = rows.filter((r) => r.locationId === target.id).map((r) => ({ shard: r.shard, free: round(r.onHand - r.reserved) })).sort((x, y) => (y.free === x.free ? x.shard - y.shard : y.free - x.free));
+      const free = round(shards.reduce((sum, s) => sum + Math.max(0, s.free), 0));
+      if (free < amount) throw new StockError(`${target.name} has ${String(free)} free of this product, and ${String(amount)} is needed.`, 'INSUFFICIENT');
+
+      const fromCodes: string[] = [];
+      for (const h of moving) {
+        const left = round(h.quantity - h.consumed - h.released);
+        await tx
+          .update(stockBalances)
+          .set({ reserved: sql`GREATEST(${stockBalances.reserved} - ${left}, 0)`, version: sql`${stockBalances.version} + 1`, updatedAt: sql`now()` })
+          .where(and(eq(stockBalances.productId, h.productId), eq(stockBalances.locationId, h.locationId), eq(stockBalances.shard, h.shard)));
+        await tx
+          .update(stockReservations)
+          .set({ released: sql`${stockReservations.released} + ${left}`, state: h.consumed > 0 ? 'consumed' : 'released', reason: `re-sourced: ${reason}`.slice(0, 300), stateChangedAt: sql`now()` })
+          .where(eq(stockReservations.id, h.id));
+        const [from] = await tx.select({ code: stockLocations.code }).from(stockLocations).where(eq(stockLocations.id, h.locationId)).limit(1);
+        fromCodes.push(from?.code ?? '?');
+      }
+      let left = amount;
+      for (const s of shards) {
+        if (left <= 0) break;
+        const take = Math.min(left, Math.max(0, s.free));
+        if (take <= 0) continue;
+        await tx
+          .update(stockBalances)
+          .set({ reserved: sql`${stockBalances.reserved} + ${take}`, version: sql`${stockBalances.version} + 1`, updatedAt: sql`now()` })
+          .where(and(eq(stockBalances.productId, input.productId), eq(stockBalances.locationId, target.id), eq(stockBalances.shard, s.shard)));
+        await tx
+          .insert(stockReservations)
+          .values({
+            companyId: input.companyId,
+            productId: input.productId,
+            locationId: target.id,
+            shard: s.shard,
+            refType: input.refType,
+            refId: input.refId,
+            refLineId: input.productId,
+            quantity: take,
+            expiresAt: moving[0]?.expiresAt ?? null,
+            sourcing: { rule: 're_sourced', channel, from: fromCodes, reason, locationCode: target.code },
+            actor: input.actor.slice(0, 200),
+          })
+          .onConflictDoUpdate({
+            target: [stockReservations.refType, stockReservations.refId, stockReservations.refLineId, stockReservations.productId, stockReservations.locationId, stockReservations.shard],
+            targetWhere: sql`${stockReservations.state} IN ('held','partly_consumed')`,
+            set: { quantity: sql`${stockReservations.quantity} + ${take}`, stateChangedAt: sql`now()` },
+          });
+        left = round(left - take);
+      }
+      await this.decisionLog?.record(
+        { companyId: input.companyId, subject: { type: input.refType, id: input.refId }, action: 'stock.hold.re_sourced', actor: { type: 'user', id: input.actor }, from: fromCodes.join(', '), to: target.code, reason: { text: reason }, outcome: { productId: input.productId, quantity: amount } },
+        tx,
+      );
+      return { moved: amount };
+    });
   }
 
   /**
