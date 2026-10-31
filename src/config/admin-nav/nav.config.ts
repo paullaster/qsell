@@ -336,6 +336,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         icon: 'Layers',
         permission: 'inventory:read',
       },
+      {
+        id: 'stock-locations',
+        title: 'Stock locations',
+        name: 'stock-locations',
+        href: '/admin/inventory/locations',
+        description: 'The warehouses, shops and vans that hold your stock',
+        icon: 'Store',
+        permission: 'stock:read',
+      },
     ],
   },
   {

@@ -144,3 +144,23 @@ export function checkCountEntries(raw: unknown): CheckedLines {
   }
   return { ok: true, lines };
 }
+
+/** A transfer's state in the words a person uses, and how loudly to say it. */
+export const TRANSFER_STATE_WORDS: Record<TransferState, { label: string; tone: 'gray' | 'sky' | 'amber' | 'green' | 'red' }> = {
+  draft: { label: 'Draft', tone: 'gray' },
+  requested: { label: 'Waiting to be sent', tone: 'amber' },
+  approved: { label: 'Approved, waiting to be sent', tone: 'sky' },
+  shipped: { label: 'On its way', tone: 'sky' },
+  partly_received: { label: 'Partly received', tone: 'amber' },
+  received: { label: 'Received', tone: 'green' },
+  closed: { label: 'Closed, some stock lost or sent back', tone: 'amber' },
+  cancelled: { label: 'Cancelled', tone: 'gray' },
+};
+
+export const COUNT_STATE_WORDS: Record<CountState, { label: string; tone: 'gray' | 'sky' | 'amber' | 'green' | 'red' }> = {
+  counting: { label: 'Being counted', tone: 'sky' },
+  counted: { label: 'Counted, waiting to be posted', tone: 'amber' },
+  approved: { label: 'Approved, waiting to be posted', tone: 'sky' },
+  posted: { label: 'Posted', tone: 'green' },
+  cancelled: { label: 'Cancelled', tone: 'gray' },
+};

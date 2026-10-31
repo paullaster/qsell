@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   COUNT_STATES,
+  COUNT_STATE_WORDS,
   TRANSFER_STATES,
+  TRANSFER_STATE_WORDS,
   canCountMove,
   canTransferMove,
   checkCountEntries,
@@ -116,5 +118,12 @@ describe('a count’s variance', () => {
     expect(countNeedsApproval(v, 0)).toBe(false);
     expect(countNeedsApproval(v, 36.5)).toBe(false);
     expect(countNeedsApproval(v, 36.49)).toBe(true);
+  });
+});
+
+describe('the words for states', () => {
+  it('say something plain for every state there is', () => {
+    for (const s of TRANSFER_STATES) expect(TRANSFER_STATE_WORDS[s].label.length, s).toBeGreaterThan(3);
+    for (const s of COUNT_STATES) expect(COUNT_STATE_WORDS[s].label.length, s).toBeGreaterThan(3);
   });
 });

@@ -340,6 +340,54 @@ export const PERMISSIONS = {
     category: 'Products & Inventory',
     description: 'Receive, write off, and audit stock',
   },
+  'stock:read': {
+    resource: 'stock',
+    action: 'read',
+    category: 'Products & Inventory',
+    description: 'See stock by location, and the transfers and counts of stock between and within them',
+  },
+  'stock:locations_manage': {
+    resource: 'stock',
+    action: 'locations_manage',
+    category: 'Products & Inventory',
+    description: 'Add, change, stop and restart the places stock is held (warehouses, shops, vans)',
+  },
+  'stock:transfer_request': {
+    resource: 'stock',
+    action: 'transfer_request',
+    category: 'Products & Inventory',
+    description: 'Ask for stock to be moved from one location to another, and change or cancel such a request',
+  },
+  'stock:transfer_approve': {
+    resource: 'stock',
+    action: 'transfer_approve',
+    category: 'Products & Inventory',
+    description: 'Approve a stock transfer that someone else asked for',
+  },
+  'stock:transfer_ship': {
+    resource: 'stock',
+    action: 'transfer_ship',
+    category: 'Products & Inventory',
+    description: 'Send a stock transfer from its location, and settle stock that did not arrive',
+  },
+  'stock:transfer_receive': {
+    resource: 'stock',
+    action: 'transfer_receive',
+    category: 'Products & Inventory',
+    description: 'Record what arrived of a stock transfer',
+  },
+  'stock:count': {
+    resource: 'stock',
+    action: 'count',
+    category: 'Products & Inventory',
+    description: 'Open a stock count, enter counted quantities and hand the count in',
+  },
+  'stock:count_approve': {
+    resource: 'stock',
+    action: 'count_approve',
+    category: 'Products & Inventory',
+    description: 'Approve and post a stock count, which changes the stock to what was counted',
+  },
 
   'taxes:manage': {
     resource: 'taxes',
