@@ -2,7 +2,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { stockDocumentLines, stockDocuments, stockLocations, stockSettings, type StockDocumentLineRow, type StockDocumentRow } from '@/server/db/drizzle/schema';
 import { COUNT_MODES, MAX_DOCUMENT_LINES, checkCountEntries, countNeedsApproval, countVariance, varianceValue, type CountMode } from '@/lib/stock-documents';
 import { StockError } from './errors';
-import { cleanReason, documentLines, journalChange, lockDocument, logStep, mustBe, nextNumber, productFacts, touch, unitProblem, type DocActor, type DocumentDeps, type Tx } from './documents';
+import { cleanReason, documentLines, journalChange, lockDocument, logStep, mustBe, nextNumber, productFacts, requireLedger, touch, unitProblem, type DocActor, type DocumentDeps, type Tx } from './documents';
 
 const round = (n: number): number => Math.round(n * 1000) / 1000 + 0;
 /** A whole-location count lists every product with stock there; more than this should be counted in parts (cycle counts). */
@@ -71,6 +71,7 @@ export class CountService {
     const note = typeof input.note === 'string' ? input.note.trim() : '';
     if (note.length > 500) throw new StockError('Keep the note to 500 characters.', 'NOTE_TOO_LONG');
     return await this.deps.db.transaction(async (tx) => {
+      await requireLedger(tx);
       const [loc] = await tx.select().from(stockLocations).where(and(eq(stockLocations.id, input.locationId), eq(stockLocations.companyId, companyId))).limit(1);
       if (loc === undefined) throw new StockError('That location could not be found.', 'NOT_FOUND');
       if (!loc.isActive || loc.kind === 'transit') throw new StockError(`${loc.name} cannot be counted.`, 'INACTIVE');
@@ -206,6 +207,7 @@ export class CountService {
   /** Makes the differences real: one count_variance movement per product that differs, and the matching journal line. */
   async post(companyId: string, actor: DocActor, id: string): Promise<{ adjusted: number }> {
     return await this.deps.db.transaction(async (tx) => {
+      await requireLedger(tx);
       const doc = await lockDocument(tx, companyId, id, 'count');
       mustBe(doc, ['counted', 'approved'], 'posted');
       const lines = await documentLines(tx, id);

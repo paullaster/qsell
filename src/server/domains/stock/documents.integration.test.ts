@@ -77,6 +77,19 @@ describe.skipIf(!has(url))('transfers and counts (database)', () => {
     await settleFinanceBacklog(c.finance);
   }, 120_000);
 
+  describe('before the new ledger is the truth', () => {
+    it('refuses transfers and counts, in words, and moves nothing', async () => {
+      await c.stockSettings.setLedgerMode(companyId, false);
+      try {
+        const p = await newProduct(0);
+        expect(await codeOf(c.stockTransfers.create(companyId, alice, { fromLocationId: main, toLocationId: shop, lines: [{ productId: p, quantity: 1 }] }))).toBe('LEDGER_OFF');
+        expect(await codeOf(c.stockCounts.open(companyId, alice, { locationId: main, mode: 'cycle', productIds: [p] }))).toBe('LEDGER_OFF');
+      } finally {
+        await c.stockSettings.setLedgerMode(companyId, true, { requireCleanShadow: false });
+      }
+    });
+  });
+
   describe('making a transfer', () => {
     it('is a numbered draft with its lines, and nothing moves yet', async () => {
       const p = await newProduct(10);

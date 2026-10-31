@@ -5,6 +5,7 @@ import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { NumberSeriesService } from '@/server/kernel/numbering/service';
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import { quantityProblem } from '@/lib/unit-rules';
+import { isLedgerModeIn } from './settings';
 import { StockError } from './errors';
 import type { StockLedger } from './ledger';
 
@@ -131,4 +132,14 @@ export async function journalChange(tx: Tx, input: { productId: string; delta: n
     actor: input.actor.slice(0, 200),
     note: input.note.slice(0, 250),
   });
+}
+
+/**
+ * Transfers and counts move stock in the per-location ledger. Until that ledger is the truth (the cut-over), the old counters are, and
+ * a movement made only in the ledger would split the two. So they wait.
+ */
+export async function requireLedger(tx: Tx): Promise<void> {
+  if (!(await isLedgerModeIn(tx))) {
+    throw new StockError('Transfers and counts work on the new stock ledger, which is not switched on for this company yet.', 'LEDGER_OFF');
+  }
 }

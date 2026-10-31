@@ -345,6 +345,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         icon: 'Store',
         permission: 'stock:read',
       },
+      {
+        id: 'stock-transfers',
+        title: 'Stock transfers',
+        name: 'stock-transfers',
+        href: '/admin/inventory/transfers',
+        description: 'Move stock between warehouses, shops and vans, and follow it on its way',
+        icon: 'Layers',
+        permission: 'stock:read',
+      },
     ],
   },
   {

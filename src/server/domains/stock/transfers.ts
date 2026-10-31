@@ -2,7 +2,7 @@ import { and, asc, eq, sql } from 'drizzle-orm';
 import { stockBalances, stockDocumentLines, stockDocuments, stockLocations, stockSettings, type StockDocumentLineRow, type StockDocumentRow } from '@/server/db/drizzle/schema';
 import { checkTransferLines, inTransit, stateAfterMovement } from '@/lib/stock-documents';
 import { StockError } from './errors';
-import { cleanReason, documentLines, journalChange, lockDocument, logStep, mustBe, nextNumber, productFacts, touch, unitProblem, type DocActor, type DocumentDeps, type Tx } from './documents';
+import { cleanReason, documentLines, journalChange, lockDocument, logStep, mustBe, nextNumber, productFacts, requireLedger, touch, unitProblem, type DocActor, type DocumentDeps, type Tx } from './documents';
 
 const round = (n: number): number => Math.round(n * 1000) / 1000 + 0;
 
@@ -55,6 +55,7 @@ export class TransferService {
 
   async create(companyId: string, actor: DocActor, input: TransferInput): Promise<{ id: string; number: string }> {
     return await this.deps.db.transaction(async (tx) => {
+      await requireLedger(tx);
       const c = await this.checkedInput(tx, companyId, input);
       const id = crypto.randomUUID();
       const number = await nextNumber(this.deps, tx, 'stock_transfer', companyId, id);
@@ -127,6 +128,7 @@ export class TransferService {
    */
   async ship(companyId: string, actor: DocActor, id: string, shipLines?: { lineId: string; quantity: number }[]): Promise<{ transitLocationId: string }> {
     return await this.deps.db.transaction(async (tx) => {
+      await requireLedger(tx);
       const doc = await lockDocument(tx, companyId, id, 'transfer');
       mustBe(doc, ['requested', 'approved'], 'shipped');
       const [settings] = await tx.select({ approval: stockSettings.transferRequiresApproval }).from(stockSettings).where(eq(stockSettings.companyId, companyId)).limit(1);
@@ -183,6 +185,7 @@ export class TransferService {
   /** Records what arrived, in whole or in part, moving it from the transit location into the receiving location. */
   async receive(companyId: string, actor: DocActor, id: string, entries: { lineId: string; quantity: number }[]): Promise<{ state: string }> {
     return await this.deps.db.transaction(async (tx) => {
+      await requireLedger(tx);
       const doc = await lockDocument(tx, companyId, id, 'transfer');
       mustBe(doc, ['shipped', 'partly_received'], 'received');
       const to = await this.place(tx, companyId, doc.toLocationId ?? '', 'receiving');
@@ -220,6 +223,7 @@ export class TransferService {
    */
   async resolve(companyId: string, actor: DocActor, id: string, entries: { lineId: string; quantity: number; action: 'write_off' | 'return_to_source' }[], reason: unknown): Promise<{ state: string }> {
     return await this.deps.db.transaction(async (tx) => {
+      await requireLedger(tx);
       const doc = await lockDocument(tx, companyId, id, 'transfer');
       mustBe(doc, ['shipped', 'partly_received'], 'settled');
       const why = cleanReason(reason, 'the stock did not arrive');

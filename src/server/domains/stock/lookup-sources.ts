@@ -1,5 +1,4 @@
-import { and, eq, ne, sql, type SQL } from 'drizzle-orm';
-import { isNull } from 'drizzle-orm';
+import { and, eq, isNull, ne, sql, type SQL } from 'drizzle-orm';
 import { products, stockLocations } from '@/server/db/drizzle/schema';
 import { LOCATION_KINDS, isSalesChannel } from '@/lib/stock';
 import { COUNT_STATES, COUNT_STATE_WORDS, TRANSFER_STATES, TRANSFER_STATE_WORDS } from '@/lib/stock-documents';

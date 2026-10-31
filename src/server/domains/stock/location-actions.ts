@@ -39,6 +39,8 @@ const fieldsOf = (raw: unknown): LocationInput => {
 /** The locations a page at a time, each with whether it holds stock, so the screen can say why one cannot be stopped. One query for the page, not one per row. */
 export async function stockLocationsPageAction(input: unknown) {
   return await runStock('stock:read', async (ctx) => {
+    // Every company has a default location. A company set up after the migration has none until something makes it, so the list does.
+    await getContainer().stockLocations.ensureDefault(ctx.companyId);
     const i = objectOf(input);
     const query = searchText({ query: typeof i.query === 'string' ? i.query : '' });
     const status = i.status === 'stopped' || i.status === 'all' ? i.status : 'active';

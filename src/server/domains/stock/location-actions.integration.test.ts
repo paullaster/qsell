@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { has } from '@/lib/values';
 import type * as mod_server_di_container from '@/server/di/container';
 import type * as mod_server_db_drizzle_client from '@/server/db/drizzle/client';
@@ -30,6 +30,8 @@ describe.skipIf(!has(url))('stock location actions (database)', () => {
   let companyId: string;
   let branchId: string;
   let main: string;
+  // Products made to put stock straight into the ledger, which the old counters do not know: removed at the end so they are no noise to other files' comparisons.
+  const made: string[] = [];
   const code = () => `LA${randomUUID().slice(0, 8)}`.toUpperCase();
   const fail = async (p: Promise<{ ok: boolean; error?: string }>) => {
     const r = await p;
@@ -60,6 +62,7 @@ describe.skipIf(!has(url))('stock location actions (database)', () => {
     main = (await c.stockLocations.ensureDefault(companyId)).id;
   });
   afterAll(async () => {
+    if (made.length > 0) await db.delete(schema.products).where(inArray(schema.products.id, made));
     await settleFinanceBacklog(c.finance);
   }, 120_000);
   beforeEach(() => {
@@ -162,6 +165,7 @@ describe.skipIf(!has(url))('stock location actions (database)', () => {
     it('says why a place cannot be stopped: it is the default, or it holds or has promised stock', async () => {
       const loc = await created();
       const prod = `prod_la_${randomUUID()}`;
+      made.push(prod);
       const it = `it_la_${randomUUID().slice(0, 6)}`;
       await db.insert(schema.itemTypes).values({ id: it, code: Math.floor(Math.random() * 1e9), name: it });
       await db.insert(schema.products).values({ id: prod, sku: `LA-${randomUUID().slice(0, 8)}`.toUpperCase(), stockCode: `LAS-${randomUUID().slice(0, 8)}`.toUpperCase(), name: 'Placed', slug: `la-${randomUUID()}`, itemTypeId: it, price: '1', stockQuantity: 0 });
