@@ -1,4 +1,5 @@
 import type { NextRequest } from 'next/server';
+import { withShopAvailability } from '@/server/domains/catalog/shop-availability';
 import { withShopPrices } from '@/server/domains/catalog/shop-prices';
 import { CatalogService } from '@/server/domains/catalog/service';
 import { publicStoreProduct } from '@/server/domains/catalog/public-store-product';
@@ -28,7 +29,7 @@ export async function GET(
     if (product === undefined) {
       return Response.json({ error: 'Product not found.' }, { status: 404, headers });
     }
-    const priced = (await withShopPrices([product]))[0];
+    const priced = (await withShopPrices(await withShopAvailability([product])))[0];
     if (priced === undefined) {
       return Response.json({ error: 'Product not found.' }, { status: 404, headers });
     }

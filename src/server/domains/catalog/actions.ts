@@ -1,5 +1,6 @@
 'use server';
 
+import { withShopAvailability } from './shop-availability';
 import { AccessDeniedError, requirePermission } from '@/server/domains/access-control/guard';
 import { revalidatePath } from 'next/cache';
 import { randomUUID } from 'node:crypto';
@@ -40,7 +41,7 @@ export async function listProductsAction(): Promise<Product[]> {
 
 /** Active, sellable catalog for the customer storefront. */
 export async function listSellableProductsAction(): Promise<PublicProduct[]> {
-  return CatalogService.getSellableProducts();
+  return await withShopAvailability(await CatalogService.getSellableProducts());
 }
 
 /** Staff lookup — returns the full record, including cost. */
@@ -51,7 +52,8 @@ export async function getProductAction(id: string): Promise<Product | null> {
 
 /** Public lookup — published, sellable products only, without staff-only fields. */
 export async function getPublicProductAction(id: string): Promise<PublicProduct | null> {
-  return (await CatalogService.getPublicProduct(id)) ?? null;
+  const product = await CatalogService.getPublicProduct(id);
+  return product === undefined ? null : ((await withShopAvailability([product]))[0] ?? null);
 }
 
 /** A product rule that was not met, or a code or slug already taken, in words for the person. */
