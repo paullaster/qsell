@@ -144,10 +144,37 @@ export class StockShadow {
   }
 
   /**
+   * Turns the orders reserved the old way (a count on the product and a line in the old journal, with no later settlement) into holds in
+   * the reservation ledger, at the default location. Without this an order paid after the switch would find nothing to issue and its
+   * stock would never leave. The balances already carry the counters' reserved quantity, so this changes no balance; it gives each
+   * promise a life. Safe to repeat: a promise already converted is left alone.
+   */
+  async convertLegacyHolds(executor: Pick<DrizzleDb, 'execute'>, companyId: string, locationId: string): Promise<number> {
+    const rows = [...(await executor.execute<Row>(sql`
+      INSERT INTO stock_reservations (company_id, product_id, location_id, shard, purpose, ref_type, ref_id, ref_line_id, quantity, state, sourcing, actor, created_at, state_changed_at)
+      SELECT ${companyId}::uuid, r.product_id, ${locationId}::uuid, 0, 'order_line', 'order', r.reference_id, r.product_id, r.qty, 'held',
+             '{"rule":"migrated_from_counters"}'::jsonb, 'migration', r.first_at, r.first_at
+      FROM (
+        SELECT im.reference_id, im.product_id, sum(-im.change_amount) AS qty, min(im.created_at) AS first_at
+        FROM inventory_movements im
+        WHERE im.change_type = 'order_reservation'
+          AND NOT EXISTS (
+            SELECT 1 FROM inventory_movements s
+            WHERE s.reference_id = im.reference_id AND s.product_id = im.product_id AND s.change_type IN ('order_fulfillment', 'order_cancellation_release'))
+        GROUP BY im.reference_id, im.product_id
+      ) r
+      WHERE r.qty > 0 AND EXISTS (SELECT 1 FROM products p WHERE p.id = r.product_id)
+      ON CONFLICT (ref_type, ref_id, ref_line_id, product_id, location_id, shard) WHERE state IN ('held', 'partly_consumed') DO NOTHING
+      RETURNING id`))];
+    return rows.length;
+  }
+
+  /**
    * Proves the new ledger agrees with the old counters. Never changes anything. `productIds` limits the check to those products
    * (for a spot check and for tests); without it every product is checked.
    */
-  async compare(options: { productIds?: readonly string[] } = {}): Promise<ShadowReport> {
+  async compare(options: { productIds?: readonly string[]; holds?: boolean; journal?: boolean; executor?: Pick<DrizzleDb, 'execute'> } = {}): Promise<ShadowReport> {
+    const db = options.executor ?? this.db;
     const sample: ShadowProblem[] = [];
     const take = (kind: ShadowProblem['kind'], rows: Row[]) => {
       for (const r of rows) {
@@ -161,20 +188,20 @@ export class StockShadow {
       if (ids.length === 0) return sql`FALSE`;
       return sql`${sql.raw(column)} IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`;
     };
-    const [total] = [...(await this.db.execute<Row>(sql`SELECT count(*)::int AS n FROM products p WHERE ${only('p.id')}`))];
-    const onHand = [...(await this.db.execute<Row>(sql`
+    const [total] = [...(await db.execute<Row>(sql`SELECT count(*)::int AS n FROM products p WHERE ${only('p.id')}`))];
+    const onHand = [...(await db.execute<Row>(sql`
       SELECT p.id AS product_id, p.stock_quantity AS expected, COALESCE(sum(b.on_hand), 0) AS found
       FROM products p LEFT JOIN stock_balances b ON b.product_id = p.id
       WHERE ${only('p.id')}
       GROUP BY p.id HAVING p.stock_quantity <> COALESCE(sum(b.on_hand), 0)
       ORDER BY p.id LIMIT 1000`))];
-    const reserved = [...(await this.db.execute<Row>(sql`
+    const reserved = [...(await db.execute<Row>(sql`
       SELECT p.id AS product_id, p.reserved_quantity AS expected, COALESCE(sum(b.reserved), 0) AS found
       FROM products p LEFT JOIN stock_balances b ON b.product_id = p.id
       WHERE ${only('p.id')}
       GROUP BY p.id HAVING p.reserved_quantity <> COALESCE(sum(b.reserved), 0)
       ORDER BY p.id LIMIT 1000`))];
-    const ledger = [...(await this.db.execute<Row>(sql`
+    const ledger = [...(await db.execute<Row>(sql`
       SELECT COALESCE(m.product_id, b.product_id) AS product_id, COALESCE(m.location_id, b.location_id) AS location_id,
              COALESCE(m.total, 0) AS expected, COALESCE(b.total, 0) AS found
       FROM (SELECT product_id, location_id, sum(quantity) AS total FROM stock_movements GROUP BY product_id, location_id) m
@@ -184,14 +211,17 @@ export class StockShadow {
         AND EXISTS (SELECT 1 FROM products p WHERE p.id = COALESCE(m.product_id, b.product_id))
         AND ${only('COALESCE(m.product_id, b.product_id)')}
       ORDER BY 1 LIMIT 1000`))];
-    const negative = [...(await this.db.execute<Row>(sql`
+    const negative = [...(await db.execute<Row>(sql`
       SELECT b.product_id, b.location_id, 0 AS expected, sum(b.on_hand) AS found
       FROM stock_balances b JOIN stock_locations l ON l.id = b.location_id
       WHERE NOT l.allow_negative AND ${only('b.product_id')} GROUP BY b.product_id, b.location_id HAVING sum(b.on_hand) < 0
       ORDER BY 1 LIMIT 1000`))];
-    const ledgerMode = (await this.db.select({ l: stockSettings.ledgerMode }).from(stockSettings).where(sql`${stockSettings.companyId} = stock_current_company()`).limit(1))[0]?.l === true;
-    const holds = ledgerMode
-      ? [...(await this.db.execute<Row>(sql`
+    const mode = [...(await db.execute<{ ledger_mode: boolean }>(sql`SELECT ledger_mode FROM stock_settings WHERE company_id = stock_current_company()`))][0]?.ledger_mode === true;
+    // The holds and the old journal are checked once the ledger is the truth, or when asked (the cut-over asks).
+    const checkHolds = options.holds ?? mode;
+    const checkJournal = options.journal ?? mode;
+    const holds = checkHolds
+      ? [...(await db.execute<Row>(sql`
           SELECT COALESCE(r.product_id, b.product_id) AS product_id, COALESCE(r.location_id, b.location_id) AS location_id,
                  COALESCE(r.total, 0) AS expected, COALESCE(b.total, 0) AS found
           FROM (SELECT product_id, location_id, sum(quantity - consumed - released) AS total FROM stock_reservations WHERE state IN ('held', 'partly_consumed') GROUP BY product_id, location_id) r
@@ -200,17 +230,17 @@ export class StockShadow {
           WHERE COALESCE(r.total, 0) <> COALESCE(b.total, 0) AND ${only('COALESCE(r.product_id, b.product_id)')}
           ORDER BY 1 LIMIT 1000`))]
       : [];
-    const journal = ledgerMode
-      ? [...(await this.db.execute<Row>(sql`
+    const journal = checkJournal
+      ? [...(await db.execute<Row>(sql`
           SELECT p.id AS product_id,
                  COALESCE((SELECT sum(new_stock - previous_stock) FROM inventory_movements j
                            WHERE j.product_id = p.id AND j.change_type NOT IN ('order_reservation', 'order_cancellation_release', 'cost_change')), 0) AS expected,
-                 COALESCE((SELECT sum(quantity) FROM stock_movements m WHERE m.product_id = p.id), 0) AS found
+                 COALESCE((SELECT sum(quantity) FROM stock_movements m WHERE m.product_id = p.id AND NOT (m.movement_type = 'opening' AND m.migrated)), 0) AS found
           FROM products p
           WHERE ${only('p.id')}
             AND COALESCE((SELECT sum(new_stock - previous_stock) FROM inventory_movements j
                           WHERE j.product_id = p.id AND j.change_type NOT IN ('order_reservation', 'order_cancellation_release', 'cost_change')), 0)
-                <> COALESCE((SELECT sum(quantity) FROM stock_movements m WHERE m.product_id = p.id), 0)
+                <> COALESCE((SELECT sum(quantity) FROM stock_movements m WHERE m.product_id = p.id AND NOT (m.movement_type = 'opening' AND m.migrated)), 0)
           ORDER BY p.id LIMIT 1000`))]
       : [];
     take('on_hand_differs', onHand.slice(0, SAMPLE));

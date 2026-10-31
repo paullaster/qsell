@@ -792,6 +792,13 @@
       "when": 1793436490632,
       "tag": "0112_stock_permissions",
       "breakpoints": true
+    },
+    {
+      "idx": 113,
+      "version": "7",
+      "when": 1793457741658,
+      "tag": "0113_stock_integrity_runs",
+      "breakpoints": true
     }
   ]
 }

@@ -5,6 +5,8 @@
  *   tsx e2e/support/stock-fixtures.ts product <tag> <quantity> [<place code>]  a product with this much stock at a place (the default one if none)
  *   tsx e2e/support/stock-fixtures.ts place <code> <name>                  a stock location, if it is not there yet
  *   tsx e2e/support/stock-fixtures.ts at <product name> <place code>       how much of a product is at a place
+ *   tsx e2e/support/stock-fixtures.ts backfill                              bring every product across to the new ledger (the worker does this in a running shop)
+ *   tsx e2e/support/stock-fixtures.ts forget                               remove the products these fixtures made, so a check of the whole company is not about them
  *   tsx e2e/support/stock-fixtures.ts receive <product id> <quantity> <place code>  more stock of a product at a place
  *   tsx e2e/support/stock-fixtures.ts order <tag> <product id> <quantity>  an order for a product, placed the way the shop places it (the stock is held)
  */
@@ -59,6 +61,19 @@ async function at(name: string, code: string): Promise<Record<string, string>> {
   return { quantity: String(Number(row?.total ?? 0)) };
 }
 
+async function backfill(): Promise<Record<string, string>> {
+  const { c, companyId } = await container();
+  let finished = false;
+  for (let i = 0; i < 500 && !finished; i += 1) finished = (await c.stockShadow.backfillBatch(companyId, 100)).finished;
+  return { finished: finished ? 'yes' : 'no' };
+}
+
+async function forget(): Promise<Record<string, string>> {
+  const { db } = await container();
+  await db.execute(sql`DELETE FROM products WHERE id LIKE 'prod_stk_%'`);
+  return { done: 'yes' };
+}
+
 async function receive(productId: string, quantity: string, code: string): Promise<Record<string, string>> {
   const { c, db, companyId } = await container();
   const target = (await place(code, code)).id;
@@ -93,6 +108,8 @@ async function main(): Promise<void> {
   else if (command === 'product' && a !== undefined && b !== undefined) result = await product(a, b, d ?? '');
   else if (command === 'place' && a !== undefined && b !== undefined) result = await place(a, b);
   else if (command === 'at' && a !== undefined && b !== undefined) result = await at(a, b);
+  else if (command === 'backfill') result = await backfill();
+  else if (command === 'forget') result = await forget();
   else if (command === 'receive' && a !== undefined && b !== undefined && d !== undefined) result = await receive(a, b, d);
   else if (command === 'order' && a !== undefined && b !== undefined && d !== undefined) result = await order(a, b, d);
   else throw new Error('usage: stock-fixtures ledger on|off | product <tag> <quantity> [<place>] | place <code> <name> | at <product name> <place>');
@@ -113,6 +130,8 @@ export const stockedProduct = (tag: string, quantity: number, place = ''): { nam
   return { name: made.name ?? '', id: made.id ?? '' };
 };
 export const makePlace = (code: string, name: string): string => stockTool('place', code, name).id ?? '';
+export const backfillStock = (): void => void stockTool('backfill');
+export const forgetStockFixtures = (): void => void stockTool('forget');
 export const receiveStock = (productId: string, quantity: number, place: string): void => void stockTool('receive', productId, String(quantity), place);
 export const placeOrder = (tag: string, productId: string, quantity: number): string => stockTool('order', tag, productId, String(quantity)).orderNumber ?? '';
 export const quantityAt = (productName: string, place: string): number => Number(stockTool('at', productName, place).quantity ?? '0');

@@ -2512,6 +2512,27 @@ export type StockDocumentLineRow = typeof stockDocumentLines.$inferSelect;
 /** Whether the old stock counters are mirrored into the new ledger (the shadow of the migration), and how far the backfill has got. */
 export const stockSettings = pgTable('stock_settings', {
   companyId: uuid('company_id')
+/**
+ * Every time the new ledger was compared with the old counters: when, what it found, and why it ran (a person, the nightly job, or the
+ * cut-over itself). The newest one is what the cut-over screen shows, and what a person looks at before switching over.
+ */
+export const stockIntegrityRuns = pgTable(
+  'stock_integrity_runs',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    ranAt: timestamp('ran_at', { withTimezone: true }).notNull().defaultNow(),
+    trigger: text('trigger').notNull(),
+    ok: boolean('ok').notNull(),
+    /** The counts and the first few differences, as the comparison reported them. */
+    report: jsonb('report').$type<Record<string, unknown>>().notNull().default({}),
+    ranBy: text('ran_by'),
+  },
+  (t) => [index('stock_integrity_runs_company_idx').on(t.companyId, t.ranAt), check('stock_integrity_runs_trigger_chk', sql`${t.trigger} IN ('manual','nightly','cutover')`)],
+);
+
     .primaryKey()
     .references(() => companySettings.id, { onDelete: 'cascade' }),
   shadowWrite: boolean('shadow_write').notNull().default(false),

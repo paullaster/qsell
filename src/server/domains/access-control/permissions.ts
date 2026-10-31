@@ -382,6 +382,12 @@ export const PERMISSIONS = {
     category: 'Products & Inventory',
     description: 'Open a stock count, enter counted quantities and hand the count in',
   },
+  'stock:cutover': {
+    resource: 'stock',
+    action: 'cutover',
+    category: 'Products & Inventory',
+    description: 'Switch the company to the new per-location stock ledger, check it, and switch back',
+  },
   'stock:count_approve': {
     resource: 'stock',
     action: 'count_approve',

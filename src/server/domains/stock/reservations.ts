@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, lte, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { products, stockBalances, stockLocations, stockReservations } from '@/server/db/drizzle/schema';
+import { inventoryMovements, products, stockBalances, stockLocations, stockReservations } from '@/server/db/drizzle/schema';
 import { planSourcing, mergeLines, type SourcingLine } from '@/lib/stock-sourcing';
 import type { SalesChannel } from '@/lib/stock';
 import type { StockLedger } from './ledger';
@@ -148,6 +148,35 @@ export class StockReservations {
     return { ok: true, reserved };
   }
 
+  /**
+   * The old journal still has one line per product for an order that was issued or given back. The books are fed from it, and the old
+   * way uses it to know an order is already settled, so it must exist whichever way the order was settled. One line per product however
+   * many places it came from; a second call adds nothing.
+   */
+  private async journalSettlement(tx: Tx, orderId: string, actor: string, type: 'order_fulfillment' | 'order_cancellation_release', perProduct: Map<string, number>, note: string): Promise<void> {
+    for (const [productId, quantity] of perProduct) {
+      if (quantity <= 0) continue;
+      const [p] = await tx.select({ name: products.name }).from(products).where(eq(products.id, productId)).limit(1);
+      const total = Number([...(await tx.execute<{ total: string }>(sql`SELECT COALESCE(sum(on_hand), 0) AS total FROM stock_balances WHERE product_id = ${productId}`))][0]?.total ?? 0);
+      const issued = type === 'order_fulfillment';
+      await tx
+        .insert(inventoryMovements)
+        .values({
+          id: `ledger_${crypto.randomUUID()}`,
+          productId,
+          productName: p?.name ?? '',
+          changeAmount: issued ? -quantity : quantity,
+          previousStock: issued ? round(total + quantity) : total,
+          newStock: total,
+          changeType: type,
+          referenceId: orderId,
+          actor: actor.slice(0, 200),
+          note: note.slice(0, 250),
+        })
+        .onConflictDoNothing();
+    }
+  }
+
   /** The open holds of a document, locked, in the same order reserve locks balances. */
   private async openHolds(tx: Tx, refType: string, refId: string) {
     return await tx
@@ -166,6 +195,7 @@ export class StockReservations {
   async consumeIn(tx: Tx, input: SettleInput): Promise<{ issued: number }> {
     const holds = await this.openHolds(tx, input.refType, input.refId);
     let issued = 0;
+    const perProduct = new Map<string, number>();
     for (const h of holds) {
       const left = round(h.quantity - h.consumed - h.released);
       if (left <= 0) continue;
@@ -202,7 +232,9 @@ export class StockReservations {
         .set({ consumed: sql`${stockReservations.consumed} + ${left}`, state: 'consumed', stateChangedAt: sql`now()`, reason: issue < left ? `short at issue: ${String(round(left - issue))} not on the shelf` : null })
         .where(eq(stockReservations.id, h.id));
       issued = round(issued + issue);
+      perProduct.set(h.productId, round((perProduct.get(h.productId) ?? 0) + issue));
     }
+    if (input.refType === 'order') await this.journalSettlement(tx, input.refId, input.actor, 'order_fulfillment', perProduct, `Fulfilled and finalized stock deduction for order ${input.refId}`);
     return { issued };
   }
 
@@ -214,6 +246,7 @@ export class StockReservations {
   async releaseIn(tx: Tx, input: SettleInput & { reason: string; expired?: boolean }): Promise<{ released: number }> {
     const holds = await this.openHolds(tx, input.refType, input.refId);
     let released = 0;
+    const perProduct = new Map<string, number>();
     for (const h of holds) {
       const left = round(h.quantity - h.consumed - h.released);
       if (left <= 0) continue;
@@ -226,7 +259,9 @@ export class StockReservations {
         .set({ released: sql`${stockReservations.released} + ${left}`, state: h.consumed > 0 ? 'consumed' : releasedState(input.expired === true), reason: input.reason.slice(0, 300), stateChangedAt: sql`now()` })
         .where(eq(stockReservations.id, h.id));
       released = round(released + left);
+      perProduct.set(h.productId, round((perProduct.get(h.productId) ?? 0) + left));
     }
+    if (input.refType === 'order') await this.journalSettlement(tx, input.refId, input.actor, 'order_cancellation_release', perProduct, `Released reservation for order ${input.refId}. ${input.reason}`.trim());
     return { released };
   }
 

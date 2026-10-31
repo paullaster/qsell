@@ -242,16 +242,15 @@ export const stockReservationExpiry = async (_payload: unknown, helpers: JobHelp
   helpers.logger.info(`Stock holds expired: ${String(expired.length)} documents, ${String(failed)} orders marked failed`);
 };
 
-/** Worker cron task: proves the per-location ledger agrees with the old stock counters, and says so loudly when it does not. */
+/** Worker cron task: proves the per-location ledger agrees with the old stock counters (while it is being filled and once it is the truth), keeps the result, and says so loudly when it does not. */
 export const stockShadowCheck = async (_payload: unknown, helpers: JobHelpers) => {
   const container = getContainer();
   const company = await container.companySettings.ensureSeeded();
-  const status = await container.stockShadow.status(company.id);
-  if (!status.shadowWrite || status.backfillDoneAt === null) return;
-  const r = await container.stockShadow.compare();
-  const bad = r.onHandDiffers + r.reservedDiffers + r.ledgerDiffers + r.negative + r.reservationsDiffer + r.journalDiffers;
-  if (bad > 0) helpers.logger.error(`Stock shadow MISMATCH: ${JSON.stringify({ ...r, sample: r.sample.slice(0, 10) })}`);
-  else helpers.logger.info(`Stock shadow agrees for ${String(r.products)} products`);
+  const status = await container.stockCutover.status(company.id);
+  if (status.mode === 'off' || (status.mode === 'shadow' && !status.backfillDone)) return;
+  const { ok, report } = await container.stockCutover.check(company.id, 'nightly', null);
+  if (!ok) helpers.logger.error(`Stock ledger MISMATCH: ${JSON.stringify({ ...report, sample: report.sample.slice(0, 10) })}`);
+  else helpers.logger.info(`Stock ledger agrees for ${String(report.products)} products`);
 };
 
 /** Worker cron task: orders that waited too long in a stage are recorded, mailed, escalated, and closed when they move on. */

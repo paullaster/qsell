@@ -364,6 +364,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'stock:read',
       },
       {
+        id: 'stock-ledger',
+        title: 'Stock ledger',
+        name: 'stock-ledger',
+        href: '/admin/inventory/ledger',
+        description: 'Move the company to stock kept place by place: start, check, switch, and go back',
+        icon: 'ShieldCheck',
+        permission: 'stock:cutover',
+      },
+      {
         id: 'stock-counts',
         title: 'Stock counts',
         name: 'stock-counts',
