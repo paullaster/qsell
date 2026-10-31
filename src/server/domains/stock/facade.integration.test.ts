@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { has } from '@/lib/values';
+import { settleFinanceBacklog } from './test-support';
 import type * as mod_server_di_container from '@/server/di/container';
 import type * as mod_server_db_drizzle_client from '@/server/db/drizzle/client';
 import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
@@ -60,7 +61,8 @@ describe.skipIf(!has(url))('the old stock operations on the ledger (database)', 
   });
   afterAll(async () => {
     await c.stockSettings.setLedgerMode(companyId, false);
-  });
+    await settleFinanceBacklog(c.finance);
+  }, 120_000);
 
   describe('a change of stock', () => {
     it('is a movement at the default location, with the old journal row beside it and the counters following', async () => {

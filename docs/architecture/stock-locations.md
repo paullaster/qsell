@@ -1,4 +1,4 @@
-# Stock per Location (L-0) — Module Design (L-0a, L-0b, L-0c BUILT)
+# Stock per Location (L-0) — Module Design (L-0a to L-0d BUILT)
 
 Status: **draft for correction**, written 2026-10-27. It is the prerequisite of the [delivery module](./delivery-module.md) (a delivery leaves a named location) and the "per-location stock ledger and balances" of Phase 2 in the [sales-order blueprint](./sales-order-blueprint.md) (§ stock, "where the scale fix lands"). It also touches [core-finance-module.md](./core-finance-module.md) (stock at cost in the books), [vendor-management-module.md](./vendor-management-module.md) (goods received, purchase returns), [pricing-module.md](./pricing-module.md) (kits) and [order-stage-timeline.md](./order-stage-timeline.md) (every stock stage of an order is timestamped).
 
@@ -496,3 +496,34 @@ Every old way of changing stock now goes through the ledger when the ledger is t
 **Verified.** Integration `facade.integration.test.ts` (16): a receipt, a count, a clamp, a change of nothing, a refusal below zero, a refusal to change holds, a piece that cannot be 2.5, every operation people use (receive, adjust, write off, count, bulk adjust), opening stock, the journal-ledger comparison clean and finding a planted difference, the product filter, the refusals and the go-ahead for switching the ledger on, and a rehearsal on a real product from the old way through the shadow to the new path. The full suite is run on a fresh database.
 
 **Next.** L-0d: transfers (a document with stock in transit) and counts, which bring the `stock_documents` tables. Then L-0e (screens, permissions, pickers, the order's stock panel), and L-0f (the cut-over, retiring the double write and the counters).
+
+
+## 21. L-0d as built (2026-10-30)
+
+Transfers with stock in transit, and counts. Still **no screen and no server action** (L-0e), and the ledger mode is still off by default, so nothing a shop does changes yet; the services work whenever the ledger is the truth.
+
+| What | Where |
+|---|---|
+| Tables `stock_documents` and `stock_document_lines`; the rule that a finished document and its lines never change and that documents are never deleted; `stock_transfer` number series | migration `0111_stock_documents.sql`, `document-kinds.ts` |
+| States, quantities in transit, count variance (pure) | `src/lib/stock-documents.ts` |
+| Transfers: create, change a draft, request, approve, cancel, ship, receive, resolve (lost or sent back) | `src/server/domains/stock/transfers.ts` (`container.stockTransfers`) |
+| Counts: open (full or cycle, blind or open), record, hand in, reopen, approve, post, cancel | `stock/counts.ts` (`container.stockCounts`) |
+| Shared locking, numbering, history and the old-journal line for a loss or a difference | `stock/documents.ts` |
+| Settings: a transfer needs approval before it ships; a count worth more than a limit needs a second person | `stock_settings.transfer_requires_approval`, `count_approval_value` |
+
+**Transfers.** A draft is numbered (`TRF-…`) and moves nothing. Shipping makes a transit location for that transfer (kind `transit`, not sellable, `TRN-<number>`), takes the stock out of the sender and puts it there in the same transaction, at the cost the line carries, so the company's total never dips and nothing is "nowhere". Stock promised to a customer cannot be shipped; the refusal says how much is free. Receiving moves what arrived from the transit location to the receiving location, in whole or in parts. What does not arrive is settled by writing it off (a `write_off` movement with the reason `lost_in_transit`, plus its line in the old journal so the books see the loss) or by sending it back. A transfer with nothing left on its way is `received`, or `closed` if anything was lost or sent back, and its transit location is stopped. A transfer cannot be cancelled once it has shipped. Approval, when the company asks for it, must be by someone other than the person who asked. A draft is changed only by someone who has seen its latest version.
+
+**Counts.** Opening a count records where the ledger stood (the highest movement id) and what each listed product should hold at the location at that point. A full count lists every product with stock there (up to 5,000; beyond that, count in parts); a cycle count lists the products chosen. Each counted figure keeps who counted it and when. The difference posted is the counted figure less what should have been there **at the moment of counting** (the snapshot plus what moved in the meantime up to that moment), so a sale made while counting is not a loss, and a sale made after the shelf was counted is not undone. A blind count hides the expected figures from the counter until the count is handed in. A count whose differences are worth more than the company's limit needs a second person who took no part in it. Posting writes one `count_variance` movement per product that differs, with the old journal line, in one transaction.
+
+**History.** Every step is a line in the decision log (`stock.transfer.*`, `stock.count.*`) with who, from-state, to-state and the reason, and the documents carry the time and the person of each step. Nothing is edited after the fact: a finished document is locked by the database.
+
+**Deviations and limits, stated plainly.**
+* **Approvals are the simple four-eyes rule** above, not the approvals engine; wiring it in is an option for L-0e if the company wants workflows.
+* **A transfer to or from a place with open reservations:** only the free part can ship; the reserved part stays.
+* **Snapshot ordering:** a count's snapshot is the highest movement id at the moment it opens. A movement that took an earlier id but commits later (a long transaction open at that instant) would be missed by both the expected figure and the "since" sum. The window is the length of such a transaction; it is the same trade-off every id-ordered consumer of the ledger makes.
+* **A product removed for good** (not just deleted) keeps its lines in old documents (no foreign key), as the movement ledger does.
+* **Receiving at a place stopped meanwhile** is refused, and the transfer waits.
+
+**Verified.** Unit `stock-documents.test.ts` (25). Integration `documents.integration.test.ts` (36): every refusal, the states, shipping less, a reservation blocking a shipment, approval by another person, cancelling, receiving in parts, two simultaneous receipts of the same stock (one wins), losses and send-backs with the journal agreeing, the database refusing to change a finished document, conservation over a random run of 24 transfers (the company owns the same except for what was written off), counts (expected figures, only differences posted, sales during counting, a real loss during sales, blind, extra products, who counted what, approval by a stranger, double posting) and another company seeing nothing.
+
+**Next.** L-0e: screens, permissions, location pickers, the order's stock panel and sourcing rules; then L-0f, the cut-over.

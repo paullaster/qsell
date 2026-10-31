@@ -54,6 +54,8 @@ import { StockLedger } from '@/server/domains/stock/ledger';
 import { StockAvailability } from '@/server/domains/stock/availability';
 import { StockShadow } from '@/server/domains/stock/shadow';
 import { StockSettingsService } from '@/server/domains/stock/settings';
+import { TransferService } from '@/server/domains/stock/transfers';
+import { CountService } from '@/server/domains/stock/counts';
 import { StockReservations } from '@/server/domains/stock/reservations';
 import { OrderSlaNotifier } from '@/server/domains/orders/sla-notifier';
 import { VendorBankChangeService } from '@/server/domains/vendors/bank-change-service';
@@ -155,6 +157,8 @@ export interface AppContainer {
   stockShadow: StockShadow;
   stockSettings: StockSettingsService;
   stockReservations: StockReservations;
+  stockTransfers: TransferService;
+  stockCounts: CountService;
   users: UserRepository;
   usersAdmin: UsersAdminRepository;
   accessControl: AccessControlService;
@@ -492,6 +496,8 @@ export function getContainer(): AppContainer {
     stockShadow: new StockShadow(drizzleDb, stockLocations),
     stockSettings: new StockSettingsService(drizzleDb, companySettings),
     stockReservations: new StockReservations(drizzleDb, stockLedger),
+    stockTransfers: new TransferService({ db: drizzleDb, ledger: stockLedger, numbering, decisionLog }),
+    stockCounts: new CountService({ db: drizzleDb, ledger: stockLedger, numbering, decisionLog }),
     users,
     usersAdmin,
     accessControl,

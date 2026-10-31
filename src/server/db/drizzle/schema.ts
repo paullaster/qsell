@@ -2412,6 +2412,103 @@ export const stockReservations = pgTable(
 );
 export type StockReservationRow = typeof stockReservations.$inferSelect;
 
+/**
+ * A transfer of stock between two locations, or a count of the stock at one. The state machine, every step's time and person, and
+ * the lines live here; the movements they cause are in the ledger. Design: docs/architecture/stock-locations.md §4.5 to §4.7.
+ */
+export const stockDocuments = pgTable(
+  'stock_documents',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    number: text('number').notNull(),
+    kind: text('kind').notNull(),
+    state: text('state').notNull(),
+    /** Transfer: where the stock leaves. Count: the location counted. */
+    fromLocationId: uuid('from_location_id').references(() => stockLocations.id, { onDelete: 'restrict' }),
+    toLocationId: uuid('to_location_id').references(() => stockLocations.id, { onDelete: 'restrict' }),
+    /** The system location that holds a transfer's stock while it is on its way; made when it ships. */
+    transitLocationId: uuid('transit_location_id').references(() => stockLocations.id, { onDelete: 'restrict' }),
+    countMode: text('count_mode'),
+    blind: boolean('blind').notNull().default(false),
+    /** The last movement in the ledger when a count was opened; what is "expected" is the ledger up to it. */
+    snapshotMovementId: bigint('snapshot_movement_id', { mode: 'number' }),
+    reasonCode: text('reason_code'),
+    note: text('note').notNull().default(''),
+    sourceType: text('source_type'),
+    sourceId: text('source_id'),
+    createdBy: text('created_by').notNull(),
+    requestedBy: text('requested_by'),
+    requestedAt: timestamp('requested_at', { withTimezone: true }),
+    approvedBy: text('approved_by'),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    shippedBy: text('shipped_by'),
+    shippedAt: timestamp('shipped_at', { withTimezone: true }),
+    lastReceivedAt: timestamp('last_received_at', { withTimezone: true }),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    postedBy: text('posted_by'),
+    postedAt: timestamp('posted_at', { withTimezone: true }),
+    cancelledBy: text('cancelled_by'),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    cancelReason: text('cancel_reason'),
+    /** Raised by every change, so two people editing the same draft cannot overwrite each other. */
+    version: integer('version').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('stock_documents_company_number_uidx').on(t.companyId, t.number),
+    index('stock_documents_kind_state_idx').on(t.companyId, t.kind, t.state, t.createdAt),
+    index('stock_documents_from_idx').on(t.fromLocationId),
+    index('stock_documents_to_idx').on(t.toLocationId),
+    index('stock_documents_open_transit_idx').on(t.transitLocationId).where(sql`${t.transitLocationId} IS NOT NULL`),
+    check('stock_documents_kind_chk', sql`${t.kind} IN ('transfer','count')`),
+    check('stock_documents_state_chk', sql`${t.state} IN ('draft','requested','approved','shipped','partly_received','received','closed','cancelled','counting','counted','posted')`),
+    check('stock_documents_transfer_places_chk', sql`${t.kind} <> 'transfer' OR (${t.fromLocationId} IS NOT NULL AND ${t.toLocationId} IS NOT NULL AND ${t.fromLocationId} <> ${t.toLocationId})`),
+    check('stock_documents_count_place_chk', sql`${t.kind} <> 'count' OR (${t.fromLocationId} IS NOT NULL AND ${t.countMode} IN ('cycle','full'))`),
+  ],
+);
+
+export const stockDocumentLines = pgTable(
+  'stock_document_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    documentId: uuid('document_id')
+      .notNull()
+      .references(() => stockDocuments.id, { onDelete: 'restrict' }),
+    lineNo: integer('line_no').notNull(),
+    /** No foreign key: a document's history outlives the product (as the movement ledger does). */
+    productId: text('product_id').notNull(),
+    /** Transfer: the quantity asked for. */
+    quantity: quantity('quantity').notNull().default(0),
+    shippedQuantity: quantity('shipped_quantity').notNull().default(0),
+    receivedQuantity: quantity('received_quantity').notNull().default(0),
+    writtenOffQuantity: quantity('written_off_quantity').notNull().default(0),
+    returnedQuantity: quantity('returned_quantity').notNull().default(0),
+    /** The cost the goods carry, frozen when the transfer ships or the count posts. */
+    unitCost: numeric('unit_cost', { precision: 14, scale: 4 }).notNull().default('0'),
+    expectedQuantity: quantity('expected_quantity'),
+    countedQuantity: quantity('counted_quantity'),
+    countedBy: text('counted_by'),
+    countedAt: timestamp('counted_at', { withTimezone: true }),
+    varianceQuantity: quantity('variance_quantity'),
+    note: text('note').notNull().default(''),
+  },
+  (t) => [
+    uniqueIndex('stock_document_lines_product_uidx').on(t.documentId, t.productId),
+    uniqueIndex('stock_document_lines_no_uidx').on(t.documentId, t.lineNo),
+    index('stock_document_lines_product_idx').on(t.productId),
+    check('stock_document_lines_quantity_chk', sql`${t.quantity} >= 0 AND ${t.shippedQuantity} >= 0 AND ${t.receivedQuantity} >= 0 AND ${t.writtenOffQuantity} >= 0 AND ${t.returnedQuantity} >= 0`),
+    check('stock_document_lines_shipped_chk', sql`${t.shippedQuantity} <= ${t.quantity}`),
+    check('stock_document_lines_accounted_chk', sql`${t.receivedQuantity} + ${t.writtenOffQuantity} + ${t.returnedQuantity} <= ${t.shippedQuantity}`),
+    check('stock_document_lines_counted_chk', sql`${t.countedQuantity} IS NULL OR ${t.countedQuantity} >= 0`),
+  ],
+);
+export type StockDocumentRow = typeof stockDocuments.$inferSelect;
+export type StockDocumentLineRow = typeof stockDocumentLines.$inferSelect;
+
 /** Whether the old stock counters are mirrored into the new ledger (the shadow of the migration), and how far the backfill has got. */
 export const stockSettings = pgTable('stock_settings', {
   companyId: uuid('company_id')
@@ -2423,6 +2520,10 @@ export const stockSettings = pgTable('stock_settings', {
    * Switching it on belongs to the cut-over (design §10, steps 3 and 4); nothing exposes it before the stock documents exist.
    */
   ledgerMode: boolean('ledger_mode').notNull().default(false),
+  /** Whether a transfer needs a second person to approve it before it can be shipped. */
+  transferRequiresApproval: boolean('transfer_requires_approval').notNull().default(false),
+  /** A count whose differences are worth more than this needs a second person to approve it. 0 means never. */
+  countApprovalValue: numeric('count_approval_value', { precision: 14, scale: 2 }).notNull().default('0'),
   /** How long an unpaid shop order holds stock, in minutes. 0 holds it until the order is settled or released (today's behaviour). */
   unpaidHoldMinutes: integer('unpaid_hold_minutes').notNull().default(0),
   /** Backfill progress: the last product id handled, and when it finished. */

@@ -180,6 +180,11 @@ export const DOCUMENT_KINDS = {
     fiscal: false,
     suggested: { code: 'CNT', prefix: 'CNT-{YY}-', digits: 8, reset: 'yearly', blockSize: 20 },
   },
+  stock_transfer: {
+    label: 'Stock transfer',
+    fiscal: false,
+    suggested: { code: 'TRF', prefix: 'TRF-{YY}-', digits: 8, reset: 'yearly', blockSize: 20 },
+  },
   vendor: {
     label: 'Vendor',
     fiscal: false,

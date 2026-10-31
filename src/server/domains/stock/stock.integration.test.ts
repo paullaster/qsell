@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { has } from '@/lib/values';
+import { settleFinanceBacklog } from './test-support';
 import { STOCK_MOVEMENT_TYPES, movementTypeOfJournal } from '@/lib/stock';
 import type * as mod_server_di_container from '@/server/di/container';
 import type * as mod_server_db_drizzle_client from '@/server/db/drizzle/client';
@@ -75,7 +76,8 @@ describe.skipIf(!has(url))('stock per location (database)', () => {
   });
   afterAll(async () => {
     await c.stockShadow.setShadow(companyId, false);
-  });
+    await settleFinanceBacklog(c.finance);
+  }, 120_000);
 
   describe('locations', () => {
     it('start with one default, made once however often it is asked for', async () => {

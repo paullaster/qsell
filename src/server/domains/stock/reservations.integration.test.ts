@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { has } from '@/lib/values';
+import { settleFinanceBacklog } from './test-support';
 import type * as mod_server_di_container from '@/server/di/container';
 import type * as mod_server_db_drizzle_client from '@/server/db/drizzle/client';
 import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
@@ -76,7 +77,8 @@ describe.skipIf(!has(url))('holds on stock per location (database)', () => {
   afterAll(async () => {
     await c.stockSettings.setLedgerMode(companyId, false);
     await c.stockSettings.setUnpaidHoldMinutes(companyId, 0);
-  });
+    await settleFinanceBacklog(c.finance);
+  }, 120_000);
 
   describe('placing a hold', () => {
     it('holds the stock at the default location and records why it is there', async () => {
