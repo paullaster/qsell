@@ -19,6 +19,16 @@ export interface PackagingSuggestion {
   uncoveredProductIds: string[];
 }
 
+export interface SelectedPackagingLine {
+  productId: string;
+  quantity: number;
+}
+
+export interface PackagingSelectionProblem {
+  code: 'invalid_input' | 'invalid_quantity';
+  message: string;
+}
+
 /**
  * Computes package counts from explicit seller-maintained fit rules. Cart lines are
  * rounded independently: quantities in different product units are never combined
@@ -62,4 +72,26 @@ export function suggestPackaging(
     for (const suggestion of result) suggestion.uncoveredProductIds = uncovered;
   }
   return result;
+}
+
+/** Server-side checkout invariant for explicitly selected packaging. */
+export function packagingSelectionProblem(
+  goods: readonly PackagingSuggestionLine[],
+  selected: readonly SelectedPackagingLine[],
+  fits: readonly PackagingFit[],
+): PackagingSelectionProblem | null {
+  if (selected.some((line) => !Number.isInteger(line.quantity) || line.quantity <= 0)) {
+    return { code: 'invalid_quantity', message: 'Packaging quantities must be whole packages.' };
+  }
+  const needed = new Map(suggestPackaging(goods, fits).map((line) => [line.packagingProductId, line.quantity]));
+  for (const line of selected) {
+    const required = needed.get(line.productId);
+    if (required === undefined) {
+      return { code: 'invalid_input', message: 'One of the selected packaging options does not fit your order.' };
+    }
+    if (line.quantity < required) {
+      return { code: 'invalid_quantity', message: 'Please add the suggested quantity of packaging so your order can be packed safely.' };
+    }
+  }
+  return null;
 }

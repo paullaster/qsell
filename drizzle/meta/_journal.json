@@ -813,6 +813,13 @@
       "when": 1793505721203,
       "tag": "0115_delivery_zones",
       "breakpoints": true
+    },
+    {
+      "idx": 116,
+      "version": "7",
+      "when": 1793508146635,
+      "tag": "0116_checkout_packaging",
+      "breakpoints": true
     }
   ]
 }

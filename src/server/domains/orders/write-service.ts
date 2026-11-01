@@ -12,9 +12,9 @@ import { isSalesChannel } from '@/lib/stock';
 import { InventoryReservationService, ONLINE_PAYMENT_METHODS } from '@/server/domains/inventory/reservation-service';
 import { broadcastRealtime } from '@/server/realtime';
 import { businessDate } from '@/server/kernel/numbering/business-date';
-import { eq, inArray } from 'drizzle-orm';
+import { inArray } from 'drizzle-orm';
 import { drizzleDb } from '@/server/db/drizzle/client';
-import { orders as ordersTable, products as productsTable } from '@/server/db/drizzle/schema';
+import { products as productsTable } from '@/server/db/drizzle/schema';
 import { needsApprovalCheck } from './approval';
 import type { PriceResult, PriceTrace } from '@/server/domains/pricing/domain/types';
 import type { GuardLine } from '@/server/domains/pricing/guard-service';
@@ -26,6 +26,7 @@ import type {
 import { readOptionalEmail } from '@/lib/guest-contact';
 import { has, nth, orElse, required } from '@/lib/values';
 import { expandKits, KitError } from '@/server/domains/pricing/kit-service';
+import { packagingSelectionProblem } from '@/lib/packaging-suggestions';
 
 /** What one line costs: the quote's own figure, else what the price lists gave, else the standard price. */
 function lineAmounts(
@@ -152,6 +153,27 @@ export const OrderWriteService = {
         p,
       ]),
     );
+    if ((params.salesModule ?? 'ecommerce') === 'ecommerce') {
+      const goods = params.items.flatMap((item) => {
+        const product = catalogProducts.get(item.productId);
+        return product !== undefined && product.isCheckoutPackaging !== true
+          ? [{ productId: item.productId, quantity: item.quantity }]
+          : [];
+      });
+      const selectedPackaging = params.items.flatMap((item) => {
+        const product = catalogProducts.get(item.productId);
+        return product?.isCheckoutPackaging === true ? [{ productId: item.productId, quantity: item.quantity }] : [];
+      });
+      if (selectedPackaging.length > 0) {
+        const fitRows = await CatalogService.packagingFitsForProducts(goods.map((item) => item.productId));
+        const problem = packagingSelectionProblem(goods, selectedPackaging, fitRows.map((fit) => ({
+          productId: fit.productId,
+          packagingProductId: fit.row.id,
+          capacity: Number(fit.capacity),
+        })));
+        if (problem !== null) return { success: false, error: problem.message, code: problem.code };
+      }
+    }
     const quotedItems = new Map((params.quotedItems ?? []).map((item) => [item.productId, item]));
 
     // A quantity is counted in the product's unit: 2 pieces, 2.5 kg, never 2.5 pieces.
@@ -180,8 +202,8 @@ export const OrderWriteService = {
     const channel =
       params.paymentMethod === 'on_account' ? 'credit_sale' : (params.salesModule ?? 'ecommerce');
     const engine = new Map<number, PriceResult>();
-    let saleCompanyId = '';
-    let saleCustomerId: string | null = null;
+    let saleCompanyId: string;
+    let saleCustomerId: string | null;
     {
       const { companySettings, customers, pricing } = getContainer();
       const company = await companySettings.ensureSeeded();

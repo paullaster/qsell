@@ -12,6 +12,7 @@ import { useModalKeys } from '@/components/ui/useModalKeys';
 import { AppImage } from '@/components/ui/AppImage';
 import { QuantityStepper } from '@/components/store/QuantityStepper';
 import { availableOf, decimalsOf, perUnitSuffix } from '@/lib/cart-quantity';
+import { PackagingOptions } from '@/components/store/PackagingOptions';
 
 export type CartItem = CartLine;
 
@@ -156,6 +157,7 @@ function OpenCart({ onClose }: { onClose: () => void }) {
                 );
               })
             ) : null}
+            {ready && items.some((line) => line.product.isCheckoutPackaging !== true) ? <PackagingOptions /> : null}
           </div>
 
           {items.length > 0 && (

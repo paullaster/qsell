@@ -268,3 +268,24 @@ On the shop, the customer may **pick a pin on the map or write the address by ha
 **Verified.** Unit: key reading, matching, circles, the readers, the method settings. Integration: the database rules (circle, empty place, method and time checks), two people editing one zone, two zones adding one place at the same moment (exactly one gets it), resolving an address and a pin, another company's data never seen, the permission each action asks for and a refusal without it, paging with no repeats, the lookup source. E2E: both screens on desktop and phone, with layout checks.
 
 **Next (D-0b, second part):** charge policies and rates (zone rate card, distance, flat or by weight, order-value tiers), scoped by branch, channel and customer group like price lists, effective-dated, with conflict checks and the same lifecycle.
+
+
+## 23. Charge policies: design (2026-11-01)
+
+Informed by the owner's earlier map and pricing service (see the memory note "Pisces map service reference"): the same pricing dimensions, made deterministic and data-driven.
+
+**Guarantees** (each has a test): (1) **The same inputs always give the same charge.** No randomness, and the clock is passed in. (2) **Quote equals charge**: the charge and its trace are stored on the order with the policy id and version; nothing is recomputed later. (3) **Never a guess**: when a charge cannot be worked out (no zone, no pin, out of range, too heavy, no rate for the weight) the answer is a refusal with a reason code and plain words, never a default price. (4) **The browser supplies only the customer's side** (written address, pin, cart); the server chooses the branch and its pin, the zone, the route, the policy and the weight. (5) A map provider only ever supplies a distance and a time; it never decides a price. (6) The trace explains every shilling, in order, and its steps add up to the amount.
+
+**Methods.** `zone_rate` (a rate card: a fee per zone and weight band, with an optional default row for any zone), `flat` (the same card with default rows only: one fee, or a fee per weight band, everywhere) and `distance` (distance bands, each with a base fee and a rate per kilometre beyond the start of the band; optionally a rate per minute of travel; a maximum range). The three differ only in how the base fee is found; everything after it is shared.
+
+**The shared steps, always in this order:** base fee, weight surcharge (distance method only; the card methods price weight in their bands), time-of-day / day-of-week / season surcharges (fixed or a percentage of the subtotal before any surcharge, so the order they are listed in cannot matter), minimum and maximum charge, order-value tier (a percentage off the capped charge; 100 is free delivery), rounding (to a unit the company chooses, nearest or up).
+
+**Distance** is the longer leg, one way, or round trip (a policy choice); the maximum range is on the one-way distance. A written address with no pin can be priced by distance only when the geocoder placed it; the quote then says the distance is approximate.
+
+**Time rules** use the company's time zone and are data, not code: days of the week, a window of the day (it may cross midnight: 22:00 to 06:00 belongs to the day it began), and a date range (it may cross the new year: December to February).
+
+**Scope and choice** reuse pricing's scopes (branch, channel, customer group, customer, country, sales type), its specificity weights and its tie check: among policies in force whose scope and dates match, the most specific wins, then the higher priority, then the newest start, then the code (as price lists do). Activating a policy that would tie with one already in force is refused, naming the other.
+
+**Lifecycle**: draft, in force, retired. A policy in force cannot be edited; make a new version (copy to draft), or retire it. Every change has a reason and is in the decision log. A quote simulator shows the charge and the trace for any address, pin, weight, order value and time before a policy goes live.
+
+**Slices**: D-0b2a the pure engine (this section); D-0b2b the data model, lifecycle and actions; D-0b2c the screens and the simulator.

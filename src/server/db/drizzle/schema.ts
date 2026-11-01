@@ -2138,6 +2138,8 @@ export const products = pgTable(
     reservedQuantity: quantity('reserved_quantity').notNull().default(0),
     lowStockThreshold: quantity('low_stock_threshold').notNull().default(0),
     isActive: boolean('is_active').notNull().default(true),
+    /** Checkout-only packaging item: inventory-bearing, but excluded from ordinary catalogue browsing. */
+    isCheckoutPackaging: boolean('is_checkout_packaging').notNull().default(false),
     imageUrl: text('image_url').notNull().default(''),
     additionalImages: jsonb('additional_images').$type<string[]>().notNull().default([]),
     rating: numeric('rating', { precision: 3, scale: 2 }).notNull().default('0'),
@@ -2191,6 +2193,25 @@ export const products = pgTable(
     index('products_sku_trgm_idx').using('gin', t.sku.op('gin_trgm_ops')),
     index('products_brand_trgm_idx').using('gin', t.brand.op('gin_trgm_ops')),
     index('products_category_name_trgm_idx').using('gin', t.categoryName.op('gin_trgm_ops')),
+  ],
+);
+
+/** Explicit fit rules. A seller can maintain the same relationship from either product's editor. */
+export const packagingFits = pgTable(
+  'packaging_fits',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    productId: text('product_id').notNull().references(() => products.id, { onDelete: 'restrict' }),
+    packagingProductId: text('packaging_product_id').notNull().references(() => products.id, { onDelete: 'restrict' }),
+    /** Product base units safely accommodated by one packaging product. */
+    capacity: numeric('capacity', { precision: 14, scale: 4 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('packaging_fits_pair_uidx').on(t.productId, t.packagingProductId),
+    index('packaging_fits_package_idx').on(t.packagingProductId, t.productId),
+    check('packaging_fits_capacity_chk', sql`${t.capacity} > 0`),
+    check('packaging_fits_distinct_products_chk', sql`${t.productId} <> ${t.packagingProductId}`),
   ],
 );
 

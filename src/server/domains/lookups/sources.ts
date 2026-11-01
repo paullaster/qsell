@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { FULFILMENT_STATUSES, STATUS_FILTERS } from '@/lib/order-admin';
 import { drizzleDb } from '@/server/db/drizzle/client';
 import {
@@ -6,6 +6,7 @@ import {
   customers,
   salesQuoteTemplates,
   salesSectionTemplates,
+  products,
 } from '@/server/db/drizzle/schema';
 import { methodLabel, QUOTE_PAYMENT_METHODS } from '@/lib/payment-method-labels';
 import { QUOTE_STATUS_FILTERS, statusFilterLabel } from '@/lib/quote-statuses';
@@ -125,6 +126,36 @@ const tradeCustomers = tableSource({
   }),
 });
 
+const packagingProducts = tableSource({
+  key: 'packaging-products',
+  permission: 'products:update',
+  table: products,
+  id: products.id,
+  label: products.name,
+  searchColumns: [products.name, products.sku, products.stockCode],
+  select: { sku: products.sku, stockCode: products.stockCode },
+  scope: ({ filters }) => {
+    acceptFilters(filters, {});
+    return [and(eq(products.isActive, true), eq(products.isCheckoutPackaging, true), eq(products.isSellable, true), isNull(products.deletedAt)) ?? eq(products.isActive, true)];
+  },
+  toOption: (row) => ({ id: String(row.id), label: String(row.label), description: joinText([row.sku, row.stockCode]), badge: 'Packaging' }),
+});
+
+const fitProducts = tableSource({
+  key: 'catalog-fit-products',
+  permission: 'products:read',
+  table: products,
+  id: products.id,
+  label: products.name,
+  searchColumns: [products.name, products.sku, products.stockCode],
+  select: { sku: products.sku },
+  scope: ({ filters }) => {
+    acceptFilters(filters, {});
+    return [and(eq(products.isActive, true), eq(products.isSellable, true), eq(products.isCheckoutPackaging, false), isNull(products.deletedAt)) ?? eq(products.isActive, true)];
+  },
+  toOption: (row) => ({ id: String(row.id), label: String(row.label), description: String(row.sku), badge: null }),
+});
+
 const enabledCurrenciesFor = (key: string, permission: 'quotes:read' | 'pricing:read' | 'rfq:create' | 'purchase_orders:create') => tableSource({
   key,
   permission,
@@ -235,6 +266,8 @@ const SOURCES: ReadonlyMap<string, LookupSource> = registry(
     quoteTemplates,
     sectionTemplates,
     tradeCustomers,
+    packagingProducts,
+    fitProducts,
     enabledCurrencies,
     pricingCurrencies,
     rfqCurrencies,

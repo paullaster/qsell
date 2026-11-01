@@ -53,14 +53,16 @@ import {
 import { checkProductUnitsAction } from '@/server/domains/units/actions';
 import type { Choice } from '@/lib/payment-options';
 import { listEtimsTargetsAction } from '@/server/domains/kra/etims/actions';
+import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 
 type ProductFormTab =
-  'basics' | 'pricing' | 'inventory' | 'specs' | 'description' | 'media' | 'kra';
+  'basics' | 'pricing' | 'inventory' | 'packaging' | 'specs' | 'description' | 'media' | 'kra';
 
 const TABS: { id: ProductFormTab; label: string; icon: typeof Package }[] = [
   { id: 'basics', label: 'Basics', icon: Package },
   { id: 'pricing', label: 'Pricing', icon: DollarSign },
   { id: 'inventory', label: 'Stock', icon: Layers },
+  { id: 'packaging', label: 'Packaging', icon: Package },
   { id: 'specs', label: 'Specs', icon: Tag },
   { id: 'description', label: 'Description', icon: AlignLeft },
   { id: 'media', label: 'Media', icon: ImageIcon },
@@ -107,6 +109,7 @@ export function AdminProductModal({ isOpen, ...props }: AdminProductModalProps) 
 }
 
 type EditableProductSpecification = ProductSpecification & { rowId: string };
+interface PackagingFitDraft { key: string; productId: string; choice: Choice | null; capacity: string }
 type AdminProductModalFormProps = Omit<AdminProductModalProps, 'isOpen'>;
 
 function AdminProductModalForm({
@@ -200,6 +203,8 @@ function AdminProductModalForm({
   const [description, setDescription] = useState(template?.description ?? '');
   const [tagsInput, setTagsInput] = useState(template === null ? '' : template.tags.join(', '));
   const [isActive, setIsActive] = useState(template?.isActive ?? true);
+  const [isCheckoutPackaging, setIsCheckoutPackaging] = useState(template?.isCheckoutPackaging ?? false);
+  const [packagingFits, setPackagingFits] = useState<PackagingFitDraft[]>(() => (template?.packagingFits ?? []).map((fit, index) => ({ key: `fit-${String(index)}`, productId: fit.productId, choice: { id: fit.productId, label: fit.productId }, capacity: String(fit.capacity) })));
 
   // Dynamic Specifications (key-value pairs)
   const [specifications, setSpecifications] = useState<EditableProductSpecification[]>(() =>
@@ -517,6 +522,8 @@ function AdminProductModalForm({
         description: description.trim(),
         tags,
         isActive,
+        isCheckoutPackaging,
+        packagingFits: packagingFits.map(({ productId, capacity }) => ({ productId, capacity: Number(capacity) })),
       };
 
       let saved: { ok: true } | { ok: false; error: string };
@@ -1049,6 +1056,35 @@ function AdminProductModalForm({
                   </div>
                 </div>
               </div>
+            ) : null}
+
+            {tab === 'packaging' ? (
+              <section className="space-y-4" aria-labelledby="packaging-config-title">
+                <div>
+                  <h3 id="packaging-config-title" className="text-sm font-semibold text-fg-strong">Packaging compatibility and capacity</h3>
+                  <p className="mt-1 text-xs text-fg-muted">Configure this from either side: on a regular product, choose packaging that fits it; on a packaging product, choose the products it can hold. Capacity is in the selected product’s base unit per one package.</p>
+                </div>
+                <div className="flex items-center gap-3 rounded-lg border border-line bg-surface-raised p-3">
+                  <input id="is-checkout-packaging" type="checkbox" checked={isCheckoutPackaging} onChange={(event) => setIsCheckoutPackaging(event.target.checked)} className="h-4 w-4 accent-indigo-600" />
+                  <label htmlFor="is-checkout-packaging" className="text-sm font-medium text-fg-strong">This product is packaging offered at checkout</label>
+                </div>
+                <div className="space-y-3">
+                  {packagingFits.map((fit, index) => (
+                    <div key={fit.key} className="grid grid-cols-1 items-end gap-2 rounded-lg border border-line p-3 sm:grid-cols-[minmax(0,1fr)_10rem_auto]">
+                      <ChoicePicker
+                        label={isCheckoutPackaging ? 'Product this package fits' : 'Suitable packaging'}
+                        source={isCheckoutPackaging ? 'catalog-fit-products' : 'packaging-products'}
+                        choice={fit.choice}
+                        onChoice={(choice) => setPackagingFits((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, choice, productId: choice?.id ?? '' } : row))}
+                        placeholder="Search products…"
+                      />
+                      <div><label htmlFor={`fit-capacity-${fit.key}`} className={labelClass}>Units per package</label><input id={`fit-capacity-${fit.key}`} type="number" min="0.0001" step="any" value={fit.capacity} onChange={(event) => setPackagingFits((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, capacity: event.target.value } : row))} className={fieldClass} /></div>
+                      <button type="button" onClick={() => setPackagingFits((rows) => rows.filter((_, rowIndex) => rowIndex !== index))} className="min-h-11 rounded-lg border border-line px-3 text-sm text-fg-muted hover:text-red-600">Remove</button>
+                    </div>
+                  ))}
+                </div>
+                <button type="button" onClick={() => setPackagingFits((rows) => [...rows, { key: globalThis.crypto.randomUUID(), productId: '', choice: null, capacity: '1' }])} className="min-h-11 rounded-lg border border-line-strong px-3 text-sm font-medium text-fg-strong hover:bg-hover">Add compatibility rule</button>
+              </section>
             ) : null}
 
             {tab === 'specs' ? (

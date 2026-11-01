@@ -12,6 +12,7 @@ import {
   paymentGatewayConfigs,
   paymentTransactions,
   products,
+  packagingFits,
   reconciliationLogs,
   taxCategories,
   unitsOfMeasure,
@@ -386,16 +387,64 @@ export class CatalogRepository {
   async listActiveSellableProducts(): Promise<ProductJoined[]> {
     return this.productQuery()
       .where(
-        and(eq(products.isActive, true), eq(products.isSellable, true), isNull(products.deletedAt)),
+        and(eq(products.isActive, true), eq(products.isSellable, true), eq(products.isCheckoutPackaging, false), isNull(products.deletedAt)),
       )
       .orderBy(asc(products.name));
+  }
+
+  async packagingFitsForProduct(id: string): Promise<{ otherProductId: string; capacity: string }[]> {
+    const rows = await this.db
+      .select({ productId: packagingFits.productId, packagingProductId: packagingFits.packagingProductId, capacity: packagingFits.capacity })
+      .from(packagingFits)
+      .where(or(eq(packagingFits.productId, id), eq(packagingFits.packagingProductId, id)))
+      .orderBy(asc(packagingFits.productId), asc(packagingFits.packagingProductId));
+    return rows.map((row) => ({
+      otherProductId: row.productId === id ? row.packagingProductId : row.productId,
+      capacity: row.capacity,
+    }));
+  }
+
+  /** Packaging offers and the eligible-cart-product capacity rules, in one indexed join. */
+  async checkoutPackagingForProducts(ids: string[]): Promise<{ row: ProductJoined; productId: string; capacity: string }[]> {
+    if (ids.length === 0) return [];
+    return await this.db
+      .select({
+        row: { ...getTableColumns(products), ...productRelations },
+        productId: packagingFits.productId,
+        capacity: packagingFits.capacity,
+      })
+      .from(packagingFits)
+      .innerJoin(products, eq(packagingFits.packagingProductId, products.id))
+      .leftJoin(itemTypes, eq(products.itemTypeId, itemTypes.id))
+      .leftJoin(taxCategories, eq(products.taxCategoryId, taxCategories.id))
+      .leftJoin(categories, eq(products.categoryId, categories.id))
+      .leftJoin(unitsOfMeasure, eq(products.baseUnitId, unitsOfMeasure.id))
+      .where(and(
+        inArray(packagingFits.productId, ids),
+        eq(products.isCheckoutPackaging, true),
+        eq(products.isActive, true),
+        eq(products.isSellable, true),
+        isNull(products.deletedAt),
+      ))
+      .orderBy(asc(products.name), asc(packagingFits.productId));
+  }
+
+  async listLivePackagingByIds(ids: string[]): Promise<ProductJoined[]> {
+    if (ids.length === 0) return [];
+    return await this.productQuery().where(and(
+      inArray(products.id, ids),
+      eq(products.isCheckoutPackaging, true),
+      eq(products.isActive, true),
+      eq(products.isSellable, true),
+      isNull(products.deletedAt),
+    ));
   }
 
   // ── Storefront reads: live (active, sellable, not deleted) products only ──
 
   /** Products a shopper may see. Every storefront read starts from this. */
   private liveProducts(): SQL {
-    return required(and(eq(products.isActive, true), eq(products.isSellable, true), isNull(products.deletedAt)), 'the live-product conditions');
+    return required(and(eq(products.isActive, true), eq(products.isSellable, true), eq(products.isCheckoutPackaging, false), isNull(products.deletedAt)), 'the live-product conditions');
   }
 
   /**

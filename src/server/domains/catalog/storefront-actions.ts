@@ -49,3 +49,24 @@ export async function productsByIdsAction(raw: unknown): Promise<PublicProduct[]
   }
   return await StorefrontCatalog.productsByIds(ids, quantities);
 }
+
+/** Checkout-only: eligible packaging products with current server-side price and stock. */
+export async function packagingForProductsAction(raw: unknown) {
+  if (!Array.isArray(raw)) return [];
+  const ids = [...new Set(raw.filter((id): id is string => typeof id === 'string' && id !== '' && id.length <= 100))].slice(0, MAX_CART_LOOKUP);
+  return await StorefrontCatalog.packagingForProducts(ids);
+}
+
+/** Public: refreshes only packaging ids already in a cart, never general catalogue lookup. */
+export async function packagingProductsByIdsAction(raw: unknown): Promise<PublicProduct[]> {
+  if (!Array.isArray(raw)) return [];
+  const ids: string[] = [];
+  const quantities = new Map<string, number>();
+  for (const entry of raw.slice(0, MAX_CART_LOOKUP)) {
+    const { id, quantity } = readCartEntry(entry);
+    if (id === null) continue;
+    ids.push(id);
+    if (quantity !== null) quantities.set(id, quantity);
+  }
+  return await StorefrontCatalog.packagingProductsByIds(ids, quantities);
+}
