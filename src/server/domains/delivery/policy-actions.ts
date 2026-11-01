@@ -42,6 +42,8 @@ export interface PolicyView extends PolicySummary {
   /** The words for the zones its fees name, by id. */
   zoneNames: Record<string, string>;
   def: ChargePolicyDef;
+  /** The tax on the charge (percent) and whether the amount includes it. */
+  tax: { rate: number; inclusive: boolean };
   activatedAt: string | null;
   retiredAt: string | null;
 }
@@ -103,7 +105,7 @@ export async function getChargePolicyAction(id: unknown) {
   return await runDelivery('deliveries:read', async (ctx) => {
     const found = await getContainer().chargePolicies.get(ctx.companyId, idOf(id, 'policy'));
     if (found === null) throw new DeliveryError('That policy could not be found.', 'NOT_FOUND');
-    const view: PolicyView = { ...summary(found.row), description: found.row.description, scopeNames: await scopeNames(ctx.companyId, found.row.scopes), zoneNames: await zoneNames(ctx.companyId, found.def.rates.flatMap((r) => (r.zoneId === null ? [] : [r.zoneId]))), def: found.def, activatedAt: found.row.activatedAt?.toISOString() ?? null, retiredAt: found.row.retiredAt?.toISOString() ?? null };
+    const view: PolicyView = { ...summary(found.row), description: found.row.description, scopeNames: await scopeNames(ctx.companyId, found.row.scopes), zoneNames: await zoneNames(ctx.companyId, found.def.rates.flatMap((r) => (r.zoneId === null ? [] : [r.zoneId]))), def: found.def, tax: { rate: Number(found.row.taxRate), inclusive: found.row.taxInclusive }, activatedAt: found.row.activatedAt?.toISOString() ?? null, retiredAt: found.row.retiredAt?.toISOString() ?? null };
     return view;
   });
 }

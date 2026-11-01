@@ -9,6 +9,7 @@ import { toHeader, type ChargePolicies } from './charge-policies';
 import type { DeliveryZones } from './zones';
 import { quoteCharge } from './domain/engine';
 import { choosePolicy, type Considered } from './domain/select';
+import { splitTax, type TaxSplit } from '@/lib/delivery-tax';
 import { placeAddress } from './geocode';
 import type { ChargeQuote, Leg, RefusalReason } from './domain/types';
 
@@ -35,6 +36,9 @@ export type QuoteResult =
   | {
       ok: true;
       amount: number;
+      /** The amount split into the charge before tax, the tax on it, and what the customer pays. */
+      split: TaxSplit;
+      taxRate: number;
       currency: string;
       steps: Extract<ChargeQuote, { ok: true }>['steps'];
       policy: { id: string; code: string; name: string; version: number; method: string };
@@ -103,6 +107,8 @@ export class DeliveryQuotes {
     return {
       ok: true,
       amount: quote.amount,
+      split: splitTax(quote.amount, Number(policy.row.taxRate), policy.row.taxInclusive),
+      taxRate: Number(policy.row.taxRate),
       currency: quote.currency,
       steps: quote.steps,
       policy: { id: policy.row.id, code: policy.row.code, name: policy.row.name, version: policy.row.version, method: policy.row.method },

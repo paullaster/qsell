@@ -33,7 +33,7 @@ import type { GeoPoint } from '@/lib/geo';
 import type { PlanResult } from '@/server/domains/delivery/plan';
 
 /** What one line costs: the quote's own figure, else what the price lists gave, else the standard price. */
-function lineAmounts(
+export function lineAmounts(
   quoted: { lineAmount: number; quantity: number } | undefined,
   priced: PriceResult | undefined,
   standardPrice: number | null | undefined,
@@ -112,7 +112,17 @@ export const OrderWriteService = {
      * To have the order delivered: how, and where to (a map pin, a written address, or both). The branch that processes it and the
      * charge are decided here on the server, never taken from the caller; the charge becomes the order's shipping fee.
      */
-    delivery?: { method: DeliveryMethod; pin?: GeoPoint | null; address?: AddressWords };
+    delivery?: {
+      method: DeliveryMethod;
+      pin?: GeoPoint | null;
+      address?: AddressWords;
+      /** Who receives it, when that is not the buyer. */
+      recipient?: { name: string; phone: string } | null;
+      /** Anything the rider should know (the gate, the floor). */
+      notes?: string | null;
+      /** What delivery cost on the screen the shopper saw (tax included). If the charge worked out now is different, the order is refused so nobody pays an amount they were not shown. */
+      expectedCharge?: number | null;
+    };
     orderId?: string;
     orderNumber?: string;
     currency: 'KES' | 'USD';
@@ -507,8 +517,15 @@ export const OrderWriteService = {
         throw error;
       }
     }
-    // Stock is held for what actually ships: components and gifts, not the kit itself.
-    const stockItems = orderItems.map((i) => ({ productId: i.productId, quantity: i.quantity }));
+    // Stock is held only for inventory-managed lines; service/non-inventory lines remain commercial order lines.
+    const stockProductKinds = await drizzleDb
+      .select({ id: productsTable.id, inventoryKind: productsTable.inventoryKind })
+      .from(productsTable)
+      .where(inArray(productsTable.id, [...new Set(orderItems.map((item) => item.productId))]));
+    const inventoryProductIds = new Set(stockProductKinds.filter((product) => product.inventoryKind === 'inventory').map((product) => product.id));
+    const stockItems = orderItems.flatMap((item) =>
+      inventoryProductIds.has(item.productId) ? [{ productId: item.productId, quantity: item.quantity }] : [],
+    );
 
     const goodsTotals = params.quotedTotals ?? computeCheckoutTotals(pricedLines);
     const { subtotal, tax } = goodsTotals;
@@ -518,31 +535,41 @@ export const OrderWriteService = {
       const { deliveryPlans, pricing, companySettings: settings } = getContainer();
       const companyId = (await settings.ensureSeeded()).id;
       const weights = await drizzleDb
-        .select({ id: productsTable.id, weight: productsTable.weight })
+        .select({ id: productsTable.id, weight: productsTable.weight, inventoryKind: productsTable.inventoryKind })
         .from(productsTable)
         .where(inArray(productsTable.id, [...new Set(orderItems.map((i) => i.productId))]));
-      const weightOf = new Map(weights.map((w) => [w.id, Number(w.weight ?? 0)]));
+      const weightOf = new Map(weights.map((w) => [w.id, { weightKg: Number(w.weight ?? 0), inventoryKind: w.inventoryKind }]));
       const planned = await deliveryPlans.plan(companyId, {
         at: new Date(),
         currency: params.currency,
         channel: isSalesChannel(deliveryChannel) ? deliveryChannel : 'ecommerce',
         method: params.delivery.method,
-        lines: orderItems.map((i) => ({ productId: i.productId, quantity: i.quantity })),
+        lines: stockItems,
         customerId: params.customerId ?? null,
         customerGroupId: await pricing.groupFor(companyId, params.customerId),
         salesType: params.paymentMethod === 'on_account' ? 'credit' : 'cash',
         country: params.shippingAddress.country,
         ...(params.delivery.address === undefined ? {} : { address: params.delivery.address }),
         pin: params.delivery.pin ?? null,
-        weightKg: orderItems.reduce((kg, i) => kg + (weightOf.get(i.productId) ?? 0) * i.quantity, 0),
+        weightKg: orderItems.reduce((kg, item) => {
+          const facts = weightOf.get(item.productId);
+          return facts?.inventoryKind === 'service' ? kg : kg + (facts?.weightKg ?? 0) * item.quantity;
+        }, 0),
         orderValue: subtotal + tax,
       });
       if (!planned.ok) return { success: false, error: planned.message, code: 'delivery_unavailable' };
+      const expected = params.delivery.expectedCharge;
+      if (expected !== undefined && expected !== null && Math.abs(expected - planned.quote.split.gross) > 0.005) {
+        return { success: false, error: `The delivery charge is now ${planned.quote.split.gross.toFixed(2)} and not the ${expected.toFixed(2)} you were shown. Please look at your order again before you pay.`, code: 'delivery_changed' };
+      }
       delivered = planned;
     }
     // A delivered order is charged what the quote said; any other keeps the shipping its caller worked out.
-    const shippingFee = delivered?.quote.amount ?? goodsTotals.shippingFee;
-    const totalAmount = delivered === null ? goodsTotals.totalAmount : subtotal + tax + shippingFee;
+    const shippingFee = delivered?.quote.split.net ?? goodsTotals.shippingFee;
+    // Tax on the charge joins the order's tax, so the books, the invoice and the total all agree.
+    const deliveryTax = delivered?.quote.split.tax ?? 0;
+    const orderTax = Math.round((tax + deliveryTax) * 100) / 100;
+    const totalAmount = delivered === null ? goodsTotals.totalAmount : Math.round((subtotal + orderTax + shippingFee) * 100) / 100;
     // The branch that processes a delivered order is the one chosen for it; stock is held from it first.
     const branchId = delivered?.branch.id ?? params.branchId;
     const orderId =
@@ -585,7 +612,7 @@ export const OrderWriteService = {
       shippingAddress: params.shippingAddress,
       items: orderItems,
       subtotal,
-      tax,
+      tax: orderTax,
       shippingFee,
       totalAmount,
       currency: params.currency,
@@ -686,12 +713,12 @@ export const OrderWriteService = {
         async (tx, saved) => {
           if (delivered !== null && params.delivery !== undefined) {
             const actor = { type: 'user' as const, id: params.requestedBy ?? params.customerId ?? null };
-            await getContainer().orderDeliveries.record(tx, { companyId: company.id, orderId: saved.id, method: params.delivery.method, plan: delivered, currency: params.currency, actor });
+            await getContainer().orderDeliveries.record(tx, { companyId: company.id, orderId: saved.id, method: params.delivery.method, plan: delivered, currency: params.currency, recipient: params.delivery.recipient ?? null, notes: params.delivery.notes ?? null, actor });
             await OrderStages.moveIn(tx, saved.id, 'charge_quoted', 'succeeded', {
               ...placedBy(channel, params.customerId ?? null, params.requestedBy ?? null),
               ref: { type: 'delivery_quote', id: saved.id },
               message: delivered.choice.words,
-              detail: { charge: delivered.quote.amount, policy: `${delivered.quote.policy.code} v${String(delivered.quote.policy.version)}`, branch: delivered.branch.code },
+              detail: { charge: delivered.quote.split.gross, tax: delivered.quote.split.tax, policy: `${delivered.quote.policy.code} v${String(delivered.quote.policy.version)}`, branch: delivered.branch.code },
             });
           }
           // What the discounts used is recorded in the same transaction as the order.

@@ -841,6 +841,20 @@
       "when": 1793522254781,
       "tag": "0119_geo_settings_usage",
       "breakpoints": true
+    },
+    {
+      "idx": 120,
+      "version": "7",
+      "when": 1793523493293,
+      "tag": "0120_delivery_tax_recipient",
+      "breakpoints": true
+    },
+    {
+      "idx": 121,
+      "version": "7",
+      "when": 1793559812411,
+      "tag": "0121_product_inventory_kind",
+      "breakpoints": true
     }
   ]
 }

@@ -15,6 +15,9 @@ import { fetchCustomerAccountAction, listEnabledCheckoutProvidersAction, lookupC
 import { useStore } from '@/components/store/StoreContext';
 import { OrderSummary } from '@/components/store/checkout/OrderSummary';
 import { PackagingOptions } from '@/components/store/PackagingOptions';
+import { DeliverySection, type Recipient } from '@/components/store/checkout/DeliverySection';
+import { useShopDelivery } from '@/components/store/checkout/useShopDelivery';
+import type { DeliveryInput } from '@/lib/checkout-input';
 
 export interface CheckoutSubmission {
   customerName: string;
@@ -25,6 +28,8 @@ export interface CheckoutSubmission {
   buyerKraPin?: string;
   shippingAddress: { street: string; city: string; countyOrState: string; country: string };
   paymentMethod: PaymentProvider;
+  /** Present when the shop works out delivery: where to, who receives it, and the charge the shopper was shown. */
+  delivery?: DeliveryInput;
 }
 
 interface CheckoutFormProps {
@@ -94,6 +99,9 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
   const [city, setCity] = useState('');
   const [countyOrState, setCountyOrState] = useState('');
   const [country, setCountry] = useState(defaultCountry);
+  const [area, setArea] = useState('');
+  const [recipient, setRecipient] = useState<Recipient>({ on: false, name: '', phone: '' });
+  const [notes, setNotes] = useState('');
   const [chosenMethod, setPaymentMethod] = useState<PaymentProvider | ''>('');
   const [providers, setProviders] = useState<{ code: PaymentProviderCode; label: string; description: string }[] | null>(null);
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
@@ -161,14 +169,20 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
     setCity(address.city);
     setCountyOrState(address.countyOrState);
     setCountry(address.country);
+    setArea('');
+    delivery.setPin(null);
     if (has(address.recipientName)) setCustomerName(address.recipientName);
     if (has(address.recipientPhone)) setCustomerPhone(address.recipientPhone);
   };
 
   const totals = cartTotals(lines);
+  const delivery = useShopDelivery({ items: lines.map((l) => ({ productId: l.product.id, quantity: l.quantity })), county: countyOrState, town: city, area, country });
+  const deliveryOn = delivery.options !== null && delivery.options.methods.length > 0;
+  const deliveryQuote = delivery.quote.phase === 'ok' ? delivery.quote.quote : null;
+  const payable = totals.totalAmount + (deliveryQuote?.gross ?? 0);
   const enabled = providers ?? [];
   const creditAvailable = accountCustomer?.accountType === 'credit' ? accountCustomer.creditLimit - accountCustomer.balance : 0;
-  const canPayOnAccount = accountCustomer?.found === true && accountCustomer.accountType === 'credit' && !accountCustomer.blocked && creditAvailable >= totals.totalAmount;
+  const canPayOnAccount = accountCustomer?.found === true && accountCustomer.accountType === 'credit' && !accountCustomer.blocked && creditAvailable >= payable;
   // On account is open only to a credit customer with room; otherwise the first enabled provider stands.
   const paymentMethod: PaymentProvider | '' = chosenMethod === 'on_account' && !canPayOnAccount ? (enabled[0]?.code ?? '') : chosenMethod;
   const payLabel = paymentMethod === 'on_account' ? 'On account' : enabled.find((provider) => provider.code === paymentMethod)?.label;
@@ -236,6 +250,14 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
       setFormError(payFrom.error);
       return;
     }
+    if (deliveryOn && deliveryQuote === null) {
+      setFormError(delivery.quote.phase === 'error' ? delivery.quote.error : 'Drop a pin or write your area, so we can work out what delivery costs.');
+      return;
+    }
+    if (deliveryOn && recipient.on && (recipient.name.trim() === '' || recipient.phone.trim() === '')) {
+      setFormError('Please enter the name and mobile number of the person who will receive the order.');
+      return;
+    }
     try {
       if (isSignedIn && (useNewAddress || !hasSavedAddresses)) {
         const { customer: updated } = await addCustomerAddressAction(customer.id, {
@@ -261,6 +283,18 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
       buyerKraPin: orElse(buyerKraPin.trim(), undefined),
       shippingAddress: { street, city, countyOrState, country },
       paymentMethod,
+      ...(deliveryOn && deliveryQuote !== null
+        ? {
+            delivery: {
+              method: deliveryQuote.method,
+              pin: delivery.pin,
+              address: { county: countyOrState.trim() === '' ? null : countyOrState.trim(), town: city.trim() === '' ? null : city.trim(), area: area.trim() === '' ? null : area.trim() },
+              recipient: recipient.on ? { name: recipient.name.trim(), phone: recipient.phone.trim() } : null,
+              notes: notes.trim() === '' ? null : notes.trim(),
+              expectedCharge: deliveryQuote.gross,
+            },
+          }
+        : {}),
     });
   };
 
@@ -379,11 +413,29 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
               <Field label="County or region">
                 {(id) => <input id={id} value={countyOrState} onChange={(e) => setCountyOrState(e.target.value)} autoComplete="address-level1" className={inputClass} placeholder="Region" />}
               </Field>
+              <Field label="Estate or area (optional)" className="sm:col-span-2" hint="Helps us find your delivery zone.">
+                {(id) => <input id={id} value={area} onChange={(e) => setArea(e.target.value)} autoComplete="address-level3" className={inputClass} placeholder="Estate, neighbourhood or area" />}
+              </Field>
               <Field label="Country" className="sm:col-span-2">
                 {(id) => <input id={id} value={country} onChange={(e) => setCountry(e.target.value)} autoComplete="country-name" className={inputClass} />}
               </Field>
             </div>
           ) : null}
+          <DeliverySection
+            delivery={delivery}
+            recipient={recipient}
+            onRecipient={setRecipient}
+            notes={notes}
+            onNotes={setNotes}
+            onUseNamed={() => {
+              const place = delivery.named;
+              if (place === null) return;
+              setStreet(place.road ?? place.label.split(',')[0]?.trim() ?? '');
+              if (place.town !== null) setCity(place.town);
+              if (place.county !== null) setCountyOrState(place.county);
+              if (place.area !== null) setArea(place.area);
+            }}
+          />
         </section>
 
         <section aria-label="Payment method" className="space-y-3">
@@ -396,10 +448,10 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
       <aside aria-label="Order summary" className="space-y-5 self-start rounded-xl border border-line bg-surface p-4 sm:p-5 lg:sticky lg:top-24 lg:col-span-5">
         <h2 className="border-b border-line pb-2 text-base font-bold text-fg-strong">Order review ({lines.length} {lines.length === 1 ? 'item' : 'items'})</h2>
         <PackagingOptions />
-        <OrderSummary lines={lines} />
+        <OrderSummary lines={lines} delivery={deliveryQuote === null ? null : { gross: deliveryQuote.gross, net: deliveryQuote.net, tax: deliveryQuote.tax, branchName: deliveryQuote.branchName }} />
         <button
           type="submit"
-          disabled={submitting || providers === null}
+          disabled={submitting || providers === null || (deliveryOn && delivery.quote.phase === 'loading')}
           className="flex min-h-12 w-full cursor-pointer items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-600/20 transition-all hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {submitting ? (
@@ -409,7 +461,7 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
             </>
           ) : (
             <>
-              Pay {money(totals.totalAmount)}
+              Pay {money(payable)}
               {has(payLabel) ? ` with ${payLabel}` : ''}
               <ArrowRight className="h-4 w-4" aria-hidden="true" />
             </>

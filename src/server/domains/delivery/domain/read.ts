@@ -26,6 +26,9 @@ export interface PolicyInput {
   maxCharge: number | null;
   roundTo: number;
   roundMode: RoundMode;
+  /** The tax on the charge, in percent, and whether the amount the policy works out already includes it. */
+  taxRate: number;
+  taxInclusive: boolean;
   rates: RateRow[];
   bands: DistanceBand[];
   tiers: ValueTier[];
@@ -101,6 +104,14 @@ function date(v: unknown, what: string, lastDay = false): Date | null {
   return Number.isNaN(d.getTime()) ? fail(`${what} is not a date.`) : d;
 }
 
+/** The tax rate in percent: nothing is 0; otherwise a number from 0 to 100 with at most two decimals. */
+function taxRateOf(v: unknown): number {
+  if (blank(v)) return 0;
+  const n = num(v);
+  if (!Number.isFinite(n) || n < 0 || n > 100 || Math.abs(n * 100 - Math.round(n * 100)) > 1e-6) return fail('The tax rate is a percentage from 0 to 100, with up to two decimals.');
+  return n;
+}
+
 /** A policy from what the browser sent, or the first thing wrong with it. It checks shape and size; `validatePolicy` checks that it is sound. */
 export function readPolicyInput(raw: unknown): Read<PolicyInput> {
   try {
@@ -171,6 +182,8 @@ export function readPolicyInput(raw: unknown): Read<PolicyInput> {
         maxCharge: optional(i.maxCharge, 'The maximum charge'),
         roundTo: blank(i.roundTo) ? 0 : need(i.roundTo, 'The rounding unit'),
         roundMode: mode as RoundMode,
+        taxRate: taxRateOf(i.taxRate),
+        taxInclusive: i.taxInclusive === true || i.taxInclusive === 'true',
         rates,
         bands,
         tiers,

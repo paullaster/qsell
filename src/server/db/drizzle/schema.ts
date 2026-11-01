@@ -337,6 +337,9 @@ export const chargePolicies = pgTable(
     maxCharge: numeric('max_charge', { precision: 14, scale: 4 }),
     roundTo: numeric('round_to', { precision: 12, scale: 4 }).notNull().default('0'),
     roundMode: text('round_mode').$type<'nearest' | 'up'>().notNull().default('nearest'),
+    /** The tax on the delivery charge, in percent, and whether the amount the policy works out already includes it. */
+    taxRate: numeric('tax_rate', { precision: 5, scale: 2 }).notNull().default('0'),
+    taxInclusive: boolean('tax_inclusive').notNull().default(false),
     bands: jsonb('bands')
       .$type<{ fromKm: number; toKm: number | null; baseFee: number; perKm: number }[]>()
       .notNull()
@@ -390,6 +393,7 @@ export const chargePolicies = pgTable(
       'charge_policies_round_chk',
       sql`${t.roundMode} IN ('nearest','up') AND ${t.roundTo} >= 0`,
     ),
+    check('charge_policies_tax_chk', sql`${t.taxRate} >= 0 AND ${t.taxRate} <= 100`),
     check('charge_policies_currency_chk', sql`${t.currency} ~ '^[A-Z]{3}$'`),
     check('charge_policies_dates_chk', sql`${t.validTo} IS NULL OR ${t.validTo} > ${t.validFrom}`),
     check(
@@ -449,13 +453,25 @@ export const orderDeliveries = pgTable(
     destination: jsonb('destination').$type<DestinationRecord>().notNull(),
     choice: jsonb('choice').$type<ChoiceRecord>().notNull(),
     charge: jsonb('charge').$type<ChargeRecord>().notNull(),
+    /** What the customer pays for delivery, and its parts: the charge before tax (the order's shipping fee), the tax on it, and the rate. */
     chargeAmount: numeric('charge_amount', { precision: 14, scale: 2 }).notNull(),
+    chargeNet: numeric('charge_net', { precision: 14, scale: 2 }).notNull().default('0'),
+    chargeTax: numeric('charge_tax', { precision: 14, scale: 2 }).notNull().default('0'),
+    taxRate: numeric('tax_rate', { precision: 5, scale: 2 }).notNull().default('0'),
+    /** Who receives it, when that is not the buyer, and anything the rider should know. These may be corrected before dispatch. */
+    recipientName: text('recipient_name'),
+    recipientPhone: text('recipient_phone'),
+    notes: text('notes'),
     currency: text('currency').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index('order_deliveries_company_branch_idx').on(t.companyId, t.branchId),
     check('order_deliveries_amount_chk', sql`${t.chargeAmount} >= 0`),
+    check(
+      'order_deliveries_split_chk',
+      sql`${t.chargeNet} >= 0 AND ${t.chargeTax} >= 0 AND ${t.chargeNet} + ${t.chargeTax} = ${t.chargeAmount} AND ${t.taxRate} >= 0 AND ${t.taxRate} <= 100`,
+    ),
     check(
       'order_deliveries_method_chk',
       sql`${t.method} IN ('own_fleet','courier','pickup','scheduled_visit')`,

@@ -141,6 +141,7 @@ export const CHECKOUT_REFUSALS = [
   'approval_needed',
   'kit_error',
   'delivery_unavailable',
+  'delivery_changed',
   'other',
 ] as const;
 export type CheckoutRefusal = (typeof CHECKOUT_REFUSALS)[number];

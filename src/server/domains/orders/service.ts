@@ -1,5 +1,6 @@
 import { orElse } from '@/lib/values';
 import type { CheckoutRefusal } from '@/lib/order-stages';
+import type { DeliveryInput } from '@/lib/checkout-input';
 import { AuthService } from '@/server/domains/auth/service';
 import type { Order, PaymentProvider } from '@/types/index';
 import { OrderWriteService } from './write-service';
@@ -35,6 +36,7 @@ export class OrdersService {
     };
     items: { productId: string; quantity: number }[];
     paymentMethod: PaymentProvider;
+    delivery?: DeliveryInput;
     currency?: 'KES' | 'USD';
     userId?: string;
     dimensionFields?:
@@ -67,6 +69,7 @@ export class OrdersService {
       items: params.items,
       currency: params.currency || 'KES',
       paymentMethod: params.paymentMethod,
+      ...(params.delivery === undefined ? {} : { delivery: { method: params.delivery.method, pin: params.delivery.pin, ...(params.delivery.address === null ? {} : { address: params.delivery.address }), recipient: params.delivery.recipient, notes: params.delivery.notes, expectedCharge: params.delivery.expectedCharge } }),
       dimensionFields: params.dimensionFields,
     });
 
