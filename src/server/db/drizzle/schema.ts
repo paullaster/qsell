@@ -186,7 +186,10 @@ export const branches = pgTable(
   (t) => [
     uniqueIndex('branches_company_code_uidx').on(t.companyId, t.code),
     index('branches_company_idx').on(t.companyId),
-    check('branches_pin_chk', sql`(${t.latitude} IS NULL) = (${t.longitude} IS NULL) AND (${t.latitude} IS NULL OR (${t.latitude} BETWEEN -90 AND 90 AND ${t.longitude} BETWEEN -180 AND 180))`),
+    check(
+      'branches_pin_chk',
+      sql`(${t.latitude} IS NULL) = (${t.longitude} IS NULL) AND (${t.latitude} IS NULL OR (${t.latitude} BETWEEN -90 AND 90 AND ${t.longitude} BETWEEN -180 AND 180))`,
+    ),
   ],
 );
 
@@ -218,7 +221,10 @@ export const deliveryZones = pgTable(
   (t) => [
     uniqueIndex('delivery_zones_company_code_uidx').on(t.companyId, t.code),
     index('delivery_zones_company_active_idx').on(t.companyId, t.isActive),
-    check('delivery_zones_circle_chk', sql`(${t.centreLatitude} IS NULL) = (${t.centreLongitude} IS NULL) AND (${t.centreLatitude} IS NULL) = (${t.radiusKm} IS NULL) AND (${t.centreLatitude} IS NULL OR (${t.centreLatitude} BETWEEN -90 AND 90 AND ${t.centreLongitude} BETWEEN -180 AND 180 AND ${t.radiusKm} > 0 AND ${t.radiusKm} <= 2000))`),
+    check(
+      'delivery_zones_circle_chk',
+      sql`(${t.centreLatitude} IS NULL) = (${t.centreLongitude} IS NULL) AND (${t.centreLatitude} IS NULL) = (${t.radiusKm} IS NULL) AND (${t.centreLatitude} IS NULL OR (${t.centreLatitude} BETWEEN -90 AND 90 AND ${t.centreLongitude} BETWEEN -180 AND 180 AND ${t.radiusKm} > 0 AND ${t.radiusKm} <= 2000))`,
+    ),
   ],
 );
 
@@ -248,7 +254,10 @@ export const deliveryZoneAreas = pgTable(
   (t) => [
     uniqueIndex('delivery_zone_areas_keys_uidx').on(t.companyId, t.countyKey, t.townKey, t.areaKey),
     index('delivery_zone_areas_zone_idx').on(t.zoneId, t.id),
-    check('delivery_zone_areas_words_chk', sql`${t.countyKey} <> '' OR ${t.townKey} <> '' OR ${t.areaKey} <> ''`),
+    check(
+      'delivery_zone_areas_words_chk',
+      sql`${t.countyKey} <> '' OR ${t.townKey} <> '' OR ${t.areaKey} <> ''`,
+    ),
   ],
 );
 
@@ -263,7 +272,9 @@ export const deliveryMethods = pgTable(
     branchId: uuid('branch_id')
       .notNull()
       .references(() => branches.id, { onDelete: 'cascade' }),
-    method: text('method').$type<'own_fleet' | 'courier' | 'pickup' | 'scheduled_visit'>().notNull(),
+    method: text('method')
+      .$type<'own_fleet' | 'courier' | 'pickup' | 'scheduled_visit'>()
+      .notNull(),
     isActive: boolean('is_active').notNull().default(true),
     /** The least time from the order to the goods being ready or on their way, in minutes. */
     leadTimeMinutes: integer('lead_time_minutes').notNull().default(0),
@@ -274,8 +285,14 @@ export const deliveryMethods = pgTable(
   (t) => [
     uniqueIndex('delivery_methods_branch_method_uidx').on(t.branchId, t.method),
     index('delivery_methods_company_idx').on(t.companyId),
-    check('delivery_methods_method_chk', sql`${t.method} IN ('own_fleet','courier','pickup','scheduled_visit')`),
-    check('delivery_methods_lead_chk', sql`${t.leadTimeMinutes} >= 0 AND ${t.leadTimeMinutes} <= 43200`),
+    check(
+      'delivery_methods_method_chk',
+      sql`${t.method} IN ('own_fleet','courier','pickup','scheduled_visit')`,
+    ),
+    check(
+      'delivery_methods_lead_chk',
+      sql`${t.leadTimeMinutes} >= 0 AND ${t.leadTimeMinutes} <= 43200`,
+    ),
   ],
 );
 
@@ -302,8 +319,14 @@ export const chargePolicies = pgTable(
     priority: integer('priority').notNull().default(0),
     validFrom: timestamp('valid_from', { withTimezone: true }).notNull().defaultNow(),
     validTo: timestamp('valid_to', { withTimezone: true }),
-    scopes: jsonb('scopes').$type<Record<string, { op: 'in' | 'not_in'; values: string[] }>>().notNull().default({}),
-    distanceBasis: text('distance_basis').$type<'one_way' | 'longer_leg' | 'round_trip'>().notNull().default('one_way'),
+    scopes: jsonb('scopes')
+      .$type<Record<string, { op: 'in' | 'not_in'; values: string[] }>>()
+      .notNull()
+      .default({}),
+    distanceBasis: text('distance_basis')
+      .$type<'one_way' | 'longer_leg' | 'round_trip'>()
+      .notNull()
+      .default('one_way'),
     maxRangeKm: numeric('max_range_km', { precision: 8, scale: 2 }),
     perMinute: numeric('per_minute', { precision: 12, scale: 4 }).notNull().default('0'),
     includedKg: numeric('included_kg', { precision: 10, scale: 3 }),
@@ -313,9 +336,29 @@ export const chargePolicies = pgTable(
     maxCharge: numeric('max_charge', { precision: 14, scale: 4 }),
     roundTo: numeric('round_to', { precision: 12, scale: 4 }).notNull().default('0'),
     roundMode: text('round_mode').$type<'nearest' | 'up'>().notNull().default('nearest'),
-    bands: jsonb('bands').$type<{ fromKm: number; toKm: number | null; baseFee: number; perKm: number }[]>().notNull().default([]),
-    tiers: jsonb('tiers').$type<{ minOrderValue: number; percentOff: number }[]>().notNull().default([]),
-    surcharges: jsonb('surcharges').$type<{ label: string; kind: 'fixed' | 'percent'; amount: number; days: number[] | null; fromMinute: number | null; toMinute: number | null; dateFrom: string | null; dateTo: string | null }[]>().notNull().default([]),
+    bands: jsonb('bands')
+      .$type<{ fromKm: number; toKm: number | null; baseFee: number; perKm: number }[]>()
+      .notNull()
+      .default([]),
+    tiers: jsonb('tiers')
+      .$type<{ minOrderValue: number; percentOff: number }[]>()
+      .notNull()
+      .default([]),
+    surcharges: jsonb('surcharges')
+      .$type<
+        {
+          label: string;
+          kind: 'fixed' | 'percent';
+          amount: number;
+          days: number[] | null;
+          fromMinute: number | null;
+          toMinute: number | null;
+          dateFrom: string | null;
+          dateTo: string | null;
+        }[]
+      >()
+      .notNull()
+      .default([]),
     /** Raised on every save of a draft, so two people editing one draft cannot overwrite each other unseen. */
     revision: integer('revision').notNull().default(1),
     createdBy: text('created_by').notNull(),
@@ -329,16 +372,29 @@ export const chargePolicies = pgTable(
   (t) => [
     uniqueIndex('charge_policies_company_code_version_uidx').on(t.companyId, t.code, t.version),
     // One draft per policy at a time, and one version in force per policy.
-    uniqueIndex('charge_policies_one_draft_uidx').on(t.companyId, t.code).where(sql`${t.status} = 'draft'`),
-    uniqueIndex('charge_policies_one_in_force_uidx').on(t.companyId, t.code).where(sql`${t.status} = 'in_force'`),
+    uniqueIndex('charge_policies_one_draft_uidx')
+      .on(t.companyId, t.code)
+      .where(sql`${t.status} = 'draft'`),
+    uniqueIndex('charge_policies_one_in_force_uidx')
+      .on(t.companyId, t.code)
+      .where(sql`${t.status} = 'in_force'`),
     index('charge_policies_company_status_idx').on(t.companyId, t.status),
     check('charge_policies_status_chk', sql`${t.status} IN ('draft','in_force','retired')`),
     check('charge_policies_method_chk', sql`${t.method} IN ('zone_rate','flat','distance')`),
-    check('charge_policies_basis_chk', sql`${t.distanceBasis} IN ('one_way','longer_leg','round_trip')`),
-    check('charge_policies_round_chk', sql`${t.roundMode} IN ('nearest','up') AND ${t.roundTo} >= 0`),
+    check(
+      'charge_policies_basis_chk',
+      sql`${t.distanceBasis} IN ('one_way','longer_leg','round_trip')`,
+    ),
+    check(
+      'charge_policies_round_chk',
+      sql`${t.roundMode} IN ('nearest','up') AND ${t.roundTo} >= 0`,
+    ),
     check('charge_policies_currency_chk', sql`${t.currency} ~ '^[A-Z]{3}$'`),
     check('charge_policies_dates_chk', sql`${t.validTo} IS NULL OR ${t.validTo} > ${t.validFrom}`),
-    check('charge_policies_charges_chk', sql`(${t.minCharge} IS NULL OR ${t.minCharge} >= 0) AND (${t.maxCharge} IS NULL OR ${t.maxCharge} >= 0) AND (${t.minCharge} IS NULL OR ${t.maxCharge} IS NULL OR ${t.minCharge} <= ${t.maxCharge}) AND ${t.perMinute} >= 0 AND ${t.perExtraKg} >= 0`),
+    check(
+      'charge_policies_charges_chk',
+      sql`(${t.minCharge} IS NULL OR ${t.minCharge} >= 0) AND (${t.maxCharge} IS NULL OR ${t.maxCharge} >= 0) AND (${t.minCharge} IS NULL OR ${t.maxCharge} IS NULL OR ${t.minCharge} <= ${t.maxCharge}) AND ${t.perMinute} >= 0 AND ${t.perExtraKg} >= 0`,
+    ),
   ],
 );
 
@@ -358,9 +414,16 @@ export const chargePolicyRates = pgTable(
     perExtraKg: numeric('per_extra_kg', { precision: 12, scale: 4 }).notNull().default('0'),
   },
   (t) => [
-    uniqueIndex('charge_policy_rates_band_uidx').on(t.policyId, sql`coalesce(${t.zoneId}, '00000000-0000-0000-0000-000000000000'::uuid)`, t.fromKg),
+    uniqueIndex('charge_policy_rates_band_uidx').on(
+      t.policyId,
+      sql`coalesce(${t.zoneId}, '00000000-0000-0000-0000-000000000000'::uuid)`,
+      t.fromKg,
+    ),
     index('charge_policy_rates_zone_idx').on(t.zoneId),
-    check('charge_policy_rates_chk', sql`${t.fromKg} >= 0 AND (${t.toKg} IS NULL OR ${t.toKg} > ${t.fromKg}) AND ${t.fee} >= 0 AND ${t.perExtraKg} >= 0`),
+    check(
+      'charge_policy_rates_chk',
+      sql`${t.fromKg} >= 0 AND (${t.toKg} IS NULL OR ${t.toKg} > ${t.fromKg}) AND ${t.fee} >= 0 AND ${t.perExtraKg} >= 0`,
+    ),
   ],
 );
 
@@ -2288,8 +2351,12 @@ export const packagingFits = pgTable(
   'packaging_fits',
   {
     id: uuid('id').defaultRandom().primaryKey(),
-    productId: text('product_id').notNull().references(() => products.id, { onDelete: 'restrict' }),
-    packagingProductId: text('packaging_product_id').notNull().references(() => products.id, { onDelete: 'restrict' }),
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    packagingProductId: text('packaging_product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
     /** Product base units safely accommodated by one packaging product. */
     capacity: numeric('capacity', { precision: 14, scale: 4 }).notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
