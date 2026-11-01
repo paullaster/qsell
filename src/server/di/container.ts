@@ -110,6 +110,8 @@ import { MediaService } from '@/server/domains/media/service';
 import { MediaPortRegistry } from '@/server/adapters/media/registry';
 import { GeoPortRegistry } from '@/server/adapters/geo/registry';
 import { GeoService } from '@/server/domains/geo/service';
+import { DeliveryZones } from '@/server/domains/delivery/zones';
+import { DeliveryMethods } from '@/server/domains/delivery/methods';
 import { KraConfigRepository } from '@/server/domains/kra/repository';
 import { KraConfigResolver } from '@/server/domains/kra/resolver';
 import { EtimsTransmissionService } from '@/server/domains/kra/etims/transmission-service';
@@ -249,6 +251,10 @@ export interface AppContainer {
   media: MediaService;
   /** Map answers (places, distances, nearest) from whichever provider is chosen, with a built-in estimate to fall back on. */
   geo: GeoService;
+  /** Delivery zones, their places, and finding the zone of an address or a pin. */
+  deliveryZones: DeliveryZones;
+  /** Which delivery methods each branch offers. */
+  deliveryMethods: DeliveryMethods;
   kraConfigs: KraConfigRepository;
   kraResolver: KraConfigResolver;
   etimsTransmission: EtimsTransmissionService;
@@ -570,6 +576,8 @@ export function getContainer(): AppContainer {
     }),
     media,
     geo: new GeoService(new GeoPortRegistry()),
+    deliveryZones: new DeliveryZones(drizzleDb, decisionLog),
+    deliveryMethods: new DeliveryMethods(drizzleDb, decisionLog),
     kraConfigs,
     kraResolver,
     etimsTransmission,

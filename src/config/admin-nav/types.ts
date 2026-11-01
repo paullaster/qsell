@@ -50,7 +50,10 @@ export type AdminNavIconName =
   | 'FileCheck'
   | 'FileText'
   | 'Star'
-  | 'Mail';
+  | 'Mail'
+  | 'Truck'
+  | 'MapPin'
+  | 'Route';
 
 export interface AdminNavItem {
   /** Stable unique id across the whole tree */

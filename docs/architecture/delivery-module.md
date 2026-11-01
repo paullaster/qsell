@@ -243,3 +243,28 @@ Each phase ships with unit, integration, API and e2e tests (desktop and phone), 
 **Not built yet (D-0a):** a real map provider adapter and the map picker in the browser (the port and `clientMap` are ready for them; D-0d draws the picker), and place search from the company's own areas (D-0b, with zones).
 
 **Verified.** Unit: the maths, the built-in adapter, the registry, the service (fallback, timeout, nearest, ties). Contract: `runGeoPortContract` on the built-in adapter. Integration: the database rule, the actions (permission, company scope, validation, decision log), the list. E2E: setting a pin by typing and by device location, refusing a non-place, changing and removing it, on desktop and phone.
+
+
+## 21. The customer gives a pin or writes the address (2026-11-01)
+
+On the shop, the customer may **pick a pin on the map or write the address by hand**, whichever they prefer. Both must work everywhere a delivery is priced:
+
+* **A written address** (county, town, area or estate, a description) is matched to a zone through the zone's **areas**: the same words, ignoring case, spacing and punctuation. An area belongs to one zone only, so a written address never has two answers. An address that matches no area has no zone: the quote says so, and a policy that does not need a zone (distance, flat) can still price it.
+* **A pin** is matched to a zone by the zone's **coverage circle** (a centre and a radius) when it has one, and always gives a **distance** from each branch's own pin. The nearest circle wins (the smallest radius on a tie, then the code), so a pin never has two answers either.
+* **With no pin, a written address has no distance**, so a distance policy cannot price it. The shop then asks for a pin (or for the area), and says why in plain words; it never guesses. A company that prices by distance can require a pin at checkout; one that prices by zone, flat or weight does not need to.
+* A pin and a written address given together are both kept. The pin decides the distance, the nearest branch and, when it falls inside a coverage circle, the zone (it is the more exact of the two); otherwise the written address decides the zone. The written address is what the rider reads.
+
+
+## 22. D-0b, first part, as built (2026-11-01): zones, places and methods
+
+**Tables** (migration 0115): `delivery_zones` (code, name, optional coverage circle kept whole by a database check: all of centre latitude, centre longitude and radius, or none; `version` for optimistic edits; stopped, never deleted), `delivery_zone_areas` (county, town, area, and the three keys they are matched by; one set of keys belongs to one zone in a company, by a unique index; at least one word, by a check), `delivery_methods` (one row per branch and method: own fleet, courier, pickup, scheduled visit; offered or not, the least preparation time in minutes, a note for staff).
+
+**Rules** (`src/lib/delivery-zones.ts`, pure): place names reduced to keys (case, accents, punctuation, spacing, the word "county"); `matchArea` picks the most specific area that covers an address (area, then town, then county; the weights are powers of two so no two different sets of words score the same); `zoneForPin` picks the circle holding a pin (nearest centre, then smaller circle, then code); `resolveZone` lets a pin in a circle decide and falls back to the written address; readers for a zone, an area and pasted lines (up to 200).
+
+**Domain** (`src/server/domains/delivery/`): `DeliveryZones` (create, update with the version the person saw, stop and restart, add places in bulk with a skipped list naming the zone that already has a place, remove a place, page a zone's places, `resolve` for an address and/or a pin in one indexed read plus the few circles) and `DeliveryMethods` (read many branches in one query, set one method with an upsert). Every change is company-scoped, in one transaction with its decision-log entry; a repeat of the same method setting writes no new entry.
+
+**Screens**: **Delivery, Delivery zones** (list with search and "show stopped", a form with the optional circle, a places panel per zone to add one by hand or paste many, remove with a confirmation) and **Delivery, Delivery methods** (every branch with its four methods, each saved with its own button). Permissions `deliveries:read` and `deliveries:manage` (admins). The zone picker `delivery-zones` is registered as a lookup source for the charge screens that come next.
+
+**Verified.** Unit: key reading, matching, circles, the readers, the method settings. Integration: the database rules (circle, empty place, method and time checks), two people editing one zone, two zones adding one place at the same moment (exactly one gets it), resolving an address and a pin, another company's data never seen, the permission each action asks for and a refusal without it, paging with no repeats, the lookup source. E2E: both screens on desktop and phone, with layout checks.
+
+**Next (D-0b, second part):** charge policies and rates (zone rate card, distance, flat or by weight, order-value tiers), scoped by branch, channel and customer group like price lists, effective-dated, with conflict checks and the same lifecycle.

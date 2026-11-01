@@ -191,6 +191,95 @@ export const branches = pgTable(
 );
 
 /**
+ * A named delivery area (Westlands, Kisumu CBD, Nyali) a delivery charge can depend on. A zone is reached from a written address
+ * through its areas, and from a map pin through its optional coverage circle. Zones are stopped, never deleted: charges and orders
+ * refer to them.
+ */
+export const deliveryZones = pgTable(
+  'delivery_zones',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    description: text('description'),
+    /** The coverage circle: all three or none. A pin inside it belongs to this zone. */
+    centreLatitude: doublePrecision('centre_latitude'),
+    centreLongitude: doublePrecision('centre_longitude'),
+    radiusKm: numeric('radius_km', { precision: 8, scale: 2 }),
+    isActive: boolean('is_active').notNull().default(true),
+    /** Raised on every change, so two people editing one zone cannot overwrite each other unseen. */
+    version: integer('version').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_zones_company_code_uidx').on(t.companyId, t.code),
+    index('delivery_zones_company_active_idx').on(t.companyId, t.isActive),
+    check('delivery_zones_circle_chk', sql`(${t.centreLatitude} IS NULL) = (${t.centreLongitude} IS NULL) AND (${t.centreLatitude} IS NULL) = (${t.radiusKm} IS NULL) AND (${t.centreLatitude} IS NULL OR (${t.centreLatitude} BETWEEN -90 AND 90 AND ${t.centreLongitude} BETWEEN -180 AND 180 AND ${t.radiusKm} > 0 AND ${t.radiusKm} <= 2000))`),
+  ],
+);
+
+/**
+ * A place that belongs to a zone: a county, a town in a county, or an estate (any of the three, at least one). The keys are the
+ * names reduced to what they mean (see `placeKey`), and one set of keys belongs to one zone only, so a written address never has
+ * two answers. An empty key covers anything.
+ */
+export const deliveryZoneAreas = pgTable(
+  'delivery_zone_areas',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    zoneId: uuid('zone_id')
+      .notNull()
+      .references(() => deliveryZones.id),
+    county: text('county'),
+    town: text('town'),
+    area: text('area'),
+    countyKey: text('county_key').notNull().default(''),
+    townKey: text('town_key').notNull().default(''),
+    areaKey: text('area_key').notNull().default(''),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_zone_areas_keys_uidx').on(t.companyId, t.countyKey, t.townKey, t.areaKey),
+    index('delivery_zone_areas_zone_idx').on(t.zoneId, t.id),
+    check('delivery_zone_areas_words_chk', sql`${t.countyKey} <> '' OR ${t.townKey} <> '' OR ${t.areaKey} <> ''`),
+  ],
+);
+
+/** How a branch can get an order to the customer. A method a branch does not offer is not offered for orders it processes. */
+export const deliveryMethods = pgTable(
+  'delivery_methods',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    branchId: uuid('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'cascade' }),
+    method: text('method').$type<'own_fleet' | 'courier' | 'pickup' | 'scheduled_visit'>().notNull(),
+    isActive: boolean('is_active').notNull().default(true),
+    /** The least time from the order to the goods being ready or on their way, in minutes. */
+    leadTimeMinutes: integer('lead_time_minutes').notNull().default(0),
+    note: text('note'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_methods_branch_method_uidx').on(t.branchId, t.method),
+    index('delivery_methods_company_idx').on(t.companyId),
+    check('delivery_methods_method_chk', sql`${t.method} IN ('own_fleet','courier','pickup','scheduled_visit')`),
+    check('delivery_methods_lead_chk', sql`${t.leadTimeMinutes} >= 0 AND ${t.leadTimeMinutes} <= 43200`),
+  ],
+);
+
+/**
  * Per-branch payment provider configuration. Credentials are encrypted JSON blobs —
  * never read provider secrets from process.env.
  */
@@ -1783,6 +1872,9 @@ export type CompanySettingsRow = typeof companySettings.$inferSelect;
 export type CompanySettingsInsert = typeof companySettings.$inferInsert;
 export type BranchRow = typeof branches.$inferSelect;
 export type BranchInsert = typeof branches.$inferInsert;
+export type DeliveryZoneRow = typeof deliveryZones.$inferSelect;
+export type DeliveryZoneAreaRow = typeof deliveryZoneAreas.$inferSelect;
+export type DeliveryMethodRow = typeof deliveryMethods.$inferSelect;
 export type PaymentProviderConfigRow = typeof paymentProviderConfigs.$inferSelect;
 export type PaymentAttemptRow = typeof paymentAttempts.$inferSelect;
 export type PaymentCallbackEventRow = typeof paymentCallbackEvents.$inferSelect;

@@ -101,6 +101,25 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
     ],
   },
   {
+    navId: 'delivery',
+    name: 'Delivery and collection',
+    summary: 'Set where you deliver and how each branch gets orders to customers, by address or by a pin on the map.',
+    features: [
+      'Delivery zones by county, town and estate',
+      'A customer can write the address or drop a pin on the map, and both find the right zone',
+      'Choose whether each branch delivers with its own riders, a courier, or lets customers collect',
+      'Say how long each method takes to prepare',
+    ],
+    keywords: [
+      'delivery management software Kenya',
+      'delivery zones for online shop',
+      'ecommerce delivery software',
+      'click and collect for shops',
+      'delivery areas by estate',
+    ],
+    subModules: ['Delivery zones', 'Delivery methods'],
+  },
+  {
     navId: 'products-inventory',
     name: 'Inventory and stock control',
     summary: 'Know what you have, where it is and when to reorder, in the units you actually sell.',
