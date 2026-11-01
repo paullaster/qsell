@@ -108,6 +108,8 @@ import { AccountService } from '@/server/domains/auth/account-service';
 import { ProductImportService } from '@/server/domains/catalog/import-service';
 import { MediaService } from '@/server/domains/media/service';
 import { MediaPortRegistry } from '@/server/adapters/media/registry';
+import { GeoPortRegistry } from '@/server/adapters/geo/registry';
+import { GeoService } from '@/server/domains/geo/service';
 import { KraConfigRepository } from '@/server/domains/kra/repository';
 import { KraConfigResolver } from '@/server/domains/kra/resolver';
 import { EtimsTransmissionService } from '@/server/domains/kra/etims/transmission-service';
@@ -245,6 +247,8 @@ export interface AppContainer {
   accounts: AccountService;
   productImports: ProductImportService;
   media: MediaService;
+  /** Map answers (places, distances, nearest) from whichever provider is chosen, with a built-in estimate to fall back on. */
+  geo: GeoService;
   kraConfigs: KraConfigRepository;
   kraResolver: KraConfigResolver;
   etimsTransmission: EtimsTransmissionService;
@@ -565,6 +569,7 @@ export function getContainer(): AppContainer {
       companyId: async () => (await companySettings.ensureSeeded()).id,
     }),
     media,
+    geo: new GeoService(new GeoPortRegistry()),
     kraConfigs,
     kraResolver,
     etimsTransmission,

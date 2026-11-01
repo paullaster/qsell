@@ -1,10 +1,11 @@
 'use client';
 
 import { use, useId, useState } from 'react';
-import { branchesPageAction, createBranchAction, updateBranchAction, type BranchView } from '@/server/domains/branches/actions';
+import { branchesPageAction, clearBranchPinAction, createBranchAction, setBranchPinAction, updateBranchAction, type BranchView } from '@/server/domains/branches/actions';
 import { usePagedList } from '@/components/ui/usePagedList';
 import { attempt, buttonClass, Chip, Field, fieldClass, LoadFailed, Message, PageHeader, primaryClass, cardClass, type Notice } from '@/components/ui/screen-kit';
-import { branchPayload, emptyBranchForm, type BranchForm } from '@/lib/branch-forms';
+import { branchPayload, emptyBranchForm, pinFormFor, type BranchForm, type PinForm } from '@/lib/branch-forms';
+import { readGeoPoint } from '@/lib/geo';
 
 type FirstPage = Awaited<ReturnType<typeof branchesPageAction>>;
 
@@ -55,6 +56,23 @@ function BranchesView({ first, may, embedded }: { first: FirstPage; may: boolean
     setBusy(true);
     const res = await attempt(updateBranchAction(b.id, patch));
     finish(res.ok, res.ok ? done : res.error);
+  };
+
+  const setPin = async (b: BranchView, form: PinForm) => {
+    const point = readGeoPoint(form.latitude, form.longitude);
+    if (!point.ok) {
+      setNotice({ kind: 'error', text: point.error });
+      return false;
+    }
+    setBusy(true);
+    const res = await attempt(setBranchPinAction(b.id, { latitude: point.point.latitude, longitude: point.point.longitude, label: form.label }));
+    finish(res.ok, res.ok ? `${b.name} is now on the map.` : res.error);
+    return res.ok;
+  };
+  const clearPin = async (b: BranchView) => {
+    setBusy(true);
+    const res = await attempt(clearBranchPinAction(b.id));
+    finish(res.ok, res.ok ? `${b.name} is no longer on the map.` : res.error);
   };
 
   return (
@@ -110,6 +128,7 @@ function BranchesView({ first, may, embedded }: { first: FirstPage; may: boolean
                 </button>
               ) : null}
             </div>
+            <BranchPin branch={b} may={may} busy={busy} onSave={setPin} onClear={clearPin} />
           </li>
         ))}
       </ul>
@@ -138,6 +157,92 @@ function BranchesView({ first, may, embedded }: { first: FirstPage; may: boolean
           <button type="submit" disabled={busy} className={primaryClass}>
             {busy ? 'Creating…' : 'Create branch'}
           </button>
+        </form>
+      ) : null}
+    </div>
+  );
+}
+
+/** Where a branch is. Delivery works out the nearest branch, and how far it is from the customer, from this pin. */
+function BranchPin({ branch, may, busy, onSave, onClear }: { branch: BranchView; may: boolean; busy: boolean; onSave: (b: BranchView, form: PinForm) => Promise<boolean>; onClear: (b: BranchView) => Promise<void> }) {
+  const uid = useId();
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState<PinForm>(() => pinFormFor(branch.pin));
+  const [locating, setLocating] = useState<string | null>(null);
+
+  const useMyLocation = () => {
+    if (!('geolocation' in navigator)) {
+      setLocating('This device cannot share its location. Type the latitude and longitude instead.');
+      return;
+    }
+    setLocating('Finding your location…');
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setForm((f) => ({ ...f, latitude: position.coords.latitude.toFixed(6), longitude: position.coords.longitude.toFixed(6) }));
+        setLocating(`Found it, accurate to about ${String(Math.round(position.coords.accuracy))} metres. Check it, then save.`);
+      },
+      () => setLocating('Could not get your location. Allow location for this site, or type the latitude and longitude.'),
+      { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 },
+    );
+  };
+
+  return (
+    <div className="w-full space-y-2 border-t border-line pt-2 text-xs text-fg">
+      <div className="flex flex-wrap items-center gap-2">
+        {branch.pin === null ? (
+          <Chip tone="amber">No pin yet</Chip>
+        ) : (
+          <span>
+            On the map at <span className="font-mono">{branch.pin.latitude.toFixed(5)}, {branch.pin.longitude.toFixed(5)}</span>
+            {branch.pin.label === null ? '' : ` (${branch.pin.label})`}
+          </span>
+        )}
+        {may ? (
+          <button type="button" className={buttonClass} aria-expanded={open} aria-controls={`${uid}-pin`} onClick={() => setOpen((o) => !o)} aria-label={`${branch.pin === null ? 'Set' : 'Change'} the map pin for ${branch.name}`}>
+            {branch.pin === null ? 'Set pin' : 'Change pin'}
+          </button>
+        ) : null}
+      </div>
+      {branch.pin === null ? <p className="text-fg-muted">Without a pin this branch is left out when the nearest branch is chosen for a delivery.</p> : null}
+      {open ? (
+        <form
+          id={`${uid}-pin`}
+          aria-label={`Map pin for ${branch.name}`}
+          className="grid grid-cols-1 gap-3 sm:grid-cols-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void onSave(branch, form).then((ok) => {
+              if (ok) setOpen(false);
+            });
+          }}
+        >
+          <Field id={`${uid}-lat`} label="Latitude">
+            <input id={`${uid}-lat`} inputMode="decimal" value={form.latitude} onChange={(e) => setForm({ ...form, latitude: e.target.value })} placeholder="-1.286389" className={`${fieldClass} font-mono`} autoComplete="off" required />
+          </Field>
+          <Field id={`${uid}-lng`} label="Longitude">
+            <input id={`${uid}-lng`} inputMode="decimal" value={form.longitude} onChange={(e) => setForm({ ...form, longitude: e.target.value })} placeholder="36.817223" className={`${fieldClass} font-mono`} autoComplete="off" required />
+          </Field>
+          <Field id={`${uid}-label`} label="What to call the place (optional)">
+            <input id={`${uid}-label`} value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} placeholder="e.g. Shop front on Moi Avenue" maxLength={120} className={fieldClass} />
+          </Field>
+          <div className="flex flex-wrap items-center gap-2 sm:col-span-3">
+            <button type="button" className={buttonClass} onClick={useMyLocation}>
+              Use my current location
+            </button>
+            <button type="submit" disabled={busy} className={primaryClass}>
+              {busy ? 'Saving…' : 'Save pin'}
+            </button>
+            {branch.pin === null ? null : (
+              <button type="button" className={buttonClass} disabled={busy} onClick={() => void onClear(branch).then(() => setOpen(false))}>
+                Remove pin
+              </button>
+            )}
+          </div>
+          {locating === null ? null : (
+            <p role="status" aria-live="polite" className="text-fg-muted sm:col-span-3">
+              {locating}
+            </p>
+          )}
         </form>
       ) : null}
     </div>

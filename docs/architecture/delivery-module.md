@@ -206,3 +206,40 @@ Each phase ships with unit, integration, API and e2e tests (desktop and phone), 
 6. **Proof of delivery default**: customer code by message (recommend), with photo as fallback; signature optional.
 7. **Cold chain** (fish): a temperature/time-out-of-fridge limit per item, recorded at hand-over? Not in D-1; say if it must be.
 8. **Is the delivery contact allowed to differ from the buyer and the payer** (yes in this design: three phone roles: contact, delivery recipient, payer).
+
+
+## 19. Decisions taken (2026-11-01) and the D-0 plan
+
+**Decisions**
+
+1. **Billing trigger default**: at the order for paid shop orders, at dispatch for credit sales, at delivery for cash on delivery (as §11). Configurable.
+2. **Maps are plug and play.** Every map capability (search an address, suggest places as people type, turn a pin into an address and back, distance and travel time between two points) sits behind one **geo port**. A provider is one adapter that implements the port, registered by name and chosen with the `GEO_DRIVER` setting (as `MEDIA_DRIVER` chooses storage). No component, server action or rule imports a provider; adding a provider changes nothing else. A built-in adapter that needs no key and no network (straight-line distance with a road factor, and the company's own zone and area lists for place search) always exists, so delivery works with no map provider configured.
+3. **The shop asks for the address or a pin first**, and from that decides the **nearest branch**, measured from each branch's own pin. That branch processes the order, and the delivery charge is worked out from the distance between that branch and the customer. Only branches that can cover the order are candidates (stock per location, L-0 sourcing); if none can cover all of it, the nearest branch that can cover the most is used and the rest is split by the existing sourcing rules, with the choice and the reason recorded on the order.
+4. **The delivery contact, the recipient and the payer can all differ** (three phone roles).
+
+**D-0 slices**
+
+| Slice | Delivers | Gate |
+|---|---|---|
+| D-0a | Geo foundation: coordinates on branches (with a screen to set the pin), pure geo maths (distance, nearest), the geo port, its registry and the built-in adapter | Nearest and distance are correct and deterministic; the built-in adapter passes the same contract tests any adapter must pass |
+| D-0b | Zones and areas; delivery methods offered per branch; charge policies and rates (all methods, effective-dated); admin screens | A policy in force is found by branch, channel, customer group and date; conflicts are refused |
+| D-0c | The quote: branch choice (nearest that can cover), charge by the policy, trace, floor and caps | The same inputs always give the same charge; the trace explains it |
+| D-0d | The shop: address-first checkout, map picker through the port, three contact roles, the charge before payment; charge line on order, quote and invoice with its tax | A charge quoted at checkout equals the charge on the order and the invoice |
+| D-0e | Pickup: collect from a chosen branch with a collection code | A code collects once, by the right person |
+
+
+## 20. D-0a as built (2026-11-01): the geo foundation
+
+**Pure maths** (`src/lib/geo.ts`): `readGeoPoint` (typed or reported numbers to a checked point, six decimals), `straightLineKm` (great circle), `estimatedRoadKm` (straight line times the company's road factor, rounded to 10 m so the same two places always give the same number), `rankByDistance` (nearest first; places with no pin set aside; ties keep the order given).
+
+**The port** (`src/server/ports/geo.ts`): `searchPlaces`, `resolvePlace`, `reverse`, `distancesFrom(from, to[])` (one call however many branches), and `capabilities` (what the provider can do, and `clientMap`, the public description of how the browser draws its map). "Nothing found" is an empty answer, never an error; `GeoUnavailableError` means the provider could not be reached.
+
+**Adapters** (`src/server/adapters/geo/`): the built-in adapter (no key, no network, estimates the road, no address search) and the registry. **To add a provider**: write an adapter that implements `GeoPort`, run `runGeoPortContract` from its test with a fake transport, add one line to `GEO_ADAPTERS`, set `GEO_DRIVER`. No screen, action or rule changes. `GEO_ROAD_FACTOR` (1 to 3, default 1.3) sets the built-in estimate.
+
+**The service** (`src/server/domains/geo/service.ts`, `container.geo`): the only way rules ask for a map answer. The chosen provider gets 2.5 seconds; when it fails or is slow the built-in estimate answers and the answer says `degraded: true`, so a map outage never stops a sale and the quote's trace can say which source it used. `nearest(from, candidates)` ranks branches by the provider's distance (road when it can) in one call.
+
+**Branch pins** (migration 0114, `branches.latitude/longitude/pin_label/pin_set_at/pin_set_by`): both numbers or neither and a place that exists (database check). Set or removed on **Settings, Branches** by typing the numbers or using the device's location (checked on the server again; never trusted from the browser), with the permission `branches:manage`, this company only, and a decision-log entry holding the old and new place. A branch with no pin is left out of the nearest-branch choice, and the screen says so.
+
+**Not built yet (D-0a):** a real map provider adapter and the map picker in the browser (the port and `clientMap` are ready for them; D-0d draws the picker), and place search from the company's own areas (D-0b, with zones).
+
+**Verified.** Unit: the maths, the built-in adapter, the registry, the service (fallback, timeout, nearest, ties). Contract: `runGeoPortContract` on the built-in adapter. Integration: the database rule, the actions (permission, company scope, validation, decision log), the list. E2E: setting a pin by typing and by device location, refusing a non-place, changing and removing it, on desktop and phone.

@@ -6,6 +6,7 @@ import {
   timestamp,
   uuid,
   boolean,
+  doublePrecision,
   integer,
   jsonb,
   bigint,
@@ -172,12 +173,20 @@ export const branches = pgTable(
     publicBaseUrl: text('public_base_url'),
     isDefault: boolean('is_default').notNull().default(false),
     isActive: boolean('is_active').notNull().default(true),
+    /** Where the branch is on the map. Delivery works out the nearest branch and its distance from this. Both or neither. */
+    latitude: doublePrecision('latitude'),
+    longitude: doublePrecision('longitude'),
+    /** What the person who set the pin called the place (a shop front, a gate), when they said. */
+    pinLabel: text('pin_label'),
+    pinSetAt: timestamp('pin_set_at', { withTimezone: true }),
+    pinSetBy: text('pin_set_by'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex('branches_company_code_uidx').on(t.companyId, t.code),
     index('branches_company_idx').on(t.companyId),
+    check('branches_pin_chk', sql`(${t.latitude} IS NULL) = (${t.longitude} IS NULL) AND (${t.latitude} IS NULL OR (${t.latitude} BETWEEN -90 AND 90 AND ${t.longitude} BETWEEN -180 AND 180))`),
   ],
 );
 
