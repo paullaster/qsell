@@ -17,3 +17,11 @@ export function branchPayload(form: BranchForm): { ok: true; payload: BranchForm
   if (!has(name)) return { ok: false, error: 'Give the branch a name.' };
   return { ok: true, payload: { code, name, actsIndependently: form.actsIndependently } };
 }
+
+export interface PinForm {
+  latitude: string;
+  longitude: string;
+  label: string;
+}
+
+export const pinFormFor = (pin: { latitude: number; longitude: number; label: string | null } | null): PinForm => ({ latitude: pin === null ? '' : String(pin.latitude), longitude: pin === null ? '' : String(pin.longitude), label: pin?.label ?? '' });

@@ -49,6 +49,15 @@ import { VendorProfileService } from '@/server/domains/vendors/profile-service';
 import { VendorReviewService } from '@/server/domains/vendors/review-service';
 import { VendorNotifier } from '@/server/domains/vendors/notifier';
 import { OrderSlaService } from '@/server/domains/orders/sla-service';
+import { StockLocationService } from '@/server/domains/stock/locations';
+import { StockLedger } from '@/server/domains/stock/ledger';
+import type { StockAvailability } from '@/server/domains/stock/availability';
+import type { StockSettingsService } from '@/server/domains/stock/settings';
+import { StockShadow } from '@/server/domains/stock/shadow';
+import { TransferService } from '@/server/domains/stock/transfers';
+import { CountService } from '@/server/domains/stock/counts';
+import { StockCutover } from '@/server/domains/stock/cutover';
+import { StockReservations } from '@/server/domains/stock/reservations';
 import { OrderSlaNotifier } from '@/server/domains/orders/sla-notifier';
 import { VendorBankChangeService } from '@/server/domains/vendors/bank-change-service';
 import { VendorLifecycleService } from '@/server/domains/vendors/lifecycle-service';
@@ -99,6 +108,15 @@ import { AccountService } from '@/server/domains/auth/account-service';
 import { ProductImportService } from '@/server/domains/catalog/import-service';
 import { MediaService } from '@/server/domains/media/service';
 import { MediaPortRegistry } from '@/server/adapters/media/registry';
+import { GeoPortRegistry } from '@/server/adapters/geo/registry';
+import { GeoService } from '@/server/domains/geo/service';
+import { createDeliveryServices } from './delivery-wiring';
+import type { DeliveryZones } from '@/server/domains/delivery/zones';
+import type { DeliveryMethods } from '@/server/domains/delivery/methods';
+import type { ChargePolicies } from '@/server/domains/delivery/charge-policies';
+import type { DeliveryQuotes } from '@/server/domains/delivery/quote';
+import type { DeliveryPlans } from '@/server/domains/delivery/plan';
+import type { OrderDeliveries } from '@/server/domains/delivery/order-delivery';
 import { KraConfigRepository } from '@/server/domains/kra/repository';
 import { KraConfigResolver } from '@/server/domains/kra/resolver';
 import { EtimsTransmissionService } from '@/server/domains/kra/etims/transmission-service';
@@ -143,6 +161,15 @@ export interface AppContainer {
   payments: PaymentService;
   orders: OrderRepository;
   orderSla: OrderSlaService;
+  stockLocations: StockLocationService;
+  stockLedger: StockLedger;
+  stockAvailability: StockAvailability;
+  stockShadow: StockShadow;
+  stockSettings: StockSettingsService;
+  stockReservations: StockReservations;
+  stockTransfers: TransferService;
+  stockCounts: CountService;
+  stockCutover: StockCutover;
   users: UserRepository;
   usersAdmin: UsersAdminRepository;
   accessControl: AccessControlService;
@@ -227,6 +254,20 @@ export interface AppContainer {
   accounts: AccountService;
   productImports: ProductImportService;
   media: MediaService;
+  /** Map answers (places, distances, nearest) from whichever provider is chosen, with a built-in estimate to fall back on. */
+  geo: GeoService;
+  /** Delivery zones, their places, and finding the zone of an address or a pin. */
+  deliveryZones: DeliveryZones;
+  /** Which delivery methods each branch offers. */
+  deliveryMethods: DeliveryMethods;
+  /** The policies that work out delivery charges, and their life from draft to retired. */
+  chargePolicies: ChargePolicies;
+  /** The delivery charge for an order from a branch to a customer, with its trace. */
+  deliveryQuotes: DeliveryQuotes;
+  /** The branch that processes a delivered order, and its charge, decided together from the customer's pin or address. */
+  deliveryPlans: DeliveryPlans;
+  /** The delivery recorded on each order. */
+  orderDeliveries: OrderDeliveries;
   kraConfigs: KraConfigRepository;
   kraResolver: KraConfigResolver;
   etimsTransmission: EtimsTransmissionService;
@@ -415,6 +456,11 @@ export function getContainer(): AppContainer {
   const creditNotes = new CreditNoteService(drizzleDb, kraSigning, numbering);
   const vendors = new VendorService(drizzleDb, numbering);
   const vendorFiles = new VendorFileStore(drizzleDb);
+  const stockLocations = new StockLocationService(drizzleDb);
+  const stockLedger = new StockLedger(drizzleDb);
+  const stockShadow = new StockShadow(drizzleDb, stockLocations);
+  const geo = new GeoService(new GeoPortRegistry());
+  const deliveryServices = createDeliveryServices({ db: drizzleDb, decisionLog, geo, companySettings });
   const orderSla = new OrderSlaService(drizzleDb, new OrderSlaNotifier(email, companySettings));
   const vendorNotifier = new VendorNotifier(drizzleDb, email, companySettings);
   const prequalLifecycle = new PrequalLifecycle(drizzleDb, vendorNotifier);
@@ -472,6 +518,15 @@ export function getContainer(): AppContainer {
     payments,
     orders,
     orderSla,
+    stockLocations,
+    stockLedger,
+    stockAvailability: deliveryServices.stockAvailability,
+    stockShadow,
+    stockSettings: deliveryServices.stockSettings,
+    stockReservations: new StockReservations(drizzleDb, stockLedger, decisionLog),
+    stockTransfers: new TransferService({ db: drizzleDb, ledger: stockLedger, numbering, decisionLog }),
+    stockCounts: new CountService({ db: drizzleDb, ledger: stockLedger, numbering, decisionLog }),
+    stockCutover: new StockCutover(drizzleDb, stockShadow, stockLocations, decisionLog),
     users,
     usersAdmin,
     accessControl,
@@ -535,6 +590,13 @@ export function getContainer(): AppContainer {
       companyId: async () => (await companySettings.ensureSeeded()).id,
     }),
     media,
+    geo,
+    deliveryZones: deliveryServices.deliveryZones,
+    deliveryMethods: deliveryServices.deliveryMethods,
+    chargePolicies: deliveryServices.chargePolicies,
+    deliveryQuotes: deliveryServices.deliveryQuotes,
+    deliveryPlans: deliveryServices.deliveryPlans,
+    orderDeliveries: deliveryServices.orderDeliveries,
     kraConfigs,
     kraResolver,
     etimsTransmission,

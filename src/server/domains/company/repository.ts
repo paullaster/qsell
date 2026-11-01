@@ -7,6 +7,7 @@ import {
   type CompanySettingsRow,
 } from '@/server/db/drizzle/schema';
 import type { CompanyProfile } from '@/server/ports/communications';
+import { resolveDocumentLayouts, type DocumentLayouts } from '@/lib/document-layouts';
 
 /** Minimal company row so the app can boot; replace via Company settings. Not demo brand data. */
 const DEFAULT_COMPANY: Omit<CompanySettingsInsert, 'id' | 'createdAt' | 'updatedAt'> = {
@@ -62,6 +63,10 @@ export function toCompanyProfile(row: CompanySettingsRow): CompanyProfile {
     bankAccountName: row.bankAccountName,
     bankAccountNumber: row.bankAccountNumber,
     bankBranch: row.bankBranch,
+    documentLayouts: resolveDocumentLayouts(
+      row.uiConfig.documentLayouts,
+      row.invoiceFooterNote ?? '',
+    ),
     invoiceFooterNote: row.invoiceFooterNote,
     invoicePrefix: row.invoicePrefix,
     logoUrl: row.logoUrl,
@@ -174,6 +179,25 @@ export class CompanySettingsRepository {
     if (!updated) {
       throw new Error('Failed to update company settings');
     }
+    readThisRequest().row = null;
+    return updated;
+  }
+
+  /** Saves print layouts atomically with the legacy invoice footer projection for older consumers. */
+  async setDocumentLayouts(layouts: DocumentLayouts): Promise<CompanySettingsRow> {
+    const current = await this.ensureSeeded();
+    const patch = JSON.stringify({ documentLayouts: layouts });
+    const invoiceFooterNote = layouts.invoice.footerText.trim();
+    const [updated] = await this.db
+      .update(companySettings)
+      .set({
+        uiConfig: sql`coalesce(${companySettings.uiConfig}, '{}'::jsonb) || ${patch}::jsonb`,
+        invoiceFooterNote: invoiceFooterNote === '' ? null : invoiceFooterNote,
+        updatedAt: new Date(),
+      })
+      .where(eq(companySettings.id, current.id))
+      .returning();
+    if (!updated) throw new Error('Failed to save company document layouts');
     readThisRequest().row = null;
     return updated;
   }

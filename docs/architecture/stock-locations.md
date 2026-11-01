@@ -1,4 +1,4 @@
-# Stock per Location (L-0) — Module Design (DRAFT, nothing built)
+# Stock per Location (L-0) — Module Design (L-0a to L-0d BUILT)
 
 Status: **draft for correction**, written 2026-10-27. It is the prerequisite of the [delivery module](./delivery-module.md) (a delivery leaves a named location) and the "per-location stock ledger and balances" of Phase 2 in the [sales-order blueprint](./sales-order-blueprint.md) (§ stock, "where the scale fix lands"). It also touches [core-finance-module.md](./core-finance-module.md) (stock at cost in the books), [vendor-management-module.md](./vendor-management-module.md) (goods received, purchase returns), [pricing-module.md](./pricing-module.md) (kits) and [order-stage-timeline.md](./order-stage-timeline.md) (every stock stage of an order is timestamped).
 
@@ -396,4 +396,134 @@ Bins, putaway and zones inside a location (the `parent_id` column is reserved); 
 
 ## 17. Decisions taken
 
-None yet for L-0 beyond what the owner decided for delivery (2026-10-27): **stock per location is built first**.
+Decided by the owner on 2026-10-29: **every recommendation in §16 is accepted as written**, namely:
+
+1. Location kinds as in §4.1 (`warehouse`, `store`, `van`, `quarantine`, `damaged`, `consignment_in`, `transit`).
+2. Negative stock forbidden everywhere except locations marked to allow it (a flag on the movement and a finding).
+3. Costing: company-wide moving average, the cost frozen on each movement (§7.1).
+4. Unpaid shop orders hold stock 30 minutes for card and M-Pesa (configurable per company); cash on delivery holds until dispatch.
+5. One shard per `(product, location)` to start; more shards on measured contention (§5.1).
+6. Location scoping of users by branch, with explicit overrides.
+7. Safety stock: not in the first version.
+8. Stock in transit belongs to the sending branch until received.
+9. A shop order comes from one location unless none can cover the whole order.
+10. All history is migrated into the new ledger.
+
+Earlier, for delivery (2026-10-27): **stock per location is built first**.
+
+
+## 18. L-0a as built (2026-10-29)
+
+Locations, the movement ledger, balances, the stock writer, availability, and the shadow of the old counters. **No screen and no server action yet**, so nothing is visible to a user and no API or e2e test applies; those come with L-0e. The shadow switch ships **off**: a deployment behaves exactly as before until it is switched on.
+
+| What | Where |
+|---|---|
+| Tables `stock_locations`, `stock_balances`, `stock_movements`, `stock_settings`; append-only trigger; the shadow triggers; `stock_movement_kind()`; `stock_default_location()` | migration `0109_stock_locations_ledger.sql` |
+| Pure rules: movement types, journal-to-ledger mapping, location checks | `src/lib/stock.ts` |
+| Locations (default, create, change, hand over the default, stop and restart) | `src/server/domains/stock/locations.ts` (`container.stockLocations`) |
+| The one writer of physical stock in the new ledger (`post`, `postMany`) | `stock/ledger.ts` (`container.stockLedger`) |
+| One definition of available, many products per query | `stock/availability.ts` (`container.stockAvailability`) |
+| Shadow switch, backfill, comparison | `stock/shadow.ts` (`container.stockShadow`) |
+| Worker | `stock-backfill` (every minute, only while the shadow is on and the backfill unfinished), `stock-shadow-check` (daily, logs a mismatch as an error) |
+
+**How the shadow works.** Instead of editing every caller, two database triggers mirror the old paths, so no path can slip past: an insert into `inventory_movements` that moved physical stock becomes a `stock_movements` row at the default location and changes its balance (`stock_mirror_journal`); a change of `products.reserved_quantity` changes the balance's `reserved` (`stock_mirror_reserved`). Holds and cost changes are not movements. A mirror that fails raises a warning and never stops the sale; the comparison reports the difference. The backfill (`backfillProduct`) runs under the product's row lock, copies the product's journal history once (`legacy_movement_id` keeps anything from being counted twice), adds an `opening` movement for whatever the history does not explain, and sets the balance to the product's counters. The comparison checks four things: counters against balances for on hand and for reserved, the movement sum against the balance for each product and location, and negative balances.
+
+**Decisions made while building.**
+* The movement idempotency key is `(document type, document id, line id, product, type, location)`, wider than the draft's, so a line id reused in another document cannot swallow a movement.
+* Movements keep no foreign key to products, so purging a product (which removes its balances) never meets the append-only ledger.
+* `on_hand >= 0` is **not** a table constraint in L-0a: the old path can go below zero and the shadow must not block it. The writer refuses it for locations that do not allow negative stock, and the comparison reports it. The constraint and `reserved <= on_hand` arrive with the cut-over.
+* Reservations are still a counter in this slice; the reservation ledger, sourcing and the expiry job are L-0b.
+
+**Verified.** Unit (`stock.test.ts`, 32), integration (`stock.integration.test.ts`, 26: locations, the ledger under 25 simultaneous sales and opposite-order baskets, conservation over random runs, append-only, availability, every mirrored kind of change, reservations through to a fulfilled order, backfill with a sale landing during it, the comparison finding a planted difference, a failing mirror not stopping a sale).
+
+**Not done / next.** L-0b (reservation ledger, sourcing, order wiring, expiry), then the rest of §14. Before the shadow is switched on in a real deployment: apply migration 0109, switch it on (`stockShadow.setShadow`), let the backfill finish, and watch the daily comparison for a full business cycle (the gate in §10).
+
+
+## 19. L-0b as built (2026-10-29)
+
+The reservation ledger, sourcing, the order paths on top of them, and expiry. Still **no screen and no server action**; and the new path stays **off** (`stock_settings.ledger_mode = false`) until the cut-over, so a deployment behaves exactly as before.
+
+| What | Where |
+|---|---|
+| Table `stock_reservations` (states, used and given-back quantities, expiry, sourcing trace); `ledger_mode` and `unpaid_hold_minutes` on `stock_settings`; the trigger that keeps the product counters equal to the balances in ledger mode | migration `0110_stock_reservations.sql` |
+| Which location supplies which line (pure) | `src/lib/stock-sourcing.ts` |
+| Reserve, consume (issue), release, expire | `src/server/domains/stock/reservations.ts` (`container.stockReservations`) |
+| The mode and the hold time | `stock/settings.ts` (`container.stockSettings`) |
+| The order paths | `InventoryReservationService.reserveForOrder / fulfilOrder / releaseOrder` choose the old or the new path by the mode; the order write service passes the channel, the branch and whether the shopper pays at once |
+| Expiry | worker `stock-reservation-expiry` (every minute): gives back holds past their end and marks a still-unpaid order failed (`payment_failed`, reason `hold_expired`) on its timeline |
+| Check | `stockShadow.compare()` also proves each balance's reserved quantity equals the sum of its open holds (once ledger mode is on) |
+
+**Behaviour.**
+* **Sourcing (decision 9 of §17):** locations of the order's branch first, then the default, then by code; only active, sellable locations that sell to the order's channel. One location takes the whole order if any can; otherwise each line comes from the first location that covers it; otherwise a line is split over locations; otherwise the order is refused in the words shoppers already see (`Insufficient inventory for "X". Available: a, Requested: q.`) and nothing is held. The rule and the places considered are recorded on each hold.
+* **Locking:** every balance an order could use is locked in one fixed order (product, location, shard), so two baskets cannot wait on each other.
+* **Idempotent:** asking again for the same order holds only the difference; consuming or releasing twice changes nothing; a late release after the sale changes nothing.
+* **Issue never goes below zero:** if stock was written down after the hold, the sale settles for what is on the shelf and the hold records the shortfall (the old code clamped the same way).
+* **Hold time (decision 4):** `unpaid_hold_minutes` (0 = until settled, today's behaviour) applies to orders whose shopper pays at once (M-Pesa, card, Pesapal, Jenga, KCB); cash on delivery and credit orders hold until settled.
+
+**Decisions made while building.**
+* Product counters follow the balances through a trigger while ledger mode is on, so the 32 readers of `stock_quantity`/`reserved_quantity` stay right until they move to `StockAvailability` (§10 step 3). It is retired with them.
+* Ledger mode ends the shadow (the counters follow the ledger, not the other way round), and the shadow cannot be turned on while it is set.
+* The backfill refuses to touch a product the ledger already manages, so it can never double a multi-location product from the old counter.
+* A sort bug the tests found: a location with no branch gave NULL in the branch-first ordering, and Postgres sorts NULL first when descending; fixed with `COALESCE`.
+* Shards: reservations take from the shard with the most free, and the writer already supports several; **no shard is added automatically**.
+
+**Not met: the load gate of §14 (L-0b).** Measured here (one laptop, one Postgres, 10 baskets in flight): a two-line reserve takes p50 11.5 ms / p95 22 ms uncontended without the product-counter projection and p50 27.5 / p95 42 ms with it. With 200 baskets over 5 hot products, zero oversell, zero deadlock and the hold ledger equal to the balances every time, but p95 is 130 to 215 ms; over 3 hot products p95 is about 470 ms (360 ms with the projection off). The cause is that each hot product has one shard, so its baskets queue on one row; the projection adds a second queue on the product row. The remedy is the design's: add shards to hot products and allocate with `SKIP LOCKED` (§5.1), and retire the projection at the cut-over. Neither is in this slice; both are needed before the gate (p95 ≤ 50 ms) can be claimed. The test asserts only the correctness properties and a loose p95 bound, and prints the numbers.
+
+**Verified.** Unit: `stock-sourcing.test.ts` (9). Integration: `reservations.integration.test.ts` (24: placing, location choice, using and giving back, the order paths end to end, expiry with the task, 200 concurrent baskets, the check), plus the guard in `stock.integration.test.ts`.
+
+**Not done / next.** L-0c (stock documents and the facade over `applyStockDelta`, so ledger mode can be switched on), the order timeline's stock stages (T-1, which needs the order to exist when the stage is written, whereas the hold is placed before the order is saved), then L-0d to L-0f.
+
+
+## 20. L-0c as built (2026-10-29)
+
+Every old way of changing stock now goes through the ledger when the ledger is the truth. Still **no screen and no server action**, and the ledger mode is still **off** by default.
+
+| What | Where |
+|---|---|
+| `applyStockDelta` (the one function every receipt, adjustment, write-off, count, goods received note, purchase return and return receipt already calls) makes the movement at a location, with an optional `locationId` and the default location otherwise | `inventory/service.ts` |
+| Opening stock of a new product (product form and CSV import) becomes an `opening` movement | `recordOpeningStock` in `inventory/service.ts`, used by `catalog/service.ts` and `catalog/import-service.ts` |
+| Switching the ledger on is refused unless the shadow has brought everything across and the comparison finds nothing different | `StockSettingsService.setLedgerMode` |
+| The comparison also proves the old journal and the ledger tell the same story (once the ledger is the truth), and can be limited to chosen products | `StockShadow.compare({ productIds })` |
+
+**How it works in ledger mode.** `applyStockDelta` locks the product row as before, takes the current total from the balances, works out the change (a counted figure, a clamp at zero, or a plain change), and posts one movement to the chosen location. The product's counters then follow the balances through the trigger of L-0b. A write that would take a place below zero is refused in words (`There is not enough stock at <place>: a on hand, b needed.`), as the design's negative-stock decision says; the old code let some callers go negative. A caller that tries to change holds through a stock change is refused, since holds belong to the reservation ledger.
+
+**Deviations from the plan in §14, on purpose.**
+* **The old journal is still written** beside every ledger movement, so the books (which are fed from it by a database trigger) and the old ledger screen keep working with no change. The books' trigger moves to the ledger, and the double write ends, at the cut-over (L-0f) as §10 step 4 says, not here. The comparison proves the two stay equal meanwhile (`journalDiffers`).
+* **No `stock_documents` header and lines tables yet.** Receipts, goods received notes, purchase returns, return receipts, adjustments and write-offs are each already a numbered, single-transaction document in their own module, and the movement carries the document's number (`document_type`, `document_id`). A separate stock-document table earns its place with transfers and counts (L-0d), which have states and several lines; adjustments and write-offs can move onto it then.
+* **No location picker on the documents yet.** The services post to the default location; a `locationId` can already be passed to `applyStockDelta`. The columns on goods received notes, purchase returns and return receipts, and the pickers, arrive with the screens in L-0e, so there is no unused column in the meantime.
+* **Approvals and the new permissions** (`stock:adjust` and the rest) arrive with the screens and actions (L-0e); the existing gates on adjustments are unchanged.
+
+**Verified.** Integration `facade.integration.test.ts` (16): a receipt, a count, a clamp, a change of nothing, a refusal below zero, a refusal to change holds, a piece that cannot be 2.5, every operation people use (receive, adjust, write off, count, bulk adjust), opening stock, the journal-ledger comparison clean and finding a planted difference, the product filter, the refusals and the go-ahead for switching the ledger on, and a rehearsal on a real product from the old way through the shadow to the new path. The full suite is run on a fresh database.
+
+**Next.** L-0d: transfers (a document with stock in transit) and counts, which bring the `stock_documents` tables. Then L-0e (screens, permissions, pickers, the order's stock panel), and L-0f (the cut-over, retiring the double write and the counters).
+
+
+## 21. L-0d as built (2026-10-30)
+
+Transfers with stock in transit, and counts. Still **no screen and no server action** (L-0e), and the ledger mode is still off by default, so nothing a shop does changes yet; the services work whenever the ledger is the truth.
+
+| What | Where |
+|---|---|
+| Tables `stock_documents` and `stock_document_lines`; the rule that a finished document and its lines never change and that documents are never deleted; `stock_transfer` number series | migration `0111_stock_documents.sql`, `document-kinds.ts` |
+| States, quantities in transit, count variance (pure) | `src/lib/stock-documents.ts` |
+| Transfers: create, change a draft, request, approve, cancel, ship, receive, resolve (lost or sent back) | `src/server/domains/stock/transfers.ts` (`container.stockTransfers`) |
+| Counts: open (full or cycle, blind or open), record, hand in, reopen, approve, post, cancel | `stock/counts.ts` (`container.stockCounts`) |
+| Shared locking, numbering, history and the old-journal line for a loss or a difference | `stock/documents.ts` |
+| Settings: a transfer needs approval before it ships; a count worth more than a limit needs a second person | `stock_settings.transfer_requires_approval`, `count_approval_value` |
+
+**Transfers.** A draft is numbered (`TRF-…`) and moves nothing. Shipping makes a transit location for that transfer (kind `transit`, not sellable, `TRN-<number>`), takes the stock out of the sender and puts it there in the same transaction, at the cost the line carries, so the company's total never dips and nothing is "nowhere". Stock promised to a customer cannot be shipped; the refusal says how much is free. Receiving moves what arrived from the transit location to the receiving location, in whole or in parts. What does not arrive is settled by writing it off (a `write_off` movement with the reason `lost_in_transit`, plus its line in the old journal so the books see the loss) or by sending it back. A transfer with nothing left on its way is `received`, or `closed` if anything was lost or sent back, and its transit location is stopped. A transfer cannot be cancelled once it has shipped. Approval, when the company asks for it, must be by someone other than the person who asked. A draft is changed only by someone who has seen its latest version.
+
+**Counts.** Opening a count records where the ledger stood (the highest movement id) and what each listed product should hold at the location at that point. A full count lists every product with stock there (up to 5,000; beyond that, count in parts); a cycle count lists the products chosen. Each counted figure keeps who counted it and when. The difference posted is the counted figure less what should have been there **at the moment of counting** (the snapshot plus what moved in the meantime up to that moment), so a sale made while counting is not a loss, and a sale made after the shelf was counted is not undone. A blind count hides the expected figures from the counter until the count is handed in. A count whose differences are worth more than the company's limit needs a second person who took no part in it. Posting writes one `count_variance` movement per product that differs, with the old journal line, in one transaction.
+
+**History.** Every step is a line in the decision log (`stock.transfer.*`, `stock.count.*`) with who, from-state, to-state and the reason, and the documents carry the time and the person of each step. Nothing is edited after the fact: a finished document is locked by the database.
+
+**Deviations and limits, stated plainly.**
+* **Approvals are the simple four-eyes rule** above, not the approvals engine; wiring it in is an option for L-0e if the company wants workflows.
+* **A transfer to or from a place with open reservations:** only the free part can ship; the reserved part stays.
+* **Snapshot ordering:** a count's snapshot is the highest movement id at the moment it opens. A movement that took an earlier id but commits later (a long transaction open at that instant) would be missed by both the expected figure and the "since" sum. The window is the length of such a transaction; it is the same trade-off every id-ordered consumer of the ledger makes.
+* **A product removed for good** (not just deleted) keeps its lines in old documents (no foreign key), as the movement ledger does.
+* **Receiving at a place stopped meanwhile** is refused, and the transfer waits.
+
+**Verified.** Unit `stock-documents.test.ts` (25). Integration `documents.integration.test.ts` (36): every refusal, the states, shipping less, a reservation blocking a shipment, approval by another person, cancelling, receiving in parts, two simultaneous receipts of the same stock (one wins), losses and send-backs with the journal agreeing, the database refusing to change a finished document, conservation over a random run of 24 transfers (the company owns the same except for what was written off), counts (expected figures, only differences posted, sales during counting, a real loss during sales, blind, extra products, who counted what, approval by a stranger, double posting) and another company seeing nothing.
+
+**Next.** L-0e: screens, permissions, location pickers, the order's stock panel and sourcing rules; then L-0f, the cut-over.

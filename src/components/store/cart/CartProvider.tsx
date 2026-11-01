@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { PublicProduct } from '@/types/index';
-import { productsByIdsAction } from '@/server/domains/catalog/storefront-actions';
+import { packagingProductsByIdsAction, productsByIdsAction } from '@/server/domains/catalog/storefront-actions';
 import { addToCart, reconcileCart, savedLines, setCartQuantity, type AddOutcome, type CartLine } from '@/lib/cart-lines';
 import { CART_STORAGE_KEY, LEGACY_CART_STORAGE_KEY, parseSavedCart, serializeCart, type SavedCartLine } from '@/lib/cart-storage';
 import { cartBadgeCount } from '@/lib/cart-quantity';
@@ -71,7 +71,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
     }
     try {
       // The quantity goes with each id so the price shown is the price at that quantity.
-      const fresh = await productsByIdsAction(saved.map((line) => ({ id: line.productId, quantity: line.quantity })));
+      const lookup = saved.map((line) => ({ id: line.productId, quantity: line.quantity }));
+      const [catalog, packaging] = await Promise.all([
+        productsByIdsAction(lookup),
+        packagingProductsByIdsAction(lookup),
+      ]);
+      const fresh = [...catalog, ...packaging];
       const result = reconcileCart(saved, fresh, moneyRef.current);
       commit(result.lines);
       for (const notice of result.notices) {
@@ -104,8 +109,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
     repriceTimer.current = window.setTimeout(() => {
       const current = linesRef.current;
       if (current.length === 0) return;
-      productsByIdsAction(current.map((line) => ({ id: line.product.id, quantity: line.quantity })))
-        .then((fresh) => {
+      const lookup = current.map((line) => ({ id: line.product.id, quantity: line.quantity }));
+      Promise.all([productsByIdsAction(lookup), packagingProductsByIdsAction(lookup)])
+        .then(([catalog, packaging]) => {
+          const fresh = [...catalog, ...packaging];
           const byId = new Map(fresh.map((product) => [product.id, product]));
           commit(linesRef.current.map((line) => ({ product: byId.get(line.product.id) ?? line.product, quantity: line.quantity })));
         })

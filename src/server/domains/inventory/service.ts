@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { OrderStages, type OrderFields } from '@/server/domains/orders/stages';
 import { moveProblem, stageForStatus } from '@/lib/order-stages';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { roundQty } from '@/lib/decimal';
 import { getContainer } from '@/server/di/container';
 import { drizzleDb } from '@/server/db/drizzle/client';
@@ -13,6 +13,9 @@ import { afterCommit, withAfterCommit } from '@/server/kernel/after-commit';
 import type { GateResult } from '@/server/kernel/approvals/parked-actions';
 import type { Product, InventoryLedgerEntry, Order, OrderStatus } from '@/types/index';
 import { InventoryReservationService } from './reservation-service';
+import { isLedgerModeIn } from '@/server/domains/stock/settings';
+import type { Queryable } from '@/server/domains/stock/ledger';
+import { movementTypeOfJournal } from '@/lib/stock';
 import { toLedgerEntry, toProduct } from '@/server/domains/catalog/mappers';
 import type { ProductJoined } from '@/server/domains/catalog/repository';
 
@@ -50,6 +53,8 @@ interface StockDelta {
   referenceId: string;
   actor: string;
   note: string;
+  /** Where the stock moves, when the per-location ledger is the truth. None means the default location. */
+  locationId?: string;
 }
 
 /**
@@ -70,7 +75,13 @@ export async function applyStockDelta(tx: Tx, params: StockDelta): Promise<numbe
     throw new Error(`Product ${params.productId} not found`);
   }
 
-  const previousStock = locked.stockQuantity;
+  // With the per-location ledger as the truth, the movement is made there (at the chosen or the default location) and the product's
+  // counters follow the balances; the old journal row is still written, so the books and the old ledger screen keep working.
+  const ledgerMode = await isLedgerModeIn(tx);
+  if (ledgerMode && params.reservedDelta !== undefined && params.reservedDelta !== 0) {
+    throw new Error('Holds are placed and given back through the reservation ledger, not through a stock change.');
+  }
+  const previousStock = ledgerMode ? await totalOnHandIn(tx, params.productId) : locked.stockQuantity;
   const nextStock =
     params.setTo ??
     roundQty(params.clampAtZero === true ? Math.max(0, previousStock + params.delta) : previousStock + params.delta);
@@ -82,17 +93,37 @@ export async function applyStockDelta(tx: Tx, params: StockDelta): Promise<numbe
     if (problem !== null) throw new Error(problem);
   }
 
-  const patch: Partial<typeof products.$inferInsert> = {
-    stockQuantity: nextStock,
-    updatedAt: new Date(),
-  };
-  if (params.reservedDelta) {
-    patch.reservedQuantity = Math.max(0, roundQty(locked.reservedQuantity + params.reservedDelta));
+  const patch: Partial<typeof products.$inferInsert> = { updatedAt: new Date() };
+  if (!ledgerMode) {
+    patch.stockQuantity = nextStock;
+    if (params.reservedDelta !== undefined && params.reservedDelta !== 0) {
+      patch.reservedQuantity = Math.max(0, roundQty(locked.reservedQuantity + params.reservedDelta));
+    }
   }
   if (params.costPrice !== undefined && params.costPrice > 0) {
     patch.costPrice = String(params.costPrice);
   }
   await tx.update(products).set(patch).where(eq(products.id, params.productId));
+
+  if (ledgerMode) {
+    const change = roundQty(nextStock - previousStock);
+    if (change !== 0) {
+      const { stockLedger } = getContainer();
+      const place = await stockLedger.defaultLocationIn(tx);
+      await stockLedger.post(tx, {
+        companyId: place.companyId,
+        productId: params.productId,
+        locationId: params.locationId ?? place.locationId,
+        type: movementTypeOfJournal(params.changeType) ?? 'adjustment',
+        quantity: change,
+        unitCost: params.costPrice !== undefined && params.costPrice > 0 ? params.costPrice : Number(locked.costPrice),
+        documentType: 'inventory_journal',
+        documentId: params.referenceId,
+        actor: { type: 'user', id: params.actor.slice(0, 200) },
+        note: params.note,
+      });
+    }
+  }
 
   await tx.insert(inventoryMovements).values({
     id: newId('ledger'),
@@ -108,6 +139,52 @@ export async function applyStockDelta(tx: Tx, params: StockDelta): Promise<numbe
   });
 
   return roundQty(nextStock - previousStock);
+}
+
+/** Everything on hand for a product over all its locations, read in the open transaction. */
+async function totalOnHandIn(tx: Queryable, productId: string): Promise<number> {
+  const rows = [...(await tx.execute<{ total: string }>(sql`SELECT COALESCE(sum(on_hand), 0) AS total FROM stock_balances WHERE product_id = ${productId}`))];
+  return Number(rows[0]?.total ?? 0);
+}
+
+/**
+ * The opening stock of a product just created (by the product form or by an import). The old journal row is always written, as
+ * before; with the per-location ledger as the truth the same quantity also becomes an `opening` movement at the default location.
+ * The product row must already exist, with its counter set to the quantity.
+ */
+export async function recordOpeningStock(
+  tx: Queryable,
+  input: { productId: string; productName: string; quantity: number; costPrice: number; referenceId: string; actor: string; note: string },
+): Promise<void> {
+  await tx.insert(inventoryMovements).values({
+    id: newId('ledger'),
+    productId: input.productId,
+    productName: input.productName,
+    changeAmount: input.quantity,
+    previousStock: 0,
+    newStock: input.quantity,
+    changeType: 'restock',
+    referenceId: input.referenceId,
+    actor: input.actor,
+    note: input.note,
+  });
+  if (input.quantity > 0 && (await isLedgerModeIn(tx))) {
+    const { stockLedger } = getContainer();
+    const place = await stockLedger.defaultLocationIn(tx);
+    await stockLedger.post(tx, {
+      companyId: place.companyId,
+      productId: input.productId,
+      locationId: place.locationId,
+      type: 'opening',
+      quantity: input.quantity,
+      unitCost: input.costPrice,
+      documentType: 'product_creation',
+      documentId: input.productId,
+      documentLineId: input.productId,
+      actor: { type: 'user', id: input.actor.slice(0, 200) },
+      note: input.note,
+    });
+  }
 }
 
 type StockDocumentKind = 'stock_adjustment' | 'stock_receipt' | 'stock_write_off' | 'stock_count';

@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   CHECKOUT_REFUSALS,
+  NON_TRACKING_STAGES,
+  tracksCurrentStage,
   ORDER_STAGES,
   ORDER_STAGE_NAMES,
   STAGE_OUTCOMES,
@@ -146,5 +148,16 @@ describe('what a customer is shown', () => {
       { stage: 'payment_confirmed', label: 'Payment received', at: '2026-01-01T10:05:00.000Z' },
       { stage: 'dispatched', label: 'On its way', at: '2026-01-01T11:00:00.000Z' },
     ]);
+  });
+});
+
+describe('stages that are not where the order is', () => {
+  it('are the stock events and the delivery charge quoted, and every other stage moves the order', () => {
+    expect([...NON_TRACKING_STAGES].sort()).toEqual(['charge_quoted', 'reservation_failed', 'stock_issued', 'stock_released', 'stock_reserved', 'stock_returned']);
+    for (const name of ORDER_STAGE_NAMES) expect(tracksCurrentStage(name), name).toBe(!NON_TRACKING_STAGES.includes(name));
+    for (const name of NON_TRACKING_STAGES) expect(isOrderStage(name), name).toBe(true);
+  });
+  it('change nothing about the order itself', () => {
+    for (const name of NON_TRACKING_STAGES) expect(Object.keys(stageEffect(name, 'succeeded')), name).toEqual([]);
   });
 });

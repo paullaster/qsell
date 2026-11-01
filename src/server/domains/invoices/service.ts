@@ -13,6 +13,8 @@ import type { Order } from '@/types/index';
 import { shownPaymentReference } from '@/lib/paymentReference';
 import { getContainer } from '@/server/di/container';
 import { businessDate } from '@/server/kernel/numbering/business-date';
+import { resolveDocumentLayouts } from '@/lib/document-layouts';
+import { has, trimToNull } from '@/lib/values';
 
 export type InvoiceDocumentType = 'tax_invoice' | 'proforma';
 
@@ -40,7 +42,7 @@ function dbErrorMessage(error: unknown): string {
     return 'Database operation failed';
   }
   const cause = (error as Error & { cause?: unknown }).cause;
-  if (cause instanceof Error && cause.message) {
+  if (cause instanceof Error && cause.message !== '') {
     return `${error.message}: ${cause.message}`;
   }
   return error.message;
@@ -90,7 +92,9 @@ const orderLine = (item: Order['items'][number]) => ({
 /** "3 crate" or "12" as the line was typed. */
 function shownQuantity(item: Order['items'][number]): string {
   const shown = lineDisplay(orderLine(item));
-  return shown.unit === null ? String(shown.quantity) : `${String(shown.quantity)} ${escapeHtml(shown.unit)}`;
+  return shown.unit === null
+    ? String(shown.quantity)
+    : `${String(shown.quantity)} ${escapeHtml(shown.unit)}`;
 }
 
 function buildInvoiceEmailHtml(args: {
@@ -134,26 +138,26 @@ function buildInvoiceEmailHtml(args: {
         <p style="margin:16px 0 8px;font-weight:700;color:${escapeHtml(company.accentColor)};">Payment details</p>
         <ul style="margin:0;padding-left:18px;color:#374151;">
           <li>Preferred method: ${escapeHtml(order.paymentMethod.replace(/_/g, ' '))}</li>
-          ${paymentReference ? `<li>Reference: ${escapeHtml(paymentReference)}</li>` : ''}
-          ${company.bankName ? `<li>Bank: ${escapeHtml(company.bankName)}</li>` : ''}
-          ${company.bankAccountName ? `<li>Account name: ${escapeHtml(company.bankAccountName)}</li>` : ''}
-          ${company.bankAccountNumber ? `<li>Account number: ${escapeHtml(company.bankAccountNumber)}</li>` : ''}
-          ${company.bankBranch ? `<li>Branch: ${escapeHtml(company.bankBranch)}</li>` : ''}
+          ${has(paymentReference) ? `<li>Reference: ${escapeHtml(paymentReference)}</li>` : ''}
+          ${has(company.bankName) ? `<li>Bank: ${escapeHtml(company.bankName)}</li>` : ''}
+          ${has(company.bankAccountName) ? `<li>Account name: ${escapeHtml(company.bankAccountName)}</li>` : ''}
+          ${has(company.bankAccountNumber) ? `<li>Account number: ${escapeHtml(company.bankAccountNumber)}</li>` : ''}
+          ${has(company.bankBranch) ? `<li>Branch: ${escapeHtml(company.bankBranch)}</li>` : ''}
         </ul>`
       : `<p style="margin:16px 0 0;color:#374151;">Payment status: <strong>${escapeHtml(order.paymentStatus.replace(/_/g, ' '))}</strong>${
-          paymentReference ? ` · Ref: ${escapeHtml(paymentReference)}` : ''
+          has(paymentReference) ? ` · Ref: ${escapeHtml(paymentReference)}` : ''
         }</p>`;
 
   return `
     <div style="font-family: Arial, Helvetica, sans-serif; color: #111827; line-height: 1.5; max-width: 640px;">
       ${
-        company.logoUrl
+        has(company.logoUrl)
           ? `<img src="${escapeHtml(company.logoUrl)}" alt="${escapeHtml(company.tradingName)} logo" width="64" height="64" style="display:block;margin:0 0 12px;object-fit:contain;" />`
           : ''
       }
       <h2 style="margin: 0 0 4px; color: ${escapeHtml(company.accentColor)};">${escapeHtml(company.tradingName)}</h2>
       ${
-        company.tagline
+        has(company.tagline)
           ? `<p style="margin:0 0 8px;color:#6B7280;font-size:12px;text-transform:uppercase;letter-spacing:0.04em;">${escapeHtml(company.tagline)}</p>`
           : ''
       }
@@ -195,7 +199,7 @@ function buildInvoiceEmailHtml(args: {
       <p style="margin:16px 0 4px;color:#6B7280;font-size:12px;text-transform:uppercase;letter-spacing:0.04em;">Ship to</p>
       <p style="margin:0;color:#374151;font-size:13px;">
         ${escapeHtml(order.customerName)}<br/>
-        ${buyerTaxPin ? `Tax PIN: ${escapeHtml(buyerTaxPin)}<br/>` : ''}
+        ${has(buyerTaxPin) ? `Tax PIN: ${escapeHtml(buyerTaxPin)}<br/>` : ''}
         ${escapeHtml(ship.street)}<br/>
         ${escapeHtml([ship.city, ship.countyOrState, ship.postalCode].filter(Boolean).join(', '))}<br/>
         ${escapeHtml(ship.country)}<br/>
@@ -205,7 +209,7 @@ function buildInvoiceEmailHtml(args: {
       ${paymentBlock}
 
       <p style="color: #6B7280; font-size: 12px; margin-top: 20px;">
-        ${escapeHtml(company.invoiceFooterNote || '')}
+        ${escapeHtml(resolveDocumentLayouts(company.documentLayouts, company.invoiceFooterNote ?? '').invoice.footerText)}
       </p>
     </div>
   `;
@@ -284,7 +288,7 @@ export class InvoiceService {
         return number;
       });
     } catch (error: unknown) {
-      throw new Error(`Failed to save invoice record: ${dbErrorMessage(error)}`);
+      throw new Error(`Failed to save invoice record: ${dbErrorMessage(error)}`, { cause: error });
     }
   }
 
@@ -328,18 +332,18 @@ export class InvoiceService {
       paymentMethod: order.paymentMethod,
       paymentReference: shownPaymentReference(order),
       paymentStatus: order.paymentStatus,
-      notes: order.internalNotes || null,
+      notes: trimToNull(order.internalNotes),
     };
   }
 
   private async buyerTaxPin(order: Order): Promise<string | null> {
-    if (!order.tradeCustomerId) return null;
+    if (!has(order.tradeCustomerId)) return null;
     const [row] = await this.deps.db
       .select({ pin: customers.buyerKraPin })
       .from(customers)
       .where(eq(customers.id, order.tradeCustomerId))
       .limit(1);
-    return row?.pin?.trim() || null;
+    return trimToNull(row?.pin);
   }
 
   private async resolveOrder(orderId: string): Promise<Order> {
@@ -403,7 +407,10 @@ export class InvoiceService {
   ): Promise<GeneratedInvoice> {
     const generated = await this.generatePdf(orderId, documentType);
     const order = await this.resolveOrder(orderId);
-    if (order.customerEmail.trim() === '') throw new Error('This order has no email address to send the invoice to. Download it instead.');
+    if (order.customerEmail.trim() === '')
+      throw new Error(
+        'This order has no email address to send the invoice to. Download it instead.',
+      );
     const company = await this.deps.companySettings.getProfile();
     const labels = documentLabels(documentType);
     const pdfBuffer = Buffer.from(generated.pdfBase64, 'base64');
@@ -518,7 +525,7 @@ export class InvoiceService {
   }
 
   async listForOrder(orderId: string) {
-    return this.deps.db
+    return await this.deps.db
       .select()
       .from(invoiceDocuments)
       .where(eq(invoiceDocuments.orderId, orderId))

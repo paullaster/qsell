@@ -32,6 +32,16 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'company:read',
       },
       {
+        id: 'company-documents',
+        title: 'Document layouts',
+        name: 'company-documents',
+        href: '/admin/company/documents',
+        description:
+          'Customize headers, footer notes and placement on quotes, invoices and receipts',
+        icon: 'FileText',
+        permission: 'company:read',
+      },
+      {
         id: 'company-appearance',
         title: 'Appearance',
         name: 'company-appearance',
@@ -336,6 +346,91 @@ export const ADMIN_NAV: AdminNavItem[] = [
         icon: 'Layers',
         permission: 'inventory:read',
       },
+      {
+        id: 'stock-by-location',
+        title: 'Stock by location',
+        name: 'stock-by-location',
+        href: '/admin/inventory/by-location',
+        description:
+          'How much of each product is held where, and how much of it is promised to customers',
+        icon: 'Layers',
+        permission: 'stock:read',
+      },
+      {
+        id: 'stock-locations',
+        title: 'Stock locations',
+        name: 'stock-locations',
+        href: '/admin/inventory/locations',
+        description: 'The warehouses, shops and vans that hold your stock',
+        icon: 'Store',
+        permission: 'stock:read',
+      },
+      {
+        id: 'stock-transfers',
+        title: 'Stock transfers',
+        name: 'stock-transfers',
+        href: '/admin/inventory/transfers',
+        description: 'Move stock between warehouses, shops and vans, and follow it on its way',
+        icon: 'Layers',
+        permission: 'stock:read',
+      },
+      {
+        id: 'stock-ledger',
+        title: 'Stock ledger',
+        name: 'stock-ledger',
+        href: '/admin/inventory/ledger',
+        description:
+          'Move the company to stock kept place by place: start, check, switch, and go back',
+        icon: 'ShieldCheck',
+        permission: 'stock:cutover',
+      },
+      {
+        id: 'stock-counts',
+        title: 'Stock counts',
+        name: 'stock-counts',
+        href: '/admin/inventory/counts',
+        description:
+          'Count what is on the shelves and bring the system in line, while the shop keeps selling',
+        icon: 'ClipboardCheck',
+        permission: 'stock:read',
+      },
+    ],
+  },
+  {
+    id: 'delivery',
+    title: 'Delivery',
+    name: 'delivery',
+    href: '/admin/delivery/zones',
+    description: 'Where you deliver, how each branch gets orders to customers, and what delivery costs',
+    icon: 'Truck',
+    subLinks: [
+      {
+        id: 'delivery-zones',
+        title: 'Delivery zones',
+        name: 'delivery-zones',
+        href: '/admin/delivery/zones',
+        description: 'The areas you deliver to, and the places that belong to each',
+        icon: 'MapPin',
+        permission: 'deliveries:read',
+      },
+      {
+        id: 'delivery-charges',
+        title: 'Delivery charges',
+        name: 'delivery-charges',
+        href: '/admin/delivery/charges',
+        description: 'How much delivery costs: by zone, flat or by weight, or by distance, with extras and discounts',
+        icon: 'Coins',
+        permission: 'deliveries:read',
+      },
+      {
+        id: 'delivery-methods',
+        title: 'Delivery methods',
+        name: 'delivery-methods',
+        href: '/admin/delivery/methods',
+        description: 'Which ways of delivering or collecting each branch offers',
+        icon: 'Route',
+        permission: 'deliveries:read',
+      },
     ],
   },
   {
@@ -389,7 +484,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
     title: 'Vendor Management',
     name: 'vendor-management',
     href: '/admin/vendors',
-    description: 'The businesses you buy from: vendors, prequalification, quotations, purchase orders and supplier invoices',
+    description:
+      'The businesses you buy from: vendors, prequalification, quotations, purchase orders and supplier invoices',
     icon: 'Store',
     subLinks: [
       {
@@ -442,7 +538,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Credit memos',
         name: 'vendor-credit-memos',
         href: '/admin/vendors/credit-memos',
-        description: 'Credit notes vendors send for invoices billed too high: check, approve and book',
+        description:
+          'Credit notes vendors send for invoices billed too high: check, approve and book',
         icon: 'FileText',
         permission: 'credit_memos:read',
       },
@@ -451,7 +548,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Payments to vendors',
         name: 'vendor-payments',
         href: '/admin/vendors/payments',
-        description: 'Payment vouchers for vendor invoices and advances: prepare, approve, pay, reverse',
+        description:
+          'Payment vouchers for vendor invoices and advances: prepare, approve, pay, reverse',
         icon: 'Wallet',
         permission: 'vendor_payments:read',
       },
@@ -505,7 +603,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Purchase requisitions',
         name: 'vendor-requisitions',
         href: '/admin/vendors/requisitions',
-        description: 'Requests to buy, approved by another person, then turned into a quotation request or an order',
+        description:
+          'Requests to buy, approved by another person, then turned into a quotation request or an order',
         icon: 'ClipboardCheck',
         permission: 'requisitions:read',
       },
@@ -523,7 +622,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Refunds from vendors',
         name: 'vendor-refunds',
         href: '/admin/vendors/refunds',
-        description: 'Money vendors pay back: overpayments, unused deposits and advances, credit memos settled in cash',
+        description:
+          'Money vendors pay back: overpayments, unused deposits and advances, credit memos settled in cash',
         icon: 'Coins',
         permission: 'vendor_payments:read',
       },
@@ -532,7 +632,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Petty cash',
         name: 'vendor-petty-cash',
         href: '/admin/vendors/petty-cash',
-        description: 'Floats of cash for small payments: vouchers with receipts, limits and top-ups',
+        description:
+          'Floats of cash for small payments: vouchers with receipts, limits and top-ups',
         icon: 'Wallet',
         permission: 'petty_cash:read',
       },
@@ -541,7 +642,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Payment rules',
         name: 'vendor-payment-rules',
         href: '/admin/vendors/payment-rules',
-        description: 'Withholding tax codes, the accounts payments are booked to, and the tolerance',
+        description:
+          'Withholding tax codes, the accounts payments are booked to, and the tolerance',
         icon: 'FileCheck',
         permission: 'vendor_payments:manage_terms',
       },
@@ -568,7 +670,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Prequalification',
         name: 'vendor-prequalification',
         href: '/admin/vendors/prequalification',
-        description: 'Vendor applications to be qualified for a category: evaluate, score and decide',
+        description:
+          'Vendor applications to be qualified for a category: evaluate, score and decide',
         icon: 'ClipboardCheck',
         permission: 'prequalification:evaluate',
       },
@@ -577,7 +680,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Categories',
         name: 'vendor-categories',
         href: '/admin/vendors/categories',
-        description: 'What vendors can be qualified for: questions, documents, validity and what vendors see',
+        description:
+          'What vendors can be qualified for: questions, documents, validity and what vendors see',
         icon: 'FileCheck',
         permission: 'prequalification:manage',
       },
@@ -595,7 +699,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Bank changes',
         name: 'vendor-bank-changes',
         href: '/admin/vendors/bank-changes',
-        description: 'Vendor requests to change where they are paid: call-back, second approval, cool-off',
+        description:
+          'Vendor requests to change where they are paid: call-back, second approval, cool-off',
         icon: 'Landmark',
         permission: 'vendor_bank:verify_callback',
       },
@@ -750,7 +855,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
             title: 'Refund limits',
             name: 'ar-refund-limits',
             href: '/admin/finance/refunds/limits',
-            description: 'How many refunds, and how much, one customer, phone or person may ask for in a window',
+            description:
+              'How many refunds, and how much, one customer, phone or person may ask for in a window',
             icon: 'Scale',
             permission: 'refund_limits:read',
           },
@@ -786,7 +892,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
             title: 'Credit adjustments',
             name: 'ar-credit-adjustments',
             href: '/admin/finance/receivables/credit-adjustments',
-            description: 'Giving up, adding to or taking from what a customer is owed, with a second person deciding',
+            description:
+              'Giving up, adding to or taking from what a customer is owed, with a second person deciding',
             icon: 'Scale',
             permission: 'credit_adjustments:read',
           },
@@ -814,7 +921,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
             title: 'Stock in the books',
             name: 'ar-inventory-posting',
             href: '/admin/finance/inventory-posting',
-            description: 'Stock at cost in the general ledger: what is posting, what is waiting, and whether the books agree with the shelves',
+            description:
+              'Stock at cost in the general ledger: what is posting, what is waiting, and whether the books agree with the shelves',
             icon: 'BookOpen',
             permission: 'inventory_posting:read',
           },
@@ -823,7 +931,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
             title: 'Exchange rates',
             name: 'ar-exchange-rates',
             href: '/admin/finance/exchange-rates',
-            description: 'The rate of each foreign currency for each day, and the month-end revaluation of what customers owe in it',
+            description:
+              'The rate of each foreign currency for each day, and the month-end revaluation of what customers owe in it',
             icon: 'Scale',
             permission: 'exchange_rates:read',
           },
@@ -925,7 +1034,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
             title: 'Payment activity',
             name: 'payment-activity',
             href: '/admin/payments/activity',
-            description: 'What the payment platforms sent and what we asked them, and what needs a person',
+            description:
+              'What the payment platforms sent and what we asked them, and what needs a person',
             icon: 'Activity',
             permission: 'payment_activity:read',
           },
@@ -1028,7 +1138,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Payments',
         name: 'settings-payments',
         href: '/admin/settings/payments',
-        description: 'Payment providers (M-Pesa, Pesapal, Equity, KCB) and the payment methods under them',
+        description:
+          'Payment providers (M-Pesa, Pesapal, Equity, KCB) and the payment methods under them',
         icon: 'Wallet',
         permission: 'payment_providers:read',
       },
@@ -1046,7 +1157,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Order Targets',
         name: 'settings-order-targets',
         href: '/admin/settings/order-targets',
-        description: 'How long an order may wait in each stage, and who is told when it waits too long',
+        description:
+          'How long an order may wait in each stage, and who is told when it waits too long',
         icon: 'Settings',
         permission: 'orders:sla_manage',
       },

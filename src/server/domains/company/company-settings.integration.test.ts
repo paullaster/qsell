@@ -1,9 +1,15 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AppContainer } from '@/server/di/container';
 import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
-import { appearancePayload, moduleLabelsPayload, profileFormFrom, profilePayload } from '@/lib/company-forms';
+import {
+  appearancePayload,
+  moduleLabelsPayload,
+  profileFormFrom,
+  profilePayload,
+} from '@/lib/company-forms';
 import { toPublicCompany } from '@/lib/company-view';
 import { resolveCompanyUiConfig, resolveSupportConfig } from '@/config/company-ui';
+import { resolveDocumentLayouts } from '@/lib/document-layouts';
 
 /**
  * Company setup against a real database: the profile is saved from the checked form (empty boxes clear the
@@ -30,24 +36,69 @@ describe.skipIf(url === '')('company setup (database)', () => {
   });
 
   it('saves the profile from the checked form, and an empty optional box clears what was there', async () => {
-    const form = { ...profileFormFrom(original), legalName: 'Setup Test Ltd', tradingName: 'Setup Test', email: 'Hello@Setup.TEST', phone: '+254 711 000 111', kraPin: 'p012345678q', invoicePrefix: 'stp', streetAddress: '1 Test Rd', city: 'Nairobi', countyOrState: 'Nairobi', postalCode: '00100', country: 'Kenya', bankName: 'Test Bank', bankAccountNumber: '12345', tagline: 'Hello' };
+    const form = {
+      ...profileFormFrom(original),
+      legalName: 'Setup Test Ltd',
+      tradingName: 'Setup Test',
+      email: 'Hello@Setup.TEST',
+      phone: '+254 711 000 111',
+      kraPin: 'p012345678q',
+      invoicePrefix: 'stp',
+      streetAddress: '1 Test Rd',
+      city: 'Nairobi',
+      countyOrState: 'Nairobi',
+      postalCode: '00100',
+      country: 'Kenya',
+      bankName: 'Test Bank',
+      bankAccountNumber: '12345',
+      tagline: 'Hello',
+    };
     const checked = profilePayload(form);
     if (!checked.ok) throw new Error(checked.error);
     const saved = await c.companySettings.update(checked.payload);
-    expect(saved).toMatchObject({ legalName: 'Setup Test Ltd', email: 'hello@setup.test', kraPin: 'P012345678Q', invoicePrefix: 'STP', bankName: 'Test Bank', tagline: 'Hello' });
+    expect(saved).toMatchObject({
+      legalName: 'Setup Test Ltd',
+      email: 'hello@setup.test',
+      kraPin: 'P012345678Q',
+      invoicePrefix: 'STP',
+      bankName: 'Test Bank',
+      tagline: 'Hello',
+    });
 
     const cleared = profilePayload({ ...form, bankName: '', bankAccountNumber: '', tagline: '  ' });
     if (!cleared.ok) throw new Error(cleared.error);
     const after = await c.companySettings.update(cleared.payload);
-    expect(after).toMatchObject({ bankName: null, bankAccountNumber: null, tagline: null, legalName: 'Setup Test Ltd' });
+    expect(after).toMatchObject({
+      bankName: null,
+      bankAccountNumber: null,
+      tagline: null,
+      legalName: 'Setup Test Ltd',
+    });
   });
 
   it('changes one part of the stored look without touching the others, even when saved one after the other', async () => {
-    await c.companySettings.setUiConfigSection('support', resolveSupportConfig({ name: 'Help desk', channels: [{ id: 'a', kind: 'phone', label: 'Call', value: '0700 000 000', detail: '', url: '' }] }));
-    const look = appearancePayload({ primaryColor: '#112233', accentColor: '#aabbcc', desktopColumns: 3 });
+    await c.companySettings.setUiConfigSection(
+      'support',
+      resolveSupportConfig({
+        name: 'Help desk',
+        channels: [
+          { id: 'a', kind: 'phone', label: 'Call', value: '0700 000 000', detail: '', url: '' },
+        ],
+      }),
+    );
+    const look = appearancePayload({
+      primaryColor: '#112233',
+      accentColor: '#aabbcc',
+      desktopColumns: 3,
+    });
     if (!look.ok) throw new Error(look.error);
-    await c.companySettings.update({ primaryColor: look.payload.primaryColor, accentColor: look.payload.accentColor });
-    await c.companySettings.setUiConfigSection('productGrid', { desktopColumns: look.payload.desktopColumns });
+    await c.companySettings.update({
+      primaryColor: look.payload.primaryColor,
+      accentColor: look.payload.accentColor,
+    });
+    await c.companySettings.setUiConfigSection('productGrid', {
+      desktopColumns: look.payload.desktopColumns,
+    });
     const labels = moduleLabelsPayload({ sales: ' Selling ', nope: 'x' }, ['sales', 'orders']);
     if (!labels.ok) throw new Error(labels.error);
     const row = await c.companySettings.setUiConfigSection('moduleLabels', labels.payload);
@@ -61,9 +112,50 @@ describe.skipIf(url === '')('company setup (database)', () => {
   });
 
   it('keeps the bank details out of what visitors are told', async () => {
-    const row = await c.companySettings.update({ bankName: 'Secret Bank', bankAccountName: 'Acme', bankAccountNumber: '999', bankBranch: 'Main' });
+    const row = await c.companySettings.update({
+      bankName: 'Secret Bank',
+      bankAccountName: 'Acme',
+      bankAccountNumber: '999',
+      bankBranch: 'Main',
+    });
     const view = toPublicCompany(row);
-    expect(JSON.stringify(view)).not.toMatch(/Secret Bank|"999"|bankName|bankAccountNumber|bankBranch|bankAccountName/);
+    expect(JSON.stringify(view)).not.toMatch(
+      /Secret Bank|"999"|bankName|bankAccountNumber|bankBranch|bankAccountName/,
+    );
     expect(view.tradingName).toBe(row.tradingName);
+  });
+
+  it('saves printable quote and invoice layouts on the company row and resolves defaults for receipts', async () => {
+    const layouts = resolveDocumentLayouts({
+      quote: {
+        headerText: 'Project quotation',
+        headerPosition: 'below_company',
+        footerText: 'Prices valid for 30 days',
+        footerPosition: 'after_totals',
+      },
+      invoice: {
+        headerText: '',
+        headerPosition: 'above_company',
+        footerText: 'Pay within 14 days',
+        footerPosition: 'after_terms',
+      },
+    });
+    const saved = await c.companySettings.setDocumentLayouts(layouts);
+
+    expect(
+      resolveDocumentLayouts(saved.uiConfig.documentLayouts, saved.invoiceFooterNote ?? ''),
+    ).toEqual(layouts);
+    expect(saved.invoiceFooterNote).toBe(layouts.invoice.footerText);
+    const cleared = await c.companySettings.setDocumentLayouts({
+      ...layouts,
+      invoice: { ...layouts.invoice, footerText: '' },
+    });
+    expect(cleared.invoiceFooterNote).toBeNull();
+    expect(resolveDocumentLayouts({ quote: { footerText: 'Quote only' } }).receipt).toMatchObject({
+      headerText: '',
+      headerPosition: 'above_company',
+      footerText: '',
+      footerPosition: 'after_terms',
+    });
   });
 });

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import { has } from '@/lib/values';
-import { ORDER_STAGE_NAMES, STAGE_COLUMN_SQL, type OrderStage, type StageOutcome } from '@/lib/order-stages';
+import { ORDER_STAGE_NAMES, STAGE_COLUMN_SQL, tracksCurrentStage, type OrderStage, type StageOutcome } from '@/lib/order-stages';
 import type * as mod_server_di_container from '@/server/di/container';
 import type * as mod_server_db_drizzle_client from '@/server/db/drizzle/client';
 import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
@@ -49,8 +49,16 @@ describe.skipIf(!has(url))('the order stage timeline (database)', () => {
     expect(result.success, result.error).toBe(true);
     return result.order?.id ?? '';
   };
-  const row = async (id: string) => (await db.select().from(schema.orders).where(eq(schema.orders.id, id)))[0];
-  const events = async (id: string) => await Stages.timeline(db, id);
+  // These tests follow the order's journey. Placing an order also writes a `stock_reserved` event (covered by
+  // stock-stages.integration.test.ts), so the helpers leave it out and count from the order's own first event.
+  const row = async (id: string) => {
+    const [found] = await db.select().from(schema.orders).where(eq(schema.orders.id, id));
+    if (found === undefined) return found;
+    const hidden = (await Stages.timeline(db, id)).filter((e) => !tracksCurrentStage(e.stage as OrderStage)).length;
+    return { ...found, stageSeq: found.stageSeq - hidden };
+  };
+  const events = async (id: string) =>
+    (await Stages.timeline(db, id)).filter((e) => tracksCurrentStage(e.stage as OrderStage)).map((e, i) => ({ ...e, sequence: i + 1 }));
   const move = (id: string, stage: OrderStage, outcome: StageOutcome, options: MoveOptions = {}) => Stages.move(db, id, stage, outcome, options);
 
   beforeAll(async () => {
@@ -106,7 +114,8 @@ describe.skipIf(!has(url))('the order stage timeline (database)', () => {
     it('writes the event and the new state together, stamps the time once, and numbers the events 1, 2, 3', async () => {
       const id = await place();
       const started = await move(id, 'payment_started', 'entered', { ref: { type: 'payment_attempt', id: 'a1' }, attemptNo: 1, detail: { provider: 'mpesa_daraja' } });
-      expect(started).toMatchObject({ recorded: true, event: { sequence: 2 } });
+      // The order's own first event is 1 and its stock event 2, so the first move is the third event.
+      expect(started).toMatchObject({ recorded: true, event: { sequence: 3 } });
       const afterStart = await row(id);
       expect(afterStart).toMatchObject({ paymentStatus: 'pending_verification', stageSeq: 2, currentStage: 'payment_started' });
       expect(afterStart?.paymentStartedAt).toBeInstanceOf(Date);
@@ -314,12 +323,12 @@ describe.skipIf(!has(url))('the order stage timeline (database)', () => {
 
     it('accepts every stage in the catalogue', async () => {
       const id = await place();
-      let sequence = 1;
+      let sequence = (await Stages.timeline(db, id)).length;
       for (const stage of ORDER_STAGE_NAMES) {
         sequence += 1;
         await db.execute(sql`INSERT INTO order_stage_events (order_id, sequence, stage, outcome, source) VALUES (${id}, ${sequence}, ${stage}, 'entered', 'system')`);
       }
-      expect(sequence).toBe(ORDER_STAGE_NAMES.length + 1);
+      expect(sequence).toBe(ORDER_STAGE_NAMES.length + 2);
     });
   });
 
@@ -396,7 +405,8 @@ describe.skipIf(!has(url))('the order stage timeline (database)', () => {
         const all = await events(id);
         expect(all.map((e) => e.sequence)).toEqual(all.map((_, i) => i + 1));
         expect(o?.stageSeq).toBe(all.length);
-        expect(o?.currentStage).toBe(all.at(-1)?.stage);
+        // Stock events are on the timeline but are not where the order is.
+        expect(o?.currentStage).toBe(all.filter((e) => tracksCurrentStage(e.stage as OrderStage)).at(-1)?.stage);
         for (let i = 1; i < all.length; i += 1) expect(all[i]?.occurredAt.getTime()).toBeGreaterThanOrEqual(all[i - 1]?.occurredAt.getTime() ?? 0);
         // Replaying every event's changes from nothing gives the order's columns today.
         const replay: Record<string, string | null> = {};
@@ -457,10 +467,10 @@ describe.skipIf(!has(url))('the order stage timeline (database)', () => {
       await move(id, 'payment_started', 'entered', { ref: { type: 'payment_attempt', id: 'r1' } });
       await move(id, 'payment_failed', 'failed', { ref: { type: 'payment_attempt', id: 'r1' }, reasonCode: 'declined', message: 'Declined' });
       const full = await read.orderTimeline(db, id, true);
-      expect(full?.events.map((e) => e.stage)).toEqual(['order_placed', 'payment_started', 'payment_failed']);
+      expect(full?.events.map((e) => e.stage)).toEqual(['order_placed', 'stock_reserved', 'payment_started', 'payment_failed']);
       expect(full?.events[0]?.sincePreviousMs).toBeNull();
-      expect(full?.events[2]?.sincePreviousMs).toBeGreaterThanOrEqual(0);
-      expect(full?.events[2]?.detail).toMatchObject({ reasonCode: 'declined', message: 'Declined', source: expect.any(String) as string });
+      expect(full?.events[3]?.sincePreviousMs).toBeGreaterThanOrEqual(0);
+      expect(full?.events[3]?.detail).toMatchObject({ reasonCode: 'declined', message: 'Declined', source: expect.any(String) as string });
       expect(full?.currentStage).toBe('payment_failed');
       const limited = await read.orderTimeline(db, id, false);
       expect(limited?.events.every((e) => e.detail === undefined)).toBe(true);

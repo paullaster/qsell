@@ -12,6 +12,7 @@ import {
   paymentGatewayConfigs,
   paymentTransactions,
   products,
+  packagingFits,
   reconciliationLogs,
   taxCategories,
   unitsOfMeasure,
@@ -386,16 +387,76 @@ export class CatalogRepository {
   async listActiveSellableProducts(): Promise<ProductJoined[]> {
     return this.productQuery()
       .where(
-        and(eq(products.isActive, true), eq(products.isSellable, true), isNull(products.deletedAt)),
+        and(eq(products.isActive, true), eq(products.isSellable, true), eq(products.isCheckoutPackaging, false), isNull(products.deletedAt)),
       )
       .orderBy(asc(products.name));
+  }
+
+  async packagingFitsForProduct(id: string): Promise<{ otherProductId: string; capacity: string }[]> {
+    const rows = await this.db
+      .select({ productId: packagingFits.productId, packagingProductId: packagingFits.packagingProductId, capacity: packagingFits.capacity })
+      .from(packagingFits)
+      .where(or(eq(packagingFits.productId, id), eq(packagingFits.packagingProductId, id)))
+      .orderBy(asc(packagingFits.productId), asc(packagingFits.packagingProductId));
+    return rows.map((row) => ({
+      otherProductId: row.productId === id ? row.packagingProductId : row.productId,
+      capacity: row.capacity,
+    }));
+  }
+
+  /** Packaging offers and the eligible-cart-product capacity rules, in one indexed join. */
+  async checkoutPackagingForProducts(ids: string[]): Promise<{ row: ProductJoined; productId: string; capacity: string }[]> {
+    if (ids.length === 0) return [];
+    return await this.db
+      .select({
+        row: { ...getTableColumns(products), ...productRelations },
+        productId: packagingFits.productId,
+        capacity: packagingFits.capacity,
+      })
+      .from(packagingFits)
+      .innerJoin(products, eq(packagingFits.packagingProductId, products.id))
+      .leftJoin(itemTypes, eq(products.itemTypeId, itemTypes.id))
+      .leftJoin(taxCategories, eq(products.taxCategoryId, taxCategories.id))
+      .leftJoin(categories, eq(products.categoryId, categories.id))
+      .leftJoin(unitsOfMeasure, eq(products.baseUnitId, unitsOfMeasure.id))
+      .where(and(
+        inArray(packagingFits.productId, ids),
+        eq(products.isCheckoutPackaging, true),
+        eq(products.isActive, true),
+        eq(products.isSellable, true),
+        isNull(products.deletedAt),
+      ))
+      .orderBy(asc(products.name), asc(packagingFits.productId));
+  }
+
+  async listLivePackagingByIds(ids: string[]): Promise<ProductJoined[]> {
+    if (ids.length === 0) return [];
+    return await this.productQuery().where(and(
+      inArray(products.id, ids),
+      eq(products.isCheckoutPackaging, true),
+      eq(products.isActive, true),
+      eq(products.isSellable, true),
+      isNull(products.deletedAt),
+    ));
   }
 
   // ── Storefront reads: live (active, sellable, not deleted) products only ──
 
   /** Products a shopper may see. Every storefront read starts from this. */
   private liveProducts(): SQL {
-    return required(and(eq(products.isActive, true), eq(products.isSellable, true), isNull(products.deletedAt)), 'the live-product conditions');
+    return required(and(eq(products.isActive, true), eq(products.isSellable, true), eq(products.isCheckoutPackaging, false), isNull(products.deletedAt)), 'the live-product conditions');
+  }
+
+  /**
+   * How much of a product the shop can sell, as SQL. While the per-location ledger is the truth it is the stock of the places that sell
+   * to the web shop; otherwise the product's two counters. (Written with the table's own name: inside a subquery a bare column of
+   * the outer table would bind to a table of the subquery.)
+   */
+  private shopAvailable(): SQL {
+    return sql`CASE WHEN COALESCE((SELECT ledger_mode FROM stock_settings WHERE company_id = stock_current_company()), false)
+      THEN COALESCE((SELECT sum(b.on_hand - b.reserved) FROM stock_balances b JOIN stock_locations l ON l.id = b.location_id
+                     WHERE b.product_id = products.id AND l.is_active AND l.is_sellable AND 'ecommerce' = ANY (l.sells_channels)), 0)
+      ELSE products.stock_quantity - products.reserved_quantity END`;
   }
 
   /** What the shop's filters ask for, apart from where the page begins. */
@@ -420,7 +481,7 @@ export class CatalogRepository {
     if (categoryIds !== null) conditions.push(categoryIds.length === 0 ? sql`false` : inArray(products.categoryId, categoryIds));
     if (query.minPrice !== null) conditions.push(gte(products.price, String(query.minPrice)));
     if (query.maxPrice !== null) conditions.push(lte(products.price, String(query.maxPrice)));
-    if (query.inStock) conditions.push(sql`${products.stockQuantity} - ${products.reservedQuantity} > 0`);
+    if (query.inStock) conditions.push(sql`${this.shopAvailable()} > 0`);
     return required(and(...conditions), 'the shop filters');
   }
 
@@ -497,7 +558,7 @@ export class CatalogRepository {
   async listRelatedLive(productId: string, categoryId: string, limit: number): Promise<ProductJoined[]> {
     return await this.productQuery()
       .where(and(this.liveProducts(), eq(products.categoryId, categoryId), ne(products.id, productId)))
-      .orderBy(desc(sql`${products.stockQuantity} - ${products.reservedQuantity} > 0`), asc(products.name))
+      .orderBy(desc(sql`${this.shopAvailable()} > 0`), asc(products.name))
       .limit(limit);
   }
 

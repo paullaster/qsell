@@ -1,7 +1,7 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, or } from 'drizzle-orm';
 import { getContainer } from '@/server/di/container';
 import { drizzleDb } from '@/server/db/drizzle/client';
-import { inventoryMovements, products } from '@/server/db/drizzle/schema';
+import { inventoryMovements, packagingFits, products } from '@/server/db/drizzle/schema';
 import { randomUUID } from 'node:crypto';
 import { broadcastRealtime } from '@/server/realtime';
 import { businessDate } from '@/server/kernel/numbering/business-date';
@@ -16,6 +16,7 @@ import type {
 import { SettingsError } from '@/server/domains/settings/errors';
 import { quantityProblem } from '@/lib/unit-rules';
 import { limitsProblem } from '@/lib/quantity-limits';
+import { productSpecificationsProblem, visibleSpecifications } from '@/lib/product-specifications';
 import { optionalAmount, standardPriceProblem } from './commercial-rules';
 import { toCategory, toItemType, toProduct, toPublicProduct, productToRow } from './mappers';
 import type { CatalogRepository } from './repository';
@@ -40,7 +41,8 @@ function slugify(value: string): string {
 
 /** Slugs are URL keys; a title-derived slug can collide, so suffix -2, -3… until free. */
 async function resolveUniqueSlug(base: string, excludeProductId?: string): Promise<string> {
-  const stem = slugify(base) || 'product';
+  const slug = slugify(base);
+  const stem = slug === '' ? 'product' : slug;
   for (let attempt = 1; attempt < 10000; attempt += 1) {
     const candidate = attempt === 1 ? stem : `${stem}-${attempt}`;
     const match = await repo().getProductBySlug(candidate);
@@ -65,14 +67,14 @@ export class CatalogService {
   /** A single product as the storefront may see it: published and sellable only. */
   static async getPublicProduct(id: string): Promise<PublicProduct | undefined> {
     const row = await repo().getProductById(id);
-    if (!row || !row.isActive || !row.isSellable) return undefined;
+    if (!row || !row.isActive || !row.isSellable || row.isCheckoutPackaging) return undefined;
     return toPublicProduct(toProduct(row));
   }
 
   /** A product for sale by its readable address (slug) or, for older links, its id. */
   static async getPublicProductByKey(key: string): Promise<PublicProduct | undefined> {
     const row = (await repo().getProductBySlug(key)) ?? (await repo().getProductById(key));
-    if (!row || !row.isActive || !row.isSellable) return undefined;
+    if (!row || !row.isActive || !row.isSellable || row.isCheckoutPackaging) return undefined;
     return toPublicProduct(toProduct(row));
   }
 
@@ -85,7 +87,12 @@ export class CatalogService {
   static async getProductWithMedia(id: string): Promise<Product | undefined> {
     const row = await repo().getProductById(id);
     if (!row) return undefined;
-    return { ...toProduct(row), media: await getContainer().media.getProductGallery(id) };
+    const fits = await repo().packagingFitsForProduct(id);
+    return {
+      ...toProduct(row),
+      packagingFits: fits.map((fit) => ({ productId: fit.otherProductId, capacity: Number(fit.capacity) })),
+      media: await getContainer().media.getProductGallery(id),
+    };
   }
 
   static async getProductBySlug(slug: string): Promise<Product | undefined> {
@@ -98,22 +105,36 @@ export class CatalogService {
     return rows.map(toProduct);
   }
 
+  static async packagingFitsForProducts(ids: string[]) {
+    return await repo().checkoutPackagingForProducts(ids);
+  }
+
   static async createProduct(productData: ProductWrite): Promise<Product> {
     const catalog = repo();
-    const { media: galleryInput, packagings: packagingInput, baseUnitId: requestedUnit, ...fields } = productData;
-    const itemType =
-      (productData.itemTypeId ? await catalog.getItemTypeById(productData.itemTypeId) : null) ??
-      (await catalog.getDefaultItemType());
+    const specificationsProblem = productSpecificationsProblem(productData.specifications);
+    if (specificationsProblem !== null) throw new SettingsError(specificationsProblem);
+    const {
+      media: galleryInput,
+      packagings: packagingInput,
+      packagingFits: packagingFitsInput,
+      baseUnitId: requestedUnit,
+      ...fields
+    } = productData;
+    const requestedItemType =
+      productData.itemTypeId === '' ? null : await catalog.getItemTypeById(productData.itemTypeId);
+    const itemType = requestedItemType ?? (await catalog.getDefaultItemType());
     if (!itemType) {
       throw new SettingsError('Create an item type first, then assign it to this product');
     }
     // A blank SKU or stock code is numbered by its series when the product is saved (below).
-    const { unit, packagings: preparedPackagings } = await getContainer().unitWriter.planForProduct({
-      productId: null,
-      requestedUnitId: requestedUnit,
-      current: null,
-      packagings: packagingInput ?? [],
-    });
+    const { unit, packagings: preparedPackagings } = await getContainer().unitWriter.planForProduct(
+      {
+        productId: null,
+        requestedUnitId: requestedUnit,
+        current: null,
+        packagings: packagingInput ?? [],
+      },
+    );
     const packagings = preparedPackagings ?? [];
     for (const [value, what] of [
       [productData.stockQuantity, 'Stock quantity'],
@@ -125,29 +146,29 @@ export class CatalogService {
     }
 
     const isSellable = itemType.isSellable;
+    const isCheckoutPackaging = productData.isCheckoutPackaging === true;
+    if (isCheckoutPackaging && !isSellable) throw new SettingsError('Packaging offered at checkout must use a sellable item type.');
+    const id = newId('prod');
+    const fitRows = await this.validatePackagingFits(id, isCheckoutPackaging, packagingFitsInput ?? [], unit.decimals, unit.name);
     let price: number | undefined;
 
     if (isSellable) {
       if (
-        productData.price == null ||
-        !Number.isFinite(Number(productData.price)) ||
-        Number(productData.price) <= 0
+        productData.price === undefined ||
+        !Number.isFinite(productData.price) ||
+        productData.price <= 0
       ) {
         throw new SettingsError('Selling price is required for sellable item types');
       }
-      price = Number(productData.price);
-    } else if (productData.price != null) {
-      price = Number(productData.price);
+      price = productData.price;
+    } else if (productData.price !== undefined) {
+      price = productData.price;
       if (!Number.isFinite(price) || price < 0) {
         throw new SettingsError('Selling price must be 0 or greater when provided');
       }
     }
 
-    if (
-      productData.costPrice == null ||
-      !Number.isFinite(Number(productData.costPrice)) ||
-      Number(productData.costPrice) < 0
-    ) {
+    if (!Number.isFinite(productData.costPrice) || productData.costPrice < 0) {
       throw new SettingsError('Cost of goods is required');
     }
 
@@ -160,26 +181,27 @@ export class CatalogService {
     const standardIssue = standardPriceProblem(standardPrice, isSellable);
     if (standardIssue !== null) throw new SettingsError(standardIssue);
 
-    const id = newId('prod');
     // Resolve the category by display name — the modal posts a free-text name.
-    const category = await catalog.getCategoryByName(productData.category ?? '');
+    const category = await catalog.getCategoryByName(productData.category);
 
     const now = new Date().toISOString();
     const newProduct: Product = {
       ...fields,
+      specifications: visibleSpecifications(productData.specifications),
       id,
-      slug: await resolveUniqueSlug(productData.slug || productData.name),
-      sku: (productData.sku ?? '').trim().toUpperCase(),
-      stockCode: (productData.stockCode ?? '').trim().toUpperCase(),
+      slug: await resolveUniqueSlug(productData.slug === '' ? productData.name : productData.slug),
+      sku: productData.sku.trim().toUpperCase(),
+      stockCode: productData.stockCode.trim().toUpperCase(),
       price,
       standardPrice,
       minOrderQty,
       maxOrderQty,
-      costPrice: Number(productData.costPrice),
+      costPrice: productData.costPrice,
       itemTypeId: itemType.id,
       itemTypeName: itemType.name,
       itemTypeCode: itemType.code,
       isSellable,
+      isCheckoutPackaging,
       baseUnitId: unit.id,
       baseUnitCode: unit.code,
       baseUnitName: unit.name,
@@ -214,6 +236,7 @@ export class CatalogService {
         newProduct[field] = row[field];
       }
       await tx.insert(products).values(row);
+      if (fitRows.length > 0) await tx.insert(packagingFits).values(fitRows);
       await getContainer().units.replacePackagingIn(tx, id, packagings);
       // The gallery commits with the product. Callers that only know image links
       // (API, CSV-style input) still get proper assets so the model stays consistent.
@@ -232,14 +255,12 @@ export class CatalogService {
         newProduct.imageUrl = gallery.imageUrl;
         newProduct.additionalImages = gallery.additionalImages;
       }
-      await tx.insert(inventoryMovements).values({
-        id: newId('ledger'),
+      const { recordOpeningStock } = await import('@/server/domains/inventory/service');
+      await recordOpeningStock(tx, {
         productId: id,
         productName: newProduct.name,
-        changeAmount: newProduct.stockQuantity,
-        previousStock: 0,
-        newStock: newProduct.stockQuantity,
-        changeType: 'restock',
+        quantity: newProduct.stockQuantity,
+        costPrice: newProduct.costPrice,
         referenceId: 'PRODUCT_CREATION',
         actor: 'admin',
         note: `Created new product ${newProduct.sku} with initial inventory of ${newProduct.stockQuantity} units`,
@@ -256,10 +277,16 @@ export class CatalogService {
 
   static async updateProduct(id: string, patchInput: ProductPatch): Promise<Product> {
     const catalog = repo();
-    const { media: galleryUpdate, packagings: packagingUpdate, ...updates } = patchInput;
+    const { media: galleryUpdate, packagings: packagingUpdate, packagingFits: packagingFitsUpdate, ...updates } = patchInput;
+    if (updates.specifications !== undefined) {
+      const specificationsProblem = productSpecificationsProblem(updates.specifications);
+      if (specificationsProblem !== null) throw new SettingsError(specificationsProblem);
+      updates.specifications = visibleSpecifications(updates.specifications);
+    }
     const existingRow = await catalog.getProductById(id);
     if (!existingRow) throw new SettingsError(`Product ${id} not found`);
     const existing = toProduct(existingRow);
+    const nextIsPackaging = updates.isCheckoutPackaging ?? existing.isCheckoutPackaging ?? false;
 
     if (updates.sku !== undefined) {
       if (updates.sku.trim() === '') throw new SettingsError('SKU code is required');
@@ -278,11 +305,16 @@ export class CatalogService {
     if (updates.stockCode !== undefined && updates.stockCode !== existing.stockCode) {
       const clash = await catalog.getProductByStockCode(updates.stockCode);
       if (clash && clash.id !== id) {
-        throw new SettingsError(`Stock code ${updates.stockCode} is already used by "${clash.name}"`);
+        throw new SettingsError(
+          `Stock code ${updates.stockCode} is already used by "${clash.name}"`,
+        );
       }
     }
     if (updates.slug !== undefined && updates.slug !== existing.slug) {
-      updates.slug = await resolveUniqueSlug(updates.slug || existing.name, id);
+      updates.slug = await resolveUniqueSlug(
+        updates.slug === '' ? existing.name : updates.slug,
+        id,
+      );
     }
 
     const plan = await getContainer().unitWriter.planForProduct({
@@ -293,8 +325,11 @@ export class CatalogService {
     });
     updates.baseUnitId = plan.unit.id;
     const packagings = plan.packagings;
+    const fitRows = packagingFitsUpdate === undefined
+      ? undefined
+      : await this.validatePackagingFits(id, nextIsPackaging, packagingFitsUpdate, plan.unit.decimals, plan.unit.name);
 
-    if (updates.itemTypeId) {
+    if (updates.itemTypeId !== undefined && updates.itemTypeId !== '') {
       const itemType = await catalog.getItemTypeById(updates.itemTypeId);
       if (!itemType) throw new SettingsError('Selected item type was not found');
       updates.itemTypeName = itemType.name;
@@ -302,36 +337,41 @@ export class CatalogService {
       updates.isSellable = itemType.isSellable;
     }
 
-    const nextSellable =
-      updates.isSellable !== undefined ? updates.isSellable : existing.isSellable;
-    const nextPrice = updates.price !== undefined ? updates.price : existing.price;
-    const nextCost = updates.costPrice !== undefined ? updates.costPrice : existing.costPrice;
+    if (nextIsPackaging && !(updates.isSellable ?? existing.isSellable)) {
+      throw new SettingsError('Packaging offered at checkout must use a sellable item type.');
+    }
+
+    const nextSellable = updates.isSellable ?? existing.isSellable;
+    const nextPrice = updates.price ?? existing.price;
+    const nextCost = updates.costPrice ?? existing.costPrice;
 
     if (nextSellable) {
-      if (nextPrice == null || !Number.isFinite(Number(nextPrice)) || Number(nextPrice) <= 0) {
+      if (nextPrice === undefined || !Number.isFinite(nextPrice) || nextPrice <= 0) {
         throw new SettingsError('Selling price is required for sellable item types');
       }
-      if (updates.price !== undefined) updates.price = Number(nextPrice);
+      if (updates.price !== undefined) updates.price = nextPrice;
     } else if (updates.price !== undefined) {
-      if (updates.price == null) {
-        updates.price = undefined;
-      } else {
-        const p = Number(updates.price);
-        if (!Number.isFinite(p) || p < 0) {
-          throw new SettingsError('Selling price must be 0 or greater when provided');
-        }
-        updates.price = p;
+      const p = updates.price;
+      if (!Number.isFinite(p) || p < 0) {
+        throw new SettingsError('Selling price must be 0 or greater when provided');
       }
+      updates.price = p;
     }
 
-    if (nextCost == null || !Number.isFinite(Number(nextCost)) || Number(nextCost) < 0) {
+    if (!Number.isFinite(nextCost) || nextCost < 0) {
       throw new SettingsError('Cost of goods is required');
     }
-    if (updates.costPrice !== undefined) updates.costPrice = Number(nextCost);
+    if (updates.costPrice !== undefined) updates.costPrice = nextCost;
 
     // Quantity limits are checked together and in the unit the product will be counted in after this save.
-    const nextMin = updates.minOrderQty !== undefined ? optionalAmount(updates.minOrderQty) : (existing.minOrderQty ?? null);
-    const nextMax = updates.maxOrderQty !== undefined ? optionalAmount(updates.maxOrderQty) : (existing.maxOrderQty ?? null);
+    const nextMin =
+      updates.minOrderQty !== undefined
+        ? optionalAmount(updates.minOrderQty)
+        : (existing.minOrderQty ?? null);
+    const nextMax =
+      updates.maxOrderQty !== undefined
+        ? optionalAmount(updates.maxOrderQty)
+        : (existing.maxOrderQty ?? null);
     const limitIssue = limitsProblem(nextMin, nextMax, plan.unit.decimals, plan.unit.name);
     if (limitIssue !== null) throw new SettingsError(limitIssue);
     if (updates.minOrderQty !== undefined) updates.minOrderQty = nextMin;
@@ -353,13 +393,17 @@ export class CatalogService {
       updates.stockQuantity !== undefined && updates.stockQuantity !== existing.stockQuantity
         ? updates.stockQuantity
         : undefined;
-    if (stockChange !== undefined && stockChange < 0) throw new SettingsError('Stock quantity must be 0 or more');
+    if (stockChange !== undefined && stockChange < 0)
+      throw new SettingsError('Stock quantity must be 0 or more');
     // Counted in the product's unit (the new one, when this save changes it).
     for (const [value, what] of [
       [stockChange, 'Stock quantity'],
       [updates.lowStockThreshold, 'The low stock threshold'],
     ] as const) {
-      const problem = value === undefined ? null : quantityProblem(value, plan.unit.decimals, plan.unit.name, what);
+      const problem =
+        value === undefined
+          ? null
+          : quantityProblem(value, plan.unit.decimals, plan.unit.name, what);
       if (problem !== null) throw new SettingsError(problem);
     }
 
@@ -388,7 +432,12 @@ export class CatalogService {
         .update(products)
         .set({ ...fieldPatch, updatedAt: new Date() })
         .where(eq(products.id, id));
-      if (packagings !== undefined) await getContainer().units.replacePackagingIn(tx, id, packagings);
+      if (packagings !== undefined)
+        await getContainer().units.replacePackagingIn(tx, id, packagings);
+      if (fitRows !== undefined) {
+        await tx.delete(packagingFits).where(or(eq(packagingFits.productId, id), eq(packagingFits.packagingProductId, id)));
+        if (fitRows.length > 0) await tx.insert(packagingFits).values(fitRows);
+      }
       // After the field update: the gallery refreshes image_url / additional_images itself.
       if (galleryUpdate !== undefined) {
         await mediaService.setProductGallery(tx, id, galleryUpdate);
@@ -419,6 +468,46 @@ export class CatalogService {
     void broadcastRealtime('inventory_update', { type: 'product_updated', productId: id });
     const updated = await catalog.getProductById(id);
     return updated ? toProduct(updated) : merged;
+  }
+
+  private static async validatePackagingFits(
+    id: string,
+    isCheckoutPackaging: boolean,
+    fits: { productId: string; capacity: number }[],
+    currentUnitDecimals: number,
+    currentUnitName: string,
+  ): Promise<(typeof packagingFits.$inferInsert)[]> {
+    if (fits.length > 100) throw new SettingsError('A product can have at most 100 packaging fit rules.');
+    if (!isCheckoutPackaging && fits.length === 0) return [];
+    const seen = new Set<string>();
+    for (const fit of fits) {
+      if (typeof fit.productId !== 'string' || fit.productId === id || seen.has(fit.productId)) throw new SettingsError('Choose each packaging relationship once.');
+      if (!Number.isFinite(fit.capacity) || fit.capacity <= 0 || fit.capacity > 1_000_000_000) throw new SettingsError('Each packaging capacity must be a number above zero.');
+      seen.add(fit.productId);
+    }
+    if (fits.length === 0) return [];
+    const selected = await repo().getProductsByIds(fits.map((fit) => fit.productId));
+    if (selected.length !== fits.length) throw new SettingsError('One of the selected packaging products could not be found.');
+    if (isCheckoutPackaging) {
+      if (selected.some((product) => !product.isSellable || product.isCheckoutPackaging || product.deletedAt !== null)) {
+        throw new SettingsError('A packaging product can only be configured for active, sellable catalogue products.');
+      }
+      for (const fit of fits) {
+        const product = selected.find((candidate) => candidate.id === fit.productId);
+        if (product === undefined) throw new SettingsError('One of the selected products could not be found.');
+        const problem = quantityProblem(fit.capacity, product.baseUnitDecimals ?? 0, product.baseUnitName ?? 'unit', 'Packaging capacity');
+        if (problem !== null) throw new SettingsError(problem);
+      }
+      return fits.map((fit) => ({ productId: fit.productId, packagingProductId: id, capacity: String(fit.capacity) }));
+    }
+    if (selected.some((product) => !product.isSellable || !product.isCheckoutPackaging || product.deletedAt !== null)) {
+      throw new SettingsError('Choose active, sellable checkout packaging products.');
+    }
+    for (const fit of fits) {
+      const problem = quantityProblem(fit.capacity, currentUnitDecimals, currentUnitName, 'Packaging capacity');
+      if (problem !== null) throw new SettingsError(problem);
+    }
+    return fits.map((fit) => ({ productId: id, packagingProductId: fit.productId, capacity: String(fit.capacity) }));
   }
 
   /**
@@ -486,7 +575,7 @@ export class CatalogService {
 
   private static async assertParent(id: string | null, parentId: string | null) {
     const problem = parentProblem(id, parentId, await repo().categoryParents());
-    if (problem) throw new Error(problem);
+    if (problem !== null) throw new Error(problem);
   }
 
   static async getCategoryById(id: string): Promise<Category | undefined> {
@@ -503,11 +592,11 @@ export class CatalogService {
       id: newId('cat'),
       parentId: data.parentId ?? null,
       name: data.name,
-      slug: data.slug || slugify(data.name),
-      description: data.description ?? '',
+      slug: data.slug === '' ? slugify(data.name) : data.slug,
+      description: data.description,
       imageUrl: data.imageUrl ?? null,
-      isActive: data.isActive ?? true,
-      displayOrder: data.displayOrder ?? 0,
+      isActive: data.isActive,
+      displayOrder: data.displayOrder,
     });
     void broadcastRealtime('category_update', { type: 'created', category: toCategory(row) });
     return toCategory(row);
@@ -518,13 +607,13 @@ export class CatalogService {
     const existing = await catalog.getCategoryById(id);
     if (!existing) throw new Error(`Category ${id} not found`);
 
-    if (updates.name !== undefined && updates.name !== existing.name)
+    if (updates.name !== undefined && updates.name !== '' && updates.name !== existing.name)
       await CatalogService.assertCategoryNameFree(updates.name, id);
     if (updates.parentId !== undefined && (updates.parentId ?? null) !== existing.parentId)
       await CatalogService.assertParent(id, updates.parentId ?? null);
 
     // Keep denormalized product labels in step with a rename.
-    if (updates.name && updates.name !== existing.name) {
+    if (updates.name !== undefined && updates.name !== '' && updates.name !== existing.name) {
       await catalog.renameCategoryLabel(existing.name, updates.name);
     }
 
@@ -589,7 +678,7 @@ export class CatalogService {
     isActive?: boolean;
   }): Promise<ItemType> {
     const catalog = repo();
-    if (data.isDefault) await catalog.clearDefaultItemType('__none__');
+    if (data.isDefault === true) await catalog.clearDefaultItemType('__none__');
     const row = await catalog.insertItemType({
       id: newId('itype'),
       name: data.name,
@@ -607,7 +696,7 @@ export class CatalogService {
     updates: Partial<Pick<ItemType, 'name' | 'code' | 'isSellable' | 'isDefault' | 'isActive'>>,
   ): Promise<ItemType> {
     const catalog = repo();
-    if (updates.isDefault) await catalog.clearDefaultItemType(id);
+    if (updates.isDefault === true) await catalog.clearDefaultItemType(id);
     const row = await catalog.updateItemType(id, updates);
     if (!row) throw new Error(`Item type ${id} not found`);
     void broadcastRealtime('item_type_update', { type: 'updated', itemType: toItemType(row) });

@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { FULFILMENT_STATUSES, STATUS_FILTERS } from '@/lib/order-admin';
 import { drizzleDb } from '@/server/db/drizzle/client';
 import {
@@ -6,6 +6,7 @@ import {
   customers,
   salesQuoteTemplates,
   salesSectionTemplates,
+  products,
 } from '@/server/db/drizzle/schema';
 import { methodLabel, QUOTE_PAYMENT_METHODS } from '@/lib/payment-method-labels';
 import { QUOTE_STATUS_FILTERS, statusFilterLabel } from '@/lib/quote-statuses';
@@ -29,6 +30,8 @@ import { APPROVAL_LOOKUP_SOURCES } from '@/server/kernel/approvals/lookup-source
 import { REASON_LOOKUP_SOURCES } from '@/server/kernel/reason-codes/lookup-sources';
 import { DIMENSION_LOOKUP_SOURCES } from '@/server/domains/dimensions/lookup-sources';
 import { UNIT_LOOKUP_SOURCES } from '@/server/domains/units/lookup-sources';
+import { STOCK_LOOKUP_SOURCES } from '@/server/domains/stock/lookup-sources';
+import { DELIVERY_LOOKUP_SOURCES } from '@/server/domains/delivery/lookup-sources';
 import { VENDOR_LOOKUP_SOURCES } from '@/server/domains/vendors/lookup-sources';
 
 /** The non-empty strings joined with a dot, or null when there are none. */
@@ -121,6 +124,36 @@ const tradeCustomers = tableSource({
     description: joinText([row.number, row.email]),
     badge: row.accountType === 'credit' ? 'Credit' : null,
   }),
+});
+
+const packagingProducts = tableSource({
+  key: 'packaging-products',
+  permission: 'products:update',
+  table: products,
+  id: products.id,
+  label: products.name,
+  searchColumns: [products.name, products.sku, products.stockCode],
+  select: { sku: products.sku, stockCode: products.stockCode },
+  scope: ({ filters }) => {
+    acceptFilters(filters, {});
+    return [and(eq(products.isActive, true), eq(products.isCheckoutPackaging, true), eq(products.isSellable, true), isNull(products.deletedAt)) ?? eq(products.isActive, true)];
+  },
+  toOption: (row) => ({ id: String(row.id), label: String(row.label), description: joinText([row.sku, row.stockCode]), badge: 'Packaging' }),
+});
+
+const fitProducts = tableSource({
+  key: 'catalog-fit-products',
+  permission: 'products:read',
+  table: products,
+  id: products.id,
+  label: products.name,
+  searchColumns: [products.name, products.sku, products.stockCode],
+  select: { sku: products.sku },
+  scope: ({ filters }) => {
+    acceptFilters(filters, {});
+    return [and(eq(products.isActive, true), eq(products.isSellable, true), eq(products.isCheckoutPackaging, false), isNull(products.deletedAt)) ?? eq(products.isActive, true)];
+  },
+  toOption: (row) => ({ id: String(row.id), label: String(row.label), description: String(row.sku), badge: null }),
 });
 
 const enabledCurrenciesFor = (key: string, permission: 'quotes:read' | 'pricing:read' | 'rfq:create' | 'purchase_orders:create') => tableSource({
@@ -233,6 +266,8 @@ const SOURCES: ReadonlyMap<string, LookupSource> = registry(
     quoteTemplates,
     sectionTemplates,
     tradeCustomers,
+    packagingProducts,
+    fitProducts,
     enabledCurrencies,
     pricingCurrencies,
     rfqCurrencies,
@@ -247,6 +282,8 @@ const SOURCES: ReadonlyMap<string, LookupSource> = registry(
     ...VENDOR_LOOKUP_SOURCES,
     ...DIMENSION_LOOKUP_SOURCES,
     ...UNIT_LOOKUP_SOURCES,
+    ...STOCK_LOOKUP_SOURCES,
+    ...DELIVERY_LOOKUP_SOURCES,
     ...REASON_LOOKUP_SOURCES,
     ...NUMBERING_LOOKUP_SOURCES,
     ...APPROVAL_LOOKUP_SOURCES,

@@ -41,6 +41,9 @@ import {
   FileText,
   Star,
   Mail,
+  Truck,
+  MapPin,
+  Route,
   type LucideIcon,
 } from 'lucide-react';
 import { hasSubLinks, type AdminNavIconName, type AdminNavItem } from '@/config/admin-nav';
@@ -83,6 +86,9 @@ const ICONS: Record<AdminNavIconName, LucideIcon> = {
   FileText,
   Star,
   Mail,
+  Truck,
+  MapPin,
+  Route,
 };
 
 function NavIcon({ name }: { name?: AdminNavIconName }) {

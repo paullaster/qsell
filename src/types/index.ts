@@ -80,6 +80,10 @@ export interface Product {
   reservedQuantity: number;
   lowStockThreshold: number;
   isActive: boolean;
+  /** Hidden from catalogue, but may be offered as an inventory-backed checkout add-on. */
+  isCheckoutPackaging?: boolean;
+  /** Per-product capacity rules, loaded for packaging administration only. */
+  packagingFits?: { productId: string; capacity: number }[];
   imageUrl: string;
   additionalImages?: string[];
   rating: number;
@@ -141,6 +145,8 @@ export type ProductWrite = Omit<
   baseUnitId?: string;
   /** The other units the product is kept, bought or sold in. */
   packagings?: ProductPackagingInput[];
+  /** Fit rules to packaging products (ordinary item) or compatible goods (packaging item). */
+  packagingFits?: { productId: string; capacity: number }[];
 };
 
 /** One alternate unit of a product as the form sends it. */
@@ -157,6 +163,7 @@ export type ProductPatch = Partial<Omit<Product, 'media' | 'baseUnitCode' | 'bas
   media?: ProductMediaInput[];
   /** Omit to leave the alternate units alone; send the full list to replace them. */
   packagings?: ProductPackagingInput[];
+  packagingFits?: { productId: string; capacity: number }[];
 };
 
 /**
