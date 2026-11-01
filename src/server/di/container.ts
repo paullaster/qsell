@@ -112,6 +112,8 @@ import { GeoPortRegistry } from '@/server/adapters/geo/registry';
 import { GeoService } from '@/server/domains/geo/service';
 import { DeliveryZones } from '@/server/domains/delivery/zones';
 import { DeliveryMethods } from '@/server/domains/delivery/methods';
+import { ChargePolicies } from '@/server/domains/delivery/charge-policies';
+import { DeliveryQuotes } from '@/server/domains/delivery/quote';
 import { KraConfigRepository } from '@/server/domains/kra/repository';
 import { KraConfigResolver } from '@/server/domains/kra/resolver';
 import { EtimsTransmissionService } from '@/server/domains/kra/etims/transmission-service';
@@ -255,6 +257,10 @@ export interface AppContainer {
   deliveryZones: DeliveryZones;
   /** Which delivery methods each branch offers. */
   deliveryMethods: DeliveryMethods;
+  /** The policies that work out delivery charges, and their life from draft to retired. */
+  chargePolicies: ChargePolicies;
+  /** The delivery charge for an order from a branch to a customer, with its trace. */
+  deliveryQuotes: DeliveryQuotes;
   kraConfigs: KraConfigRepository;
   kraResolver: KraConfigResolver;
   etimsTransmission: EtimsTransmissionService;
@@ -446,6 +452,9 @@ export function getContainer(): AppContainer {
   const stockLocations = new StockLocationService(drizzleDb);
   const stockLedger = new StockLedger(drizzleDb);
   const stockShadow = new StockShadow(drizzleDb, stockLocations);
+  const geo = new GeoService(new GeoPortRegistry());
+  const deliveryZones = new DeliveryZones(drizzleDb, decisionLog);
+  const chargePolicies = new ChargePolicies(drizzleDb, decisionLog);
   const orderSla = new OrderSlaService(drizzleDb, new OrderSlaNotifier(email, companySettings));
   const vendorNotifier = new VendorNotifier(drizzleDb, email, companySettings);
   const prequalLifecycle = new PrequalLifecycle(drizzleDb, vendorNotifier);
@@ -575,9 +584,11 @@ export function getContainer(): AppContainer {
       companyId: async () => (await companySettings.ensureSeeded()).id,
     }),
     media,
-    geo: new GeoService(new GeoPortRegistry()),
-    deliveryZones: new DeliveryZones(drizzleDb, decisionLog),
+    geo,
+    deliveryZones,
     deliveryMethods: new DeliveryMethods(drizzleDb, decisionLog),
+    chargePolicies,
+    deliveryQuotes: new DeliveryQuotes(drizzleDb, chargePolicies, deliveryZones, geo),
     kraConfigs,
     kraResolver,
     etimsTransmission,

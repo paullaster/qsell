@@ -280,6 +280,91 @@ export const deliveryMethods = pgTable(
 );
 
 /**
+ * How a delivery charge is worked out. A policy in force is never edited: a change is a new version (same `code`, next `version`),
+ * so an order can point at the exact policy that priced it. Bands, steps and time rules are small lists kept here; the fees of a
+ * rate card are rows in `charge_policy_rates`. Soundness (no gaps, no overlaps) is checked by the domain before a policy can go live.
+ */
+export const chargePolicies = pgTable(
+  'charge_policies',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    /** The policy's name across versions. */
+    code: text('code').notNull(),
+    version: integer('version').notNull().default(1),
+    name: text('name').notNull(),
+    description: text('description'),
+    method: text('method').$type<'zone_rate' | 'flat' | 'distance'>().notNull(),
+    currency: text('currency').notNull(),
+    status: text('status').$type<'draft' | 'in_force' | 'retired'>().notNull().default('draft'),
+    priority: integer('priority').notNull().default(0),
+    validFrom: timestamp('valid_from', { withTimezone: true }).notNull().defaultNow(),
+    validTo: timestamp('valid_to', { withTimezone: true }),
+    scopes: jsonb('scopes').$type<Record<string, { op: 'in' | 'not_in'; values: string[] }>>().notNull().default({}),
+    distanceBasis: text('distance_basis').$type<'one_way' | 'longer_leg' | 'round_trip'>().notNull().default('one_way'),
+    maxRangeKm: numeric('max_range_km', { precision: 8, scale: 2 }),
+    perMinute: numeric('per_minute', { precision: 12, scale: 4 }).notNull().default('0'),
+    includedKg: numeric('included_kg', { precision: 10, scale: 3 }),
+    perExtraKg: numeric('per_extra_kg', { precision: 12, scale: 4 }).notNull().default('0'),
+    maxWeightKg: numeric('max_weight_kg', { precision: 10, scale: 3 }),
+    minCharge: numeric('min_charge', { precision: 14, scale: 4 }),
+    maxCharge: numeric('max_charge', { precision: 14, scale: 4 }),
+    roundTo: numeric('round_to', { precision: 12, scale: 4 }).notNull().default('0'),
+    roundMode: text('round_mode').$type<'nearest' | 'up'>().notNull().default('nearest'),
+    bands: jsonb('bands').$type<{ fromKm: number; toKm: number | null; baseFee: number; perKm: number }[]>().notNull().default([]),
+    tiers: jsonb('tiers').$type<{ minOrderValue: number; percentOff: number }[]>().notNull().default([]),
+    surcharges: jsonb('surcharges').$type<{ label: string; kind: 'fixed' | 'percent'; amount: number; days: number[] | null; fromMinute: number | null; toMinute: number | null; dateFrom: string | null; dateTo: string | null }[]>().notNull().default([]),
+    /** Raised on every save of a draft, so two people editing one draft cannot overwrite each other unseen. */
+    revision: integer('revision').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    activatedAt: timestamp('activated_at', { withTimezone: true }),
+    activatedBy: text('activated_by'),
+    retiredAt: timestamp('retired_at', { withTimezone: true }),
+    retiredBy: text('retired_by'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('charge_policies_company_code_version_uidx').on(t.companyId, t.code, t.version),
+    // One draft per policy at a time, and one version in force per policy.
+    uniqueIndex('charge_policies_one_draft_uidx').on(t.companyId, t.code).where(sql`${t.status} = 'draft'`),
+    uniqueIndex('charge_policies_one_in_force_uidx').on(t.companyId, t.code).where(sql`${t.status} = 'in_force'`),
+    index('charge_policies_company_status_idx').on(t.companyId, t.status),
+    check('charge_policies_status_chk', sql`${t.status} IN ('draft','in_force','retired')`),
+    check('charge_policies_method_chk', sql`${t.method} IN ('zone_rate','flat','distance')`),
+    check('charge_policies_basis_chk', sql`${t.distanceBasis} IN ('one_way','longer_leg','round_trip')`),
+    check('charge_policies_round_chk', sql`${t.roundMode} IN ('nearest','up') AND ${t.roundTo} >= 0`),
+    check('charge_policies_currency_chk', sql`${t.currency} ~ '^[A-Z]{3}$'`),
+    check('charge_policies_dates_chk', sql`${t.validTo} IS NULL OR ${t.validTo} > ${t.validFrom}`),
+    check('charge_policies_charges_chk', sql`(${t.minCharge} IS NULL OR ${t.minCharge} >= 0) AND (${t.maxCharge} IS NULL OR ${t.maxCharge} >= 0) AND (${t.minCharge} IS NULL OR ${t.maxCharge} IS NULL OR ${t.minCharge} <= ${t.maxCharge}) AND ${t.perMinute} >= 0 AND ${t.perExtraKg} >= 0`),
+  ],
+);
+
+/** The fees of a rate card: one row per zone (or any zone) and weight band. */
+export const chargePolicyRates = pgTable(
+  'charge_policy_rates',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    policyId: uuid('policy_id')
+      .notNull()
+      .references(() => chargePolicies.id, { onDelete: 'cascade' }),
+    /** Null is the fee for any zone without a row of its own. */
+    zoneId: uuid('zone_id').references(() => deliveryZones.id),
+    fromKg: numeric('from_kg', { precision: 10, scale: 3 }).notNull().default('0'),
+    toKg: numeric('to_kg', { precision: 10, scale: 3 }),
+    fee: numeric('fee', { precision: 14, scale: 4 }).notNull(),
+    perExtraKg: numeric('per_extra_kg', { precision: 12, scale: 4 }).notNull().default('0'),
+  },
+  (t) => [
+    uniqueIndex('charge_policy_rates_band_uidx').on(t.policyId, sql`coalesce(${t.zoneId}, '00000000-0000-0000-0000-000000000000'::uuid)`, t.fromKg),
+    index('charge_policy_rates_zone_idx').on(t.zoneId),
+    check('charge_policy_rates_chk', sql`${t.fromKg} >= 0 AND (${t.toKg} IS NULL OR ${t.toKg} > ${t.fromKg}) AND ${t.fee} >= 0 AND ${t.perExtraKg} >= 0`),
+  ],
+);
+
+/**
  * Per-branch payment provider configuration. Credentials are encrypted JSON blobs —
  * never read provider secrets from process.env.
  */
@@ -1875,6 +1960,8 @@ export type BranchInsert = typeof branches.$inferInsert;
 export type DeliveryZoneRow = typeof deliveryZones.$inferSelect;
 export type DeliveryZoneAreaRow = typeof deliveryZoneAreas.$inferSelect;
 export type DeliveryMethodRow = typeof deliveryMethods.$inferSelect;
+export type ChargePolicyRow = typeof chargePolicies.$inferSelect;
+export type ChargePolicyRateRow = typeof chargePolicyRates.$inferSelect;
 export type PaymentProviderConfigRow = typeof paymentProviderConfigs.$inferSelect;
 export type PaymentAttemptRow = typeof paymentAttempts.$inferSelect;
 export type PaymentCallbackEventRow = typeof paymentCallbackEvents.$inferSelect;

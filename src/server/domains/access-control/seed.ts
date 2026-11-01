@@ -74,6 +74,7 @@ const SEED_ROLES: SeedRole[] = [
       'stock:count_approve',
       'stock:cutover',
       'deliveries:manage',
+      'delivery_rates:manage',
       'media:upload',
       'media:delete',
       'payments:refund',

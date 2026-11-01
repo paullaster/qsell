@@ -400,6 +400,12 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'Create and change delivery zones and areas, and choose the delivery methods each branch offers',
   },
+  'delivery_rates:manage': {
+    resource: 'delivery_rates',
+    action: 'manage',
+    category: 'Orders & Sales',
+    description: 'Write, change, put in force and retire the policies that work out delivery charges',
+  },
   'stock:count_approve': {
     resource: 'stock',
     action: 'count_approve',
