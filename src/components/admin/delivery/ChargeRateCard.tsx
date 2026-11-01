@@ -1,10 +1,14 @@
 'use client';
 
-import { useId } from 'react';
+import { useId, useState } from 'react';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { Field, buttonClass, fieldClass } from '@/components/ui/screen-kit';
 import { emptyBand, emptyRate, nextKey, type BandLine, type RateLine } from '@/lib/charge-policy-form';
+import { ChargeRatePaste } from './ChargeRatePaste';
 import type { ChargeMethod } from '@/server/domains/delivery/domain/types';
+
+/** A long card shows its first rows and the rest on request, so a pasted card of hundreds of fees does not slow the screen. */
+const ROWS_AT_FIRST = 50;
 
 function RowShell({ label, onRemove, disabled, children }: { label: string; onRemove: () => void; disabled: boolean; children: React.ReactNode }) {
   return (
@@ -24,6 +28,7 @@ export function ChargeRateCard({ method, rates, onChange, disabled }: { method: 
   const uid = useId();
   const set = (i: number, patch: Partial<RateLine>) => onChange(rates.map((r, k) => (k === i ? { ...r, ...patch } : r)));
   const byZone = method === 'zone_rate';
+  const [shown, setShown] = useState(ROWS_AT_FIRST);
   return (
     <fieldset className="space-y-3" disabled={disabled}>
       <legend className="text-xs font-semibold text-fg">{byZone ? 'Fees by zone and weight' : 'Fees by weight'}</legend>
@@ -32,7 +37,7 @@ export function ChargeRateCard({ method, rates, onChange, disabled }: { method: 
         Weights run from 0 kg with no gaps: each band starts where the one before ends, and the last band has no upper limit so every weight has a fee. The extra-kilogram fee belongs to that last band.
       </p>
       <ul className="space-y-2" aria-label="Fees">
-        {rates.map((r, i) => (
+        {rates.slice(0, shown).map((r, i) => (
           <RowShell key={r.key} label={`Fee ${String(i + 1)}`} onRemove={() => onChange(rates.filter((_, k) => k !== i))} disabled={disabled}>
             {byZone ? (
               <div className="sm:col-span-2 lg:col-span-1">
@@ -54,10 +59,25 @@ export function ChargeRateCard({ method, rates, onChange, disabled }: { method: 
           </RowShell>
         ))}
       </ul>
-      {disabled ? null : (
-        <button type="button" className={buttonClass} onClick={() => onChange([...rates, emptyRate(nextKey(rates))])}>
-          Add a fee
+      {rates.length > shown ? (
+        <button type="button" className={buttonClass} onClick={() => setShown(shown + ROWS_AT_FIRST)}>
+          Show {String(Math.min(ROWS_AT_FIRST, rates.length - shown))} more of {String(rates.length - shown)} fees not shown
         </button>
+      ) : null}
+      {disabled ? null : (
+        <div className="space-y-2">
+          <button
+            type="button"
+            className={buttonClass}
+            onClick={() => {
+              onChange([...rates, emptyRate(nextKey(rates))]);
+              setShown(rates.length + 1);
+            }}
+          >
+            Add a fee
+          </button>
+          <ChargeRatePaste method={method} rates={rates} onChange={onChange} />
+        </div>
       )}
     </fieldset>
   );

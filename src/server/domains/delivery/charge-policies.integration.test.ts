@@ -401,6 +401,44 @@ describe.skipIf(!has(url))('delivery charge policies (database)', () => {
     });
   });
 
+  describe('matching the zone codes of a pasted rate card', () => {
+    it('finds this company’s zones by code in any case, and says which are unknown and which are stopped', async () => {
+      const a = await zone('Westlands');
+      const stopped = await zone('Old');
+      await db.update(schema.deliveryZones).set({ isActive: false }).where(eq(schema.deliveryZones.id, stopped));
+      const codeOf = async (id: string) => (await db.select().from(schema.deliveryZones).where(eq(schema.deliveryZones.id, id)))[0]?.code ?? '';
+      const [ac, sc] = [await codeOf(a), await codeOf(stopped)];
+      const r = await actions.matchZoneCodesAction([ac.toLowerCase(), ac, sc, 'NOPE-1']);
+      expect(r).toMatchObject({ ok: true });
+      if (!r.ok) return;
+      expect(r.data.zones).toEqual([{ id: a, code: ac, name: 'Westlands' }]);
+      expect(r.data.stopped).toEqual([sc]);
+      expect(r.data.unknown).toEqual(['NOPE-1']);
+    });
+
+    it('never finds another company’s zone', async () => {
+      const foreign = await zone('Theirs', otherCompany);
+      const foreignCode = (await db.select().from(schema.deliveryZones).where(eq(schema.deliveryZones.id, foreign)))[0]?.code ?? '';
+      const r = await actions.matchZoneCodesAction([foreignCode]);
+      expect(r).toMatchObject({ ok: true, data: { zones: [], stopped: [], unknown: [foreignCode] } });
+    });
+
+    it('refuses what is not a short list of codes', async () => {
+      for (const bad of ['NBO', null, [1], ['has space'], ['"; drop table'], new Array<string>(201).fill('A')]) {
+        expect(await actions.matchZoneCodesAction(bad)).toMatchObject({ ok: false, code: 'BAD_INPUT' });
+      }
+      expect(await actions.matchZoneCodesAction([])).toMatchObject({ ok: true, data: { zones: [], stopped: [], unknown: [] } });
+    });
+
+    it('asks for deliveries:read and nothing else', async () => {
+      requirePermission.mockClear();
+      await actions.matchZoneCodesAction(['X']);
+      expect(requirePermission.mock.calls.map((call: unknown[]) => call.at(0))).toEqual(['deliveries:read']);
+      requirePermission.mockRejectedValue(new Error('Forbidden'));
+      expect((await actions.matchZoneCodesAction(['X'])).ok).toBe(false);
+    });
+  });
+
   describe('permissions', () => {
     it('reading and the simulator ask for deliveries:read, and every change asks for delivery_rates:manage', async () => {
       const b = await branch();

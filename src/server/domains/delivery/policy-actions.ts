@@ -142,6 +142,17 @@ export async function retireChargePolicyAction(id: unknown, reason: unknown) {
   return await runDelivery('delivery_rates:manage', async (ctx) => summary(await getContainer().chargePolicies.retire(ctx.companyId, { id: ctx.userId }, idOf(id, 'policy'), reason)), PATHS);
 }
 
+/** Matches the zone codes of a pasted rate card to this company's zones. Nothing is saved. */
+export async function matchZoneCodesAction(codes: unknown) {
+  return await runDelivery('deliveries:read', async (ctx) => {
+    if (!Array.isArray(codes) || codes.length > 200 || !codes.every((c): c is string => typeof c === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,19}$/.test(c))) throw new DeliveryError('Those zone codes could not be read.', 'BAD_INPUT');
+    const wanted = [...new Set(codes.map((c) => c.toUpperCase()))];
+    const { zones, stopped } = await getContainer().deliveryZones.byCodes(ctx.companyId, wanted);
+    const known = new Set([...zones.map((z) => z.code), ...stopped]);
+    return { zones, stopped, unknown: wanted.filter((c) => !known.has(c)) };
+  });
+}
+
 /** What the fees of a policy refer to, by zone, for showing a policy's rate card with names. */
 export async function chargePolicyRateCountAction(id: unknown) {
   return await runDelivery('deliveries:read', async (ctx) => {

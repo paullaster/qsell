@@ -155,6 +155,16 @@ export class DeliveryZones {
     });
   }
 
+  /** The zones with these codes (one read, this company only), for matching a pasted rate card. A stopped zone is named apart so it can be told from a mistyped code. */
+  async byCodes(companyId: string, codes: readonly string[]): Promise<{ zones: { id: string; code: string; name: string }[]; stopped: string[] }> {
+    if (codes.length === 0) return { zones: [], stopped: [] };
+    const rows = await this.db
+      .select({ id: deliveryZones.id, code: deliveryZones.code, name: deliveryZones.name, isActive: deliveryZones.isActive })
+      .from(deliveryZones)
+      .where(and(eq(deliveryZones.companyId, companyId), inArray(deliveryZones.code, [...codes])));
+    return { zones: rows.filter((z) => z.isActive).map(({ id, code, name }) => ({ id, code, name })), stopped: rows.filter((z) => !z.isActive).map((z) => z.code) };
+  }
+
   /** One page of a zone's places in a stable order. */
   async areasPage(companyId: string, zoneId: string, after: string | null, limit: number): Promise<{ rows: DeliveryZoneAreaRow[]; next: string | null }> {
     const rows = await this.db
