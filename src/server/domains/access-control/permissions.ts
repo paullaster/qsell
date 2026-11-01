@@ -388,6 +388,24 @@ export const PERMISSIONS = {
     category: 'Products & Inventory',
     description: 'Switch the company to the new per-location stock ledger, check it, and switch back',
   },
+  'deliveries:read': {
+    resource: 'deliveries',
+    action: 'read',
+    category: 'Orders & Sales',
+    description: 'See delivery zones, areas and the delivery methods each branch offers',
+  },
+  'deliveries:manage': {
+    resource: 'deliveries',
+    action: 'manage',
+    category: 'Orders & Sales',
+    description: 'Create and change delivery zones and areas, and choose the delivery methods each branch offers',
+  },
+  'delivery_rates:manage': {
+    resource: 'delivery_rates',
+    action: 'manage',
+    category: 'Orders & Sales',
+    description: 'Write, change, put in force and retire the policies that work out delivery charges',
+  },
   'stock:count_approve': {
     resource: 'stock',
     action: 'count_approve',

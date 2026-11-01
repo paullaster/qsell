@@ -1,7 +1,7 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, or } from 'drizzle-orm';
 import { getContainer } from '@/server/di/container';
 import { drizzleDb } from '@/server/db/drizzle/client';
-import { inventoryMovements, products } from '@/server/db/drizzle/schema';
+import { inventoryMovements, packagingFits, products } from '@/server/db/drizzle/schema';
 import { randomUUID } from 'node:crypto';
 import { broadcastRealtime } from '@/server/realtime';
 import { businessDate } from '@/server/kernel/numbering/business-date';
@@ -67,14 +67,14 @@ export class CatalogService {
   /** A single product as the storefront may see it: published and sellable only. */
   static async getPublicProduct(id: string): Promise<PublicProduct | undefined> {
     const row = await repo().getProductById(id);
-    if (!row || !row.isActive || !row.isSellable) return undefined;
+    if (!row || !row.isActive || !row.isSellable || row.isCheckoutPackaging) return undefined;
     return toPublicProduct(toProduct(row));
   }
 
   /** A product for sale by its readable address (slug) or, for older links, its id. */
   static async getPublicProductByKey(key: string): Promise<PublicProduct | undefined> {
     const row = (await repo().getProductBySlug(key)) ?? (await repo().getProductById(key));
-    if (!row || !row.isActive || !row.isSellable) return undefined;
+    if (!row || !row.isActive || !row.isSellable || row.isCheckoutPackaging) return undefined;
     return toPublicProduct(toProduct(row));
   }
 
@@ -87,7 +87,12 @@ export class CatalogService {
   static async getProductWithMedia(id: string): Promise<Product | undefined> {
     const row = await repo().getProductById(id);
     if (!row) return undefined;
-    return { ...toProduct(row), media: await getContainer().media.getProductGallery(id) };
+    const fits = await repo().packagingFitsForProduct(id);
+    return {
+      ...toProduct(row),
+      packagingFits: fits.map((fit) => ({ productId: fit.otherProductId, capacity: Number(fit.capacity) })),
+      media: await getContainer().media.getProductGallery(id),
+    };
   }
 
   static async getProductBySlug(slug: string): Promise<Product | undefined> {
@@ -100,6 +105,10 @@ export class CatalogService {
     return rows.map(toProduct);
   }
 
+  static async packagingFitsForProducts(ids: string[]) {
+    return await repo().checkoutPackagingForProducts(ids);
+  }
+
   static async createProduct(productData: ProductWrite): Promise<Product> {
     const catalog = repo();
     const specificationsProblem = productSpecificationsProblem(productData.specifications);
@@ -107,6 +116,7 @@ export class CatalogService {
     const {
       media: galleryInput,
       packagings: packagingInput,
+      packagingFits: packagingFitsInput,
       baseUnitId: requestedUnit,
       ...fields
     } = productData;
@@ -136,6 +146,10 @@ export class CatalogService {
     }
 
     const isSellable = itemType.isSellable;
+    const isCheckoutPackaging = productData.isCheckoutPackaging === true;
+    if (isCheckoutPackaging && !isSellable) throw new SettingsError('Packaging offered at checkout must use a sellable item type.');
+    const id = newId('prod');
+    const fitRows = await this.validatePackagingFits(id, isCheckoutPackaging, packagingFitsInput ?? [], unit.decimals, unit.name);
     let price: number | undefined;
 
     if (isSellable) {
@@ -167,7 +181,6 @@ export class CatalogService {
     const standardIssue = standardPriceProblem(standardPrice, isSellable);
     if (standardIssue !== null) throw new SettingsError(standardIssue);
 
-    const id = newId('prod');
     // Resolve the category by display name — the modal posts a free-text name.
     const category = await catalog.getCategoryByName(productData.category);
 
@@ -188,6 +201,7 @@ export class CatalogService {
       itemTypeName: itemType.name,
       itemTypeCode: itemType.code,
       isSellable,
+      isCheckoutPackaging,
       baseUnitId: unit.id,
       baseUnitCode: unit.code,
       baseUnitName: unit.name,
@@ -222,6 +236,7 @@ export class CatalogService {
         newProduct[field] = row[field];
       }
       await tx.insert(products).values(row);
+      if (fitRows.length > 0) await tx.insert(packagingFits).values(fitRows);
       await getContainer().units.replacePackagingIn(tx, id, packagings);
       // The gallery commits with the product. Callers that only know image links
       // (API, CSV-style input) still get proper assets so the model stays consistent.
@@ -262,7 +277,7 @@ export class CatalogService {
 
   static async updateProduct(id: string, patchInput: ProductPatch): Promise<Product> {
     const catalog = repo();
-    const { media: galleryUpdate, packagings: packagingUpdate, ...updates } = patchInput;
+    const { media: galleryUpdate, packagings: packagingUpdate, packagingFits: packagingFitsUpdate, ...updates } = patchInput;
     if (updates.specifications !== undefined) {
       const specificationsProblem = productSpecificationsProblem(updates.specifications);
       if (specificationsProblem !== null) throw new SettingsError(specificationsProblem);
@@ -271,6 +286,7 @@ export class CatalogService {
     const existingRow = await catalog.getProductById(id);
     if (!existingRow) throw new SettingsError(`Product ${id} not found`);
     const existing = toProduct(existingRow);
+    const nextIsPackaging = updates.isCheckoutPackaging ?? existing.isCheckoutPackaging ?? false;
 
     if (updates.sku !== undefined) {
       if (updates.sku.trim() === '') throw new SettingsError('SKU code is required');
@@ -309,6 +325,9 @@ export class CatalogService {
     });
     updates.baseUnitId = plan.unit.id;
     const packagings = plan.packagings;
+    const fitRows = packagingFitsUpdate === undefined
+      ? undefined
+      : await this.validatePackagingFits(id, nextIsPackaging, packagingFitsUpdate, plan.unit.decimals, plan.unit.name);
 
     if (updates.itemTypeId !== undefined && updates.itemTypeId !== '') {
       const itemType = await catalog.getItemTypeById(updates.itemTypeId);
@@ -316,6 +335,10 @@ export class CatalogService {
       updates.itemTypeName = itemType.name;
       updates.itemTypeCode = itemType.code;
       updates.isSellable = itemType.isSellable;
+    }
+
+    if (nextIsPackaging && !(updates.isSellable ?? existing.isSellable)) {
+      throw new SettingsError('Packaging offered at checkout must use a sellable item type.');
     }
 
     const nextSellable = updates.isSellable ?? existing.isSellable;
@@ -411,6 +434,10 @@ export class CatalogService {
         .where(eq(products.id, id));
       if (packagings !== undefined)
         await getContainer().units.replacePackagingIn(tx, id, packagings);
+      if (fitRows !== undefined) {
+        await tx.delete(packagingFits).where(or(eq(packagingFits.productId, id), eq(packagingFits.packagingProductId, id)));
+        if (fitRows.length > 0) await tx.insert(packagingFits).values(fitRows);
+      }
       // After the field update: the gallery refreshes image_url / additional_images itself.
       if (galleryUpdate !== undefined) {
         await mediaService.setProductGallery(tx, id, galleryUpdate);
@@ -441,6 +468,46 @@ export class CatalogService {
     void broadcastRealtime('inventory_update', { type: 'product_updated', productId: id });
     const updated = await catalog.getProductById(id);
     return updated ? toProduct(updated) : merged;
+  }
+
+  private static async validatePackagingFits(
+    id: string,
+    isCheckoutPackaging: boolean,
+    fits: { productId: string; capacity: number }[],
+    currentUnitDecimals: number,
+    currentUnitName: string,
+  ): Promise<(typeof packagingFits.$inferInsert)[]> {
+    if (fits.length > 100) throw new SettingsError('A product can have at most 100 packaging fit rules.');
+    if (!isCheckoutPackaging && fits.length === 0) return [];
+    const seen = new Set<string>();
+    for (const fit of fits) {
+      if (typeof fit.productId !== 'string' || fit.productId === id || seen.has(fit.productId)) throw new SettingsError('Choose each packaging relationship once.');
+      if (!Number.isFinite(fit.capacity) || fit.capacity <= 0 || fit.capacity > 1_000_000_000) throw new SettingsError('Each packaging capacity must be a number above zero.');
+      seen.add(fit.productId);
+    }
+    if (fits.length === 0) return [];
+    const selected = await repo().getProductsByIds(fits.map((fit) => fit.productId));
+    if (selected.length !== fits.length) throw new SettingsError('One of the selected packaging products could not be found.');
+    if (isCheckoutPackaging) {
+      if (selected.some((product) => !product.isSellable || product.isCheckoutPackaging || product.deletedAt !== null)) {
+        throw new SettingsError('A packaging product can only be configured for active, sellable catalogue products.');
+      }
+      for (const fit of fits) {
+        const product = selected.find((candidate) => candidate.id === fit.productId);
+        if (product === undefined) throw new SettingsError('One of the selected products could not be found.');
+        const problem = quantityProblem(fit.capacity, product.baseUnitDecimals ?? 0, product.baseUnitName ?? 'unit', 'Packaging capacity');
+        if (problem !== null) throw new SettingsError(problem);
+      }
+      return fits.map((fit) => ({ productId: fit.productId, packagingProductId: id, capacity: String(fit.capacity) }));
+    }
+    if (selected.some((product) => !product.isSellable || !product.isCheckoutPackaging || product.deletedAt !== null)) {
+      throw new SettingsError('Choose active, sellable checkout packaging products.');
+    }
+    for (const fit of fits) {
+      const problem = quantityProblem(fit.capacity, currentUnitDecimals, currentUnitName, 'Packaging capacity');
+      if (problem !== null) throw new SettingsError(problem);
+    }
+    return fits.map((fit) => ({ productId: id, packagingProductId: fit.productId, capacity: String(fit.capacity) }));
   }
 
   /**

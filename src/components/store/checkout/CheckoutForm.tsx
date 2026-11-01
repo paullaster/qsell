@@ -14,6 +14,7 @@ import { PayFromField } from '@/components/store/checkout/PayFromField';
 import { fetchCustomerAccountAction, listEnabledCheckoutProvidersAction, lookupCheckoutCustomerAction, addCustomerAddressAction } from '@/server/actions';
 import { useStore } from '@/components/store/StoreContext';
 import { OrderSummary } from '@/components/store/checkout/OrderSummary';
+import { PackagingOptions } from '@/components/store/PackagingOptions';
 
 export interface CheckoutSubmission {
   customerName: string;
@@ -394,6 +395,7 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
 
       <aside aria-label="Order summary" className="space-y-5 self-start rounded-xl border border-line bg-surface p-4 sm:p-5 lg:sticky lg:top-24 lg:col-span-5">
         <h2 className="border-b border-line pb-2 text-base font-bold text-fg-strong">Order review ({lines.length} {lines.length === 1 ? 'item' : 'items'})</h2>
+        <PackagingOptions />
         <OrderSummary lines={lines} />
         <button
           type="submit"

@@ -33,6 +33,9 @@ const screens: [string, string, RegExp, string | RegExp][] = [
     'Document numbering',
   ],
   ['branches', '/admin/settings/branches', /Loading branches/, 'Branches'],
+  ['delivery zones', '/admin/delivery/zones', /Loading delivery zones/, 'Delivery zones'],
+  ['delivery methods', '/admin/delivery/methods', /Loading delivery methods/, 'Delivery methods'],
+  ['delivery charges', '/admin/delivery/charges', /Loading delivery charges/, 'Delivery charges'],
   [
     'approval workflows',
     '/admin/settings/approvals/workflows',

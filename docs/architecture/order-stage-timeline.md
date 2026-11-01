@@ -50,6 +50,7 @@ One controlled list (a code constant with a test, like the movement types), grou
 |---|---|
 | **Initiation** | `checkout_started`, `checkout_validated`, `checkout_refused` (reason: input invalid, quantity limit, stock short, not for sale, price changed, coupon refused, rate-limited) |
 | **Placement** | `order_placed`, `charge_quoted` (delivery charge), `pricing_applied` (the price trace id) |
+| **Placement (delivery)** | `charge_quoted`: the delivery charge and the branch chosen for it, recorded when the order is placed with delivery (`detail`: charge, policy and version, branch; the message is the reason in words). Non-tracking, like the stock stages |
 | **Stock** | `stock_reserved` / `reservation_failed`, `stock_issued`, `stock_released` (reason: cancelled, payment failed, expired, re-sourced), `stock_returned` |
 | **Approval** | `approval_requested`, `approval_approved`, `approval_rejected`, `approval_escalated`, `approval_reopened`, `approval_withdrawn` |
 | **Payment** | `payment_started`, `prompt_sent`, `payment_pending_verification`, `payment_confirmed`, `payment_failed` (reason: declined, timeout, cancelled, wrong number), `payment_expired`, `payment_retried`, `payment_reconciled`, `payment_discrepancy`, `refund_requested`, `refund_completed`, `refund_failed` |

@@ -57,6 +57,7 @@ export function reasonWords(code: string | null): string {
     credit_limit: 'Over the credit limit',
     approval_needed: 'Needs approval',
     kit_error: 'Set contents problem',
+    delivery_unavailable: 'Could not be delivered',
     payment_start_failed: 'The payment could not be started',
     payment_failed: 'The payment did not go through',
     payout_returned: 'The refund payout came back',

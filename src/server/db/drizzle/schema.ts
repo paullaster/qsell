@@ -6,6 +6,7 @@ import {
   timestamp,
   uuid,
   boolean,
+  doublePrecision,
   integer,
   jsonb,
   bigint,
@@ -20,6 +21,7 @@ import {
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import type { CompanyUiConfigRaw } from '@/config/company-ui';
+import type { ChargeRecord, ChoiceRecord, DestinationRecord } from '@/lib/order-delivery';
 import type { MediaVisibility, StoredMediaProvider } from '@/server/ports/media';
 import type {
   PaymentProviderCode,
@@ -172,12 +174,292 @@ export const branches = pgTable(
     publicBaseUrl: text('public_base_url'),
     isDefault: boolean('is_default').notNull().default(false),
     isActive: boolean('is_active').notNull().default(true),
+    /** Where the branch is on the map. Delivery works out the nearest branch and its distance from this. Both or neither. */
+    latitude: doublePrecision('latitude'),
+    longitude: doublePrecision('longitude'),
+    /** What the person who set the pin called the place (a shop front, a gate), when they said. */
+    pinLabel: text('pin_label'),
+    pinSetAt: timestamp('pin_set_at', { withTimezone: true }),
+    pinSetBy: text('pin_set_by'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex('branches_company_code_uidx').on(t.companyId, t.code),
     index('branches_company_idx').on(t.companyId),
+    check(
+      'branches_pin_chk',
+      sql`(${t.latitude} IS NULL) = (${t.longitude} IS NULL) AND (${t.latitude} IS NULL OR (${t.latitude} BETWEEN -90 AND 90 AND ${t.longitude} BETWEEN -180 AND 180))`,
+    ),
+  ],
+);
+
+/**
+ * A named delivery area (Westlands, Kisumu CBD, Nyali) a delivery charge can depend on. A zone is reached from a written address
+ * through its areas, and from a map pin through its optional coverage circle. Zones are stopped, never deleted: charges and orders
+ * refer to them.
+ */
+export const deliveryZones = pgTable(
+  'delivery_zones',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    description: text('description'),
+    /** The coverage circle: all three or none. A pin inside it belongs to this zone. */
+    centreLatitude: doublePrecision('centre_latitude'),
+    centreLongitude: doublePrecision('centre_longitude'),
+    radiusKm: numeric('radius_km', { precision: 8, scale: 2 }),
+    isActive: boolean('is_active').notNull().default(true),
+    /** Raised on every change, so two people editing one zone cannot overwrite each other unseen. */
+    version: integer('version').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_zones_company_code_uidx').on(t.companyId, t.code),
+    index('delivery_zones_company_active_idx').on(t.companyId, t.isActive),
+    check(
+      'delivery_zones_circle_chk',
+      sql`(${t.centreLatitude} IS NULL) = (${t.centreLongitude} IS NULL) AND (${t.centreLatitude} IS NULL) = (${t.radiusKm} IS NULL) AND (${t.centreLatitude} IS NULL OR (${t.centreLatitude} BETWEEN -90 AND 90 AND ${t.centreLongitude} BETWEEN -180 AND 180 AND ${t.radiusKm} > 0 AND ${t.radiusKm} <= 2000))`,
+    ),
+  ],
+);
+
+/**
+ * A place that belongs to a zone: a county, a town in a county, or an estate (any of the three, at least one). The keys are the
+ * names reduced to what they mean (see `placeKey`), and one set of keys belongs to one zone only, so a written address never has
+ * two answers. An empty key covers anything.
+ */
+export const deliveryZoneAreas = pgTable(
+  'delivery_zone_areas',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    zoneId: uuid('zone_id')
+      .notNull()
+      .references(() => deliveryZones.id),
+    county: text('county'),
+    town: text('town'),
+    area: text('area'),
+    countyKey: text('county_key').notNull().default(''),
+    townKey: text('town_key').notNull().default(''),
+    areaKey: text('area_key').notNull().default(''),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_zone_areas_keys_uidx').on(t.companyId, t.countyKey, t.townKey, t.areaKey),
+    index('delivery_zone_areas_zone_idx').on(t.zoneId, t.id),
+    check(
+      'delivery_zone_areas_words_chk',
+      sql`${t.countyKey} <> '' OR ${t.townKey} <> '' OR ${t.areaKey} <> ''`,
+    ),
+  ],
+);
+
+/** How a branch can get an order to the customer. A method a branch does not offer is not offered for orders it processes. */
+export const deliveryMethods = pgTable(
+  'delivery_methods',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    branchId: uuid('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'cascade' }),
+    method: text('method')
+      .$type<'own_fleet' | 'courier' | 'pickup' | 'scheduled_visit'>()
+      .notNull(),
+    isActive: boolean('is_active').notNull().default(true),
+    /** The least time from the order to the goods being ready or on their way, in minutes. */
+    leadTimeMinutes: integer('lead_time_minutes').notNull().default(0),
+    note: text('note'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_methods_branch_method_uidx').on(t.branchId, t.method),
+    index('delivery_methods_company_idx').on(t.companyId),
+    check(
+      'delivery_methods_method_chk',
+      sql`${t.method} IN ('own_fleet','courier','pickup','scheduled_visit')`,
+    ),
+    check(
+      'delivery_methods_lead_chk',
+      sql`${t.leadTimeMinutes} >= 0 AND ${t.leadTimeMinutes} <= 43200`,
+    ),
+  ],
+);
+
+/**
+ * How a delivery charge is worked out. A policy in force is never edited: a change is a new version (same `code`, next `version`),
+ * so an order can point at the exact policy that priced it. Bands, steps and time rules are small lists kept here; the fees of a
+ * rate card are rows in `charge_policy_rates`. Soundness (no gaps, no overlaps) is checked by the domain before a policy can go live.
+ */
+export const chargePolicies = pgTable(
+  'charge_policies',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    /** The policy's name across versions. */
+    code: text('code').notNull(),
+    version: integer('version').notNull().default(1),
+    name: text('name').notNull(),
+    description: text('description'),
+    method: text('method').$type<'zone_rate' | 'flat' | 'distance'>().notNull(),
+    currency: text('currency').notNull(),
+    status: text('status').$type<'draft' | 'in_force' | 'retired'>().notNull().default('draft'),
+    priority: integer('priority').notNull().default(0),
+    validFrom: timestamp('valid_from', { withTimezone: true }).notNull().defaultNow(),
+    validTo: timestamp('valid_to', { withTimezone: true }),
+    scopes: jsonb('scopes')
+      .$type<Record<string, { op: 'in' | 'not_in'; values: string[] }>>()
+      .notNull()
+      .default({}),
+    distanceBasis: text('distance_basis')
+      .$type<'one_way' | 'longer_leg' | 'round_trip'>()
+      .notNull()
+      .default('one_way'),
+    maxRangeKm: numeric('max_range_km', { precision: 8, scale: 2 }),
+    perMinute: numeric('per_minute', { precision: 12, scale: 4 }).notNull().default('0'),
+    includedKg: numeric('included_kg', { precision: 10, scale: 3 }),
+    perExtraKg: numeric('per_extra_kg', { precision: 12, scale: 4 }).notNull().default('0'),
+    maxWeightKg: numeric('max_weight_kg', { precision: 10, scale: 3 }),
+    minCharge: numeric('min_charge', { precision: 14, scale: 4 }),
+    maxCharge: numeric('max_charge', { precision: 14, scale: 4 }),
+    roundTo: numeric('round_to', { precision: 12, scale: 4 }).notNull().default('0'),
+    roundMode: text('round_mode').$type<'nearest' | 'up'>().notNull().default('nearest'),
+    bands: jsonb('bands')
+      .$type<{ fromKm: number; toKm: number | null; baseFee: number; perKm: number }[]>()
+      .notNull()
+      .default([]),
+    tiers: jsonb('tiers')
+      .$type<{ minOrderValue: number; percentOff: number }[]>()
+      .notNull()
+      .default([]),
+    surcharges: jsonb('surcharges')
+      .$type<
+        {
+          label: string;
+          kind: 'fixed' | 'percent';
+          amount: number;
+          days: number[] | null;
+          fromMinute: number | null;
+          toMinute: number | null;
+          dateFrom: string | null;
+          dateTo: string | null;
+        }[]
+      >()
+      .notNull()
+      .default([]),
+    /** Raised on every save of a draft, so two people editing one draft cannot overwrite each other unseen. */
+    revision: integer('revision').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    activatedAt: timestamp('activated_at', { withTimezone: true }),
+    activatedBy: text('activated_by'),
+    retiredAt: timestamp('retired_at', { withTimezone: true }),
+    retiredBy: text('retired_by'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('charge_policies_company_code_version_uidx').on(t.companyId, t.code, t.version),
+    // One draft per policy at a time, and one version in force per policy.
+    uniqueIndex('charge_policies_one_draft_uidx')
+      .on(t.companyId, t.code)
+      .where(sql`${t.status} = 'draft'`),
+    uniqueIndex('charge_policies_one_in_force_uidx')
+      .on(t.companyId, t.code)
+      .where(sql`${t.status} = 'in_force'`),
+    index('charge_policies_company_status_idx').on(t.companyId, t.status),
+    check('charge_policies_status_chk', sql`${t.status} IN ('draft','in_force','retired')`),
+    check('charge_policies_method_chk', sql`${t.method} IN ('zone_rate','flat','distance')`),
+    check(
+      'charge_policies_basis_chk',
+      sql`${t.distanceBasis} IN ('one_way','longer_leg','round_trip')`,
+    ),
+    check(
+      'charge_policies_round_chk',
+      sql`${t.roundMode} IN ('nearest','up') AND ${t.roundTo} >= 0`,
+    ),
+    check('charge_policies_currency_chk', sql`${t.currency} ~ '^[A-Z]{3}$'`),
+    check('charge_policies_dates_chk', sql`${t.validTo} IS NULL OR ${t.validTo} > ${t.validFrom}`),
+    check(
+      'charge_policies_charges_chk',
+      sql`(${t.minCharge} IS NULL OR ${t.minCharge} >= 0) AND (${t.maxCharge} IS NULL OR ${t.maxCharge} >= 0) AND (${t.minCharge} IS NULL OR ${t.maxCharge} IS NULL OR ${t.minCharge} <= ${t.maxCharge}) AND ${t.perMinute} >= 0 AND ${t.perExtraKg} >= 0`,
+    ),
+  ],
+);
+
+/** The fees of a rate card: one row per zone (or any zone) and weight band. */
+export const chargePolicyRates = pgTable(
+  'charge_policy_rates',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    policyId: uuid('policy_id')
+      .notNull()
+      .references(() => chargePolicies.id, { onDelete: 'cascade' }),
+    /** Null is the fee for any zone without a row of its own. */
+    zoneId: uuid('zone_id').references(() => deliveryZones.id),
+    fromKg: numeric('from_kg', { precision: 10, scale: 3 }).notNull().default('0'),
+    toKg: numeric('to_kg', { precision: 10, scale: 3 }),
+    fee: numeric('fee', { precision: 14, scale: 4 }).notNull(),
+    perExtraKg: numeric('per_extra_kg', { precision: 12, scale: 4 }).notNull().default('0'),
+  },
+  (t) => [
+    uniqueIndex('charge_policy_rates_band_uidx').on(
+      t.policyId,
+      sql`coalesce(${t.zoneId}, '00000000-0000-0000-0000-000000000000'::uuid)`,
+      t.fromKg,
+    ),
+    index('charge_policy_rates_zone_idx').on(t.zoneId),
+    check(
+      'charge_policy_rates_chk',
+      sql`${t.fromKg} >= 0 AND (${t.toKg} IS NULL OR ${t.toKg} > ${t.fromKg}) AND ${t.fee} >= 0 AND ${t.perExtraKg} >= 0`,
+    ),
+  ],
+);
+
+/**
+ * How an order is delivered: which branch processes it and why, where it goes, and the charge as it was quoted, with its working.
+ * One row for each delivered order, written in the same transaction as the order. What is kept here is a snapshot: a later change
+ * to a policy, a zone or a branch's stock never alters what an order was told.
+ */
+export const orderDeliveries = pgTable(
+  'order_deliveries',
+  {
+    orderId: text('order_id')
+      .primaryKey()
+      .references(() => orders.id, { onDelete: 'cascade' }),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    method: text('method')
+      .$type<'own_fleet' | 'courier' | 'pickup' | 'scheduled_visit'>()
+      .notNull(),
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+    destination: jsonb('destination').$type<DestinationRecord>().notNull(),
+    choice: jsonb('choice').$type<ChoiceRecord>().notNull(),
+    charge: jsonb('charge').$type<ChargeRecord>().notNull(),
+    chargeAmount: numeric('charge_amount', { precision: 14, scale: 2 }).notNull(),
+    currency: text('currency').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('order_deliveries_company_branch_idx').on(t.companyId, t.branchId),
+    check('order_deliveries_amount_chk', sql`${t.chargeAmount} >= 0`),
+    check(
+      'order_deliveries_method_chk',
+      sql`${t.method} IN ('own_fleet','courier','pickup','scheduled_visit')`,
+    ),
   ],
 );
 
@@ -1774,6 +2056,12 @@ export type CompanySettingsRow = typeof companySettings.$inferSelect;
 export type CompanySettingsInsert = typeof companySettings.$inferInsert;
 export type BranchRow = typeof branches.$inferSelect;
 export type BranchInsert = typeof branches.$inferInsert;
+export type DeliveryZoneRow = typeof deliveryZones.$inferSelect;
+export type DeliveryZoneAreaRow = typeof deliveryZoneAreas.$inferSelect;
+export type DeliveryMethodRow = typeof deliveryMethods.$inferSelect;
+export type ChargePolicyRow = typeof chargePolicies.$inferSelect;
+export type ChargePolicyRateRow = typeof chargePolicyRates.$inferSelect;
+export type OrderDeliveryRow = typeof orderDeliveries.$inferSelect;
 export type PaymentProviderConfigRow = typeof paymentProviderConfigs.$inferSelect;
 export type PaymentAttemptRow = typeof paymentAttempts.$inferSelect;
 export type PaymentCallbackEventRow = typeof paymentCallbackEvents.$inferSelect;
@@ -2037,6 +2325,8 @@ export const products = pgTable(
     reservedQuantity: quantity('reserved_quantity').notNull().default(0),
     lowStockThreshold: quantity('low_stock_threshold').notNull().default(0),
     isActive: boolean('is_active').notNull().default(true),
+    /** Checkout-only packaging item: inventory-bearing, but excluded from ordinary catalogue browsing. */
+    isCheckoutPackaging: boolean('is_checkout_packaging').notNull().default(false),
     imageUrl: text('image_url').notNull().default(''),
     additionalImages: jsonb('additional_images').$type<string[]>().notNull().default([]),
     rating: numeric('rating', { precision: 3, scale: 2 }).notNull().default('0'),
@@ -2090,6 +2380,29 @@ export const products = pgTable(
     index('products_sku_trgm_idx').using('gin', t.sku.op('gin_trgm_ops')),
     index('products_brand_trgm_idx').using('gin', t.brand.op('gin_trgm_ops')),
     index('products_category_name_trgm_idx').using('gin', t.categoryName.op('gin_trgm_ops')),
+  ],
+);
+
+/** Explicit fit rules. A seller can maintain the same relationship from either product's editor. */
+export const packagingFits = pgTable(
+  'packaging_fits',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    packagingProductId: text('packaging_product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    /** Product base units safely accommodated by one packaging product. */
+    capacity: numeric('capacity', { precision: 14, scale: 4 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('packaging_fits_pair_uidx').on(t.productId, t.packagingProductId),
+    index('packaging_fits_package_idx').on(t.packagingProductId, t.productId),
+    check('packaging_fits_capacity_chk', sql`${t.capacity} > 0`),
+    check('packaging_fits_distinct_products_chk', sql`${t.productId} <> ${t.packagingProductId}`),
   ],
 );
 

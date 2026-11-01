@@ -71,6 +71,28 @@ export const StorefrontCatalog = {
     return await withShopPrices(await withShopAvailability(rows.map((row) => toPublicProduct(toProduct(row)))), quantities);
   },
 
+  /** Checkout-only inventory items matched to the products currently in the cart. */
+  async packagingForProducts(ids: string[]): Promise<{ product: PublicProduct; productId: string; capacity: number }[]> {
+    const rows = await repo().checkoutPackagingForProducts([...new Set(ids)].slice(0, MAX_CART_LOOKUP));
+    const products = await withShopPrices(
+      await withShopAvailability(rows.map((entry) => toPublicProduct(toProduct(entry.row)))),
+    );
+    const byId = new Map(products.map((product) => [product.id, product]));
+    return rows.flatMap((entry) => {
+      const product = byId.get(entry.row.id);
+      const capacity = Number(entry.capacity);
+      return product === undefined || !Number.isFinite(capacity) || capacity <= 0
+        ? []
+        : [{ product, productId: entry.productId, capacity }];
+    });
+  },
+
+  /** Reloads a saved checkout packaging selection without making packaging searchable or browseable. */
+  async packagingProductsByIds(ids: string[], quantities: ReadonlyMap<string, number> = new Map()): Promise<PublicProduct[]> {
+    const rows = await repo().listLivePackagingByIds([...new Set(ids)].slice(0, MAX_CART_LOOKUP));
+    return await withShopPrices(await withShopAvailability(rows.map((row) => toPublicProduct(toProduct(row)))), quantities);
+  },
+
   async related(product: Pick<PublicProduct, 'id'>, limit = 4): Promise<PublicProduct[]> {
     const row = await repo().getProductById(product.id);
     if (row?.categoryId == null) return [];
