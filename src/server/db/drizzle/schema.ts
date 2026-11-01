@@ -462,6 +462,8 @@ export const orderDeliveries = pgTable(
     recipientName: text('recipient_name'),
     recipientPhone: text('recipient_phone'),
     notes: text('notes'),
+    /** What became of the delivery's own invoice at KRA, when delivery is billed on a separate invoice. */
+    invoiceKraStatus: text('invoice_kra_status').$type<'skipped' | 'failed' | 'transmitted' | 'deferred'>(),
     currency: text('currency').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -529,6 +531,27 @@ export const geoUsage = pgTable(
     index('geo_usage_company_bucket_idx').on(t.companyId, t.bucket),
     check('geo_usage_op_chk', sql`${t.op} IN ('search','resolve','reverse','distance')`),
   ],
+);
+
+/**
+ * How delivery is billed when an order is invoiced and signed for KRA: as a line of the same invoice as the products, or on an
+ * invoice of its own. The delivery service is a registered item (a service) so KRA can be sent a line for it. One row for each
+ * company; changes are version-checked and logged.
+ */
+export const deliveryBillingSettings = pgTable(
+  'delivery_billing_settings',
+  {
+    companyId: uuid('company_id')
+      .primaryKey()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    mode: text('mode').$type<'with_goods' | 'separate'>().notNull().default('with_goods'),
+    /** The product that stands for the delivery service on invoices and at KRA. */
+    serviceProductId: text('service_product_id').references(() => products.id, { onDelete: 'restrict' }),
+    version: integer('version').notNull().default(1),
+    updatedBy: text('updated_by').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check('delivery_billing_mode_chk', sql`${t.mode} IN ('with_goods','separate')`)],
 );
 
 /**
@@ -2131,6 +2154,7 @@ export type ChargePolicyRow = typeof chargePolicies.$inferSelect;
 export type ChargePolicyRateRow = typeof chargePolicyRates.$inferSelect;
 export type OrderDeliveryRow = typeof orderDeliveries.$inferSelect;
 export type GeoSettingsRow = typeof geoSettings.$inferSelect;
+export type DeliveryBillingRow = typeof deliveryBillingSettings.$inferSelect;
 export type PaymentProviderConfigRow = typeof paymentProviderConfigs.$inferSelect;
 export type PaymentAttemptRow = typeof paymentAttempts.$inferSelect;
 export type PaymentCallbackEventRow = typeof paymentCallbackEvents.$inferSelect;
@@ -2358,6 +2382,11 @@ export const products = pgTable(
     itemTypeId: text('item_type_id')
       .notNull()
       .references(() => itemTypes.id, { onDelete: 'restrict' }),
+    /** Operational stock contract, independent of the seller-defined item classification. */
+    inventoryKind: text('inventory_kind')
+      .$type<'inventory' | 'non_inventory' | 'service'>()
+      .notNull()
+      .default('inventory'),
     /** Denormalized from the item type; drives the storefront sellable filter. */
     isSellable: boolean('is_sellable').notNull().default(true),
     price: numeric('price', { precision: 14, scale: 2 }),
@@ -2430,8 +2459,13 @@ export const products = pgTable(
       'products_standard_price_chk',
       sql`${t.standardPrice} IS NULL OR ${t.standardPrice} >= 0`,
     ),
+    check(
+      'products_inventory_kind_chk',
+      sql`${t.inventoryKind} IN ('inventory','non_inventory','service') AND (${t.inventoryKind} = 'inventory' OR (${t.stockQuantity} = 0 AND ${t.reservedQuantity} = 0 AND ${t.lowStockThreshold} = 0))`,
+    ),
     index('products_category_idx').on(t.categoryId),
     index('products_item_type_idx').on(t.itemTypeId),
+    index('products_inventory_kind_idx').on(t.inventoryKind, t.id),
     index('products_active_idx').on(t.isActive),
     index('products_base_unit_idx').on(t.baseUnitId),
     // The shop reads only live, sellable products, in one of four orders, a page at a time.

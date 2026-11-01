@@ -855,6 +855,13 @@
       "when": 1793559812411,
       "tag": "0121_product_inventory_kind",
       "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "7",
+      "when": 1793562155724,
+      "tag": "0122_delivery_billing",
+      "breakpoints": true
     }
   ]
 }
