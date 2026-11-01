@@ -49,6 +49,15 @@ import { VendorProfileService } from '@/server/domains/vendors/profile-service';
 import { VendorReviewService } from '@/server/domains/vendors/review-service';
 import { VendorNotifier } from '@/server/domains/vendors/notifier';
 import { OrderSlaService } from '@/server/domains/orders/sla-service';
+import { StockLocationService } from '@/server/domains/stock/locations';
+import { StockLedger } from '@/server/domains/stock/ledger';
+import { StockAvailability } from '@/server/domains/stock/availability';
+import { StockShadow } from '@/server/domains/stock/shadow';
+import { StockSettingsService } from '@/server/domains/stock/settings';
+import { TransferService } from '@/server/domains/stock/transfers';
+import { CountService } from '@/server/domains/stock/counts';
+import { StockCutover } from '@/server/domains/stock/cutover';
+import { StockReservations } from '@/server/domains/stock/reservations';
 import { OrderSlaNotifier } from '@/server/domains/orders/sla-notifier';
 import { VendorBankChangeService } from '@/server/domains/vendors/bank-change-service';
 import { VendorLifecycleService } from '@/server/domains/vendors/lifecycle-service';
@@ -143,6 +152,15 @@ export interface AppContainer {
   payments: PaymentService;
   orders: OrderRepository;
   orderSla: OrderSlaService;
+  stockLocations: StockLocationService;
+  stockLedger: StockLedger;
+  stockAvailability: StockAvailability;
+  stockShadow: StockShadow;
+  stockSettings: StockSettingsService;
+  stockReservations: StockReservations;
+  stockTransfers: TransferService;
+  stockCounts: CountService;
+  stockCutover: StockCutover;
   users: UserRepository;
   usersAdmin: UsersAdminRepository;
   accessControl: AccessControlService;
@@ -415,6 +433,9 @@ export function getContainer(): AppContainer {
   const creditNotes = new CreditNoteService(drizzleDb, kraSigning, numbering);
   const vendors = new VendorService(drizzleDb, numbering);
   const vendorFiles = new VendorFileStore(drizzleDb);
+  const stockLocations = new StockLocationService(drizzleDb);
+  const stockLedger = new StockLedger(drizzleDb);
+  const stockShadow = new StockShadow(drizzleDb, stockLocations);
   const orderSla = new OrderSlaService(drizzleDb, new OrderSlaNotifier(email, companySettings));
   const vendorNotifier = new VendorNotifier(drizzleDb, email, companySettings);
   const prequalLifecycle = new PrequalLifecycle(drizzleDb, vendorNotifier);
@@ -472,6 +493,15 @@ export function getContainer(): AppContainer {
     payments,
     orders,
     orderSla,
+    stockLocations,
+    stockLedger,
+    stockAvailability: new StockAvailability(drizzleDb),
+    stockShadow,
+    stockSettings: new StockSettingsService(drizzleDb, companySettings),
+    stockReservations: new StockReservations(drizzleDb, stockLedger, decisionLog),
+    stockTransfers: new TransferService({ db: drizzleDb, ledger: stockLedger, numbering, decisionLog }),
+    stockCounts: new CountService({ db: drizzleDb, ledger: stockLedger, numbering, decisionLog }),
+    stockCutover: new StockCutover(drizzleDb, stockShadow, stockLocations, decisionLog),
     users,
     usersAdmin,
     accessControl,

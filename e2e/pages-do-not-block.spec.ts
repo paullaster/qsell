@@ -9,43 +9,137 @@ import { E2E_URL } from './support/constants';
 const DELAY = 3000;
 
 const screens: [string, string, RegExp, string | RegExp][] = [
-  ['wallet policy', '/admin/finance/receivables/wallet-policy', /Loading the wallet policy/, 'Wallet policy'],
+  [
+    'wallet policy',
+    '/admin/finance/receivables/wallet-policy',
+    /Loading the wallet policy/,
+    'Wallet policy',
+  ],
   ['receipts', '/admin/finance/receipts', /Loading receipts/, 'Customer receipts'],
   ['new refund', '/admin/finance/refunds/new', /Loading the refund form/, 'New refund'],
-  ['bank accounts', '/admin/finance/bank-accounts', /Loading bank accounts/, 'Bank and cash accounts'],
+  [
+    'bank accounts',
+    '/admin/finance/bank-accounts',
+    /Loading bank accounts/,
+    'Bank and cash accounts',
+  ],
   ['returns', '/admin/finance/receivables/returns', /Loading returns/, 'Returns'],
   ['dimensions', '/admin/settings/dimensions', /Loading dimensions/, 'Dimensions'],
   ['number series', '/admin/settings/number-series', /Loading number series/, 'Number series'],
-  ['document numbering', '/admin/settings/number-series/bindings', /Loading document numbering/, 'Document numbering'],
+  [
+    'document numbering',
+    '/admin/settings/number-series/bindings',
+    /Loading document numbering/,
+    'Document numbering',
+  ],
   ['branches', '/admin/settings/branches', /Loading branches/, 'Branches'],
-  ['approval workflows', '/admin/settings/approvals/workflows', /Loading approval workflows/, 'Approval workflows'],
+  [
+    'approval workflows',
+    '/admin/settings/approvals/workflows',
+    /Loading approval workflows/,
+    'Approval workflows',
+  ],
   ['approvers', '/admin/settings/approvals/approvers', /Loading approvers/, 'Approvers'],
-  ['approval switches', '/admin/settings/approvals/switches', /Loading the approval switches/, 'Approval switches'],
-  ['approval monitor', '/admin/settings/approvals/monitor', /Loading the approval monitor/, 'Approval monitor'],
-  ['company mode', '/admin/settings/tax-compliance/kra-tims-etims/company', /Loading the company mode/, 'Company mode'],
-  ['branch modes', '/admin/settings/tax-compliance/kra-tims-etims/branches', /Loading the branch modes/, 'Branch modes'],
-  ['eTIMS items', '/admin/settings/tax-compliance/kra-tims-etims/items', /Loading eTIMS items/, 'eTIMS items'],
-  ['signing log', '/admin/settings/tax-compliance/kra-tims-etims/signing-log', /Loading the signing log/, 'Signing log'],
-  ['tax classification', '/admin/settings/tax-compliance/kra-tims-etims/classification', /Loading tax classification/, 'Tax & compliance management'],
-  ['approvals inbox', '/admin/approvals/inbox', /Loading your approvals/, 'Approvals waiting on you'],
+  [
+    'approval switches',
+    '/admin/settings/approvals/switches',
+    /Loading the approval switches/,
+    'Approval switches',
+  ],
+  [
+    'approval monitor',
+    '/admin/settings/approvals/monitor',
+    /Loading the approval monitor/,
+    'Approval monitor',
+  ],
+  [
+    'company mode',
+    '/admin/settings/tax-compliance/kra-tims-etims/company',
+    /Loading the company mode/,
+    'Company mode',
+  ],
+  [
+    'branch modes',
+    '/admin/settings/tax-compliance/kra-tims-etims/branches',
+    /Loading the branch modes/,
+    'Branch modes',
+  ],
+  [
+    'eTIMS items',
+    '/admin/settings/tax-compliance/kra-tims-etims/items',
+    /Loading eTIMS items/,
+    'eTIMS items',
+  ],
+  [
+    'signing log',
+    '/admin/settings/tax-compliance/kra-tims-etims/signing-log',
+    /Loading the signing log/,
+    'Signing log',
+  ],
+  [
+    'tax classification',
+    '/admin/settings/tax-compliance/kra-tims-etims/classification',
+    /Loading tax classification/,
+    'Tax & compliance management',
+  ],
+  [
+    'approvals inbox',
+    '/admin/approvals/inbox',
+    /Loading your approvals/,
+    'Approvals waiting on you',
+  ],
   ['my approval requests', '/admin/approvals/requests', /Loading your requests/, 'My requests'],
   ['company profile', '/admin/company/profile', /Loading the company profile/, 'Company profile'],
-  ['company appearance', '/admin/company/appearance', /Loading the appearance settings/, 'Appearance'],
+  [
+    'company document layouts',
+    '/admin/company/documents',
+    /Loading company document layouts/,
+    'Document layouts',
+  ],
+  [
+    'company appearance',
+    '/admin/company/appearance',
+    /Loading the appearance settings/,
+    'Appearance',
+  ],
   ['company modules', '/admin/company/modules', /Loading the module names/, 'Module names'],
   ['company support', '/admin/company/support', /Loading the support settings/, 'Customer support'],
   ['customers', '/admin/customers', /Loading customers/, 'Customers'],
   ['exchange rates', '/admin/finance/exchange-rates', /Loading exchange rates/, 'Exchange rates'],
-  ['stock in the books', '/admin/finance/inventory-posting', /Loading stock in the books/, 'Stock in the books'],
-  ['bank payment files', '/admin/finance/refunds/files', /Loading bank payment files/, 'Bank payment files'],
+  [
+    'stock in the books',
+    '/admin/finance/inventory-posting',
+    /Loading stock in the books/,
+    'Stock in the books',
+  ],
+  [
+    'bank payment files',
+    '/admin/finance/refunds/files',
+    /Loading bank payment files/,
+    'Bank payment files',
+  ],
   ['projects', '/admin/projects', /Loading projects/, 'Projects'],
   ['new project', '/admin/projects/new', /Loading the new project/, 'New project'],
-  ['credit adjustments', '/admin/finance/receivables/credit-adjustments', /Loading credit adjustments/, 'Customer credit adjustments'],
-  ['new credit adjustment', '/admin/finance/receivables/credit-adjustments/new', /Loading the credit adjustment form/, 'Change a customer\'s credit'],
+  [
+    'credit adjustments',
+    '/admin/finance/receivables/credit-adjustments',
+    /Loading credit adjustments/,
+    'Customer credit adjustments',
+  ],
+  [
+    'new credit adjustment',
+    '/admin/finance/receivables/credit-adjustments/new',
+    /Loading the credit adjustment form/,
+    "Change a customer's credit",
+  ],
   ['payment settings', '/admin/settings/payments', /Loading payment settings/, 'Payments'],
 ];
 
 for (const [name, url, skeleton, heading] of screens) {
-  test(`${name} shows its loading state at once and loads in parallel`, async ({ page, context }) => {
+  test(`${name} shows its loading state at once and loads in parallel`, async ({
+    page,
+    context,
+  }) => {
     const title = page.getByRole('heading', { name: heading, level: 2 }).first();
     // Visit once without the delay so the development server has built the route, then once more to learn how long
     // this screen takes on this machine right now; only then slow the actions down.
@@ -62,7 +156,9 @@ for (const [name, url, skeleton, heading] of screens) {
     const started = Date.now();
     await page.goto(url, { waitUntil: 'commit' });
     // The loading state is drawn first, while the slowed data is still on its way: the heading is not there yet when it shows.
-    await expect(page.getByRole('status').filter({ hasText: skeleton })).toBeVisible({ timeout: baseline + delay });
+    await expect(page.getByRole('status').filter({ hasText: skeleton })).toBeVisible({
+      timeout: baseline + delay,
+    });
     await expect(title).toBeHidden({ timeout: 0 });
     await expect(title).toBeVisible({ timeout: baseline + delay * 2 + 5000 });
     // Side by side the delays overlap: the screen takes its usual time plus about one delay. Waits one after the other

@@ -7,7 +7,6 @@ import { and, asc, count, desc, eq, inArray, isNull, lt, sql } from 'drizzle-orm
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   categories,
-  inventoryMovements,
   itemTypes,
   productImportJobs,
   productImportRows,
@@ -601,14 +600,12 @@ export class ProductImportService {
         job.createdByEmail === '' ? 'import' : job.createdByEmail,
       );
     }
-    await db.insert(inventoryMovements).values({
-      id: `ledger_${randomUUID()}`,
+    const { recordOpeningStock } = await import('@/server/domains/inventory/service');
+    await recordOpeningStock(db, {
       productId: id,
       productName: draft.name,
-      changeAmount: draft.stockQuantity,
-      previousStock: 0,
-      newStock: draft.stockQuantity,
-      changeType: 'restock',
+      quantity: draft.stockQuantity,
+      costPrice: draft.costPrice,
       referenceId: `IMPORT:${job.id}`,
       actor: job.createdByEmail === '' ? 'import' : job.createdByEmail,
       note: `Created by CSV import (${job.fileName}) with opening stock of ${draft.stockQuantity} units`,

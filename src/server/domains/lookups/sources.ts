@@ -29,6 +29,7 @@ import { APPROVAL_LOOKUP_SOURCES } from '@/server/kernel/approvals/lookup-source
 import { REASON_LOOKUP_SOURCES } from '@/server/kernel/reason-codes/lookup-sources';
 import { DIMENSION_LOOKUP_SOURCES } from '@/server/domains/dimensions/lookup-sources';
 import { UNIT_LOOKUP_SOURCES } from '@/server/domains/units/lookup-sources';
+import { STOCK_LOOKUP_SOURCES } from '@/server/domains/stock/lookup-sources';
 import { VENDOR_LOOKUP_SOURCES } from '@/server/domains/vendors/lookup-sources';
 
 /** The non-empty strings joined with a dot, or null when there are none. */
@@ -247,6 +248,7 @@ const SOURCES: ReadonlyMap<string, LookupSource> = registry(
     ...VENDOR_LOOKUP_SOURCES,
     ...DIMENSION_LOOKUP_SOURCES,
     ...UNIT_LOOKUP_SOURCES,
+    ...STOCK_LOOKUP_SOURCES,
     ...REASON_LOOKUP_SOURCES,
     ...NUMBERING_LOOKUP_SOURCES,
     ...APPROVAL_LOOKUP_SOURCES,

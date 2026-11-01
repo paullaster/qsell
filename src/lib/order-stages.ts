@@ -157,6 +157,15 @@ const NONE: StageEffect = {};
 
 type EffectOf = StageEffect | ((outcome: StageOutcome) => StageEffect);
 
+/**
+ * Stages recorded on the order's timeline that are not where the order is. What happens to its stock runs beside its journey (placed,
+ * paid, packed, sent): an order whose stock was just issued is still "paid and waiting to be sent", and the check for orders that
+ * wait too long must keep seeing that. These stages get a place in the order of events but do not become its current stage.
+ */
+export const NON_TRACKING_STAGES: readonly OrderStage[] = ['stock_reserved', 'reservation_failed', 'stock_issued', 'stock_released', 'stock_returned'];
+
+export const tracksCurrentStage = (stage: OrderStage): boolean => !NON_TRACKING_STAGES.includes(stage);
+
 /** The columns each stage sets. Everything the order's status can do is in this table; a stage that is not here is a fact and changes nothing. */
 const EFFECTS: Partial<Record<OrderStage, EffectOf>> = {
   approval_requested: { approvalStatus: 'pending' },

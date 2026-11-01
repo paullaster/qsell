@@ -10,6 +10,7 @@ import { OrderApprovalBanner } from '@/components/admin/approvals/OrderApprovalB
 import { OrderCreditNotesPanel } from '@/components/admin/OrderCreditNotesPanel';
 import { OrderReferencePanel } from './OrderReferencePanel';
 import { OrderTimelinePanel } from './OrderTimelinePanel';
+import { OrderStockPanel } from './OrderStockPanel';
 import { OrderTenderPanel } from '@/components/admin/pricing/OrderTenderPanel';
 import {
   FULFILMENT_STATUSES,
@@ -386,6 +387,7 @@ export function OrderDetailsModal({
           <OrderReferencePanel orderId={order.id} onChanged={onChanged} />
         ) : null}
         <OrderTenderPanel orderId={order.id} onChanged={onChanged} />
+        <OrderStockPanel orderId={order.id} canMove={order.status === 'pending' || order.status === 'processing'} />
         <OrderTimelinePanel orderId={order.id} />
         <OrderCreditNotesPanel key={order.id} orderId={order.id} />
       </div>

@@ -764,6 +764,41 @@
       "when": 1793169363517,
       "tag": "0108_order_sla_targets_breaches",
       "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "7",
+      "when": 1793268593944,
+      "tag": "0109_stock_locations_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "7",
+      "when": 1793269522245,
+      "tag": "0110_stock_reservations",
+      "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "7",
+      "when": 1793333162957,
+      "tag": "0111_stock_documents",
+      "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "7",
+      "when": 1793436490632,
+      "tag": "0112_stock_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 113,
+      "version": "7",
+      "when": 1793457741658,
+      "tag": "0113_stock_integrity_runs",
+      "breakpoints": true
     }
   ]
 }

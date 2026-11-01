@@ -4,6 +4,7 @@ import { STOREFRONT_PAGE_SIZE, type StorefrontCategory, type StorefrontPage, typ
 import { descendantsOf } from './category-tree';
 import { toPublicProduct, toProduct } from './mappers';
 import { withShopPrices } from './shop-prices';
+import { withShopAvailability } from './shop-availability';
 
 /** The most lines a cart check or a related list will look at. */
 export const MAX_CART_LOOKUP = 100;
@@ -52,7 +53,7 @@ export const StorefrontCatalog = {
     }
     const page = await repo().searchStorefront(query, categoryIds, STOREFRONT_PAGE_SIZE);
     return {
-      products: await withShopPrices(page.rows.map((row) => toPublicProduct(toProduct(row)))),
+      products: await withShopPrices(await withShopAvailability(page.rows.map((row) => toPublicProduct(toProduct(row))))),
       nextCursor: page.nextCursor,
       total: page.total,
       category,
@@ -67,14 +68,14 @@ export const StorefrontCatalog = {
   async productsByIds(ids: string[], quantities: ReadonlyMap<string, number> = new Map()): Promise<PublicProduct[]> {
     const unique = [...new Set(ids)].slice(0, MAX_CART_LOOKUP);
     const rows = await repo().listLiveProductsByIds(unique);
-    return await withShopPrices(rows.map((row) => toPublicProduct(toProduct(row))), quantities);
+    return await withShopPrices(await withShopAvailability(rows.map((row) => toPublicProduct(toProduct(row)))), quantities);
   },
 
   async related(product: Pick<PublicProduct, 'id'>, limit = 4): Promise<PublicProduct[]> {
     const row = await repo().getProductById(product.id);
     if (row?.categoryId == null) return [];
     const rows = await repo().listRelatedLive(product.id, row.categoryId, limit);
-    return await withShopPrices(rows.map((item) => toPublicProduct(toProduct(item))));
+    return await withShopPrices(await withShopAvailability(rows.map((item) => toPublicProduct(toProduct(item)))));
   },
 
   sitemapProducts(): Promise<{ id: string; slug: string; updatedAt: Date; imageUrl: string }[]> {

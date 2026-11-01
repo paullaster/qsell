@@ -2,18 +2,35 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import PDFDocument from 'pdfkit';
 import { PdfKitInvoiceAdapter } from './pdfkit-invoice.adapter';
 import { quotePdfItems } from '@/server/domains/quotes/pdf-items';
+import { resolveDocumentLayouts } from '@/lib/document-layouts';
+
+type PdfTextMethod = (this: unknown, text: unknown, ...args: unknown[]) => unknown;
+
+function isPdfTextMethod(value: unknown): value is PdfTextMethod {
+  return typeof value === 'function';
+}
 
 /** What the printed quote says, read from the text the PDF was asked to draw. */
-async function printed(showLines: boolean): Promise<string[]> {
+async function printed(
+  showLines: boolean,
+  quoteLayout?: {
+    headerText: string;
+    headerPosition: 'above_company' | 'below_company';
+    footerText: string;
+    footerPosition: 'after_totals' | 'after_terms';
+  },
+): Promise<string[]> {
   const drawn: string[] = [];
-  const real = PDFDocument.prototype.text;
+  const descriptor = Object.getOwnPropertyDescriptor(PDFDocument.prototype, 'text');
+  const real: unknown = descriptor?.value;
+  if (!isPdfTextMethod(real)) throw new Error('PDFKit text drawing method is unavailable.');
   vi.spyOn(PDFDocument.prototype, 'text').mockImplementation(function (
     this: unknown,
-    text: unknown,
+    text: string,
     ...rest: unknown[]
   ) {
-    drawn.push(String(text));
-    return (real as (...a: unknown[]) => unknown).call(this, text, ...rest) as never;
+    drawn.push(text);
+    return real.call(this, text, ...rest) as never;
   } as never);
   const items = quotePdfItems({
     lines: [
@@ -61,6 +78,9 @@ async function printed(showLines: boolean): Promise<string[]> {
       invoicePrefix: 'I',
       primaryColor: '#111111',
       accentColor: '#222222',
+      documentLayouts: resolveDocumentLayouts(
+        quoteLayout === undefined ? {} : { quote: quoteLayout },
+      ),
     },
     customer: {
       name: 'Buyer',
@@ -101,5 +121,19 @@ describe('a printed quote', () => {
     expect(text.some((t) => t.includes('1,800'))).toBe(true);
     // Title first, then its items.
     expect(text.indexOf('Power kit')).toBeLessThan(text.indexOf('Solar panel'));
+  });
+
+  it('prints company-configured quote header and footer text', async () => {
+    const text = await printed(true, {
+      headerText: 'Quotation: renewable energy system',
+      headerPosition: 'below_company',
+      footerText: 'Offer valid for 21 days',
+      footerPosition: 'after_totals',
+    });
+    expect(text).toContain('Quotation: renewable energy system');
+    expect(text).toContain('Offer valid for 21 days');
+    expect(text).toContain(
+      'This quotation is subject to the stated validity and terms. It is not a tax invoice or confirmation of payment.',
+    );
   });
 });
