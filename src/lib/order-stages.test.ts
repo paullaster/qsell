@@ -152,8 +152,8 @@ describe('what a customer is shown', () => {
 });
 
 describe('stages that are not where the order is', () => {
-  it('are the stock events, and every other stage moves the order', () => {
-    expect([...NON_TRACKING_STAGES].sort()).toEqual(['reservation_failed', 'stock_issued', 'stock_released', 'stock_reserved', 'stock_returned']);
+  it('are the stock events and the delivery charge quoted, and every other stage moves the order', () => {
+    expect([...NON_TRACKING_STAGES].sort()).toEqual(['charge_quoted', 'reservation_failed', 'stock_issued', 'stock_released', 'stock_reserved', 'stock_returned']);
     for (const name of ORDER_STAGE_NAMES) expect(tracksCurrentStage(name), name).toBe(!NON_TRACKING_STAGES.includes(name));
     for (const name of NON_TRACKING_STAGES) expect(isOrderStage(name), name).toBe(true);
   });

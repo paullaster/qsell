@@ -1,7 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { branches } from '@/server/db/drizzle/schema';
-import { has } from '@/lib/values';
 import { isGeoPoint, type GeoPoint } from '@/lib/geo';
 import type { AddressWords } from '@/lib/delivery-zones';
 import { DEFAULT_BUSINESS_TIMEZONE } from '@/server/kernel/numbering/business-date';
@@ -10,6 +9,7 @@ import { toHeader, type ChargePolicies } from './charge-policies';
 import type { DeliveryZones } from './zones';
 import { quoteCharge } from './domain/engine';
 import { choosePolicy, type Considered } from './domain/select';
+import { placeAddress } from './geocode';
 import type { ChargeQuote, Leg, RefusalReason } from './domain/types';
 
 export interface QuoteInput {
@@ -23,6 +23,8 @@ export interface QuoteInput {
   country?: string | null;
   address?: AddressWords;
   pin?: GeoPoint | null;
+  /** The point to measure to when the caller has already found it (a pin, or a written address placed on the map); saves placing it twice. */
+  placed?: { point: GeoPoint; approximate: boolean } | null;
   weightKg: number;
   orderValue: number;
 }
@@ -75,9 +77,10 @@ export class DeliveryQuotes {
     if (policy.def.method === 'distance') {
       if (branch.latitude === null || branch.longitude === null) return { ok: false, reason: 'branch_has_no_pin', message: `${branch.name} has no map pin, so a distance cannot be measured from it. Set its pin on the branches screen.`, considered };
       const from: GeoPoint = { latitude: branch.latitude, longitude: branch.longitude };
-      let to = pin;
+      let to = input.placed?.point ?? pin;
+      approximate = input.placed?.approximate ?? false;
       if (to === null && input.address !== undefined) {
-        to = await this.geocode(input.address);
+        to = await placeAddress(this.geo, input.address);
         approximate = to !== null;
       }
       if (to !== null) {
@@ -107,16 +110,5 @@ export class DeliveryQuotes {
       route: quote.basis.km === null ? null : { km: quote.basis.km, minutes: quote.basis.minutes, provider, degraded, approximate },
       considered,
     };
-  }
-
-  /** A written address placed on the map, as an approximate point; null when the map service cannot place it. */
-  private async geocode(address: AddressWords): Promise<GeoPoint | null> {
-    const query = [address.area, address.town, address.county].filter((p): p is string => has(p)).join(', ');
-    if (query === '') return null;
-    const found = await this.geo.searchPlaces(query, { limit: 1 });
-    const first = found.value.at(0);
-    if (first === undefined) return null;
-    if (first.point !== null) return first.point;
-    return (await this.geo.resolvePlace(first.id)).value?.point ?? null;
   }
 }

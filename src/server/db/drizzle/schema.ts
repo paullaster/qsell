@@ -21,6 +21,7 @@ import {
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import type { CompanyUiConfigRaw } from '@/config/company-ui';
+import type { ChargeRecord, ChoiceRecord, DestinationRecord } from '@/lib/order-delivery';
 import type { MediaVisibility, StoredMediaProvider } from '@/server/ports/media';
 import type {
   PaymentProviderCode,
@@ -423,6 +424,41 @@ export const chargePolicyRates = pgTable(
     check(
       'charge_policy_rates_chk',
       sql`${t.fromKg} >= 0 AND (${t.toKg} IS NULL OR ${t.toKg} > ${t.fromKg}) AND ${t.fee} >= 0 AND ${t.perExtraKg} >= 0`,
+    ),
+  ],
+);
+
+/**
+ * How an order is delivered: which branch processes it and why, where it goes, and the charge as it was quoted, with its working.
+ * One row for each delivered order, written in the same transaction as the order. What is kept here is a snapshot: a later change
+ * to a policy, a zone or a branch's stock never alters what an order was told.
+ */
+export const orderDeliveries = pgTable(
+  'order_deliveries',
+  {
+    orderId: text('order_id')
+      .primaryKey()
+      .references(() => orders.id, { onDelete: 'cascade' }),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    method: text('method')
+      .$type<'own_fleet' | 'courier' | 'pickup' | 'scheduled_visit'>()
+      .notNull(),
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+    destination: jsonb('destination').$type<DestinationRecord>().notNull(),
+    choice: jsonb('choice').$type<ChoiceRecord>().notNull(),
+    charge: jsonb('charge').$type<ChargeRecord>().notNull(),
+    chargeAmount: numeric('charge_amount', { precision: 14, scale: 2 }).notNull(),
+    currency: text('currency').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('order_deliveries_company_branch_idx').on(t.companyId, t.branchId),
+    check('order_deliveries_amount_chk', sql`${t.chargeAmount} >= 0`),
+    check(
+      'order_deliveries_method_chk',
+      sql`${t.method} IN ('own_fleet','courier','pickup','scheduled_visit')`,
     ),
   ],
 );
@@ -2025,6 +2061,7 @@ export type DeliveryZoneAreaRow = typeof deliveryZoneAreas.$inferSelect;
 export type DeliveryMethodRow = typeof deliveryMethods.$inferSelect;
 export type ChargePolicyRow = typeof chargePolicies.$inferSelect;
 export type ChargePolicyRateRow = typeof chargePolicyRates.$inferSelect;
+export type OrderDeliveryRow = typeof orderDeliveries.$inferSelect;
 export type PaymentProviderConfigRow = typeof paymentProviderConfigs.$inferSelect;
 export type PaymentAttemptRow = typeof paymentAttempts.$inferSelect;
 export type PaymentCallbackEventRow = typeof paymentCallbackEvents.$inferSelect;

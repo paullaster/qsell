@@ -51,9 +51,9 @@ import { VendorNotifier } from '@/server/domains/vendors/notifier';
 import { OrderSlaService } from '@/server/domains/orders/sla-service';
 import { StockLocationService } from '@/server/domains/stock/locations';
 import { StockLedger } from '@/server/domains/stock/ledger';
-import { StockAvailability } from '@/server/domains/stock/availability';
+import type { StockAvailability } from '@/server/domains/stock/availability';
+import type { StockSettingsService } from '@/server/domains/stock/settings';
 import { StockShadow } from '@/server/domains/stock/shadow';
-import { StockSettingsService } from '@/server/domains/stock/settings';
 import { TransferService } from '@/server/domains/stock/transfers';
 import { CountService } from '@/server/domains/stock/counts';
 import { StockCutover } from '@/server/domains/stock/cutover';
@@ -110,10 +110,13 @@ import { MediaService } from '@/server/domains/media/service';
 import { MediaPortRegistry } from '@/server/adapters/media/registry';
 import { GeoPortRegistry } from '@/server/adapters/geo/registry';
 import { GeoService } from '@/server/domains/geo/service';
-import { DeliveryZones } from '@/server/domains/delivery/zones';
-import { DeliveryMethods } from '@/server/domains/delivery/methods';
-import { ChargePolicies } from '@/server/domains/delivery/charge-policies';
-import { DeliveryQuotes } from '@/server/domains/delivery/quote';
+import { createDeliveryServices } from './delivery-wiring';
+import type { DeliveryZones } from '@/server/domains/delivery/zones';
+import type { DeliveryMethods } from '@/server/domains/delivery/methods';
+import type { ChargePolicies } from '@/server/domains/delivery/charge-policies';
+import type { DeliveryQuotes } from '@/server/domains/delivery/quote';
+import type { DeliveryPlans } from '@/server/domains/delivery/plan';
+import type { OrderDeliveries } from '@/server/domains/delivery/order-delivery';
 import { KraConfigRepository } from '@/server/domains/kra/repository';
 import { KraConfigResolver } from '@/server/domains/kra/resolver';
 import { EtimsTransmissionService } from '@/server/domains/kra/etims/transmission-service';
@@ -261,6 +264,10 @@ export interface AppContainer {
   chargePolicies: ChargePolicies;
   /** The delivery charge for an order from a branch to a customer, with its trace. */
   deliveryQuotes: DeliveryQuotes;
+  /** The branch that processes a delivered order, and its charge, decided together from the customer's pin or address. */
+  deliveryPlans: DeliveryPlans;
+  /** The delivery recorded on each order. */
+  orderDeliveries: OrderDeliveries;
   kraConfigs: KraConfigRepository;
   kraResolver: KraConfigResolver;
   etimsTransmission: EtimsTransmissionService;
@@ -453,8 +460,7 @@ export function getContainer(): AppContainer {
   const stockLedger = new StockLedger(drizzleDb);
   const stockShadow = new StockShadow(drizzleDb, stockLocations);
   const geo = new GeoService(new GeoPortRegistry());
-  const deliveryZones = new DeliveryZones(drizzleDb, decisionLog);
-  const chargePolicies = new ChargePolicies(drizzleDb, decisionLog);
+  const deliveryServices = createDeliveryServices({ db: drizzleDb, decisionLog, geo, companySettings });
   const orderSla = new OrderSlaService(drizzleDb, new OrderSlaNotifier(email, companySettings));
   const vendorNotifier = new VendorNotifier(drizzleDb, email, companySettings);
   const prequalLifecycle = new PrequalLifecycle(drizzleDb, vendorNotifier);
@@ -514,9 +520,9 @@ export function getContainer(): AppContainer {
     orderSla,
     stockLocations,
     stockLedger,
-    stockAvailability: new StockAvailability(drizzleDb),
+    stockAvailability: deliveryServices.stockAvailability,
     stockShadow,
-    stockSettings: new StockSettingsService(drizzleDb, companySettings),
+    stockSettings: deliveryServices.stockSettings,
     stockReservations: new StockReservations(drizzleDb, stockLedger, decisionLog),
     stockTransfers: new TransferService({ db: drizzleDb, ledger: stockLedger, numbering, decisionLog }),
     stockCounts: new CountService({ db: drizzleDb, ledger: stockLedger, numbering, decisionLog }),
@@ -585,10 +591,12 @@ export function getContainer(): AppContainer {
     }),
     media,
     geo,
-    deliveryZones,
-    deliveryMethods: new DeliveryMethods(drizzleDb, decisionLog),
-    chargePolicies,
-    deliveryQuotes: new DeliveryQuotes(drizzleDb, chargePolicies, deliveryZones, geo),
+    deliveryZones: deliveryServices.deliveryZones,
+    deliveryMethods: deliveryServices.deliveryMethods,
+    chargePolicies: deliveryServices.chargePolicies,
+    deliveryQuotes: deliveryServices.deliveryQuotes,
+    deliveryPlans: deliveryServices.deliveryPlans,
+    orderDeliveries: deliveryServices.orderDeliveries,
     kraConfigs,
     kraResolver,
     etimsTransmission,

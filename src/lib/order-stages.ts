@@ -140,6 +140,7 @@ export const CHECKOUT_REFUSALS = [
   'credit_limit',
   'approval_needed',
   'kit_error',
+  'delivery_unavailable',
   'other',
 ] as const;
 export type CheckoutRefusal = (typeof CHECKOUT_REFUSALS)[number];
@@ -158,11 +159,11 @@ const NONE: StageEffect = {};
 type EffectOf = StageEffect | ((outcome: StageOutcome) => StageEffect);
 
 /**
- * Stages recorded on the order's timeline that are not where the order is. What happens to its stock runs beside its journey (placed,
+ * Stages recorded on the order's timeline that are not where the order is. The delivery charge quoted at placement is one; what happens to its stock runs beside its journey (placed,
  * paid, packed, sent): an order whose stock was just issued is still "paid and waiting to be sent", and the check for orders that
  * wait too long must keep seeing that. These stages get a place in the order of events but do not become its current stage.
  */
-export const NON_TRACKING_STAGES: readonly OrderStage[] = ['stock_reserved', 'reservation_failed', 'stock_issued', 'stock_released', 'stock_returned'];
+export const NON_TRACKING_STAGES: readonly OrderStage[] = ['stock_reserved', 'reservation_failed', 'stock_issued', 'stock_released', 'stock_returned', 'charge_quoted'];
 
 export const tracksCurrentStage = (stage: OrderStage): boolean => !NON_TRACKING_STAGES.includes(stage);
 
