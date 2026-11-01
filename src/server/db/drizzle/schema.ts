@@ -464,6 +464,58 @@ export const orderDeliveries = pgTable(
 );
 
 /**
+ * The map service a company has chosen, and its settings (addresses of servers, a contact email). Nothing secret is kept here: a
+ * provider that needs a key will keep it sealed with the other credentials. One row for each company; changes are version-checked
+ * and written to the decision log.
+ */
+export const geoSettings = pgTable(
+  'geo_settings',
+  {
+    companyId: uuid('company_id')
+      .primaryKey()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    driver: text('driver').notNull(),
+    config: jsonb('config').$type<Record<string, unknown>>().notNull().default({}),
+    version: integer('version').notNull().default(1),
+    updatedBy: text('updated_by').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('geo_settings_driver_chk', sql`${t.driver} IN ('builtin','osm','google','mapbox')`),
+  ],
+);
+
+/**
+ * What the map service was asked and how it answered, added up by the hour: how many calls, how many failed or fell back to the
+ * built-in estimate, and how long they took. This is the evidence for choosing between services, and it grows by one row for each
+ * provider, kind of call and hour, never for each call.
+ */
+export const geoUsage = pgTable(
+  'geo_usage',
+  {
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    provider: text('provider').notNull(),
+    op: text('op').notNull(),
+    bucket: timestamp('bucket', { withTimezone: true }).notNull(),
+    calls: integer('calls').notNull().default(0),
+    failures: integer('failures').notNull().default(0),
+    fallbacks: integer('fallbacks').notNull().default(0),
+    totalMs: bigint('total_ms', { mode: 'number' }).notNull().default(0),
+    maxMs: integer('max_ms').notNull().default(0),
+    under500: integer('under_500').notNull().default(0),
+    under1000: integer('under_1000').notNull().default(0),
+    under2500: integer('under_2500').notNull().default(0),
+  },
+  (t) => [
+    primaryKey({ columns: [t.companyId, t.provider, t.op, t.bucket] }),
+    index('geo_usage_company_bucket_idx').on(t.companyId, t.bucket),
+    check('geo_usage_op_chk', sql`${t.op} IN ('search','resolve','reverse','distance')`),
+  ],
+);
+
+/**
  * Per-branch payment provider configuration. Credentials are encrypted JSON blobs —
  * never read provider secrets from process.env.
  */
@@ -2062,6 +2114,7 @@ export type DeliveryMethodRow = typeof deliveryMethods.$inferSelect;
 export type ChargePolicyRow = typeof chargePolicies.$inferSelect;
 export type ChargePolicyRateRow = typeof chargePolicyRates.$inferSelect;
 export type OrderDeliveryRow = typeof orderDeliveries.$inferSelect;
+export type GeoSettingsRow = typeof geoSettings.$inferSelect;
 export type PaymentProviderConfigRow = typeof paymentProviderConfigs.$inferSelect;
 export type PaymentAttemptRow = typeof paymentAttempts.$inferSelect;
 export type PaymentCallbackEventRow = typeof paymentCallbackEvents.$inferSelect;

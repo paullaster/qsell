@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { BuiltinGeoAdapter } from '@/server/adapters/geo/builtin.adapter';
-import { GeoPortRegistry } from '@/server/adapters/geo/registry';
+import { GeoPortRegistry, type GeoSelection } from '@/server/adapters/geo/registry';
 import { GeoUnavailableError, type GeoPoint, type GeoPort, type RouteEstimate } from '@/server/ports/geo';
-import { GeoService } from './service';
+import { GeoService, type GeoCallEvent } from './service';
 
 const nairobi: GeoPoint = { latitude: -1.2921, longitude: 36.8219 };
 const nakuru: GeoPoint = { latitude: -0.3031, longitude: 36.08 };
@@ -54,7 +54,42 @@ describe('the geo service', () => {
   it('is never "degraded" for the built-in provider, which has nothing better to fall back to', async () => {
     const service = new GeoService(new GeoPortRegistry({}));
     expect(await service.reverse(nairobi)).toEqual({ value: null, degraded: false, provider: 'builtin' });
-    expect(service.capabilities().placeSearch).toBe(false);
+    expect((await service.capabilities()).placeSearch).toBe(false);
+  });
+
+  describe('what it records and which provider it uses', () => {
+    const events: GeoCallEvent[] = [];
+    const recording = (port: GeoPort, selection: GeoSelection | null = null) => {
+      events.length = 0;
+      let t = 0;
+      return new GeoService(new GeoPortRegistry({ GEO_DRIVER: 'acme' }, { builtin: () => new BuiltinGeoAdapter(), acme: () => port }, selection), 50, (e) => events.push(e), () => (t += 40));
+    };
+    it('notes each call with its provider, kind, time and whether it worked', async () => {
+      const service = recording(acme('works'));
+      await service.searchPlaces('Westlands');
+      await service.distancesFrom(nairobi, [nakuru]);
+      expect(events).toEqual([
+        { provider: 'acme', op: 'search', ms: 40, ok: true, fellBack: false },
+        { provider: 'acme', op: 'distance', ms: 40, ok: true, fellBack: false },
+      ]);
+    });
+    it('notes a failure, and a distance that fell back to the estimate', async () => {
+      const service = recording(acme('fails'));
+      await service.searchPlaces('Westlands');
+      await service.distancesFrom(nairobi, [nakuru]);
+      expect(events).toEqual([
+        { provider: 'acme', op: 'search', ms: 40, ok: false, fellBack: false },
+        { provider: 'acme', op: 'distance', ms: 40, ok: false, fellBack: true },
+      ]);
+    });
+    it('uses the provider the administrator chose over the environment, and the built-in one when the choice cannot be built', async () => {
+      const chosen = new GeoService(new GeoPortRegistry({ GEO_DRIVER: 'builtin' }, { builtin: () => new BuiltinGeoAdapter(), acme: () => acme('works') }, () => Promise.resolve({ driver: 'acme', config: {} })));
+      expect((await chosen.searchPlaces('Westlands')).provider).toBe('acme');
+      const broken = new GeoService(new GeoPortRegistry({}, { builtin: () => new BuiltinGeoAdapter(), acme: () => { throw new Error('bad setting'); } }, () => Promise.resolve({ driver: 'acme', config: {} })));
+      expect((await broken.reverse(nairobi)).provider).toBe('builtin');
+      const failing = new GeoService(new GeoPortRegistry({}, { builtin: () => new BuiltinGeoAdapter() }, () => Promise.reject(new Error('db down'))));
+      expect((await failing.reverse(nairobi)).provider).toBe('builtin');
+    });
   });
 
   describe('the nearest', () => {

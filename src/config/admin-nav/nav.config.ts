@@ -431,6 +431,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         icon: 'Route',
         permission: 'deliveries:read',
       },
+      {
+        id: 'delivery-maps',
+        title: 'Map service',
+        name: 'delivery-maps',
+        href: '/admin/delivery/maps',
+        description: 'Choose the map service for addresses and distances, and compare cost and reliability',
+        icon: 'MapPin',
+        permission: 'deliveries:read',
+      },
     ],
   },
   {

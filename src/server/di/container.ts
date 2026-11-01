@@ -108,7 +108,8 @@ import { AccountService } from '@/server/domains/auth/account-service';
 import { ProductImportService } from '@/server/domains/catalog/import-service';
 import { MediaService } from '@/server/domains/media/service';
 import { MediaPortRegistry } from '@/server/adapters/media/registry';
-import { GeoPortRegistry } from '@/server/adapters/geo/registry';
+import { GEO_ADAPTERS, GeoPortRegistry } from '@/server/adapters/geo/registry';
+import { GeoSettingsService } from '@/server/domains/geo/settings';
 import { GeoService } from '@/server/domains/geo/service';
 import { createDeliveryServices } from './delivery-wiring';
 import type { DeliveryZones } from '@/server/domains/delivery/zones';
@@ -256,6 +257,8 @@ export interface AppContainer {
   media: MediaService;
   /** Map answers (places, distances, nearest) from whichever provider is chosen, with a built-in estimate to fall back on. */
   geo: GeoService;
+  /** Which map service the company uses, how it is set up and how each has behaved. */
+  geoSettings: GeoSettingsService;
   /** Delivery zones, their places, and finding the zone of an address or a pin. */
   deliveryZones: DeliveryZones;
   /** Which delivery methods each branch offers. */
@@ -459,7 +462,11 @@ export function getContainer(): AppContainer {
   const stockLocations = new StockLocationService(drizzleDb);
   const stockLedger = new StockLedger(drizzleDb);
   const stockShadow = new StockShadow(drizzleDb, stockLocations);
-  const geo = new GeoService(new GeoPortRegistry());
+  const geoCompanyId = async (): Promise<string> => (await companySettings.ensureSeeded()).id;
+  const geoSettings = new GeoSettingsService(drizzleDb, decisionLog, geoCompanyId);
+  const geo = new GeoService(new GeoPortRegistry(process.env, GEO_ADAPTERS, geoSettings.selection), undefined, (event) => {
+    void geoCompanyId().then((id) => geoSettings.record(id, event)).catch(() => undefined);
+  });
   const deliveryServices = createDeliveryServices({ db: drizzleDb, decisionLog, geo, companySettings });
   const orderSla = new OrderSlaService(drizzleDb, new OrderSlaNotifier(email, companySettings));
   const vendorNotifier = new VendorNotifier(drizzleDb, email, companySettings);
@@ -591,6 +598,7 @@ export function getContainer(): AppContainer {
     }),
     media,
     geo,
+    geoSettings,
     deliveryZones: deliveryServices.deliveryZones,
     deliveryMethods: deliveryServices.deliveryMethods,
     chargePolicies: deliveryServices.chargePolicies,

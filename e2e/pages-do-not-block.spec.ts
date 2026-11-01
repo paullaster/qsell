@@ -36,6 +36,7 @@ const screens: [string, string, RegExp, string | RegExp][] = [
   ['delivery zones', '/admin/delivery/zones', /Loading delivery zones/, 'Delivery zones'],
   ['delivery methods', '/admin/delivery/methods', /Loading delivery methods/, 'Delivery methods'],
   ['delivery charges', '/admin/delivery/charges', /Loading delivery charges/, 'Delivery charges'],
+  ['map service', '/admin/delivery/maps', /Loading map service/, 'Map service'],
   [
     'approval workflows',
     '/admin/settings/approvals/workflows',
