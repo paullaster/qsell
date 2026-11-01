@@ -3,6 +3,7 @@ import PDFDocument from 'pdfkit';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { InvoicePdfPort, InvoicePayload } from '@/server/ports/communications';
+import { resolveDocumentLayouts } from '@/lib/document-layouts';
 
 function money(amount: number, currency: string): string {
   return `${currency} ${amount.toLocaleString('en-KE', {
@@ -11,16 +12,16 @@ function money(amount: number, currency: string): string {
   })}`;
 }
 
-function nonEmpty(parts: Array<string | null | undefined>): string[] {
+function nonEmpty(parts: (string | null | undefined)[]): string[] {
   return parts.filter((p): p is string => typeof p === 'string' && p.trim().length > 0);
 }
 
 export function resolveLocalLogoPath(logoUrl?: string | null): string | null {
-  if (!logoUrl || !logoUrl.startsWith('/')) return null;
-  const apiRoute = logoUrl.match(/^\/api\/company\/logo\/(logo-[a-z\d-]+\.(?:png|jpg|webp|svg))$/i);
-  const legacyPath = logoUrl.match(/^\/uploads\/company\/(logo-[a-z\d-]+\.(?:png|jpg|webp|svg))$/i);
+  if (logoUrl?.startsWith('/') !== true) return null;
+  const apiRoute = /^\/api\/company\/logo\/(logo-[a-z\d-]+\.(?:png|jpg|webp|svg))$/i.exec(logoUrl);
+  const legacyPath = /^\/uploads\/company\/(logo-[a-z\d-]+\.(?:png|jpg|webp|svg))$/i.exec(logoUrl);
   const filename = apiRoute?.[1] ?? legacyPath?.[1];
-  if (!filename) return null;
+  if (filename === undefined) return null;
   const absolute = path.join(process.cwd(), 'public', 'uploads', 'company', filename);
   return existsSync(absolute) ? absolute : null;
 }
@@ -37,8 +38,19 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
     return new Promise((resolve, reject) => {
       const isProforma = payload.documentType !== 'tax_invoice';
       const isQuote = payload.documentType === 'sales_quote';
-      const title = isQuote ? 'SALES QUOTATION' : isProforma ? 'PROFORMA INVOICE' : 'TAX INVOICE';
-      const docLabel = isQuote ? 'Quote No.' : isProforma ? 'Proforma No.' : 'Invoice No.';
+      const layout = resolveDocumentLayouts(
+        payload.company.documentLayouts,
+        payload.company.invoiceFooterNote ?? '',
+      )[isQuote ? 'quote' : 'invoice'];
+      let title = 'TAX INVOICE';
+      let docLabel = 'Invoice No.';
+      if (isQuote) {
+        title = 'SALES QUOTATION';
+        docLabel = 'Quote No.';
+      } else if (isProforma) {
+        title = 'PROFORMA INVOICE';
+        docLabel = 'Proforma No.';
+      }
 
       const doc = new PDFDocument({
         size: 'A4',
@@ -64,22 +76,30 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
       const PAGE_H = doc.page.height;
       const M = 42;
       const CONTENT_W = PAGE_W - M * 2;
-      const primary = payload.company.primaryColor || '#111827';
-      const accent = payload.company.accentColor || '#4F46E5';
+      const primary = has(payload.company.primaryColor) ? payload.company.primaryColor : '#111827';
+      const accent = has(payload.company.accentColor) ? payload.company.accentColor : '#4F46E5';
       const muted = '#6B7280';
       const ink = '#111827';
       const line = '#E5E7EB';
 
       doc.rect(0, 0, PAGE_W, 6).fill(accent);
 
-      const headerTop = 28;
+      let headerTop = 28;
+      if (layout.headerText.trim() !== '' && layout.headerPosition === 'above_company') {
+        doc
+          .fillColor(ink)
+          .font('Helvetica')
+          .fontSize(8)
+          .text(layout.headerText.trim(), M, 14, { width: CONTENT_W, lineGap: 2 });
+        headerTop = Math.max(headerTop, doc.y + 8);
+      }
       const leftW = CONTENT_W * 0.55;
       const rightW = CONTENT_W * 0.42;
       const rightX = M + CONTENT_W - rightW;
 
       let brandX = M;
       const logoPath = resolveLocalLogoPath(payload.company.logoUrl);
-      if (logoPath) {
+      if (logoPath !== null) {
         try {
           doc.image(logoPath, M, headerTop, { fit: [48, 48] });
           brandX = M + 56;
@@ -92,12 +112,19 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
         .fillColor(primary)
         .font('Helvetica-Bold')
         .fontSize(16)
-        .text(payload.company.tradingName || payload.company.legalName, brandX, headerTop, {
-          width: leftW - (brandX - M),
-          lineGap: 2,
-        });
+        .text(
+          has(payload.company.tradingName)
+            ? payload.company.tradingName
+            : payload.company.legalName,
+          brandX,
+          headerTop,
+          {
+            width: leftW - (brandX - M),
+            lineGap: 2,
+          },
+        );
 
-      if (payload.company.tagline) {
+      if (has(payload.company.tagline)) {
         doc
           .fillColor(muted)
           .font('Helvetica')
@@ -108,7 +135,7 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
           });
       }
 
-      let leftY = Math.max(doc.y + 6, logoPath ? headerTop + 52 : doc.y + 4);
+      let leftY = Math.max(doc.y + 6, logoPath !== null ? headerTop + 52 : doc.y + 4);
       doc.fillColor(muted).font('Helvetica').fontSize(8);
       const companyLines = nonEmpty([
         payload.company.legalName !== payload.company.tradingName
@@ -120,9 +147,9 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
           .join(', '),
         payload.company.country,
         payload.company.locationLabel,
-        payload.company.tel ? `Tel: ${payload.company.tel}` : null,
+        has(payload.company.tel) ? `Tel: ${payload.company.tel}` : null,
         `Email: ${payload.company.email}`,
-        payload.company.website ? `Web: ${payload.company.website}` : null,
+        has(payload.company.website) ? `Web: ${payload.company.website}` : null,
         `KRA PIN: ${payload.company.kraPin}`,
       ]);
 
@@ -139,16 +166,16 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
         .text(title, rightX, rightY, { width: rightW, align: 'right', lineBreak: false });
       rightY += 24;
 
-      const metaRows: Array<[string, string]> = [
+      const metaRows: [string, string][] = [
         [docLabel, payload.invoiceNumber],
         ...(isQuote ? [] : [['Order No.', payload.orderNumber] as [string, string]]),
         ['Issue Date', new Date(payload.issuedAt).toLocaleDateString('en-KE')],
         ...(isQuote
           ? [
-              ...(payload.validUntil
+              ...(has(payload.validUntil)
                 ? [['Valid Until', payload.validUntil] as [string, string]]
                 : []),
-              ...(payload.customerReference
+              ...(has(payload.customerReference)
                 ? [['Customer Reference', payload.customerReference] as [string, string]]
                 : []),
             ]
@@ -180,6 +207,14 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
       }
 
       let y = Math.max(leftY, rightY) + 14;
+      if (layout.headerText.trim() !== '' && layout.headerPosition === 'below_company') {
+        doc
+          .fillColor(ink)
+          .font('Helvetica')
+          .fontSize(8)
+          .text(layout.headerText.trim(), M, y, { width: CONTENT_W, lineGap: 2 });
+        y = doc.y + 12;
+      }
       doc
         .moveTo(M, y)
         .lineTo(M + CONTENT_W, y)
@@ -217,7 +252,9 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
           payload.billingInformation?.email ?? payload.customer.email,
           payload.billingInformation?.phone ?? payload.customer.phone,
           payload.billingInformation?.address ?? null,
-          payload.billingInformation?.taxId ? `Tax PIN: ${payload.billingInformation.taxId}` : null,
+          has(payload.billingInformation?.taxId)
+            ? `Tax PIN: ${payload.billingInformation.taxId}`
+            : null,
         ]);
         doc.fillColor(ink).font('Helvetica-Bold').fontSize(10);
         doc.text(billLines[0] ?? '', M, billY, { width: halfW, lineBreak: false });
@@ -294,7 +331,13 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
 
       // One priced row of the table. `indent` pushes a section's own items in under its title.
       const drawRow = (
-        row: { name: string; quantity: number; unit?: string | null; unitPrice: number; totalPrice: number },
+        row: {
+          name: string;
+          quantity: number;
+          unit?: string | null;
+          unitPrice: number;
+          totalPrice: number;
+        },
         index: number,
         indent = 0,
       ) => {
@@ -323,11 +366,16 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
         doc.text(row.name, cols.desc.x + 6 + indent, textY, {
           width: cols.desc.w - 8 - indent,
         });
-        doc.text(has(row.unit) ? `${String(row.quantity)} ${row.unit}` : String(row.quantity), cols.qty.x, textY, {
-          width: cols.qty.w,
-          align: 'right',
-          lineBreak: false,
-        });
+        doc.text(
+          has(row.unit) ? `${String(row.quantity)} ${row.unit}` : String(row.quantity),
+          cols.qty.x,
+          textY,
+          {
+            width: cols.qty.w,
+            align: 'right',
+            lineBreak: false,
+          },
+        );
         doc.text(money(row.unitPrice, payload.currency), cols.unit.x, textY, {
           width: cols.unit.w,
           align: 'right',
@@ -356,7 +404,7 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
             .font('Helvetica-Bold')
             .fontSize(10)
             .text(item.name, M + 8, y + 7, { width: CONTENT_W * 0.67, lineBreak: false });
-          if (item.sectionDescription) {
+          if (has(item.sectionDescription)) {
             doc
               .fillColor(muted)
               .font('Helvetica')
@@ -400,7 +448,7 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
       const totalsW = 220;
       const totalsX = M + CONTENT_W - totalsW;
       const totalLabel = isProforma ? 'Amount Payable' : 'Total Paid';
-      const totals: Array<{ label: string; value: string; emph?: boolean }> = [
+      const totals: { label: string; value: string; emph?: boolean }[] = [
         { label: 'Subtotal', value: money(payload.subtotal, payload.currency) },
         { label: payload.taxLabel ?? 'VAT (16%)', value: money(payload.tax, payload.currency) },
         { label: 'Shipping', value: money(payload.shippingFee, payload.currency) },
@@ -408,7 +456,7 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
       ];
 
       for (const row of totals) {
-        if (row.emph) {
+        if (row.emph === true) {
           doc.rect(totalsX - 8, y - 4, totalsW + 8, 22).fill(primary);
           doc
             .fillColor('#FFFFFF')
@@ -442,8 +490,20 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
 
       y += 18;
 
+      const customFooter = layout.footerText.trim();
+      if (customFooter !== '' && layout.footerPosition === 'after_totals') {
+        if (y > PAGE_H - 120) {
+          doc.addPage();
+          doc.rect(0, 0, PAGE_W, 6).fill(accent);
+          y = 28;
+        }
+        doc.fillColor(muted).font('Helvetica').fontSize(8);
+        doc.text(customFooter, M, y, { width: CONTENT_W, lineGap: 2 });
+        y = doc.y + 10;
+      }
+
       // Payment / bank instructions — proforma and quote documents.
-      if (isQuote && payload.paymentDetails) {
+      if (isQuote && has(payload.paymentDetails)) {
         if (y > PAGE_H - 160) {
           doc.addPage();
           doc.rect(0, 0, PAGE_W, 6).fill(accent);
@@ -474,15 +534,15 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
 
         const paymentLines = nonEmpty([
           `Preferred method: ${payload.paymentMethod.replace(/_/g, ' ')}`,
-          payload.paymentReference ? `Reference: ${payload.paymentReference}` : null,
-          payload.company.bankName ? `Bank: ${payload.company.bankName}` : null,
-          payload.company.bankAccountName
+          has(payload.paymentReference) ? `Reference: ${payload.paymentReference}` : null,
+          has(payload.company.bankName) ? `Bank: ${payload.company.bankName}` : null,
+          has(payload.company.bankAccountName)
             ? `Account name: ${payload.company.bankAccountName}`
             : null,
-          payload.company.bankAccountNumber
+          has(payload.company.bankAccountNumber)
             ? `Account number: ${payload.company.bankAccountNumber}`
             : null,
-          payload.company.bankBranch ? `Branch: ${payload.company.bankBranch}` : null,
+          has(payload.company.bankBranch) ? `Branch: ${payload.company.bankBranch}` : null,
         ]);
 
         doc.fillColor(ink).font('Helvetica').fontSize(8);
@@ -493,7 +553,7 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
         y += 10;
       }
 
-      if (isQuote && payload.paymentTerms) {
+      if (isQuote && has(payload.paymentTerms)) {
         if (y > PAGE_H - 140) {
           doc.addPage();
           doc.rect(0, 0, PAGE_W, 6).fill(accent);
@@ -508,7 +568,7 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
           .text(payload.paymentTerms, M, y, { width: CONTENT_W });
         y = doc.y + 10;
       }
-      if (isQuote && payload.termsAndConditions) {
+      if (isQuote && has(payload.termsAndConditions)) {
         if (y > PAGE_H - 140) {
           doc.addPage();
           doc.rect(0, 0, PAGE_W, 6).fill(accent);
@@ -524,17 +584,32 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
         y = doc.y + 10;
       }
 
-      const footerNote = isQuote
-        ? 'This quotation is subject to the stated validity and terms. It is not a tax invoice or confirmation of payment.'
-        : isProforma
-          ? isQuote
-            ? 'This quotation is valid subject to the expiry date shown and is not a tax invoice or confirmation of payment.'
-            : 'This proforma invoice is a quotation for payment. It is not a tax invoice and does not confirm receipt of funds.'
-          : payload.company.invoiceFooterNote ||
-            'This is a computer-generated tax invoice. Keep for your records and KRA compliance.';
+      if (customFooter !== '' && layout.footerPosition === 'after_terms') {
+        doc.fillColor(muted).font('Helvetica').fontSize(8);
+        doc.text(customFooter, M, y, { width: CONTENT_W, lineGap: 2 });
+        y = doc.y + 6;
+      }
 
-      doc.fillColor(muted).font('Helvetica').fontSize(8);
-      doc.text(footerNote, M, y, { width: CONTENT_W, lineGap: 2 });
+      let footerNote =
+        'This is a computer-generated tax invoice. Keep for your records and KRA compliance.';
+      if (isQuote) {
+        footerNote =
+          'This quotation is subject to the stated validity and terms. It is not a tax invoice or confirmation of payment.';
+      } else if (isProforma) {
+        footerNote =
+          'This proforma invoice is a quotation for payment. It is not a tax invoice and does not confirm receipt of funds.';
+      }
+      const showStandardNote = isQuote || customFooter === '';
+      if (showStandardNote) {
+        doc.fillColor(muted).font('Helvetica').fontSize(8);
+        const invoiceNote = has(payload.company.invoiceFooterNote)
+          ? payload.company.invoiceFooterNote
+          : footerNote;
+        doc.text(isQuote ? footerNote : invoiceNote, M, y, {
+          width: CONTENT_W,
+          lineGap: 2,
+        });
+      }
 
       const pages = doc.bufferedPageRange();
       for (let i = 0; i < pages.count; i += 1) {

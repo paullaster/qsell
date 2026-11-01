@@ -14,7 +14,7 @@ export const SUPPORT_CHANNEL_KINDS = [
 export type SupportChannelKind = (typeof SUPPORT_CHANNEL_KINDS)[number];
 
 /** One way customers can reach the company. Entirely admin-defined. */
-export type SupportChannel = {
+export interface SupportChannel {
   id: string;
   kind: SupportChannelKind;
   /** Heading shown to customers, e.g. "Phone & WhatsApp", "Nairobi hub". */
@@ -25,13 +25,20 @@ export type SupportChannel = {
   detail: string;
   /** Optional http(s) link (e.g. a map pin) for location/website/other channels. */
   url: string;
-};
+}
 
-export type SupportGuarantee = { id: string; text: string };
-export type SupportFaq = { id: string; question: string; answer: string };
+export interface SupportGuarantee {
+  id: string;
+  text: string;
+}
+export interface SupportFaq {
+  id: string;
+  question: string;
+  answer: string;
+}
 
 /** Storefront help & support content. Every list starts empty — nothing is pre-filled. */
-export type CompanySupportConfig = {
+export interface CompanySupportConfig {
   /** Display name of the whole section (modal title, footer heading, menu entries). */
   name: string;
   subtitle: string;
@@ -40,7 +47,7 @@ export type CompanySupportConfig = {
   guarantees: SupportGuarantee[];
   faqsTitle: string;
   faqs: SupportFaq[];
-};
+}
 
 export const SUPPORT_LIMITS = {
   name: 60,
@@ -92,7 +99,9 @@ export const BANNER_LIMITS = { banners: 5, title: 80, text: 240, cta: 30, href: 
  * Raw / partial UI config as stored in DB (JSONB).
  * All fields optional — missing or invalid values resolve to defaults.
  */
-export type CompanyUiConfigRaw = {
+export interface CompanyUiConfigRaw {
+  /** Company-specific printable document headers, footer notes and placement. Validated at the company settings boundary. */
+  documentLayouts?: unknown;
   productGrid?: {
     /** Columns at ~1140px. Smaller viewports scale down from this. Default: 4 */
     desktopColumns?: number;
@@ -108,10 +117,10 @@ export type CompanyUiConfigRaw = {
   policies?: Partial<PolicyPage>[];
   /** Front-page notices; see {@link PromoBanner}. */
   banners?: Partial<PromoBanner>[];
-};
+}
 
 /** Fully resolved UI config — safe to consume anywhere without null checks. */
-export type CompanyUiConfig = {
+export interface CompanyUiConfig {
   productGrid: {
     desktopColumns: ProductGridDesktopColumns;
   };
@@ -119,7 +128,7 @@ export type CompanyUiConfig = {
   support: CompanySupportConfig;
   policies: PolicyPage[];
   banners: PromoBanner[];
-};
+}
 
 export const PRODUCT_GRID_DESKTOP_COLUMNS = [
   2, 3, 4,

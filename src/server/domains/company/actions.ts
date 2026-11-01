@@ -8,7 +8,17 @@ import type { CompanySettingsRow } from '@/server/db/drizzle/schema';
 import { runSetting } from '@/server/domains/settings/action-runner';
 import { SettingsError } from '@/server/domains/settings/errors';
 import { getAdminNav } from '@/config/admin-nav';
-import { flattenModuleLabelOptions, resolveCompanyUiConfig, resolveBanners, resolvePolicies, resolveSupportConfig, type CompanySupportConfig, type CompanyUiConfig, type PolicyPage, type PromoBanner } from '@/config/company-ui';
+import {
+  flattenModuleLabelOptions,
+  resolveCompanyUiConfig,
+  resolveBanners,
+  resolvePolicies,
+  resolveSupportConfig,
+  type CompanySupportConfig,
+  type CompanyUiConfig,
+  type PolicyPage,
+  type PromoBanner,
+} from '@/config/company-ui';
 import {
   appearancePayload,
   moduleLabelsPayload,
@@ -20,8 +30,23 @@ import {
 } from '@/lib/company-forms';
 import { detectLogoKind, MAX_LOGO_BYTES } from '@/lib/logo-file';
 import { toPublicCompany, type PublicCompany } from '@/lib/company-view';
+import {
+  documentLayoutsProblem,
+  resolveDocumentLayouts,
+  type DocumentLayouts,
+} from '@/lib/document-layouts';
 
-const PAGES = ['/', '/admin', '/admin/company', '/admin/company/profile', '/admin/company/appearance', '/admin/company/modules', '/admin/company/support', '/admin/orders'];
+const PAGES = [
+  '/',
+  '/admin',
+  '/admin/company',
+  '/admin/company/profile',
+  '/admin/company/documents',
+  '/admin/company/appearance',
+  '/admin/company/modules',
+  '/admin/company/support',
+  '/admin/orders',
+];
 
 /**
  * What the storefront and the admin shell may know about the company. Bank details are left out:
@@ -42,12 +67,24 @@ const knownModuleIds = (): string[] => flattenModuleLabelOptions(getAdminNav()).
 // ── Reading, for the people who manage the company ───────────────────────
 
 export async function companyProfileAction() {
-  return runSetting('company:manage', async ({ company }): Promise<ProfileView> => profileFormFrom(company));
+  return runSetting('company:manage', async ({ company }): Promise<ProfileView> =>
+    profileFormFrom(company),
+  );
+}
+
+export async function companyDocumentLayoutsAction() {
+  return runSetting('company:manage', async ({ company }): Promise<DocumentLayouts> =>
+    resolveDocumentLayouts(company.uiConfig.documentLayouts, company.invoiceFooterNote ?? ''),
+  );
 }
 
 export async function companyAppearanceAction() {
   return runSetting('company:manage', async ({ company }): Promise<AppearanceForm> => {
-    return { primaryColor: company.primaryColor, accentColor: company.accentColor, desktopColumns: resolveCompanyUiConfig(company.uiConfig).productGrid.desktopColumns };
+    return {
+      primaryColor: company.primaryColor,
+      accentColor: company.accentColor,
+      desktopColumns: resolveCompanyUiConfig(company.uiConfig).productGrid.desktopColumns,
+    };
   });
 }
 
@@ -78,6 +115,20 @@ export async function saveCompanyProfileAction(form: ProfileForm) {
   );
 }
 
+export async function saveCompanyDocumentLayoutsAction(layouts: unknown) {
+  return runSetting(
+    'company:manage',
+    async (): Promise<DocumentLayouts> => {
+      const problem = documentLayoutsProblem(layouts);
+      if (problem !== null) throw new SettingsError(problem);
+      const clean = resolveDocumentLayouts(layouts);
+      const row = await getContainer().companySettings.setDocumentLayouts(clean);
+      return resolveDocumentLayouts(row.uiConfig.documentLayouts, row.invoiceFooterNote ?? '');
+    },
+    { paths: ['/admin/company/documents'] },
+  );
+}
+
 /** Saves the colours and the product density. Only these two parts of the stored look change. */
 export async function saveCompanyAppearanceAction(form: AppearanceForm) {
   return runSetting(
@@ -86,8 +137,13 @@ export async function saveCompanyAppearanceAction(form: AppearanceForm) {
       const checked = appearancePayload(form);
       if (!checked.ok) throw new SettingsError(checked.error);
       const { companySettings } = getContainer();
-      await companySettings.update({ primaryColor: checked.payload.primaryColor, accentColor: checked.payload.accentColor });
-      await companySettings.setUiConfigSection('productGrid', { desktopColumns: checked.payload.desktopColumns });
+      await companySettings.update({
+        primaryColor: checked.payload.primaryColor,
+        accentColor: checked.payload.accentColor,
+      });
+      await companySettings.setUiConfigSection('productGrid', {
+        desktopColumns: checked.payload.desktopColumns,
+      });
       return checked.payload;
     },
     { paths: PAGES },
@@ -167,11 +223,13 @@ export async function uploadCompanyLogoAction(formData: FormData) {
     'company:manage',
     async (): Promise<{ logoUrl: string }> => {
       const file = formData.get('logo');
-      if (!(file instanceof File) || file.size === 0) throw new SettingsError('Choose a logo image to upload.');
+      if (!(file instanceof File) || file.size === 0)
+        throw new SettingsError('Choose a logo image to upload.');
       if (file.size > MAX_LOGO_BYTES) throw new SettingsError('The logo must be 2 MB or smaller.');
       const buffer = Buffer.from(await file.arrayBuffer());
       const kind = detectLogoKind(buffer);
-      if (kind === null) throw new SettingsError('The logo must be a PNG, JPEG, WebP or plain SVG picture.');
+      if (kind === null)
+        throw new SettingsError('The logo must be a PNG, JPEG, WebP or plain SVG picture.');
       const dir = path.join(process.cwd(), 'public', 'uploads', 'company');
       await mkdir(dir, { recursive: true });
       const filename = `logo-${String(Date.now())}-${randomUUID()}.${kind}`;

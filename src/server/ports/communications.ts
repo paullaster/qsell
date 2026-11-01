@@ -1,3 +1,5 @@
+import type { DocumentLayouts } from '@/lib/document-layouts';
+
 /**
  * Communication & document ports (DI).
  * Adapters implement these interfaces; domain services depend on ports only.
@@ -24,6 +26,8 @@ export interface CompanyProfile {
   bankAccountName?: string | null;
   bankAccountNumber?: string | null;
   bankBranch?: string | null;
+  documentLayouts?: DocumentLayouts;
+  /** Legacy invoice-only note retained for compatibility with older integrations. */
   invoiceFooterNote?: string | null;
   invoicePrefix: string;
   logoUrl?: string | null;
@@ -36,7 +40,7 @@ export interface InvoiceLineItem {
   sectionTotal?: number;
   sectionDescription?: string | null;
   /** The section's own items, listed under its title when it is set to show them. */
-  sectionLines?: Array<{
+  sectionLines?: {
     sku: string;
     name: string;
     quantity: number;
@@ -44,7 +48,7 @@ export interface InvoiceLineItem {
     unit?: string | null;
     unitPrice: number;
     totalPrice: number;
-  }>;
+  }[];
   sku: string;
   name: string;
   quantity: number;
