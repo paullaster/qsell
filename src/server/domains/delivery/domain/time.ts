@@ -44,3 +44,37 @@ export function ruleHolds(rule: Pick<Surcharge, 'days' | 'fromMinute' | 'toMinut
   }
   return rule.days === null || rule.days.includes(day);
 }
+
+/** The offset of a time zone from UTC at a moment, in minutes. Zones less than 12 hours from UTC. */
+function offsetMinutes(at: Date, timeZone: string): number {
+  const local = localClock(at, timeZone).minuteOfDay;
+  const utc = at.getUTCHours() * 60 + at.getUTCMinutes();
+  return ((local - utc + 1440 + 720) % 1440) - 720;
+}
+
+const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** Is this a calendar date written as YYYY-MM-DD? */
+export const isDateOnly = (text: string): boolean => {
+  const m = DATE_ONLY.exec(text);
+  if (m === null) return false;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  return d.getUTCFullYear() === Number(m[1]) && d.getUTCMonth() === Number(m[2]) - 1 && d.getUTCDate() === Number(m[3]);
+};
+
+/** The moment a calendar day (YYYY-MM-DD) begins in a time zone. */
+export function startOfLocalDay(day: string, timeZone: string): Date {
+  const m = DATE_ONLY.exec(day);
+  if (m === null) throw new RangeError(`"${day}" is not a date.`);
+  const utcMidnight = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  // The offset can differ between midnight UTC and local midnight (daylight saving), so settle it in two passes.
+  const first = new Date(utcMidnight - offsetMinutes(new Date(utcMidnight), timeZone) * 60_000);
+  return new Date(utcMidnight - offsetMinutes(first, timeZone) * 60_000);
+}
+
+/** The calendar day after YYYY-MM-DD. */
+export function nextDay(day: string): string {
+  const m = DATE_ONLY.exec(day);
+  if (m === null) throw new RangeError(`"${day}" is not a date.`);
+  return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + 1)).toISOString().slice(0, 10);
+}

@@ -13,7 +13,7 @@ describe('reading a policy from the browser', () => {
   it('trims, upper-cases the currency, reads numbers written as text, and fills what is left out', () => {
     const r = readPolicyInput({ ...base, priority: '3', minCharge: '100', maxCharge: '', validFrom: '2026-11-01', description: '  x  ' });
     expect(r).toMatchObject({ ok: true, value: { name: 'Standard', currency: 'KES', method: 'flat', priority: 3, minCharge: 100, maxCharge: null, perMinute: 0, roundTo: 0, roundMode: 'nearest', distanceBasis: 'one_way', description: 'x', scopes: {}, bands: [], tiers: [], surcharges: [] } });
-    expect(r.ok && r.value.validFrom?.toISOString().slice(0, 10)).toBe('2026-11-01');
+    expect(r.ok && r.value.validFrom?.toISOString()).toBe('2026-10-31T21:00:00.000Z');
     expect(r.ok && r.value.rates).toEqual([{ zoneId: null, fromKg: 0, toKg: null, fee: 250, perExtraKg: 0 }]);
   });
   it('reads a rate card for zones, bands, steps and time rules', () => {
@@ -37,7 +37,7 @@ describe('reading a policy from the browser', () => {
     expect(err({ ...base, roundMode: 'down' })).toBe('Choose how the charge is rounded.');
     expect(err({ ...base, priority: 'high' })).toBe('The priority must be a number.');
     expect(err({ ...base, minCharge: 'lots' })).toBe('The minimum charge must be a number.');
-    expect(err({ ...base, validFrom: 'someday' })).toBe('The start date is not a date.');
+    expect(err({ ...base, validFrom: 'someday' })).toBe('The first day is not a date.');
     expect(err({ ...base, rates: 'many' })).toBe('fees must be a list.');
     expect(err({ ...base, rates: [{ fee: 'cheap' }] })).toBe('Fee 1: the fee must be a number.');
     expect(err({ ...base, rates: [{ fee: 1, zoneId: 'not-a-uuid' }] })).toBe('Fee 1: that zone is not valid.');
@@ -57,5 +57,16 @@ describe('reading a policy from the browser', () => {
     const r = readPolicyInput(base);
     expect(r.ok).toBe(true);
     if (r.ok) expect(validatePolicy({ ...r.value, id: 'x', code: 'STD', version: 1 })).toEqual([]);
+  });
+});
+
+describe('dates as people write them', () => {
+  it('starts the first day at local midnight and ends after the whole of the last day', () => {
+    const r = readPolicyInput({ ...base, validFrom: '2026-11-01', validTo: '2026-11-30' });
+    expect(r.ok && r.value.validFrom?.toISOString()).toBe('2026-10-31T21:00:00.000Z');
+    expect(r.ok && r.value.validTo?.toISOString()).toBe('2026-11-30T21:00:00.000Z');
+    const full = readPolicyInput({ ...base, validFrom: '2026-11-01T06:30:00Z' });
+    expect(full.ok && full.value.validFrom?.toISOString()).toBe('2026-11-01T06:30:00.000Z');
+    expect(err({ ...base, validTo: '2026-13-45' })).toBe('The last day is not a date.');
   });
 });

@@ -109,6 +109,8 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'A customer can write the address or drop a pin on the map, and both find the right zone',
       'Choose whether each branch delivers with its own riders, a courier, or lets customers collect',
       'Say how long each method takes to prepare',
+      'Delivery charges by zone, by weight or by distance from the nearest branch, with extras for busy times and discounts for bigger orders',
+      'Try any delivery charge before it goes live and see exactly how it was worked out',
     ],
     keywords: [
       'delivery management software Kenya',
@@ -116,8 +118,10 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'ecommerce delivery software',
       'click and collect for shops',
       'delivery areas by estate',
+      'delivery charge calculator',
+      'delivery fee by distance',
     ],
-    subModules: ['Delivery zones', 'Delivery methods'],
+    subModules: ['Delivery zones', 'Delivery charges', 'Delivery methods'],
   },
   {
     navId: 'products-inventory',

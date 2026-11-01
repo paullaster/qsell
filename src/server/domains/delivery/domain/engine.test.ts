@@ -314,3 +314,19 @@ describe('what every charge promises', () => {
     }
   });
 });
+
+describe('days in the business’s time zone', () => {
+  it('begins a day at the local midnight, not at midnight UTC', async () => {
+    const { startOfLocalDay, nextDay, isDateOnly } = await import('./time');
+    expect(startOfLocalDay('2026-11-01', 'Africa/Nairobi').toISOString()).toBe('2026-10-31T21:00:00.000Z');
+    expect(startOfLocalDay('2026-11-01', 'UTC').toISOString()).toBe('2026-11-01T00:00:00.000Z');
+    expect(startOfLocalDay('2026-03-08', 'America/New_York').toISOString()).toBe('2026-03-08T05:00:00.000Z');
+    expect(startOfLocalDay('2026-03-09', 'America/New_York').toISOString()).toBe('2026-03-09T04:00:00.000Z');
+    expect(nextDay('2026-12-31')).toBe('2027-01-01');
+    expect(nextDay('2028-02-28')).toBe('2028-02-29');
+    expect(isDateOnly('2026-02-29')).toBe(false);
+    expect(isDateOnly('2028-02-29')).toBe(true);
+    expect(isDateOnly('2026-1-1')).toBe(false);
+    expect(() => startOfLocalDay('soon', 'UTC')).toThrow(RangeError);
+  });
+});

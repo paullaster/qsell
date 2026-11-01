@@ -1,6 +1,12 @@
 import { and, eq, sql } from 'drizzle-orm';
-import { deliveryZones } from '@/server/db/drizzle/schema';
-import { acceptFilters, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
+import { branches, customerGroups, deliveryZones } from '@/server/db/drizzle/schema';
+import { acceptFilters, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
+import { CHANNELS } from '@/server/domains/pricing/domain/types';
+
+const text = (v: unknown): string => (typeof v === 'string' ? v : '');
+
+/** The words for the parts of the business a charge can be limited to. */
+export const CHANNEL_WORDS: Record<string, string> = { ecommerce: 'Web shop', sales_order: 'Sales orders', credit_sale: 'Credit sales', pos_cash_sale: 'Point of sale' };
 
 /** The delivery zones, for choosing one in a rate or an area. Stopped zones are not offered. */
 const zones = tableSource({
@@ -23,4 +29,46 @@ const zones = tableSource({
   }),
 });
 
-export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones];
+/** The branches, for choosing where a delivery leaves from or who a charge is for. Open branches only. Read with the delivery permission, not the branch one. */
+const deliveryBranches = tableSource({
+  key: 'delivery-branches',
+  permission: 'deliveries:read',
+  table: branches,
+  id: branches.id,
+  label: branches.name,
+  searchColumns: [branches.name, branches.code],
+  select: { code: branches.code },
+  scope: ({ filters, companyId }) => {
+    acceptFilters(filters, {});
+    return [and(eq(branches.companyId, companyId), eq(branches.isActive, true)) ?? sql`false`];
+  },
+  toOption: (row) => ({ id: text(row.id), label: `${text(row.code)} — ${text(row.label)}`, description: null, badge: null }),
+});
+
+/** The customer groups, for limiting a charge to a group. */
+const deliveryCustomerGroups = tableSource({
+  key: 'delivery-customer-groups',
+  permission: 'deliveries:read',
+  table: customerGroups,
+  id: customerGroups.id,
+  label: customerGroups.name,
+  searchColumns: [customerGroups.name, customerGroups.code],
+  select: { code: customerGroups.code },
+  scope: ({ filters, companyId }) => {
+    acceptFilters(filters, {});
+    return [eq(customerGroups.companyId, companyId)];
+  },
+  toOption: (row) => ({ id: text(row.id), label: `${text(row.label)} (${text(row.code)})`, description: null, badge: null }),
+});
+
+/** The parts of the business that make sales, for limiting a charge to one. */
+const deliveryChannels = staticSource({
+  key: 'delivery-channels',
+  permission: 'deliveries:read',
+  items: ({ filters }) => {
+    acceptFilters(filters, {});
+    return CHANNELS.map((id) => ({ id, label: CHANNEL_WORDS[id] ?? id, description: null }));
+  },
+});
+
+export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels];

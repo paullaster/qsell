@@ -1,6 +1,9 @@
 import { validateScopes } from '@/server/domains/pricing/domain/rules';
 import type { Scopes } from '@/server/domains/pricing/domain/types';
 import { CHARGE_METHODS, DISTANCE_BASES, ROUND_MODES, type ChargeMethod, type DistanceBand, type DistanceBasis, type RateRow, type RoundMode, type Surcharge, type ValueTier } from './types';
+import { clockMinutes } from '@/lib/clock-time';
+import { DEFAULT_BUSINESS_TIMEZONE } from '@/server/kernel/numbering/business-date';
+import { isDateOnly, nextDay, startOfLocalDay } from './time';
 import { LIMITS } from './validate';
 
 /** A policy as a person writes it: everything but its code and version. */
@@ -59,6 +62,17 @@ const list = (v: unknown, what: string, max: number): unknown[] => {
 };
 const row = (v: unknown, what: string): Record<string, unknown> => (isObject(v) ? v : fail(`${what} is not valid.`));
 
+/** A time of day as minutes after midnight, from minutes or from text such as 22:00. */
+function minuteOf(v: unknown, what: string): number | null {
+  if (blank(v)) return null;
+  if (typeof v === 'string' && v.includes(':')) {
+    const minutes = clockMinutes(v);
+    return Number.isNaN(minutes) ? fail(`${what} must be a time such as 22:00.`) : minutes;
+  }
+  const n = num(v);
+  return Number.isFinite(n) ? n : fail(`${what} must be a time such as 22:00.`);
+}
+
 function zoneOf(v: unknown, where: string): string | null {
   if (blank(v)) return null;
   return typeof v === 'string' && UUID.test(v) ? v : fail(`${where}: that zone is not valid.`);
@@ -74,9 +88,16 @@ function kindOf(v: unknown, where: string): 'fixed' | 'percent' {
   return fail(`${where}: choose a fixed amount or a percentage.`);
 }
 
-function date(v: unknown, what: string): Date | null {
+/**
+ * A date as written. A plain day (2026-11-01) is the start of that day in the business's time zone, or with `lastDay` the start of the
+ * day after it (so "the last day" includes the whole day). Anything else must be a full date and time.
+ */
+function date(v: unknown, what: string, lastDay = false): Date | null {
   if (blank(v)) return null;
-  const d = v instanceof Date ? v : new Date(String(v));
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? fail(`${what} is not a date.`) : v;
+  const text = String(v).trim();
+  if (isDateOnly(text)) return startOfLocalDay(lastDay ? nextDay(text) : text, DEFAULT_BUSINESS_TIMEZONE);
+  const d = new Date(text);
   return Number.isNaN(d.getTime()) ? fail(`${what} is not a date.`) : d;
 }
 
@@ -122,8 +143,8 @@ export function readPolicyInput(raw: unknown): Read<PolicyInput> {
         kind: kindOf(o.kind, `Extra charge ${String(n + 1)}`),
         amount: need(o.amount, `Extra charge ${String(n + 1)}: the amount`),
         days,
-        fromMinute: optional(o.fromMinute, `Extra charge ${String(n + 1)}: the start of the hours`),
-        toMinute: optional(o.toMinute, `Extra charge ${String(n + 1)}: the end of the hours`),
+        fromMinute: minuteOf(o.fromMinute, `Extra charge ${String(n + 1)}: the start of the hours`),
+        toMinute: minuteOf(o.toMinute, `Extra charge ${String(n + 1)}: the end of the hours`),
         dateFrom: text(o.dateFrom),
         dateTo: text(o.dateTo),
       };
@@ -137,8 +158,8 @@ export function readPolicyInput(raw: unknown): Read<PolicyInput> {
         method: method as ChargeMethod,
         currency,
         priority: blank(i.priority) ? 0 : Math.trunc(need(i.priority, 'The priority')),
-        validFrom: date(i.validFrom, 'The start date'),
-        validTo: date(i.validTo, 'The end date'),
+        validFrom: date(i.validFrom, 'The first day'),
+        validTo: date(i.validTo, 'The last day', true),
         scopes,
         distanceBasis: basis as DistanceBasis,
         maxRangeKm: optional(i.maxRangeKm, 'The furthest distance'),

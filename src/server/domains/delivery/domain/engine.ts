@@ -70,8 +70,7 @@ export function quoteCharge(policy: ChargePolicyDef, request: ChargeRequest): Ch
     tripMinutes = trip.minutes;
     const band = policy.bands.find((b) => trip.km >= b.fromKm && (b.toKm === null || trip.km < b.toKm));
     if (band === undefined) return refuse('no_rate', `No distance band covers ${km(trip.km)}.`);
-    const span = band.toKm === null ? `from ${km(band.fromKm)}` : `${km(band.fromKm)} to ${km(band.toKm)}`;
-    add('base', `Base fee for ${span}`, band.baseFee);
+    add('base', band.toKm === null ? `Base fee from ${km(band.fromKm)}` : `Base fee for ${km(band.fromKm)} to ${km(band.toKm)}`, band.baseFee);
     if (band.perKm > 0 && trip.km > band.fromKm) add('base', `${shown(c, band.perKm)} a km for ${km(trip.km - band.fromKm)}`, band.perKm * (trip.km - band.fromKm));
     if (policy.perMinute > 0 && trip.minutes !== null) add('time', `${shown(c, policy.perMinute)} a minute for ${String(Math.round(trip.minutes))} minutes`, policy.perMinute * trip.minutes);
     if (policy.includedKg !== null && policy.perExtraKg > 0 && request.weightKg > policy.includedKg) {

@@ -1,8 +1,11 @@
 'use server';
 
-import { and, asc, eq, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import { drizzleDb } from '@/server/db/drizzle/client';
-import { chargePolicies, chargePolicyRates, currencies, type ChargePolicyRow } from '@/server/db/drizzle/schema';
+import { branches, chargePolicies, chargePolicyRates, currencies, customerGroups, deliveryZones, type ChargePolicyRow } from '@/server/db/drizzle/schema';
+import { DEFAULT_BUSINESS_TIMEZONE, businessDate } from '@/server/kernel/numbering/business-date';
+import { isDateOnly, startOfLocalDay } from './domain/time';
+import { CHANNEL_WORDS } from './lookup-sources';
 import { getContainer } from '@/server/di/container';
 import { readGeoPoint } from '@/lib/geo';
 import { afterCursor, matching, pageOf, searchText, PAGE_SIZE } from '@/server/domains/settings/paging';
@@ -24,6 +27,9 @@ export interface PolicySummary {
   priority: number;
   validFrom: string;
   validTo: string | null;
+  /** The first and last day it applies, as the business's calendar writes them. */
+  firstDay: string;
+  lastDay: string | null;
   /** Who it is for, as stored. */
   scopes: ChargePolicyRow['scopes'];
   revision: number;
@@ -31,12 +37,16 @@ export interface PolicySummary {
 
 export interface PolicyView extends PolicySummary {
   description: string | null;
+  /** The words for the branches, customer groups and channels the policy names, by id. */
+  scopeNames: Record<string, Record<string, string>>;
+  /** The words for the zones its fees name, by id. */
+  zoneNames: Record<string, string>;
   def: ChargePolicyDef;
   activatedAt: string | null;
   retiredAt: string | null;
 }
 
-const summary = (r: ChargePolicyRow): PolicySummary => ({ id: r.id, code: r.code, version: r.version, name: r.name, method: r.method, currency: r.currency, status: r.status, priority: r.priority, validFrom: r.validFrom.toISOString(), validTo: r.validTo?.toISOString() ?? null, scopes: r.scopes, revision: r.revision });
+const summary = (r: ChargePolicyRow): PolicySummary => ({ id: r.id, code: r.code, version: r.version, name: r.name, method: r.method, currency: r.currency, status: r.status, priority: r.priority, validFrom: r.validFrom.toISOString(), validTo: r.validTo?.toISOString() ?? null, firstDay: businessDate(r.validFrom), lastDay: r.validTo === null ? null : businessDate(new Date(r.validTo.getTime() - 1)), scopes: r.scopes, revision: r.revision });
 
 const input = (raw: unknown) => {
   const read = readPolicyInput(raw);
@@ -69,12 +79,31 @@ export async function chargePoliciesPageAction(raw: unknown) {
   });
 }
 
+/** The names behind the ids a policy is limited to, in one read for each kind. */
+async function scopeNames(companyId: string, scopes: ChargePolicyRow['scopes']): Promise<Record<string, Record<string, string>>> {
+  const out: Record<string, Record<string, string>> = { channel: Object.fromEntries((scopes.channel?.values ?? []).map((v) => [v, CHANNEL_WORDS[v] ?? v])) };
+  const branchIds = (scopes.branch?.values ?? []).filter((v) => UUID.test(v));
+  if (branchIds.length > 0) out.branch = Object.fromEntries((await drizzleDb.select({ id: branches.id, name: branches.name, code: branches.code }).from(branches).where(and(eq(branches.companyId, companyId), inArray(branches.id, branchIds)))).map((b) => [b.id, `${b.code} — ${b.name}`]));
+  const groupIds = (scopes.customer_group?.values ?? []).filter((v) => UUID.test(v));
+  if (groupIds.length > 0) out.customer_group = Object.fromEntries((await drizzleDb.select({ id: customerGroups.id, name: customerGroups.name, code: customerGroups.code }).from(customerGroups).where(and(eq(customerGroups.companyId, companyId), inArray(customerGroups.id, groupIds)))).map((g) => [g.id, `${g.name} (${g.code})`]));
+  return out;
+}
+
+async function zoneNames(companyId: string, ids: string[]): Promise<Record<string, string>> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return {};
+  const rows = await drizzleDb.select({ id: deliveryZones.id, code: deliveryZones.code, name: deliveryZones.name }).from(deliveryZones).where(and(eq(deliveryZones.companyId, companyId), inArray(deliveryZones.id, unique)));
+  return Object.fromEntries(rows.map((z) => [z.id, `${z.code} · ${z.name}`]));
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** One policy with everything the editor needs. */
 export async function getChargePolicyAction(id: unknown) {
   return await runDelivery('deliveries:read', async (ctx) => {
     const found = await getContainer().chargePolicies.get(ctx.companyId, idOf(id, 'policy'));
     if (found === null) throw new DeliveryError('That policy could not be found.', 'NOT_FOUND');
-    const view: PolicyView = { ...summary(found.row), description: found.row.description, def: found.def, activatedAt: found.row.activatedAt?.toISOString() ?? null, retiredAt: found.row.retiredAt?.toISOString() ?? null };
+    const view: PolicyView = { ...summary(found.row), description: found.row.description, scopeNames: await scopeNames(ctx.companyId, found.row.scopes), zoneNames: await zoneNames(ctx.companyId, found.def.rates.flatMap((r) => (r.zoneId === null ? [] : [r.zoneId]))), def: found.def, activatedAt: found.row.activatedAt?.toISOString() ?? null, retiredAt: found.row.retiredAt?.toISOString() ?? null };
     return view;
   });
 }
@@ -130,6 +159,15 @@ async function baseCurrency(): Promise<string> {
   return base?.code ?? 'KES';
 }
 
+/** The moment asked about: now when none is given; "2026-11-07T14:30" is that time in the business's time zone; a full timestamp is taken as it is. */
+function moment(v: unknown): Date {
+  if (typeof v !== 'string' || v.trim() === '') return new Date();
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})$/.exec(v.trim());
+  if (m === null) return new Date(v);
+  if (!isDateOnly(m[1] ?? '')) return new Date(Number.NaN);
+  return new Date(startOfLocalDay(m[1] ?? '', DEFAULT_BUSINESS_TIMEZONE).getTime() + (Number(m[2]) * 60 + Number(m[3])) * 60_000);
+}
+
 const num = (v: unknown, what: string, fallback?: number): number => {
   if (v === undefined || v === null || (typeof v === 'string' && v.trim() === '')) {
     if (fallback !== undefined) return fallback;
@@ -145,7 +183,7 @@ export async function quoteDeliveryAction(raw: unknown) {
   return await runDelivery('deliveries:read', async (ctx) => {
     const i = objectOf(raw);
     const branchId = idOf(i.branchId, 'branch');
-    const at = typeof i.at === 'string' && i.at.trim() !== '' ? new Date(i.at) : new Date();
+    const at = moment(i.at);
     if (Number.isNaN(at.getTime())) throw new DeliveryError('The time is not valid.', 'BAD_INPUT');
     const hasPin = !(i.latitude === undefined || i.latitude === null || i.latitude === '') || !(i.longitude === undefined || i.longitude === null || i.longitude === '');
     let pin = null;

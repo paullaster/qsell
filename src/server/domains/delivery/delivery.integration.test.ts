@@ -335,6 +335,38 @@ describe.skipIf(!has(url))('delivery zones and methods (database)', () => {
     });
   });
 
+  describe('the pickers for who a charge is for', () => {
+    const source = (key: string) => sources.DELIVERY_LOOKUP_SOURCES.find((x) => x.key === key);
+    it('offer this company’s open branches by code or name, behind the delivery permission', async () => {
+      const open = await branch();
+      const closed = await branch();
+      await db.update(schema.branches).set({ isActive: false }).where(eq(schema.branches.id, closed));
+      const foreign = await branch(otherCompany);
+      const src = source('delivery-branches');
+      const all = await src?.search({ companyId, query: '', limit: 200, after: null, filters: {} });
+      const ids = all?.options.map((o) => o.id) ?? [];
+      expect(ids).toContain(open);
+      expect(ids).not.toContain(closed);
+      expect(ids).not.toContain(foreign);
+      expect(src?.permission).toBe('deliveries:read');
+      await expect(src?.search({ companyId, query: '', limit: 5, after: null, filters: { x: 'y' } })).rejects.toThrow();
+    });
+    it('offer this company’s customer groups, and the channels in words', async () => {
+      const [mine] = await db.insert(schema.customerGroups).values({ companyId, code: `G${tag}`, name: `Group ${tag}` }).returning();
+      const [theirs] = await db.insert(schema.customerGroups).values({ companyId: otherCompany, code: `H${tag}`, name: `Hidden ${tag}` }).returning();
+      try {
+        const groups = source('delivery-customer-groups');
+        const page = await groups?.search({ companyId, query: tag, limit: 20, after: null, filters: {} });
+        expect(page?.options.map((o) => o.id)).toEqual([mine?.id]);
+        expect(groups?.permission).toBe('deliveries:read');
+        const channels = await source('delivery-channels')?.search({ companyId, query: '', limit: 20, after: null, filters: {} });
+        expect(channels?.options.map((o) => o.label).sort()).toEqual(['Credit sales', 'Point of sale', 'Sales orders', 'Web shop']);
+      } finally {
+        await db.delete(schema.customerGroups).where(inArray(schema.customerGroups.id, [mine?.id ?? '', theirs?.id ?? '']));
+      }
+    });
+  });
+
   describe('the zone picker', () => {
     it('offers this company’s active zones by code or name, and nothing else', async () => {
       const live = await zoneRow({ name: `Pickable ${tag}` });

@@ -289,3 +289,20 @@ Informed by the owner's earlier map and pricing service (see the memory note "Pi
 **Lifecycle**: draft, in force, retired. A policy in force cannot be edited; make a new version (copy to draft), or retire it. Every change has a reason and is in the decision log. A quote simulator shows the charge and the trace for any address, pin, weight, order value and time before a policy goes live.
 
 **Slices**: D-0b2a the pure engine (this section); D-0b2b the data model, lifecycle and actions; D-0b2c the screens and the simulator.
+
+
+## 24. D-0b, second part, as built (2026-11-01): charge policies, the quote and their screens
+
+**Engine** (`src/server/domains/delivery/domain/`, pure): `quoteCharge` works the charge out and explains every step; `choosePolicy` and `wouldTie` reuse pricing's scopes, specificity and tie rule; `validatePolicy` decides what may go live; `readPolicyInput` turns what the browser sent into a policy (size limits, plain-language errors, dates as business-time days: a first day starts at local midnight, a last day includes the whole day). The promises of section 23 each have a test, including one that checks that a policy that passes validation can always be priced unless an input it needs is missing.
+
+**Data** (migration 0117): `charge_policies` (code and version, status, scope, dates, the distance and rounding settings; bands, order-value steps and time rules as small lists) and `charge_policy_rates` (the fees of a rate card). The database keeps one draft and one version in force for each code, and checks the basics (status, method, currency, dates, charges).
+
+**Life of a policy** (`ChargePolicies`): draft, saved with a revision check; a new version copies a policy in force or retired into the next draft; **putting a draft in force** needs a reason, a sound policy, zones that are in use, and nothing in force that would tie with it, and in the same transaction retires the version it replaces; retire needs a reason; a draft can be discarded and nothing else can be deleted. Each step is in the decision log with its reason. Permission `delivery_rates:manage` writes; `deliveries:read` reads and tries.
+
+**The quote** (`DeliveryQuotes`): from a branch and the customer's address or pin it finds the zone, measures the distance from the branch's own pin (a map service with the built-in estimate to fall back on; for a written address with no pin, the address is placed on the map and the distance is marked approximate), chooses the policy and returns the charge with its trace, the zone, the route and which policies were looked at and why each won or lost.
+
+**Screens**: **Delivery, Delivery charges**: the list (in force and drafts, retired, all), an editor (basics, who it is for, the three methods, limits and rounding, discounts for bigger orders, extra charges for busy times), the lifecycle buttons (put in force and retire ask why first), and **Try a delivery charge**, which asks the server what an order would be charged and shows the steps. Selection uses pickers (no native select); scope pickers use delivery-specific lookup sources behind `deliveries:read`.
+
+**Verified.** Unit: the engine, time rules, selection, validation, the reader, the form conversions. Integration: the whole lifecycle, two people at once (saving a draft, putting one in force), ties, stopped zones, company isolation, the quote end to end including the map fallback, permissions. E2E: write, refuse, put in force, try, version and replace, on desktop and phone.
+
+**Known limits.** A rate card is edited row by row; pasting a large card is not built (the limit is 5000 fees). The charge is not yet applied to an order: D-0c chooses the nearest branch that can cover the order and D-0d puts the charge on the shop checkout, the order and the invoice, with its tax.

@@ -414,6 +414,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'deliveries:read',
       },
       {
+        id: 'delivery-charges',
+        title: 'Delivery charges',
+        name: 'delivery-charges',
+        href: '/admin/delivery/charges',
+        description: 'How much delivery costs: by zone, flat or by weight, or by distance, with extras and discounts',
+        icon: 'Coins',
+        permission: 'deliveries:read',
+      },
+      {
         id: 'delivery-methods',
         title: 'Delivery methods',
         name: 'delivery-methods',
