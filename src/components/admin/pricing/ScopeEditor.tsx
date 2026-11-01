@@ -8,6 +8,8 @@ import {
   type ScopeDimension,
   type Scopes,
 } from '@/server/domains/pricing/domain/types';
+import { useDebouncedValue } from '@/components/ui/useDebouncedValue';
+import { SegmentedChoice } from '@/components/ui/SegmentedChoice';
 import { buttonClass, fieldClass } from '../approvals/shared';
 
 const HELP: Record<ScopeDimension, string> = {
@@ -20,6 +22,11 @@ const HELP: Record<ScopeDimension, string> = {
   channel: 'Which part of the business made the sale.',
   country: 'Two-letter country codes such as KE or UG.',
 };
+
+const SCOPE_OPS = [
+  { value: 'in', label: 'Only these' },
+  { value: 'not_in', label: 'Everything except these' },
+] as const;
 
 const CHANNEL_LABELS: Record<string, string> = {
   ecommerce: 'Web shop',
@@ -49,10 +56,8 @@ export function ScopeEditor({
 }) {
   const [customerNames, setCustomerNames] = useState<Record<string, string>>(names.customer ?? {});
   const set = (d: ScopeDimension, rule: Scopes[ScopeDimension]) => {
-    const next = { ...value };
-    if (rule) next[d] = rule;
-    else delete next[d];
-    onChange(next);
+    const others = Object.fromEntries(Object.entries(value).filter(([k]) => k !== d)) as Scopes;
+    onChange(rule ? { ...others, [d]: rule } : others);
   };
 
   return (
@@ -78,77 +83,89 @@ export function ScopeEditor({
             <p className="ml-6 text-xs text-fg-muted">{HELP[d]}</p>
             {rule ? (
               <div className="mt-2 ml-0 space-y-2 sm:ml-6">
-                <select
-                  aria-label={`${SCOPE_LABELS[d]}: only or all except`}
-                  className={`${fieldClass} sm:max-w-xs`}
+                <SegmentedChoice
+                  label={`${SCOPE_LABELS[d]}: only or all except`}
+                  hideLabel
                   value={rule.op}
-                  onChange={(e) => set(d, { ...rule, op: e.target.value as 'in' | 'not_in' })}
-                >
-                  <option value="in">Only these</option>
-                  <option value="not_in">Everything except these</option>
-                </select>
-                {d === 'customer' ? (
-                  <CustomerPicker
-                    selected={rule.values}
-                    nameOf={(id) => customerNames[id] ?? id}
-                    remember={(id, name) => setCustomerNames((m) => ({ ...m, [id]: name }))}
-                    onChange={(values) => set(d, { ...rule, values })}
-                  />
-                ) : d === 'customer_group' ? (
-                  <Checks
-                    options={lookups.groups.map((g) => ({
-                      value: g.id,
-                      label: `${g.name} (${g.code})`,
-                    }))}
-                    selected={rule.values}
-                    onChange={(values) => set(d, { ...rule, values })}
-                    empty="No customer groups yet. Create one under Customer groups."
-                  />
-                ) : d === 'branch' ? (
-                  <Checks
-                    options={lookups.branches.map((b) => ({
-                      value: b.id,
-                      label: `${b.name} (${b.code})`,
-                    }))}
-                    selected={rule.values}
-                    onChange={(values) => set(d, { ...rule, values })}
-                    empty="No branches."
-                  />
-                ) : d === 'sales_type' ? (
-                  <Checks
-                    options={lookups.salesTypes.map((v) => ({
-                      value: v,
-                      label: v === 'cash' ? 'Cash sale' : 'Credit sale',
-                    }))}
-                    selected={rule.values}
-                    onChange={(values) => set(d, { ...rule, values })}
-                    empty=""
-                  />
-                ) : d === 'channel' ? (
-                  <Checks
-                    options={lookups.channels.map((v) => ({
-                      value: v,
-                      label: CHANNEL_LABELS[v] ?? v,
-                    }))}
-                    selected={rule.values}
-                    onChange={(values) => set(d, { ...rule, values })}
-                    empty=""
-                  />
-                ) : (
-                  <TextValues
-                    label={SCOPE_LABELS[d]}
-                    values={rule.values}
-                    upper={d === 'country'}
-                    placeholder={d === 'country' ? 'KE' : 'ROUTE-1'}
-                    onChange={(values) => set(d, { ...rule, values })}
-                  />
-                )}
+                  options={SCOPE_OPS}
+                  onChange={(op) => set(d, { ...rule, op })}
+                />
+                <ScopeValues
+                  dimension={d}
+                  rule={rule}
+                  lookups={lookups}
+                  customerNames={customerNames}
+                  remember={(id, name) => setCustomerNames((m) => ({ ...m, [id]: name }))}
+                  onChange={(next) => set(d, next)}
+                />
               </div>
             ) : null}
           </div>
         );
       })}
     </fieldset>
+  );
+}
+
+type ScopeRule = NonNullable<Scopes[ScopeDimension]>;
+
+/** The values of one limit: the control that fits what the limit is about. */
+function ScopeValues({
+  dimension: d,
+  rule,
+  lookups,
+  customerNames,
+  remember,
+  onChange,
+}: {
+  dimension: ScopeDimension;
+  rule: ScopeRule;
+  lookups: PricingLookups;
+  customerNames: Record<string, string>;
+  remember: (id: string, name: string) => void;
+  onChange: (next: ScopeRule) => void;
+}) {
+  const values = (next: string[]) => onChange({ ...rule, values: next });
+  const choices: Partial<Record<ScopeDimension, { options: { value: string; label: string }[]; empty: string }>> = {
+    customer_group: {
+      options: lookups.groups.map((g) => ({ value: g.id, label: `${g.name} (${g.code})` })),
+      empty: 'No customer groups yet. Create one under Customer groups.',
+    },
+    branch: {
+      options: lookups.branches.map((b) => ({ value: b.id, label: `${b.name} (${b.code})` })),
+      empty: 'No branches.',
+    },
+    sales_type: {
+      options: lookups.salesTypes.map((v) => ({ value: v, label: v === 'cash' ? 'Cash sale' : 'Credit sale' })),
+      empty: '',
+    },
+    channel: {
+      options: lookups.channels.map((v) => ({ value: v, label: CHANNEL_LABELS[v] ?? v })),
+      empty: '',
+    },
+  };
+  const choice = choices[d];
+  if (d === 'customer') {
+    return (
+      <CustomerPicker
+        selected={rule.values}
+        nameOf={(id) => customerNames[id] ?? id}
+        remember={remember}
+        onChange={values}
+      />
+    );
+  }
+  if (choice) {
+    return <Checks options={choice.options} selected={rule.values} onChange={values} empty={choice.empty} />;
+  }
+  return (
+    <TextValues
+      label={SCOPE_LABELS[d]}
+      values={rule.values}
+      upper={d === 'country'}
+      placeholder={d === 'country' ? 'KE' : 'ROUTE-1'}
+      onChange={values}
+    />
   );
 }
 
@@ -201,7 +218,7 @@ function TextValues({
   const [draft, setDraft] = useState('');
   const add = () => {
     const v = upper ? draft.trim().toUpperCase() : draft.trim();
-    if (v && !values.includes(v)) onChange([...values, v]);
+    if (v !== '' && !values.includes(v)) onChange([...values, v]);
     setDraft('');
   };
   return (
@@ -278,23 +295,20 @@ function CustomerPicker({
 }) {
   const uid = useId();
   const [q, setQ] = useState('');
-  const [found, setFound] = useState<{ id: string; number: string; name: string }[]>([]);
+  const [answer, setAnswer] = useState<{ q: string; rows: { id: string; number: string; name: string }[] }>({ q: '', rows: [] });
+  const asked = useDebouncedValue(q.trim(), 250);
   useEffect(() => {
-    if (q.trim().length < 2) {
-      setFound([]);
-      return;
-    }
+    if (asked.length < 2) return;
     let live = true;
-    const t = setTimeout(() => {
-      void searchCustomersAction(q).then((r) => {
-        if (live && r.ok) setFound(r.data);
-      });
-    }, 250);
+    void searchCustomersAction(asked).then((r) => {
+      if (live && r.ok) setAnswer({ q: asked, rows: r.data });
+    });
     return () => {
       live = false;
-      clearTimeout(t);
     };
-  }, [q]);
+  }, [asked]);
+  // Only an answer to what is typed now is shown; a shorter or changed search shows nothing stale.
+  const found = asked.length >= 2 && answer.q === asked ? answer.rows : [];
   return (
     <div className="space-y-2">
       <label htmlFor={uid} className="sr-only">
