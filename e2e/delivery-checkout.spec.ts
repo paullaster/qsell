@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { noHorizontalScroll, noInnerHorizontalScroll, noNativeSelect } from './support/page';
+import { noHorizontalScroll, noInnerHorizontalScroll, noNativeSelect, open } from './support/page';
 import { deliveryTool } from './support/delivery-fixtures';
 
 async function cartWithSalt(page: Page): Promise<void> {
@@ -83,7 +83,28 @@ test.describe('delivery at the shop checkout', () => {
       expect(kept.recipient_phone).toBe('254722111222');
       expect(kept.notes).toBe('Blue gate, ask for the guard');
       expect(kept.stages).toContain('charge_quoted');
+
+      // Staff see the order's delivery invoice only when the company bills delivery on an invoice of its own.
+      const openOrder = async (): Promise<void> => {
+        await open(page, '/admin/orders', /Customer Orders/);
+        await page.getByLabel('Search orders').fill(orderNumber ?? '');
+        const manage = page.getByRole('button', { name: /Manage/ }).first();
+        await expect(manage).toBeVisible({ timeout: 60_000 });
+        await manage.click();
+        await expect(page.getByRole('dialog')).toBeVisible({ timeout: 30_000 });
+      };
+      deliveryTool('billing', 'with_goods');
+      await openOrder();
+      const invoices = page.getByRole('group', { name: 'Invoices' });
+      await expect(invoices.getByRole('button', { name: 'Tax Invoice PDF' })).toBeVisible();
+      await expect(invoices.getByRole('button', { name: 'Delivery Invoice PDF' })).toHaveCount(0);
+      deliveryTool('billing', 'separate');
+      await openOrder();
+      await expect(invoices.getByRole('button', { name: 'Delivery Invoice PDF' })).toBeVisible({ timeout: 30_000 });
+      await expect(invoices.getByRole('button', { name: 'Email Delivery Invoice' })).toBeVisible();
+      await noHorizontalScroll(page);
     } finally {
+      deliveryTool('billing', 'reset');
       deliveryTool('close', tag);
     }
   });

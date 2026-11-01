@@ -1,12 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { DollarSign, FileText, Mail, MapPin, Phone, Printer, Truck, User } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
 import { Field, fieldClass, primaryClass } from '@/components/ui/screen-kit';
 import { OrderApprovalBanner } from '@/components/admin/approvals/OrderApprovalBanner';
+import { deliveryInvoiceAvailableAction } from '@/server/domains/invoices/actions';
 import { OrderCreditNotesPanel } from '@/components/admin/OrderCreditNotesPanel';
 import { OrderReferencePanel } from './OrderReferencePanel';
 import { OrderTimelinePanel } from './OrderTimelinePanel';
@@ -43,7 +44,7 @@ interface Props {
   notice: string | null;
   onClose: () => void;
   onPreview: () => void;
-  onInvoice: (action: 'download' | 'email', type: 'tax_invoice' | 'proforma') => void;
+  onInvoice: (action: 'download' | 'email', type: 'tax_invoice' | 'proforma' | 'delivery_invoice') => void;
   onSave: (change: FulfilmentChange) => void;
   onCancel: (reason: string) => void;
   /** Something in the panels below changed the order's money or approval: the list is read again. */
@@ -75,6 +76,17 @@ export function OrderDetailsModal({
   const [notes, setNotes] = useState(order.internalNotes ?? '');
   const [cancelReason, setCancelReason] = useState('Customer requested order cancellation');
   const held = heldForApproval(order);
+  // Delivery billed apart from the goods has an invoice of its own; the buttons for it show only then.
+  const [deliveryInvoice, setDeliveryInvoice] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void deliveryInvoiceAvailableAction(order.id).then((r) => {
+      if (live && r.ok) setDeliveryInvoice(r.data.available);
+    });
+    return () => {
+      live = false;
+    };
+  }, [order.id]);
 
   const save = (e: React.SyntheticEvent) => {
     e.preventDefault();
@@ -136,6 +148,28 @@ export function OrderDetailsModal({
               Email Proforma
             </button>
           )}
+          {deliveryInvoice ? (
+            <>
+              <button
+                type="button"
+                disabled={invoiceBusy}
+                onClick={() => onInvoice('download', 'delivery_invoice')}
+                className={`${linkButton} bg-surface-sunken text-fg hover:bg-hover`}
+              >
+                <Truck className="h-3.5 w-3.5" aria-hidden />
+                Delivery Invoice PDF
+              </button>
+              <button
+                type="button"
+                disabled={invoiceBusy}
+                onClick={() => onInvoice('email', 'delivery_invoice')}
+                className={`${linkButton} bg-indigo-600/20 text-indigo-800 hover:bg-indigo-600/30`}
+              >
+                <Mail className="h-3.5 w-3.5" aria-hidden />
+                Email Delivery Invoice
+              </button>
+            </>
+          ) : null}
           <button
             type="button"
             onClick={onPreview}

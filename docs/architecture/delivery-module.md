@@ -375,3 +375,46 @@ A charge policy now has a tax rate and says whether its amounts already include 
 ### 26.5 Verified
 
 Unit: provider catalogue and cost arithmetic (tier boundaries, monotonic), volume fit, settings checks (https, blocked hosts, tile placeholders, country codes), usage summaries, the OpenStreetMap adapter against fake servers (headers, spacing, caching, chunking, unroutable places, failures), the registry and service (recording, choice, fallback), the delivery tax split, the checkout input (delivery, recipient, amounts), branch choice. Integration (database): saving the choice (reason, validation, version conflict, two at once, decision log, effect on the services), usage counting and metrics, trying a service, permissions; orders with tax (added and included), the shown-charge guard, recipient and note, the shop quote equal to the order's charge, refusals in words, the gate, search and pin naming. E2E: choosing a service with the cost screen on desktop and phone; the shop checkout from a written area, then a device-location pin, a recipient, the charge and its tax shown before payment and the order carrying exactly that.
+
+
+## 27. Delivery on the invoice and at KRA (2026-11-02)
+
+**The setting** (Delivery, Delivery invoicing; `delivery_billing_settings`, one row for each company, version-checked, a reason of a few words, decision log `delivery.billing_changed`; `deliveries:read` to see, `deliveries:manage` to change):
+
+| | On the same invoice (`with_goods`, the default) | On its own invoice (`separate`) |
+|---|---|---|
+| Invoice | One tax invoice. Delivery is a line beside the product lines. | The products' tax invoice as before, plus a second tax invoice for the delivery service. |
+| Tax shown | Subtotal (products and delivery, before tax), then **VAT on products**, **VAT on delivery (16%)**, **Total VAT**, then the total. | Each invoice shows its own VAT; together they are the order. |
+| Number | One. | Two, both from the **same tax invoice series** (one legal sequence); the delivery invoice is its own document of the order. |
+| KRA | One signing, with the delivery service item as a line. | Two signings, each its own document in the signing log (`order:<id>:tax_invoice`, `order_delivery:<id>:tax_invoice`), each with its own receipt. |
+
+An order with no delivery charge, a free one, or an older order with a shipping fee and no delivery record is laid out exactly as before in either mode (the old "Shipping" row is kept for the last).
+
+**One plan for every output** (`src/lib/delivery-invoicing.ts` `planInvoices`, read by `invoicePlanFor`): the invoice, its email, the PDF and what is sent to KRA all come from it, so they cannot disagree. The order keeps `subtotal` (products before tax), `tax` (products and delivery), `shippingFee` (delivery before tax) and the total; the delivery's own net, tax, gross and rate are kept on its record. Tax on the products is the order's tax less the delivery's. A layout whose invoices do not add up to the order, to the cent, is refused and never issued. A proforma is one request for payment, so it always shows delivery with the goods.
+
+**What KRA is sent.** eTIMS takes registered items, so the delivery service is a **product the company chooses** (a service item created under Products and registered under KRA, eTIMS items). The delivery line is that item, quantity 1, at what the customer pays for delivery (tax included), like the product lines; the tax class comes from the item at KRA. The goods line amounts, the total and the frozen record of what was sent (used by credit notes) are as before, with the delivery line in them when it is on the invoice. Signing is **refused, in words, and nothing is sent** when no item has been chosen (`DELIVERY_ITEM_NOT_SET`) or when the item's tax rate is not the tax the delivery was charged (`DELIVERY_TAX_MISMATCH`: KRA works the tax from the item, so a mismatch would sign a wrong tax). The settings screen names charge policies in force whose tax differs from the item's before an invoice is refused, and says whether the item is registered.
+
+**The separate delivery invoice.** Issued when the goods invoice is issued (generating the goods invoice starts the delivery invoice too, in the background, numbered once; asking again returns the same number). It can be downloaded or emailed on its own (document type `delivery_invoice`, "Tax Invoice: Delivery Service"). Its KRA status is kept on the delivery record (`order_deliveries.invoice_kra_status`), so it never overwrites the order's own KRA status, which is the goods invoice's.
+
+**Limits.** The credit note's goods lines keep their old behaviour (see §27.1). Orders invoiced before this layout existed have no delivery line to credit. Google and Mapbox adapters, D-0e and rider dispatch are later.
+
+**Verified.** Unit: the plan in both modes (tax parts add up, subtotal plus tax is the total, free and no delivery unchanged, old shipping row kept, rounding to the cent, refuses a plan that does not add up). Integration (database, a pretend KRA that keeps what it is asked to send): the setting (default, save with reason, validation, stale version, two at once, log, tax mismatches named, permissions); one invoice (the lines KRA is sent, the total, the layout, the document and the tax parts, refusal without an item, refusal on a tax mismatch); two invoices (what each sends and the totals adding up to the order, each its own document in the log, the delivery status on the delivery record, both issued from the one series once, titles, nothing to give when delivery is with the goods); an order with no delivery unchanged. E2E: the settings screen on desktop and phone (default, the example for each choice, saving with an item and a reason, kept after reload).
+
+
+### 27.1 Credit notes, the order screen and the timeline (2026-11-02)
+
+**Credit notes follow how the invoice was issued, not today's setting.** The tax invoice's record keeps `deliveryBilling` (the mode) and `deliveryServiceProductId` in its `meta`; `invoicedLayout` reads them and `src/lib/delivery-credit.ts` (pure) turns them with the delivery record into a credit target.
+
+| Invoiced | Credit |
+|---|---|
+| On the same invoice | Delivery is one more creditable line of the goods invoice ("Delivery", quantity 1, what the customer paid with tax), found by the delivery service item, and sent to KRA against the signed line. It is a service: nothing is expected back into stock, and it earns no rebate or loyalty points, so those use the goods lines only. |
+| On its own invoice | The goods invoice's creditable total is the order total less delivery. The delivery is credited in full (`issueForDelivery`, one line, once) in a credit note of its own against `order_delivery:<id>:tax_invoice`, signed against the delivery invoice's number. It goes through the same approval workflow (`credit_note.requested`, payload `delivery: true`). A line for the delivery on the goods invoice is refused. |
+| Before delivery had a layout, or no charge | Nothing of delivery to credit; as before. |
+
+The credit-note panel shows the delivery line (same invoice) or a "Credit the delivery invoice" block (own invoice), with the reason and note given above it.
+
+**Order screen.** Orders whose delivery is billed apart show **Delivery Invoice PDF** and **Email Delivery Invoice** beside the tax invoice buttons (`deliveryInvoiceAvailableAction`, `orders:read`).
+
+**Timeline.** The delivery invoice's KRA result is on the order's timeline as `delivery_invoice_signed`, `delivery_invoice_failed` (with the reason code and message) and `delivery_invoice_skipped` (migration 0123 adds them to the stage check). They are non-tracking stages and change no column, so `orders.kra_transmission_status` stays the goods invoice's.
+
+**Known, not changed here.** A goods line is credited at its line price (before tax for a tax-exclusive product), as credit notes always did; the delivery line is credited at what was paid (tax included), which is how it is invoiced and sent to KRA. Aligning goods credits with tax-inclusive amounts is a separate change to the whole credit-note flow.

@@ -65,14 +65,14 @@ export function AdminOrders({ firstPage, companyPromise }: AdminOrdersProps) {
 
   const invoice = async (
     action: 'download' | 'email',
-    type: 'tax_invoice' | 'proforma',
+    type: 'tax_invoice' | 'proforma' | 'delivery_invoice',
     orderId: string,
   ) => {
     setInvoiceBusy(true);
     setNotice(null);
     setError(null);
     try {
-      const kind = type === 'proforma' ? 'Proforma invoice' : 'Posted tax invoice';
+      const kind = { proforma: 'Proforma invoice', delivery_invoice: 'Delivery invoice', tax_invoice: 'Posted tax invoice' }[type];
       if (action === 'download') {
         const result = await generateInvoicePdfAction(orderId, type);
         downloadPdfBase64(result.pdfBase64, result.filename);

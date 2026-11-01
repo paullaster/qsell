@@ -3,6 +3,7 @@
  *   tsx e2e/support/delivery-fixtures.ts open <tag>    a branch with a map pin that offers its own riders, and a charge in force for it
  *                                                      (a flat 300 plus 16% tax), named "Delivery <tag>"
  *   tsx e2e/support/delivery-fixtures.ts order <order number>  what an order was given for delivery: branch, charge and its tax, who receives it, the order's own tax and total
+ *   tsx e2e/support/delivery-fixtures.ts billing <with_goods|separate|reset>  how delivery is invoiced (an item named "Salt 500g" stands for the service); reset puts back the shop's default: one invoice, no item
  *   tsx e2e/support/delivery-fixtures.ts close <tag>   takes all of that out of play again, so the shop's other tests are not asked about delivery
  */
 import { execFileSync } from 'node:child_process';
@@ -45,6 +46,19 @@ async function close(tag: string): Promise<Record<string, string>> {
   return { closed: 'yes' };
 }
 
+async function billing(mode: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { products } = await import('@/server/db/drizzle/schema');
+  const c = getContainer();
+  const company = await c.companySettings.ensureSeeded();
+  const [item] = await db.select({ id: products.id }).from(products).where(eq(products.name, 'Salt 500g'));
+  const now = await c.deliveryBilling.get(company.id);
+  const reset = mode === 'reset';
+  await c.deliveryBilling.save(company.id, 'e2e', { mode: reset ? 'with_goods' : mode, serviceProductId: reset ? null : (item?.id ?? null), expectedVersion: now.version, reason: 'End-to-end test of delivery invoicing' });
+  return { mode };
+}
+
 async function order(orderNumber: string): Promise<Record<string, string>> {
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
   const [row] = await db.execute<Record<string, string | null>>(sql`
@@ -58,12 +72,13 @@ async function order(orderNumber: string): Promise<Record<string, string>> {
 
 async function main(): Promise<void> {
   const [command, tag] = process.argv.slice(2);
-  if (tag === undefined) throw new Error('usage: delivery-fixtures open|close|order <tag>');
+  if (tag === undefined) throw new Error('usage: delivery-fixtures open|close|order|billing <tag>');
   let result: Record<string, string> | null = null;
   if (command === 'open') result = await open(tag);
   if (command === 'close') result = await close(tag);
   if (command === 'order') result = await order(tag);
-  if (result === null) throw new Error('usage: delivery-fixtures open|close|order <tag>');
+  if (command === 'billing') result = await billing(tag);
+  if (result === null) throw new Error('usage: delivery-fixtures open|close|order|billing <tag>');
   process.stdout.write(`FIXTURE ${JSON.stringify(result)}\n`);
 }
 

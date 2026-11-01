@@ -119,6 +119,7 @@ import type { DeliveryQuotes } from '@/server/domains/delivery/quote';
 import type { DeliveryPlans } from '@/server/domains/delivery/plan';
 import type { OrderDeliveries } from '@/server/domains/delivery/order-delivery';
 import { KraConfigRepository } from '@/server/domains/kra/repository';
+import type { DeliveryBilling } from '@/server/domains/delivery/billing';
 import { KraConfigResolver } from '@/server/domains/kra/resolver';
 import { EtimsTransmissionService } from '@/server/domains/kra/etims/transmission-service';
 import { EtimsItemService } from '@/server/domains/kra/etims/item-service';
@@ -272,6 +273,8 @@ export interface AppContainer {
   /** The delivery recorded on each order. */
   orderDeliveries: OrderDeliveries;
   kraConfigs: KraConfigRepository;
+  /** How delivery is billed on invoices and at KRA. */
+  deliveryBilling: DeliveryBilling;
   kraResolver: KraConfigResolver;
   etimsTransmission: EtimsTransmissionService;
   etimsItems: EtimsItemService;
@@ -606,6 +609,7 @@ export function getContainer(): AppContainer {
     deliveryPlans: deliveryServices.deliveryPlans,
     orderDeliveries: deliveryServices.orderDeliveries,
     kraConfigs,
+    deliveryBilling: deliveryServices.deliveryBilling,
     kraResolver,
     etimsTransmission,
     etimsItems,

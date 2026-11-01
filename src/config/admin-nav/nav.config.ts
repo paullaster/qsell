@@ -432,6 +432,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'deliveries:read',
       },
       {
+        id: 'delivery-invoicing',
+        title: 'Delivery invoicing',
+        name: 'delivery-invoicing',
+        href: '/admin/delivery/invoicing',
+        description: 'Whether delivery goes on the same invoice as the products or on its own, and how KRA is told',
+        icon: 'FileText',
+        permission: 'deliveries:read',
+      },
+      {
         id: 'delivery-maps',
         title: 'Map service',
         name: 'delivery-maps',

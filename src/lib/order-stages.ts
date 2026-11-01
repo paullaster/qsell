@@ -108,6 +108,10 @@ export const ORDER_STAGES = {
   kra_submitted: { phase: 'billing', label: 'Sent to KRA' },
   kra_signed: { phase: 'billing', label: 'Signed by KRA' },
   kra_failed: { phase: 'billing', label: 'KRA did not accept it' },
+  // A delivery billed on an invoice of its own is signed on its own; these do not touch the order's own KRA status, which is the goods invoice's.
+  delivery_invoice_signed: { phase: 'billing', label: 'Delivery invoice signed by KRA' },
+  delivery_invoice_failed: { phase: 'billing', label: 'Delivery invoice: KRA did not accept it' },
+  delivery_invoice_skipped: { phase: 'billing', label: 'Delivery invoice not sent to KRA' },
   credit_note_issued: { phase: 'billing', label: 'Credit note issued' },
   // Closure
   completed: { phase: 'closure', label: 'Completed' },
@@ -164,7 +168,7 @@ type EffectOf = StageEffect | ((outcome: StageOutcome) => StageEffect);
  * paid, packed, sent): an order whose stock was just issued is still "paid and waiting to be sent", and the check for orders that
  * wait too long must keep seeing that. These stages get a place in the order of events but do not become its current stage.
  */
-export const NON_TRACKING_STAGES: readonly OrderStage[] = ['stock_reserved', 'reservation_failed', 'stock_issued', 'stock_released', 'stock_returned', 'charge_quoted'];
+export const NON_TRACKING_STAGES: readonly OrderStage[] = ['stock_reserved', 'reservation_failed', 'stock_issued', 'stock_released', 'stock_returned', 'charge_quoted', 'delivery_invoice_signed', 'delivery_invoice_failed', 'delivery_invoice_skipped'];
 
 export const tracksCurrentStage = (stage: OrderStage): boolean => !NON_TRACKING_STAGES.includes(stage);
 
@@ -220,6 +224,20 @@ export function stageForStatus(target: OrderStatus): { stage: OrderStage; outcom
       return { stage: 'refunded', outcome: 'succeeded' };
     case 'pending':
       return { stage: 'status_corrected', outcome: 'succeeded' };
+  }
+}
+
+/** The stage that mirrors what happened to the delivery's own invoice at KRA. It never changes the order's own KRA status. */
+export function stageForDeliveryInvoice(status: string): { stage: OrderStage; outcome: StageOutcome } | null {
+  switch (status) {
+    case 'transmitted':
+      return { stage: 'delivery_invoice_signed', outcome: 'succeeded' };
+    case 'failed':
+      return { stage: 'delivery_invoice_failed', outcome: 'failed' };
+    case 'skipped':
+      return { stage: 'delivery_invoice_skipped', outcome: 'skipped' };
+    default:
+      return null;
   }
 }
 

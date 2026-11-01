@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
   getOrderCreditableAction,
+  issueDeliveryCreditNoteAction,
   issueOrderCreditNoteAction,
   listOrderCreditNotesAction,
   retryCreditNoteSigningAction,
@@ -11,6 +12,7 @@ import {
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { anythingLeft, chosenLines, creditStep, creditUnitName, creditEstimate, inCreditUnit, creditNoteRequest, formatMoney, noteMissing, perUnit, reasonLabel } from '@/lib/credit-note-form';
 import type { Choice } from '@/lib/payment-options';
+import type { CreditNoteReason } from '@/server/domains/credit-notes/reasons';
 
 type Creditable = NonNullable<
   Awaited<ReturnType<typeof getOrderCreditableAction>> extends infer R
@@ -134,6 +136,32 @@ export function OrderCreditNotesPanel({ orderId }: { orderId: string }) {
     })();
   };
 
+  // Delivery billed on its own invoice is credited against that invoice, in a credit note of its own.
+  const creditDelivery = () => {
+    void (async () => {
+      setIssuing(true);
+      setError(null);
+      setNotice(null);
+      try {
+        const res = await issueDeliveryCreditNoteAction({ orderId, reasonCode: reason?.id as CreditNoteReason, reasonNote: note.trim() === '' ? undefined : note.trim() });
+        if (!res.ok) {
+          setError(res.error);
+          return;
+        }
+        setNotice(
+          res.data.status === 'pending_approval'
+            ? res.data.message
+            : `Credit note ${res.data.creditNote.creditNoteNo} issued for the delivery. Signing with KRA continues in the background.`,
+        );
+        setNote('');
+        await load();
+        timers.current.push(setTimeout(() => void load(), 2500), setTimeout(() => void load(), 7000));
+      } finally {
+        setIssuing(false);
+      }
+    })();
+  };
+
   const retry = (id: string) => {
     void (async () => {
       setRetrying(id);
@@ -157,7 +185,7 @@ export function OrderCreditNotesPanel({ orderId }: { orderId: string }) {
         <h4 id={`${uid}-h`} className="text-xs font-bold tracking-wider text-fg-strong uppercase">
           Credit notes
         </h4>
-        {data?.hasTaxInvoice === true && anythingLeft(lines) && !open ? (
+        {data?.hasTaxInvoice === true && (anythingLeft(lines) || (data.deliveryInvoice?.remaining ?? 0) > 0) && !open ? (
           <button type="button" className={buttonClass} onClick={() => setOpen(true)}>
             Issue credit note
           </button>
@@ -186,7 +214,7 @@ export function OrderCreditNotesPanel({ orderId }: { orderId: string }) {
         </p>
       ) : null}
 
-      {data?.hasTaxInvoice === true && !anythingLeft(lines) ? (
+      {data?.hasTaxInvoice === true && !anythingLeft(lines) && (data.deliveryInvoice?.remaining ?? 0) <= 0 ? (
         <p className="text-fg-muted">Everything on this invoice has been credited.</p>
       ) : null}
 
@@ -328,6 +356,24 @@ export function OrderCreditNotesPanel({ orderId }: { orderId: string }) {
               </p>
             ) : null}
           </div>
+
+          {data.deliveryInvoice !== null ? (
+            <div className="space-y-2 rounded-lg bg-surface-sunken/60 p-3">
+              <p className="font-semibold text-fg-strong">{data.deliveryInvoice.description} (invoiced on its own)</p>
+              <p className="text-fg-muted">
+                {money(data.deliveryInvoice.amount, data.currency)} invoiced · {money(data.deliveryInvoice.credited, data.currency)} credited ·{' '}
+                {money(data.deliveryInvoice.remaining, data.currency)} left. It has its own credit note, with the reason and note above.
+              </p>
+              <button
+                type="button"
+                className={buttonClass}
+                disabled={issuing || data.deliveryInvoice.remaining <= 0 || reason === null || missingNote}
+                onClick={creditDelivery}
+              >
+                Credit the delivery invoice
+              </button>
+            </div>
+          ) : null}
 
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="font-semibold text-fg-strong">

@@ -1,0 +1,58 @@
+import { expect, test, type Locator } from '@playwright/test';
+import { noHorizontalScroll, noInnerHorizontalScroll, noNativeSelect, open } from './support/page';
+import { pick } from './support/quotes';
+
+/** Brings a button to the middle of the screen first; on a phone the development badge covers the bottom corner. */
+async function press(button: Locator): Promise<void> {
+  await button.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+  await button.click();
+}
+
+test.describe('delivery invoicing', () => {
+  test('delivery on the same invoice or on its own is shown with an example, chosen with an item and a reason, and kept', async ({ page }) => {
+    test.slow();
+    await open(page, '/admin/delivery/invoicing', 'Delivery invoicing');
+    await noNativeSelect(page);
+    await noHorizontalScroll(page);
+
+    // The default is one invoice: delivery a line, and the tax for the products, for the delivery and in all.
+    const preview = page.getByRole('group', { name: 'How it looks' });
+    await expect(page.getByRole('radio', { name: /On the same invoice/ })).toBeChecked();
+    await expect(preview.getByRole('figure', { name: 'The invoice' })).toContainText('Delivery');
+    await expect(preview).toContainText('VAT on products');
+    await expect(preview).toContainText('VAT on delivery (16%)');
+    await expect(preview).toContainText('Total VAT');
+    await expect(preview.getByRole('figure', { name: 'Invoice for the delivery service' })).toHaveCount(0);
+    await expect(page.getByText('No item chosen')).toBeVisible();
+
+    // On its own: two invoices that add up to the same order.
+    await page.getByRole('radio', { name: /On its own invoice/ }).check();
+    await expect(preview.getByRole('figure', { name: 'Invoice for the products' })).toContainText('1,160.00');
+    await expect(preview.getByRole('figure', { name: 'Invoice for the delivery service' })).toContainText('348.00');
+    await noInnerHorizontalScroll(page);
+    await noHorizontalScroll(page);
+
+    // Saving needs a reason, and the item the delivery is signed as.
+    const form = page.getByRole('form', { name: 'Save delivery invoicing' });
+    await expect(form.getByRole('button', { name: 'Save' })).toBeDisabled();
+    await form.getByLabel('Why? (kept with the change)').fill('Our accountant wants delivery apart');
+    await pick(page, page.getByRole('combobox', { name: 'Delivery service item' }), 'Salt 500g', /Salt 500g/);
+    await expect(page.getByText('Save to check this item')).toBeVisible();
+    await press(form.getByRole('button', { name: 'Save' }));
+    await expect(page.getByText('Saved. New invoices follow this choice')).toBeVisible({ timeout: 30_000 });
+    // Once saved, the item is checked: whether KRA knows it and what tax it carries.
+    await expect(page.getByLabel('About this item')).toContainText('Not registered with KRA yet');
+
+    // It is kept.
+    await page.reload();
+    await expect(page.getByRole('radio', { name: /On its own invoice/ })).toBeChecked({ timeout: 30_000 });
+    await expect(page.getByRole('combobox', { name: 'Delivery service item' })).toHaveValue(/Salt 500g/);
+
+    // Put back (the mode and the item), so the shop's other tests invoice as they always did.
+    await page.getByRole('radio', { name: /On the same invoice/ }).check();
+    await page.getByRole('button', { name: 'Clear Delivery service item' }).click();
+    await page.getByLabel('Why? (kept with the change)').fill('Back to one invoice after the test');
+    await press(page.getByRole('form', { name: 'Save delivery invoicing' }).getByRole('button', { name: 'Save' }));
+    await expect(page.getByText('Saved. New invoices follow this choice')).toBeVisible({ timeout: 30_000 });
+  });
+});

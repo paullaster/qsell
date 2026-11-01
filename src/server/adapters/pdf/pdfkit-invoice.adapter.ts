@@ -42,7 +42,7 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
         payload.company.documentLayouts,
         payload.company.invoiceFooterNote ?? '',
       )[isQuote ? 'quote' : 'invoice'];
-      let title = 'TAX INVOICE';
+      let title = has(payload.documentTitle) ? payload.documentTitle.toUpperCase() : 'TAX INVOICE';
       let docLabel = 'Invoice No.';
       if (isQuote) {
         title = 'SALES QUOTATION';
@@ -448,10 +448,12 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
       const totalsW = 220;
       const totalsX = M + CONTENT_W - totalsW;
       const totalLabel = isProforma ? 'Amount Payable' : 'Total Paid';
+      const taxRows = payload.taxRows ?? [{ label: payload.taxLabel ?? 'VAT (16%)', amount: payload.tax }];
       const totals: { label: string; value: string; emph?: boolean }[] = [
         { label: 'Subtotal', value: money(payload.subtotal, payload.currency) },
-        { label: payload.taxLabel ?? 'VAT (16%)', value: money(payload.tax, payload.currency) },
-        { label: 'Shipping', value: money(payload.shippingFee, payload.currency) },
+        ...taxRows.map((r) => ({ label: r.label, value: money(r.amount, payload.currency) })),
+        // With the tax in its parts, delivery is a line of the invoice (or has its own), so there is no shipping row to show.
+        ...(payload.taxRows !== undefined && payload.shippingFee === 0 ? [] : [{ label: 'Shipping', value: money(payload.shippingFee, payload.currency) }]),
         { label: totalLabel, value: money(payload.totalAmount, payload.currency), emph: true },
       ];
 

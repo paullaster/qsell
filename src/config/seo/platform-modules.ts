@@ -111,6 +111,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'Say how long each method takes to prepare',
       'Delivery charges by zone, by weight or by distance from the nearest branch, with extras for busy times and discounts for bigger orders',
       'Try any delivery charge before it goes live and see exactly how it was worked out',
+      'Choose whether delivery goes on the same tax invoice as the products or on its own invoice signed separately for KRA, with the tax shown for the products and for the delivery',
       'Choose the map service for addresses and distances (free OpenStreetMap or a paid one) and compare what each costs for your orders',
     ],
     keywords: [
@@ -122,7 +123,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'delivery charge calculator',
       'delivery fee by distance',
     ],
-    subModules: ['Delivery zones', 'Delivery charges', 'Delivery methods', 'Map service'],
+    subModules: ['Delivery zones', 'Delivery charges', 'Delivery methods', 'Delivery invoicing', 'Map service'],
   },
   {
     navId: 'products-inventory',
