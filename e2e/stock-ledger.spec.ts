@@ -59,6 +59,8 @@ test.describe('moving the company to the new stock ledger', () => {
     await back.getByRole('button', { name: /^Confirm: Go back to the old way/ }).click();
     await expect(page.locator('p[role="alert"]').first()).toContainText(/Say why/, { timeout: 30_000 });
     await back.getByLabel('Why go back').fill('Looking at a report before we carry on');
+    // The confirmation closes after each answer, so it is opened again now that there is a reason.
+    await back.getByRole('button', { name: 'Go back to the old way' }).click();
     await back.getByRole('button', { name: /^Confirm: Go back to the old way/ }).click();
     await expect(page.getByText('Back to the old way.')).toBeVisible({ timeout: 30_000 });
     await expect(where).toContainText('The old way', { timeout: 30_000 });
