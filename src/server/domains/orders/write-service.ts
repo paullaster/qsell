@@ -27,6 +27,7 @@ import { readOptionalEmail } from '@/lib/guest-contact';
 import { has, nth, orElse, required } from '@/lib/values';
 import { expandKits, KitError } from '@/server/domains/pricing/kit-service';
 import { packagingSelectionProblem } from '@/lib/packaging-suggestions';
+import { inventoryStockLines } from '@/lib/inventory-kind';
 import type { DeliveryMethod } from '@/lib/delivery-methods';
 import type { AddressWords } from '@/lib/delivery-zones';
 import type { GeoPoint } from '@/lib/geo';
@@ -518,13 +519,18 @@ export const OrderWriteService = {
       }
     }
     // Stock is held only for inventory-managed lines; service/non-inventory lines remain commercial order lines.
-    const stockProductKinds = await drizzleDb
+    const stockProductIds = [...new Set(orderItems.map((item) => item.productId))];
+    const stockProductKinds = stockProductIds.length === 0 ? [] : await drizzleDb
       .select({ id: productsTable.id, inventoryKind: productsTable.inventoryKind })
       .from(productsTable)
-      .where(inArray(productsTable.id, [...new Set(orderItems.map((item) => item.productId))]));
-    const inventoryProductIds = new Set(stockProductKinds.filter((product) => product.inventoryKind === 'inventory').map((product) => product.id));
-    const stockItems = orderItems.flatMap((item) =>
-      inventoryProductIds.has(item.productId) ? [{ productId: item.productId, quantity: item.quantity }] : [],
+      .where(inArray(productsTable.id, stockProductIds));
+    if (stockProductKinds.length !== stockProductIds.length) {
+      return { success: false, error: 'A product in your order could not be found.', code: 'not_found' };
+    }
+    const inventoryKindsById = new Map(stockProductKinds.map((product) => [product.id, product.inventoryKind]));
+    const stockItems = inventoryStockLines(
+      orderItems.map(({ productId, quantity }) => ({ productId, quantity })),
+      inventoryKindsById,
     );
 
     const goodsTotals = params.quotedTotals ?? computeCheckoutTotals(pricedLines);
@@ -819,7 +825,7 @@ export const OrderWriteService = {
     }
 
     // The stock was set aside before the order existed; now the order's own timeline says so, and where.
-    await InventoryReservationService.recordReserved(orderId, stockItems);
+    if (stockItems.length > 0) await InventoryReservationService.recordReserved(orderId, stockItems);
 
     void broadcastRealtime('order_event', { type: 'order_created', order });
 

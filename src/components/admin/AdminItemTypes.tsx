@@ -3,6 +3,8 @@
 import React, { use, useState } from 'react';
 import { Tags, Plus, Search, Edit2, Trash2, Check, X, Package, Star } from 'lucide-react';
 import { type ItemType, type Product } from '@/types/index';
+import type { InventoryKind } from '@/lib/inventory-kind';
+import { BehavesAsField, inventoryKindLabel } from '@/components/admin/BehavesAsField';
 import {
   createItemTypeAction,
   updateItemTypeAction,
@@ -31,6 +33,7 @@ export function AdminItemTypes({
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [isSellable, setIsSellable] = useState(true);
+  const [behavesAs, setBehavesAs] = useState<InventoryKind>('inventory');
   const [isDefault, setIsDefault] = useState(false);
   const [isActive, setIsActive] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -46,6 +49,7 @@ export function AdminItemTypes({
     setName('');
     setCode('');
     setIsSellable(true);
+    setBehavesAs('inventory');
     setIsDefault(itemTypes.length === 0);
     setIsActive(true);
     setFormError(null);
@@ -57,6 +61,7 @@ export function AdminItemTypes({
     setName(type.name);
     setCode(String(type.code));
     setIsSellable(type.isSellable);
+    setBehavesAs(type.defaultInventoryKind);
     setIsDefault(type.isDefault);
     setIsActive(type.isActive);
     setFormError(null);
@@ -85,6 +90,7 @@ export function AdminItemTypes({
           name: name.trim(),
           code: parsedCode,
           isSellable,
+          defaultInventoryKind: behavesAs,
           isDefault,
           isActive,
         });
@@ -96,6 +102,7 @@ export function AdminItemTypes({
           name: name.trim(),
           code: parsedCode,
           isSellable,
+          defaultInventoryKind: behavesAs,
           isDefault: itemTypes.length === 0 ? true : isDefault,
           isActive,
         });
@@ -104,7 +111,7 @@ export function AdminItemTypes({
       setIsModalOpen(false);
       onRefresh();
     } catch (err: unknown) {
-      setFormError(err instanceof Error ? err.message : 'Failed to save item type');
+      setFormError(err instanceof Error ? err.message : 'Failed to save business classification');
     } finally {
       setIsSubmitting(false);
     }
@@ -114,8 +121,8 @@ export function AdminItemTypes({
     if (
       !window.confirm(
         type.isDefault
-          ? 'This is the default item type. Set another default before deleting.'
-          : `Delete item type "${type.name}"?`,
+          ? 'This is the default business classification. Set another default before deleting.'
+          : `Delete business classification "${type.name}"?`,
       )
     ) {
       return;
@@ -143,11 +150,13 @@ export function AdminItemTypes({
         <div>
           <h2 className="flex items-center gap-2 text-xl font-bold text-fg-strong">
             <Tags className="h-5 w-5 text-indigo-400" />
-            Item Types
+            Business classifications
           </h2>
           <p className="mt-1 max-w-2xl text-sm text-fg-muted">
-            Classify products for catalog and tax compliance. Each type needs the integer code
-            issued by the tax authority. Exactly one type is the default for new products.
+            Describe what a product is in your business and whether it is sold directly. Each
+            classification keeps its existing tax-authority code. It also says whether its products
+            are stocked goods, goods that are not stocked, or services; a new product starts with
+            that and keeps its own after.
           </p>
         </div>
         <button
@@ -156,7 +165,7 @@ export function AdminItemTypes({
           className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500"
         >
           <Plus className="h-4 w-4" />
-          Add item type
+          Add business classification
         </button>
       </div>
 
@@ -178,6 +187,7 @@ export function AdminItemTypes({
             <tr>
               <th className="px-4 py-3">Tax code</th>
               <th className="px-4 py-3">Name</th>
+              <th className="px-4 py-3">Behaves as</th>
               <th className="px-4 py-3 text-center">Sellable</th>
               <th className="px-4 py-3 text-center">Default</th>
               <th className="px-4 py-3 text-center">Products</th>
@@ -188,8 +198,8 @@ export function AdminItemTypes({
           <tbody className="divide-y divide-line/80 bg-surface-sunken/40">
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-fg-subtle">
-                  No item types yet. Create one to classify products.
+                <td colSpan={8} className="px-4 py-10 text-center text-fg-subtle">
+                  No business classifications yet. Create one to classify products.
                 </td>
               </tr>
             ) : (
@@ -197,6 +207,7 @@ export function AdminItemTypes({
                 <tr key={type.id} className="hover:bg-hover">
                   <td className="px-4 py-3 font-mono text-fg">{type.code}</td>
                   <td className="px-4 py-3 font-semibold text-fg-strong">{type.name}</td>
+                  <td className="px-4 py-3 text-fg">{inventoryKindLabel(type.defaultInventoryKind)}</td>
                   <td className="px-4 py-3 text-center">
                     {type.isSellable ? (
                       <span className="text-emerald-600">Yes</span>
@@ -270,7 +281,7 @@ export function AdminItemTypes({
           >
             <div className="flex items-center justify-between">
               <h3 className="text-base font-bold text-fg-strong">
-                {editing ? 'Edit item type' : 'Create item type'}
+                {editing ? 'Edit business classification' : 'Create business classification'}
               </h3>
               <button
                 type="button"
@@ -315,6 +326,8 @@ export function AdminItemTypes({
                 Integer value provided by the tax authority for e-invoicing / compliance.
               </p>
             </div>
+
+            <BehavesAsField value={behavesAs} onChange={setBehavesAs} />
 
             <div className="flex flex-wrap gap-4 text-xs text-fg">
               <label className="inline-flex items-center gap-2">

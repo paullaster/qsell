@@ -71,7 +71,7 @@ const deliveryChannels = staticSource({
   },
 });
 
-/** The items that can stand for the delivery service on an invoice. Live products only; the tax each carries is shown so a mismatch is seen at once. */
+/** The items that can stand for the delivery service on an invoice: live services only; the tax each carries is shown so a mismatch is seen at once. */
 const serviceProducts = tableSource({
   key: 'delivery-service-products',
   permission: 'deliveries:read',
@@ -82,7 +82,7 @@ const serviceProducts = tableSource({
   select: { sku: products.sku, tax: products.taxRate },
   scope: ({ filters }) => {
     acceptFilters(filters, {});
-    return [and(isNull(products.deletedAt), eq(products.isActive, true)) ?? sql`false`];
+    return [and(isNull(products.deletedAt), eq(products.isActive, true), eq(products.inventoryKind, 'service')) ?? sql`false`];
   },
   toOption: (row) => ({ id: text(row.id), label: `${text(row.label)} (${text(row.sku)})`, description: row.tax === null || row.tax === undefined ? 'No tax rate set' : `Tax ${text(row.tax)}%`, badge: null }),
 });

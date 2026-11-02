@@ -23,6 +23,7 @@ import {
 import { type Product, type Category } from '@/types/index';
 import { AppImage, PRODUCT_IMAGE_FALLBACK } from '@/components/ui/AppImage';
 import { buildProductsCsv } from '@/lib/productCsv';
+import { inventoryKindOf, isInventoryManaged } from '@/lib/inventory-kind';
 import { downloadCsv } from '@/lib/downloadPdf';
 import Link from 'next/link';
 import { ProductImportDialog } from '@/components/admin/ProductImportDialog';
@@ -35,6 +36,13 @@ import {
   type BulkNotice,
 } from '@/components/admin/BulkFeedback';
 import type { ProductSelection } from '@/server/domains/catalog/bulk-delete';
+
+function inventoryTreatmentLabel(product: Pick<Product, 'inventoryKind'>): string {
+  const kind = inventoryKindOf(product);
+  if (kind === 'inventory') return 'Inventory item';
+  if (kind === 'non_inventory') return 'Non-inventory item';
+  return 'Service';
+}
 
 interface AdminProductsProps {
   productsPromise: Promise<Product[]>;
@@ -108,7 +116,8 @@ export function AdminProducts({
 
   // Filtering Logic
   const filteredProducts = products.filter((p) => {
-    const available = p.stockQuantity - p.reservedQuantity;
+    const inventoryManaged = isInventoryManaged(p);
+    const available = inventoryManaged ? p.stockQuantity - p.reservedQuantity : 0;
     const matchesSearch =
       p.name.toLowerCase().includes(search.toLowerCase()) ||
       p.sku.toLowerCase().includes(search.toLowerCase()) ||
@@ -120,10 +129,10 @@ export function AdminProducts({
       statusFilter === 'all' || (statusFilter === 'active' ? p.isActive : !p.isActive);
 
     let matchesStock = true;
-    if (stockFilter === 'in_stock') matchesStock = available > p.lowStockThreshold;
+    if (stockFilter === 'in_stock') matchesStock = inventoryManaged && available > p.lowStockThreshold;
     else if (stockFilter === 'low_stock')
-      matchesStock = available > 0 && available <= p.lowStockThreshold;
-    else if (stockFilter === 'out_of_stock') matchesStock = available <= 0;
+      matchesStock = inventoryManaged && available > 0 && available <= p.lowStockThreshold;
+    else if (stockFilter === 'out_of_stock') matchesStock = inventoryManaged && available <= 0;
 
     return matchesSearch && matchesCategory && matchesStatus && matchesStock;
   });
@@ -492,9 +501,11 @@ export function AdminProducts({
                 </tr>
               ) : (
                 filteredProducts.map((p) => {
-                  const available = p.stockQuantity - p.reservedQuantity;
-                  const isLow = available <= p.lowStockThreshold && available > 0;
-                  const isOut = available <= 0;
+                  const inventoryManaged = isInventoryManaged(p);
+                  const available = inventoryManaged ? p.stockQuantity - p.reservedQuantity : 0;
+                  const isLow = inventoryManaged && available <= p.lowStockThreshold && available > 0;
+                  const isOut = inventoryManaged && available <= 0;
+                  const inventoryLabel = inventoryTreatmentLabel(p);
                   const rowSelected = isSelected(p.id);
                   const cost = p.costPrice;
                   const sellPrice = p.price;
@@ -539,6 +550,7 @@ export function AdminProducts({
                             <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] text-fg-muted">
                               <span>SKU: {p.sku}</span>
                               <span className="text-fg-subtle">Stock: {p.stockCode}</span>
+                              <span className="rounded border border-line px-1.5 py-0.5 font-sans text-[10px]">{inventoryLabel}</span>
                               {p.brand && (
                                 <span className="font-sans text-fg-subtle">• {p.brand}</span>
                               )}
@@ -594,9 +606,9 @@ export function AdminProducts({
                                   : 'bg-surface-sunken text-fg-strong'
                             }`}
                           >
-                            {available} available
+                            {inventoryManaged ? `${available} available` : 'Not tracked'}
                           </span>
-                          {p.reservedQuantity > 0 && (
+                          {inventoryManaged && p.reservedQuantity > 0 && (
                             <span className="mt-0.5 font-mono text-[10px] text-fg-subtle">
                               ({p.reservedQuantity} reserved)
                             </span>

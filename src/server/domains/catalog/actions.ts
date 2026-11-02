@@ -39,6 +39,12 @@ export async function listProductsAction(): Promise<Product[]> {
   return CatalogService.getAllProducts();
 }
 
+/** Products whose stock is tracked by the inventory ledger and stock-management screens. */
+export async function listInventoryProductsAction(): Promise<Product[]> {
+  await requirePermission('products:read');
+  return CatalogService.getInventoryProducts();
+}
+
 /** Active, sellable catalog for the customer storefront. */
 export async function listSellableProductsAction(): Promise<PublicProduct[]> {
   return await withShopAvailability(await CatalogService.getSellableProducts());
@@ -264,6 +270,7 @@ export async function createItemTypeAction(data: {
   name: string;
   code: number;
   isSellable: boolean;
+  defaultInventoryKind?: ItemType['defaultInventoryKind'];
   isDefault?: boolean;
   isActive?: boolean;
 }): Promise<ItemType> {
@@ -277,7 +284,7 @@ export async function createItemTypeAction(data: {
 
 export async function updateItemTypeAction(
   id: string,
-  updates: Partial<Pick<ItemType, 'name' | 'code' | 'isSellable' | 'isDefault' | 'isActive'>>,
+  updates: Partial<Pick<ItemType, 'name' | 'code' | 'isSellable' | 'defaultInventoryKind' | 'isDefault' | 'isActive'>>,
 ): Promise<ItemType> {
   await requirePermission('products:update');
   const itemType = await CatalogService.updateItemType(id, updates);

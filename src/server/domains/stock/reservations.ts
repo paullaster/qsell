@@ -67,6 +67,14 @@ export class StockReservations {
     const wanted = mergeLines(input.lines).filter((l) => l.quantity > 0);
     if (wanted.length === 0) return { ok: true, reserved: [] };
 
+    const kinds = await tx.select({ id: products.id, inventoryKind: products.inventoryKind }).from(products).where(inArray(products.id, wanted.map((line) => line.productId)));
+    const kindById = new Map(kinds.map((product) => [product.id, product.inventoryKind]));
+    const notInventory = wanted.find((line) => kindById.get(line.productId) !== 'inventory');
+    if (notInventory !== undefined) {
+      const [product] = await tx.select({ name: products.name }).from(products).where(eq(products.id, notInventory.productId)).limit(1);
+      return { ok: false, productId: notInventory.productId, error: `${product?.name ?? 'This product'} is not inventory-managed and cannot have a stock reservation.` };
+    }
+
     // What this document already holds (or has used) counts: asking again for the same order asks only for the rest.
     const have = await tx
       .select({ productId: stockReservations.productId, quantity: sql<number>`sum(${stockReservations.quantity} - ${stockReservations.released})::float8` })

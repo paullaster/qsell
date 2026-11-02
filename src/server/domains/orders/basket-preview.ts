@@ -8,6 +8,7 @@ import { drizzleDb } from '@/server/db/drizzle/client';
 import { products as productsTable } from '@/server/db/drizzle/schema';
 import { firstFilled, nth, orElse } from '@/lib/values';
 import { lineAmounts } from './write-service';
+import { inventoryStockLines } from '@/lib/inventory-kind';
 
 export type BasketPreview =
   | {
@@ -73,7 +74,7 @@ export async function previewShopBasket(items: readonly { productId: string; qua
   const totals = computeCheckoutTotals(priceable.map((l) => ({ productId: l.item.productId, quantity: l.item.quantity, unitPrice: l.unitPrice, taxRate: l.product.taxRate ?? 0, isTaxInclusive: l.product.isTaxInclusive !== false })));
   const productFacts = await drizzleDb.select({ id: productsTable.id, weight: productsTable.weight, inventoryKind: productsTable.inventoryKind }).from(productsTable).where(inArray(productsTable.id, [...new Set(stock.map((s) => s.productId))]));
   const factsById = new Map(productFacts.map((product) => [product.id, { weightKg: Number(product.weight ?? 0), inventoryKind: product.inventoryKind }]));
-  const inventoryLines = stock.filter((line) => factsById.get(line.productId)?.inventoryKind === 'inventory');
+  const inventoryLines = inventoryStockLines(stock, new Map(productFacts.map((product) => [product.id, product.inventoryKind])));
   return {
     ok: true,
     subtotal: totals.subtotal,

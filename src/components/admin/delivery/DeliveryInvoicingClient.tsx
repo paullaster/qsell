@@ -68,7 +68,7 @@ function InvoicingView({ first, may }: { first: View; may: boolean }) {
         <legend className="px-1 text-sm font-semibold text-fg-strong">The item that stands for delivery</legend>
         <p className="text-xs text-fg-muted">KRA is sent an item, not a description. Create a service item for delivery under Products, register it with KRA under KRA, eTIMS items, and choose it here. Its tax rate must be the tax your delivery charges carry.</p>
         <div className="max-w-md">
-          <ChoicePicker label="Delivery service item" source="delivery-service-products" choice={item} onChoice={setItem} placeholder="Search products by name or code" clearable />
+          <ChoicePicker label="Delivery service item" source="delivery-service-products" choice={item} onChoice={setItem} placeholder="Search services by name or code" clearable />
         </div>
         {item === null ? (
           <p role="status" className="text-sm text-amber-700">No item chosen. Orders with a delivery charge cannot be signed for KRA until one is.</p>
@@ -81,6 +81,7 @@ function InvoicingView({ first, may }: { first: View; may: boolean }) {
         )}
         {item !== null && shown === null ? <p className="text-xs text-fg-muted">Save to check this item: whether it is registered with KRA and what tax it carries.</p> : null}
         {shown !== null && !shown.registered ? <p className="text-sm text-amber-700">Register this item with KRA before delivery can be signed.</p> : null}
+        {shown !== null && !shown.isService ? <p className="text-sm text-amber-700">This item is not a service. It still works for invoices already set up, but choose a service item (a classification that behaves as a service) when you next change this.</p> : null}
         {saved.taxMismatches.length > 0 ? (
           <div role="alert" className="rounded-lg border border-amber-400 bg-amber-50 p-3 text-sm text-amber-900">
             <p className="font-semibold">These delivery charges carry a different tax from the item, so their invoices would be refused:</p>

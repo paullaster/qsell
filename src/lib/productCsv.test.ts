@@ -6,6 +6,7 @@ const HEADERS = [
   'Stock_Code',
   'Name',
   'Category',
+  'Inventory_Kind',
   'Cost_Price',
   'Price',
   'Stock_Qty',
@@ -23,6 +24,7 @@ const row = (over: Partial<Record<(typeof HEADERS)[number], string>> = {}) => {
     Stock_Code: 'S1',
     Name: 'Fish',
     Category: 'Food',
+    Inventory_Kind: 'inventory',
     Cost_Price: '50',
     Price: '100',
     Stock_Qty: '12.5',
@@ -54,5 +56,13 @@ describe('the product CSV: unit and decimal stock', () => {
       expect(r.ok).toBe(false);
       expect(!r.ok && r.errors[0]?.column).toBe('Stock_Qty');
     }
+  });
+
+  it('defaults old templates to inventory and allows services/non-inventory products only with zero stock', () => {
+    expect(parse(row({ Inventory_Kind: '' }))).toMatchObject({ ok: true, draft: { inventoryKind: 'inventory' } });
+    expect(parse(row({ Inventory_Kind: 'service', Stock_Qty: '0', Low_Stock_Threshold: '0' }))).toMatchObject({ ok: true, draft: { inventoryKind: 'service' } });
+    const invalid = parse(row({ Inventory_Kind: 'non_inventory', Stock_Qty: '2' }));
+    expect(invalid.ok).toBe(false);
+    expect(!invalid.ok && invalid.errors.map((error) => error.column)).toContain('Stock_Qty');
   });
 });

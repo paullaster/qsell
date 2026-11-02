@@ -80,7 +80,7 @@ export class CountService {
       let productIds: string[];
       if (mode === 'full') {
         const rows = [...(await tx.execute<{ product_id: string }>(sql`
-          SELECT m.product_id FROM stock_movements m JOIN products p ON p.id = m.product_id AND p.deleted_at IS NULL
+          SELECT m.product_id FROM stock_movements m JOIN products p ON p.id = m.product_id AND p.deleted_at IS NULL AND p.inventory_kind = 'inventory'
           WHERE m.location_id = ${loc.id}::uuid AND m.id <= ${snapshot} GROUP BY m.product_id HAVING sum(m.quantity) <> 0 ORDER BY m.product_id`))];
         productIds = rows.map((r) => r.product_id);
         if (productIds.length > MAX_FULL_COUNT_LINES) throw new StockError(`${loc.name} holds ${String(productIds.length)} products, more than one full count can list (${String(MAX_FULL_COUNT_LINES)}). Count it in parts, with cycle counts.`, 'TOO_MANY');
@@ -91,6 +91,7 @@ export class CountService {
         productIds = [...new Set(ids)].sort();
         const facts = await productFacts(tx, productIds);
         if (productIds.some((id) => facts.get(id)?.deleted !== false)) throw new StockError('A product to count could not be found.', 'NO_PRODUCT');
+        if (productIds.some((id) => facts.get(id)?.inventoryKind !== 'inventory')) throw new StockError('Cycle counts can include inventory-managed products only.', 'NOT_INVENTORY');
       }
       const id = crypto.randomUUID();
       const number = await nextNumber(this.deps, tx, 'stock_count', companyId, id);

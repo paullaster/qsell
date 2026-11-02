@@ -1,6 +1,7 @@
 import { expect, test, type Locator } from '@playwright/test';
 import { noHorizontalScroll, noInnerHorizontalScroll, noNativeSelect, open } from './support/page';
 import { pick } from './support/quotes';
+import { deliveryTool } from './support/delivery-fixtures';
 
 /** Brings a button to the middle of the screen first; on a phone the development badge covers the bottom corner. */
 async function press(button: Locator): Promise<void> {
@@ -11,6 +12,8 @@ async function press(button: Locator): Promise<void> {
 test.describe('delivery invoicing', () => {
   test('delivery on the same invoice or on its own is shown with an example, chosen with an item and a reason, and kept', async ({ page }) => {
     test.slow();
+    // The item that stands for delivery has to be a service, so one is made first (the screens for that are checked in service-classification).
+    deliveryTool('service', 'ensure');
     await open(page, '/admin/delivery/invoicing', 'Delivery invoicing');
     await noNativeSelect(page);
     await noHorizontalScroll(page);
@@ -36,7 +39,7 @@ test.describe('delivery invoicing', () => {
     const form = page.getByRole('form', { name: 'Save delivery invoicing' });
     await expect(form.getByRole('button', { name: 'Save' })).toBeDisabled();
     await form.getByLabel('Why? (kept with the change)').fill('Our accountant wants delivery apart');
-    await pick(page, page.getByRole('combobox', { name: 'Delivery service item' }), 'Salt 500g', /Salt 500g/);
+    await pick(page, page.getByRole('combobox', { name: 'Delivery service item' }), 'E2E Delivery', /E2E Delivery service/);
     await expect(page.getByText('Save to check this item')).toBeVisible();
     await press(form.getByRole('button', { name: 'Save' }));
     await expect(page.getByText('Saved. New invoices follow this choice')).toBeVisible({ timeout: 30_000 });
@@ -46,7 +49,7 @@ test.describe('delivery invoicing', () => {
     // It is kept.
     await page.reload();
     await expect(page.getByRole('radio', { name: /On its own invoice/ })).toBeChecked({ timeout: 30_000 });
-    await expect(page.getByRole('combobox', { name: 'Delivery service item' })).toHaveValue(/Salt 500g/);
+    await expect(page.getByRole('combobox', { name: 'Delivery service item' })).toHaveValue(/E2E Delivery service/);
 
     // Put back (the mode and the item), so the shop's other tests invoice as they always did.
     await page.getByRole('radio', { name: /On the same invoice/ }).check();

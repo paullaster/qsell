@@ -1,6 +1,7 @@
 'use client';
 
 import { quantityStep } from '@/lib/unit-rules';
+import { isInventoryManaged } from '@/lib/inventory-kind';
 import React, { use, useState } from 'react';
 import {
   Layers,
@@ -36,7 +37,7 @@ interface AdminInventoryProps {
 }
 
 export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: AdminInventoryProps) {
-  const products = use(productsPromise);
+  const products = use(productsPromise).filter(isInventoryManaged);
   const ledger = use(ledgerPromise);
 
   const [activeTab, setActiveTab] = useState<
