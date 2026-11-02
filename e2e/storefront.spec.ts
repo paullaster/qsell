@@ -6,7 +6,7 @@ import {
   noNativeSelect,
   open,
 } from './support/page';
-import { latestAttempt, makeInventoryKindProduct, makePackaging } from './support/storefront-fixtures';
+import { latestAttempt, forgetPackaging, makeInventoryKindProduct, makePackaging } from './support/storefront-fixtures';
 
 /** The first product in the list, by its link (the card's name). */
 const productNames = (page: Page) =>
@@ -221,6 +221,12 @@ test.describe('browsing', () => {
 });
 
 test.describe('the cart and checkout', () => {
+  // A bag made for a test fits the shared rice, so it would be offered to every later test; each is taken out again.
+  const madePackaging: string[] = [];
+  test.afterEach(() => {
+    for (const id of madePackaging.splice(0)) forgetPackaging(id);
+  });
+
   test('sellable services and non-inventory goods remain orderable at zero on-hand stock', async ({ page, request }, testInfo) => {
     const tag = `kind-${testInfo.project.name}-${String(testInfo.retry)}-${String(Date.now())}`;
     const products = [
@@ -260,6 +266,7 @@ test.describe('the cart and checkout', () => {
   test('offers hidden packaging in the cart and checkout with a capacity-based quantity and backend price', async ({ page, request }, testInfo) => {
     test.slow();
     const packaging = makePackaging(`pack-${testInfo.project.name}-${String(testInfo.retry)}-${String(Date.now())}`);
+    madePackaging.push(packaging.id);
     const direct = await request.get(`/api/store/products/${packaging.slug}`);
     expect(direct.status()).toBe(404);
 
@@ -271,7 +278,8 @@ test.describe('the cart and checkout', () => {
     await page.getByRole('button', { name: 'Shopping Cart' }).click();
     const drawer = page.getByRole('dialog', { name: 'Your Cart' });
     await expect(drawer.getByRole('heading', { name: 'Packaging (optional)' })).toBeVisible();
-    const addPackaging = drawer.getByRole('button', { name: 'Add 3 suggested' });
+    // Every bag that fits this rice is offered, so this test's own is found by its name.
+    const addPackaging = drawer.getByRole('listitem').filter({ hasText: packaging.name }).getByRole('button', { name: 'Add 3 suggested' });
     await expect(addPackaging).toBeVisible();
     await addPackaging.click();
     await expect(drawer.getByRole('heading', { name: packaging.name })).toBeVisible();
