@@ -400,6 +400,12 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'Create and change delivery zones and areas, and choose the delivery methods each branch offers',
   },
+  'deliveries:fulfil': {
+    resource: 'deliveries',
+    action: 'fulfil',
+    category: 'Orders & Sales',
+    description: 'Make deliveries for orders and take them through picking, packing, sending out, delivery, a failed attempt, return and cancelling',
+  },
   'deliveries:handover': {
     resource: 'deliveries',
     action: 'handover',

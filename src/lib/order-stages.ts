@@ -100,6 +100,8 @@ export const ORDER_STAGES = {
   out_for_delivery: { phase: 'fulfilment', label: 'Out for delivery', customerLabel: 'Out for delivery' },
   delivery_attempted: { phase: 'fulfilment', label: 'Delivery attempted' },
   delivered: { phase: 'fulfilment', label: 'Delivered', customerLabel: 'Delivered' },
+  // One delivery of several arrived; the order is not delivered until all of it has, so this does not move the order's status.
+  part_delivered: { phase: 'fulfilment', label: 'Part delivered', customerLabel: 'Part of your order delivered' },
   delivery_failed: { phase: 'fulfilment', label: 'Delivery failed' },
   returned_to_stock: { phase: 'fulfilment', label: 'Returned to stock' },
   collected: { phase: 'fulfilment', label: 'Collected', customerLabel: 'Collected' },

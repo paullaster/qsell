@@ -457,3 +457,30 @@ The customer's own look-up (`trackedCollectionAction`) uses the same proof as tr
 **Verified.** Unit (`collection-code`, the checkout parser), integration (planning and the pick checked on the server, the order and code made together, the code never in the clear, unpaid and cancelled refused, ready then once-only hand-over including a race, wrong tries and the lock, ID check, a new code, company isolation, database checks, permissions, the customer's look-up) and end-to-end on desktop and phone (checkout, the customer finding the code, the counter, the ID check).
 
 **Not built yet.** The code is not emailed or texted (there is no message to the customer when an order is ready; that is D-1's messages). An order that is never collected is not expired or cancelled. Someone other than the buyer can collect only by showing the buyer's code or by an ID check at the counter; there is no "authorised collector" field.
+
+## 29. D-1a as built (2026-11-03): the delivery document
+
+**What it is.** A *delivery* is one go at getting some or all of an order to the customer: picked, packed, sent out, delivered. An order that is delivered by the shop's own riders or by a courier can have several (what is on the shelf now, the rest later). Orders that are collected from a branch have no delivery document: they have the collection code (§28). Visits come in D-4.
+
+**Tables** (migration 0129): `deliveries` (number from the `sales_delivery` series, `DLV-{YY}-…`; the method, branch and destination copied from the order's delivery record; recipient, notes, courier and tracking number; a `version` for the two-people-at-once check; the time of each step), `delivery_lines` (planned, picked, delivered per product, in the product's base unit, with checks that picked never exceeds planned and delivered never exceeds picked) and `delivery_events` (the delivery's own history: kept, a trigger refuses any change or delete). A finished delivery (delivered, returned or cancelled) cannot change state, even straight in the database.
+
+**States** (`src/lib/delivery-document.ts`, the only place that says what may follow what):
+
+```
+draft → released → picking → packed → ready → out_for_delivery → delivered
+                      ↺ record what was picked (until it is packed)
+out_for_delivery → failed_attempt → ready (try again, at most 3 times) | returned
+draft, released, picking, packed, ready → cancelled
+```
+
+**Splitting an order.** `allocate` gives a delivery everything the order has left, or what is asked for, never more than is left of each product. The order is locked while a delivery is made, so two people asking at once cannot take the same goods (the second is told there is nothing left). Quantities are checked against the product's unit (no half a piece). **A short pick** (less picked than planned) is recorded, and the difference is open on the order again, to go on another delivery or be cancelled; what is delivered is what was picked. A returned or cancelled delivery gives its goods back to the order the same way.
+
+**The order's delivery status is never stored.** `orderDeliveryStatus` works it out from the deliveries: not started, on its way, partly delivered, delivered, needs attention (a failed attempt). The order's own status becomes *shipped* when something is sent out, and *delivered* only when **every product is delivered in full**; before that a delivery that arrives records the new stage `part_delivered` ("Part of your order delivered", migration 0129 adds it to the stage check), which does not move the order's status.
+
+**Every step** (`DeliveryDocuments.step`) locks the delivery, checks its version when the screen sends one ("Someone else changed this delivery… reload"), checks the rules, changes it and writes its event and the order's stages in **one transaction**: `released_for_fulfilment`, `pick_started`, `picked`, `packed`, `ready`, `dispatched` and `out_for_delivery`, `delivery_attempted` (failed, with its reason), `delivered` or `part_delivered`, `delivery_failed`. Cancel, return and a failed attempt also go to the decision log with their reason. Releasing and sending out are refused for an order that is unpaid (a sale on account is paid later), cancelled, refunded or waiting for approval. Failure reasons come from a list (nobody there, refused, wrong address, unreachable, damaged, not safe, other, which needs words); returning and cancelling need a reason; a courier delivery says which courier has it.
+
+**Permissions.** `deliveries:read` to see; `deliveries:fulfil` for every step (administrators and managers have it). The list, each delivery and the order's own panel are read behind `deliveries:read`; the buttons are shown only to people who can use them, and the server checks again.
+
+**Screens.** Delivery › **Deliveries**: a list, newest first, kept to the server (keyset paging, search by delivery number, order number or customer, a state picker). Each delivery has its own screen with what it carries, the steps that fit its state, who receives it and its history. The order screen has a **Deliveries** panel: the order's delivery status, what is left of each product, its deliveries, and a form to make another from what is left.
+
+**Not built yet (the rest of D-1).** Stock does not move with these steps: it is still consumed at payment, and returning a delivery does not put stock back (so `returned_to_stock` is not recorded); the configurable goods issue and the return receipt with a disposition are the next slice. No dispatch board, runs or riders (D-1c, D-2), no public tracking page or messages to the customer (D-1d), no delivery note (D-1e), and a courier's status is typed in rather than received. A delivery is accepted whole: partial acceptance at the door (refused or damaged items) comes with the rider app.

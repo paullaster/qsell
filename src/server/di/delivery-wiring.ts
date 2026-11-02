@@ -3,6 +3,8 @@ import type { CompanySettingsRepository } from '@/server/domains/company/reposit
 import { DeliveryBilling } from '@/server/domains/delivery/billing';
 import { DeliveryMethods } from '@/server/domains/delivery/methods';
 import { OrderCollections } from '@/server/domains/delivery/collection';
+import { DeliveryDocuments } from '@/server/domains/delivery/documents';
+import type { NumberSeriesService } from '@/server/kernel/numbering/service';
 import { OrderDeliveries } from '@/server/domains/delivery/order-delivery';
 import { DeliveryPlans } from '@/server/domains/delivery/plan';
 import { DeliveryQuotes } from '@/server/domains/delivery/quote';
@@ -19,6 +21,7 @@ export function createDeliveryServices(input: {
   decisionLog: DecisionLog;
   geo: GeoService;
   companySettings: CompanySettingsRepository;
+  numbering: NumberSeriesService;
 }) {
   const stockAvailability = new StockAvailability(input.db);
   const stockSettings = new StockSettingsService(input.db, input.companySettings);
@@ -36,6 +39,7 @@ export function createDeliveryServices(input: {
   );
   const orderDeliveries = new OrderDeliveries(input.db, input.decisionLog);
   const orderCollections = new OrderCollections(input.db, input.decisionLog);
+  const deliveryDocuments = new DeliveryDocuments(input.db, input.decisionLog, input.numbering);
   const deliveryBilling = new DeliveryBilling(input.db, input.decisionLog);
 
   return {
@@ -48,6 +52,7 @@ export function createDeliveryServices(input: {
     deliveryPlans,
     orderDeliveries,
     orderCollections,
+    deliveryDocuments,
     deliveryBilling,
   };
 }

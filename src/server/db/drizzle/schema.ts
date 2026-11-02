@@ -530,6 +530,125 @@ export const orderCollections = pgTable(
 export type OrderCollectionRow = typeof orderCollections.$inferSelect;
 
 /**
+ * A delivery of an order: what is got ready and sent, in one go. An order can have several (what is on the shelf now, the rest
+ * later). The order's delivery status is worked out from them, never stored. Its history is `delivery_events`, which is kept.
+ */
+export const deliveries = pgTable(
+  'deliveries',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    orderId: text('order_id')
+      .notNull()
+      .references(() => orders.id, { onDelete: 'restrict' }),
+    /** From the number series; unique within the company. */
+    number: text('number').notNull(),
+    method: text('method').$type<'own_fleet' | 'courier'>().notNull(),
+    /** The branch the goods leave from, as the order's delivery chose it. */
+    branchId: uuid('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'restrict' }),
+    status: text('status')
+      .$type<'draft' | 'released' | 'picking' | 'packed' | 'ready' | 'out_for_delivery' | 'delivered' | 'failed_attempt' | 'returned' | 'cancelled'>()
+      .notNull()
+      .default('draft'),
+    /** Where it goes, copied from the order when the delivery is made, so it can be corrected here before it goes out. */
+    destination: jsonb('destination').$type<DestinationRecord>().notNull(),
+    recipientName: text('recipient_name'),
+    recipientPhone: text('recipient_phone'),
+    notes: text('notes'),
+    /** For a courier: who has it and the courier's own tracking number, typed in. */
+    courierName: text('courier_name'),
+    trackingNumber: text('tracking_number'),
+    /** Who received it, said when it is marked delivered. */
+    receivedBy: text('received_by'),
+    failedAttempts: integer('failed_attempts').notNull().default(0),
+    /** Two people changing a delivery at once: the second is told to reload instead of overwriting the first. */
+    version: integer('version').notNull().default(1),
+    createdBy: text('created_by'),
+    releasedAt: timestamp('released_at', { withTimezone: true }),
+    packedAt: timestamp('packed_at', { withTimezone: true }),
+    readyAt: timestamp('ready_at', { withTimezone: true }),
+    dispatchedAt: timestamp('dispatched_at', { withTimezone: true }),
+    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('deliveries_company_number_uidx').on(t.companyId, t.number),
+    index('deliveries_order_idx').on(t.orderId),
+    index('deliveries_company_status_idx').on(t.companyId, t.status, t.createdAt.desc(), t.id),
+    index('deliveries_company_branch_status_idx').on(t.companyId, t.branchId, t.status),
+    check('deliveries_status_chk', sql`${t.status} IN ('draft','released','picking','packed','ready','out_for_delivery','delivered','failed_attempt','returned','cancelled')`),
+    check('deliveries_method_chk', sql`${t.method} IN ('own_fleet','courier')`),
+    check('deliveries_attempts_chk', sql`${t.failedAttempts} >= 0`),
+    check('deliveries_version_chk', sql`${t.version} >= 1`),
+    // Delivered means delivered at a time; a finished delivery (delivered, returned, cancelled) has a closing time.
+    check('deliveries_delivered_chk', sql`(${t.status} = 'delivered') = (${t.deliveredAt} IS NOT NULL)`),
+    check('deliveries_closed_chk', sql`${t.status} NOT IN ('delivered','returned','cancelled') OR ${t.closedAt} IS NOT NULL`),
+  ],
+);
+
+/** What a delivery carries, product by product: planned, then picked (possibly short), then delivered. */
+export const deliveryLines = pgTable(
+  'delivery_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    deliveryId: uuid('delivery_id')
+      .notNull()
+      .references(() => deliveries.id, { onDelete: 'cascade' }),
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    /** Null until it is counted. A short pick leaves the difference open on the order. */
+    picked: numeric('picked', { precision: 14, scale: 3 }),
+    delivered: numeric('delivered', { precision: 14, scale: 3 }).notNull().default('0'),
+  },
+  (t) => [
+    uniqueIndex('delivery_lines_delivery_product_uidx').on(t.deliveryId, t.productId),
+    index('delivery_lines_product_idx').on(t.productId),
+    check('delivery_lines_quantity_chk', sql`${t.quantity} > 0`),
+    check('delivery_lines_picked_chk', sql`${t.picked} IS NULL OR (${t.picked} >= 0 AND ${t.picked} <= ${t.quantity})`),
+    check('delivery_lines_delivered_chk', sql`${t.delivered} >= 0 AND ${t.delivered} <= COALESCE(${t.picked}, ${t.quantity})`),
+  ],
+);
+
+/** What happened to a delivery, in order, with who and why. Never changed or removed: a correction is a new event. */
+export const deliveryEvents = pgTable(
+  'delivery_events',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    deliveryId: uuid('delivery_id')
+      .notNull()
+      .references(() => deliveries.id, { onDelete: 'restrict' }),
+    /** 1, 2, 3 ... per delivery, assigned under the delivery's row lock. */
+    sequence: integer('sequence').notNull(),
+    action: text('action').notNull(),
+    fromStatus: text('from_status'),
+    toStatus: text('to_status'),
+    actorType: text('actor_type').notNull(),
+    actorId: text('actor_id'),
+    reasonCode: text('reason_code'),
+    note: text('note'),
+    detail: jsonb('detail').$type<Record<string, unknown>>().notNull().default({}),
+    /** The server's clock, never a phone's. */
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_events_delivery_seq_uidx').on(t.deliveryId, t.sequence),
+    check('delivery_events_sequence_chk', sql`${t.sequence} >= 1`),
+  ],
+);
+
+export type DeliveryRow = typeof deliveries.$inferSelect;
+export type DeliveryLineRow = typeof deliveryLines.$inferSelect;
+export type DeliveryEventRow = typeof deliveryEvents.$inferSelect;
+
+/**
  * The map service a company has chosen, and its settings (addresses of servers, a contact email). Nothing secret is kept here: a
  * provider that needs a key will keep it sealed with the other credentials. One row for each company; changes are version-checked
  * and written to the decision log.

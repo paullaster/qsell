@@ -79,7 +79,7 @@ async function billing(mode: string): Promise<Record<string, string>> {
 async function order(orderNumber: string): Promise<Record<string, string>> {
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
   const [row] = await db.execute<Record<string, string | null>>(sql`
-    SELECT o.shipping_fee, o.tax, o.total_amount, o.subtotal, d.method, b.name AS branch, d.charge_amount, d.charge_net, d.charge_tax, d.tax_rate, d.recipient_name, d.recipient_phone, d.notes, d.choice->>'reason' AS reason,
+    SELECT o.shipping_fee, o.tax, o.total_amount, o.subtotal, o.status AS order_status, d.method, b.name AS branch, d.charge_amount, d.charge_net, d.charge_tax, d.tax_rate, d.recipient_name, d.recipient_phone, d.notes, d.choice->>'reason' AS reason,
            (SELECT string_agg(e.stage, ',' ORDER BY e.sequence) FROM order_stage_events e WHERE e.order_id = o.id) AS stages
     FROM orders o LEFT JOIN order_deliveries d ON d.order_id = o.id LEFT JOIN branches b ON b.id = o.branch_id
     WHERE o.order_number = ${orderNumber}`);

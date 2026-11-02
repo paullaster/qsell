@@ -6,6 +6,7 @@ import { COLLECTION_ATTEMPT_LIMIT, generateCollectionCode, isWellFormedCollectio
 import { decryptCredentials, encryptCredentials, fingerprintSecret } from '@/server/domains/payments/crypto';
 import { OrderStages } from '@/server/domains/orders/stages';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
+import { orderReadinessProblem } from './order-readiness';
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
@@ -45,11 +46,9 @@ export type CollectionOutcome = { ok: true; view: CollectionView } | { ok: false
 const fail = (reason: CollectionRefusal, message: string, attemptsLeft?: number): CollectionOutcome => ({ ok: false, reason, message, ...(attemptsLeft === undefined ? {} : { attemptsLeft }) });
 
 /** The order states from which an order is not handed over, with what to say. */
-function orderProblem(order: { status: string; paymentStatus: string; approvalStatus: string | null }): CollectionOutcome | null {
-  if (order.status === 'cancelled' || order.status === 'refunded' || order.status === 'failed') return fail('order_closed', 'This order was cancelled or refunded, so it is not handed over.');
-  if (order.approvalStatus === 'pending' || order.approvalStatus === 'rejected' || order.approvalStatus === 'draft') return fail('on_hold', 'This order is waiting for approval, so it is not handed over yet.');
-  if (order.paymentStatus !== 'paid') return fail('not_paid', 'This order has not been paid for, so it is not handed over.');
-  return null;
+function orderProblem(order: { status: string; paymentStatus: string; approvalStatus: string | null; paymentMethod: string }): CollectionOutcome | null {
+  const problem = orderReadinessProblem(order);
+  return problem === null ? null : fail(problem.reason, problem.message);
 }
 
 const sameSecret = (a: string, b: string): boolean => {
@@ -148,7 +147,7 @@ export class OrderCollections {
       if (row.status === 'collected') return fail('already_collected', 'This order has already been collected.');
       if (row.status === 'locked') return fail('locked', 'This order’s code is locked. Give the customer a new code first.');
       if (row.status !== 'waiting' && row.status !== 'ready') return fail('not_collectable', 'This order is not waiting to be collected.');
-      const [order] = await tx.select({ status: orders.status, paymentStatus: orders.paymentStatus, approvalStatus: orders.approvalStatus }).from(orders).where(eq(orders.id, orderId));
+      const [order] = await tx.select({ status: orders.status, paymentStatus: orders.paymentStatus, approvalStatus: orders.approvalStatus, paymentMethod: orders.paymentMethod }).from(orders).where(eq(orders.id, orderId));
       if (order === undefined) return fail('not_found', 'That order could not be found.');
       const problem = orderProblem(order);
       if (problem !== null) return problem;
@@ -169,7 +168,7 @@ export class OrderCollections {
       if (row === undefined) return fail('not_found', 'That order is not waiting to be collected.');
       const refused = this.statusProblem(row.status);
       if (refused !== null) return refused;
-      const [order] = await tx.select({ status: orders.status, paymentStatus: orders.paymentStatus, approvalStatus: orders.approvalStatus }).from(orders).where(eq(orders.id, orderId));
+      const [order] = await tx.select({ status: orders.status, paymentStatus: orders.paymentStatus, approvalStatus: orders.approvalStatus, paymentMethod: orders.paymentMethod }).from(orders).where(eq(orders.id, orderId));
       if (order === undefined) return fail('not_found', 'That order could not be found.');
       const problem = orderProblem(order);
       if (problem !== null) return problem;
@@ -207,7 +206,7 @@ export class OrderCollections {
       // A locked code is a reason to look at ID, so it does not stop this path; anything else that is over does.
       const refused = row.status === 'locked' ? null : this.statusProblem(row.status);
       if (refused !== null) return refused;
-      const [order] = await tx.select({ status: orders.status, paymentStatus: orders.paymentStatus, approvalStatus: orders.approvalStatus }).from(orders).where(eq(orders.id, orderId));
+      const [order] = await tx.select({ status: orders.status, paymentStatus: orders.paymentStatus, approvalStatus: orders.approvalStatus, paymentMethod: orders.paymentMethod }).from(orders).where(eq(orders.id, orderId));
       if (order === undefined) return fail('not_found', 'That order could not be found.');
       const problem = orderProblem(order);
       if (problem !== null) return problem;

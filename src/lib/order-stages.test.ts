@@ -34,9 +34,9 @@ describe('the stage catalogue', () => {
     expect(isOrderStage('toString')).toBe(false);
   });
 
-  it('is exactly the list the database accepts (migrations 0106, then 0123 which added the delivery invoice stages), so the two cannot drift', () => {
+  it('is exactly the list the database accepts (migrations 0106, then 0123 and 0129, which added the delivery invoice and part-delivered stages), so the two cannot drift', () => {
     const sql = readFileSync('drizzle/0106_order_stage_timeline.sql', 'utf8');
-    const latest = readFileSync('drizzle/0123_delivery_invoice_stages.sql', 'utf8');
+    const latest = readFileSync('drizzle/0129_delivery_documents.sql', 'utf8');
     const inDb = /order_stage_events_stage_chk" CHECK \("stage" IN \(([^)]*)\)\)/.exec(latest)?.[1]?.split(',').map((s) => s.trim().replaceAll("'", '')) ?? [];
     expect([...inDb].sort()).toEqual([...ORDER_STAGE_NAMES].sort());
     const outcomes = /order_stage_events_outcome_chk" CHECK \("order_stage_events"."outcome" IN \(([^)]*)\)\)/.exec(sql)?.[1]?.split(',').map((s) => s.trim().replaceAll("'", '')) ?? [];
