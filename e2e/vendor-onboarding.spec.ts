@@ -12,11 +12,11 @@ test.describe('a vendor completes its profile', () => {
   test('separates customer registration from vendor business onboarding', async ({ page }) => {
     await page.goto('/register');
     await expect(page.getByRole('heading', { name: 'Create account' })).toBeVisible({ timeout: 30_000 });
-    await page.getByRole('link', { name: 'Register your vendor business' }).click();
+    await page.getByRole('link', { name: 'Create a vendor account' }).click();
     await expect(page).toHaveURL(/\/vendor\/register$/);
     await expect(page.getByRole('heading', { name: 'Register your vendor business' })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText(/If a buyer sent you an invitation, accept that link instead/)).toHaveCount(1);
-    await expect(page.getByRole('link', { name: 'Sign in', exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: /^Sign in first/ })).toBeVisible();
   });
 
   test('every section is filled in the portal, the profile is sent, and then it is locked', async ({ page }, testInfo) => {

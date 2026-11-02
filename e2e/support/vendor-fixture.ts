@@ -39,9 +39,13 @@ async function main(): Promise<void> {
     await new UserRepository().create({ email: customerEmail, password: E2E_VENDOR_PASSWORD, name: `Existing ${tag}`, role: 'customer', emailVerified: true });
     const ctx = { companyId: company.id, actor: { type: 'user' as const, id: 'e2e-fixture' }, origin: { surface: 'e2e', action: 'fixture' } };
     const made = await container.vendors.createByStaff(ctx, { vendorType: 'company', legalName, tradingName: '', taxId: `X${randomUUID().replace(/-/g, '').slice(0, 9).toUpperCase()}`, country: 'Kenya', email: `company-${tag}@example.test`, phone: '', paymentTermDays: '30', currency: '', approvedExpenseVendor: false, notes: '' }, true);
+    // The vendor has its own owner, who can sign in and manage the team; the existing customer is invited as a finance member, because an owner cannot be removed.
+    const ownerEmail = `owner-existing-${tag}@example.test`;
+    const owner = await new UserRepository().create({ email: ownerEmail, password: E2E_VENDOR_PASSWORD, name: `Owner ${tag}`, role: 'vendor', emailVerified: true });
+    await db.insert(schema.vendorUsers).values({ vendorId: made.id, userId: owner.id, portalRole: 'owner', status: 'active' });
     const token = randomBytes(32).toString('base64url');
-    await db.insert(schema.vendorInvitations).values({ companyId: company.id, vendorId: made.id, email: customerEmail, inviteeName: `Existing ${tag}`, portalRole: 'owner', tokenHash: createHash('sha256').update(token).digest('hex'), expiresAt: new Date(Date.now() + 7 * 86_400_000), createdBy: 'e2e-fixture', deliveryStatus: 'sent' });
-    process.stdout.write(`FIXTURE ${JSON.stringify({ vendorId: made.id, legalName, email: customerEmail, token })}\n`);
+    await db.insert(schema.vendorInvitations).values({ companyId: company.id, vendorId: made.id, email: customerEmail, inviteeName: `Existing ${tag}`, portalRole: 'finance', tokenHash: createHash('sha256').update(token).digest('hex'), expiresAt: new Date(Date.now() + 7 * 86_400_000), createdBy: 'e2e-fixture', deliveryStatus: 'sent' });
+    process.stdout.write(`FIXTURE ${JSON.stringify({ vendorId: made.id, legalName, email: customerEmail, ownerEmail, token })}\n`);
     return;
   }
   if (mode === 'staffadded') {

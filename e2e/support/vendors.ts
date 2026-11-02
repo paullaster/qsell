@@ -13,6 +13,8 @@ export interface VendorFixture {
   changeId?: string;
   newLast4?: string;
   token?: string;
+  /** The vendor's owner login, where the fixture makes one (invitation-existing); `email` is then the invited customer's. */
+  ownerEmail?: string;
 }
 
 /** A vendor made for this test alone (see vendor-fixture.ts). A new tag each time makes a retried test start clean. */
