@@ -528,8 +528,7 @@ export class InvoiceService {
         subject,
         html,
         text: `Your ${company.tradingName} ${labels.title} ${generated.invoiceNumber} for ${order.currency} ${figures.totalAmount} is attached.`,
-        replyTo: company.email,
-        fromOverride: `${company.tradingName} Billing <${company.email}>`,
+        sender: { name: company.tradingName, address: company.email },
         attachments: [
           {
             filename: generated.filename,
