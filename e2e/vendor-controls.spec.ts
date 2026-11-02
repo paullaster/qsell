@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { noHorizontalScroll, noNativeSelect, open } from './support/page';
+import { clickUntilVisible, noHorizontalScroll, noNativeSelect, open } from './support/page';
 import { pick } from './support/quotes';
 import { attemptTag, makeVendor, makeVendorInvitation, signedOutPage, signInAsVendor } from './support/vendors';
 import { E2E_VENDOR_PASSWORD } from './support/constants';
@@ -158,7 +158,7 @@ test.describe('invitations', () => {
     await expect(page.getByText(/This invitation matches an existing qsell account/)).toBeVisible({ timeout: 30_000 });
     await page.getByRole('button', { name: 'Accept invitation and link this account' }).click();
     await expect(page.getByRole('heading', { name: `You have joined ${invite.legalName}` })).toBeVisible({ timeout: 30_000 });
-    await page.getByRole('button', { name: 'Sign out and sign in to the vendor portal' }).click();
+    await page.getByRole('button', { name: 'Sign out and refresh vendor access' }).click();
     await expect(page).toHaveURL(/\/login$/, { timeout: 30_000 });
     await page.getByLabel('Email').fill(invite.email);
     await page.getByLabel('Password', { exact: true }).fill(E2E_VENDOR_PASSWORD);
@@ -167,7 +167,7 @@ test.describe('invitations', () => {
     await expect(page.getByRole('heading', { name: invite.legalName })).toBeVisible();
   });
 
-  test('the existing customer login stays enabled when the vendor membership is removed', async ({ page }, testInfo) => {
+  test('the existing customer login stays enabled when the vendor owner removes their membership', async ({ page }, testInfo) => {
     const invite = makeVendor(attemptTag(testInfo.project.name, testInfo.retry), 'invitation-existing');
     const inviteUrl = `/vendor/invitations/accept?token=${encodeURIComponent(invite.token ?? '')}`;
     await page.goto(`/login?callbackUrl=${encodeURIComponent(inviteUrl)}`);
@@ -176,19 +176,27 @@ test.describe('invitations', () => {
     await page.getByRole('button', { name: /^Sign in/ }).click();
     await expect(page).toHaveURL(/\/vendor\/invitations\/accept/);
     await page.getByRole('button', { name: 'Accept invitation and link this account' }).click();
-    await expect(page.getByRole('heading', { name: /You have joined/ })).toBeVisible();
-    await page.getByRole('button', { name: 'Sign out and sign in to the vendor portal' }).click();
-    await page.getByLabel('Email').fill(invite.email);
+    await expect(page.getByRole('heading', { name: /You have joined/ })).toBeVisible({ timeout: 30_000 });
+    await page.getByRole('button', { name: 'Sign out and refresh vendor access' }).click();
+    await expect(page).toHaveURL(/\/login$/, { timeout: 30_000 });
+
+    // The vendor's owner, not the member, removes the membership: an owner, and a person themselves, cannot be removed.
+    await page.getByLabel('Email').fill(invite.ownerEmail ?? '');
     await page.getByLabel('Password', { exact: true }).fill(E2E_VENDOR_PASSWORD);
     await page.getByRole('button', { name: /^Sign in/ }).click();
     await expect(page).toHaveURL(/\/vendor$/, { timeout: 60_000 });
     await page.getByRole('navigation', { name: 'Vendor portal' }).getByRole('link', { name: 'Team' }).click();
     await expect(page.getByRole('heading', { name: 'Your team' })).toBeVisible();
-    const emailRow = page.locator('li').filter({ hasText: invite.email });
-    await emailRow.getByRole('button', { name: /Remove Existing/ }).click();
-    await page.getByRole('button', { name: /Confirm: Remove Existing/ }).click();
-    await expect(page.getByText('Removed.')).toBeVisible();
+    const memberRow = page.locator('li').filter({ hasText: invite.email });
+    await expect(memberRow).toBeVisible({ timeout: 30_000 });
+    const confirmRemove = page.getByRole('button', { name: /^Confirm: Remove .* from your team$/ });
+    await clickUntilVisible(memberRow.getByRole('button', { name: /^Remove .* from your team$/ }), confirmRemove);
+    await confirmRemove.click();
+    await expect(page.getByText('Removed.')).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('li').filter({ hasText: invite.email })).toHaveCount(0, { timeout: 30_000 });
     await page.getByRole('button', { name: 'Sign out' }).click();
+
+    // The person is no longer in the vendor business, but their own login still works and lands in the shop, not the portal.
     await page.goto('/login');
     await page.getByLabel('Email').fill(invite.email);
     await page.getByLabel('Password', { exact: true }).fill(E2E_VENDOR_PASSWORD);

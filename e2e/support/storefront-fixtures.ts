@@ -12,7 +12,7 @@
  *   tsx e2e/support/storefront-fixtures.ts payment-phones <order number>    the contact number, the number the order is paid from and every attempt's number
  */
 import { execFileSync } from 'node:child_process';
-import { sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { e2eEnvironment } from './env';
 import { E2E_SHOPPER_PASSWORD } from './constants';
 
@@ -170,6 +170,20 @@ async function paymentPhones(orderNumber: string): Promise<Record<string, string
   return { contact: order.customer_phone, paidFrom: order.payment_phone ?? '', attempts: attempts.map((a) => a.customer_phone ?? '').join(',') };
 }
 
+/** Takes a checkout bag made by `packaging` out again, with its fit rule, so it is not offered to every later test that buys the same rice. */
+async function removePackaging(id: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { packagingFits, products } = await import('@/server/db/drizzle/schema');
+  await db.delete(packagingFits).where(eq(packagingFits.packagingProductId, id));
+  try {
+    await db.delete(products).where(and(eq(products.id, id), eq(products.isCheckoutPackaging, true)));
+  } catch {
+    // An order that used it keeps it; it is only taken out of sale.
+    await db.update(products).set({ isActive: false, deletedAt: new Date() }).where(and(eq(products.id, id), eq(products.isCheckoutPackaging, true)));
+  }
+  return { forgotten: id };
+}
+
 async function main(): Promise<void> {
   const [command, a, b] = process.argv.slice(2);
   let result: Record<string, string>;
@@ -177,6 +191,7 @@ async function main(): Promise<void> {
   else if (command === 'product' && a !== undefined) result = await product(a);
   else if (command === 'limited-product' && a !== undefined && b !== undefined && process.argv[5] !== undefined) result = await limitedProduct(a, b, process.argv[5]);
   else if (command === 'packaging' && a !== undefined) result = await packaging(a);
+  else if (command === 'forget-packaging' && a !== undefined) result = await removePackaging(a);
   else if (command === 'inventory-kind-product' && a !== undefined && b !== undefined) result = await inventoryKindProduct(a, b);
   else if (command === 'set-stock' && a !== undefined && b !== undefined) result = await writeStock(a, b);
   else if (command === 'order-stages' && a !== undefined) result = await readOrderStages(a);
@@ -211,6 +226,11 @@ export function makeLimitedProduct(tag: string, min: number, max: number): { nam
 export function makePackaging(tag: string): { id: string; name: string; slug: string; goodsId: string; goodsName: string } {
   const made = storefrontTool('packaging', tag);
   return { id: made.id ?? '', name: made.name ?? '', slug: made.slug ?? '', goodsId: made.goodsId ?? '', goodsName: made.goodsName ?? '' };
+}
+
+/** Takes a bag made by `makePackaging` out again. */
+export function forgetPackaging(id: string): void {
+  storefrontTool('forget-packaging', id);
 }
 
 /** Adds a zero-stock sellable product to check non-stock/service storefront ordering. */
