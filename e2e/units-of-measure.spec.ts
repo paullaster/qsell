@@ -134,7 +134,7 @@ test.describe('units of measure', () => {
     await page.getByText(productName, { exact: true }).first().click();
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible({ timeout: 30_000 });
-    await dialog.getByRole('button', { name: 'Stock' }).click();
+    await dialog.getByRole('button', { name: 'Stock', exact: true }).click();
 
     // The product is counted in the default unit, picked from the shared list.
     const unit = dialog.getByRole('combobox', { name: /Unit of measure/ });
@@ -151,7 +151,7 @@ test.describe('units of measure', () => {
 
     // It is there when the product is opened again.
     await page.getByText(productName, { exact: true }).first().click();
-    await page.getByRole('dialog').getByRole('button', { name: 'Stock' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Stock', exact: true }).click();
     const again = page.getByRole('dialog').getByRole('group', { name: 'Alternate unit 1' });
     await expect(again.getByLabel(/= how many PCS/)).toHaveValue('12', { timeout: 30_000 });
 
@@ -195,7 +195,7 @@ test.describe('fish sold by the kilogram', () => {
     await open(page, '/admin/products', /Products|Catalog/);
     let dialog = page.getByRole('dialog');
     await clickUntilVisible(page.getByText('Rice 5kg', { exact: true }).first(), dialog);
-    await dialog.getByRole('button', { name: 'Stock' }).click();
+    await dialog.getByRole('button', { name: 'Stock', exact: true }).click();
     const stockField = (d: typeof dialog) =>
       d
         .locator('label', { hasText: /^On-Hand Stock/ })
@@ -208,7 +208,7 @@ test.describe('fish sold by the kilogram', () => {
     dialog = page.getByRole('dialog');
     await clickUntilVisible(page.getByText(fish, { exact: true }).first(), dialog);
     await expect(dialog).toBeVisible({ timeout: 30_000 });
-    await dialog.getByRole('button', { name: 'Stock' }).click();
+    await dialog.getByRole('button', { name: 'Stock', exact: true }).click();
     await expect(dialog.getByRole('combobox', { name: /Unit of measure/ })).toHaveValue(/KG/, {
       timeout: 30_000,
     });
@@ -228,7 +228,7 @@ test.describe('fish sold by the kilogram', () => {
 
     dialog = page.getByRole('dialog');
     await clickUntilVisible(page.getByText(fish, { exact: true }).first(), dialog);
-    await dialog.getByRole('button', { name: 'Stock' }).click();
+    await dialog.getByRole('button', { name: 'Stock', exact: true }).click();
     await expect(stockField(dialog)).toHaveValue('12.5', { timeout: 30_000 });
     await dialog.getByRole('button', { name: 'Cancel' }).click();
 
@@ -264,7 +264,7 @@ test.describe('fish sold by the kilogram', () => {
     await open(page, '/admin/products', /Products|Catalog/);
     dialog = page.getByRole('dialog');
     await clickUntilVisible(page.getByText(fish, { exact: true }).first(), dialog);
-    await dialog.getByRole('button', { name: 'Stock' }).click();
+    await dialog.getByRole('button', { name: 'Stock', exact: true }).click();
     await dialog.getByRole('button', { name: 'Remove alternate unit 1' }).click();
     await dialog.getByRole('button', { name: 'Save Changes' }).click();
     await expect(dialog).toBeHidden({ timeout: 30_000 });
