@@ -54,7 +54,7 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
           return;
         }
         let destination: string;
-        if (res.role === 'vendor') {
+        if (res.role === 'vendor' || res.vendorId !== null) {
           destination = safeCallbackUrl?.startsWith('/vendor') === true ? safeCallbackUrl : '/vendor';
         } else if (res.isStaff) {
           // Staff must land in admin — ignore storefront callback leftovers (e.g. "/").
@@ -212,6 +212,7 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
           >
             Sign in
           </Link>
+          <p className="mt-3 text-xs text-fg-muted">Registering as a supplier? <Link href="/vendor/register" className="font-semibold text-indigo-600 underline underline-offset-2 dark:text-indigo-300">Create a vendor account</Link></p>
         </div>
       ) : (
         <div className="space-y-3 border-t border-line pt-4">
@@ -238,6 +239,7 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
               Continue as guest
             </Link>
           </p>
+          <p className="text-center text-xs text-fg-muted">A supplier? <Link href="/vendor/register" className="font-semibold text-indigo-600 underline underline-offset-2 dark:text-indigo-300">Register your vendor business</Link> or use your invitation link.</p>
         </div>
       )}
     </form>

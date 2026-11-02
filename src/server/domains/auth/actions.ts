@@ -3,6 +3,7 @@
 import { AuthError, CredentialsSignin } from 'next-auth';
 import { auth, EMAIL_NOT_VERIFIED_CODE, signIn, signOut } from '@/auth';
 import { UserRepository } from '@/server/domains/auth/user-repository';
+import { findPortalAccess } from '@/server/domains/vendors/portal-access';
 import { getContainer } from '@/server/di/container';
 import type { UserSession, CustomerAccount } from '@/types/index';
 import { SESSION_COOKIE } from './service';
@@ -300,7 +301,7 @@ export async function loginAction(input: {
   email: string;
   password: string;
 }): Promise<
-  | { ok: true; role: string; isStaff: boolean; mustChangePassword: boolean }
+  | { ok: true; role: string; isStaff: boolean; mustChangePassword: boolean; vendorId: string | null }
   | { ok: false; error: string; code?: 'EMAIL_NOT_VERIFIED' }
 > {
   const requestId = randomUUID();
@@ -321,11 +322,15 @@ export async function loginAction(input: {
     await signIn('credentials', { email, password, redirect: false });
     // Role and flags come from an indexed lookup; no hashing, the password is already verified.
     const user = await new UserRepository().findByEmail(email);
+    const portal = user?.role === 'vendor' || user?.role === 'customer'
+      ? await findPortalAccess(user.id)
+      : null;
     return {
       ok: true,
       role: user?.role ?? 'customer',
       isStaff: user ? await new UserRepository().isStaffRoleKey(user.role) : false,
       mustChangePassword: user?.mustChangePassword === true,
+      vendorId: portal?.vendorId ?? null,
     };
   } catch (err) {
     if (err instanceof CredentialsSignin && err.code === EMAIL_NOT_VERIFIED_CODE) {
@@ -507,7 +512,8 @@ export async function logoutAction(formData?: FormData): Promise<void> {
   await expireSessionCookies();
 
   const returnTo = formData?.get('returnTo');
-  redirect(returnTo === '/login' ? '/login' : '/');
+  const inviteReturn = typeof returnTo === 'string' && /^\/vendor\/invitations\/accept\?token=[A-Za-z0-9_-]{43}$/.test(returnTo);
+  redirect(returnTo === '/login' || inviteReturn ? String(returnTo) : '/');
 }
 
 /**

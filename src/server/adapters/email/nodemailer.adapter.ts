@@ -1,22 +1,20 @@
 import nodemailer from 'nodemailer';
 import type { EmailMessage, EmailPort, EmailSendResult } from '@/server/ports/communications';
+import { isRecord } from '@/lib/values';
 
 export class ConsoleEmailAdapter implements EmailPort {
   readonly name = 'console';
 
-  async send(message: EmailMessage): Promise<EmailSendResult> {
+  send(message: EmailMessage): Promise<EmailSendResult> {
     const id = `console_${Date.now()}`;
     console.warn('[ConsoleEmailAdapter] Outbound email', {
       id,
-      to: message.to,
+      to: message.to.replace(/^(.).+(@.+)$/, '$1…$2'),
       subject: message.subject,
-      attachments: message.attachments?.map((a) => ({
-        filename: a.filename,
-        bytes: a.content.length,
-      })),
-      textPreview: (message.text || message.html).slice(0, 180),
+      provider: this.name,
+      delivery: 'not_sent',
     });
-    return { messageId: id, provider: this.name };
+    return Promise.resolve({ messageId: id, provider: this.name });
   }
 }
 
@@ -57,13 +55,13 @@ export class NodemailerSmtpAdapter implements EmailPort {
       host,
       port,
       secure: options?.secure ?? port === 465,
-      auth: user ? { user, pass } : undefined,
+      auth: user !== '' ? { user, pass } : undefined,
     });
   }
 
   async send(message: EmailMessage): Promise<EmailSendResult> {
-    const info = await this.transporter.sendMail({
-      from: message.fromOverride || this.from,
+    const info: unknown = await this.transporter.sendMail({
+      from: message.fromOverride ?? this.from,
       to: message.to,
       replyTo: message.replyTo,
       subject: message.subject,
@@ -76,8 +74,11 @@ export class NodemailerSmtpAdapter implements EmailPort {
       })),
     });
 
+    const messageId = isRecord(info) && typeof info.messageId === 'string' && info.messageId !== ''
+      ? info.messageId
+      : `smtp_${Date.now()}`;
     return {
-      messageId: String(info.messageId || `smtp_${Date.now()}`),
+      messageId,
       provider: this.name,
     };
   }

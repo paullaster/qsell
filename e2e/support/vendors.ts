@@ -12,14 +12,23 @@ export interface VendorFixture {
   number?: string;
   changeId?: string;
   newLast4?: string;
+  token?: string;
 }
 
 /** A vendor made for this test alone (see vendor-fixture.ts). A new tag each time makes a retried test start clean. */
-export function makeVendor(tag: string, mode: 'new' | 'submitted' | 'approved' | 'expiring' | 'bankpending' | 'bankready' | 'staffadded'): VendorFixture {
+export function makeVendor(tag: string, mode: 'new' | 'submitted' | 'approved' | 'expiring' | 'bankpending' | 'bankready' | 'staffadded' | 'invitation' | 'invitation-existing'): VendorFixture {
   const output = execFileSync('pnpm', ['exec', 'tsx', 'e2e/support/vendor-fixture.ts', tag, mode], { env: { ...process.env, ...e2eEnvironment() }, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
   const line = output.split('\n').find((l) => l.startsWith('FIXTURE '));
   if (line === undefined) throw new Error(`the vendor fixture printed nothing usable: ${output.slice(-500)}`);
   return JSON.parse(line.slice('FIXTURE '.length)) as VendorFixture;
+}
+
+/** A staff-created active vendor with one pending owner invitation to exercise the real acceptance page. */
+export function makeVendorInvitation(tag: string): VendorFixture & { token: string } {
+  const output = execFileSync('pnpm', ['exec', 'tsx', 'e2e/support/vendor-fixture.ts', tag, 'invitation'], { env: { ...process.env, ...e2eEnvironment() }, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+  const line = output.split('\n').find((value) => value.startsWith('FIXTURE '));
+  if (line === undefined) throw new Error(`the vendor invitation fixture printed nothing usable: ${output.slice(-500)}`);
+  return JSON.parse(line.slice('FIXTURE '.length)) as VendorFixture & { token: string };
 }
 
 /** A tag that is different for each browser project and each attempt, short enough for a name or an email. */

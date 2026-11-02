@@ -5,6 +5,8 @@ import { auth } from '@/auth';
 import { logoutAction } from '@/server/domains/auth/actions';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { buttonClass } from '@/components/ui/screen-kit';
+import { VendorPortalNavigation } from '@/components/vendor/VendorPortalNavigation';
+import { findPortalAccess } from '@/server/domains/vendors/portal-access';
 
 // The portal is private to vendors and never indexed.
 export const metadata: Metadata = { title: 'Vendor portal', robots: { index: false, follow: false } };
@@ -16,7 +18,9 @@ export const metadata: Metadata = { title: 'Vendor portal', robots: { index: fal
 export default async function VendorPortalLayout({ children }: { children: ReactNode }) {
   const session = await auth();
   const user = session?.user;
-  if (user?.role !== 'vendor' || typeof user.vendorId !== 'string') redirect('/login?callbackUrl=%2Fvendor');
+  if (user === undefined || user.isStaff || (user.role !== 'vendor' && user.role !== 'customer')) redirect('/login?callbackUrl=%2Fvendor');
+  const access = await findPortalAccess(user.id);
+  if (access === null) redirect('/login?callbackUrl=%2Fvendor');
   return (
     <div className="min-h-dvh bg-canvas">
       <header className="border-b border-line bg-surface-raised">
@@ -32,6 +36,7 @@ export default async function VendorPortalLayout({ children }: { children: React
           </div>
         </div>
       </header>
+      <VendorPortalNavigation role={access.portalRole} />
       <main className="mx-auto max-w-5xl px-4 py-6">{children}</main>
     </div>
   );

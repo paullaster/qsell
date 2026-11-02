@@ -2204,6 +2204,8 @@ export const itemTypes = pgTable(
     name: text('name').notNull(),
     /** Non-sellable types (raw materials) must not carry a selling price. */
     isSellable: boolean('is_sellable').notNull().default(true),
+    /** How a new product of this classification is stocked. The product keeps its own copy, so changing this never rewrites existing products. */
+    defaultInventoryKind: text('default_inventory_kind').notNull().default('inventory'),
     /** Exactly one default is used when a product is created without a type. */
     isDefault: boolean('is_default').notNull().default(false),
     isActive: boolean('is_active').notNull().default(true),
@@ -2213,6 +2215,7 @@ export const itemTypes = pgTable(
   (t) => [
     uniqueIndex('item_types_code_uidx').on(t.code),
     uniqueIndex('item_types_name_uidx').on(t.name),
+    check('item_types_default_inventory_kind_chk', sql`${t.defaultInventoryKind} IN ('inventory', 'non_inventory', 'service')`),
   ],
 );
 
@@ -6772,6 +6775,8 @@ export type VendorStatus =
   | 'archived';
 export type VendorBlock = 'none' | 'payment' | 'all';
 export type VendorPortalRole = 'owner' | 'finance' | 'sales' | 'readonly';
+export type VendorInvitationStatus = 'pending' | 'accepted' | 'revoked' | 'expired';
+export type VendorInvitationDeliveryStatus = 'pending' | 'sent' | 'failed';
 
 /** Which accounts a vendor's payables, advances, discounts, tolerance, exchange differences and withholding post to. */
 export const vendorPostingGroups = pgTable(
@@ -6928,6 +6933,48 @@ export const vendorUsers = pgTable(
     check('vendor_users_status_chk', sql`${t.status} IN ('active','removed')`),
   ],
 );
+
+/** Invitations are durable records independent of login rows; access exists only after the invitee accepts. */
+export const vendorInvitations = pgTable(
+  'vendor_invitations',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    vendorId: uuid('vendor_id').notNull().references(() => vendors.id, { onDelete: 'restrict' }),
+    email: text('email').notNull(),
+    inviteeName: text('invitee_name').notNull(),
+    portalRole: text('portal_role').$type<VendorPortalRole>().notNull(),
+    tokenHash: text('token_hash').notNull(),
+    status: text('status').$type<VendorInvitationStatus>().notNull().default('pending'),
+    deliveryStatus: text('delivery_status').$type<VendorInvitationDeliveryStatus>().notNull().default('pending'),
+    deliveryError: text('delivery_error'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdBy: text('created_by').notNull(),
+    acceptedBy: uuid('accepted_by').references(() => users.id, { onDelete: 'restrict' }),
+    acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('vendor_invitations_token_uidx').on(t.tokenHash),
+    uniqueIndex('vendor_invitations_pending_email_uidx')
+      .on(t.vendorId, sql`lower(${t.email})`)
+      .where(sql`${t.status} = 'pending'`),
+    uniqueIndex('vendor_invitations_pending_owner_uidx')
+      .on(t.vendorId)
+      .where(sql`${t.status} = 'pending' AND ${t.portalRole} = 'owner'`),
+    index('vendor_invitations_company_status_idx').on(t.companyId, t.status, t.createdAt),
+    index('vendor_invitations_vendor_idx').on(t.vendorId, t.status, t.createdAt),
+    check('vendor_invitations_email_chk', sql`${t.email} = lower(btrim(${t.email}))`),
+    check('vendor_invitations_role_chk', sql`${t.portalRole} IN ('owner','finance','sales','readonly')`),
+    check('vendor_invitations_status_chk', sql`${t.status} IN ('pending','accepted','revoked','expired')`),
+    check('vendor_invitations_delivery_chk', sql`${t.deliveryStatus} IN ('pending','sent','failed')`),
+    check('vendor_invitations_state_chk', sql`(${t.status} = 'accepted') = (${t.acceptedAt} IS NOT NULL) AND (${t.status} = 'accepted') = (${t.acceptedBy} IS NOT NULL)`),
+  ],
+);
+
+export type VendorInvitationRow = typeof vendorInvitations.$inferSelect;
 
 /** Every step of a vendor's life: who, what, why, from where. Append-only. */
 export const vendorEvents = pgTable(

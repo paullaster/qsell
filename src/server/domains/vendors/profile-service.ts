@@ -210,9 +210,12 @@ export class VendorProfileService {
   async saveProfile(actor: PortalActor, d: ProfileData): Promise<void> {
     const problems = checkProfile(d);
     if (Object.keys(problems).length > 0) throw new ProfileError('INVALID', Object.values(problems)[0] ?? 'Check the form.', problems);
-    await this.db.transaction(async (tx) => {
-      const v = await this.guard(tx, actor, 'profile');
-      await tx
+      await this.db.transaction(async (tx) => {
+        const v = await this.guard(tx, actor, 'profile');
+        if ((v.status === 'active' || v.status === 'suspended') && d.vendorType !== v.vendorType) {
+          throw new ProfileError('NOT_EDITABLE', 'Your business type was verified during onboarding. Contact the buyer to change it.');
+        }
+        await tx
         .update(vendors)
         .set({
           vendorType: d.vendorType,

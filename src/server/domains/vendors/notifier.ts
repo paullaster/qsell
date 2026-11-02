@@ -28,9 +28,9 @@ export class VendorNotifier {
     private readonly company: CompanySettingsRepository,
   ) {}
 
-  private async send(to: string[], subject: string, mail: Mail, audience: 'vendor' | 'staff'): Promise<void> {
+  private async send(to: string[], subject: string, mail: Mail, audience: 'vendor' | 'staff'): Promise<boolean> {
     const recipients = [...new Set(to.map((a) => a.trim().toLowerCase()).filter((a) => a !== ''))];
-    if (recipients.length === 0) return;
+    if (recipients.length === 0) return false;
     try {
       const settings = await this.company.ensureSeeded();
       const base = resolvePublicBaseUrl(settings.publicBaseUrl);
@@ -41,10 +41,13 @@ export class VendorNotifier {
       const text = `${mail.heading}\n\n${mail.body}\n\n${(mail.details ?? []).map(([k, v]) => `${k}: ${v}`).join('\n')}\n\n${mail.cta}: ${url}\n\n${footer}`;
       for (const to1 of recipients) {
         const message: EmailMessage = { to: to1, subject: `${subject} · ${store}`, html, text };
-        await this.email.send(message);
+        const result = await this.email.send(message);
+        if (result.provider === 'console') return false;
       }
+      return true;
     } catch (error) {
       console.error('[vendor.notify] mail not sent', { subject, error });
+      return false;
     }
   }
 
@@ -173,7 +176,7 @@ export class VendorNotifier {
 
   /** Mailed to someone invited to a vendor's portal; `path` carries the single-use link. */
   async invitation(to: string, name: string, businessName: string, path: string, role: string): Promise<void> {
-    await this.send([to], 'You are invited to the vendor portal', {
+    const sent = await this.send([to], 'You are invited to the vendor portal', {
       heading: `Join ${businessName} in the vendor portal`,
       body: `Hello ${name}, you have been invited to manage ${businessName} as a vendor. Choose a password to start; this link works for 7 days.`,
       cta: 'Choose my password',
@@ -181,6 +184,7 @@ export class VendorNotifier {
       details: [['Your role', role]],
       footer: 'If you did not expect this invitation, ignore this email: nothing happens until you use the link.',
     }, 'vendor');
+    if (!sent) throw new Error('Invitation email delivery did not complete.');
   }
 
   async suspended(vendorId: string, reason: string): Promise<void> {

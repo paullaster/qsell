@@ -337,15 +337,17 @@ export const maskAccount = (last4: string): string => `•••• ${last4}`;
 
 /**
  * Whether a person may change a section right now: exactly "yes", or the plain reason they may not. Before approval (and after a
- * revision request) the whole profile is open; an approved vendor changes only its contacts and documents itself, because
- * who it is and where it is paid are controlled changes; while the profile is with the reviewer nothing changes.
+ * revision request) the profile and documents are open; an approved vendor may maintain public profile/contact/document details,
+ * while verified business registration, tax and payment data remain controlled; while the profile is with the reviewer nothing changes.
  */
 export function mayEditProfileNow(status: string, decidedAt: Date | null, now: Date, portalRole: string, section: Section): string {
   if (!mayEditSection(portalRole, section)) return 'Your role on this account does not let you change this part.';
   if (mayEditProfile(status, decidedAt, now)) return 'yes';
   if ((LOCKED_FOR_REVIEW as readonly string[]).includes(status)) return 'Your profile is with the reviewer. You can change it again if they ask you to revise something.';
   if (status === 'active' || status === 'suspended') {
-    return section === 'contacts' || section === 'attachments' ? 'yes' : 'This part is already approved. To change it, contact the buyer.';
+    return section === 'profile' || section === 'contacts' || section === 'attachments'
+      ? 'yes'
+      : 'This part is verified and locked to protect your legal or payment details. Contact the buyer if it needs to change.';
   }
   if (status === 'rejected') return `Your application was not accepted. You can apply again ${String(REAPPLY_AFTER_DAYS)} days after the decision.`;
   return 'Your account cannot be changed right now.';

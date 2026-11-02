@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test';
 import { noHorizontalScroll, noNativeSelect, open } from './support/page';
 import { pick } from './support/quotes';
-import { attemptTag, makeVendor, signedOutPage, signInAsVendor } from './support/vendors';
+import { attemptTag, makeVendor, makeVendorInvitation, signedOutPage, signInAsVendor } from './support/vendors';
+import { E2E_VENDOR_PASSWORD } from './support/constants';
 
 test.describe('staff control a vendor’s standing', () => {
   test('suspend, block and archive each need a reason, and each can be undone', async ({ page }, testInfo) => {
@@ -59,16 +60,18 @@ test.describe('invitations', () => {
     const people = page.getByRole('region', { name: 'Portal users' });
     await expect(people.getByText('Nobody has a vendor portal login')).toBeVisible({ timeout: 60_000 });
     const invite = people.getByRole('form', { name: 'Invite the owner' });
-    await invite.getByRole('button', { name: 'Send invitation' }).click();
-    await expect(invite.getByLabel('Owner’s name')).toBeFocused().catch(() => undefined);
-    await invite.getByLabel('Owner’s name').fill('Olive Owner');
+    await invite.getByLabel('Owner’s full name').fill('Test users');
     await invite.getByLabel('Owner’s email').fill(`owner-${tag}@example.test`);
-    await invite.getByRole('button', { name: 'Send invitation' }).click();
-    await expect(people.getByText('The invitation was sent.')).toBeVisible({ timeout: 30_000 });
+    await invite.getByRole('button', { name: 'Send vendor portal invitation' }).click();
+    await expect(people.getByRole('alert')).toContainText('Enter the invitee’s real name');
+    await invite.getByLabel('Owner’s full name').fill('Olive Owner');
+    await invite.getByRole('button', { name: 'Send vendor portal invitation' }).click();
+    await expect(people.getByText(/invitation is saved, but its email was not delivered/i)).toBeVisible({ timeout: 30_000 });
     await expect(people.getByText('Invited, not joined')).toBeVisible({ timeout: 30_000 });
+    await expect(people.getByText('Email not delivered')).toBeVisible();
     await expect(people.getByRole('form', { name: 'Invite the owner' })).toHaveCount(0);
     await people.getByRole('button', { name: `Resend the invitation to owner-${tag}@example.test` }).click();
-    await expect(people.getByText('A fresh invitation was sent.')).toBeVisible({ timeout: 30_000 });
+    await expect(people.getByText(/invitation is saved, but its email was not delivered/i)).toBeVisible({ timeout: 30_000 });
     await people.getByRole('button', { name: /Cancel the invitation to/ }).click();
     await people.getByRole('button', { name: /Confirm: Cancel the invitation/ }).click();
     await expect(people.getByText('The invitation is cancelled.')).toBeVisible({ timeout: 30_000 });
@@ -95,8 +98,9 @@ test.describe('invitations', () => {
       await expect(v.getByText('Enter a valid email address.').first()).toBeVisible({ timeout: 30_000 });
       await form.getByLabel('Email').fill(`colleague-${tag}@example.test`);
       await form.getByRole('button', { name: 'Send invitation' }).click();
-      await expect(v.getByText(/If that address can be invited/)).toBeVisible({ timeout: 30_000 });
+      await expect(v.getByText(/invitation is saved, but its email was not delivered/i)).toBeVisible({ timeout: 30_000 });
       await expect(v.getByText('Invited, not joined')).toBeVisible({ timeout: 30_000 });
+      await expect(v.getByText('Email not delivered')).toBeVisible();
       await noHorizontalScroll(v);
       await v.getByRole('button', { name: 'Remove Fiona Finance from your team' }).click();
       await v.getByRole('button', { name: /Confirm: Remove Fiona Finance/ }).click();
@@ -105,6 +109,91 @@ test.describe('invitations', () => {
     } finally {
       await w.close();
     }
+  });
+
+  test('accepts a named invitation, creates its login only on acceptance, and opens an action-oriented vendor portal', async ({ browser }, testInfo) => {
+    test.slow();
+    const invite = makeVendorInvitation(attemptTag(testInfo.project.name, testInfo.retry));
+    const fresh = await signedOutPage(browser, testInfo);
+    const page = fresh.page;
+    try {
+    await page.goto(`/vendor/invitations/accept?token=${encodeURIComponent(invite.token)}`);
+    await expect(page.getByRole('heading', { name: `Join ${invite.legalName}` })).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText(invite.email)).toBeVisible();
+    await page.getByLabel('Choose a password').fill(invite.password);
+    await page.getByRole('button', { name: 'Accept and create vendor sign-in' }).click();
+    await expect(page.getByRole('heading', { name: `You have joined ${invite.legalName}` })).toBeVisible({ timeout: 60_000 });
+    await page.getByRole('link', { name: 'Sign in to the vendor portal' }).click();
+    await page.getByLabel('Email').fill(invite.email);
+    await page.getByLabel('Password', { exact: true }).fill(invite.password);
+    await page.getByRole('button', { name: /^Sign in/ }).click();
+    await expect(page).toHaveURL(/\/vendor$/, { timeout: 60_000 });
+    await expect(page.getByRole('navigation', { name: 'Vendor portal' }).getByRole('link', { name: 'My profile' })).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Vendor portal' }).getByRole('link', { name: 'Requests for quotation' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: invite.legalName })).toBeVisible();
+    await page.getByRole('navigation', { name: 'Vendor portal' }).getByRole('link', { name: 'My profile' }).click();
+    await expect(page.getByRole('heading', { name: 'Your profile' })).toBeVisible({ timeout: 30_000 });
+    await page.getByRole('link', { name: 'Vendor profile', exact: true }).click();
+    await page.getByLabel('Country').fill('Kenya');
+    await page.getByLabel('What you supply').fill('We supply transport services and related logistics.');
+    await page.getByLabel('Street or building').fill('1 Mombasa Road');
+    await page.getByLabel('Town or city').fill('Nairobi');
+    await page.getByLabel('Business phone').fill('+254 700 000 000');
+    await page.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByText('Saved.')).toBeVisible({ timeout: 30_000 });
+    await noHorizontalScroll(page);
+    } finally {
+      await fresh.close();
+    }
+  });
+
+  test('an existing customer account signs in and explicitly accepts the vendor invitation', async ({ page }, testInfo) => {
+    const invite = makeVendor(attemptTag(testInfo.project.name, testInfo.retry), 'invitation-existing');
+    const inviteUrl = `/vendor/invitations/accept?token=${encodeURIComponent(invite.token ?? '')}`;
+    await page.goto(`/login?callbackUrl=${encodeURIComponent(inviteUrl)}`);
+    await page.getByLabel('Email').fill(invite.email);
+    await page.getByLabel('Password', { exact: true }).fill(E2E_VENDOR_PASSWORD);
+    await page.getByRole('button', { name: /^Sign in/ }).click();
+    await expect(page).toHaveURL(/\/vendor\/invitations\/accept/);
+    await expect(page.getByText(/This invitation matches an existing qsell account/)).toBeVisible({ timeout: 30_000 });
+    await page.getByRole('button', { name: 'Accept invitation and link this account' }).click();
+    await expect(page.getByRole('heading', { name: `You have joined ${invite.legalName}` })).toBeVisible({ timeout: 30_000 });
+    await page.getByRole('button', { name: 'Sign out and sign in to the vendor portal' }).click();
+    await expect(page).toHaveURL(/\/login$/, { timeout: 30_000 });
+    await page.getByLabel('Email').fill(invite.email);
+    await page.getByLabel('Password', { exact: true }).fill(E2E_VENDOR_PASSWORD);
+    await page.getByRole('button', { name: /^Sign in/ }).click();
+    await expect(page).toHaveURL(/\/vendor$/, { timeout: 60_000 });
+    await expect(page.getByRole('heading', { name: invite.legalName })).toBeVisible();
+  });
+
+  test('the existing customer login stays enabled when the vendor membership is removed', async ({ page }, testInfo) => {
+    const invite = makeVendor(attemptTag(testInfo.project.name, testInfo.retry), 'invitation-existing');
+    const inviteUrl = `/vendor/invitations/accept?token=${encodeURIComponent(invite.token ?? '')}`;
+    await page.goto(`/login?callbackUrl=${encodeURIComponent(inviteUrl)}`);
+    await page.getByLabel('Email').fill(invite.email);
+    await page.getByLabel('Password', { exact: true }).fill(E2E_VENDOR_PASSWORD);
+    await page.getByRole('button', { name: /^Sign in/ }).click();
+    await expect(page).toHaveURL(/\/vendor\/invitations\/accept/);
+    await page.getByRole('button', { name: 'Accept invitation and link this account' }).click();
+    await expect(page.getByRole('heading', { name: /You have joined/ })).toBeVisible();
+    await page.getByRole('button', { name: 'Sign out and sign in to the vendor portal' }).click();
+    await page.getByLabel('Email').fill(invite.email);
+    await page.getByLabel('Password', { exact: true }).fill(E2E_VENDOR_PASSWORD);
+    await page.getByRole('button', { name: /^Sign in/ }).click();
+    await expect(page).toHaveURL(/\/vendor$/, { timeout: 60_000 });
+    await page.getByRole('navigation', { name: 'Vendor portal' }).getByRole('link', { name: 'Team' }).click();
+    await expect(page.getByRole('heading', { name: 'Your team' })).toBeVisible();
+    const emailRow = page.locator('li').filter({ hasText: invite.email });
+    await emailRow.getByRole('button', { name: /Remove Existing/ }).click();
+    await page.getByRole('button', { name: /Confirm: Remove Existing/ }).click();
+    await expect(page.getByText('Removed.')).toBeVisible();
+    await page.getByRole('button', { name: 'Sign out' }).click();
+    await page.goto('/login');
+    await page.getByLabel('Email').fill(invite.email);
+    await page.getByLabel('Password', { exact: true }).fill(E2E_VENDOR_PASSWORD);
+    await page.getByRole('button', { name: /^Sign in/ }).click();
+    await expect(page).toHaveURL(/\/$/, { timeout: 60_000 });
   });
 });
 

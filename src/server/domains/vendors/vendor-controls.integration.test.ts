@@ -318,30 +318,42 @@ describe.skipIf(!has(url))('vendor controls: bank change, standing, expiry, invi
   });
 
   describe('invitations', () => {
-    it('the owner invites a colleague, who sets a password from the link and signs in', async () => {
+    it('the owner creates a durable invitation without creating a login, then the invitee accepts and signs in', async () => {
       const a = await approvedVendor();
       outbox.sent = [];
       const email = `colleague.${run}.${String(seq)}@example.test`;
       await invites.inviteColleague(a, { email, name: 'Fiona Finance' }, 'finance');
+      expect(await c.users.findByEmail(email)).toBeNull();
       const mail = outbox.sent.find((m) => m.to === email);
-      expect(mail?.html).toContain('https://shop.test/reset-password?token=');
+      expect(mail?.html).toContain('https://shop.test/vendor/invitations/accept?token=');
       const token = /token=([A-Za-z0-9_-]{43})/.exec(mail?.text ?? '')?.[1] ?? '';
-      expect(await c.accounts.resetPassword(token, 'Str0ng-Passw0rd!x')).toBe('ok');
+      await invites.accept(token, 'Str0ng-Passw0rd!x', null);
       const user = await c.users.verifyPassword(email, 'Str0ng-Passw0rd!x');
       expect(user?.role).toBe('vendor');
       const { findPortalAccess } = await import('./portal-access');
       expect(await findPortalAccess(required(user).id)).toEqual({ vendorId: a.vendorId, portalRole: 'finance' });
-      expect(await c.accounts.resetPassword(token, 'Another-Passw0rd!y')).toBe('invalid');
+      await expect(invites.accept(token, 'Another-Passw0rd!y', null)).rejects.toMatchObject({ code: 'INVALID_INVITATION' });
     });
 
-    it('says nothing about an address that already has an account, and creates nothing', async () => {
+    it('invites an existing qsell account and links it only after that exact user signs in', async () => {
       const a = await approvedVendor();
-      const taken = `own1.${run}@example.test`;
+      const taken = `customer.${run}@example.test`;
+      const existingCustomer = await c.users.create({ email: taken, password: 'NotUsed-1234!', name: 'Existing customer', role: 'customer', emailVerified: true });
       outbox.sent = [];
-      await invites.inviteColleague(a, { email: taken, name: 'Someone Else' }, 'sales');
-      expect(outbox.sent).toHaveLength(0);
+      await invites.inviteColleague(a, { email: taken, name: 'Customer Account' }, 'sales');
+      const token = /token=([A-Za-z0-9_-]{43})/.exec(outbox.sent[0]?.text ?? '')?.[1] ?? '';
+      expect(await invites.preview(token)).toMatchObject({ existingAccount: true, existingAccountUnavailable: false, email: taken });
+      expect(await invites.accept(token, '', existingCustomer.id)).toBe(true);
+      const linked = required(await c.users.findByEmail(taken));
+      expect(linked.role).toBe('customer');
+      const { findPortalAccess } = await import('./portal-access');
+      expect(await findPortalAccess(linked.id)).toEqual({ vendorId: a.vendorId, portalRole: 'sales' });
       const team = await invites.team(a.vendorId);
-      expect(team.map((t) => t.email)).not.toContain(taken);
+      const member = required(team.find((person) => person.email === taken));
+      expect(member).toMatchObject({ joined: true, role: 'sales' });
+      await invites.remove(a.vendorId, member.id, { type: 'user', id: 'staff-reviewer' }, {});
+      expect((await c.users.findByEmail(taken))?.isActive).toBe(true);
+      expect(await findPortalAccess(linked.id)).toBeNull();
     });
 
     it('only the owner invites, only to real roles, with a valid address', async () => {
@@ -349,17 +361,27 @@ describe.skipIf(!has(url))('vendor controls: bank change, standing, expiry, invi
       expect(await codeOf(invites.inviteColleague({ ...a, portalRole: 'finance' }, { email: 'x@y.test', name: 'Xavier' }, 'sales'))).toBe('NOT_ALLOWED');
       expect(await codeOf(invites.inviteColleague(a, { email: 'x@y.test', name: 'Xavier' }, 'owner'))).toBe('INVALID');
       expect(await codeOf(invites.inviteColleague(a, { email: 'not-an-email', name: 'Xavier' }, 'sales'))).toBe('INVALID');
+      expect(await codeOf(invites.inviteColleague(a, { email: 'x@y.test', name: 'Test users' }, 'sales'))).toBe('INVALID');
     });
 
-    it('resends to someone who has not joined, and removes an unused invitation completely', async () => {
+    it('records failed delivery, resends the durable invitation, and revokes it without creating an unused login', async () => {
       const a = await approvedVendor();
       const email = `pending.${run}.${String(seq)}@example.test`;
-      await invites.inviteColleague(a, { email, name: 'Pat Pending' }, 'readonly');
+      const failedEmail: EmailPort = {
+        name: 'failed',
+        send: () => Promise.reject(new Error('simulated SMTP failure')),
+      };
+      const { VendorNotifier: Notifier } = await import('./notifier');
+      const { VendorInvitationService: Invites } = await import('./invitation-service');
+      const failingInvites = new Invites(db, c.users, c.authTokens, new Notifier(db, failedEmail, c.companySettings));
+      expect(await codeOf(failingInvites.inviteColleague(a, { email, name: 'Pat Pending' }, 'readonly'))).toBe('EMAIL_DELIVERY_FAILED');
       const person = required((await invites.team(a.vendorId)).find((t) => t.email === email));
       expect(person.joined).toBe(false);
+      expect(person.deliveryStatus).toBe('failed');
       outbox.sent = [];
       await invites.resend(a.vendorId, person.id);
       expect(outbox.sent).toHaveLength(1);
+      expect(required((await invites.team(a.vendorId)).find((t) => t.email === email)).deliveryStatus).toBe('sent');
       await invites.remove(a.vendorId, person.id, { type: 'user', id: a.userId }, {});
       expect((await invites.team(a.vendorId)).map((t) => t.email)).not.toContain(email);
       expect(await c.users.findByEmail(email)).toBeNull();
@@ -371,7 +393,7 @@ describe.skipIf(!has(url))('vendor controls: bank change, standing, expiry, invi
       outbox.sent = [];
       await invites.inviteColleague(a, { email, name: 'Jo Joined' }, 'sales');
       const token = /token=([A-Za-z0-9_-]{43})/.exec(outbox.sent[0]?.text ?? '')?.[1] ?? '';
-      await c.accounts.resetPassword(token, 'Str0ng-Passw0rd!z');
+      await invites.accept(token, 'Str0ng-Passw0rd!z', null);
       const person = required((await invites.team(a.vendorId)).find((t) => t.email === email));
       const owner = required((await invites.team(a.vendorId)).find((t) => t.role === 'owner'));
       await db.update(schema.users).set({ emailVerifiedAt: new Date() }).where(eq(schema.users.id, a.userId));
@@ -388,14 +410,28 @@ describe.skipIf(!has(url))('vendor controls: bank change, standing, expiry, invi
       const added = await c.vendors.createByStaff(ctx, { vendorType: 'company', legalName: `Walk-in ${run}`, tradingName: '', taxId: `A${run}00001Z`, country: 'Kenya', email: `walkin.${run}@example.test`, phone: '', paymentTermDays: '30', currency: '', approvedExpenseVendor: false, notes: '' }, true);
       outbox.sent = [];
       const email = `walkin.owner.${run}@example.test`;
+      outbox.sent = [];
       await invites.inviteOwner(ctx, added.id, { email, name: 'Wally Walkin' });
       expect(outbox.sent.some((m) => m.to === email)).toBe(true);
+      const token = /token=([A-Za-z0-9_-]{43})/.exec(outbox.sent[0]?.text ?? '')?.[1] ?? '';
       expect(await codeOf(invites.inviteOwner(ctx, added.id, { email: `second.${run}@example.test`, name: 'Second Owner' }))).toBe('HAS_OWNER');
       expect(await codeOf(invites.inviteOwner({ ...ctx, companyId: randomUUID() }, added.id, { email: `x.${run}@example.test`, name: 'Xavier X' }))).toBe('NOT_FOUND');
       // An owner invitation nobody used can be cancelled, and then a new owner can be invited.
       const pending = required((await invites.team(added.id)).find((t) => t.email === email));
       await invites.remove(added.id, pending.id, { type: 'user', id: 'staff' }, {});
+      await expect(invites.accept(token, 'Str0ng-Passw0rd!z', null)).rejects.toMatchObject({ code: 'INVALID_INVITATION' });
       expect(await codeOf(invites.inviteOwner(ctx, added.id, { email, name: 'Wally Walkin' }))).toBe('OK');
+    });
+
+    it('serializes concurrent attempts to establish the single pending owner', async () => {
+      const added = await c.vendors.createByStaff(ctx, { vendorType: 'company', legalName: `Concurrent ${run}`, tradingName: '', taxId: `C${randomUUID().replace(/-/g, '').slice(0, 9).toUpperCase()}`, country: 'Kenya', email: `concurrent.${run}@example.test`, phone: '', paymentTermDays: '30', currency: '', approvedExpenseVendor: false, notes: '' }, true);
+      const attempts = await Promise.allSettled([
+        invites.inviteOwner(ctx, added.id, { email: `first.${run}@example.test`, name: 'First Owner' }),
+        invites.inviteOwner(ctx, added.id, { email: `second.${run}@example.test`, name: 'Second Owner' }),
+      ]);
+      expect(attempts.filter((attempt) => attempt.status === 'fulfilled')).toHaveLength(1);
+      expect(attempts.filter((attempt) => attempt.status === 'rejected')).toHaveLength(1);
+      expect((await invites.team(added.id)).filter((person) => person.role === 'owner' && !person.joined)).toHaveLength(1);
     });
   });
 

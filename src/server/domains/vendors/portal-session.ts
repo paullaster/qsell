@@ -14,7 +14,7 @@ export class PortalAccessError extends Error {
 export async function requirePortalVendor(): Promise<PortalAccess & { userId: string; name: string }> {
   const session = await auth();
   const user = session?.user;
-  if (user?.role !== 'vendor' || user.isStaff) throw new PortalAccessError();
+  if (user === undefined || user.isStaff || (user.role !== 'vendor' && user.role !== 'customer')) throw new PortalAccessError();
   const access = await findPortalAccess(user.id);
   if (access === null) throw new PortalAccessError();
   return { ...access, userId: user.id, name: user.name };

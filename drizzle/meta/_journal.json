@@ -869,6 +869,34 @@
       "when": 1793571248300,
       "tag": "0123_delivery_invoice_stages",
       "breakpoints": true
+    },
+    {
+      "idx": 124,
+      "version": "7",
+      "when": 1793573450528,
+      "tag": "0124_vendor_invitations",
+      "breakpoints": true
+    },
+    {
+      "idx": 125,
+      "version": "7",
+      "when": 1793588311126,
+      "tag": "0125_vendor_invitation_invariants",
+      "breakpoints": true
+    },
+    {
+      "idx": 126,
+      "version": "7",
+      "when": 1793591072505,
+      "tag": "0126_item_type_default_inventory_kind",
+      "breakpoints": true
+    },
+    {
+      "idx": 127,
+      "version": "7",
+      "when": 1793593120329,
+      "tag": "0127_vendor_invitation_accepted_user_restrict",
+      "breakpoints": true
     }
   ]
 }

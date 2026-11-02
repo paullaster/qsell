@@ -19,6 +19,7 @@ import { KitConfigService, KitService } from '@/server/domains/pricing/kit-servi
 import { PriceGuardConfigService } from '@/server/domains/pricing/guard-config-service';
 import type { EmailPort, InvoicePdfPort } from '@/server/ports/communications';
 import { PdfKitInvoiceAdapter } from '@/server/adapters/pdf/pdfkit-invoice.adapter';
+import { emailRuntimeConfig } from '@/server/adapters/email/config';
 import {
   ConsoleEmailAdapter,
   NodemailerSmtpAdapter,
@@ -118,8 +119,8 @@ import type { ChargePolicies } from '@/server/domains/delivery/charge-policies';
 import type { DeliveryQuotes } from '@/server/domains/delivery/quote';
 import type { DeliveryPlans } from '@/server/domains/delivery/plan';
 import type { OrderDeliveries } from '@/server/domains/delivery/order-delivery';
-import { KraConfigRepository } from '@/server/domains/kra/repository';
 import type { DeliveryBilling } from '@/server/domains/delivery/billing';
+import { KraConfigRepository } from '@/server/domains/kra/repository';
 import { KraConfigResolver } from '@/server/domains/kra/resolver';
 import { EtimsTransmissionService } from '@/server/domains/kra/etims/transmission-service';
 import { EtimsItemService } from '@/server/domains/kra/etims/item-service';
@@ -272,9 +273,9 @@ export interface AppContainer {
   deliveryPlans: DeliveryPlans;
   /** The delivery recorded on each order. */
   orderDeliveries: OrderDeliveries;
-  kraConfigs: KraConfigRepository;
   /** How delivery is billed on invoices and at KRA. */
   deliveryBilling: DeliveryBilling;
+  kraConfigs: KraConfigRepository;
   kraResolver: KraConfigResolver;
   etimsTransmission: EtimsTransmissionService;
   etimsItems: EtimsItemService;
@@ -313,7 +314,7 @@ export interface AppContainer {
 }
 
 function createEmailPort(): EmailPort {
-  const driver = (process.env.EMAIL_DRIVER ?? 'console').toLowerCase();
+  const { driver } = emailRuntimeConfig(process.env);
   if (driver === 'smtp') {
     return new NodemailerSmtpAdapter();
   }
@@ -608,8 +609,8 @@ export function getContainer(): AppContainer {
     deliveryQuotes: deliveryServices.deliveryQuotes,
     deliveryPlans: deliveryServices.deliveryPlans,
     orderDeliveries: deliveryServices.orderDeliveries,
-    kraConfigs,
     deliveryBilling: deliveryServices.deliveryBilling,
+    kraConfigs,
     kraResolver,
     etimsTransmission,
     etimsItems,

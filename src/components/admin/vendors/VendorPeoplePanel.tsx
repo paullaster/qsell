@@ -16,6 +16,9 @@ export interface PortalPerson {
   status: string;
   lastLoginAt: string | null;
   joined: boolean;
+  deliveryStatus?: string | null;
+  expiresAt?: string | null;
+  expired?: boolean;
 }
 
 /** The people who can sign in for a vendor, their invitations, and (for a vendor with no owner yet) the invitation of its owner. */
@@ -35,6 +38,7 @@ export function VendorPeoplePanel({ vendorId, people, canInvite, archived }: { v
     setBusy(false);
     if (!res.ok) {
       setNotice({ kind: 'error', text: res.error });
+      if (res.error.toLowerCase().includes('invitation is saved')) router.refresh();
       return false;
     }
     setNotice({ kind: 'ok', text: done });
@@ -53,14 +57,18 @@ export function VendorPeoplePanel({ vendorId, people, canInvite, archived }: { v
               <span className="min-w-0 break-words"><span className="font-semibold text-fg-strong">{u.name}</span> <span className="text-fg-muted">{u.email}</span></span>
               <span className="flex flex-wrap items-center gap-2 text-xs text-fg-muted">
                 <Chip tone="gray">{u.role}</Chip>
-                {u.status !== 'active' ? <Chip tone="amber">Removed</Chip> : null}
+                {u.status === 'removed' ? <Chip tone="amber">Removed</Chip> : null}
+                {u.status === 'expired' ? <Chip tone="amber">Invitation expired</Chip> : null}
                 {u.status === 'active' && !u.joined ? <Chip tone="sky">Invited, not joined</Chip> : null}
+                {u.status === 'active' && !u.joined && u.deliveryStatus === 'failed' ? <Chip tone="red">Email not delivered</Chip> : null}
+                {u.status === 'active' && !u.joined && u.expired === true ? <Chip tone="amber">Invitation expired — resend</Chip> : null}
                 {canInvite && u.status === 'active' && !u.joined ? (
                   <>
-                    <button type="button" className={buttonClass} disabled={busy} onClick={() => void act(resendVendorInvitationAction(vendorId, u.id), 'A fresh invitation was sent.')} aria-label={`Resend the invitation to ${u.email}`}>Resend</button>
-                    <InlineConfirm label={`Cancel the invitation to ${u.email}`} action="Cancel invitation" confirm="Yes, cancel it" busy={busy} onConfirm={() => void act(cancelVendorInvitationAction(vendorId, u.id), 'The invitation is cancelled.')} />
+                    <button type="button" className={buttonClass} disabled={busy} onClick={() => void act(resendVendorInvitationAction(vendorId, u.id), 'Invitation resent.')} aria-label={`Resend the invitation to ${u.email}`}>{u.expired === true ? 'Send new invitation' : 'Resend'}</button>
+                    {u.expired === true ? null : <InlineConfirm label={`Cancel the invitation to ${u.email}`} action="Cancel invitation" confirm="Yes, cancel it" busy={busy} onConfirm={() => void act(cancelVendorInvitationAction(vendorId, u.id), 'The invitation is cancelled.')} />}
                   </>
                 ) : null}
+                {canInvite && u.status === 'expired' ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void act(resendVendorInvitationAction(vendorId, u.id), 'A new invitation was sent.')} aria-label={`Send a new invitation to ${u.email}`}>Send new invitation</button> : null}
               </span>
             </li>
           ))}
@@ -72,10 +80,10 @@ export function VendorPeoplePanel({ vendorId, people, canInvite, archived }: { v
           aria-label="Invite the owner"
           onSubmit={(e) => { e.preventDefault(); void act(inviteVendorOwnerAction(vendorId, who), 'The invitation was sent.').then((ok) => { if (ok) setWho({ name: '', email: '' }); }); }}
         >
-          <p className="text-sm text-fg sm:col-span-2">This vendor has no owner who can sign in. Invite one: they receive a link to choose a password.</p>
-          <Field id={`${uid}-n`} label="Owner’s name"><input id={`${uid}-n`} value={who.name} onChange={(e) => setWho((p) => ({ ...p, name: e.target.value }))} className={fieldClass} required maxLength={120} autoComplete="off" /></Field>
+          <p className="text-sm text-fg sm:col-span-2">This vendor has no owner who can sign in. Invite the real account owner; they will choose their own password from a one-use invitation link.</p>
+          <Field id={`${uid}-n`} label="Owner’s full name" hint="This name appears in the portal and invitation email."><input id={`${uid}-n`} value={who.name} onChange={(e) => setWho((p) => ({ ...p, name: e.target.value }))} className={fieldClass} required maxLength={120} autoComplete="name" /></Field>
           <Field id={`${uid}-e`} label="Owner’s email"><input id={`${uid}-e`} type="email" value={who.email} onChange={(e) => setWho((p) => ({ ...p, email: e.target.value }))} className={fieldClass} required maxLength={160} autoComplete="off" /></Field>
-          <div className="sm:col-span-2"><button type="submit" className={primaryClass} disabled={busy}>{busy ? 'Sending…' : 'Send invitation'}</button></div>
+          <div className="sm:col-span-2"><button type="submit" className={primaryClass} disabled={busy}>{busy ? 'Sending…' : 'Send vendor portal invitation'}</button></div>
         </form>
       ) : null}
     </section>

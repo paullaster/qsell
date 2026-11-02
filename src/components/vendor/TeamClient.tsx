@@ -39,6 +39,7 @@ function TeamView({ team }: { team: Team }) {
     if (!res.ok) {
       setNotice({ kind: 'error', text: res.error });
       setProblems('problems' in res && res.problems !== undefined ? res.problems : {});
+      if (res.error.toLowerCase().includes('invitation is saved')) router.refresh();
       return false;
     }
     setNotice({ kind: 'ok', text: messageOf(res.data) ?? done });
@@ -58,13 +59,17 @@ function TeamView({ team }: { team: Team }) {
               <span className="flex flex-wrap items-center gap-2">
                 <Chip tone="gray">{ROLE_WORDS[p.role] ?? p.role}</Chip>
                 {p.id === team.you ? <Chip tone="sky">You</Chip> : null}
-                {p.joined ? null : <Chip tone="amber">Invited, not joined</Chip>}
-                {team.canManage && p.role !== 'owner' ? (
+                {p.status === 'expired' ? <Chip tone="amber">Invitation expired</Chip> : null}
+                {p.status !== 'expired' && !p.joined ? <Chip tone="amber">Invited, not joined</Chip> : null}
+                {!p.joined && p.deliveryStatus === 'failed' ? <Chip tone="red">Email not delivered</Chip> : null}
+                {!p.joined && p.expired ? <Chip tone="amber">Invitation expired — resend</Chip> : null}
+                {team.canManage && p.role !== 'owner' && p.status === 'active' ? (
                   <>
-                    {p.joined ? null : <button type="button" className={buttonClass} disabled={busy} onClick={() => void act(resendInvitationAction(p.id), 'A fresh invitation was sent.')} aria-label={`Resend the invitation to ${p.email}`}>Resend</button>}
+                    {!p.joined ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void act(resendInvitationAction(p.id), p.expired ? 'A new invitation was sent.' : 'Invitation resent.')} aria-label={`${p.expired ? 'Send a new' : 'Resend the'} invitation to ${p.email}`}>{p.expired ? 'Send new invitation' : 'Resend'}</button> : null}
                     <InlineConfirm label={`Remove ${p.name} from your team`} action="Remove" confirm="Yes, remove" busy={busy} onConfirm={() => void act(removeTeamMemberAction(p.id), 'Removed.')} />
                   </>
                 ) : null}
+                {team.canManage && p.status === 'expired' ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void act(resendInvitationAction(p.id), 'A new invitation was sent.')} aria-label={`Send a new invitation to ${p.email}`}>Send new invitation</button> : null}
               </span>
             </li>
           ))}
