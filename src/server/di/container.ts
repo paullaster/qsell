@@ -19,6 +19,7 @@ import { KitConfigService, KitService } from '@/server/domains/pricing/kit-servi
 import { PriceGuardConfigService } from '@/server/domains/pricing/guard-config-service';
 import type { EmailPort, InvoicePdfPort } from '@/server/ports/communications';
 import { PdfKitInvoiceAdapter } from '@/server/adapters/pdf/pdfkit-invoice.adapter';
+import { emailRuntimeConfig } from '@/server/adapters/email/config';
 import {
   ConsoleEmailAdapter,
   NodemailerSmtpAdapter,
@@ -108,7 +109,8 @@ import { AccountService } from '@/server/domains/auth/account-service';
 import { ProductImportService } from '@/server/domains/catalog/import-service';
 import { MediaService } from '@/server/domains/media/service';
 import { MediaPortRegistry } from '@/server/adapters/media/registry';
-import { GeoPortRegistry } from '@/server/adapters/geo/registry';
+import { GEO_ADAPTERS, GeoPortRegistry } from '@/server/adapters/geo/registry';
+import { GeoSettingsService } from '@/server/domains/geo/settings';
 import { GeoService } from '@/server/domains/geo/service';
 import { createDeliveryServices } from './delivery-wiring';
 import type { DeliveryZones } from '@/server/domains/delivery/zones';
@@ -117,6 +119,7 @@ import type { ChargePolicies } from '@/server/domains/delivery/charge-policies';
 import type { DeliveryQuotes } from '@/server/domains/delivery/quote';
 import type { DeliveryPlans } from '@/server/domains/delivery/plan';
 import type { OrderDeliveries } from '@/server/domains/delivery/order-delivery';
+import type { DeliveryBilling } from '@/server/domains/delivery/billing';
 import { KraConfigRepository } from '@/server/domains/kra/repository';
 import { KraConfigResolver } from '@/server/domains/kra/resolver';
 import { EtimsTransmissionService } from '@/server/domains/kra/etims/transmission-service';
@@ -256,6 +259,8 @@ export interface AppContainer {
   media: MediaService;
   /** Map answers (places, distances, nearest) from whichever provider is chosen, with a built-in estimate to fall back on. */
   geo: GeoService;
+  /** Which map service the company uses, how it is set up and how each has behaved. */
+  geoSettings: GeoSettingsService;
   /** Delivery zones, their places, and finding the zone of an address or a pin. */
   deliveryZones: DeliveryZones;
   /** Which delivery methods each branch offers. */
@@ -268,6 +273,8 @@ export interface AppContainer {
   deliveryPlans: DeliveryPlans;
   /** The delivery recorded on each order. */
   orderDeliveries: OrderDeliveries;
+  /** How delivery is billed on invoices and at KRA. */
+  deliveryBilling: DeliveryBilling;
   kraConfigs: KraConfigRepository;
   kraResolver: KraConfigResolver;
   etimsTransmission: EtimsTransmissionService;
@@ -307,7 +314,7 @@ export interface AppContainer {
 }
 
 function createEmailPort(): EmailPort {
-  const driver = (process.env.EMAIL_DRIVER ?? 'console').toLowerCase();
+  const { driver } = emailRuntimeConfig(process.env);
   if (driver === 'smtp') {
     return new NodemailerSmtpAdapter();
   }
@@ -459,7 +466,11 @@ export function getContainer(): AppContainer {
   const stockLocations = new StockLocationService(drizzleDb);
   const stockLedger = new StockLedger(drizzleDb);
   const stockShadow = new StockShadow(drizzleDb, stockLocations);
-  const geo = new GeoService(new GeoPortRegistry());
+  const geoCompanyId = async (): Promise<string> => (await companySettings.ensureSeeded()).id;
+  const geoSettings = new GeoSettingsService(drizzleDb, decisionLog, geoCompanyId);
+  const geo = new GeoService(new GeoPortRegistry(process.env, GEO_ADAPTERS, geoSettings.selection), undefined, (event) => {
+    void geoCompanyId().then((id) => geoSettings.record(id, event)).catch(() => undefined);
+  });
   const deliveryServices = createDeliveryServices({ db: drizzleDb, decisionLog, geo, companySettings });
   const orderSla = new OrderSlaService(drizzleDb, new OrderSlaNotifier(email, companySettings));
   const vendorNotifier = new VendorNotifier(drizzleDb, email, companySettings);
@@ -591,12 +602,14 @@ export function getContainer(): AppContainer {
     }),
     media,
     geo,
+    geoSettings,
     deliveryZones: deliveryServices.deliveryZones,
     deliveryMethods: deliveryServices.deliveryMethods,
     chargePolicies: deliveryServices.chargePolicies,
     deliveryQuotes: deliveryServices.deliveryQuotes,
     deliveryPlans: deliveryServices.deliveryPlans,
     orderDeliveries: deliveryServices.orderDeliveries,
+    deliveryBilling: deliveryServices.deliveryBilling,
     kraConfigs,
     kraResolver,
     etimsTransmission,

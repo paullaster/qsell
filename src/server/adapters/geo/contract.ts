@@ -15,7 +15,7 @@ export function runGeoPortContract(name: string, make: () => GeoPort): void {
     it('names itself and says what it can do', () => {
       const port = make();
       expect(port.provider).not.toBe('');
-      for (const key of ['placeSearch', 'reverseGeocode', 'roadDistance', 'travelTime'] as const) expect(typeof port.capabilities[key]).toBe('boolean');
+      for (const key of ['placeSearch', 'typeahead', 'reverseGeocode', 'roadDistance', 'travelTime'] as const) expect(typeof port.capabilities[key]).toBe('boolean');
       if (port.capabilities.clientMap !== null) {
         expect(port.capabilities.clientMap.driver).not.toBe('');
         // Only public values go to the browser.

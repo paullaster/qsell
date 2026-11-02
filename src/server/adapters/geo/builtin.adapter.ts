@@ -11,7 +11,7 @@ const AVERAGE_KMH = 30;
  */
 export class BuiltinGeoAdapter implements GeoPort {
   readonly provider = 'builtin';
-  readonly capabilities: GeoCapabilities = { placeSearch: false, reverseGeocode: false, roadDistance: false, travelTime: true, clientMap: null };
+  readonly capabilities: GeoCapabilities = { placeSearch: false, typeahead: false, reverseGeocode: false, roadDistance: false, travelTime: true, clientMap: null };
 
   constructor(private readonly roadFactor = 1.3) {}
 

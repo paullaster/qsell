@@ -34,9 +34,10 @@ describe('the stage catalogue', () => {
     expect(isOrderStage('toString')).toBe(false);
   });
 
-  it('is exactly the list the database accepts (migration 0106), so the two cannot drift', () => {
+  it('is exactly the list the database accepts (migrations 0106, then 0123 which added the delivery invoice stages), so the two cannot drift', () => {
     const sql = readFileSync('drizzle/0106_order_stage_timeline.sql', 'utf8');
-    const inDb = /order_stage_events_stage_chk" CHECK \("stage" IN \(([^)]*)\)\)/.exec(sql)?.[1]?.split(',').map((s) => s.trim().replaceAll("'", '')) ?? [];
+    const latest = readFileSync('drizzle/0123_delivery_invoice_stages.sql', 'utf8');
+    const inDb = /order_stage_events_stage_chk" CHECK \("stage" IN \(([^)]*)\)\)/.exec(latest)?.[1]?.split(',').map((s) => s.trim().replaceAll("'", '')) ?? [];
     expect([...inDb].sort()).toEqual([...ORDER_STAGE_NAMES].sort());
     const outcomes = /order_stage_events_outcome_chk" CHECK \("order_stage_events"."outcome" IN \(([^)]*)\)\)/.exec(sql)?.[1]?.split(',').map((s) => s.trim().replaceAll("'", '')) ?? [];
     expect([...outcomes].sort()).toEqual([...STAGE_OUTCOMES].sort());
@@ -152,12 +153,23 @@ describe('what a customer is shown', () => {
 });
 
 describe('stages that are not where the order is', () => {
-  it('are the stock events and the delivery charge quoted, and every other stage moves the order', () => {
-    expect([...NON_TRACKING_STAGES].sort()).toEqual(['charge_quoted', 'reservation_failed', 'stock_issued', 'stock_released', 'stock_reserved', 'stock_returned']);
+  it('are the stock events, the delivery charge quoted and the delivery invoice at KRA, and every other stage moves the order', () => {
+    expect([...NON_TRACKING_STAGES].sort()).toEqual(['charge_quoted', 'delivery_invoice_failed', 'delivery_invoice_signed', 'delivery_invoice_skipped', 'reservation_failed', 'stock_issued', 'stock_released', 'stock_reserved', 'stock_returned']);
     for (const name of ORDER_STAGE_NAMES) expect(tracksCurrentStage(name), name).toBe(!NON_TRACKING_STAGES.includes(name));
     for (const name of NON_TRACKING_STAGES) expect(isOrderStage(name), name).toBe(true);
   });
   it('change nothing about the order itself', () => {
     for (const name of NON_TRACKING_STAGES) expect(Object.keys(stageEffect(name, 'succeeded')), name).toEqual([]);
+  });
+});
+
+describe('stageForDeliveryInvoice', () => {
+  it('maps what happened at KRA to stages that are not the order\'s own', async () => {
+    const { stageForDeliveryInvoice } = await import('./order-stages');
+    expect(stageForDeliveryInvoice('transmitted')).toEqual({ stage: 'delivery_invoice_signed', outcome: 'succeeded' });
+    expect(stageForDeliveryInvoice('failed')).toEqual({ stage: 'delivery_invoice_failed', outcome: 'failed' });
+    expect(stageForDeliveryInvoice('skipped')).toEqual({ stage: 'delivery_invoice_skipped', outcome: 'skipped' });
+    expect(stageForDeliveryInvoice('deferred')).toBeNull();
+    for (const name of ['delivery_invoice_signed', 'delivery_invoice_failed', 'delivery_invoice_skipped'] as const) expect(Object.keys(stageEffect(name, 'succeeded'))).toEqual([]);
   });
 });

@@ -54,7 +54,13 @@ export function registerApprovalHandlers(engine: ApprovalEngine, gate: ParkedAct
           lines: { productId: string; quantity: number }[];
           reason: { code: CreditNoteReason; note?: string };
           restock?: boolean;
+          /** Credits the delivery invoice rather than lines of the goods invoice. */
+          delivery?: boolean;
         };
+        if (p.delivery === true) {
+          const cn = await getContainer().creditNotes.issueForDelivery({ orderId: p.orderId, reason: p.reason, issuedBy: row.requestedBy }, tx);
+          return { creditNoteId: cn.id, creditNoteNo: cn.creditNoteNo };
+        }
         // Issued in the approver's transaction, on behalf of the person who asked for it.
         const cn = await getContainer().creditNotes.issueForOrder(
           {

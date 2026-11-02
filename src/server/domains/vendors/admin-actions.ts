@@ -75,7 +75,12 @@ export async function resendVendorInvitationAction(vendorId: string, vendorUserI
     const container = getContainer();
     const found = await container.vendors.get(ctx.companyId, vid);
     if (found === null) throw new FinanceError('NOT_FOUND', 'That vendor does not exist.');
-    await container.vendorInvitations.resend(vid, id(vendorUserId));
+    try {
+      await container.vendorInvitations.resend(vid, id(vendorUserId));
+    } catch (error) {
+      if (error instanceof ProfileError) throw new FinanceError(error.code, error.message);
+      throw error;
+    }
   });
 }
 
@@ -85,7 +90,12 @@ export async function cancelVendorInvitationAction(vendorId: string, vendorUserI
     const container = getContainer();
     const found = await container.vendors.get(ctx.companyId, vid);
     if (found === null) throw new FinanceError('NOT_FOUND', 'That vendor does not exist.');
-    await container.vendorInvitations.remove(vid, id(vendorUserId), { type: 'user', id: ctx.actor.id ?? '' }, { ...ctx.origin });
+    try {
+      await container.vendorInvitations.remove(vid, id(vendorUserId), { type: 'user', id: ctx.actor.id ?? '' }, { ...ctx.origin });
+    } catch (error) {
+      if (error instanceof ProfileError) throw new FinanceError(error.code, error.message);
+      throw error;
+    }
   }, ['/admin/vendors']);
 }
 

@@ -16,7 +16,7 @@ const NEXT_STEP: Record<string, string> = {
   profile_submitted: 'Your profile has been sent. We will review it soon.',
   under_review: 'Your profile is being reviewed.',
   revision_requested: 'We asked for changes to your profile. Open your profile to see what to fix.',
-  active: 'Your business is active.',
+  active: 'Your business is active. Keep your profile, contacts and documents current, apply for relevant categories, and use the menu below to manage requests, orders and invoices.',
   suspended: 'Your account is suspended. Contact the buyer for the reason and the way back.',
   rejected: 'Your application was not accepted. Contact the buyer if you believe this is a mistake.',
 };
@@ -26,6 +26,12 @@ export function VendorDashboardClient({ overviewPromise }: { overviewPromise: Re
   if (!res.ok) return <LoadFailed error={res.error} />;
   const v = res.data;
   const state = VENDOR_STATUS[v.status] ?? { label: v.status, tone: 'gray' as const };
+  let standingMessage = v.standingReason;
+  if (standingMessage === null) {
+    if (v.status === 'archived') standingMessage = 'This vendor account is archived.';
+    else if (v.status === 'suspended') standingMessage = 'This vendor account is suspended.';
+    else standingMessage = `Transactions are blocked: ${VENDOR_BLOCK[v.block] ?? v.block}.`;
+  }
   return (
     <div className="space-y-5">
       <PageHeader
@@ -39,6 +45,13 @@ export function VendorDashboardClient({ overviewPromise }: { overviewPromise: Re
         }
       />
       <p className="text-sm text-fg">{NEXT_STEP[v.status] ?? 'Your account is being reviewed.'}</p>
+      {v.block !== 'none' || v.status === 'suspended' || v.status === 'archived' ? (
+        <section aria-label="Account access status" className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+          <h2 className="text-sm font-bold text-fg-strong">Some vendor actions are paused</h2>
+          <p className="mt-1 text-sm text-fg-muted">{standingMessage}</p>
+          <p className="mt-1 text-sm text-fg-muted">Contact the buyer using the support link below to resolve this and learn which actions are available again.</p>
+        </section>
+      ) : null}
       <section aria-label="Your profile" className={cardClass}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-bold text-fg-strong">Your profile</h2>
@@ -118,6 +131,11 @@ export function VendorDashboardClient({ overviewPromise }: { overviewPromise: Re
           <p className="mt-1 text-sm text-fg-muted">Invite colleagues in finance or sales and choose what each can do.</p>
         </section>
       ) : null}
+      <section aria-label="Need help" className={cardClass}>
+        <h2 className="text-sm font-bold text-fg-strong">Need help?</h2>
+        <p className="mt-1 text-sm text-fg-muted">If a page says you cannot make a change, it will explain the role or approval condition. For account access or profile changes qsell has locked, contact the buyer.</p>
+        {v.supportEmail.trim() === '' ? <p className="mt-2 text-xs text-fg-muted">The buyer has not added a support email yet.</p> : <a className="mt-2 inline-flex min-h-10 items-center font-semibold text-indigo-600 underline underline-offset-2" href={`mailto:${encodeURIComponent(v.supportEmail)}?subject=${encodeURIComponent(`Vendor portal support: ${v.legalName}`)}`}>Email the buyer: {v.supportEmail}</a>}
+      </section>
       <p className="text-xs text-fg-muted">Signed in as {v.yourName} ({v.yourRole}).</p>
     </div>
   );

@@ -15,6 +15,7 @@ export function e2eEnvironment(): Record<string, string> {
   return {
     ...inherited,
     DATABASE_URL: e2eDatabaseUrl(),
+    EMAIL_DRIVER: 'console',
     APP_URL: E2E_URL,
     AUTH_URL: E2E_URL,
     NEXTAUTH_URL: E2E_URL,

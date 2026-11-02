@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
  */
 const DIR = join(process.cwd(), 'src/server/domains/vendors');
 /** Actions a person without a session must be able to call; it answers the same for known and unknown addresses. */
-const PUBLIC_ACTIONS = new Set(['registerVendorAction']);
+const PUBLIC_ACTIONS = new Set(['registerVendorAction', 'registerVendorBusinessForCurrentAccountAction']);
 const FORBIDDEN_PARAMS = /\b(vendorId|companyId|userId|actor|portalRole)\b/;
 
 const portalFiles = readdirSync(DIR).filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts') && readFileSync(join(DIR, f), 'utf8').includes("from './portal-runner'"));

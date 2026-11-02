@@ -21,8 +21,10 @@ export interface ClientMapDescriptor {
 }
 
 export interface GeoCapabilities {
-  /** Suggests places for typed text. */
+  /** Finds places for text that was asked for (a search button). */
   placeSearch: boolean;
+  /** May be asked on every keystroke. A provider that forbids it (the free OpenStreetMap search) is searched only when the person asks. */
+  typeahead: boolean;
   /** Turns a pin into an address. */
   reverseGeocode: boolean;
   /** Distances follow roads, not the crow's flight. */

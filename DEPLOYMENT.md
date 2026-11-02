@@ -94,6 +94,10 @@ Where each value ends up:
 On the server, per installation: `$DEPLOY_PATH/.env.runtime` (app configuration and
 secrets) and `$DEPLOY_PATH/secrets/postgres_password`, both mode `600`.
 
+Production email must be real SMTP delivery: set `EMAIL_DRIVER=smtp`, `EMAIL_SMTP_HOST`, `EMAIL_SMTP_PORT`, `EMAIL_SMTP_USER`, `EMAIL_SMTP_PASSWORD`, `EMAIL_FROM`, and `EMAIL_FROM_NAME` in `.env.runtime`. Restart the app and worker after changing them. Production startup refuses console mode or a missing SMTP host/from address. Console mode is local/test only and logs a redacted “not sent” record; vendor invitations remain visible with an email-delivery failure and can be resent from the vendor team panel. Verify the sender domain and provider delivery logs in staging before inviting real suppliers.
+
+Production email is required for vendor invitations, account verification, password resets and notifications. Set `EMAIL_DRIVER=smtp`, `EMAIL_SMTP_HOST`, `EMAIL_SMTP_PORT`, `EMAIL_SMTP_USER`, `EMAIL_SMTP_PASSWORD`, `EMAIL_FROM`, and `EMAIL_FROM_NAME` in `.env.runtime`; restart the app and worker after changing them. Production refuses to start with the console sink or without an SMTP host and sender. Console mode is for local/test use only: it records a redacted log entry and does not send mail. Vendor invitations remain visible as pending with “Email not delivered” if delivery fails; fix the SMTP configuration and use **Resend** rather than creating a duplicate invitation.
+
 ## 3. One-time repository setup
 
 Done once per repository, not per server.

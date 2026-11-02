@@ -337,6 +337,9 @@ export const chargePolicies = pgTable(
     maxCharge: numeric('max_charge', { precision: 14, scale: 4 }),
     roundTo: numeric('round_to', { precision: 12, scale: 4 }).notNull().default('0'),
     roundMode: text('round_mode').$type<'nearest' | 'up'>().notNull().default('nearest'),
+    /** The tax on the delivery charge, in percent, and whether the amount the policy works out already includes it. */
+    taxRate: numeric('tax_rate', { precision: 5, scale: 2 }).notNull().default('0'),
+    taxInclusive: boolean('tax_inclusive').notNull().default(false),
     bands: jsonb('bands')
       .$type<{ fromKm: number; toKm: number | null; baseFee: number; perKm: number }[]>()
       .notNull()
@@ -390,6 +393,7 @@ export const chargePolicies = pgTable(
       'charge_policies_round_chk',
       sql`${t.roundMode} IN ('nearest','up') AND ${t.roundTo} >= 0`,
     ),
+    check('charge_policies_tax_chk', sql`${t.taxRate} >= 0 AND ${t.taxRate} <= 100`),
     check('charge_policies_currency_chk', sql`${t.currency} ~ '^[A-Z]{3}$'`),
     check('charge_policies_dates_chk', sql`${t.validTo} IS NULL OR ${t.validTo} > ${t.validFrom}`),
     check(
@@ -449,7 +453,17 @@ export const orderDeliveries = pgTable(
     destination: jsonb('destination').$type<DestinationRecord>().notNull(),
     choice: jsonb('choice').$type<ChoiceRecord>().notNull(),
     charge: jsonb('charge').$type<ChargeRecord>().notNull(),
+    /** What the customer pays for delivery, and its parts: the charge before tax (the order's shipping fee), the tax on it, and the rate. */
     chargeAmount: numeric('charge_amount', { precision: 14, scale: 2 }).notNull(),
+    chargeNet: numeric('charge_net', { precision: 14, scale: 2 }).notNull().default('0'),
+    chargeTax: numeric('charge_tax', { precision: 14, scale: 2 }).notNull().default('0'),
+    taxRate: numeric('tax_rate', { precision: 5, scale: 2 }).notNull().default('0'),
+    /** Who receives it, when that is not the buyer, and anything the rider should know. These may be corrected before dispatch. */
+    recipientName: text('recipient_name'),
+    recipientPhone: text('recipient_phone'),
+    notes: text('notes'),
+    /** What became of the delivery's own invoice at KRA, when delivery is billed on a separate invoice. */
+    invoiceKraStatus: text('invoice_kra_status').$type<'skipped' | 'failed' | 'transmitted' | 'deferred'>(),
     currency: text('currency').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -457,10 +471,87 @@ export const orderDeliveries = pgTable(
     index('order_deliveries_company_branch_idx').on(t.companyId, t.branchId),
     check('order_deliveries_amount_chk', sql`${t.chargeAmount} >= 0`),
     check(
+      'order_deliveries_split_chk',
+      sql`${t.chargeNet} >= 0 AND ${t.chargeTax} >= 0 AND ${t.chargeNet} + ${t.chargeTax} = ${t.chargeAmount} AND ${t.taxRate} >= 0 AND ${t.taxRate} <= 100`,
+    ),
+    check(
       'order_deliveries_method_chk',
       sql`${t.method} IN ('own_fleet','courier','pickup','scheduled_visit')`,
     ),
   ],
+);
+
+/**
+ * The map service a company has chosen, and its settings (addresses of servers, a contact email). Nothing secret is kept here: a
+ * provider that needs a key will keep it sealed with the other credentials. One row for each company; changes are version-checked
+ * and written to the decision log.
+ */
+export const geoSettings = pgTable(
+  'geo_settings',
+  {
+    companyId: uuid('company_id')
+      .primaryKey()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    driver: text('driver').notNull(),
+    config: jsonb('config').$type<Record<string, unknown>>().notNull().default({}),
+    version: integer('version').notNull().default(1),
+    updatedBy: text('updated_by').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('geo_settings_driver_chk', sql`${t.driver} IN ('builtin','osm','google','mapbox')`),
+  ],
+);
+
+/**
+ * What the map service was asked and how it answered, added up by the hour: how many calls, how many failed or fell back to the
+ * built-in estimate, and how long they took. This is the evidence for choosing between services, and it grows by one row for each
+ * provider, kind of call and hour, never for each call.
+ */
+export const geoUsage = pgTable(
+  'geo_usage',
+  {
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    provider: text('provider').notNull(),
+    op: text('op').notNull(),
+    bucket: timestamp('bucket', { withTimezone: true }).notNull(),
+    calls: integer('calls').notNull().default(0),
+    failures: integer('failures').notNull().default(0),
+    fallbacks: integer('fallbacks').notNull().default(0),
+    totalMs: bigint('total_ms', { mode: 'number' }).notNull().default(0),
+    maxMs: integer('max_ms').notNull().default(0),
+    under500: integer('under_500').notNull().default(0),
+    under1000: integer('under_1000').notNull().default(0),
+    under2500: integer('under_2500').notNull().default(0),
+  },
+  (t) => [
+    primaryKey({ columns: [t.companyId, t.provider, t.op, t.bucket] }),
+    index('geo_usage_company_bucket_idx').on(t.companyId, t.bucket),
+    check('geo_usage_op_chk', sql`${t.op} IN ('search','resolve','reverse','distance')`),
+  ],
+);
+
+/**
+ * How delivery is billed when an order is invoiced and signed for KRA: as a line of the same invoice as the products, or on an
+ * invoice of its own. The delivery service is a registered item (a service) so KRA can be sent a line for it. One row for each
+ * company; changes are version-checked and logged.
+ */
+export const deliveryBillingSettings = pgTable(
+  'delivery_billing_settings',
+  {
+    companyId: uuid('company_id')
+      .primaryKey()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    mode: text('mode').$type<'with_goods' | 'separate'>().notNull().default('with_goods'),
+    /** The product that stands for the delivery service on invoices and at KRA. */
+    serviceProductId: text('service_product_id').references(() => products.id, { onDelete: 'restrict' }),
+    version: integer('version').notNull().default(1),
+    updatedBy: text('updated_by').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check('delivery_billing_mode_chk', sql`${t.mode} IN ('with_goods','separate')`)],
 );
 
 /**
@@ -2062,6 +2153,8 @@ export type DeliveryMethodRow = typeof deliveryMethods.$inferSelect;
 export type ChargePolicyRow = typeof chargePolicies.$inferSelect;
 export type ChargePolicyRateRow = typeof chargePolicyRates.$inferSelect;
 export type OrderDeliveryRow = typeof orderDeliveries.$inferSelect;
+export type GeoSettingsRow = typeof geoSettings.$inferSelect;
+export type DeliveryBillingRow = typeof deliveryBillingSettings.$inferSelect;
 export type PaymentProviderConfigRow = typeof paymentProviderConfigs.$inferSelect;
 export type PaymentAttemptRow = typeof paymentAttempts.$inferSelect;
 export type PaymentCallbackEventRow = typeof paymentCallbackEvents.$inferSelect;
@@ -2111,6 +2204,8 @@ export const itemTypes = pgTable(
     name: text('name').notNull(),
     /** Non-sellable types (raw materials) must not carry a selling price. */
     isSellable: boolean('is_sellable').notNull().default(true),
+    /** How a new product of this classification is stocked. The product keeps its own copy, so changing this never rewrites existing products. */
+    defaultInventoryKind: text('default_inventory_kind').notNull().default('inventory'),
     /** Exactly one default is used when a product is created without a type. */
     isDefault: boolean('is_default').notNull().default(false),
     isActive: boolean('is_active').notNull().default(true),
@@ -2120,6 +2215,7 @@ export const itemTypes = pgTable(
   (t) => [
     uniqueIndex('item_types_code_uidx').on(t.code),
     uniqueIndex('item_types_name_uidx').on(t.name),
+    check('item_types_default_inventory_kind_chk', sql`${t.defaultInventoryKind} IN ('inventory', 'non_inventory', 'service')`),
   ],
 );
 
@@ -2289,6 +2385,11 @@ export const products = pgTable(
     itemTypeId: text('item_type_id')
       .notNull()
       .references(() => itemTypes.id, { onDelete: 'restrict' }),
+    /** Operational stock contract, independent of the seller-defined item classification. */
+    inventoryKind: text('inventory_kind')
+      .$type<'inventory' | 'non_inventory' | 'service'>()
+      .notNull()
+      .default('inventory'),
     /** Denormalized from the item type; drives the storefront sellable filter. */
     isSellable: boolean('is_sellable').notNull().default(true),
     price: numeric('price', { precision: 14, scale: 2 }),
@@ -2361,8 +2462,13 @@ export const products = pgTable(
       'products_standard_price_chk',
       sql`${t.standardPrice} IS NULL OR ${t.standardPrice} >= 0`,
     ),
+    check(
+      'products_inventory_kind_chk',
+      sql`${t.inventoryKind} IN ('inventory','non_inventory','service') AND (${t.inventoryKind} = 'inventory' OR (${t.stockQuantity} = 0 AND ${t.reservedQuantity} = 0 AND ${t.lowStockThreshold} = 0))`,
+    ),
     index('products_category_idx').on(t.categoryId),
     index('products_item_type_idx').on(t.itemTypeId),
+    index('products_inventory_kind_idx').on(t.inventoryKind, t.id),
     index('products_active_idx').on(t.isActive),
     index('products_base_unit_idx').on(t.baseUnitId),
     // The shop reads only live, sellable products, in one of four orders, a page at a time.
@@ -6669,6 +6775,8 @@ export type VendorStatus =
   | 'archived';
 export type VendorBlock = 'none' | 'payment' | 'all';
 export type VendorPortalRole = 'owner' | 'finance' | 'sales' | 'readonly';
+export type VendorInvitationStatus = 'pending' | 'accepted' | 'revoked' | 'expired';
+export type VendorInvitationDeliveryStatus = 'pending' | 'sent' | 'failed';
 
 /** Which accounts a vendor's payables, advances, discounts, tolerance, exchange differences and withholding post to. */
 export const vendorPostingGroups = pgTable(
@@ -6825,6 +6933,48 @@ export const vendorUsers = pgTable(
     check('vendor_users_status_chk', sql`${t.status} IN ('active','removed')`),
   ],
 );
+
+/** Invitations are durable records independent of login rows; access exists only after the invitee accepts. */
+export const vendorInvitations = pgTable(
+  'vendor_invitations',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    vendorId: uuid('vendor_id').notNull().references(() => vendors.id, { onDelete: 'restrict' }),
+    email: text('email').notNull(),
+    inviteeName: text('invitee_name').notNull(),
+    portalRole: text('portal_role').$type<VendorPortalRole>().notNull(),
+    tokenHash: text('token_hash').notNull(),
+    status: text('status').$type<VendorInvitationStatus>().notNull().default('pending'),
+    deliveryStatus: text('delivery_status').$type<VendorInvitationDeliveryStatus>().notNull().default('pending'),
+    deliveryError: text('delivery_error'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdBy: text('created_by').notNull(),
+    acceptedBy: uuid('accepted_by').references(() => users.id, { onDelete: 'restrict' }),
+    acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('vendor_invitations_token_uidx').on(t.tokenHash),
+    uniqueIndex('vendor_invitations_pending_email_uidx')
+      .on(t.vendorId, sql`lower(${t.email})`)
+      .where(sql`${t.status} = 'pending'`),
+    uniqueIndex('vendor_invitations_pending_owner_uidx')
+      .on(t.vendorId)
+      .where(sql`${t.status} = 'pending' AND ${t.portalRole} = 'owner'`),
+    index('vendor_invitations_company_status_idx').on(t.companyId, t.status, t.createdAt),
+    index('vendor_invitations_vendor_idx').on(t.vendorId, t.status, t.createdAt),
+    check('vendor_invitations_email_chk', sql`${t.email} = lower(btrim(${t.email}))`),
+    check('vendor_invitations_role_chk', sql`${t.portalRole} IN ('owner','finance','sales','readonly')`),
+    check('vendor_invitations_status_chk', sql`${t.status} IN ('pending','accepted','revoked','expired')`),
+    check('vendor_invitations_delivery_chk', sql`${t.deliveryStatus} IN ('pending','sent','failed')`),
+    check('vendor_invitations_state_chk', sql`(${t.status} = 'accepted') = (${t.acceptedAt} IS NOT NULL) AND (${t.status} = 'accepted') = (${t.acceptedBy} IS NOT NULL)`),
+  ],
+);
+
+export type VendorInvitationRow = typeof vendorInvitations.$inferSelect;
 
 /** Every step of a vendor's life: who, what, why, from where. Append-only. */
 export const vendorEvents = pgTable(

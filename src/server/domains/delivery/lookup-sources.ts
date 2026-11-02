@@ -1,5 +1,5 @@
-import { and, eq, sql } from 'drizzle-orm';
-import { branches, customerGroups, deliveryZones } from '@/server/db/drizzle/schema';
+import { and, eq, isNull, sql } from 'drizzle-orm';
+import { branches, customerGroups, deliveryZones, products } from '@/server/db/drizzle/schema';
 import { acceptFilters, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
 import { CHANNELS } from '@/server/domains/pricing/domain/types';
 
@@ -71,4 +71,20 @@ const deliveryChannels = staticSource({
   },
 });
 
-export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels];
+/** The items that can stand for the delivery service on an invoice. Live products only; the tax each carries is shown so a mismatch is seen at once. */
+const serviceProducts = tableSource({
+  key: 'delivery-service-products',
+  permission: 'deliveries:read',
+  table: products,
+  id: products.id,
+  label: products.name,
+  searchColumns: [products.name, products.sku],
+  select: { sku: products.sku, tax: products.taxRate },
+  scope: ({ filters }) => {
+    acceptFilters(filters, {});
+    return [and(isNull(products.deletedAt), eq(products.isActive, true)) ?? sql`false`];
+  },
+  toOption: (row) => ({ id: text(row.id), label: `${text(row.label)} (${text(row.sku)})`, description: row.tax === null || row.tax === undefined ? 'No tax rate set' : `Tax ${text(row.tax)}%`, badge: null }),
+});
+
+export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts];

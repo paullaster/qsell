@@ -75,6 +75,9 @@ export interface PolicyForm {
   maxCharge: string;
   roundTo: string;
   roundMode: RoundMode;
+  /** Percent; blank is no tax. */
+  taxRate: string;
+  taxInclusive: boolean;
   rates: RateLine[];
   bands: BandLine[];
   tiers: TierLine[];
@@ -90,7 +93,7 @@ export const emptyTier = (key = '0'): TierLine => ({ key, minOrderValue: '', per
 export const emptySurcharge = (key = '0'): SurchargeLine => ({ key, label: '', kind: 'fixed', amount: '', days: new Array<boolean>(7).fill(false), hoursOn: false, from: '22:00', to: '06:00', seasonOn: false, dateFrom: '12-01', dateTo: '01-05' });
 
 export const emptyPolicyForm = (currency = 'KES'): PolicyForm => ({
-  code: '', name: '', description: '', method: 'flat', currency, priority: '0', firstDay: '', lastDay: '', scopes: {}, distanceBasis: 'one_way', maxRangeKm: '', perMinute: '', includedKg: '', perExtraKg: '', maxWeightKg: '', minCharge: '', maxCharge: '', roundTo: '', roundMode: 'nearest',
+  code: '', name: '', description: '', method: 'flat', currency, priority: '0', firstDay: '', lastDay: '', scopes: {}, distanceBasis: 'one_way', maxRangeKm: '', perMinute: '', includedKg: '', perExtraKg: '', maxWeightKg: '', minCharge: '', maxCharge: '', roundTo: '', roundMode: 'nearest', taxRate: '', taxInclusive: false,
   rates: [{ ...emptyRate() }], bands: [emptyBand()], tiers: [], surcharges: [],
 });
 
@@ -98,7 +101,7 @@ const show = (n: number | null): string => (n === null ? '' : String(n));
 
 /** The form for a policy that exists, with the words for the zones and who it is for. */
 export function formFromPolicy(
-  policy: { code: string; description: string | null; priority: number; firstDay: string; lastDay: string | null; scopes: Record<string, { op: 'in' | 'not_in'; values: string[] }>; def: ChargePolicyDef },
+  policy: { code: string; description: string | null; priority: number; firstDay: string; lastDay: string | null; scopes: Record<string, { op: 'in' | 'not_in'; values: string[] }>; def: ChargePolicyDef; tax?: { rate: number; inclusive: boolean } },
   names: { zones: Record<string, string>; scopes: Record<string, Record<string, string>> },
 ): PolicyForm {
   const d = policy.def;
@@ -127,6 +130,8 @@ export function formFromPolicy(
     maxCharge: show(d.maxCharge),
     roundTo: d.roundTo === 0 ? '' : String(d.roundTo),
     roundMode: d.roundMode,
+    taxRate: policy.tax === undefined || policy.tax.rate === 0 ? '' : String(policy.tax.rate),
+    taxInclusive: policy.tax?.inclusive ?? false,
     rates: d.rates.map((r, i) => ({ key: String(i), zone: r.zoneId === null ? null : { id: r.zoneId, label: names.zones[r.zoneId] ?? r.zoneId }, fromKg: String(r.fromKg), toKg: show(r.toKg), fee: String(r.fee), perExtraKg: r.perExtraKg === 0 ? '' : String(r.perExtraKg) })),
     bands: d.bands.map((b, i) => ({ key: String(i), fromKm: String(b.fromKm), toKm: show(b.toKm), baseFee: String(b.baseFee), perKm: b.perKm === 0 ? '' : String(b.perKm) })),
     tiers: d.tiers.map((t, i) => ({ key: String(i), minOrderValue: String(t.minOrderValue), percentOff: String(t.percentOff) })),
@@ -173,6 +178,8 @@ export function payloadFromForm(f: PolicyForm): Record<string, unknown> {
     maxCharge: f.maxCharge,
     roundTo: f.roundTo,
     roundMode: f.roundMode,
+    taxRate: f.taxRate,
+    taxInclusive: f.taxInclusive,
     rates: distance ? [] : f.rates.map((r) => ({ zoneId: f.method === 'flat' ? '' : (r.zone?.id ?? ''), fromKg: r.fromKg, toKg: r.toKg, fee: r.fee, perExtraKg: r.perExtraKg })),
     bands: distance ? f.bands.map((b) => ({ fromKm: b.fromKm, toKm: b.toKm, baseFee: b.baseFee, perKm: b.perKm })) : [],
     tiers: f.tiers.map((t) => ({ minOrderValue: t.minOrderValue, percentOff: t.percentOff })),

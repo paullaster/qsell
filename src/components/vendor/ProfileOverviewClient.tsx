@@ -16,8 +16,8 @@ const BANNER: Record<string, string> = {
   profile_submitted: 'Your profile has been sent. We will look at it soon. You will not be able to change it while it is being reviewed.',
   under_review: 'Your profile is being reviewed. You will not be able to change it until we decide.',
   revision_requested: 'We asked for changes. Fix what is marked below, then send your profile again.',
-  active: 'Your profile is approved. You can keep your contact persons and documents up to date here.',
-  suspended: 'Your account is suspended. You can keep your contact persons and documents up to date.',
+  active: 'Your profile is approved. You can keep public business information, contact persons and documents up to date. Verified business type, registration and payment details remain protected.',
+  suspended: 'Your account is suspended. You can keep permitted profile information, contact persons and documents up to date.',
   rejected: 'Your application was not accepted.',
 };
 
@@ -59,6 +59,7 @@ function Overview({ view }: { view: Extract<Awaited<ReturnType<typeof profileOve
               <Chip tone={TONE[s.status]}>{WORDS[s.status]}</Chip>
             </div>
             {s.note === null ? null : <p role="note" className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-fg"><span className="font-semibold">To fix:</span> {s.note}</p>}
+            {!s.canEdit && s.readOnlyBecause !== null ? <p className="text-xs text-fg-muted">{s.readOnlyBecause}</p> : null}
             {s.status === 'complete' || !s.canEdit ? null : (
               <ul className="list-disc pl-5 text-xs text-fg-muted">{s.missing.slice(0, 4).map((m) => <li key={m}>{m}</li>)}</ul>
             )}

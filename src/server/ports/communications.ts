@@ -83,6 +83,10 @@ export interface InvoicePayload {
   subtotal: number;
   tax: number;
   taxLabel?: string;
+  /** The tax in its parts (on the products, on the delivery, in all). When given, these rows are shown instead of the single tax row, and the shipping row is left out when it is nothing. */
+  taxRows?: { label: string; amount: number }[];
+  /** What the document is called when it is not the plain tax invoice (for example the invoice of the delivery service). */
+  documentTitle?: string | null;
   shippingFee: number;
   totalAmount: number;
   paymentMethod: string;

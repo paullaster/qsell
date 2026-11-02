@@ -92,6 +92,8 @@ const headerValues = (input: PolicyInput) => ({
   maxCharge: text(input.maxCharge),
   roundTo: String(input.roundTo),
   roundMode: input.roundMode,
+  taxRate: String(input.taxRate),
+  taxInclusive: input.taxInclusive,
   bands: input.bands,
   tiers: input.tiers,
   surcharges: input.surcharges,
@@ -195,7 +197,7 @@ export class ChargePolicies {
           .insert(chargePolicies)
           .values({
             companyId, code: from.code, version: next, status: 'draft', createdBy: actor.id, name: from.name, description: from.description, method: from.method, currency: from.currency, priority: from.priority, validFrom: new Date(), validTo: null, scopes: from.scopes,
-            distanceBasis: from.distanceBasis, maxRangeKm: from.maxRangeKm, perMinute: from.perMinute, includedKg: from.includedKg, perExtraKg: from.perExtraKg, maxWeightKg: from.maxWeightKg, minCharge: from.minCharge, maxCharge: from.maxCharge, roundTo: from.roundTo, roundMode: from.roundMode, bands: from.bands, tiers: from.tiers, surcharges: from.surcharges,
+            distanceBasis: from.distanceBasis, maxRangeKm: from.maxRangeKm, perMinute: from.perMinute, includedKg: from.includedKg, perExtraKg: from.perExtraKg, maxWeightKg: from.maxWeightKg, minCharge: from.minCharge, maxCharge: from.maxCharge, roundTo: from.roundTo, roundMode: from.roundMode, taxRate: from.taxRate, taxInclusive: from.taxInclusive, bands: from.bands, tiers: from.tiers, surcharges: from.surcharges,
           })
           .returning();
         if (row === undefined) throw new Error('The policy was not saved.');

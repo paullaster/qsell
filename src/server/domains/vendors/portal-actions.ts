@@ -5,7 +5,6 @@ import { headers } from 'next/headers';
 import * as Sentry from '@sentry/nextjs';
 import { randomUUID } from 'node:crypto';
 import { getContainer } from '@/server/di/container';
-import { UserRepository } from '@/server/domains/auth/user-repository';
 import { validatePassword } from '@/lib/passwordPolicy';
 import { checkRegistration, type VendorRegistration } from '@/lib/vendor-forms';
 import { has } from '@/lib/values';
@@ -13,15 +12,41 @@ import { clientAddress, waitMessage } from '@/lib/rate-limit';
 import { isUniqueViolation } from '@/server/domains/settings/errors';
 import { PortalAccessError } from './portal-session';
 import { portal } from './portal-runner';
+import { auth } from '@/auth';
+import { UserRepository } from '@/server/domains/auth/user-repository';
+import { findPortalAccess } from './portal-access';
 
 type Result = { ok: true } | { ok: false; error: string };
 
-/**
- * A vendor business signs up (docs/architecture/vendor-management-module.md §5.2). Open to anyone; nothing is visible to the
- * vendor until staff review its profile. The answer is the same whether or not the address already has an account, so the
- * form cannot be used to find out who is registered: an existing unverified address is mailed its link again, anything else
- * existing is left alone.
- */
+/** A signed-in customer can also register a vendor business without creating a duplicate login. */
+export async function registerVendorBusinessForCurrentAccountAction(raw: unknown): Promise<Result> {
+  try {
+    const session = await auth();
+    const actor = session?.user;
+    if (actor === undefined || actor.isStaff || actor.role !== 'customer') {
+      return { ok: false, error: 'Sign in to a verified customer account to register a vendor business.' };
+    }
+    const current = await new UserRepository().findById(actor.id);
+    if (current?.role !== 'customer' || !current.isActive || current.emailVerifiedAt === null) {
+      return { ok: false, error: 'This qsell account cannot register a vendor business. Sign in with a verified customer account or ask the buyer for an invitation.' };
+    }
+    if (await findPortalAccess(current.id) !== null) return { ok: false, error: 'This account already has access to a vendor business. Open the vendor portal or ask the buyer to invite a separate vendor account.' };
+    const form = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
+    const legalName = typeof form.legalName === 'string' ? form.legalName.trim() : '';
+    const phone = typeof form.phone === 'string' ? form.phone.trim() : '';
+    if (legalName.length < 2 || legalName.length > 200) return { ok: false, error: 'Enter the legal name of your business (2–200 characters).' };
+    if (phone !== '' && !/^\+?[0-9 ()-]{7,20}$/.test(phone)) return { ok: false, error: 'Enter a phone number with 7 to 20 digits.' };
+    const company = await getContainer().companySettings.ensureSeeded();
+    await getContainer().vendors.registerBusiness({ companyId: company.id, userId: current.id, legalName, email: current.email, phone: phone === '' ? current.phone : phone });
+    return { ok: true };
+  } catch (error) {
+    if (isUniqueViolation(error)) return { ok: false, error: 'This business is already registered. Sign in to the linked vendor account or contact the buyer for help.' };
+    console.error('[vendor.register.existing_account]', error);
+    return { ok: false, error: 'We could not register this vendor business just now. Please try again or ask the buyer for an invitation.' };
+  }
+}
+
+/** A supplier can create a vendor business here; this is separate from customer registration and buyer invitations. */
 export async function registerVendorAction(input: VendorRegistration): Promise<Result> {
   const requestId = randomUUID();
   try {
@@ -99,6 +124,8 @@ export async function portalOverviewAction() {
     const found = await container.vendors.portalView(me.vendorId);
     if (found === null) throw new PortalAccessError();
     const profile = await container.vendorProfile.statuses(me.companyId, me.vendorId);
+    const company = await container.companySettings.ensureSeeded();
+    const standing = await container.vendorLifecycle.standing(me.companyId, me.vendorId);
     return {
       legalName: found.legalName,
       status: found.status,
@@ -106,6 +133,8 @@ export async function portalOverviewAction() {
       number: found.number,
       yourName: me.name,
       yourRole: me.portalRole,
+      supportEmail: company.email,
+      standingReason: standing?.reasonText ?? null,
       sections: profile?.statuses ?? null,
     };
   });

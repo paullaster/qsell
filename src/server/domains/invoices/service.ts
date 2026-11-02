@@ -6,17 +6,21 @@ import {
   customers,
   invoiceDocuments,
   orders,
+  type OrderDeliveryRow,
 } from '@/server/db/drizzle/schema';
 import type { CompanySettingsRepository } from '@/server/domains/company/repository';
 import type { EmailPort, InvoicePayload, InvoicePdfPort } from '@/server/ports/communications';
 import type { Order } from '@/types/index';
+import type { InvoiceFigures, InvoicePlan } from '@/lib/delivery-invoicing';
+import { invoicePlanFor } from '@/server/domains/delivery/invoice-plan';
 import { shownPaymentReference } from '@/lib/paymentReference';
 import { getContainer } from '@/server/di/container';
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import { resolveDocumentLayouts } from '@/lib/document-layouts';
 import { has, trimToNull } from '@/lib/values';
 
-export type InvoiceDocumentType = 'tax_invoice' | 'proforma';
+/** `delivery_invoice` is the delivery service's own tax invoice, for a company that bills delivery apart from the goods. */
+export type InvoiceDocumentType = 'tax_invoice' | 'proforma' | 'delivery_invoice';
 
 export interface InvoiceServiceDeps {
   db: DrizzleDb;
@@ -49,6 +53,14 @@ function dbErrorMessage(error: unknown): string {
 }
 
 function documentLabels(documentType: InvoiceDocumentType) {
+  if (documentType === 'delivery_invoice') {
+    return {
+      title: 'Tax Invoice: Delivery Service',
+      emailSubjectKind: 'Tax Invoice (Delivery Service)',
+      emailIntro: 'tax invoice for the delivery service',
+      templateKey: 'tax_invoice_delivery',
+    };
+  }
   if (documentType === 'proforma') {
     return {
       title: 'Proforma Invoice',
@@ -104,10 +116,26 @@ function buildInvoiceEmailHtml(args: {
   order: Order;
   invoiceNumber: string;
   buyerTaxPin?: string | null;
+  /** The money of this document: the products' invoice (with delivery on it, or not) or the delivery service's own. */
+  figures: InvoiceFigures;
+  /** True for the delivery service's own invoice: no product lines. */
+  deliveryOnly?: boolean;
 }): string {
-  const { documentType, labels, company, order, invoiceNumber, buyerTaxPin } = args;
+  const { documentType, labels, company, order, invoiceNumber, buyerTaxPin, figures } = args;
   const ship = order.shippingAddress;
-  const itemRows = order.items
+  const deliveryRow =
+    figures.deliveryLine === null
+      ? ''
+      : `
+      <tr>
+        <td style="padding:8px;border-bottom:1px solid #E5E7EB;">
+          <div style="font-weight:600;">${escapeHtml(figures.deliveryLine.name)}</div>
+        </td>
+        <td style="padding:8px;border-bottom:1px solid #E5E7EB;text-align:center;">1</td>
+        <td style="padding:8px;border-bottom:1px solid #E5E7EB;text-align:right;">${formatMoney(figures.deliveryLine.net, order.currency)}</td>
+        <td style="padding:8px;border-bottom:1px solid #E5E7EB;text-align:right;">${formatMoney(figures.deliveryLine.net, order.currency)}</td>
+      </tr>`;
+  const itemRows = (args.deliveryOnly === true ? [] : order.items)
     .map(
       (item) => `
       <tr>
@@ -119,7 +147,7 @@ function buildInvoiceEmailHtml(args: {
         <td style="padding:8px;border-bottom:1px solid #E5E7EB;text-align:right;">${formatMoney(item.totalPrice, order.currency)}</td>
       </tr>`,
     )
-    .join('');
+    .join('') + deliveryRow;
 
   const companyAddress = [
     company.streetAddress,
@@ -174,7 +202,7 @@ function buildInvoiceEmailHtml(args: {
       <p>
         Please find attached your <strong>${escapeHtml(labels.title)}</strong>
         <strong>${escapeHtml(invoiceNumber)}</strong> totaling
-        <strong>${formatMoney(order.totalAmount, order.currency)}</strong>.
+        <strong>${formatMoney(figures.totalAmount, order.currency)}</strong>.
       </p>
 
       <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:13px;">
@@ -190,10 +218,10 @@ function buildInvoiceEmailHtml(args: {
       </table>
 
       <table style="width:100%;max-width:280px;margin-left:auto;font-size:13px;border-collapse:collapse;">
-        <tr><td style="padding:4px 0;color:#6B7280;">Subtotal</td><td style="padding:4px 0;text-align:right;">${formatMoney(order.subtotal, order.currency)}</td></tr>
-        <tr><td style="padding:4px 0;color:#6B7280;">VAT</td><td style="padding:4px 0;text-align:right;">${formatMoney(order.tax, order.currency)}</td></tr>
-        <tr><td style="padding:4px 0;color:#6B7280;">Shipping</td><td style="padding:4px 0;text-align:right;">${formatMoney(order.shippingFee, order.currency)}</td></tr>
-        <tr><td style="padding:8px 0;font-weight:700;">Total</td><td style="padding:8px 0;text-align:right;font-weight:700;">${formatMoney(order.totalAmount, order.currency)}</td></tr>
+        <tr><td style="padding:4px 0;color:#6B7280;">Subtotal</td><td style="padding:4px 0;text-align:right;">${formatMoney(figures.subtotal, order.currency)}</td></tr>
+        ${figures.taxRows.map((r) => `<tr><td style="padding:4px 0;color:#6B7280;">${escapeHtml(r.label)}</td><td style="padding:4px 0;text-align:right;">${formatMoney(r.amount, order.currency)}</td></tr>`).join('')}
+        ${figures.shippingFee > 0 ? `<tr><td style="padding:4px 0;color:#6B7280;">Shipping</td><td style="padding:4px 0;text-align:right;">${formatMoney(figures.shippingFee, order.currency)}</td></tr>` : ''}
+        <tr><td style="padding:8px 0;font-weight:700;">Total</td><td style="padding:8px 0;text-align:right;font-weight:700;">${formatMoney(figures.totalAmount, order.currency)}</td></tr>
       </table>
 
       <p style="margin:16px 0 4px;color:#6B7280;font-size:12px;text-transform:uppercase;letter-spacing:0.04em;">Ship to</p>
@@ -224,7 +252,7 @@ export class InvoiceService {
    * The number and the record are saved in one short transaction, so a gap-free series gives its
    * number back if the save fails; the PDF is rendered afterwards, never while the lock is held.
    */
-  private async numberDocument(order: Order, documentType: InvoiceDocumentType): Promise<string> {
+  private async numberDocument(order: Order, documentType: InvoiceDocumentType, figures: InvoiceFigures, billingMode: string, serviceProductId: string | null): Promise<string> {
     const [existing] = await this.deps.db
       .select({ invoiceNumber: invoiceDocuments.invoiceNumber })
       .from(invoiceDocuments)
@@ -238,6 +266,8 @@ export class InvoiceService {
     if (existing) return existing.invoiceNumber;
 
     const kind = documentType === 'proforma' ? 'proforma_invoice' : 'tax_invoice';
+    // The delivery service's own invoice comes from the same tax invoice series (one legal sequence), as its own document.
+    const documentId = documentType === 'delivery_invoice' ? `${order.id}#delivery` : order.id;
     const company = await this.deps.companySettings.ensureSeeded();
     const [row] = await this.deps.db
       .select({ branchId: orders.branchId })
@@ -253,7 +283,7 @@ export class InvoiceService {
             companyId: company.id,
             branchId: row?.branchId ?? null,
             date: businessDate(),
-            document: { kind, id: order.id },
+            document: { kind, id: documentId },
           },
           tx,
         );
@@ -267,10 +297,10 @@ export class InvoiceService {
             customerEmail: order.customerEmail,
             customerName: order.customerName,
             currency: order.currency,
-            subtotal: String(order.subtotal),
-            tax: String(order.tax),
-            shippingFee: String(order.shippingFee),
-            totalAmount: String(order.totalAmount),
+            subtotal: String(figures.subtotal),
+            tax: String(figures.totalTax),
+            shippingFee: String(figures.shippingFee),
+            totalAmount: String(figures.totalAmount),
             pdfStorageKey: `${number}.pdf`,
             emailStatus: 'not_sent',
             meta: {
@@ -281,6 +311,8 @@ export class InvoiceService {
               transmitInvoicesToKra: order.transmitInvoicesToKra === true,
               customerAccountType: order.customerAccountType ?? null,
               tradeCustomerId: order.tradeCustomerId ?? null,
+              deliveryBilling: billingMode,
+              deliveryServiceProductId: serviceProductId,
             },
           })
           // Two requests for the same new document: both get the same number, one record.
@@ -298,9 +330,27 @@ export class InvoiceService {
     company: InvoicePayload['company'],
     documentType: InvoiceDocumentType,
     buyerTaxPin: string | null,
+    figures: InvoiceFigures,
   ): InvoicePayload {
+    const deliveryOnly = documentType === 'delivery_invoice';
+    const goods = deliveryOnly
+      ? []
+      : order.items.map((item) => {
+          const shown = lineDisplay(orderLine(item));
+          return {
+            sku: item.sku,
+            name: item.productName,
+            quantity: shown.quantity,
+            unit: shown.unit,
+            unitPrice: shown.unitPrice,
+            totalPrice: item.totalPrice,
+          };
+        });
+    // Delivery is a line beside the products (or the only line of its own invoice), before tax, like the products' tax row.
+    const delivery = figures.deliveryLine === null ? [] : [{ sku: 'DELIVERY', name: figures.deliveryLine.name, quantity: 1, unit: null, unitPrice: figures.deliveryLine.net, totalPrice: figures.deliveryLine.net }];
     return {
-      documentType,
+      documentType: deliveryOnly ? 'tax_invoice' : documentType,
+      ...(deliveryOnly ? { documentTitle: 'Tax Invoice: Delivery Service' } : {}),
       invoiceNumber,
       issuedAt: new Date().toISOString(),
       orderId: order.id,
@@ -314,26 +364,35 @@ export class InvoiceService {
         kraPin: buyerTaxPin,
         shippingAddress: order.shippingAddress,
       },
-      items: order.items.map((item) => {
-        const shown = lineDisplay(orderLine(item));
-        return {
-          sku: item.sku,
-          name: item.productName,
-          quantity: shown.quantity,
-          unit: shown.unit,
-          unitPrice: shown.unitPrice,
-          totalPrice: item.totalPrice,
-        };
-      }),
-      subtotal: order.subtotal,
-      tax: order.tax,
-      shippingFee: order.shippingFee,
-      totalAmount: order.totalAmount,
+      items: [...goods, ...delivery],
+      subtotal: figures.subtotal,
+      tax: figures.totalTax,
+      taxRows: figures.taxRows,
+      shippingFee: figures.shippingFee,
+      totalAmount: figures.totalAmount,
       paymentMethod: order.paymentMethod,
       paymentReference: shownPaymentReference(order),
       paymentStatus: order.paymentStatus,
       notes: trimToNull(order.internalNotes),
     };
+  }
+
+  /**
+   * How this order's money is laid out on its invoices: the company's choice (delivery on the goods invoice, or on its own) applied
+   * to the delivery the order was given. A layout that does not add up to the order is refused, never issued. A proforma is one
+   * request for payment, so it always shows delivery with the goods.
+   */
+  async planFor(order: Order, documentType: InvoiceDocumentType = 'tax_invoice'): Promise<{ plan: InvoicePlan; delivery: OrderDeliveryRow | null; figures: InvoiceFigures; serviceProductId: string | null }> {
+    const company = await this.deps.companySettings.ensureSeeded();
+    const { plan, delivery, figures, serviceProductId } = await invoicePlanFor(this.deps.db, company.id, order.id, documentType);
+    return { plan, delivery, figures, serviceProductId };
+  }
+
+  /** True when the order has a delivery invoice of its own: delivery is billed apart and has been charged. */
+  async hasDeliveryInvoice(orderId: string): Promise<boolean> {
+    const order = await this.resolveOrder(orderId);
+    const { plan } = await this.planFor(order, 'tax_invoice');
+    return plan.deliveryInvoice !== null;
   }
 
   private async buyerTaxPin(order: Order): Promise<string | null> {
@@ -371,24 +430,31 @@ export class InvoiceService {
     this.assertProformaAllowed(order, documentType);
     // A tax invoice is a fiscal document: not before the sale has been approved.
     if (
-      documentType === 'tax_invoice' &&
+      documentType !== 'proforma' &&
       ['pending', 'rejected', 'draft'].includes(order.approvalStatus ?? 'none')
     ) {
       throw new Error('A tax invoice cannot be issued while this order is waiting for approval.');
     }
     const company = await this.deps.companySettings.getProfile();
     const buyerTaxPin = await this.buyerTaxPin(order);
-    const invoiceNumber = await this.numberDocument(order, documentType);
-    const payload = this.buildPayload(order, invoiceNumber, company, documentType, buyerTaxPin);
+    const { plan, figures, serviceProductId } = await this.planFor(order, documentType);
+    const invoiceNumber = await this.numberDocument(order, documentType, figures, plan.mode, serviceProductId);
+    const payload = this.buildPayload(order, invoiceNumber, company, documentType, buyerTaxPin, figures);
     const pdf = await this.deps.invoicePdf.generate(payload);
     const filename = `${invoiceNumber}.pdf`;
 
     // Whether this document is signed with KRA is the signing policy's call, and signing must
     // never hold up the invoice (or the sale) it belongs to, so this is not awaited. The
     // service records every decision and failure itself and does not throw.
-    void getContainer()
-      .kraSigning.processOrderDocument({ orderId: order.id, documentType, invoiceNumber })
-      .catch((error: unknown) => console.error('[kra-signing] hook failed', error));
+    const signing = getContainer().kraSigning;
+    void (documentType === 'delivery_invoice'
+      ? signing.processOrderDeliveryDocument({ orderId: order.id, invoiceNumber })
+      : signing.processOrderDocument({ orderId: order.id, documentType, invoiceNumber })
+    ).catch((error: unknown) => console.error('[kra-signing] hook failed', error));
+    // A company that bills delivery on its own invoice gets that invoice with the goods invoice, numbered and signed on its own.
+    if (documentType === 'tax_invoice' && plan.deliveryInvoice !== null) {
+      void this.generatePdf(order.id, 'delivery_invoice').catch((error: unknown) => console.error('[invoices] delivery invoice failed', error));
+    }
 
     return {
       invoiceNumber,
@@ -416,6 +482,7 @@ export class InvoiceService {
     const pdfBuffer = Buffer.from(generated.pdfBase64, 'base64');
 
     const buyerTaxPin = await this.buyerTaxPin(order);
+    const { figures } = await this.planFor(order, documentType);
     const subject = `${company.tradingName} ${labels.emailSubjectKind} ${generated.invoiceNumber}`;
     const html = buildInvoiceEmailHtml({
       documentType,
@@ -424,6 +491,8 @@ export class InvoiceService {
       order,
       invoiceNumber: generated.invoiceNumber,
       buyerTaxPin,
+      figures,
+      deliveryOnly: documentType === 'delivery_invoice',
     });
 
     const [outbox] = await this.deps.db
@@ -439,7 +508,7 @@ export class InvoiceService {
           invoiceNumber: generated.invoiceNumber,
           documentType,
           customerEmail: order.customerEmail,
-          totalAmount: order.totalAmount,
+          totalAmount: figures.totalAmount,
           currency: order.currency,
           companyTradingName: company.tradingName,
           adapter: this.deps.email.name,
@@ -458,7 +527,7 @@ export class InvoiceService {
         to: order.customerEmail,
         subject,
         html,
-        text: `Your ${company.tradingName} ${labels.title} ${generated.invoiceNumber} for ${order.currency} ${order.totalAmount} is attached.`,
+        text: `Your ${company.tradingName} ${labels.title} ${generated.invoiceNumber} for ${order.currency} ${figures.totalAmount} is attached.`,
         replyTo: company.email,
         fromOverride: `${company.tradingName} Billing <${company.email}>`,
         attachments: [
