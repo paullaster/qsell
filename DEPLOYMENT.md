@@ -94,7 +94,18 @@ Where each value ends up:
 On the server, per installation: `$DEPLOY_PATH/.env.runtime` (app configuration and
 secrets) and `$DEPLOY_PATH/secrets/postgres_password`, both mode `600`.
 
-Production email must be real SMTP delivery: set `EMAIL_DRIVER=smtp`, `EMAIL_SMTP_HOST`, `EMAIL_SMTP_PORT`, `EMAIL_SMTP_USER`, `EMAIL_SMTP_PASSWORD`, `EMAIL_FROM`, and `EMAIL_FROM_NAME` in `.env.runtime`. Restart the app and worker after changing them. Production startup refuses console mode or a missing SMTP host/from address. Console mode is local/test only and logs a redacted “not sent” record; vendor invitations remain visible with an email-delivery failure and can be resent from the vendor team panel. Verify the sender domain and provider delivery logs in staging before inviting real suppliers.
+Production email must be real SMTP delivery: set `EMAIL_DRIVER=smtp`, `EMAIL_SMTP_HOST`, `EMAIL_SMTP_PORT`, `EMAIL_SMTP_USER`, `EMAIL_SMTP_PASSWORD`, `EMAIL_FROM` (the mailbox the mail server lets this instance send as) and, if you want one, `EMAIL_FROM_NAME` and `EMAIL_FROM_POLICY` in `.env.runtime`. Nothing has a built-in value: an instance without a real host and mailbox refuses to start its SMTP sender. Restart the app and worker after changing them. Production startup refuses console mode or a missing SMTP host/from address. Console mode is local/test only and logs a redacted “not sent” record; vendor invitations remain visible with an email-delivery failure and can be resent from the vendor team panel. Verify the sender domain and provider delivery logs in staging before inviting real suppliers.
+
+### Who a mail is from (mail servers differ)
+
+Some mail servers accept any From address from an authenticated login; others reject or rewrite mail whose From is not the mailbox they logged in as. Each instance chooses with `EMAIL_FROM_POLICY`:
+
+| Policy | From the reader sees | Reply-To | Use it when |
+|---|---|---|---|
+| `mailbox` (default) | the mailbox, shown with the company's name (`"Acme Ltd" <mail@your-domain>`) | the company's email address from Company settings, if it is a real address | the server only accepts the login's own address, or you do not know |
+| `business` | the company's own email address | none | the server accepts a From that is not the login; the mailbox is named in the Sender header and used as the SMTP envelope sender |
+
+The SMTP envelope sender is always the mailbox. Quotes and invoices speak for the company: its trading name and its email address come from Company settings, so the same build works for every instance. A company email that is not a real address (such as the `admin@localhost` the first start is seeded with) is never used as From or Reply-To; set the real address under Company settings. If the server refuses the sender, the quote or invoice stays unsent and the screen says "The mail server refused the sender address" with what to change; set `EMAIL_FROM_POLICY=mailbox`, or `EMAIL_FROM` to an address the server allows.
 
 Production email is required for vendor invitations, account verification, password resets and notifications. Set `EMAIL_DRIVER=smtp`, `EMAIL_SMTP_HOST`, `EMAIL_SMTP_PORT`, `EMAIL_SMTP_USER`, `EMAIL_SMTP_PASSWORD`, `EMAIL_FROM`, and `EMAIL_FROM_NAME` in `.env.runtime`; restart the app and worker after changing them. Production refuses to start with the console sink or without an SMTP host and sender. Console mode is for local/test use only: it records a redacted log entry and does not send mail. Vendor invitations remain visible as pending with “Email not delivered” if delivery fails; fix the SMTP configuration and use **Resend** rather than creating a duplicate invitation.
 

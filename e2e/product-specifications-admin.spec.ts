@@ -19,7 +19,7 @@ test.describe('editing product specifications', () => {
     await expect(dialog.getByRole('button', { name: 'Stock behaviour' })).toBeVisible();
     await dialog.getByRole('button', { name: 'Stock behaviour' }).click();
     await expect(dialog.getByRole('combobox', { name: 'How should qsell manage this product?' })).toBeVisible();
-    await expect(dialog.getByText(/Inventory treatment is fixed when a product is created/)).toBeVisible();
+    await expect(dialog.getByText(/You can change inventory treatment only while the product has no stock or business-document history/)).toBeVisible();
     await dialog.getByRole('button', { name: 'Specs' }).click();
 
     const specificationNames = dialog.getByRole('textbox', { name: /^Specification name / });

@@ -1845,8 +1845,7 @@ export class SalesQuoteService {
       subject: `${company.tradingName} quotation ${quote.quoteNumber}`,
       html,
       text: `Your quotation ${quote.quoteNumber} totals ${quote.currency} ${num(quote.totalAmount).toFixed(2)}.${acceptUrl ? ` Review and respond: ${acceptUrl}` : ''}`,
-      replyTo: company.email,
-      fromOverride: `${company.tradingName} Sales <${company.email}>`,
+      sender: { name: company.tradingName, address: company.email },
       attachments: [
         { filename: `${quote.quoteNumber}.pdf`, content: pdf, contentType: 'application/pdf' },
       ],

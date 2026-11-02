@@ -125,8 +125,13 @@ export interface EmailMessage {
   html: string;
   text?: string;
   attachments?: EmailAttachment[];
+  /** Where an answer should go, when it is not the business address given in `sender`. Left off when it is not a real address. */
   replyTo?: string;
-  fromOverride?: string;
+  /**
+   * The business this mail speaks for: its name and its own address. How that appears (as From, or as the display name and Reply-To
+   * of the instance's mailbox) is decided by the deployment's settings, because mail servers differ on what From they accept.
+   */
+  sender?: { name?: string; address?: string };
 }
 
 export interface EmailSendResult {
