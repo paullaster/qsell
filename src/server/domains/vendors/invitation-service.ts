@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { hash } from '@node-rs/bcrypt';
-import { and, asc, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNull, lte, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   users,
@@ -67,7 +67,7 @@ export class VendorInvitationService {
 
         await tx.update(vendorInvitations)
           .set({ status: 'expired', updatedAt: now })
-          .where(and(eq(vendorInvitations.vendorId, vendorId), eq(vendorInvitations.status, 'pending'), sql`${vendorInvitations.expiresAt} <= ${now}`));
+          .where(and(eq(vendorInvitations.vendorId, vendorId), eq(vendorInvitations.status, 'pending'), lte(vendorInvitations.expiresAt, now)));
 
         const existingUser = await tx.select({ id: users.id, role: users.role })
           .from(users).where(eq(users.email, who.email)).for('update');
