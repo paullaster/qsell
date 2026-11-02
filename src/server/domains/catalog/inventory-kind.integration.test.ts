@@ -117,7 +117,8 @@ describe.skipIf(!has(url))('operational inventory kind (database)', () => {
         .update(schema.products)
         .set({ inventoryKind: 'inventory' })
         .where(eq(schema.products.id, service.id)),
-    ).rejects.toThrow(/stock or document history/);
+      // The driver reports a failed statement as "Failed query"; what the trigger said is the cause.
+    ).rejects.toMatchObject({ cause: { message: expect.stringMatching(/stock or document history/) as string } });
 
     const { StockLedger } = await import('@/server/domains/stock/ledger');
     const ledger = new StockLedger(db);
