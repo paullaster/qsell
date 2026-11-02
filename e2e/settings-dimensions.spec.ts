@@ -61,7 +61,7 @@ test.describe('dimensions', () => {
     await expect(page.getByText('A2 is switched off.')).toBeVisible({ timeout: 30_000 });
 
     // Deleting asks first, in place; "Keep it" changes nothing, and the second press does it.
-    await second.getByRole('button', { name: 'Delete value A2' }).click();
+    await clickUntilVisible(second.getByRole('button', { name: 'Delete value A2' }), second.getByRole('button', { name: 'Keep it' }));
     await second.getByRole('button', { name: 'Keep it' }).focus();
     await page.keyboard.press('Enter');
     await expect(second.getByRole('button', { name: 'Delete value A2' })).toBeVisible();
