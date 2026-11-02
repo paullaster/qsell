@@ -51,9 +51,10 @@ describe.skipIf(!has(url))('delivery billing (database)', () => {
     const r = await actions.saveDeliveryBillingAction({ mode, serviceProductId, expectedVersion: v, reason: 'Set up for the test' });
     if (!r.ok) throw new Error(r.error);
   };
-  const product = async (over: { tax?: string | null; name?: string } = {}) => {
+  /** An item for the test: a service by default (only a service can stand for delivery); goods when `goods` is set. */
+  const product = async (over: { tax?: string | null; name?: string; goods?: boolean } = {}) => {
     const id = `prod_db_${randomUUID()}`;
-    await db.insert(schema.products).values({ id, sku: `DB-${randomUUID().slice(0, 8)}`.toUpperCase(), stockCode: `DBS-${randomUUID().slice(0, 8)}`.toUpperCase(), name: over.name ?? `Billed ${id.slice(-6)}`, slug: `db-${randomUUID()}`, itemTypeId, price: '1000', costPrice: '10', taxRate: over.tax === undefined ? '16' : over.tax, isTaxInclusive: false, stockQuantity: 0 });
+    await db.insert(schema.products).values({ id, sku: `DB-${randomUUID().slice(0, 8)}`.toUpperCase(), stockCode: `DBS-${randomUUID().slice(0, 8)}`.toUpperCase(), name: over.name ?? `Billed ${id.slice(-6)}`, slug: `db-${randomUUID()}`, itemTypeId, price: '1000', costPrice: '10', taxRate: over.tax === undefined ? '16' : over.tax, isTaxInclusive: false, stockQuantity: 0, inventoryKind: over.goods === true ? 'inventory' : 'service' });
     return id;
   };
   /** A delivered order: one product of 1,000 before tax with 16% tax, delivery 300 before tax with 16% tax (so 348 to pay). */
@@ -62,7 +63,7 @@ describe.skipIf(!has(url))('delivery billing (database)', () => {
     const branchId = b?.id ?? '';
     madeBranches.push(branchId);
     await db.insert(schema.deliveryMethods).values({ companyId, branchId, method: 'own_fleet' });
-    const p = await product();
+    const p = await product({ goods: true });
     const loc = await c.stockLocations.create(companyId, { code: code(), name: 'Shelf', kind: 'store', branchId, fulfilsDelivery: true });
     madeLocations.push(loc.id);
     await db.transaction((tx) => c.stockLedger.post(tx, { companyId, productId: p, locationId: loc.id, type: 'receipt', quantity: 10, unitCost: 10, actor: { type: 'job' } }));
@@ -149,6 +150,20 @@ describe.skipIf(!has(url))('delivery billing (database)', () => {
       expect(await c.deliveryBilling.forInvoicing(companyId)).toEqual({ mode: 'separate', serviceProductId: p });
       const log = await db.select().from(schema.decisionLog).where(eq(schema.decisionLog.subjectId, companyId));
       expect(log.find((l) => l.action === 'delivery.billing_changed')).toMatchObject({ fromState: 'with_goods', toState: 'separate', reasonText: 'Our accountant wants it apart' });
+    });
+
+    it('accepts only a service as the item that stands for delivery, and offers only services in the picker', async () => {
+      const goods = await product({ name: 'A stocked good', goods: true });
+      const service = await product({ name: 'A real service' });
+      const v = (await c.deliveryBilling.get(companyId)).version;
+      expect(await actions.saveDeliveryBillingAction({ mode: 'separate', serviceProductId: goods, expectedVersion: v, reason: 'Trying a good' })).toMatchObject({ ok: false, code: 'BAD_INPUT', error: expect.stringContaining('not a service') as string });
+      expect((await c.deliveryBilling.get(companyId)).version).toBe(v);
+      expect(await actions.saveDeliveryBillingAction({ mode: 'separate', serviceProductId: service, expectedVersion: v, reason: 'Trying a service' })).toMatchObject({ ok: true, data: { serviceItem: { id: service, isService: true } } });
+      const { DELIVERY_LOOKUP_SOURCES } = await import('./lookup-sources');
+      const picker = DELIVERY_LOOKUP_SOURCES.find((source) => source.key === 'delivery-service-products');
+      const offered = (await picker?.search({ companyId, query: '', limit: 200, after: null, filters: {} }))?.options.map((o) => o.id) ?? [];
+      expect(offered).toContain(service);
+      expect(offered).not.toContain(goods);
     });
 
     it('refuses without a reason, a mode that does not exist, an item that does not exist, or a stale version', async () => {
@@ -455,7 +470,7 @@ describe.skipIf(!has(url))('delivery billing (database)', () => {
   describe('an order with no delivery', () => {
     it('is invoiced and signed exactly as before, in either mode', async () => {
       const service = await product();
-      const p = await product();
+      const p = await product({ goods: true });
       const loc = await c.stockLocations.create(companyId, { code: code(), name: 'Plain shelf', kind: 'store', branchId: null });
       madeLocations.push(loc.id);
       await db.transaction((tx) => c.stockLedger.post(tx, { companyId, productId: p, locationId: loc.id, type: 'receipt', quantity: 5, unitCost: 10, actor: { type: 'job' } }));

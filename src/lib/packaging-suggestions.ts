@@ -41,11 +41,20 @@ export function suggestPackaging(
 ): PackagingSuggestion[] {
   const byPackage = new Map<string, Map<string, number>>();
   for (const fit of fits) {
-    if (fit.productId === '' || fit.packagingProductId === '' || !Number.isFinite(fit.capacity) || fit.capacity <= 0) continue;
+    if (
+      fit.productId === '' ||
+      fit.packagingProductId === '' ||
+      !Number.isFinite(fit.capacity) ||
+      fit.capacity <= 0
+    )
+      continue;
     const byProduct = byPackage.get(fit.packagingProductId) ?? new Map<string, number>();
     // Duplicate configuration is treated conservatively: use the smallest capacity.
     const existing = byProduct.get(fit.productId);
-    byProduct.set(fit.productId, existing === undefined ? fit.capacity : Math.min(existing, fit.capacity));
+    byProduct.set(
+      fit.productId,
+      existing === undefined ? fit.capacity : Math.min(existing, fit.capacity),
+    );
     byPackage.set(fit.packagingProductId, byProduct);
   }
 
@@ -61,13 +70,25 @@ export function suggestPackaging(
       eligibleProductIds.push(line.productId);
       quantity += Math.ceil(line.quantity / capacity);
     }
-    if (quantity > 0) result.push({ packagingProductId, quantity, eligibleProductIds, uncoveredProductIds });
+    if (quantity > 0)
+      result.push({ packagingProductId, quantity, eligibleProductIds, uncoveredProductIds });
   }
 
   // Expose items with no configured packaging fit so the UI can explain why no
   // quantity was auto-suggested instead of silently implying they are covered.
-  const configuredProductIds = new Set(fits.filter((fit) => Number.isFinite(fit.capacity) && fit.capacity > 0).map((fit) => fit.productId));
-  const uncovered = lines.filter((line) => Number.isFinite(line.quantity) && line.quantity > 0 && !configuredProductIds.has(line.productId)).map((line) => line.productId);
+  const configuredProductIds = new Set(
+    fits
+      .filter((fit) => Number.isFinite(fit.capacity) && fit.capacity > 0)
+      .map((fit) => fit.productId),
+  );
+  const uncovered = lines
+    .filter(
+      (line) =>
+        Number.isFinite(line.quantity) &&
+        line.quantity > 0 &&
+        !configuredProductIds.has(line.productId),
+    )
+    .map((line) => line.productId);
   if (uncovered.length > 0) {
     for (const suggestion of result) suggestion.uncoveredProductIds = uncovered;
   }
@@ -83,14 +104,23 @@ export function packagingSelectionProblem(
   if (selected.some((line) => !Number.isInteger(line.quantity) || line.quantity <= 0)) {
     return { code: 'invalid_quantity', message: 'Packaging quantities must be whole packages.' };
   }
-  const needed = new Map(suggestPackaging(goods, fits).map((line) => [line.packagingProductId, line.quantity]));
+  const needed = new Map(
+    suggestPackaging(goods, fits).map((line) => [line.packagingProductId, line.quantity]),
+  );
   for (const line of selected) {
     const required = needed.get(line.productId);
     if (required === undefined) {
-      return { code: 'invalid_input', message: 'One of the selected packaging options does not fit your order.' };
+      return {
+        code: 'invalid_input',
+        message: 'One of the selected packaging options does not fit your order.',
+      };
     }
     if (line.quantity < required) {
-      return { code: 'invalid_quantity', message: 'Please add the suggested quantity of packaging so your order can be packed safely.' };
+      return {
+        code: 'invalid_quantity',
+        message:
+          'Please add the suggested quantity of packaging so your order can be packed safely.',
+      };
     }
   }
   return null;

@@ -1,5 +1,6 @@
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import type { UserRow } from '@/server/db/drizzle/schema';
+import { users, type UserRow } from '@/server/db/drizzle/schema';
+import { eq } from 'drizzle-orm';
 import type { EmailMessage, EmailPort } from '@/server/ports/communications';
 import type { CompanySettingsRepository } from '@/server/domains/company/repository';
 import type { UserRepository } from './user-repository';
@@ -110,6 +111,8 @@ export class AccountService {
       if (userId === null) {
         return 'invalid';
       }
+      const [user] = await tx.select({ isActive: users.isActive }).from(users).where(eq(users.id, userId)).for('update');
+      if (user?.isActive !== true) return 'invalid';
       await this.deps.users.setPassword(userId, password, { verifyEmail: true, executor: tx });
       // Receiving the reset mail proved inbox control, so pending verification links are moot.
       await this.deps.tokens.revokeOutstanding(userId, 'email_verification', tx);

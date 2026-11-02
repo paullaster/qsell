@@ -149,7 +149,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
     subModules: [
       'Products',
       'Trash',
-      'Item Types',
+      'Business Classifications',
       'Units of Measure',
       'Categories',
       'Kits and hampers',

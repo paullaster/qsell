@@ -1,6 +1,7 @@
 import type { DashboardAnalytics } from '@/types/index';
 import { getContainer } from '@/server/di/container';
 import { toReconciliationLog } from '@/server/domains/catalog/mappers';
+import { isInventoryManaged } from '@/lib/inventory-kind';
 
 export class AnalyticsService {
   static async getDashboardAnalytics(): Promise<DashboardAnalytics> {
@@ -26,6 +27,7 @@ export class AnalyticsService {
         : 100;
 
     const lowStockAlertsCount = products.filter((p) => {
+      if (!isInventoryManaged(p)) return false;
       const available = p.stockQuantity - p.reservedQuantity;
       return available <= p.lowStockThreshold;
     }).length;
@@ -64,7 +66,7 @@ export class AnalyticsService {
       totalOrders,
       averageOrderValue,
       reconciliationRate,
-      activeStockSkus: products.filter((p) => p.stockQuantity - p.reservedQuantity > 0).length,
+      activeStockSkus: products.filter((p) => isInventoryManaged(p) && p.stockQuantity - p.reservedQuantity > 0).length,
       lowStockAlertsCount,
       todaySalesKes,
       salesByPaymentMethod,

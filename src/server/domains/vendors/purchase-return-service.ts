@@ -150,9 +150,11 @@ export class PurchaseReturnService {
         const room = returnable(Number(nl.accepted), Number(nl.invoicedQuantity), Number(nl.returnedQuantity));
         if (Math.round(qty * 1000) > Math.round(room * 1000)) throw new FinanceError('TOO_MUCH', `“${pl.description}”: only ${String(room)} can still go back. Goods that were invoiced go back after the vendor’s credit memo has opened them again.`);
         if (pl.productId !== null && nl.unitCost !== null) {
-          const [p] = await tx.select({ stock: products.stockQuantity, name: products.name }).from(products).where(eq(products.id, pl.productId)).for('update');
-          if (p !== undefined && p.stock < qty) throw new FinanceError('STOCK_GONE', `Only ${String(p.stock)} of ${p.name} is in stock, so ${String(qty)} cannot go back: some was sold.`);
-          await applyStockDelta(tx, { productId: pl.productId, delta: -qty, changeType: 'purchase_return', referenceId: number, actor: ctx.actor.id ?? 'system', note: `Returned to the vendor on ${number}: ${r.reason}`.slice(0, 250) });
+          const [p] = await tx.select({ stock: products.stockQuantity, name: products.name, inventoryKind: products.inventoryKind }).from(products).where(eq(products.id, pl.productId)).for('update');
+          if (p?.inventoryKind === 'inventory') {
+            if (p.stock < qty) throw new FinanceError('STOCK_GONE', `Only ${String(p.stock)} of ${p.name} is in stock, so ${String(qty)} cannot go back: some was sold.`);
+            await applyStockDelta(tx, { productId: pl.productId, delta: -qty, changeType: 'purchase_return', referenceId: number, actor: ctx.actor.id ?? 'system', note: `Returned to the vendor on ${number}: ${r.reason}`.slice(0, 250) });
+          }
         }
         await tx.update(rgnLines).set({ returnedQuantity: sql`${rgnLines.returnedQuantity} + ${String(qty)}::numeric` }).where(eq(rgnLines.id, nl.id));
         await tx.update(purchaseReturnLines).set({ unitCost: nl.unitCost }).where(eq(purchaseReturnLines.id, l.id));

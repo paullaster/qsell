@@ -7,6 +7,7 @@ import { getContainer } from '@/server/di/container';
 import { drizzleDb } from '@/server/db/drizzle/client';
 import { inventoryMovements, products, unitsOfMeasure } from '@/server/db/drizzle/schema';
 import { quantityProblem } from '@/lib/unit-rules';
+import { isInventoryManaged } from '@/lib/inventory-kind';
 import { broadcastRealtime } from '@/server/realtime';
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import { afterCommit, withAfterCommit } from '@/server/kernel/after-commit';
@@ -73,6 +74,9 @@ export async function applyStockDelta(tx: Tx, params: StockDelta): Promise<numbe
 
   if (locked === undefined || (locked.deletedAt !== null && params.allowDeleted !== true)) {
     throw new Error(`Product ${params.productId} not found`);
+  }
+  if (locked.inventoryKind !== 'inventory') {
+    throw new Error('Stock can only be adjusted for inventory-managed products.');
   }
 
   // With the per-location ledger as the truth, the movement is made there (at the chosen or the default location) and the product's
@@ -156,6 +160,10 @@ export async function recordOpeningStock(
   tx: Queryable,
   input: { productId: string; productName: string; quantity: number; costPrice: number; referenceId: string; actor: string; note: string },
 ): Promise<void> {
+  const [product] = await tx.select({ inventoryKind: products.inventoryKind }).from(products).where(eq(products.id, input.productId)).limit(1);
+  if (product === undefined || product.inventoryKind !== 'inventory') {
+    throw new Error('Opening stock can only be recorded for inventory-managed products.');
+  }
   await tx.insert(inventoryMovements).values({
     id: newId('ledger'),
     productId: input.productId,
@@ -249,7 +257,7 @@ export class InventoryDomainService {
     const rows = await getContainer().catalog.listProducts();
     return rows
       .map(toProduct)
-      .filter((p) => p.stockQuantity - p.reservedQuantity <= p.lowStockThreshold);
+      .filter((p) => isInventoryManaged(p) && p.stockQuantity - p.reservedQuantity <= p.lowStockThreshold);
   }
 
   /** Query-side variant — one round trip instead of loading the whole catalog. */

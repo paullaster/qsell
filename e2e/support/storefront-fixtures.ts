@@ -74,6 +74,66 @@ async function limitedProduct(tag: string, min: string, max: string): Promise<Re
   return { name, id };
 }
 
+async function packaging(tag: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { packagingFits, products } = await import('@/server/db/drizzle/schema');
+  const [goods] = await db.execute<{ id: string; item_type_id: string; category_id: string | null; category_name: string; base_unit_id: string }>(sql`SELECT id, item_type_id, category_id, category_name, base_unit_id FROM products WHERE name = 'Rice 5kg' AND deleted_at IS NULL LIMIT 1`);
+  if (goods === undefined) throw new Error('e2e fixture: the seed has no product for packaging');
+  const safeTag = tag.replace(/[^a-z0-9]/gi, '').toUpperCase();
+  const id = `prod_pkg_${safeTag}`;
+  const name = `Checkout bag ${safeTag}`;
+  await db.insert(products).values({
+    id,
+    sku: `PKG-${safeTag}`,
+    stockCode: `PKGS-${safeTag}`,
+    name,
+    slug: `checkout-bag-${safeTag.toLowerCase()}`,
+    itemTypeId: goods.item_type_id,
+    categoryId: goods.category_id,
+    categoryName: goods.category_name,
+    baseUnitId: goods.base_unit_id,
+    price: '12',
+    costPrice: '3',
+    taxRate: '0',
+    isTaxInclusive: true,
+    stockQuantity: 100,
+    isCheckoutPackaging: true,
+  }).onConflictDoNothing();
+  await db.insert(packagingFits).values({ productId: goods.id, packagingProductId: id, capacity: '2' }).onConflictDoNothing();
+  return { id, name, slug: `checkout-bag-${safeTag.toLowerCase()}`, goodsId: goods.id, goodsName: 'Rice 5kg' };
+}
+
+async function inventoryKindProduct(kind: string, tag: string): Promise<Record<string, string>> {
+  if (kind !== 'non_inventory' && kind !== 'service') throw new Error('e2e fixture: kind must be non_inventory or service');
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { products } = await import('@/server/db/drizzle/schema');
+  const [template] = await db.execute<{ item_type_id: string; category_id: string | null; category_name: string; base_unit_id: string }>(sql`SELECT item_type_id, category_id, category_name, base_unit_id FROM products WHERE name = 'Rice 5kg' AND deleted_at IS NULL LIMIT 1`);
+  if (template === undefined) throw new Error('e2e fixture: the seed has no product to copy');
+  const safeTag = tag.replace(/[^a-z0-9]/gi, '').toUpperCase();
+  const id = `prod_kind_${safeTag}`;
+  const name = `${kind === 'service' ? 'Service' : 'Non-stock'} ${safeTag}`;
+  const slug = `${kind}-${safeTag.toLowerCase()}`;
+  await db.insert(products).values({
+    id,
+    sku: `KIND-${safeTag}`,
+    stockCode: `KINDS-${safeTag}`,
+    name,
+    slug,
+    itemTypeId: template.item_type_id,
+    categoryId: template.category_id,
+    categoryName: template.category_name,
+    baseUnitId: template.base_unit_id,
+    price: '40',
+    costPrice: '5',
+    taxRate: '0',
+    isTaxInclusive: true,
+    stockQuantity: 0,
+    isSellable: true,
+    inventoryKind: kind,
+  }).onConflictDoNothing();
+  return { id, name, slug, kind };
+}
+
 async function writeStock(productId: string, quantity: string): Promise<Record<string, string>> {
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
   await db.execute(sql`UPDATE products SET stock_quantity = ${Number(quantity)} WHERE id = ${productId}`);
@@ -116,6 +176,8 @@ async function main(): Promise<void> {
   if (command === 'reviewer' && a !== undefined && b !== undefined) result = await reviewer(a, b);
   else if (command === 'product' && a !== undefined) result = await product(a);
   else if (command === 'limited-product' && a !== undefined && b !== undefined && process.argv[5] !== undefined) result = await limitedProduct(a, b, process.argv[5]);
+  else if (command === 'packaging' && a !== undefined) result = await packaging(a);
+  else if (command === 'inventory-kind-product' && a !== undefined && b !== undefined) result = await inventoryKindProduct(a, b);
   else if (command === 'set-stock' && a !== undefined && b !== undefined) result = await writeStock(a, b);
   else if (command === 'order-stages' && a !== undefined) result = await readOrderStages(a);
   else if (command === 'late-order' && a !== undefined) result = await lateOrder(a, b ?? '3');
@@ -143,6 +205,18 @@ export function makeProduct(tag: string): string {
 export function makeLimitedProduct(tag: string, min: number, max: number): { name: string; id: string } {
   const made = storefrontTool('limited-product', tag, String(min), String(max));
   return { name: made.name ?? '', id: made.id ?? '' };
+}
+
+/** Adds a hidden, stocked checkout bag with a fit rule for the seeded rice product. */
+export function makePackaging(tag: string): { id: string; name: string; slug: string; goodsId: string; goodsName: string } {
+  const made = storefrontTool('packaging', tag);
+  return { id: made.id ?? '', name: made.name ?? '', slug: made.slug ?? '', goodsId: made.goodsId ?? '', goodsName: made.goodsName ?? '' };
+}
+
+/** Adds a zero-stock sellable product to check non-stock/service storefront ordering. */
+export function makeInventoryKindProduct(kind: 'non_inventory' | 'service', tag: string): { id: string; name: string; slug: string; kind: string } {
+  const made = storefrontTool('inventory-kind-product', kind, tag);
+  return { id: made.id ?? '', name: made.name ?? '', slug: made.slug ?? '', kind: made.kind ?? '' };
 }
 
 /** The stages an order has been through (`stage:outcome`, in order) and where it is now. */

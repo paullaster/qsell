@@ -1,4 +1,5 @@
 import { roundQty } from '@/lib/decimal';
+import { isInventoryManaged } from '@/lib/inventory-kind';
 import type { QuantityLimits } from '@/lib/quantity-limits';
 
 /**
@@ -18,8 +19,14 @@ export const minCartQuantity = (decimals: number): number =>
   decimals <= 0 ? 1 : 10 ** -Math.min(3, decimals);
 
 /** What can still be sold: the stock not already reserved for someone else. */
-export const availableOf = (product: { stockQuantity: number; reservedQuantity: number }): number =>
-  Math.max(0, roundQty(product.stockQuantity - product.reservedQuantity));
+export const availableOf = (product: {
+  stockQuantity: number;
+  reservedQuantity: number;
+  inventoryKind?: 'inventory' | 'non_inventory' | 'service' | null;
+}): number =>
+  isInventoryManaged(product)
+    ? Math.max(0, roundQty(product.stockQuantity - product.reservedQuantity))
+    : Number.POSITIVE_INFINITY;
 
 /**
  * A wanted quantity made into one that can be bought: rounded to the unit's decimals, at least the least

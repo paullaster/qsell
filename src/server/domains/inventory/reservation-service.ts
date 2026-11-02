@@ -65,6 +65,19 @@ export class InventoryReservationService {
     options: ReserveOptions = {},
   ): Promise<{ success: boolean; error?: string }> {
     if (items.length === 0) return { success: true };
+    const kinds = await drizzleDb
+      .select({ id: products.id, name: products.name, inventoryKind: products.inventoryKind })
+      .from(products)
+      .where(inArray(products.id, [...new Set(items.map((item) => item.productId))]));
+    const kindById = new Map(kinds.map((product) => [product.id, product]));
+    const nonInventory = items.find((item) => kindById.get(item.productId)?.inventoryKind !== 'inventory');
+    if (nonInventory !== undefined) {
+      const product = kindById.get(nonInventory.productId);
+      return {
+        success: false,
+        error: `${product?.name ?? 'This product'} is not inventory-managed and cannot be reserved.`,
+      };
+    }
 
     // With the per-location ledger as the truth, the hold is placed there (choosing the location); the counters follow it.
     const container = getContainer();
@@ -220,6 +233,7 @@ export class InventoryReservationService {
             .for('update')
             .limit(1);
           if (!product) continue;
+          if (product.inventoryKind !== 'inventory') continue;
 
           const next = await settle(product, item.quantity);
 
@@ -411,6 +425,7 @@ export class InventoryReservationService {
     return drizzleDb
       .select({ productId: orderItems.productId, quantity: orderItems.quantity })
       .from(orderItems)
-      .where(eq(orderItems.orderId, orderId));
+      .innerJoin(products, eq(orderItems.productId, products.id))
+      .where(and(eq(orderItems.orderId, orderId), eq(products.inventoryKind, 'inventory')));
   }
 }

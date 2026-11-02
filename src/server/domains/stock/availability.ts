@@ -28,6 +28,7 @@ export class StockAvailability {
       FROM stock_balances b
       JOIN stock_locations l ON l.id = b.location_id
       WHERE b.product_id IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
+        AND EXISTS (SELECT 1 FROM products p WHERE p.id = b.product_id AND p.inventory_kind = 'inventory')
         AND l.is_active AND l.is_sellable AND ${channel} = ANY (l.sells_channels)
       GROUP BY b.product_id`);
     for (const r of rows) {
@@ -56,6 +57,7 @@ export class StockAvailability {
       SELECT l.branch_id, b.product_id, sum(greatest(b.on_hand - b.reserved, 0)) AS free
       FROM stock_balances b
       JOIN stock_locations l ON l.id = b.location_id
+      JOIN products p ON p.id = b.product_id AND p.inventory_kind = 'inventory'
       WHERE l.company_id = ${companyId}
         AND b.product_id IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
         AND l.is_active AND l.is_sellable AND l.fulfils_delivery AND ${channel} = ANY (l.sells_channels)

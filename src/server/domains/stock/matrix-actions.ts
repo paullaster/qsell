@@ -69,6 +69,7 @@ export async function stockMatrixAction(input: unknown) {
 
     const conditions: (SQL | undefined)[] = [
       isNull(products.deletedAt),
+      eq(products.inventoryKind, 'inventory'),
       matching(query, [products.name, products.sku, products.stockCode]),
       withStock ? sql`EXISTS (SELECT 1 FROM stock_balances b WHERE b.product_id = ${products.id} AND ${inColumns} AND b.on_hand <> 0)` : undefined,
       after === null ? undefined : sql`(${products.name}, ${products.id}) > (${after.k}, ${after.id})`,

@@ -1,8 +1,10 @@
 import { availableOf, cartQuantityWords } from '@/lib/cart-quantity';
+import { isInventoryManaged } from '@/lib/inventory-kind';
 import type { PublicProduct } from '@/types/index';
 
 /** Whether a product can be bought: sold out, nearly gone (with how many are left), or in stock. */
 export function StockBadge({ product }: { product: PublicProduct }) {
+  if (!isInventoryManaged(product)) return null;
   const available = availableOf(product);
   if (available <= 0) {
     return <span className="inline-flex items-center rounded-md border border-line-strong bg-surface-sunken px-2.5 py-1 text-xs font-bold text-destructive">Sold out</span>;

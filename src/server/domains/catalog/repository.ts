@@ -384,6 +384,12 @@ export class CatalogRepository {
     return this.productQuery().where(isNull(products.deletedAt)).orderBy(asc(products.name));
   }
 
+  async listInventoryProducts(): Promise<ProductJoined[]> {
+    return this.productQuery()
+      .where(and(eq(products.inventoryKind, 'inventory'), isNull(products.deletedAt)))
+      .orderBy(asc(products.name));
+  }
+
   async listActiveSellableProducts(): Promise<ProductJoined[]> {
     return this.productQuery()
       .where(
@@ -453,7 +459,8 @@ export class CatalogRepository {
    * the outer table would bind to a table of the subquery.)
    */
   private shopAvailable(): SQL {
-    return sql`CASE WHEN COALESCE((SELECT ledger_mode FROM stock_settings WHERE company_id = stock_current_company()), false)
+    return sql`CASE WHEN ${products.inventoryKind} <> 'inventory' THEN 1
+      WHEN COALESCE((SELECT ledger_mode FROM stock_settings WHERE company_id = stock_current_company()), false)
       THEN COALESCE((SELECT sum(b.on_hand - b.reserved) FROM stock_balances b JOIN stock_locations l ON l.id = b.location_id
                      WHERE b.product_id = products.id AND l.is_active AND l.is_sellable AND 'ecommerce' = ANY (l.sells_channels)), 0)
       ELSE products.stock_quantity - products.reserved_quantity END`;
@@ -577,6 +584,7 @@ export class CatalogRepository {
       .where(
         and(
           isNull(products.deletedAt),
+          eq(products.inventoryKind, 'inventory'),
           sql`${products.stockQuantity} - ${products.reservedQuantity} <= ${products.lowStockThreshold}`,
         ),
       )
@@ -588,6 +596,24 @@ export class CatalogRepository {
       .where(and(eq(products.id, id), isNull(products.deletedAt)))
       .limit(1);
     return rows[0] ?? null;
+  }
+
+  /** Once a product is referenced by operational or commercial documents, its stock contract cannot be reinterpreted. */
+  async hasInventoryKindHistory(id: string): Promise<boolean> {
+    const rows = await this.db.execute<{ used: boolean }>(sql`
+      SELECT (
+        EXISTS (SELECT 1 FROM inventory_movements WHERE product_id = ${id} AND (change_amount <> 0 OR change_type <> 'restock'))
+        OR EXISTS (SELECT 1 FROM stock_movements WHERE product_id = ${id})
+        OR EXISTS (SELECT 1 FROM stock_reservations WHERE product_id = ${id})
+        OR EXISTS (SELECT 1 FROM order_items WHERE product_id = ${id})
+        OR EXISTS (SELECT 1 FROM purchase_order_lines WHERE product_id = ${id})
+        OR EXISTS (SELECT 1 FROM sales_quote_lines WHERE product_id = ${id})
+        OR EXISTS (SELECT 1 FROM sales_quote_template_lines WHERE product_id = ${id})
+        OR EXISTS (SELECT 1 FROM sales_section_template_lines WHERE product_id = ${id})
+        OR EXISTS (SELECT 1 FROM stock_document_lines WHERE product_id = ${id})
+        OR EXISTS (SELECT 1 FROM product_kit_components WHERE product_id = ${id})
+      ) AS used`);
+    return rows[0]?.used ?? true;
   }
 
   async getProductBySlug(slug: string): Promise<ProductJoined | null> {

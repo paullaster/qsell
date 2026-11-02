@@ -3,7 +3,8 @@
  *   tsx e2e/support/delivery-fixtures.ts open <tag>    a branch with a map pin that offers its own riders, and a charge in force for it
  *                                                      (a flat 300 plus 16% tax), named "Delivery <tag>"
  *   tsx e2e/support/delivery-fixtures.ts order <order number>  what an order was given for delivery: branch, charge and its tax, who receives it, the order's own tax and total
- *   tsx e2e/support/delivery-fixtures.ts billing <with_goods|separate|reset>  how delivery is invoiced (an item named "Salt 500g" stands for the service); reset puts back the shop's default: one invoice, no item
+ *   tsx e2e/support/delivery-fixtures.ts billing <with_goods|separate|reset>  how delivery is invoiced (an item named "E2E Delivery service" stands for the service); reset puts back the shop's default: one invoice, no item
+ *   tsx e2e/support/delivery-fixtures.ts service <any>  makes "E2E Delivery service", a service with a 16% tax and no price or cost, if it is not there yet
  *   tsx e2e/support/delivery-fixtures.ts close <tag>   takes all of that out of play again, so the shop's other tests are not asked about delivery
  */
 import { execFileSync } from 'node:child_process';
@@ -46,16 +47,28 @@ async function close(tag: string): Promise<Record<string, string>> {
   return { closed: 'yes' };
 }
 
-async function billing(mode: string): Promise<Record<string, string>> {
-  const { getContainer } = await import('@/server/di/container');
+const SERVICE_NAME = 'E2E Delivery service';
+
+/** The item that stands for the delivery service: a real service, which is the only kind the screen offers. */
+async function serviceItem(): Promise<string> {
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
   const { products } = await import('@/server/db/drizzle/schema');
+  const [existing] = await db.select({ id: products.id }).from(products).where(eq(products.name, SERVICE_NAME));
+  if (existing !== undefined) return existing.id;
+  const [salt] = await db.select({ itemTypeId: products.itemTypeId }).from(products).where(eq(products.name, 'Salt 500g'));
+  if (salt === undefined) throw new Error('e2e fixture: the seeded products are not there');
+  const id = 'prod_e2e_delivery_service';
+  await db.insert(products).values({ id, sku: 'E2E-DLV', stockCode: 'E2E-DLV-S', name: SERVICE_NAME, slug: 'e2e-delivery-service', itemTypeId: salt.itemTypeId, costPrice: '0', taxRate: '16', isTaxInclusive: false, stockQuantity: 0, isSellable: false, inventoryKind: 'service' });
+  return id;
+}
+
+async function billing(mode: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
   const c = getContainer();
   const company = await c.companySettings.ensureSeeded();
-  const [item] = await db.select({ id: products.id }).from(products).where(eq(products.name, 'Salt 500g'));
   const now = await c.deliveryBilling.get(company.id);
   const reset = mode === 'reset';
-  await c.deliveryBilling.save(company.id, 'e2e', { mode: reset ? 'with_goods' : mode, serviceProductId: reset ? null : (item?.id ?? null), expectedVersion: now.version, reason: 'End-to-end test of delivery invoicing' });
+  await c.deliveryBilling.save(company.id, 'e2e', { mode: reset ? 'with_goods' : mode, serviceProductId: reset ? null : await serviceItem(), expectedVersion: now.version, reason: 'End-to-end test of delivery invoicing' });
   return { mode };
 }
 
@@ -72,12 +85,13 @@ async function order(orderNumber: string): Promise<Record<string, string>> {
 
 async function main(): Promise<void> {
   const [command, tag] = process.argv.slice(2);
-  if (tag === undefined) throw new Error('usage: delivery-fixtures open|close|order|billing <tag>');
+  if (tag === undefined) throw new Error('usage: delivery-fixtures open|close|order|billing|service <tag>');
   let result: Record<string, string> | null = null;
   if (command === 'open') result = await open(tag);
   if (command === 'close') result = await close(tag);
   if (command === 'order') result = await order(tag);
   if (command === 'billing') result = await billing(tag);
+  if (command === 'service') result = { id: await serviceItem(), name: SERVICE_NAME };
   if (result === null) throw new Error('usage: delivery-fixtures open|close|order|billing <tag>');
   process.stdout.write(`FIXTURE ${JSON.stringify(result)}\n`);
 }

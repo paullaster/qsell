@@ -294,10 +294,10 @@ export const ADMIN_NAV: AdminNavItem[] = [
       },
       {
         id: 'item-types',
-        title: 'Item Types',
+        title: 'Business Classifications',
         name: 'item-types',
         href: '/admin/item-types',
-        description: 'Raw materials, finished goods, and other user-defined item classes',
+        description: 'Classify products by business purpose and sellability, separately from stock handling',
         icon: 'Shapes',
         permission: 'products:read',
       },

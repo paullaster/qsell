@@ -15,6 +15,8 @@ import type {
 } from '@/types/index';
 import { SettingsError } from '@/server/domains/settings/errors';
 import { quantityProblem } from '@/lib/unit-rules';
+import { inventoryKindQuantityProblem, isInventoryKind, type InventoryKind } from '@/lib/inventory-kind';
+import { productSellability } from '@/lib/product-sellability';
 import { limitsProblem } from '@/lib/quantity-limits';
 import { productSpecificationsProblem, visibleSpecifications } from '@/lib/product-specifications';
 import { optionalAmount, standardPriceProblem } from './commercial-rules';
@@ -56,6 +58,11 @@ export class CatalogService {
 
   static async getAllProducts(): Promise<Product[]> {
     const rows = await repo().listProducts();
+    return rows.map(toProduct);
+  }
+
+  static async getInventoryProducts(): Promise<Product[]> {
+    const rows = await repo().listInventoryProducts();
     return rows.map(toProduct);
   }
 
@@ -145,9 +152,20 @@ export class CatalogService {
       if (value < 0) throw new SettingsError(`${what} must be 0 or more`);
     }
 
-    const isSellable = itemType.isSellable;
+    const inventoryKind = productData.inventoryKind ?? itemType.defaultInventoryKind;
+    if (!isInventoryKind(inventoryKind)) throw new SettingsError('Choose a valid inventory treatment.');
+    const isSellable = productSellability({ classificationSellable: itemType.isSellable, kind: inventoryKind, price: productData.price });
     const isCheckoutPackaging = productData.isCheckoutPackaging === true;
+    if (isCheckoutPackaging && inventoryKind !== 'inventory') {
+      throw new SettingsError('Checkout packaging must be inventory-managed so its stock can be reserved.');
+    }
     if (isCheckoutPackaging && !isSellable) throw new SettingsError('Packaging offered at checkout must use a sellable item type.');
+    const kindQuantityIssue = inventoryKindQuantityProblem(inventoryKind, {
+      stockQuantity: productData.stockQuantity,
+      reservedQuantity: 0,
+      lowStockThreshold: productData.lowStockThreshold,
+    });
+    if (kindQuantityIssue !== null) throw new SettingsError(kindQuantityIssue);
     const id = newId('prod');
     const fitRows = await this.validatePackagingFits(id, isCheckoutPackaging, packagingFitsInput ?? [], unit.decimals, unit.name);
     let price: number | undefined;
@@ -168,7 +186,9 @@ export class CatalogService {
       }
     }
 
-    if (!Number.isFinite(productData.costPrice) || productData.costPrice < 0) {
+    // A service has no goods to cost, so an empty cost means nothing to cost, not a missing answer.
+    const costPrice = inventoryKind === 'service' && (productData.costPrice === undefined || Number.isNaN(productData.costPrice)) ? 0 : productData.costPrice;
+    if (!Number.isFinite(costPrice) || costPrice < 0) {
       throw new SettingsError('Cost of goods is required');
     }
 
@@ -196,11 +216,12 @@ export class CatalogService {
       standardPrice,
       minOrderQty,
       maxOrderQty,
-      costPrice: productData.costPrice,
+      costPrice,
       itemTypeId: itemType.id,
       itemTypeName: itemType.name,
       itemTypeCode: itemType.code,
       isSellable,
+      inventoryKind,
       isCheckoutPackaging,
       baseUnitId: unit.id,
       baseUnitCode: unit.code,
@@ -255,16 +276,18 @@ export class CatalogService {
         newProduct.imageUrl = gallery.imageUrl;
         newProduct.additionalImages = gallery.additionalImages;
       }
-      const { recordOpeningStock } = await import('@/server/domains/inventory/service');
-      await recordOpeningStock(tx, {
-        productId: id,
-        productName: newProduct.name,
-        quantity: newProduct.stockQuantity,
-        costPrice: newProduct.costPrice,
-        referenceId: 'PRODUCT_CREATION',
-        actor: 'admin',
-        note: `Created new product ${newProduct.sku} with initial inventory of ${newProduct.stockQuantity} units`,
-      });
+      if (newProduct.inventoryKind === 'inventory') {
+        const { recordOpeningStock } = await import('@/server/domains/inventory/service');
+        await recordOpeningStock(tx, {
+          productId: id,
+          productName: newProduct.name,
+          quantity: newProduct.stockQuantity,
+          costPrice: newProduct.costPrice,
+          referenceId: 'PRODUCT_CREATION',
+          actor: 'admin',
+          note: `Created new product ${newProduct.sku} with initial inventory of ${newProduct.stockQuantity} units`,
+        });
+      }
     });
 
     void broadcastRealtime('inventory_update', {
@@ -286,7 +309,20 @@ export class CatalogService {
     const existingRow = await catalog.getProductById(id);
     if (!existingRow) throw new SettingsError(`Product ${id} not found`);
     const existing = toProduct(existingRow);
+    const existingInventoryKind = existing.inventoryKind ?? 'inventory';
+    if (updates.inventoryKind !== undefined) {
+      if (!isInventoryKind(updates.inventoryKind)) throw new SettingsError('Choose a valid inventory treatment.');
+      if (updates.inventoryKind !== existingInventoryKind) {
+        if (await catalog.hasInventoryKindHistory(id)) {
+          throw new SettingsError('This product already has stock or document history, so its inventory treatment cannot change. Create a replacement product to preserve its history.');
+        }
+      }
+    }
+    const nextInventoryKind = existingInventoryKind;
     const nextIsPackaging = updates.isCheckoutPackaging ?? existing.isCheckoutPackaging ?? false;
+    if (nextIsPackaging && nextInventoryKind !== 'inventory') {
+      throw new SettingsError('Checkout packaging must be inventory-managed so its stock can be reserved.');
+    }
 
     if (updates.sku !== undefined) {
       if (updates.sku.trim() === '') throw new SettingsError('SKU code is required');
@@ -341,8 +377,15 @@ export class CatalogService {
       throw new SettingsError('Packaging offered at checkout must use a sellable item type.');
     }
 
-    const nextSellable = updates.isSellable ?? existing.isSellable;
+    // A service with no price is kept out of sale; the classification, not the stored flag, says whether it could be sold with one.
+    let classificationSellable = updates.isSellable ?? existing.isSellable;
+    if (nextInventoryKind === 'service' && updates.isSellable === undefined) {
+      const type = await catalog.getItemTypeById(existing.itemTypeId);
+      if (type) classificationSellable = type.isSellable;
+    }
     const nextPrice = updates.price ?? existing.price;
+    const nextSellable = productSellability({ classificationSellable, kind: nextInventoryKind, price: nextPrice });
+    if (nextSellable !== existing.isSellable) updates.isSellable = nextSellable;
     const nextCost = updates.costPrice ?? existing.costPrice;
 
     if (nextSellable) {
@@ -406,6 +449,12 @@ export class CatalogService {
           : quantityProblem(value, plan.unit.decimals, plan.unit.name, what);
       if (problem !== null) throw new SettingsError(problem);
     }
+    const kindQuantityIssue = inventoryKindQuantityProblem(nextInventoryKind, {
+      stockQuantity: stockChange ?? existing.stockQuantity,
+      reservedQuantity: existing.reservedQuantity,
+      lowStockThreshold: updates.lowStockThreshold ?? existing.lowStockThreshold,
+    });
+    if (kindQuantityIssue !== null) throw new SettingsError(kindQuantityIssue);
 
     const merged: Product = { ...existing, ...updates, id, updatedAt: new Date().toISOString() };
     const patch = productToRow(merged);
@@ -489,8 +538,8 @@ export class CatalogService {
     const selected = await repo().getProductsByIds(fits.map((fit) => fit.productId));
     if (selected.length !== fits.length) throw new SettingsError('One of the selected packaging products could not be found.');
     if (isCheckoutPackaging) {
-      if (selected.some((product) => !product.isSellable || product.isCheckoutPackaging || product.deletedAt !== null)) {
-        throw new SettingsError('A packaging product can only be configured for active, sellable catalogue products.');
+      if (selected.some((product) => !product.isSellable || product.isCheckoutPackaging || product.inventoryKind !== 'inventory' || product.deletedAt !== null)) {
+        throw new SettingsError('A packaging product can only be configured for active, sellable inventory items in the catalogue.');
       }
       for (const fit of fits) {
         const product = selected.find((candidate) => candidate.id === fit.productId);
@@ -500,7 +549,7 @@ export class CatalogService {
       }
       return fits.map((fit) => ({ productId: fit.productId, packagingProductId: id, capacity: String(fit.capacity) }));
     }
-    if (selected.some((product) => !product.isSellable || !product.isCheckoutPackaging || product.deletedAt !== null)) {
+    if (selected.some((product) => !product.isSellable || !product.isCheckoutPackaging || product.inventoryKind !== 'inventory' || product.deletedAt !== null)) {
       throw new SettingsError('Choose active, sellable checkout packaging products.');
     }
     for (const fit of fits) {
@@ -674,16 +723,20 @@ export class CatalogService {
     name: string;
     code: number;
     isSellable: boolean;
+    defaultInventoryKind?: InventoryKind;
     isDefault?: boolean;
     isActive?: boolean;
   }): Promise<ItemType> {
     const catalog = repo();
+    const defaultInventoryKind = data.defaultInventoryKind ?? 'inventory';
+    if (!isInventoryKind(defaultInventoryKind)) throw new SettingsError('Choose how products of this classification are managed.');
     if (data.isDefault === true) await catalog.clearDefaultItemType('__none__');
     const row = await catalog.insertItemType({
       id: newId('itype'),
       name: data.name,
       code: data.code,
       isSellable: data.isSellable,
+      defaultInventoryKind,
       isDefault: data.isDefault ?? false,
       isActive: data.isActive ?? true,
     });
@@ -693,9 +746,12 @@ export class CatalogService {
 
   static async updateItemType(
     id: string,
-    updates: Partial<Pick<ItemType, 'name' | 'code' | 'isSellable' | 'isDefault' | 'isActive'>>,
+    updates: Partial<Pick<ItemType, 'name' | 'code' | 'isSellable' | 'defaultInventoryKind' | 'isDefault' | 'isActive'>>,
   ): Promise<ItemType> {
     const catalog = repo();
+    if (updates.defaultInventoryKind !== undefined && !isInventoryKind(updates.defaultInventoryKind)) {
+      throw new SettingsError('Choose how products of this classification are managed.');
+    }
     if (updates.isDefault === true) await catalog.clearDefaultItemType(id);
     const row = await catalog.updateItemType(id, updates);
     if (!row) throw new Error(`Item type ${id} not found`);

@@ -131,14 +131,16 @@ export class RgnService {
         if (Number(l.accepted) > room + 1e-9) throw new FinanceError('OVER_RECEIPT', `“${pl.description}”: ${l.accepted} accepted, but only ${String(room)} more is allowed on the order${tolerance > 0 ? ` (with ${String(tolerance)}% tolerance)` : ''}. Refuse the extra, or amend the order first.`);
         let unitCost: string | null = null;
         if (pl.productId !== null && Number(l.accepted) > 0) {
-          const [p] = await tx.select({ unitId: products.baseUnitId, name: products.name }).from(products).where(eq(products.id, pl.productId));
+          const [p] = await tx.select({ unitId: products.baseUnitId, name: products.name, inventoryKind: products.inventoryKind }).from(products).where(eq(products.id, pl.productId));
           const [u] = p === undefined ? [] : await tx.select({ code: unitsOfMeasure.code, name: unitsOfMeasure.name, symbol: unitsOfMeasure.symbol }).from(unitsOfMeasure).where(eq(unitsOfMeasure.id, p.unitId));
           if (u !== undefined && !sameUnit(pl.unit, u)) throw new FinanceError('UNIT_MISMATCH', `“${pl.description}” is ordered in ${pl.unit}, but ${p?.name ?? 'the product'} is counted in ${u.name}. Amend the order line to the same unit first.`);
           // Stock from an order in another currency costs what it is worth in the books' currency on the day it arrived.
           const rate = po.currency === base ? '1' : await this.fx.requireRate(tx, ctx.companyId, po.currency, r.receivedDate);
           const net = Number(pl.unitPrice) * (1 - Number(pl.discountPercent) / 100) * Number(rate);
-          unitCost = net.toFixed(4);
-          await applyStockDelta(tx, { productId: pl.productId, delta: Number(l.accepted), costPrice: Number(unitCost), changeType: 'purchase_order_receipt', referenceId: number, actor: ctx.actor.id ?? 'system', note: `Received on ${number} against ${po.number ?? 'an order'}; vendor delivery note ${r.deliveryNoteNo}` });
+          if (p?.inventoryKind === 'inventory') {
+            unitCost = net.toFixed(4);
+            await applyStockDelta(tx, { productId: pl.productId, delta: Number(l.accepted), costPrice: Number(unitCost), changeType: 'purchase_order_receipt', referenceId: number, actor: ctx.actor.id ?? 'system', note: `Received on ${number} against ${po.number ?? 'an order'}; vendor delivery note ${r.deliveryNoteNo}` });
+          }
         }
         await tx.update(rgnLines).set({ unitCost }).where(eq(rgnLines.id, l.id));
         await tx.update(purchaseOrderLines).set({ receivedQuantity: String(Math.round((Number(pl.receivedQuantity) + Number(l.accepted)) * 1000) / 1000) }).where(eq(purchaseOrderLines.id, pl.id));
@@ -189,9 +191,11 @@ export class RgnService {
         const pl = poLines.find((x) => x.id === l.poLineId);
         if (pl === undefined) continue;
         if (pl.productId !== null && Number(l.accepted) > 0) {
-          const [p] = await tx.select({ stock: products.stockQuantity, name: products.name }).from(products).where(eq(products.id, pl.productId)).for('update');
-          if (p !== undefined && p.stock < Number(l.accepted)) throw new FinanceError('STOCK_GONE', `Only ${String(p.stock)} of ${p.name} is in stock, so ${l.accepted} cannot be taken out: some was sold. Use a purchase return.`);
-          await applyStockDelta(tx, { productId: pl.productId, delta: -Number(l.accepted), changeType: 'purchase_receipt_reversal', referenceId: r.number ?? id, actor: ctx.actor.id ?? 'system', note: `Reversal of ${r.number ?? 'a note'}: ${text.slice(0, 200)}` });
+          const [p] = await tx.select({ stock: products.stockQuantity, name: products.name, inventoryKind: products.inventoryKind }).from(products).where(eq(products.id, pl.productId)).for('update');
+          if (p?.inventoryKind === 'inventory') {
+            if (p.stock < Number(l.accepted)) throw new FinanceError('STOCK_GONE', `Only ${String(p.stock)} of ${p.name} is in stock, so ${l.accepted} cannot be taken out: some was sold. Use a purchase return.`);
+            await applyStockDelta(tx, { productId: pl.productId, delta: -Number(l.accepted), changeType: 'purchase_receipt_reversal', referenceId: r.number ?? id, actor: ctx.actor.id ?? 'system', note: `Reversal of ${r.number ?? 'a note'}: ${text.slice(0, 200)}` });
+          }
         }
         await tx.update(purchaseOrderLines).set({ receivedQuantity: String(Math.max(0, Math.round((Number(pl.receivedQuantity) - Number(l.accepted)) * 1000) / 1000)) }).where(eq(purchaseOrderLines.id, pl.id));
       }

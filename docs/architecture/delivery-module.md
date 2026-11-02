@@ -418,3 +418,15 @@ The credit-note panel shows the delivery line (same invoice) or a "Credit the de
 **Timeline.** The delivery invoice's KRA result is on the order's timeline as `delivery_invoice_signed`, `delivery_invoice_failed` (with the reason code and message) and `delivery_invoice_skipped` (migration 0123 adds them to the stage check). They are non-tracking stages and change no column, so `orders.kra_transmission_status` stays the goods invoice's.
 
 **Known, not changed here.** A goods line is credited at its line price (before tax for a tax-exclusive product), as credit notes always did; the delivery line is credited at what was paid (tax included), which is how it is invoiced and sent to KRA. Aligning goods credits with tax-inclusive amounts is a separate change to the whole credit-note flow.
+
+### 27.2 The delivery service item is a service (2026-11-02)
+
+The item that stands for delivery on an invoice must be a **service**. What makes a product a service is its `inventory_kind` (`service`, stored on the product so the stock ledger can rely on it); it is not read from the business classification, because a classification is a name the seller can rename and retype.
+
+The two are connected by a starting point. A **business classification** has `default_inventory_kind` (migration 0126; "Behaves as" on the screen: Inventory item, Non-inventory item or Service). A new product takes it unless the caller names a kind, and the product form presets the Stock behaviour tab from it. Changing a classification's behaviour changes only products made afterwards; a product keeps its own kind and can still be changed until it has stock or documents.
+
+What a service needs: no stock, **no cost of goods** (an empty cost is stored as 0; goods still must give one) and, when its classification is not sold from the shop, **no selling price**. A classification that is sold from the shop still asks for a price. Delivery fees come from the charge policies, never from the item's price; the item supplies its name, tax rate and KRA registration (§27).
+
+The delivery invoicing screen offers only services, and saving refuses anything else. An item chosen before this stays working at signing; the screen flags it ("This item is not a service") so it can be replaced.
+
+Not done: a CSV import with a blank "Inventory_Kind" still means Inventory; it does not look at the classification.

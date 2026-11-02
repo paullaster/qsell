@@ -54,14 +54,17 @@ import { checkProductUnitsAction } from '@/server/domains/units/actions';
 import type { Choice } from '@/lib/payment-options';
 import { listEtimsTargetsAction } from '@/server/domains/kra/etims/actions';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { INVENTORY_KIND_OPTIONS, isInventoryKind, type InventoryKind } from '@/lib/inventory-kind';
+import { productSellability } from '@/lib/product-sellability';
 
 type ProductFormTab =
-  'basics' | 'pricing' | 'inventory' | 'packaging' | 'specs' | 'description' | 'media' | 'kra';
+  'basics' | 'pricing' | 'inventory' | 'handling' | 'packaging' | 'specs' | 'description' | 'media' | 'kra';
 
 const TABS: { id: ProductFormTab; label: string; icon: typeof Package }[] = [
   { id: 'basics', label: 'Basics', icon: Package },
   { id: 'pricing', label: 'Pricing', icon: DollarSign },
   { id: 'inventory', label: 'Stock', icon: Layers },
+  { id: 'handling', label: 'Stock behaviour', icon: Layers },
   { id: 'packaging', label: 'Packaging', icon: Package },
   { id: 'specs', label: 'Specs', icon: Tag },
   { id: 'description', label: 'Description', icon: AlignLeft },
@@ -204,6 +207,11 @@ function AdminProductModalForm({
   const [tagsInput, setTagsInput] = useState(template === null ? '' : template.tags.join(', '));
   const [isActive, setIsActive] = useState(template?.isActive ?? true);
   const [isCheckoutPackaging, setIsCheckoutPackaging] = useState(template?.isCheckoutPackaging ?? false);
+  const [inventoryKindChoice, setInventoryKindChoice] = useState<Choice | null>(() => {
+    const id = template?.inventoryKind ?? initialItemTypes?.find((type) => type.isDefault)?.defaultInventoryKind ?? 'inventory';
+    const option = INVENTORY_KIND_OPTIONS.find((candidate) => candidate.id === id);
+    return { id, label: option?.label ?? 'Inventory item' };
+  });
   const [packagingFits, setPackagingFits] = useState<PackagingFitDraft[]>(() => (template?.packagingFits ?? []).map((fit, index) => ({ key: `fit-${String(index)}`, productId: fit.productId, choice: { id: fit.productId, label: fit.productId }, capacity: String(fit.capacity) })));
 
   // Dynamic Specifications (key-value pairs)
@@ -229,7 +237,7 @@ function AdminProductModalForm({
     if (initialItemTypes === undefined || initialItemTypes.length === 0) {
       listItemTypesAction()
         .then((types) => setItemTypes((current) => mergeById(current, types)))
-        .catch(() => setError('Item types could not be loaded. Try again.'));
+        .catch(() => setError('Business classifications could not be loaded. Try again.'));
     }
   }, [initialTaxCategories, initialItemTypes]);
 
@@ -279,11 +287,25 @@ function AdminProductModalForm({
           : current;
         return mergeById(cleared, [detail.itemType]);
       });
-      setItemTypeId(detail.itemType.id);
+      chooseItemType(detail.itemType.id, detail.itemType.defaultInventoryKind);
     };
     window.addEventListener(CATALOG_SHORTCUT_CREATED, onCreated);
     return () => window.removeEventListener(CATALOG_SHORTCUT_CREATED, onCreated);
   }, []);
+
+  const isService = inventoryKindChoice?.id === 'service';
+
+  /** A new product starts with how its classification says products are managed; one being edited keeps its own. */
+  function chooseItemType(id: string, defaultKind: InventoryKind | undefined) {
+    setItemTypeId(id);
+    if (isEditing || defaultKind === undefined) return;
+    setInventoryKindChoice({ id: defaultKind, label: INVENTORY_KIND_OPTIONS.find((option) => option.id === defaultKind)?.label ?? 'Inventory item' });
+    if (defaultKind !== 'inventory') {
+      setStockQuantity('0');
+      setLowStockThreshold('0');
+      setIsCheckoutPackaging(false);
+    }
+  }
 
   const activeItemType =
     itemTypes.find((t) => t.id === itemTypeId) ??
@@ -346,7 +368,7 @@ function AdminProductModalForm({
       m.includes('title') ||
       m.includes('sku') ||
       m.includes('category') ||
-      m.includes('item type')
+      m.includes('item type') || m.includes('business classification')
     ) {
       setTab('basics');
     } else if (m.includes('price') || m.includes('selling') || m.includes('cost')) {
@@ -397,14 +419,30 @@ function AdminProductModalForm({
     if (activeItemType === undefined) {
       const msg =
         itemTypes.length === 0
-          ? 'Create an item type first, then assign it to this product.'
+          ? 'Create a business classification first, then assign it to this product.'
           : 'Item type is required.';
       setError(msg);
       focusTabForError(msg);
       return;
     }
 
-    const sellable = activeItemType.isSellable;
+    // A service with no selling price is not offered for sale, so it does not need one.
+    const sellable = productSellability({ classificationSellable: activeItemType.isSellable, kind: isService ? 'service' : 'inventory', price: price.trim() === '' ? undefined : Number(price) });
+    if (inventoryKindChoice === null || !isInventoryKind(inventoryKindChoice.id)) {
+      setError('Choose how qsell should manage stock for this product.');
+      setTab('handling');
+      return;
+    }
+    if (isCheckoutPackaging && inventoryKindChoice.id !== 'inventory') {
+      setError('Checkout packaging must use inventory-managed stock.');
+      setTab('packaging');
+      return;
+    }
+    if (inventoryKindChoice.id !== 'inventory' && (Number(stockQuantity) !== 0 || Number(lowStockThreshold) !== 0)) {
+      setError('Non-inventory items and services cannot have on-hand stock or a reorder threshold.');
+      setTab('inventory');
+      return;
+    }
 
     if (sellable) {
       if (price.trim() === '' || !Number.isFinite(Number(price)) || Number(price) <= 0) {
@@ -420,8 +458,8 @@ function AdminProductModalForm({
       return;
     }
 
-    if (costPrice.trim() === '' || !Number.isFinite(Number(costPrice)) || Number(costPrice) < 0) {
-      const msg = 'Cost of goods is required and must be 0 or greater.';
+    if ((costPrice.trim() === '' && !isService) || !Number.isFinite(Number(costPrice)) || Number(costPrice) < 0) {
+      const msg = isService ? 'Cost of goods must be 0 or greater when given.' : 'Cost of goods is required and must be 0 or greater.';
       setError(msg);
       focusTabForError(msg);
       return;
@@ -497,6 +535,7 @@ function AdminProductModalForm({
         itemTypeName: activeItemType.name,
         itemTypeCode: activeItemType.code,
         isSellable: sellable,
+        inventoryKind: inventoryKindChoice.id,
         price: price.trim() === '' ? undefined : Number(price),
         compareAtPrice:
           compareAtPrice.trim() !== '' && Number(compareAtPrice) > 0
@@ -505,7 +544,7 @@ function AdminProductModalForm({
         standardPrice: standardNumber,
         minOrderQty: minNumber,
         maxOrderQty: maxNumber,
-        costPrice: Number(costPrice),
+        costPrice: isService && costPrice.trim() === '' ? 0 : Number(costPrice),
         taxCategoryId: activeTax?.id,
         taxCategoryName: activeTax?.name,
         taxRate: activeTax ? activeTax.rate : 0,
@@ -716,33 +755,27 @@ function AdminProductModalForm({
                 </div>
                 <div>
                   <div className="mb-1 flex items-center justify-between gap-2">
-                    <label className="text-[11px] font-semibold text-fg-muted">Item Type *</label>
+                    <label className="text-[11px] font-semibold text-fg-muted">Business classification *</label>
                     {itemTypes.length > 0 ? (
                       <CatalogCreateShortcut href="/admin/item-types/new">
                         New
                       </CatalogCreateShortcut>
                     ) : null}
                   </div>
-                  <select
-                    value={itemTypeId !== '' ? itemTypeId : (activeItemType?.id ?? '')}
-                    onChange={(e) => setItemTypeId(e.target.value)}
-                    className={`${fieldClass} cursor-pointer`}
+                  <ChoicePicker
+                    label="Business classification"
+                    source="business-item-types"
+                    choice={activeItemType === undefined ? null : { id: activeItemType.id, label: `${String(activeItemType.code)} · ${activeItemType.name}` }}
+                    onChoice={(choice) => chooseItemType(choice?.id ?? '', itemTypes.find((type) => type.id === choice?.id)?.defaultInventoryKind)}
+                    placeholder="Search business classifications…"
+                    clearable={false}
+                    required
                     disabled={itemTypes.length === 0}
-                  >
-                    <option value="">
-                      {itemTypes.length === 0 ? 'No item types yet' : 'Select item type'}
-                    </option>
-                    {itemTypes.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.code} — {t.name}
-                        {t.isDefault ? ' (default)' : ''}
-                        {!t.isSellable ? ' · not sellable' : ''}
-                      </option>
-                    ))}
-                  </select>
+                  />
+                  <p className="mt-1 text-[11px] text-fg-subtle">Describes your business category and sellability. Choose stock handling separately on the Stock behaviour tab.</p>
                   {itemTypes.length === 0 ? (
                     <p className="mt-1 text-[11px] text-amber-600">
-                      Create an item type under Products &amp; Inventory first.{' '}
+                      Create a business classification under Products &amp; Inventory first.{' '}
                       <CatalogCreateShortcut href="/admin/item-types/new">
                         New
                       </CatalogCreateShortcut>
@@ -815,7 +848,7 @@ function AdminProductModalForm({
                   <div>
                     <label className={labelClass}>
                       Selling Price (KES)
-                      {activeItemType?.isSellable !== false ? ' *' : ''}
+                      {activeItemType?.isSellable !== false && !isService ? ' *' : ''}
                     </label>
                     <input
                       type="number"
@@ -826,10 +859,13 @@ function AdminProductModalForm({
                       placeholder="Leave empty for none"
                       className={`${fieldClass} font-mono font-bold`}
                     />
-                    {activeItemType && !activeItemType.isSellable ? (
+                    {isService ? (
                       <p className="mt-1 text-[11px] text-fg-subtle">
-                        Optional for non-sellable item types.
+                        Optional for a service. Without a price it is not sold from the shop, which is what you want for something like delivery, charged from the delivery rates. Give it a price to sell it.
                       </p>
+                    ) : null}
+                    {!isService && activeItemType && !activeItemType.isSellable ? (
+                      <p className="mt-1 text-[11px] text-fg-subtle">Optional for non-sellable item types.</p>
                     ) : null}
                   </div>
                   <div>
@@ -879,14 +915,14 @@ function AdminProductModalForm({
                     />
                   </div>
                   <div>
-                    <label className={labelClass}>Cost of Goods (KES) *</label>
+                    <label className={labelClass}>{`Cost of Goods (KES)${isService ? '' : ' *'}`}</label>
                     <input
                       type="number"
                       min={0}
                       step="any"
                       value={costPrice}
                       onChange={(e) => setCostPrice(e.target.value)}
-                      placeholder="Leave empty for none"
+                      placeholder={isService ? 'Leave empty: a service has no goods to cost' : 'e.g. 0 if it costs nothing'}
                       className={`${fieldClass} font-mono`}
                     />
                   </div>
@@ -1014,32 +1050,16 @@ function AdminProductModalForm({
                   }}
                 />
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                  <div>
-                    <label
-                      className={labelClass}
-                    >{`On-Hand Stock${baseUnit?.meta?.code === undefined ? '' : ` (${baseUnit.meta.code})`}`}</label>
-                    <input
-                      type="number"
-                      min={0}
-                      step={unitStep}
-                      value={stockQuantity}
-                      onChange={(e) => setStockQuantity(e.target.value)}
-                      placeholder="e.g. 15"
-                      className={`${fieldClass} font-mono font-bold`}
-                    />
-                  </div>
-                  <div>
-                    <label className={labelClass}>Low Stock Threshold</label>
-                    <input
-                      type="number"
-                      min={0}
-                      step={unitStep}
-                      value={lowStockThreshold}
-                      onChange={(e) => setLowStockThreshold(e.target.value)}
-                      placeholder="e.g. 5"
-                      className={`${fieldClass} font-mono`}
-                    />
-                  </div>
+                  {inventoryKindChoice?.id === 'inventory' ? <>
+                    <div>
+                      <label className={labelClass}>{`On-Hand Stock${baseUnit?.meta?.code === undefined ? '' : ` (${baseUnit.meta.code})`}`}</label>
+                      <input type="number" min={0} step={unitStep} value={stockQuantity} onChange={(e) => setStockQuantity(e.target.value)} placeholder="e.g. 15" className={`${fieldClass} font-mono font-bold`} />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Low Stock Threshold</label>
+                      <input type="number" min={0} step={unitStep} value={lowStockThreshold} onChange={(e) => setLowStockThreshold(e.target.value)} placeholder="e.g. 5" className={`${fieldClass} font-mono`} />
+                    </div>
+                  </> : <p className="rounded-lg border border-line bg-surface-raised p-3 text-xs leading-relaxed text-fg-muted sm:col-span-2">This product does not keep stock balances or reorder thresholds. Choose <strong>Inventory item</strong> on the Stock behaviour tab to manage quantities.</p>}
                   <div>
                     <label
                       className={labelClass}
@@ -1058,6 +1078,34 @@ function AdminProductModalForm({
               </div>
             ) : null}
 
+            {tab === 'handling' ? (
+              <section className="max-w-2xl space-y-4" aria-labelledby="inventory-treatment-title">
+                <div>
+                  <h3 id="inventory-treatment-title" className="text-sm font-semibold text-fg-strong">Inventory treatment</h3>
+                  <p className="mt-1 text-xs leading-relaxed text-fg-muted">{isEditing ? 'It controls whether qsell tracks stock, reserves quantities, and sends physical movements through inventory workflows.' : `A new product starts as its business classification says${activeItemType === undefined ? '' : ` (${activeItemType.name}: ${INVENTORY_KIND_OPTIONS.find((option) => option.id === activeItemType.defaultInventoryKind)?.label ?? 'Inventory item'})`}. You can change it here until the product has stock or documents. It controls whether qsell tracks stock, reserves quantities, and sends physical movements through inventory workflows.`}</p>
+                </div>
+                <ChoicePicker
+                  label="How should qsell manage this product?"
+                  source="inventory-kinds"
+                  choice={inventoryKindChoice}
+                  onChoice={(choice) => {
+                    setInventoryKindChoice(choice);
+                    if (choice?.id !== 'inventory') {
+                      setStockQuantity('0');
+                      setLowStockThreshold('0');
+                      setIsCheckoutPackaging(false);
+                    }
+                  }}
+                  placeholder="Choose an inventory treatment"
+                  clearable={false}
+                  required
+                />
+                {inventoryKindChoice === null ? null : <p className="rounded-lg border border-line bg-surface-raised p-3 text-xs leading-relaxed text-fg-muted">{INVENTORY_KIND_OPTIONS.find((option) => option.id === inventoryKindChoice.id)?.description ?? ''}</p>}
+                {isEditing ? <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-relaxed text-amber-800">You can change inventory treatment only while the product has no stock or business-document history. After it has been used, create a replacement product so its historical stock and documents keep their original meaning.</p> : null}
+                {inventoryKindChoice?.id !== 'inventory' ? <p className="text-xs text-fg-muted">Stock quantity and reorder threshold must both be zero. Sales and purchases can still use the product; they will not create stock reservations.</p> : null}
+              </section>
+            ) : null}
+
             {tab === 'packaging' ? (
               <section className="space-y-4" aria-labelledby="packaging-config-title">
                 <div>
@@ -1065,7 +1113,7 @@ function AdminProductModalForm({
                   <p className="mt-1 text-xs text-fg-muted">Configure this from either side: on a regular product, choose packaging that fits it; on a packaging product, choose the products it can hold. Capacity is in the selected product’s base unit per one package.</p>
                 </div>
                 <div className="flex items-center gap-3 rounded-lg border border-line bg-surface-raised p-3">
-                  <input id="is-checkout-packaging" type="checkbox" checked={isCheckoutPackaging} onChange={(event) => setIsCheckoutPackaging(event.target.checked)} className="h-4 w-4 accent-indigo-600" />
+                  <input id="is-checkout-packaging" type="checkbox" checked={isCheckoutPackaging} disabled={inventoryKindChoice?.id !== 'inventory'} onChange={(event) => setIsCheckoutPackaging(event.target.checked)} className="h-4 w-4 accent-indigo-600 disabled:opacity-50" />
                   <label htmlFor="is-checkout-packaging" className="text-sm font-medium text-fg-strong">This product is packaging offered at checkout</label>
                 </div>
                 <div className="space-y-3">

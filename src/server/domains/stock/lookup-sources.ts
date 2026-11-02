@@ -62,7 +62,7 @@ const stockProducts = tableSource({
   scope: ({ filters }) => {
     const { at, ...rest } = filters;
     if (Object.keys(rest).length > 0) throw new LookupFilterError('Unsupported filter.');
-    const conditions: SQL[] = [isNull(products.deletedAt)];
+    const conditions: SQL[] = [isNull(products.deletedAt), eq(products.inventoryKind, 'inventory')];
     if (at !== undefined) {
       if (!UUID.test(at)) throw new LookupFilterError('That is not a valid choice.');
       conditions.push(sql`EXISTS (SELECT 1 FROM stock_balances b WHERE b.product_id = ${products.id} AND b.location_id = ${at}::uuid AND b.on_hand > 0)`);

@@ -29,6 +29,7 @@ export interface ProductFacts {
   unitName: string;
   decimals: number;
   deleted: boolean;
+  inventoryKind: 'inventory' | 'non_inventory' | 'service';
 }
 
 /** The document, locked for the rest of the transaction. Refused when it is not this company's or not this kind. */
@@ -51,16 +52,17 @@ export async function productFacts(tx: Tx, ids: readonly string[]): Promise<Map<
   const out = new Map<string, ProductFacts>();
   if (ids.length === 0) return out;
   const rows = await tx
-    .select({ id: products.id, name: products.name, cost: products.costPrice, unitName: unitsOfMeasure.name, decimals: unitsOfMeasure.decimals, deletedAt: products.deletedAt })
+    .select({ id: products.id, name: products.name, cost: products.costPrice, unitName: unitsOfMeasure.name, decimals: unitsOfMeasure.decimals, deletedAt: products.deletedAt, inventoryKind: products.inventoryKind })
     .from(products)
     .leftJoin(unitsOfMeasure, eq(unitsOfMeasure.id, products.baseUnitId))
     .where(inArray(products.id, [...ids]));
-  for (const r of rows) out.set(r.id, { id: r.id, name: r.name, cost: Number(r.cost), unitName: r.unitName ?? 'unit', decimals: r.decimals ?? 3, deleted: r.deletedAt !== null });
+  for (const r of rows) out.set(r.id, { id: r.id, name: r.name, cost: Number(r.cost), unitName: r.unitName ?? 'unit', decimals: r.decimals ?? 3, deleted: r.deletedAt !== null, inventoryKind: r.inventoryKind });
   return out;
 }
 
 /** Each quantity must fit the unit the product is counted in. */
 export function unitProblem(facts: ProductFacts, quantity: number, what: string): string | null {
+  if (facts.inventoryKind !== 'inventory') return `"${facts.name}" is not inventory-managed and cannot be used on a stock document.`;
   return quantityProblem(quantity, facts.decimals, facts.unitName, `${what} of "${facts.name}"`);
 }
 

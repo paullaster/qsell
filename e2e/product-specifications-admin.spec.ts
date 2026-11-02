@@ -15,6 +15,11 @@ test.describe('editing product specifications', () => {
     await open(page, '/admin/products', /Products|Catalog/);
     const dialog = page.getByRole('dialog');
     await clickUntilVisible(page.getByText(productName, { exact: true }).first(), dialog);
+    await expect(dialog.getByRole('combobox', { name: 'Business classification' })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Stock behaviour' })).toBeVisible();
+    await dialog.getByRole('button', { name: 'Stock behaviour' }).click();
+    await expect(dialog.getByRole('combobox', { name: 'How should qsell manage this product?' })).toBeVisible();
+    await expect(dialog.getByText(/Inventory treatment is fixed when a product is created/)).toBeVisible();
     await dialog.getByRole('button', { name: 'Specs' }).click();
 
     const specificationNames = dialog.getByRole('textbox', { name: /^Specification name / });

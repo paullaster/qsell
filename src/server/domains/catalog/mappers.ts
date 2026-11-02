@@ -1,4 +1,5 @@
 import { decryptCredentials } from '@/server/domains/payments/crypto';
+import { isInventoryKind } from '@/lib/inventory-kind';
 import type {
   Category,
   CurrencyConfig,
@@ -72,6 +73,7 @@ export function toItemType(row: ItemTypeRow, productCount?: number): ItemType {
     code: row.code,
     name: row.name,
     isSellable: row.isSellable,
+    defaultInventoryKind: isInventoryKind(row.defaultInventoryKind) ? row.defaultInventoryKind : 'inventory',
     isDefault: row.isDefault,
     isActive: row.isActive,
     productCount,
@@ -133,6 +135,7 @@ export function toProduct(row: ProductJoined): Product {
     // integrity failure worth surfacing rather than rendering as "undefined".
     itemTypeName: row.itemTypeName ?? 'Unknown item type',
     itemTypeCode: row.itemTypeCode ?? 0,
+    inventoryKind: row.inventoryKind,
     isSellable: row.isSellable,
     price: optionalNum(row.price),
     standardPrice: optionalNum(row.standardPrice) ?? null,
@@ -260,6 +263,7 @@ export function productToRow(product: Product): ProductInsert {
     brand: product.brand ?? null,
     itemTypeId: product.itemTypeId,
     isSellable: product.isSellable,
+    inventoryKind: product.inventoryKind ?? 'inventory',
     price: product.price == null ? null : String(product.price),
     standardPrice: product.standardPrice == null ? null : String(product.standardPrice),
     minOrderQty: product.minOrderQty ?? null,

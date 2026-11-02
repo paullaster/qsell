@@ -1,4 +1,4 @@
-import { asc, eq, gt, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { products, stockSettings } from '@/server/db/drizzle/schema';
 import { StockError } from './errors';
@@ -82,12 +82,12 @@ export class StockShadow {
     const loc = await this.locations.ensureDefault(companyId);
     return await this.db.transaction(async (tx) => {
       const [p] = await tx
-        .select({ stock: products.stockQuantity, reserved: products.reservedQuantity, cost: products.costPrice })
+        .select({ stock: products.stockQuantity, reserved: products.reservedQuantity, cost: products.costPrice, inventoryKind: products.inventoryKind })
         .from(products)
         .where(eq(products.id, productId))
         .for('update')
         .limit(1);
-      if (p === undefined) return false;
+      if (p === undefined || p.inventoryKind !== 'inventory') return false;
       // A product the ledger already manages (it has movements the ledger itself wrote) is never overwritten from the old counter.
       const native = [...(await tx.execute<Row>(sql`SELECT 1 AS n FROM stock_movements WHERE product_id = ${productId} AND legacy_movement_id IS NULL AND NOT migrated LIMIT 1`))];
       if (native.length > 0) return false;
@@ -129,7 +129,7 @@ export class StockShadow {
     const ids = await this.db
       .select({ id: products.id })
       .from(products)
-      .where(status.backfillCursor === null ? undefined : gt(products.id, status.backfillCursor))
+      .where(and(status.backfillCursor === null ? undefined : gt(products.id, status.backfillCursor), eq(products.inventoryKind, 'inventory')))
       .orderBy(asc(products.id))
       .limit(limit);
     let done = 0;
@@ -163,7 +163,7 @@ export class StockShadow {
             WHERE s.reference_id = im.reference_id AND s.product_id = im.product_id AND s.change_type IN ('order_fulfillment', 'order_cancellation_release'))
         GROUP BY im.reference_id, im.product_id
       ) r
-      WHERE r.qty > 0 AND EXISTS (SELECT 1 FROM products p WHERE p.id = r.product_id)
+       WHERE r.qty > 0 AND EXISTS (SELECT 1 FROM products p WHERE p.id = r.product_id AND p.inventory_kind = 'inventory')
       ON CONFLICT (ref_type, ref_id, ref_line_id, product_id, location_id, shard) WHERE state IN ('held', 'partly_consumed') DO NOTHING
       RETURNING id`))];
     return rows.length;
