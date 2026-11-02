@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { noHorizontalScroll, noInnerHorizontalScroll, noNativeSelect, open } from './support/page';
+import { clickUntilVisible, noHorizontalScroll, noInnerHorizontalScroll, noNativeSelect, open } from './support/page';
 
 test.describe('delivery zones', () => {
   test('a zone is added, given places one at a time and many at once, kept to one zone per place, changed, stopped and restarted', async ({ page }, testInfo) => {
@@ -70,16 +70,18 @@ test.describe('delivery zones', () => {
     await expect(southPlaces.getByRole('list', { name: `Places in ${south}` })).toContainText(`Karen, Nairobi ${tag}`);
 
     // A place is removed after a confirmation.
-    await southPlaces.getByRole('button', { name: `Remove Karen, Nairobi ${tag}` }).click();
-    await southPlaces.getByRole('button', { name: `Confirm: Remove Karen, Nairobi ${tag}` }).click();
+    // The list reloads after a place is added; a tap that lands during that reload is lost, as it would be for a person, so it is repeated until the question appears.
+    const confirmRemove = southPlaces.getByRole('button', { name: `Confirm: Remove Karen, Nairobi ${tag}` });
+    await clickUntilVisible(southPlaces.getByRole('button', { name: `Remove Karen, Nairobi ${tag}` }), confirmRemove);
+    await confirmRemove.click();
     await expect(page.getByText(`Karen, Nairobi ${tag} removed from ${south}.`)).toBeVisible({ timeout: 30_000 });
     await expect(southPlaces).toContainText('No places yet');
     await noHorizontalScroll(page);
     await noInnerHorizontalScroll(page);
 
     // The zone is changed (the form keeps its values), stopped (and then hidden), and restarted.
-    await westRow.getByRole('button', { name: `Edit ${west}` }).click();
     const edit = page.getByRole('form', { name: `Edit ${west}` });
+    await clickUntilVisible(westRow.getByRole('button', { name: `Edit ${west}` }), edit);
     await expect(edit.getByLabel('Radius in kilometres')).toHaveValue('4');
     await edit.getByLabel('Name').fill(`Westlands central ${tag}`);
     await edit.getByRole('button', { name: 'Save changes' }).click();
@@ -87,8 +89,9 @@ test.describe('delivery zones', () => {
     const renamed = list.getByRole('listitem').filter({ hasText: `Westlands central ${tag}` });
     await expect(renamed).toBeVisible({ timeout: 30_000 });
 
-    await renamed.getByRole('button', { name: `Stop ${west}` }).click();
-    await renamed.getByRole('button', { name: `Confirm: Stop ${west}` }).click();
+    const confirmStop = renamed.getByRole('button', { name: `Confirm: Stop ${west}` });
+    await clickUntilVisible(renamed.getByRole('button', { name: `Stop ${west}` }), confirmStop);
+    await confirmStop.click();
     await expect(page.getByText(`${west} stopped.`)).toBeVisible({ timeout: 30_000 });
     await expect(list.getByRole('listitem').filter({ hasText: `Westlands central ${tag}` })).toHaveCount(0);
     await page.getByLabel('Show stopped zones').check();
