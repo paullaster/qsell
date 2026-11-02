@@ -325,3 +325,96 @@ Informed by the owner's earlier map and pricing service (see the memory note "Pi
 **Not built yet (D-0c):** the shop's address-first checkout and the map picker (D-0d); the tax on the charge and the charge line on the invoice (D-0d); collection from a branch with a code (D-0e; the plan refuses `pickup` for now); showing the choice on the admin order page (it is on the timeline, in words).
 
 **Verified.** Unit: the branch choice (nearest that covers, passed-over branches, partial cover, exclusions, no position, ties and order independence, words), the paste reader. Integration (database): choosing among branches with several locations each and company stock, a location that may not dispatch deliveries, partial cover, branches with no pin or without the method, the same answer every time, an address the built-in map cannot place, no policy; an order placed with delivery (branch, fee, total, record, timeline order `order_placed`, `charge_quoted`, `stock_reserved`, the hold at the chosen branch's location, the decision log), a caller who passes a different branch or amount, a refused delivery leaving no order, an order without delivery unchanged, and the record's immutability; zone-code matching (case, unknown, stopped, other company, bad input, permission). E2E: pasting a rate card on desktop and phone.
+
+
+## 26. D-0d as built (2026-11-02): the map service, the shop checkout, tax on the charge
+
+### 26.1 Choosing the map service (Delivery, Map service)
+
+**What an administrator sees.** Four services side by side, each laid out with the same rows: what a month costs **at the shop's own volume**, price and billing, reliability, how it has actually behaved **for this shop**, limits, search while typing, road distance and time, Kenyan places and addresses, what its terms ask, best for, watch out for, and links to the provider's own pages. The shop's volume is filled in from its last 30 days of orders and its branches; the administrator can change the numbers to plan for growth, and can enter a shillings rate to see costs in KES. Notes that are our judgement and not the provider's statement are marked "our view".
+
+**Facts and where they come from** (`src/lib/geo-providers.ts`, checked 2026-11-01, each with its source linked on the card):
+- **OpenStreetMap** (Nominatim for places, OSRM for roads, Leaflet in the browser): free on the public servers, with no uptime promise. Nominatim allows at most one request a second for the whole business, requires results to be cached and an identifying user agent, and **forbids search as people type**; the tile servers allow normal viewing only (no bulk download), require attribution and a referrer, and promise nothing; the OSRM demo server is for light use with no guarantees. So the adapter spaces public requests a little over a second apart, remembers answers for a day, identifies the business with the contact email the administrator gives, and searches only when the shopper presses Search. Pointed at a server of your own or a paid host running the same software (the three addresses are settings), it is not slowed and allows search as people type.
+- **Google Maps Platform**: pay by use after a monthly free allowance; at the basic edition 10,000 free calls a month for Geocoding, Route Matrix and Dynamic Maps, then about US$5 per 1,000 geocodes and route elements and US$7 per 1,000 map views, cheaper at higher volume (tiers in the catalogue, read from Google's pricing page). A 99.9% monthly uptime target with service credits of 10%, 25% or 50%. A billing account and key are needed, and its terms limit storing results. **Its connection is not installed yet**: it is shown for comparison and cannot be chosen.
+- **Mapbox**: shown for comparison only. The prices found in public sources disagreed, so **no number is shown**; the card links Mapbox's own page. Not installed yet.
+- **Built-in estimate**: free, always there, straight line times a road factor; it is also what every other service falls back to.
+
+**Cost estimate.** `estimateCost` turns orders, branches, lookups per order, delivery prices per order and map views per order into the calls each service bills for (address lookups, route-matrix elements, map views) and charges Google's tiers graduated (free allowance, then each band at its own rate). OpenStreetMap shows "free" but a **volume fit**: about 1,000 requests a day is light, above that "plan to move to a paid host", above 5,000 "weak" (these thresholds are our rule of thumb, stated as such).
+
+**Evidence from the shop's own use.** Every call to the map service is counted by provider, kind and hour (`geo_usage`, one row per hour, never per call): how many worked, how many failed or fell back to the estimate, how long they took, and the shares answered within half a second, one second and two and a half seconds (the longest a shopper is made to wait). The card for a service shows these once it has been used, over the last 30 days.
+
+**Choosing.** Settings are version-checked (two people saving get one winner), need a reason of a few words, are checked on the server (https only; not this machine or a cloud metadata address; a contact email for OpenStreetMap), and go to the decision log with the old and new service. **Try it now** runs three real steps with the form's settings without saving: find a place, name a pin, measure a road (Nairobi to Nakuru, checked for believability), each timed, spaced eight seconds apart. A service that fails its try can still be saved, because delivery falls back to the estimate rather than stopping a sale, but the screen says what failed first. The choice is remembered for 30 seconds by the services (a save clears it at once); a saved choice that can no longer be built falls back to the estimate. Needs `deliveries:read` to see and `deliveries:manage` to change or try.
+
+**Adding another provider** is still one adapter, its contract tests, one line in `GEO_ADAPTERS`, and an entry in the catalogue (with its prices and its settings form fields).
+
+### 26.2 The shop checkout (address first)
+
+**The section** ("Show us where to deliver", inside Delivery address): the shopper drops a pin on the map (Leaflet with the chosen service's pictures and its attribution), searches for a place **by pressing Search** (never as they type on the free servers), uses the device's location, or just writes the area; the address above gains an "Estate or area" field. A pin names itself (the service's reverse lookup) and one button fills the written address from it. Someone else can be the recipient (name and mobile number, checked on the server) and a note can be left for the rider; the payer is the existing "number to pay from". The map cannot be used by keyboard, so the written address and "use my location" are always offered beside it.
+
+**The charge before payment.** After a short pause, whenever the place, the way of delivering or the basket changes, the browser asks `shopQuoteDeliveryAction` for the delivery. The server prices the basket the way the shop prices an order (the same price lists, customer and branch), breaks kits into their parts, chooses the nearest branch that can cover it (D-0c), works the charge under the policy that applies and answers with the branch, why, the charge with its tax, how it was worked out, and a caution when the distance is a guess (a written area placed on the map) or only an estimate. An answer to an earlier question is never shown for a later one. The summary shows "Delivery from <branch>" and a total that includes it, and the button says what will be paid.
+
+**The order carries what was shown.** The checkout sends the charge the shopper saw (`expectedCharge`). The order's own charge is worked out again, on the server, at placement; if it is not the same to the cent, the order is **refused and nothing is saved** with "the delivery charge is now X and not the Y you were shown" (`delivery_changed`), and the screen prices it again. So a stale screen, a changed policy or a price-list difference can never charge an amount that was not shown. The shopper's browser supplies only the basket's ids and quantities and the place; never a branch, a price or a charge.
+
+**Gate.** The shop offers a way of delivering only where a branch really offers it **and** a charge policy in force covers that branch for the shop. A method switched on before its charges exist never stops anyone checking out; a shop with neither is unchanged.
+
+**Limits.** The search and pin lookups and the delivery price are rate limited per address (`shop_map_search_ip`, `shop_delivery_quote_ip`).
+
+### 26.3 Tax on the charge, and what the order records
+
+A charge policy now has a tax rate and says whether its amounts already include the tax. The charge splits to the cent into **net** (kept as the order's shipping fee), **tax** (added to the order's tax, so the books, the invoice and the total agree) and **gross** (what the customer pays for delivery); `order_deliveries` keeps all three, the rate, who receives it and the note for the rider. The split, the amount and the rate are frozen by the database trigger; the recipient and the note may be corrected before dispatch. A check constraint keeps net plus tax equal to the amount.
+
+### 26.4 Known limits
+
+- **eTIMS / KRA.** The tax-invoice payload is built from the order's product lines and the order total; delivery is not sent as a line. This was already so for any shipping fee, but delivery charges are now real, so **the delivery line must be added to the KRA payload before delivery charges are used on invoices that are signed**. Not done here; flagged.
+- The invoice and the invoice PDF show the shipping fee as a row and the tax in the tax total; the delivery tax is not yet a separate line.
+- Saved addresses do not yet keep a pin.
+- The Google and Mapbox connections are not installed; the screen shows them for comparison.
+- A map picker needs a map service with a picture server (OpenStreetMap); with the built-in estimate there is no map, and shoppers write the area or use their location.
+- Cash on delivery billing at delivery, pickup with a collection code (D-0e), rider and run dispatch are later slices.
+
+### 26.5 Verified
+
+Unit: provider catalogue and cost arithmetic (tier boundaries, monotonic), volume fit, settings checks (https, blocked hosts, tile placeholders, country codes), usage summaries, the OpenStreetMap adapter against fake servers (headers, spacing, caching, chunking, unroutable places, failures), the registry and service (recording, choice, fallback), the delivery tax split, the checkout input (delivery, recipient, amounts), branch choice. Integration (database): saving the choice (reason, validation, version conflict, two at once, decision log, effect on the services), usage counting and metrics, trying a service, permissions; orders with tax (added and included), the shown-charge guard, recipient and note, the shop quote equal to the order's charge, refusals in words, the gate, search and pin naming. E2E: choosing a service with the cost screen on desktop and phone; the shop checkout from a written area, then a device-location pin, a recipient, the charge and its tax shown before payment and the order carrying exactly that.
+
+
+## 27. Delivery on the invoice and at KRA (2026-11-02)
+
+**The setting** (Delivery, Delivery invoicing; `delivery_billing_settings`, one row for each company, version-checked, a reason of a few words, decision log `delivery.billing_changed`; `deliveries:read` to see, `deliveries:manage` to change):
+
+| | On the same invoice (`with_goods`, the default) | On its own invoice (`separate`) |
+|---|---|---|
+| Invoice | One tax invoice. Delivery is a line beside the product lines. | The products' tax invoice as before, plus a second tax invoice for the delivery service. |
+| Tax shown | Subtotal (products and delivery, before tax), then **VAT on products**, **VAT on delivery (16%)**, **Total VAT**, then the total. | Each invoice shows its own VAT; together they are the order. |
+| Number | One. | Two, both from the **same tax invoice series** (one legal sequence); the delivery invoice is its own document of the order. |
+| KRA | One signing, with the delivery service item as a line. | Two signings, each its own document in the signing log (`order:<id>:tax_invoice`, `order_delivery:<id>:tax_invoice`), each with its own receipt. |
+
+An order with no delivery charge, a free one, or an older order with a shipping fee and no delivery record is laid out exactly as before in either mode (the old "Shipping" row is kept for the last).
+
+**One plan for every output** (`src/lib/delivery-invoicing.ts` `planInvoices`, read by `invoicePlanFor`): the invoice, its email, the PDF and what is sent to KRA all come from it, so they cannot disagree. The order keeps `subtotal` (products before tax), `tax` (products and delivery), `shippingFee` (delivery before tax) and the total; the delivery's own net, tax, gross and rate are kept on its record. Tax on the products is the order's tax less the delivery's. A layout whose invoices do not add up to the order, to the cent, is refused and never issued. A proforma is one request for payment, so it always shows delivery with the goods.
+
+**What KRA is sent.** eTIMS takes registered items, so the delivery service is a **product the company chooses** (a service item created under Products and registered under KRA, eTIMS items). The delivery line is that item, quantity 1, at what the customer pays for delivery (tax included), like the product lines; the tax class comes from the item at KRA. The goods line amounts, the total and the frozen record of what was sent (used by credit notes) are as before, with the delivery line in them when it is on the invoice. Signing is **refused, in words, and nothing is sent** when no item has been chosen (`DELIVERY_ITEM_NOT_SET`) or when the item's tax rate is not the tax the delivery was charged (`DELIVERY_TAX_MISMATCH`: KRA works the tax from the item, so a mismatch would sign a wrong tax). The settings screen names charge policies in force whose tax differs from the item's before an invoice is refused, and says whether the item is registered.
+
+**The separate delivery invoice.** Issued when the goods invoice is issued (generating the goods invoice starts the delivery invoice too, in the background, numbered once; asking again returns the same number). It can be downloaded or emailed on its own (document type `delivery_invoice`, "Tax Invoice: Delivery Service"). Its KRA status is kept on the delivery record (`order_deliveries.invoice_kra_status`), so it never overwrites the order's own KRA status, which is the goods invoice's.
+
+**Limits.** The credit note's goods lines keep their old behaviour (see §27.1). Orders invoiced before this layout existed have no delivery line to credit. Google and Mapbox adapters, D-0e and rider dispatch are later.
+
+**Verified.** Unit: the plan in both modes (tax parts add up, subtotal plus tax is the total, free and no delivery unchanged, old shipping row kept, rounding to the cent, refuses a plan that does not add up). Integration (database, a pretend KRA that keeps what it is asked to send): the setting (default, save with reason, validation, stale version, two at once, log, tax mismatches named, permissions); one invoice (the lines KRA is sent, the total, the layout, the document and the tax parts, refusal without an item, refusal on a tax mismatch); two invoices (what each sends and the totals adding up to the order, each its own document in the log, the delivery status on the delivery record, both issued from the one series once, titles, nothing to give when delivery is with the goods); an order with no delivery unchanged. E2E: the settings screen on desktop and phone (default, the example for each choice, saving with an item and a reason, kept after reload).
+
+
+### 27.1 Credit notes, the order screen and the timeline (2026-11-02)
+
+**Credit notes follow how the invoice was issued, not today's setting.** The tax invoice's record keeps `deliveryBilling` (the mode) and `deliveryServiceProductId` in its `meta`; `invoicedLayout` reads them and `src/lib/delivery-credit.ts` (pure) turns them with the delivery record into a credit target.
+
+| Invoiced | Credit |
+|---|---|
+| On the same invoice | Delivery is one more creditable line of the goods invoice ("Delivery", quantity 1, what the customer paid with tax), found by the delivery service item, and sent to KRA against the signed line. It is a service: nothing is expected back into stock, and it earns no rebate or loyalty points, so those use the goods lines only. |
+| On its own invoice | The goods invoice's creditable total is the order total less delivery. The delivery is credited in full (`issueForDelivery`, one line, once) in a credit note of its own against `order_delivery:<id>:tax_invoice`, signed against the delivery invoice's number. It goes through the same approval workflow (`credit_note.requested`, payload `delivery: true`). A line for the delivery on the goods invoice is refused. |
+| Before delivery had a layout, or no charge | Nothing of delivery to credit; as before. |
+
+The credit-note panel shows the delivery line (same invoice) or a "Credit the delivery invoice" block (own invoice), with the reason and note given above it.
+
+**Order screen.** Orders whose delivery is billed apart show **Delivery Invoice PDF** and **Email Delivery Invoice** beside the tax invoice buttons (`deliveryInvoiceAvailableAction`, `orders:read`).
+
+**Timeline.** The delivery invoice's KRA result is on the order's timeline as `delivery_invoice_signed`, `delivery_invoice_failed` (with the reason code and message) and `delivery_invoice_skipped` (migration 0123 adds them to the stage check). They are non-tracking stages and change no column, so `orders.kra_transmission_status` stays the goods invoice's.
+
+**Known, not changed here.** A goods line is credited at its line price (before tax for a tax-exclusive product), as credit notes always did; the delivery line is credited at what was paid (tax included), which is how it is invoiced and sent to KRA. Aligning goods credits with tax-inclusive amounts is a separate change to the whole credit-note flow.

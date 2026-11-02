@@ -75,3 +75,38 @@ describe('parseCheckoutInput', () => {
     expect(parseCheckoutInput({ ...good(), items: Array.from({ length: 101 }, (_, i) => ({ productId: `p${String(i)}`, quantity: 1 })) }).ok).toBe(false);
   });
 });
+
+describe('the delivery part of a checkout', () => {
+  const delivery = (over: Record<string, unknown> = {}) => ({ method: 'own_fleet', pin: { latitude: -1.2921, longitude: 36.8219 }, address: { county: 'Nairobi', town: 'Nairobi', area: 'Westlands' }, ...over });
+  const parse = (d: unknown) => parseCheckoutInput({ ...good(), delivery: d });
+
+  it('is absent for an order without delivery, so such a checkout is read exactly as before', () => {
+    const r = parseCheckoutInput(good());
+    expect(r.ok && 'delivery' in r.value).toBe(false);
+  });
+
+  it('reads a pin, a written area, who receives it, the note and the charge the shopper saw', () => {
+    const r = parse(delivery({ recipient: { name: ' Wanjiku ', phone: '0722 222 222' }, notes: ' Blue gate ', expectedCharge: 348 }));
+    expect(r).toMatchObject({ ok: true, value: { delivery: { method: 'own_fleet', pin: { latitude: -1.2921, longitude: 36.8219 }, address: { county: 'Nairobi', town: 'Nairobi', area: 'Westlands' }, recipient: { name: 'Wanjiku', phone: '254722222222' }, notes: 'Blue gate', expectedCharge: 348 } } });
+  });
+
+  it('takes a written area alone, or a pin alone, but not neither', () => {
+    expect(parse(delivery({ pin: null }))).toMatchObject({ ok: true, value: { delivery: { pin: null } } });
+    expect(parse(delivery({ address: { county: ' ', town: '', area: null } }))).toMatchObject({ ok: true, value: { delivery: { address: null } } });
+    expect(parse(delivery({ pin: undefined, address: undefined }))).toMatchObject({ ok: false, error: expect.stringContaining('Drop a pin') as string });
+  });
+
+  it('refuses what is not a place, a way of delivering, a phone number or an amount, in words', () => {
+    expect(parse(delivery({ pin: { latitude: 120, longitude: 0 } }))).toMatchObject({ ok: false, error: expect.stringContaining('not a place') as string });
+    expect(parse(delivery({ method: 'teleport' }))).toMatchObject({ ok: false, error: expect.stringContaining('how you want') as string });
+    expect(parse(delivery({ recipient: { name: 'Wanjiku', phone: '12' } }))).toMatchObject({ ok: false, error: expect.stringContaining('mobile number') as string });
+    expect(parse(delivery({ expectedCharge: -5 }))).toMatchObject({ ok: false });
+    expect(parse(delivery({ expectedCharge: 'cheap' }))).toMatchObject({ ok: false });
+    expect(parse(delivery({ notes: 'x'.repeat(301) }))).toMatchObject({ ok: false });
+    expect(parse('nonsense')).toMatchObject({ ok: false });
+  });
+
+  it('does not make a recipient of a blank name', () => {
+    expect(parse(delivery({ recipient: { name: '  ', phone: '' } }))).toMatchObject({ ok: true, value: { delivery: { recipient: null } } });
+  });
+});

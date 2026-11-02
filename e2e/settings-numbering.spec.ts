@@ -74,8 +74,12 @@ test.describe('number series', () => {
     await noHorizontalScroll(page);
 
     // Put it back: removing the default asks for a reason too.
-    await kind.getByRole('combobox', { name: 'Default series for Stock count' }).click();
-    await page.keyboard.press('Escape');
-    await kind.getByRole('combobox', { name: 'Default series for Stock count' }).clear();
+    // Clearing only asks; until the removal is confirmed the series stays bound, and every later spec that opens a stock count gets this series' numbers.
+    await kind.getByRole('button', { name: 'Clear Default series for Stock count' }).click();
+    await expect(confirm).toBeVisible({ timeout: 30_000 });
+    await pick(page, confirm.getByRole('combobox', { name: 'Reason' }), '', /./);
+    await confirm.getByRole('button', { name: 'Confirm change' }).click();
+    await expect(page.getByText('Stock count numbering updated.')).toBeVisible({ timeout: 30_000 });
+    await expect(kind.getByRole('combobox', { name: 'Default series for Stock count' })).not.toHaveValue(new RegExp(code));
   });
 });

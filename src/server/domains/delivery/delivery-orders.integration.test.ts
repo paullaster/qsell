@@ -5,6 +5,7 @@ import { has } from '@/lib/values';
 import type * as mod_server_di_container from '@/server/di/container';
 import type * as mod_server_db_drizzle_client from '@/server/db/drizzle/client';
 import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
+import type * as ShopActions from './shop-actions';
 import type * as StagesModule from '@/server/domains/orders/stages';
 import type { OrderWriteService as OrderWriteServiceType } from '@/server/domains/orders/write-service';
 import { settleFinanceBacklog } from '@/server/domains/stock/test-support';
@@ -13,6 +14,8 @@ const { requirePermission } = vi.hoisted(() => ({ requirePermission: vi.fn() }))
 vi.mock('@/server/domains/access-control/guard', async (original) => ({ ...(await original<Record<string, unknown>>()), requirePermission }));
 vi.mock('@/server/domains/finance/action-runner', () => ({ injectedDelay: () => Promise.resolve() }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
+vi.mock('next/headers', () => ({ headers: () => Promise.resolve(new Headers({ 'x-real-ip': '10.1.2.3' })) }));
+vi.mock('@/auth', () => ({ auth: () => Promise.resolve(null) }));
 
 /**
  * Choosing the branch that delivers an order and charging the delivery, against a real database: the nearest branch that can cover
@@ -37,7 +40,8 @@ describe.skipIf(!has(url))('delivery for orders (database)', () => {
   let createOrder: (typeof OrderWriteServiceType)['createOrder'];
   let companyId: string;
   let itemTypeId: string;
-  let spy: { mockRestore: () => void };
+  let shop: typeof ShopActions;
+  let spy: { mockRestore: () => void } | undefined;
   const tag = randomUUID().slice(0, 6).toUpperCase();
   let n = 0;
   const code = () => `DO${tag}${String((n += 1)).padStart(3, '0')}`;
@@ -82,6 +86,7 @@ describe.skipIf(!has(url))('delivery for orders (database)', () => {
     const mod = await import('@/server/di/container');
     db = (await import('@/server/db/drizzle/client')).drizzleDb;
     schema = await import('@/server/db/drizzle/schema');
+    shop = await import('./shop-actions');
     ({ OrderStages: Stages } = await import('@/server/domains/orders/stages'));
     const writer = (await import('@/server/domains/orders/write-service')).OrderWriteService;
     createOrder = (input) => writer.createOrder(input);
@@ -96,9 +101,9 @@ describe.skipIf(!has(url))('delivery for orders (database)', () => {
     await c.stockLocations.ensureDefault(companyId);
     await c.stockShadow.setShadow(companyId, false);
     await c.stockSettings.setLedgerMode(companyId, true, { requireCleanShadow: false });
-  });
+  }, 180_000);
   afterAll(async () => {
-    spy.mockRestore();
+    spy?.mockRestore();
     await c.stockSettings.setLedgerMode(companyId, false);
     const mine = madePolicies.length === 0 ? [] : madePolicies;
     if (mine.length > 0) {
@@ -339,6 +344,144 @@ describe.skipIf(!has(url))('delivery for orders (database)', () => {
       // A removed branch only loses its link.
       await db.update(schema.orderDeliveries).set({ branchId: null }).where(eq(schema.orderDeliveries.orderId, id));
       expect((await c.orderDeliveries.forOrder(companyId, id))?.branchId).toBeNull();
+    });
+  });
+
+  describe('tax, the recipient, and the charge the shopper was shown', () => {
+    const place = async (productId: string, delivery: Parameters<typeof createOrder>[0]['delivery']) =>
+      await createOrder({
+        orderNumber: `DO-${randomUUID()}`,
+        customerName: 'Deliver Buyer',
+        customerEmail: `do-${randomUUID()}@deliver.test`,
+        customerPhone: '0700000000',
+        shippingAddress: { street: '1 Test Rd', city: 'Nairobi', countyOrState: 'Nairobi', country: 'KE' },
+        items: [{ productId, quantity: 1 }],
+        currency: 'KES',
+        paymentMethod: 'mpesa_daraja',
+        delivery,
+      });
+    const setup = async (over: Record<string, unknown>, fee = 300) => {
+      const a = await branch(NAIROBI);
+      const p = await product();
+      await stock(a, p, 10);
+      await flatFor([a], fee, over);
+      return { a, p };
+    };
+
+    it('adds tax to a charge quoted without it: the order’s tax and total include it, the shipping fee does not', async () => {
+      const { p } = await setup({ taxRate: 16 });
+      const r = await place(p, { method: 'own_fleet', pin: CUSTOMER });
+      expect(r.success, r.error).toBe(true);
+      const o = r.order;
+      expect(o?.shippingFee).toBe(300);
+      expect(o?.tax).toBe(48);
+      expect(o?.totalAmount).toBe((o?.subtotal ?? 0) + 48 + 300);
+      const rec = await c.orderDeliveries.forOrder(companyId, o?.id ?? '');
+      expect(rec).toMatchObject({ chargeAmount: '348.00', chargeNet: '300.00', chargeTax: '48.00', taxRate: '16.00' });
+      expect(rec?.charge.split).toEqual({ net: 300, tax: 48, gross: 348 });
+      const [row] = await db.select().from(schema.orders).where(eq(schema.orders.id, o?.id ?? ''));
+      expect(Number(row?.tax)).toBe(48);
+      expect(Number(row?.totalAmount)).toBe(Number(row?.subtotal) + 48 + 300);
+    });
+
+    it('takes tax out of a charge that includes it, so the customer still pays the charge as worked out', async () => {
+      const { p } = await setup({ taxRate: 16, taxInclusive: true }, 348);
+      const r = await place(p, { method: 'own_fleet', pin: CUSTOMER });
+      expect(r.order).toMatchObject({ shippingFee: 300, tax: 48 });
+      expect(r.order?.totalAmount).toBe((r.order?.subtotal ?? 0) + 348);
+    });
+
+    it('refuses a policy with a tax rate that is not a percentage', async () => {
+      const actions = await import('./policy-actions');
+      const a = await branch(NAIROBI);
+      for (const bad of [120, -1, '16.555', 'abc']) {
+        const made = await actions.createChargePolicyDraftAction(code(), { name: 'Bad', method: 'flat', currency: 'KES', scopes: { branch: { op: 'in', values: [a] } }, rates: [{ zoneId: null, fromKg: 0, toKg: null, fee: 10 }], taxRate: bad });
+        expect(made, String(bad)).toMatchObject({ ok: false, error: expect.stringContaining('tax rate') as string });
+      }
+    });
+
+    it('places the order when the charge is the one the shopper was shown, and refuses it, saving nothing, when it is not', async () => {
+      const { p } = await setup({ taxRate: 16 });
+      const ok = await place(p, { method: 'own_fleet', pin: CUSTOMER, expectedCharge: 348 });
+      expect(ok.success, ok.error).toBe(true);
+      const before = await db.select().from(schema.orders).where(like(schema.orders.orderNumber, 'DO-%'));
+      const stale = await place(p, { method: 'own_fleet', pin: CUSTOMER, expectedCharge: 300 });
+      expect(stale).toMatchObject({ success: false, code: 'delivery_changed' });
+      expect(stale.error).toMatch(/348\.00 and not the 300\.00/);
+      expect(await db.select().from(schema.orders).where(like(schema.orders.orderNumber, 'DO-%'))).toHaveLength(before.length);
+    });
+
+    it('keeps who receives it and the note for the rider, which may be corrected before dispatch', async () => {
+      const { p } = await setup({});
+      const r = await place(p, { method: 'own_fleet', pin: CUSTOMER, recipient: { name: 'Wanjiku', phone: '254712345678' }, notes: 'Blue gate, ask for the guard' });
+      const id = r.order?.id ?? '';
+      expect(await c.orderDeliveries.forOrder(companyId, id)).toMatchObject({ recipientName: 'Wanjiku', recipientPhone: '254712345678', notes: 'Blue gate, ask for the guard' });
+      await db.update(schema.orderDeliveries).set({ recipientPhone: '254799999999' }).where(eq(schema.orderDeliveries.orderId, id));
+      expect((await c.orderDeliveries.forOrder(companyId, id))?.recipientPhone).toBe('254799999999');
+    });
+  });
+
+  describe('the shop’s delivery section', () => {
+    const basket = (productId: string, quantity = 1) => [{ productId, quantity }];
+
+    it('quotes the same charge the order is then placed with, from the right branch, and says how it was worked out', async () => {
+      const a = await branch(NAIROBI);
+      const far = await branch(MOMBASA);
+      const p = await product(1);
+      await stock(a, p, 10);
+      await stock(far, p, 10);
+      await flatFor([a, far], 250, { taxRate: 16 });
+      const q = await shop.shopQuoteDeliveryAction({ method: 'own_fleet', pin: CUSTOMER, items: basket(p, 2) });
+      expect(q.ok, q.ok ? '' : q.error).toBe(true);
+      if (!q.ok) return;
+      expect(q.data).toMatchObject({ gross: 290, net: 250, tax: 40, taxRate: 16, currency: 'KES', approximate: false });
+      expect(q.data.why).toMatch(/nearest branch/);
+      expect(q.data.steps.length).toBeGreaterThan(0);
+      const placed = await createOrder({
+        orderNumber: `DO-${randomUUID()}`, customerName: 'Shopper', customerEmail: `do-${randomUUID()}@deliver.test`, customerPhone: '0700000000',
+        shippingAddress: { street: '1 Test Rd', city: 'Nairobi', countyOrState: 'Nairobi', country: 'KE' },
+        items: basket(p, 2), currency: 'KES', paymentMethod: 'mpesa_daraja',
+        delivery: { method: 'own_fleet', pin: CUSTOMER, expectedCharge: q.data.gross },
+      });
+      expect(placed.success, placed.error).toBe(true);
+      expect(Number(placed.order?.shippingFee) + 40).toBe(q.data.gross);
+      expect((await c.orderDeliveries.forOrder(companyId, placed.order?.id ?? ''))?.branchId).toBe(a);
+    });
+
+    it('says in words when it cannot quote, and reads nothing it should not trust', async () => {
+      const a = await branch(NAIROBI);
+      const p = await product();
+      await stock(a, p, 10);
+      expect(await shop.shopQuoteDeliveryAction({ method: 'own_fleet', items: basket(p) })).toMatchObject({ ok: false, error: expect.stringContaining('Drop a pin') as string });
+      expect(await shop.shopQuoteDeliveryAction({ method: 'own_fleet', pin: CUSTOMER, items: [] })).toMatchObject({ ok: false });
+      expect(await shop.shopQuoteDeliveryAction({ method: 'own_fleet', pin: CUSTOMER, items: [{ productId: p, quantity: -1 }] })).toMatchObject({ ok: false });
+      expect(await shop.shopQuoteDeliveryAction({ method: 'own_fleet', pin: { latitude: 99, longitude: 0 }, items: basket(p) })).toMatchObject({ ok: false });
+      expect(await shop.shopQuoteDeliveryAction({ method: 'own_fleet', pin: CUSTOMER, items: basket(p) })).toMatchObject({ ok: false, error: expect.stringContaining('No delivery charge policy') as string });
+      expect(await shop.shopQuoteDeliveryAction('nonsense')).toMatchObject({ ok: false });
+      expect(await shop.shopQuoteDeliveryAction({ method: 'own_fleet', pin: CUSTOMER, items: basket(`prod_missing_${randomUUID()}`) })).toMatchObject({ ok: false });
+    });
+
+    it('offers a way of delivering only where a branch offers it and a charge policy covers that branch', async () => {
+      const a = await branch(NAIROBI, ['own_fleet']);
+      const bare = await shop.shopDeliveryOptionsAction();
+      // Switched on but with no charges set up for it: not offered, so nobody is stopped at the checkout.
+      expect(bare.ok && bare.data.methods.includes('own_fleet')).toBe(false);
+      await flatFor([a], 100);
+      const options = await shop.shopDeliveryOptionsAction();
+      expect(options.ok).toBe(true);
+      if (!options.ok) return;
+      expect(options.data.methods).toContain('own_fleet');
+      expect(options.data.methods).not.toContain('courier');
+      expect(options.data.clientMap).toBeNull();
+      expect(options.data.canSearch).toBe(false);
+      expect(options.data.centre.latitude).toBeLessThan(0);
+    });
+
+    it('searches and names a pin only when asked, in words when it cannot, and never past its limit', async () => {
+      expect(await shop.shopSearchPlacesAction({ q: 'ab' })).toMatchObject({ ok: false });
+      expect(await shop.shopSearchPlacesAction({ q: 'Westlands' })).toEqual({ ok: true, data: [] });
+      expect(await shop.shopNamePinAction({ latitude: -1.26, longitude: 36.8 })).toEqual({ ok: true, data: null });
+      expect(await shop.shopNamePinAction({ latitude: 'x', longitude: 1 })).toMatchObject({ ok: false });
     });
   });
 });

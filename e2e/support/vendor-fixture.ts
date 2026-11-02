@@ -7,14 +7,14 @@
  * approved with a bank change whose call-back was recorded by someone else, so this session may approve it; `staffadded` is an
  * active vendor staff added, with nobody who can sign in. A new tag makes a new vendor, so a retried test starts clean.
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { E2E_VENDOR_PASSWORD } from './constants';
 
 const PDF = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n');
 
 async function main(): Promise<void> {
   const [tag, mode] = process.argv.slice(2);
-  const modes = ['new', 'submitted', 'approved', 'expiring', 'bankpending', 'bankready', 'staffadded'];
+  const modes = ['new', 'submitted', 'approved', 'expiring', 'bankpending', 'bankready', 'staffadded', 'invitation', 'invitation-existing'];
   if (tag === undefined || mode === undefined || !modes.includes(mode)) throw new Error(`usage: vendor-fixture <tag> ${modes.join('|')}`);
   const { getContainer } = await import('@/server/di/container');
   const { UserRepository } = await import('@/server/domains/auth/user-repository');
@@ -25,6 +25,25 @@ async function main(): Promise<void> {
   const company = await container.companySettings.ensureSeeded();
   const email = `fixture-${tag}@example.test`;
   const legalName = `Fixture Vendor ${tag}`;
+  if (mode === 'invitation') {
+    const ctx = { companyId: company.id, actor: { type: 'user' as const, id: 'e2e-fixture' }, origin: { surface: 'e2e', action: 'fixture' } };
+    const made = await container.vendors.createByStaff(ctx, { vendorType: 'company', legalName, tradingName: '', taxId: `I${randomUUID().replace(/-/g, '').slice(0, 9).toUpperCase()}`, country: 'Kenya', email: `company-${tag}@example.test`, phone: '', paymentTermDays: '30', currency: '', approvedExpenseVendor: false, notes: '' }, true);
+    const token = randomBytes(32).toString('base64url');
+    const inviteEmail = `owner-${tag}@example.test`;
+    await db.insert(schema.vendorInvitations).values({ companyId: company.id, vendorId: made.id, email: inviteEmail, inviteeName: `Owner ${tag}`, portalRole: 'owner', tokenHash: createHash('sha256').update(token).digest('hex'), expiresAt: new Date(Date.now() + 7 * 86_400_000), createdBy: 'e2e-fixture', deliveryStatus: 'sent' });
+    process.stdout.write(`FIXTURE ${JSON.stringify({ vendorId: made.id, legalName, email: inviteEmail, token, password: E2E_VENDOR_PASSWORD })}\n`);
+    return;
+  }
+  if (mode === 'invitation-existing') {
+    const customerEmail = `existing-customer-${tag}@example.test`;
+    await new UserRepository().create({ email: customerEmail, password: E2E_VENDOR_PASSWORD, name: `Existing ${tag}`, role: 'customer', emailVerified: true });
+    const ctx = { companyId: company.id, actor: { type: 'user' as const, id: 'e2e-fixture' }, origin: { surface: 'e2e', action: 'fixture' } };
+    const made = await container.vendors.createByStaff(ctx, { vendorType: 'company', legalName, tradingName: '', taxId: `X${randomUUID().replace(/-/g, '').slice(0, 9).toUpperCase()}`, country: 'Kenya', email: `company-${tag}@example.test`, phone: '', paymentTermDays: '30', currency: '', approvedExpenseVendor: false, notes: '' }, true);
+    const token = randomBytes(32).toString('base64url');
+    await db.insert(schema.vendorInvitations).values({ companyId: company.id, vendorId: made.id, email: customerEmail, inviteeName: `Existing ${tag}`, portalRole: 'owner', tokenHash: createHash('sha256').update(token).digest('hex'), expiresAt: new Date(Date.now() + 7 * 86_400_000), createdBy: 'e2e-fixture', deliveryStatus: 'sent' });
+    process.stdout.write(`FIXTURE ${JSON.stringify({ vendorId: made.id, legalName, email: customerEmail, token })}\n`);
+    return;
+  }
   if (mode === 'staffadded') {
     const ctx = { companyId: company.id, actor: { type: 'user' as const, id: 'e2e-fixture' }, origin: { surface: 'e2e', action: 'fixture' } };
     const made = await container.vendors.createByStaff(ctx, { vendorType: 'company', legalName, tradingName: '', taxId: `S${randomUUID().replace(/-/g, '').slice(0, 9).toUpperCase()}`, country: 'Kenya', email, phone: '', paymentTermDays: '30', currency: '', approvedExpenseVendor: false, notes: '' }, true);

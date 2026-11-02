@@ -58,6 +58,7 @@ export function reasonWords(code: string | null): string {
     approval_needed: 'Needs approval',
     kit_error: 'Set contents problem',
     delivery_unavailable: 'Could not be delivered',
+    delivery_changed: 'The delivery charge changed',
     payment_start_failed: 'The payment could not be started',
     payment_failed: 'The payment did not go through',
     payout_returned: 'The refund payout came back',

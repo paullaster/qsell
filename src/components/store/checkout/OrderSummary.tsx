@@ -7,7 +7,7 @@ import { AppImage } from '@/components/ui/AppImage';
 import { useStore } from '@/components/store/StoreContext';
 
 /** The lines of an order with tax, shipping and the total, as the shopper will be charged. */
-export function OrderSummary({ lines }: { lines: CartLine[] }) {
+export function OrderSummary({ lines, delivery = null }: { lines: CartLine[]; delivery?: { gross: number; net: number; tax: number; branchName: string } | null }) {
   const { money } = useStore();
   const totals = cartTotals(lines);
   const taxRows = cartTaxRows(lines);
@@ -41,6 +41,12 @@ export function OrderSummary({ lines }: { lines: CartLine[] }) {
             <dd className="shrink-0 font-mono text-fg-strong">{money(row.amount)}</dd>
           </div>
         ))}
+        {delivery === null ? null : (
+          <div className="flex justify-between gap-3">
+            <dt className="min-w-0 truncate">Delivery from {delivery.branchName}</dt>
+            <dd className="shrink-0 font-mono text-fg-strong">{delivery.gross === 0 ? 'Free' : money(delivery.gross)}</dd>
+          </div>
+        )}
         {totals.shippingFee > 0 ? (
           <div className="flex justify-between">
             <dt>Shipping</dt>
@@ -49,7 +55,7 @@ export function OrderSummary({ lines }: { lines: CartLine[] }) {
         ) : null}
         <div className="flex justify-between border-t border-line pt-2 text-base font-bold text-fg-strong">
           <dt>Total</dt>
-          <dd className="font-mono">{money(totals.totalAmount)}</dd>
+          <dd className="font-mono">{money(totals.totalAmount + (delivery?.gross ?? 0))}</dd>
         </div>
       </dl>
     </div>

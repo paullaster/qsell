@@ -1,0 +1,2 @@
+ALTER TABLE "item_types" ADD COLUMN "default_inventory_kind" text DEFAULT 'inventory' NOT NULL;--> statement-breakpoint
+ALTER TABLE "item_types" ADD CONSTRAINT "item_types_default_inventory_kind_chk" CHECK ("item_types"."default_inventory_kind" IN ('inventory', 'non_inventory', 'service'));

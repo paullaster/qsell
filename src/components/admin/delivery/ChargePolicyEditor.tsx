@@ -148,6 +148,20 @@ export function ChargePolicyEditor({ policy, currency, onCancel, onSaved }: { po
         <p className="text-xs text-fg-muted">The least and most charge must be multiples of the rounding unit, so rounding can never break them.</p>
       </fieldset>
 
+      <fieldset className="space-y-3" disabled={readOnly || busy}>
+        <legend className="text-xs font-semibold text-fg">Tax on the delivery charge</legend>
+        <div className="grid items-end gap-3 sm:grid-cols-2">
+          <Field id={`${uid}-tax`} label="Tax rate (%)" hint="Such as 16 for VAT. Empty: no tax on delivery.">
+            <input id={`${uid}-tax`} inputMode="decimal" value={form.taxRate} onChange={(e) => set('taxRate', e.target.value)} className={fieldClass} autoComplete="off" />
+          </Field>
+          <label className="flex min-h-10 cursor-pointer items-center gap-2 text-sm text-fg">
+            <input type="checkbox" className="size-4" checked={form.taxInclusive} onChange={(e) => set('taxInclusive', e.target.checked)} />
+            The amounts above already include the tax
+          </label>
+        </div>
+        <p className="text-xs text-fg-muted">When the amounts do not include tax, the customer pays the charge plus the tax. When they do, the customer pays the charge as worked out and the tax is taken out of it. The tax is added to the order’s tax and shown on the invoice.</p>
+      </fieldset>
+
       <ChargeTiers tiers={form.tiers} onChange={(next) => set('tiers', next)} disabled={readOnly || busy} />
       <ChargeSurcharges surcharges={form.surcharges} onChange={(next) => set('surcharges', next)} disabled={readOnly || busy} />
 

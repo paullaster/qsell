@@ -30,7 +30,16 @@ export async function profileOverviewAction() {
     const submitVerdict = me.portalRole === 'owner' ? mayEditProfileNow(v.status, v.decidedAt, now, me.portalRole, 'profile') : 'Only the owner of the vendor account can send the profile for review.';
     return {
       status: v.status,
-      sections: SECTIONS.map((s) => ({ id: s.id, label: s.label, hint: s.hint, status: found.statuses[s.id], missing: found.missing[s.id], note: notes[s.id] ?? null, canEdit: canEdit[s.id] })),
+      sections: SECTIONS.map((s) => ({
+        id: s.id,
+        label: s.label,
+        hint: s.hint,
+        status: found.statuses[s.id],
+        missing: found.missing[s.id],
+        note: notes[s.id] ?? null,
+        canEdit: canEdit[s.id],
+        readOnlyBecause: canEdit[s.id] ? null : mayEditProfileNow(v.status, v.decidedAt, now, me.portalRole, s.id),
+      })),
       complete: found.complete,
       canSubmit: found.complete && submitVerdict === 'yes' && (v.status === 'registered' || v.status === 'profile_in_progress' || v.status === 'revision_requested' || v.status === 'rejected'),
       submitBlockedBecause: submitVerdict === 'yes' ? null : submitVerdict,
@@ -53,6 +62,9 @@ export async function profileFormAction(section: string) {
       label: sectionLabel(section),
       canEdit: verdict === 'yes',
       readOnlyBecause: verdict === 'yes' ? null : verdict,
+      vendorTypeReadOnlyBecause: section === 'profile' && (loaded.vendor.status === 'active' || loaded.vendor.status === 'suspended')
+        ? 'Your business type was verified during onboarding. Contact the buyer to change it.'
+        : null,
       note: notes[section] ?? null,
       profile: state.profile,
       business: state.business,

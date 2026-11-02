@@ -351,7 +351,7 @@ describe.skipIf(!has(url))('approvals in modules (database)', () => {
     expect(required((await c.orders.getById(o.id))).approvalStatus).toBe('approved');
     expect((await updateOrderStatus(o.id, 'processing')).status).toBe('processing');
     // Every one of those stages is on the order's timeline, in order, with its time.
-    expect(await stagesOf(o.id)).toEqual(['order_placed:succeeded', 'approval_requested:entered', 'approval_approved:succeeded', 'released_for_fulfilment:succeeded']);
+    expect(await stagesOf(o.id)).toEqual(['order_placed:succeeded', 'approval_requested:entered', 'stock_reserved:succeeded', 'approval_approved:succeeded', 'released_for_fulfilment:succeeded']);
     const approved = (await timelineOf(o.id)).find((e) => e.stage === 'approval_approved');
     expect(approved?.occurredAt).toBeInstanceOf(Date);
     expect((await timelineOf(o.id)).every((e) => e.source !== 'trigger')).toBe(true);
@@ -382,6 +382,7 @@ describe.skipIf(!has(url))('approvals in modules (database)', () => {
     expect(await stagesOf(o.id)).toEqual([
       'order_placed:succeeded',
       'approval_requested:entered',
+      'stock_reserved:succeeded',
       'approval_rejected:failed',
       'approval_reopened:entered',
       'approval_requested:entered',

@@ -77,6 +77,24 @@ export async function issueOrderCreditNoteAction(input: {
   });
 }
 
+/** Credits the delivery invoice in full, when delivery was billed on an invoice of its own. */
+export async function issueDeliveryCreditNoteAction(input: {
+  orderId: string;
+  reasonCode: CreditNoteReason;
+  reasonNote?: string;
+}): Promise<CreditNoteActionResult<IssueCreditNoteOutcome>> {
+  return run(async () => {
+    const userId = await requirePermission('credit_notes:create');
+    const outcome = await getContainer().creditNotes.issueForDeliveryGated({
+      orderId: input.orderId,
+      reason: { code: input.reasonCode, note: input.reasonNote },
+      issuedBy: userId,
+    });
+    if (outcome.status === 'pending_approval') return outcome;
+    return { status: 'issued' as const, creditNote: toView(outcome.creditNote) };
+  });
+}
+
 /** Signs a credit note again, e.g. after a gateway outage or once configuration is fixed. */
 export async function retryCreditNoteSigningAction(
   creditNoteId: string,

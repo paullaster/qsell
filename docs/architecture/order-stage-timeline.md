@@ -55,7 +55,7 @@ One controlled list (a code constant with a test, like the movement types), grou
 | **Approval** | `approval_requested`, `approval_approved`, `approval_rejected`, `approval_escalated`, `approval_reopened`, `approval_withdrawn` |
 | **Payment** | `payment_started`, `prompt_sent`, `payment_pending_verification`, `payment_confirmed`, `payment_failed` (reason: declined, timeout, cancelled, wrong number), `payment_expired`, `payment_retried`, `payment_reconciled`, `payment_discrepancy`, `refund_requested`, `refund_completed`, `refund_failed` |
 | **Fulfilment** | `released_for_fulfilment`, `blocked` / `unblocked` (reason, owner), `pick_started`, `picked`, `packed`, `ready`, `dispatched`, `out_for_delivery`, `delivery_attempted` (result, reason), `delivered`, `delivery_failed`, `returned_to_stock`, `collected` (pickup) |
-| **Billing & compliance** | `invoice_issued`, `kra_submitted`, `kra_signed`, `kra_failed` (reason), `credit_note_issued` |
+| **Billing & compliance** | `invoice_issued`, `kra_submitted`, `kra_signed`, `kra_failed` (reason), `delivery_invoice_signed` / `delivery_invoice_failed` (reason) / `delivery_invoice_skipped` (a delivery billed on its own invoice; they do not change the order's KRA status), `credit_note_issued` |
 | **Closure** | `completed`, `cancelled` (reason, who), `failed` (reason), `refunded` |
 
 A failure stage always carries a reason code from the controlled reason catalogue and a plain-language message; a free-text detail is bounded and never holds secrets or personal data beyond ids.

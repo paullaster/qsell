@@ -86,7 +86,10 @@ function ProfileSection({ form }: { form: Form }) {
     <form onSubmit={(e) => { e.preventDefault(); void save(saveProfileAction(d), 'Saved.'); }} noValidate className={`${cardClass} space-y-4`} aria-label="Vendor profile">
       <Message notice={notice} />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <ChoicePicker label="Kind of business" source="vendor-types" choice={optionOf(VENDOR_TYPES, d.vendorType)} onChoice={(c) => set('vendorType', c?.id ?? 'company')} clearable={false} disabled={off} />
+        <div className="space-y-1">
+          <ChoicePicker label="Kind of business" source="vendor-types" choice={optionOf(VENDOR_TYPES, d.vendorType)} onChoice={(c) => set('vendorType', c?.id ?? 'company')} clearable={false} disabled={off || form.vendorTypeReadOnlyBecause !== null} />
+          {form.vendorTypeReadOnlyBecause === null ? null : <p className="text-xs text-fg-muted">{form.vendorTypeReadOnlyBecause}</p>}
+        </div>
         <Text id={`${uid}-tn`} label="Trading name" value={d.tradingName} onChange={(v) => set('tradingName', v)} problem={err(problems, 'tradingName')} disabled={off} />
       </div>
       <Field id={`${uid}-desc`} label="What you supply" hint={err(problems, 'description') ?? 'A sentence or two about your products or services.'}>

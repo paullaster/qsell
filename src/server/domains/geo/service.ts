@@ -12,6 +12,20 @@ export interface Answer<T> {
   provider: string;
 }
 
+export type GeoOp = 'search' | 'resolve' | 'reverse' | 'distance';
+
+/** One call to a map service, as it went: what the administrator weighs a provider by. */
+export interface GeoCallEvent {
+  provider: string;
+  op: GeoOp;
+  ms: number;
+  ok: boolean;
+  /** The provider failed and the built-in estimate answered instead. */
+  fellBack: boolean;
+}
+
+export type GeoRecorder = (event: GeoCallEvent) => void;
+
 export interface NearestResult<T> {
   /** Nearest first, each with the distance to it. */
   ranked: { item: T; route: RouteEstimate }[];
@@ -29,30 +43,32 @@ export class GeoService {
   constructor(
     private readonly registry: GeoPortRegistry,
     private readonly timeoutMs = PROVIDER_TIMEOUT_MS,
+    private readonly record: GeoRecorder = () => undefined,
+    private readonly clock: () => number = () => Date.now(),
   ) {}
 
-  /** What the active provider can do, for the screens that decide what to show (a search box, a map). */
-  capabilities() {
-    return this.registry.active().capabilities;
+  /** What the provider in use can do, for the screens that decide what to show (a search box, a map). */
+  async capabilities() {
+    return (await this.registry.current()).capabilities;
   }
 
-  searchPlaces(query: string, options?: SearchOptions): Promise<Answer<PlaceSuggestion[]>> {
+  async searchPlaces(query: string, options?: SearchOptions): Promise<Answer<PlaceSuggestion[]>> {
     const text = query.trim();
-    if (text.length < 2) return Promise.resolve({ value: [], degraded: false, provider: this.registry.active().provider });
-    return this.ask((port) => port.searchPlaces(text, options), []);
+    if (text.length < 2) return { value: [], degraded: false, provider: (await this.registry.current()).provider };
+    return await this.ask('search', (port) => port.searchPlaces(text, options), []);
   }
 
   resolvePlace(id: string): Promise<Answer<ResolvedPlace | null>> {
-    return this.ask((port) => port.resolvePlace(id), null);
+    return this.ask('resolve', (port) => port.resolvePlace(id), null);
   }
 
   reverse(point: GeoPoint): Promise<Answer<ResolvedPlace | null>> {
-    return this.ask((port) => port.reverse(point), null);
+    return this.ask('reverse', (port) => port.reverse(point), null);
   }
 
-  distancesFrom(from: GeoPoint, to: readonly GeoPoint[]): Promise<Answer<RouteEstimate[]>> {
-    if (to.length === 0) return Promise.resolve({ value: [], degraded: false, provider: this.registry.active().provider });
-    return this.askWithEstimate((port) => port.distancesFrom(from, to), (port) => port.distancesFrom(from, to));
+  async distancesFrom(from: GeoPoint, to: readonly GeoPoint[]): Promise<Answer<RouteEstimate[]>> {
+    if (to.length === 0) return { value: [], degraded: false, provider: (await this.registry.current()).provider };
+    return await this.askWithEstimate((port) => port.distancesFrom(from, to), (port) => port.distancesFrom(from, to));
   }
 
   /** The candidates nearest first by the distance the provider gives (road when it can), one call however many there are. */
@@ -68,19 +84,28 @@ export class GeoService {
     return { ranked, unplaced, degraded: answer.degraded, provider: answer.provider };
   }
 
-  private ask<T>(call: (port: GeoPort) => Promise<T>, empty: T): Promise<Answer<T>> {
-    const port = this.registry.active();
-    return this.within(call(port)).then(
-      (value) => ({ value, degraded: false, provider: port.provider }),
-      () => ({ value: empty, degraded: port.provider !== 'builtin', provider: port.provider }),
-    );
+  private async ask<T>(op: GeoOp, call: (port: GeoPort) => Promise<T>, empty: T): Promise<Answer<T>> {
+    const port = await this.registry.current();
+    const started = this.clock();
+    try {
+      const value = await this.within(call(port));
+      this.record({ provider: port.provider, op, ms: this.clock() - started, ok: true, fellBack: false });
+      return { value, degraded: false, provider: port.provider };
+    } catch {
+      this.record({ provider: port.provider, op, ms: this.clock() - started, ok: false, fellBack: false });
+      return { value: empty, degraded: port.provider !== 'builtin', provider: port.provider };
+    }
   }
 
   private async askWithEstimate<T>(call: (port: GeoPort) => Promise<T>, estimate: (port: GeoPort) => Promise<T>): Promise<Answer<T>> {
-    const port = this.registry.active();
+    const port = await this.registry.current();
+    const started = this.clock();
     try {
-      return { value: await this.within(call(port)), degraded: false, provider: port.provider };
+      const value = await this.within(call(port));
+      this.record({ provider: port.provider, op: 'distance', ms: this.clock() - started, ok: true, fellBack: false });
+      return { value, degraded: false, provider: port.provider };
     } catch {
+      this.record({ provider: port.provider, op: 'distance', ms: this.clock() - started, ok: false, fellBack: port.provider !== 'builtin' });
       const fallback = this.registry.fallback();
       return { value: await estimate(fallback), degraded: true, provider: fallback.provider };
     }

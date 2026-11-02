@@ -88,7 +88,7 @@ export async function vendorDetailAction(id: string) {
         createdAt: v.createdAt.toISOString(),
       },
       postingGroup: found.postingGroup,
-      portalUsers: found.portalUsers.map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.portal_role, status: u.status, lastLoginAt: u.last_login_at, joined: u.joined })),
+      portalUsers: await container.vendorInvitations.team(id),
       balances: balances.map((b) => ({ currency: b.currency, owed: fromCents(b.cents) })),
       canSeeLedger: canLedger,
       events: found.events.map((e) => ({

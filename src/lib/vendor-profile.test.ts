@@ -3,7 +3,7 @@ import {
   describeDestination,
   numberOf,
   allStatuses, checkBanks, checkBusiness, checkContacts, checkDirectors, checkProfile, emptyBusiness, emptyFinancial, emptyProfile,
-  mayEditProfile, mayEditSection, missingIn, profileComplete, sectionStatus, type ProfileState,
+  mayEditProfile, mayEditProfileNow, mayEditSection, missingIn, profileComplete, sectionStatus, type ProfileState,
 } from './vendor-profile';
 
 const goodProfile = { ...emptyProfile(), country: 'Kenya', description: 'We supply solar panels and inverters to businesses.', physicalStreet: '1 Mombasa Road', physicalCity: 'Nairobi', phone: '+254 700 000 000' };
@@ -105,6 +105,15 @@ describe('who may change what', () => {
     expect(mayEditSection('sales', 'financial')).toBe(false);
     expect(mayEditSection('readonly', 'attachments')).toBe(false);
   });
+
+  it('lets an approved owner update their public profile but locks verified legal and payment details with a reason', () => {
+    expect(mayEditProfileNow('active', now, now, 'owner', 'profile')).toBe('yes');
+    expect(mayEditProfileNow('active', now, now, 'owner', 'contacts')).toBe('yes');
+    expect(mayEditProfileNow('active', now, now, 'owner', 'attachments')).toBe('yes');
+    expect(mayEditProfileNow('active', now, now, 'owner', 'business')).toMatch(/verified and locked/);
+    expect(mayEditProfileNow('active', now, now, 'owner', 'financial')).toMatch(/verified and locked/);
+    expect(mayEditProfileNow('active', now, now, 'finance', 'profile')).toMatch(/role on this account/);
+  });
 });
 
 describe('M-Pesa destinations', () => {
@@ -128,4 +137,3 @@ describe('M-Pesa destinations', () => {
     expect(describeDestination('bank', 'KCB', 'Moi Avenue', '6789')).toBe('KCB, Moi Avenue account ending 6789');
   });
 });
-

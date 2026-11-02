@@ -77,7 +77,7 @@ test.describe('vendor portal', () => {
     test.slow();
     const tag = suffix(testInfo.project.name);
     await page.goto('/vendor/register');
-    await expect(page.getByRole('heading', { name: 'Become a vendor', level: 1 })).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByRole('heading', { name: 'Register your vendor business', level: 1 })).toBeVisible({ timeout: 60_000 });
     await expect.poll(() => page.getByLabel('Business legal name').evaluate((el) => Object.keys(el).some((k) => k.startsWith('__reactProps'))), { timeout: 30_000 }).toBe(true);
     await page.getByLabel('Business legal name').fill(`Self Registered ${tag}`);
     await page.getByLabel('Your name').fill('Wanjiru');
@@ -97,7 +97,7 @@ test.describe('vendor portal', () => {
   test('a bad registration is refused with the reason, and a taken address gives the same answer as a new one', async ({ page }, testInfo) => {
     test.slow();
     await page.goto('/vendor/register');
-    await expect(page.getByRole('heading', { name: 'Become a vendor', level: 1 })).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByRole('heading', { name: 'Register your vendor business', level: 1 })).toBeVisible({ timeout: 60_000 });
     await expect.poll(() => page.getByLabel('Business legal name').evaluate((el) => Object.keys(el).some((k) => k.startsWith('__reactProps'))), { timeout: 30_000 }).toBe(true);
     await page.getByRole('button', { name: 'Create vendor account' }).click();
     await expect(page.locator('form[aria-label="Register as a vendor"] [role="alert"]')).toContainText('legal name');

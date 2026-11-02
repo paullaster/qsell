@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { OrderStages } from '@/server/domains/orders/stages';
-import { stageForKra } from '@/lib/order-stages';
+import { stageForDeliveryInvoice, stageForKra } from '@/lib/order-stages';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   branches,
@@ -9,8 +9,10 @@ import {
   customerLedgerEntries,
   customers,
   kraSigningEvents,
+  orderDeliveries,
   orderItems,
   orders,
+  products,
   salesQuotes,
   type KraSigningEventRow,
 } from '@/server/db/drizzle/schema';
@@ -40,6 +42,7 @@ import {
 } from './types';
 
 import { has, required, trimToNull } from '@/lib/values';
+import { invoicePlanFor, type OrderInvoicePlan } from '@/server/domains/delivery/invoice-plan';
 
 /** What is sent to KRA for a document. Built only once the policy has said "sign". */
 export interface SignableInvoice {
@@ -190,22 +193,27 @@ export class DocumentSigningService {
         // No trade customer means no profile: the default is to sign.
         customerFlag: has(order.tradeCustomerId) ? order.transmitInvoicesToKra : null,
         buildInvoice: async () => {
+          const plan = await invoicePlanFor(this.db, companyId, order.id, input.documentType);
           const lines = await this.db
             .select()
             .from(orderItems)
             .where(eq(orderItems.orderId, order.id));
+          const goods = lines.map((l) => ({
+            productId: l.productId,
+            qty: l.quantity,
+            unitPrice: Number(l.unitPrice),
+            amount: Number(l.totalPrice),
+          }));
+          // With delivery billed on the same invoice, delivery is a line beside the products. It is the registered delivery service
+          // item at what the customer pays for it (tax included); the tax in the parts is on the invoice document and in the log.
+          const delivery = plan.figures.deliveryLine === null ? [] : [await this.deliveryLine(plan)];
           return {
             traderInvoiceNo: input.invoiceNumber,
             currency: order.currency,
-            totalAmount: Number(order.totalAmount),
+            totalAmount: plan.figures.totalAmount,
             salesDate: new Date(),
             customerPin: (await this.buyerPin(order.tradeCustomerId)) ?? undefined,
-            lines: lines.map((l) => ({
-              productId: l.productId,
-              qty: l.quantity,
-              unitPrice: Number(l.unitPrice),
-              amount: Number(l.totalPrice),
-            })),
+            lines: [...goods, ...delivery],
           };
         },
         // The order and its ledger invoice entry mirror the outcome; nothing else writes it.
@@ -227,6 +235,71 @@ export class DocumentSigningService {
     } catch (error: unknown) {
       return this.unexpected(error);
     }
+  }
+
+  /**
+   * The delivery service's own tax invoice, for a company that bills delivery apart from the goods. It has its own number and is
+   * signed on its own: its source is the order's delivery, so its log and its status are not mixed with the goods invoice's. Its
+   * status is kept on the delivery record; the order's own KRA status is the goods invoice's alone.
+   */
+  async processOrderDeliveryDocument(input: { orderId: string; invoiceNumber: string }): Promise<SigningResult> {
+    try {
+      const [order] = await this.db.select().from(orders).where(eq(orders.id, input.orderId)).limit(1);
+      if (!order) throw new Error(`Order ${input.orderId} not found`);
+      const companyId = await this.companyIdFor(order.tradeCustomerId, order.branchId);
+      return await this.processDocument({
+        source: { kind: 'order_delivery', id: order.id, ref: `${order.orderNumber} delivery` },
+        companyId,
+        branchId: order.branchId,
+        module: isSigningModule(order.salesModule) ? order.salesModule : 'ecommerce',
+        documentType: 'tax_invoice',
+        customerFlag: has(order.tradeCustomerId) ? order.transmitInvoicesToKra : null,
+        buildInvoice: async () => {
+          const plan = await invoicePlanFor(this.db, companyId, order.id, 'delivery_invoice');
+          return {
+            traderInvoiceNo: input.invoiceNumber,
+            currency: order.currency,
+            totalAmount: plan.figures.totalAmount,
+            salesDate: new Date(),
+            customerPin: (await this.buyerPin(order.tradeCustomerId)) ?? undefined,
+            lines: [await this.deliveryLine(plan)],
+          };
+        },
+        onStatus: async (status) => {
+          await this.db.update(orderDeliveries).set({ invoiceKraStatus: status }).where(eq(orderDeliveries.orderId, order.id));
+          // On the order's timeline too, apart from the goods invoice's own stages, with the reason when it did not go through.
+          const step = stageForDeliveryInvoice(status);
+          if (step === null) return;
+          const why = status === 'transmitted' ? null : await this.lastReason(`order_delivery:${order.id}:tax_invoice`);
+          await OrderStages.move(this.db, order.id, step.stage, step.outcome, {
+            source: 'worker',
+            detail: { status },
+            ...(why === null ? {} : { reasonCode: why.reason, message: why.message }),
+          });
+        },
+      });
+    } catch (error: unknown) {
+      return this.unexpected(error);
+    }
+  }
+
+  /**
+   * The line KRA is sent for the delivery service: the company's registered delivery service item, once, at what the customer
+   * pays for delivery. Refused, in words, when no item has been chosen or the item's tax is not the tax the delivery was charged.
+   */
+  private async deliveryLine(plan: OrderInvoicePlan): Promise<{ productId: string; qty: number; unitPrice: number; amount: number }> {
+    const line = plan.figures.deliveryLine;
+    if (line === null) throw new Error('There is no delivery on this invoice.');
+    if (plan.serviceProductId === null) {
+      throw new DeliveryBillingError('DELIVERY_ITEM_NOT_SET', 'This order has a delivery charge but no item stands for the delivery service. Choose it under Delivery, Delivery invoicing, and register it with KRA.');
+    }
+    const [item] = await this.db.select({ name: products.name, taxRate: products.taxRate }).from(products).where(eq(products.id, plan.serviceProductId));
+    if (item === undefined) throw new DeliveryBillingError('DELIVERY_ITEM_NOT_SET', 'The item chosen for the delivery service no longer exists. Choose another under Delivery, Delivery invoicing.');
+    const itemRate = item.taxRate === null ? null : Number(item.taxRate);
+    if (itemRate === null || Math.abs(itemRate - line.taxRate) > 0.005) {
+      throw new DeliveryBillingError('DELIVERY_TAX_MISMATCH', `Delivery was charged with ${String(line.taxRate)}% tax, but the delivery service item "${item.name}" carries ${itemRate === null ? 'no tax rate' : `${String(itemRate)}%`}. KRA works the tax from the item, so the two must agree. Change the item's tax or the charge policy's.`);
+    }
+    return { productId: plan.serviceProductId, qty: 1, unitPrice: line.gross, amount: line.gross };
   }
 
   /**
@@ -701,6 +774,14 @@ export class DocumentSigningService {
     return row ?? null;
   }
 
+  /** Why the document's latest event ended as it did, in the log's own words, for the order's timeline. */
+  private async lastReason(documentKey: string): Promise<{ reason: string; message: string } | null> {
+    const last = await this.lastEvent(documentKey);
+    if (last === null) return null;
+    const error = (last.payload as { error?: unknown }).error;
+    return { reason: last.reason, message: typeof error === 'string' ? error : last.reason };
+  }
+
   private async lastDecision(documentKey: string): Promise<KraSigningEventRow | null> {
     const [row] = await this.db
       .select()
@@ -772,6 +853,17 @@ function stable(value: unknown): string {
   );
 }
 
+/** Delivery cannot be put on an invoice KRA will take: no item for the service, or its tax does not agree with the charge. */
+export class DeliveryBillingError extends Error {
+  constructor(
+    readonly code: 'DELIVERY_ITEM_NOT_SET' | 'DELIVERY_TAX_MISMATCH',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'DeliveryBillingError';
+  }
+}
+
 function classify(error: unknown): { reason: SigningReason; message: string; retryable: boolean } {
   if (error instanceof KraConfigError) {
     return {
@@ -779,6 +871,9 @@ function classify(error: unknown): { reason: SigningReason; message: string; ret
       message: error.message,
       retryable: false,
     };
+  }
+  if (error instanceof DeliveryBillingError) {
+    return { reason: error.code, message: error.message, retryable: false };
   }
   if (error instanceof EtimsItemError) {
     return { reason: 'ITEMS_NOT_REGISTERED', message: error.message, retryable: false };

@@ -37,7 +37,7 @@ export type SigningDocumentType = 'tax_invoice' | 'proforma';
 export const SIGNING_DOCUMENT_TYPES: readonly SigningDocumentType[] = ['tax_invoice', 'proforma'];
 
 /** Where a document came from. Part of its identity in the signing log. */
-export type SigningSourceKind = 'order' | 'quote' | 'pos_sale' | 'credit_note';
+export type SigningSourceKind = 'order' | 'order_delivery' | 'quote' | 'pos_sale' | 'credit_note';
 
 /** The signing outcome as mirrored onto the records a document came from. */
 export type KraDocumentStatus = 'skipped' | 'failed' | 'transmitted' | 'deferred';
@@ -95,6 +95,8 @@ export type SigningReason =
   | 'CONFIG_INCOMPLETE'
   | 'MODE_MISMATCH'
   | 'ITEMS_NOT_REGISTERED'
+  | 'DELIVERY_ITEM_NOT_SET'
+  | 'DELIVERY_TAX_MISMATCH'
   | 'TIMS_SIGNING_UNAVAILABLE'
   | 'TRANSMISSION_FAILED'
   | 'UNEXPECTED_ERROR';

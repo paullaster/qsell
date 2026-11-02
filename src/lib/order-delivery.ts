@@ -41,7 +41,10 @@ export interface ChoiceRecord {
 
 /** The charge as it was quoted, with how it was worked out. The order and the invoice carry this amount, never a new one. */
 export interface ChargeRecord {
+  /** As the policy worked it out. With `split`: the charge before tax, the tax, and what the customer paid for delivery. */
   amount: number;
+  split: { net: number; tax: number; gross: number };
+  taxRate: number;
   currency: string;
   policy: { id: string; code: string; name: string; version: number; method: string };
   zone: { id: string; code: string; name: string; by: 'pin' | 'address' } | null;

@@ -68,7 +68,7 @@ if (!authSecret) {
 const STAFF_REVALIDATE_MS = 60_000;
 
 /** Portal pages anyone may open: signing up. Everything else under /vendor needs a vendor session. */
-const PUBLIC_VENDOR_PATHS = new Set(['/vendor/register']);
+const PUBLIC_VENDOR_PATHS = new Set(['/vendor/register', '/vendor/invitations/accept']);
 
 const authConfig = {
   secret: authSecret,
@@ -108,7 +108,7 @@ const authConfig = {
         if (user.emailVerifiedAt === null) throw new EmailNotVerified();
 
         // A vendor login is only valid while it belongs to a vendor business.
-        const portal = user.role === 'vendor' ? await findPortalAccess(user.id) : null;
+        const portal = user.role === 'vendor' || user.role === 'customer' ? await findPortalAccess(user.id) : null;
         if (user.role === 'vendor' && portal === null) return null;
         return {
           id: user.id,
@@ -139,7 +139,7 @@ const authConfig = {
       if (path.startsWith('/vendor') && !PUBLIC_VENDOR_PATHS.has(path)) {
         // Staff never use the portal and vendors never use the back office.
         if (auth?.user.isStaff === true) return Response.redirect(new URL('/admin', request.nextUrl));
-        return auth?.user.role === 'vendor' && typeof auth.user.vendorId === 'string' && auth.user.vendorId !== '';
+        return (auth?.user.role === 'vendor' || auth?.user.role === 'customer') && typeof auth.user.vendorId === 'string' && auth.user.vendorId !== '' && typeof auth.user.vendorRole === 'string';
       }
       return true;
     },
@@ -160,7 +160,7 @@ const authConfig = {
       // the lookup so storefront traffic never pays for it. Tokens issued before the staff
       // flag existed (isStaff undefined) refresh immediately.
       if (
-        token.role === 'customer' ||
+        (token.role === 'customer' && (token.vendorId === null || token.vendorId === undefined)) ||
         (token.isStaff !== undefined && Date.now() - (token.verifiedAt ?? 0) < STAFF_REVALIDATE_MS)
       ) {
         return token;
@@ -175,12 +175,12 @@ const authConfig = {
       token.role = current.role;
       token.isStaff = await new UserRepository().isStaffRoleKey(current.role);
       token.mustChangePassword = current.mustChangePassword;
-      if (current.role === 'vendor') {
+      if (current.role === 'vendor' || current.role === 'customer') {
         // A removed portal user or an archived vendor ends the session at the next check.
         const portal = await findPortalAccess(current.id);
-        if (portal === null) return null;
-        token.vendorId = portal.vendorId;
-        token.vendorRole = portal.portalRole;
+        if (portal === null && current.role === 'vendor') return null;
+        token.vendorId = portal?.vendorId ?? null;
+        token.vendorRole = portal?.portalRole ?? null;
       } else {
         token.vendorId = null;
         token.vendorRole = null;
