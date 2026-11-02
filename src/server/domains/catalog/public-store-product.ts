@@ -14,6 +14,7 @@ export function publicStoreProduct(product: PublicProduct) {
     compareAtPrice: product.compareAtPrice,
     taxRate: product.taxRate,
     isTaxInclusive: product.isTaxInclusive,
+    inventoryKind: product.inventoryKind ?? 'inventory',
     stockQuantity: product.stockQuantity,
     baseUnitCode: product.baseUnitCode,
     baseUnitName: product.baseUnitName,

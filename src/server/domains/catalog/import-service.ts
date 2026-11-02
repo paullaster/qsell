@@ -566,6 +566,7 @@ export class ProductImportService {
       brand: draft.brand,
       itemTypeId: itemType.id,
       isSellable: itemType.isSellable,
+      inventoryKind: draft.inventoryKind,
       baseUnitId: unit.id,
       price: draft.price === null ? null : draft.price.toFixed(2),
       compareAtPrice: draft.compareAtPrice === null ? null : draft.compareAtPrice.toFixed(2),
@@ -600,16 +601,18 @@ export class ProductImportService {
         job.createdByEmail === '' ? 'import' : job.createdByEmail,
       );
     }
-    const { recordOpeningStock } = await import('@/server/domains/inventory/service');
-    await recordOpeningStock(db, {
-      productId: id,
-      productName: draft.name,
-      quantity: draft.stockQuantity,
-      costPrice: draft.costPrice,
-      referenceId: `IMPORT:${job.id}`,
-      actor: job.createdByEmail === '' ? 'import' : job.createdByEmail,
-      note: `Created by CSV import (${job.fileName}) with opening stock of ${draft.stockQuantity} units`,
-    });
+    if (draft.inventoryKind === 'inventory') {
+      const { recordOpeningStock } = await import('@/server/domains/inventory/service');
+      await recordOpeningStock(db, {
+        productId: id,
+        productName: draft.name,
+        quantity: draft.stockQuantity,
+        costPrice: draft.costPrice,
+        referenceId: `IMPORT:${job.id}`,
+        actor: job.createdByEmail === '' ? 'import' : job.createdByEmail,
+        note: `Created by CSV import (${job.fileName}) with initial inventory of ${draft.stockQuantity} units`,
+      });
+    }
     return id;
   }
 

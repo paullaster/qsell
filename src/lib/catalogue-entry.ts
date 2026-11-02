@@ -16,6 +16,7 @@ export type CatalogueProduct = Pick<
   | 'category'
   | 'brand'
   | 'isSellable'
+  | 'inventoryKind'
   | 'price'
   | 'costPrice'
   | 'taxRate'

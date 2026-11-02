@@ -7,8 +7,10 @@ import {
   salesQuoteTemplates,
   salesSectionTemplates,
   products,
+  itemTypes,
 } from '@/server/db/drizzle/schema';
 import { methodLabel, QUOTE_PAYMENT_METHODS } from '@/lib/payment-method-labels';
+import { INVENTORY_KIND_OPTIONS } from '@/lib/inventory-kind';
 import { QUOTE_STATUS_FILTERS, statusFilterLabel } from '@/lib/quote-statuses';
 import { TEMPLATE_STATUS_FILTERS, templateStatusLabel } from '@/lib/template-statuses';
 import {
@@ -41,6 +43,19 @@ function joinText(parts: unknown[]): string | null {
 }
 
 const STATUS_FILTER = { status: ['active', 'archived'] } as const;
+
+const inventoryKinds = staticSource({
+  key: 'inventory-kinds',
+  permission: 'products:read',
+  items: ({ filters }) => {
+    acceptFilters(filters, {});
+    return INVENTORY_KIND_OPTIONS.map((option) => ({
+      id: option.id,
+      label: option.label,
+      description: option.description,
+    }));
+  },
+});
 
 /**
  * The lists an Autocomplete may search. Add a list here, with its permission and the columns it is
@@ -151,9 +166,29 @@ const fitProducts = tableSource({
   select: { sku: products.sku },
   scope: ({ filters }) => {
     acceptFilters(filters, {});
-    return [and(eq(products.isActive, true), eq(products.isSellable, true), eq(products.isCheckoutPackaging, false), isNull(products.deletedAt)) ?? eq(products.isActive, true)];
+    return [and(eq(products.isActive, true), eq(products.isSellable, true), eq(products.inventoryKind, 'inventory'), eq(products.isCheckoutPackaging, false), isNull(products.deletedAt)) ?? eq(products.isActive, true)];
   },
   toOption: (row) => ({ id: String(row.id), label: String(row.label), description: String(row.sku), badge: null }),
+});
+
+const businessItemTypes = tableSource({
+  key: 'business-item-types',
+  permission: 'products:read',
+  table: itemTypes,
+  id: itemTypes.id,
+  label: itemTypes.name,
+  searchColumns: [itemTypes.name],
+  select: { code: itemTypes.code, isSellable: itemTypes.isSellable, isDefault: itemTypes.isDefault },
+  scope: ({ filters }) => {
+    acceptFilters(filters, {});
+    return [eq(itemTypes.isActive, true)];
+  },
+  toOption: (row) => ({
+    id: String(row.id),
+    label: `${String(row.code)} · ${String(row.label)}`,
+    description: row.isSellable === true ? 'Sellable business classification' : 'Not sold directly',
+    badge: row.isDefault === true ? 'Default' : null,
+  }),
 });
 
 const enabledCurrenciesFor = (key: string, permission: 'quotes:read' | 'pricing:read' | 'rfq:create' | 'purchase_orders:create') => tableSource({
@@ -268,6 +303,7 @@ const SOURCES: ReadonlyMap<string, LookupSource> = registry(
     tradeCustomers,
     packagingProducts,
     fitProducts,
+    businessItemTypes,
     enabledCurrencies,
     pricingCurrencies,
     rfqCurrencies,
@@ -277,6 +313,7 @@ const SOURCES: ReadonlyMap<string, LookupSource> = registry(
     templateStatuses,
     orderStatuses,
     orderFulfilmentStatuses,
+    inventoryKinds,
     ...PAYMENT_LOOKUP_SOURCES,
     ...FINANCE_LOOKUP_SOURCES,
     ...VENDOR_LOOKUP_SOURCES,

@@ -13,6 +13,8 @@ export interface ServiceItemView {
   taxRate: number | null;
   /** Registered with KRA eTIMS for the company, so KRA can be sent a line for it. */
   registered: boolean;
+  /** Only a service can stand for delivery; an older choice that is not one keeps working but is flagged on the screen. */
+  isService: boolean;
 }
 
 export interface BillingView {
@@ -65,7 +67,9 @@ export class DeliveryBilling {
     if (typeof expected !== 'number' || !Number.isInteger(expected) || expected < 0) throw new DeliveryError('Reload the page and try again.', 'BAD_INPUT');
     const productId = typeof input.serviceProductId === 'string' && input.serviceProductId !== '' ? input.serviceProductId : null;
     if (productId !== null) {
-      if (productId.length > 100 || (await this.item(companyId, productId)) === null) throw new DeliveryError('That item could not be found. Choose the item that stands for the delivery service.', 'NOT_FOUND');
+      const chosen = productId.length > 100 ? null : await this.item(companyId, productId);
+      if (chosen === null) throw new DeliveryError('That item could not be found. Choose the item that stands for the delivery service.', 'NOT_FOUND');
+      if (!chosen.isService) throw new DeliveryError(`"${chosen.name}" is a stocked or non-stock good, not a service. Choose a service item, or create one under a classification that behaves as a service.`, 'BAD_INPUT');
     }
     await this.db.transaction(async (tx) => {
       const [before] = await tx.select().from(deliveryBillingSettings).where(eq(deliveryBillingSettings.companyId, companyId)).for('update');
@@ -84,9 +88,9 @@ export class DeliveryBilling {
 
   /** The delivery service item with what a reader needs to judge it. Null when it does not exist or has been removed. */
   private async item(companyId: string, productId: string): Promise<ServiceItemView | null> {
-    const [p] = await this.db.select({ id: products.id, name: products.name, sku: products.sku, taxRate: products.taxRate }).from(products).where(and(eq(products.id, productId), isNull(products.deletedAt)));
+    const [p] = await this.db.select({ id: products.id, name: products.name, sku: products.sku, taxRate: products.taxRate, inventoryKind: products.inventoryKind }).from(products).where(and(eq(products.id, productId), isNull(products.deletedAt)));
     if (p === undefined) return null;
     const [registered] = await this.db.select({ id: etimsItems.id }).from(etimsItems).where(and(eq(etimsItems.productId, productId), eq(etimsItems.companyId, companyId), eq(etimsItems.status, 'registered'))).limit(1);
-    return { id: p.id, name: p.name, sku: p.sku, taxRate: p.taxRate === null ? null : Number(p.taxRate), registered: registered !== undefined };
+    return { id: p.id, name: p.name, sku: p.sku, taxRate: p.taxRate === null ? null : Number(p.taxRate), registered: registered !== undefined, isService: p.inventoryKind === 'service' };
   }
 }

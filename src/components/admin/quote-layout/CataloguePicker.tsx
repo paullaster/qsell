@@ -5,6 +5,7 @@ import { Plus, Search, ShoppingCart, X } from 'lucide-react';
 import { QuantityInput } from './QuantityInput';
 import { useModalKeys } from './useModalKeys';
 import type { CatalogueEntry } from '@/lib/quote-layout';
+import { isInventoryManaged } from '@/lib/inventory-kind';
 import {
   blankDraft,
   readDraft,
@@ -320,7 +321,7 @@ export function CataloguePicker({
                                 : money(product.price, currency)}
                             </span>
                             {showCost && <> · cost {money(product.costPrice, currency)}</>} ·{' '}
-                            {product.stockQuantity - product.reservedQuantity} available · tax{' '}
+                            {isInventoryManaged(product) ? `${product.stockQuantity - product.reservedQuantity} available` : 'Not stock-tracked'} · tax{' '}
                             {product.taxRate ?? 0}%
                           </p>
                           {here !== null && (

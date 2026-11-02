@@ -1,6 +1,6 @@
 import { and, eq, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { stockBalances, stockLocations, stockMovements } from '@/server/db/drizzle/schema';
+import { products, stockBalances, stockLocations, stockMovements } from '@/server/db/drizzle/schema';
 import { isMovementType, type StockMovementType } from '@/lib/stock';
 import { StockError } from './errors';
 
@@ -58,6 +58,9 @@ export class StockLedger {
     if (!isMovementType(m.type)) throw new StockError('That kind of stock movement is not known.', 'BAD_TYPE');
     if (!isWhole(m.quantity) || (m.quantity === 0 && m.type !== 'cost_revaluation')) throw new StockError('A stock movement needs a quantity that is not zero, to at most three decimals.', 'BAD_QUANTITY');
     if (m.documentLineId !== undefined && m.documentType === undefined) throw new StockError('A document line needs its document type.', 'BAD_DOCUMENT');
+    const [product] = await tx.select({ id: products.id, inventoryKind: products.inventoryKind }).from(products).where(eq(products.id, m.productId)).limit(1);
+    if (product === undefined) throw new StockError('That product could not be found.', 'NOT_FOUND');
+    if (product.inventoryKind !== 'inventory') throw new StockError('Stock movements can only be posted for inventory-managed products.', 'NOT_INVENTORY');
     const shard = m.shard ?? 0;
     const [location] = await tx.select().from(stockLocations).where(and(eq(stockLocations.id, m.locationId), eq(stockLocations.companyId, m.companyId))).limit(1);
     if (location === undefined) throw new StockError('That location could not be found.', 'NOT_FOUND');

@@ -56,6 +56,7 @@ describe('publicStoreProduct', () => {
       compareAtPrice: product.compareAtPrice,
       taxRate: product.taxRate,
       isTaxInclusive: product.isTaxInclusive,
+      inventoryKind: 'inventory',
       stockQuantity: product.stockQuantity,
       baseUnitCode: product.baseUnitCode,
       baseUnitName: product.baseUnitName,

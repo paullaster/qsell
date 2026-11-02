@@ -1,4 +1,5 @@
 import type { PriceTrace } from '@/server/domains/pricing/domain/types';
+import type { InventoryKind } from '@/lib/inventory-kind';
 
 export interface Category {
   id: string;
@@ -26,6 +27,8 @@ export interface ItemType {
   code: number;
   name: string;
   isSellable: boolean;
+  /** How a new product of this classification is stocked; the product keeps its own copy. */
+  defaultInventoryKind: InventoryKind;
   isDefault: boolean;
   isActive: boolean;
   productCount?: number;
@@ -51,6 +54,8 @@ export interface Product {
   itemTypeId: string;
   itemTypeName: string;
   itemTypeCode: number;
+  /** Inventory behavior contract; separate from the seller-defined item classification above. */
+  inventoryKind?: InventoryKind;
   /** Denormalized from item type — storefront uses this to hide non-sellable items */
   isSellable: boolean;
   /** Required when item type is sellable; omit/null when not sellable */
@@ -143,6 +148,8 @@ export type ProductWrite = Omit<
   media?: ProductMediaInput[];
   /** Left out: the default unit of measure. */
   baseUnitId?: string;
+  /** Defaults to inventory to preserve existing product and integration behavior. */
+  inventoryKind?: InventoryKind;
   /** The other units the product is kept, bought or sold in. */
   packagings?: ProductPackagingInput[];
   /** Fit rules to packaging products (ordinary item) or compatible goods (packaging item). */

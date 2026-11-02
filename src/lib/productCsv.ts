@@ -8,6 +8,7 @@
  */
 
 import type { Product, ProductSpecification } from '@/types/index';
+import { isInventoryKind, type InventoryKind } from '@/lib/inventory-kind';
 import { guardFormula, toCsv, unguardFormula, UTF8_BOM } from '@/lib/csv';
 
 /** Separator for list-valued cells (tags, extra images, specifications). */
@@ -76,6 +77,14 @@ export const PRODUCT_CSV_COLUMNS = [
     required: false,
     help: 'Name or number code of an existing item type. Blank uses the default item type.',
     example: '',
+  },
+  {
+    header: 'Inventory_Kind',
+    aliases: ['Inventory_Treatment', 'Stock_Handling'],
+    kind: 'text',
+    required: false,
+    help: 'Inventory handling: inventory, non_inventory, or service. Blank keeps legacy behavior and means inventory.',
+    example: 'inventory',
   },
   {
     header: 'Price',
@@ -202,6 +211,7 @@ export interface ProductImportDraft {
   slug: string | null;
   categoryName: string;
   itemTypeRef: string | null;
+  inventoryKind: InventoryKind;
   /** The code of the unit stock is counted in; null for the default unit. */
   unitRef: string | null;
   price: number | null;
@@ -347,16 +357,6 @@ export function parseProductRow(
     }
     return Number(value);
   };
-  const integer = (header: ProductCsvHeader): number => {
-    const value = cell(header);
-    if (value === '') return 0;
-    if (!INTEGER.test(value)) {
-      fail(header, `"${value}" must be a whole number of 0 or more.${numberHint(value)}`);
-      return 0;
-    }
-    return Number(value);
-  };
-
   const quantityCell = (header: ProductCsvHeader): number => {
     const value = cell(header);
     if (value === '') return 0;
@@ -376,6 +376,11 @@ export function parseProductRow(
   }
   const categoryName = text('Category', true);
   const itemTypeRef = text('Item_Type', false);
+  const inventoryKindRaw = cell('Inventory_Kind').toLowerCase().replaceAll('-', '_').replaceAll(' ', '_');
+  const inventoryKind = inventoryKindRaw === '' ? 'inventory' : inventoryKindRaw;
+  if (!isInventoryKind(inventoryKind)) {
+    fail('Inventory_Kind', 'must be inventory, non_inventory, or service. Blank means inventory.');
+  }
   const unitRef = text('Unit', false, 20);
   // Whether 0 is allowed depends on the item type (sellable needs > 0): checked by the import service.
   const price = money('Price');
@@ -388,6 +393,10 @@ export function parseProductRow(
   const taxRef = text('Tax_Category', false);
   const stockQuantity = quantityCell('Stock_Qty');
   const lowStockThreshold = quantityCell('Low_Stock_Threshold');
+  if (inventoryKind !== 'inventory' && (stockQuantity !== 0 || lowStockThreshold !== 0)) {
+    fail('Stock_Qty', 'must be 0 for non-inventory items and services.');
+    fail('Low_Stock_Threshold', 'must be 0 for non-inventory items and services.');
+  }
 
   const weightRaw = cell('Weight_Kg');
   let weight: number | null = null;
@@ -439,6 +448,7 @@ export function parseProductRow(
       slug: slugRaw === '' ? null : slugRaw,
       categoryName,
       itemTypeRef: itemTypeRef === '' ? null : itemTypeRef,
+      inventoryKind: isInventoryKind(inventoryKind) ? inventoryKind : 'inventory',
       unitRef: unitRef === '' ? null : unitRef,
       price,
       compareAtPrice,
@@ -480,6 +490,7 @@ function exportCells(product: Product): Record<ProductCsvHeader, string> {
     Slug: product.slug,
     Category: product.category,
     Item_Type: product.itemTypeName,
+    Inventory_Kind: product.inventoryKind ?? 'inventory',
     Unit: product.baseUnitCode,
     Price: money2(product.price),
     Compare_At_Price: money2(product.compareAtPrice),

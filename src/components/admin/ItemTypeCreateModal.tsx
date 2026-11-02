@@ -5,12 +5,15 @@ import { useRouter } from 'next/navigation';
 import { Tags, X } from 'lucide-react';
 import { createItemTypeAction } from '@/server/actions';
 import { publishCatalogShortcut } from '@/components/admin/catalog-shortcuts';
+import { BehavesAsField } from '@/components/admin/BehavesAsField';
+import type { InventoryKind } from '@/lib/inventory-kind';
 
 export function ItemTypeCreateModal({ presentation }: { presentation: 'intercepted' | 'page' }) {
   const router = useRouter();
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [isSellable, setIsSellable] = useState(true);
+  const [behavesAs, setBehavesAs] = useState<InventoryKind>('inventory');
   const [isDefault, setIsDefault] = useState(false);
   const [isActive, setIsActive] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -24,7 +27,7 @@ export function ItemTypeCreateModal({ presentation }: { presentation: 'intercept
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
-      setFormError('Item type name is required.');
+      setFormError('Business classification name is required.');
       return;
     }
 
@@ -41,6 +44,7 @@ export function ItemTypeCreateModal({ presentation }: { presentation: 'intercept
         name: name.trim(),
         code: parsedCode,
         isSellable,
+        defaultInventoryKind: behavesAs,
         isDefault,
         isActive,
       });
@@ -53,7 +57,7 @@ export function ItemTypeCreateModal({ presentation }: { presentation: 'intercept
         router.refresh();
       }
     } catch (err: unknown) {
-      setFormError(err instanceof Error ? err.message : 'Failed to save item type');
+      setFormError(err instanceof Error ? err.message : 'Failed to save business classification');
     } finally {
       setIsSubmitting(false);
     }
@@ -69,9 +73,9 @@ export function ItemTypeCreateModal({ presentation }: { presentation: 'intercept
           <div className="flex items-center gap-2">
             <Tags className="h-5 w-5 text-indigo-400" />
             <div>
-              <h3 className="text-base font-bold text-fg-strong">Create item type</h3>
+              <h3 className="text-base font-bold text-fg-strong">Create business classification</h3>
               <p className="text-[11px] text-fg-muted">
-                Add an item type, then return to the product form.
+                Add a business classification, then return to the product form.
               </p>
             </div>
           </div>
@@ -119,6 +123,8 @@ export function ItemTypeCreateModal({ presentation }: { presentation: 'intercept
             Integer value provided by the tax authority for e-invoicing / compliance.
           </p>
         </div>
+
+        <BehavesAsField value={behavesAs} onChange={setBehavesAs} />
 
         <div className="flex flex-wrap gap-4 text-xs text-fg">
           <label className="inline-flex items-center gap-2">

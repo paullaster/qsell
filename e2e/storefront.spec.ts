@@ -6,6 +6,7 @@ import {
   noNativeSelect,
   open,
 } from './support/page';
+import { latestAttempt, makeInventoryKindProduct, makePackaging } from './support/storefront-fixtures';
 
 /** The first product in the list, by its link (the card's name). */
 const productNames = (page: Page) =>
@@ -220,6 +221,91 @@ test.describe('browsing', () => {
 });
 
 test.describe('the cart and checkout', () => {
+  test('sellable services and non-inventory goods remain orderable at zero on-hand stock', async ({ page, request }, testInfo) => {
+    const tag = `kind-${testInfo.project.name}-${String(testInfo.retry)}-${String(Date.now())}`;
+    const products = [
+      makeInventoryKindProduct('non_inventory', `${tag}-goods`),
+      makeInventoryKindProduct('service', `${tag}-service`),
+    ];
+    for (const product of products) {
+      const response = await request.get(`/api/store/products/${product.slug}`);
+      expect(response.status()).toBe(200);
+      expect(await response.json()).toMatchObject({ inventoryKind: product.kind, stockQuantity: 0, price: 40 });
+    }
+
+    for (const product of products) {
+      await page.goto(`/?q=${encodeURIComponent(product.name)}`);
+      const card = page.getByRole('list', { name: 'Products' });
+      await expect(card.getByRole('link', { name: product.name })).toBeVisible({ timeout: 30_000 });
+      await expect(card.getByText('Sold out')).toHaveCount(0);
+      await card.getByRole('button', { name: `Add ${product.name} to cart` }).click();
+      await expect(page.getByText(`${product.name} is in your cart.`)).toBeVisible();
+    }
+
+    await page.goto('/checkout');
+    const orderItems = page.getByRole('list', { name: 'Items in your order' });
+    for (const product of products) await expect(orderItems.getByText(product.name)).toBeVisible({ timeout: 30_000 });
+    await page.getByLabel('Full name').fill('Inventory kind buyer');
+    await page.getByLabel('Mobile phone').fill('0711 000 111');
+    await page.getByLabel('Street, building or office').fill('1 Moi Avenue');
+    await page.getByLabel('City or town').fill('Nairobi');
+    await page.getByRole('button', { name: /^Pay / }).click();
+    await expect(
+      page.getByRole('region', { name: 'Payment not completed' }).or(page.getByRole('region', { name: 'Waiting for payment' })),
+    ).toBeVisible({ timeout: 90_000 });
+    await noHorizontalScroll(page);
+    await noInnerHorizontalScroll(page);
+  });
+
+  test('offers hidden packaging in the cart and checkout with a capacity-based quantity and backend price', async ({ page, request }, testInfo) => {
+    test.slow();
+    const packaging = makePackaging(`pack-${testInfo.project.name}-${String(testInfo.retry)}-${String(Date.now())}`);
+    const direct = await request.get(`/api/store/products/${packaging.slug}`);
+    expect(direct.status()).toBe(404);
+
+    await page.goto('/?q=Rice%205kg');
+    const addGoods = page.getByRole('button', { name: `Add ${packaging.goodsName} to cart` }).first();
+    await expect(addGoods).toBeVisible({ timeout: 30_000 });
+    for (let index = 0; index < 5; index += 1) await addGoods.click();
+
+    await page.getByRole('button', { name: 'Shopping Cart' }).click();
+    const drawer = page.getByRole('dialog', { name: 'Your Cart' });
+    await expect(drawer.getByRole('heading', { name: 'Packaging (optional)' })).toBeVisible();
+    const addPackaging = drawer.getByRole('button', { name: 'Add 3 suggested' });
+    await expect(addPackaging).toBeVisible();
+    await addPackaging.click();
+    await expect(drawer.getByRole('heading', { name: packaging.name })).toBeVisible();
+    await noHorizontalScroll(page);
+    await noInnerHorizontalScroll(page);
+
+    await page.goto('/checkout');
+    await expect(page.getByRole('heading', { name: 'Packaging (optional)' })).toBeVisible({ timeout: 30_000 });
+    const orderItems = page.getByRole('list', { name: 'Items in your order' });
+    const packagingLine = orderItems.locator('li').filter({ hasText: packaging.name });
+    await expect(packagingLine).toContainText('3 ×');
+    await expect(packagingLine).toContainText('12');
+    await noHorizontalScroll(page);
+    await noInnerHorizontalScroll(page);
+
+    // Tamper with the browser cart: checkout must reject less than the configured capacity-based requirement.
+    await page.evaluate((packagingId) => {
+      const saved = JSON.parse(window.localStorage.getItem('qsell_cart_v2') ?? '[]') as { productId: string; quantity: number }[];
+      const line = saved.find((item) => item.productId === packagingId);
+      if (line !== undefined) line.quantity = 2;
+      window.localStorage.setItem('qsell_cart_v2', JSON.stringify(saved));
+    }, packaging.id);
+    await page.reload();
+    await page.getByLabel('Full name').fill('Packaging Validation');
+    await page.getByLabel('Mobile phone').fill('0711 000 111');
+    await page.getByLabel('Street, building or office').fill('1 Moi Avenue');
+    await page.getByLabel('City or town').fill('Nairobi');
+    const pay = page.getByRole('button', { name: /^Pay / });
+    await expect(pay).toBeEnabled({ timeout: 30_000 });
+    await pay.click();
+    await expect(page.locator('form').getByRole('alert')).toContainText('Please add the suggested quantity of packaging');
+    expect(latestAttempt()).toMatchObject({ outcome: 'refused', reason: 'invalid_quantity' });
+  });
+
   test('what is in the cart survives a reload, shows on the badge, and checkout is a page with the order beside it', async ({
     page,
   }) => {
