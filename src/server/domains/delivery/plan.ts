@@ -20,6 +20,8 @@ export interface PlanInput {
   currency: string;
   channel: SalesChannel;
   method: DeliveryMethod;
+  /** For collection: the branch the customer chose. It is checked here, never trusted. */
+  pickupBranchId?: string | null;
   /** What is to be delivered, as the stock lines of the order (kits already broken into their parts). */
   lines: readonly { productId: string; quantity: number }[];
   customerId?: string | null;
@@ -37,8 +39,29 @@ export type PlanRefusal = QuoteRefusal | 'no_destination' | 'no_branch' | 'metho
 type Quoted = Extract<QuoteResult, { ok: true }>;
 
 export type PlanResult =
-  | { ok: true; branch: { id: string; code: string; name: string }; choice: ChoiceRecord; destination: DestinationRecord; quote: Quoted }
+  | { ok: true; branch: { id: string; code: string; name: string }; choice: ChoiceRecord; destination: DestinationRecord; quote: Quoted; /** Set when the order is to be collected: the branch, as the customer was shown it. */ pickup?: PickupPoint }
   | { ok: false; reason: PlanRefusal; message: string; choice: ChoiceRecord | null; destination: DestinationRecord };
+
+/** A branch the customer can collect from, with what the shop says about it. */
+export interface PickupPoint {
+  branchId: string;
+  code: string;
+  name: string;
+  address: string;
+  /** The parts of the address, for writing it on an order. */
+  street: string | null;
+  city: string | null;
+  county: string | null;
+  phone: string | null;
+  /** What the person who pinned the branch called the place (a shop front, a gate). */
+  landmark: string | null;
+  /** How long the branch needs to get an order ready. */
+  leadTimeMinutes: number;
+  note: string | null;
+  /** Whether it has every line of the order. */
+  holdsAll: boolean;
+  totalLines: number;
+}
 
 const EXCLUDED_WORDS = { method_not_offered: 'does not offer this way of delivering', no_pin: 'has no map pin', holds_none_of_it: 'has none of the goods' } as const;
 
@@ -57,11 +80,62 @@ export class DeliveryPlans {
     private readonly quotes: DeliveryQuotes,
   ) {}
 
+  /**
+   * The branches this order can be collected from: those that offer collection and hold all of it (without the per-location ledger
+   * there is no stock by branch, so every branch that offers collection counts). The customer picks one; the server checks the pick.
+   */
+  async pickupPoints(companyId: string, input: { lines: readonly { productId: string; quantity: number }[]; channel: SalesChannel }): Promise<PickupPoint[]> {
+    const rows = await this.db
+      .select({ id: branches.id, code: branches.code, name: branches.name, street: branches.streetAddress, city: branches.city, county: branches.countyOrState, phone: branches.phone, pinLabel: branches.pinLabel })
+      .from(branches)
+      .where(and(eq(branches.companyId, companyId), eq(branches.isActive, true)));
+    const ids = rows.map((r) => r.id);
+    const [offered, grids, ledger] = await Promise.all([
+      this.methods.forBranches(companyId, ids),
+      this.availability.byBranch(companyId, ids, input.lines.map((l) => l.productId), input.channel),
+      this.stockSettings.isLedgerMode(),
+    ]);
+    const wanted = mergeByProduct(input.lines);
+    return rows.flatMap((r) => {
+      const offer = (offered.get(r.id) ?? []).find((m) => m.method === 'pickup' && m.isActive);
+      if (offer === undefined) return [];
+      const grid = grids.get(r.id);
+      const holdsAll = !ledger || wanted.every((l) => (grid?.get(l.productId) ?? 0) >= l.quantity);
+      const address = [r.street, r.city, r.county].filter((part): part is string => part !== null && part.trim() !== '').join(', ');
+      return [{ branchId: r.id, code: r.code, name: r.name, address, street: r.street, city: r.city, county: r.county, phone: r.phone, landmark: r.pinLabel, leadTimeMinutes: offer.leadTimeMinutes, note: offer.note, holdsAll, totalLines: wanted.length }];
+    });
+  }
+
+  /** Collection from a branch the customer chose: no charge, and the branch must really offer collection and hold the whole order. */
+  private async planPickup(companyId: string, input: PlanInput, destination: DestinationRecord): Promise<PlanResult> {
+    const refuse = (reason: PlanRefusal, message: string): PlanResult => ({ ok: false, reason, message, choice: null, destination });
+    const wanted = input.pickupBranchId;
+    if (wanted === undefined || wanted === null || wanted === '') return refuse('no_branch', 'Choose the branch you will collect from.');
+    const points = await this.pickupPoints(companyId, { lines: input.lines, channel: input.channel });
+    const point = points.find((p) => p.branchId === wanted);
+    if (point === undefined) return refuse('method_not_available', 'That branch does not offer collection. Choose another branch.');
+    if (!point.holdsAll) return refuse('no_branch', `${point.name} does not have everything in this order right now. Choose another branch.`);
+    const chosen = { branchId: point.branchId, code: point.code, name: point.name, km: null, minutes: null, coversLines: point.totalLines, totalLines: point.totalLines };
+    const choice: ChoiceRecord = {
+      reason: 'customer_chose',
+      words: choiceWords({ chosen: { ...chosen, coversUnits: 0, totalUnits: 0, offersMethod: true }, reason: 'customer_chose', ranked: [], excluded: [], passedOver: [], partial: false }),
+      chosen,
+      ranked: [{ branchId: point.branchId, code: point.code, km: null, coversLines: point.totalLines, totalLines: point.totalLines }],
+      excluded: [],
+      passedOver: [],
+      partial: false,
+      provider: 'none',
+      degraded: false,
+    };
+    const quote: Quoted = { ok: true, amount: 0, split: { net: 0, tax: 0, gross: 0 }, taxRate: 0, currency: input.currency, steps: [{ kind: 'base', label: 'Collecting from the branch: no charge', amount: 0, running: 0 }], policy: null, zone: null, route: null, considered: [] };
+    return { ok: true, branch: { id: point.branchId, code: point.code, name: point.name }, choice, destination, quote, pickup: point };
+  }
+
   async plan(companyId: string, input: PlanInput): Promise<PlanResult> {
     const pin = input.pin !== undefined && input.pin !== null && isGeoPoint(input.pin) ? input.pin : null;
     const address = input.address !== undefined && hasAnyKey(keysOf(input.address)) ? input.address : undefined;
     const empty: DestinationRecord = { pin, address: address ?? null, positionFrom: 'none', approximate: false };
-    if (input.method === 'pickup') return { ok: false, reason: 'method_not_available', message: 'Collection from a branch is not available yet.', choice: null, destination: empty };
+    if (input.method === 'pickup') return await this.planPickup(companyId, input, empty);
     if (pin === null && address === undefined) return { ok: false, reason: 'no_destination', message: 'Give a map pin or an address, so we can tell which branch delivers this order and what the delivery costs.', choice: null, destination: empty };
 
     // Where the customer is: the pin if there is one, else the written address placed on the map (approximate).

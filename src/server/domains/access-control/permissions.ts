@@ -400,6 +400,18 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'Create and change delivery zones and areas, and choose the delivery methods each branch offers',
   },
+  'deliveries:handover': {
+    resource: 'deliveries',
+    action: 'handover',
+    category: 'Orders & Sales',
+    description: 'Mark orders ready for collection and hand them over to the customer who shows the collection code',
+  },
+  'deliveries:handover_override': {
+    resource: 'deliveries',
+    action: 'handover_override',
+    category: 'Orders & Sales',
+    description: 'Hand an order over after checking ID when the customer has no code, and give a new collection code when one is lost or locked',
+  },
   'delivery_rates:manage': {
     resource: 'delivery_rates',
     action: 'manage',

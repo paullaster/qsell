@@ -35,7 +35,9 @@ export type ChoiceReason =
   /** No branch can cover it all; this one covers the most. */
   | 'best_cover'
   /** The customer's position is not known, so the branch is chosen by what it holds (then its code). */
-  | 'position_unknown';
+  | 'position_unknown'
+  /** The customer chose the branch to collect from. */
+  | 'customer_chose';
 
 export interface BranchChoiceResult {
   chosen: BranchOption | null;
@@ -108,6 +110,8 @@ export function choiceWords(result: BranchChoiceResult): string {
       return `No branch has all of it. ${c.name}${away} holds the most (${String(c.coversLines)} of ${String(c.totalLines)} lines); the rest comes from other locations.`;
     case 'position_unknown':
       return `${c.name} holds the most of it. The customer's position is not known, so distance was not used.`;
+    case 'customer_chose':
+      return `The customer chose to collect from ${c.name}.`;
     case 'no_branch':
       return 'No branch can deliver this order.';
   }

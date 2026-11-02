@@ -41,7 +41,8 @@ export type QuoteResult =
       taxRate: number;
       currency: string;
       steps: Extract<ChargeQuote, { ok: true }>['steps'];
-      policy: { id: string; code: string; name: string; version: number; method: string };
+      /** The policy that worked the charge out. Null when no policy applies: collecting an order from a branch costs nothing. */
+      policy: { id: string; code: string; name: string; version: number; method: string } | null;
       zone: { id: string; code: string; name: string; by: 'pin' | 'address' } | null;
       route: { km: number; minutes: number | null; provider: string; degraded: boolean; approximate: boolean } | null;
       considered: Considered[];

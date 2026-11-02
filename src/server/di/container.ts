@@ -118,6 +118,7 @@ import type { DeliveryMethods } from '@/server/domains/delivery/methods';
 import type { ChargePolicies } from '@/server/domains/delivery/charge-policies';
 import type { DeliveryQuotes } from '@/server/domains/delivery/quote';
 import type { DeliveryPlans } from '@/server/domains/delivery/plan';
+import type { OrderCollections } from '@/server/domains/delivery/collection';
 import type { OrderDeliveries } from '@/server/domains/delivery/order-delivery';
 import type { DeliveryBilling } from '@/server/domains/delivery/billing';
 import { KraConfigRepository } from '@/server/domains/kra/repository';
@@ -273,6 +274,7 @@ export interface AppContainer {
   deliveryPlans: DeliveryPlans;
   /** The delivery recorded on each order. */
   orderDeliveries: OrderDeliveries;
+  orderCollections: OrderCollections;
   /** How delivery is billed on invoices and at KRA. */
   deliveryBilling: DeliveryBilling;
   kraConfigs: KraConfigRepository;
@@ -609,6 +611,7 @@ export function getContainer(): AppContainer {
     deliveryQuotes: deliveryServices.deliveryQuotes,
     deliveryPlans: deliveryServices.deliveryPlans,
     orderDeliveries: deliveryServices.orderDeliveries,
+    orderCollections: deliveryServices.orderCollections,
     deliveryBilling: deliveryServices.deliveryBilling,
     kraConfigs,
     kraResolver,

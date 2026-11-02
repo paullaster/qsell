@@ -5,6 +5,8 @@
  *   tsx e2e/support/delivery-fixtures.ts order <order number>  what an order was given for delivery: branch, charge and its tax, who receives it, the order's own tax and total
  *   tsx e2e/support/delivery-fixtures.ts billing <with_goods|separate|reset>  how delivery is invoiced (an item named "E2E Delivery service" stands for the service); reset puts back the shop's default: one invoice, no item
  *   tsx e2e/support/delivery-fixtures.ts service <any>  makes "E2E Delivery service", a service with a 16% tax and no price or cost, if it is not there yet
+ *   tsx e2e/support/delivery-fixtures.ts pay <order number>  marks an order paid, as the payment engine does when the money arrives
+ *   tsx e2e/support/delivery-fixtures.ts collection <order number>  an order's collection: its state, how it was handed over, the wrong tries, and the code the customer was given
  *   tsx e2e/support/delivery-fixtures.ts close <tag>   takes all of that out of play again, so the shop's other tests are not asked about delivery
  */
 import { execFileSync } from 'node:child_process';
@@ -24,6 +26,8 @@ async function open(tag: string): Promise<Record<string, string>> {
   const [branch] = await db.insert(branches).values({ companyId: company.id, code: `E${tag}`.slice(0, 20), name, latitude: PIN.latitude, longitude: PIN.longitude }).returning();
   if (branch === undefined) throw new Error('e2e fixture: the branch was not made');
   await db.insert(deliveryMethods).values({ companyId: company.id, branchId: branch.id, method: 'own_fleet' });
+  // The same branch can be collected from, ready in half an hour.
+  await db.insert(deliveryMethods).values({ companyId: company.id, branchId: branch.id, method: 'pickup', leadTimeMinutes: 30 });
   const read = readPolicyInput({ name: `Delivery ${tag}`, method: 'flat', currency: 'KES', scopes: { branch: { op: 'in', values: [branch.id] } }, rates: [{ zoneId: '', fromKg: 0, toKg: '', fee: 300 }], taxRate: 16 });
   if (!read.ok) throw new Error(`e2e fixture: ${read.error}`);
   const draft = await c.chargePolicies.createDraft(company.id, { id: 'e2e' }, `E2E${tag}`, read.value);
@@ -75,7 +79,7 @@ async function billing(mode: string): Promise<Record<string, string>> {
 async function order(orderNumber: string): Promise<Record<string, string>> {
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
   const [row] = await db.execute<Record<string, string | null>>(sql`
-    SELECT o.shipping_fee, o.tax, o.total_amount, o.subtotal, b.name AS branch, d.charge_amount, d.charge_net, d.charge_tax, d.tax_rate, d.recipient_name, d.recipient_phone, d.notes, d.choice->>'reason' AS reason,
+    SELECT o.shipping_fee, o.tax, o.total_amount, o.subtotal, d.method, b.name AS branch, d.charge_amount, d.charge_net, d.charge_tax, d.tax_rate, d.recipient_name, d.recipient_phone, d.notes, d.choice->>'reason' AS reason,
            (SELECT string_agg(e.stage, ',' ORDER BY e.sequence) FROM order_stage_events e WHERE e.order_id = o.id) AS stages
     FROM orders o LEFT JOIN order_deliveries d ON d.order_id = o.id LEFT JOIN branches b ON b.id = o.branch_id
     WHERE o.order_number = ${orderNumber}`);
@@ -83,16 +87,43 @@ async function order(orderNumber: string): Promise<Record<string, string>> {
   return Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v ?? '']));
 }
 
+/** Marks an order paid, as the payment engine does when the money arrives, so the test does not wait for a payment that cannot complete here. */
+async function pay(orderNumber: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { orders } = await import('@/server/db/drizzle/schema');
+  const { OrderStages } = await import('@/server/domains/orders/stages');
+  const [order] = await db.select({ id: orders.id }).from(orders).where(eq(orders.orderNumber, orderNumber));
+  if (order === undefined) throw new Error(`e2e fixture: no order ${orderNumber}`);
+  await OrderStages.move(db, order.id, 'payment_confirmed', 'succeeded', {});
+  return { paid: orderNumber };
+}
+
+/** What an order's collection looks like, and the code the customer was given (what the customer sees on their screen). */
+async function collection(orderNumber: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { orders, orderCollections } = await import('@/server/db/drizzle/schema');
+  const c = getContainer();
+  const company = await c.companySettings.ensureSeeded();
+  const [order] = await db.select({ id: orders.id, status: orders.status }).from(orders).where(eq(orders.orderNumber, orderNumber));
+  if (order === undefined) throw new Error(`e2e fixture: no order ${orderNumber}`);
+  const [row] = await db.select().from(orderCollections).where(eq(orderCollections.orderId, order.id));
+  const code = await c.orderCollections.codeFor(company.id, order.id);
+  return { orderStatus: order.status, status: row?.status ?? '', how: row?.collectedHow ?? '', attempts: String(row?.failedAttempts ?? 0), code: code ?? '' };
+}
+
 async function main(): Promise<void> {
   const [command, tag] = process.argv.slice(2);
-  if (tag === undefined) throw new Error('usage: delivery-fixtures open|close|order|billing|service <tag>');
+  if (tag === undefined) throw new Error('usage: delivery-fixtures open|close|order|billing|service|pay|collection <tag>');
   let result: Record<string, string> | null = null;
   if (command === 'open') result = await open(tag);
   if (command === 'close') result = await close(tag);
   if (command === 'order') result = await order(tag);
   if (command === 'billing') result = await billing(tag);
+  if (command === 'pay') result = await pay(tag);
+  if (command === 'collection') result = await collection(tag);
   if (command === 'service') result = { id: await serviceItem(), name: SERVICE_NAME };
-  if (result === null) throw new Error('usage: delivery-fixtures open|close|order|billing <tag>');
+  if (result === null) throw new Error('usage: delivery-fixtures open|close|order|billing|service|pay|collection <tag>');
   process.stdout.write(`FIXTURE ${JSON.stringify(result)}\n`);
 }
 

@@ -2,6 +2,7 @@ import type { DrizzleDb } from '@/server/db/drizzle/client';
 import type { CompanySettingsRepository } from '@/server/domains/company/repository';
 import { DeliveryBilling } from '@/server/domains/delivery/billing';
 import { DeliveryMethods } from '@/server/domains/delivery/methods';
+import { OrderCollections } from '@/server/domains/delivery/collection';
 import { OrderDeliveries } from '@/server/domains/delivery/order-delivery';
 import { DeliveryPlans } from '@/server/domains/delivery/plan';
 import { DeliveryQuotes } from '@/server/domains/delivery/quote';
@@ -34,6 +35,7 @@ export function createDeliveryServices(input: {
     deliveryQuotes,
   );
   const orderDeliveries = new OrderDeliveries(input.db, input.decisionLog);
+  const orderCollections = new OrderCollections(input.db, input.decisionLog);
   const deliveryBilling = new DeliveryBilling(input.db, input.decisionLog);
 
   return {
@@ -45,6 +47,7 @@ export function createDeliveryServices(input: {
     deliveryQuotes,
     deliveryPlans,
     orderDeliveries,
+    orderCollections,
     deliveryBilling,
   };
 }

@@ -482,6 +482,54 @@ export const orderDeliveries = pgTable(
 );
 
 /**
+ * An order the customer comes to collect. The code the customer shows is kept sealed (so the customer can be shown it again) and as
+ * a keyed hash (so a typed code is checked without opening anything). It works once; a few wrong tries lock it. Who handed the order
+ * over, when and how are kept here, and each step is also a stage on the order's timeline.
+ */
+export const orderCollections = pgTable(
+  'order_collections',
+  {
+    orderId: text('order_id')
+      .primaryKey()
+      .references(() => orders.id, { onDelete: 'cascade' }),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    /** The branch the customer collects from. A branch with orders waiting cannot be deleted. */
+    branchId: uuid('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'restrict' }),
+    status: text('status').$type<'waiting' | 'ready' | 'collected' | 'locked' | 'cancelled'>().notNull().default('waiting'),
+    codeSealed: jsonb('code_sealed').$type<EncryptedCredentialsBlob>().notNull(),
+    codeFingerprint: text('code_fingerprint').notNull(),
+    failedAttempts: integer('failed_attempts').notNull().default(0),
+    readyAt: timestamp('ready_at', { withTimezone: true }),
+    readyBy: text('ready_by'),
+    collectedAt: timestamp('collected_at', { withTimezone: true }),
+    collectedBy: text('collected_by'),
+    collectedHow: text('collected_how').$type<'code' | 'id_check'>(),
+    /** What ID the person at the counter saw, when the hand-over was not by code. */
+    idSeen: text('id_seen'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('order_collections_branch_status_idx').on(t.companyId, t.branchId, t.status),
+    check('order_collections_status_chk', sql`${t.status} IN ('waiting','ready','collected','locked','cancelled')`),
+    check('order_collections_attempts_chk', sql`${t.failedAttempts} >= 0`),
+    check('order_collections_how_chk', sql`${t.collectedHow} IS NULL OR ${t.collectedHow} IN ('code','id_check')`),
+    // Collected means handed over by someone, at a time, in a way; and an ID hand-over says which ID was seen.
+    check(
+      'order_collections_collected_chk',
+      sql`(${t.status} = 'collected') = (${t.collectedAt} IS NOT NULL AND ${t.collectedBy} IS NOT NULL AND ${t.collectedHow} IS NOT NULL)`,
+    ),
+    check('order_collections_id_chk', sql`${t.collectedHow} IS DISTINCT FROM 'id_check' OR (${t.idSeen} IS NOT NULL AND length(${t.idSeen}) >= 4)`),
+  ],
+);
+
+export type OrderCollectionRow = typeof orderCollections.$inferSelect;
+
+/**
  * The map service a company has chosen, and its settings (addresses of servers, a contact email). Nothing secret is kept here: a
  * provider that needs a key will keep it sealed with the other credentials. One row for each company; changes are version-checked
  * and written to the decision log.

@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { GeoPoint } from '@/lib/geo';
 import { useDebouncedValue } from '@/components/ui/useDebouncedValue';
-import { shopDeliveryOptionsAction, shopNamePinAction, shopQuoteDeliveryAction, shopSearchPlacesAction, type ShopDeliveryOptions, type ShopDeliveryQuote, type ShopPinPlace, type ShopPlace } from '@/server/domains/delivery/shop-actions';
+import { shopDeliveryOptionsAction, shopNamePinAction, shopPickupPointsAction, shopQuoteDeliveryAction, shopSearchPlacesAction, type ShopDeliveryOptions, type ShopDeliveryQuote, type ShopPickupPoint, type ShopPinPlace, type ShopPlace } from '@/server/domains/delivery/shop-actions';
 
-export type Method = 'own_fleet' | 'courier';
+export type Method = 'own_fleet' | 'courier' | 'pickup';
 
 export type QuotePhase = { phase: 'idle' } | { phase: 'loading' } | { phase: 'ok'; quote: ShopDeliveryQuote } | { phase: 'error'; error: string };
 
@@ -29,6 +29,8 @@ export interface ShopDelivery {
   nameNotice: string | null;
   search: { text: string; setText: (t: string) => void; run: () => void; results: ShopPlace[]; busy: boolean; error: string | null };
   locate: { run: () => void; busy: boolean; error: string | null };
+  /** Collecting from a branch: the branches this basket can be collected from, and the one chosen. */
+  pickup: { points: ShopPickupPoint[] | null; error: string | null; chosen: string | null; choose: (branchId: string) => void };
 }
 
 interface Input {
@@ -58,6 +60,8 @@ export function useShopDelivery(input: Input): ShopDelivery {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [locating, setLocating] = useState(false);
   const [locateError, setLocateError] = useState<string | null>(null);
+  const [chosenBranch, setChosenBranch] = useState<string | null>(null);
+  const [points, setPoints] = useState<{ key: string; list: ShopPickupPoint[] } | { key: string; error: string } | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -76,15 +80,35 @@ export function useShopDelivery(input: Input): ShopDelivery {
   }, []);
 
   const hasPlace = pin !== null || input.county.trim() !== '' || input.town.trim() !== '' || input.area.trim() !== '';
-  const request = JSON.stringify({ method, pin, county: input.county.trim(), town: input.town.trim(), area: input.area.trim(), country: input.country.trim(), items: input.items });
+  const basketKey = JSON.stringify(input.items);
+  // The branches to collect from are asked for when collecting is chosen and the basket is known; a choice the basket no longer allows is dropped.
+  useEffect(() => {
+    if (method !== 'pickup' || input.items.length === 0) return;
+    let live = true;
+    void shopPickupPointsAction({ items: input.items }).then((r) => {
+      if (!live) return;
+      if (!r.ok) {
+        setPoints({ key: basketKey, error: r.error });
+        return;
+      }
+      setPoints({ key: basketKey, list: r.data });
+      setChosenBranch((current) => (current !== null && r.data.some((p) => p.branchId === current && p.holdsAll) ? current : null));
+    });
+    return () => {
+      live = false;
+    };
+    // The basket is compared by its content, not by identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [method, basketKey]);
+  const request = JSON.stringify({ method, pickupBranchId: method === 'pickup' ? chosenBranch : null, pin, county: input.county.trim(), town: input.town.trim(), area: input.area.trim(), country: input.country.trim(), items: input.items });
   const asked = useDebouncedValue(request, 700);
-  const active = options !== null && options.methods.length > 0 && hasPlace && input.items.length > 0;
+  const active = options !== null && options.methods.length > 0 && (method === 'pickup' ? chosenBranch !== null : hasPlace) && input.items.length > 0;
 
   useEffect(() => {
     if (!active) return;
     let live = true;
-    const body = JSON.parse(asked) as { method: Method; pin: GeoPoint | null; county: string; town: string; area: string; country: string; items: Input['items'] };
-    void shopQuoteDeliveryAction({ method: body.method, pin: body.pin, address: { county: body.county, town: body.town, area: body.area, country: body.country }, items: body.items }).then((r) => {
+    const body = JSON.parse(asked) as { method: Method; pickupBranchId: string | null; pin: GeoPoint | null; county: string; town: string; area: string; country: string; items: Input['items'] };
+    void shopQuoteDeliveryAction({ method: body.method, pickupBranchId: body.pickupBranchId, pin: body.pin, address: { county: body.county, town: body.town, area: body.area, country: body.country }, items: body.items }).then((r) => {
       if (live) setAnswer({ key: asked, outcome: r.ok ? { ok: true, quote: r.data } : { ok: false, error: r.error } });
     });
     return () => {
@@ -157,5 +181,11 @@ export function useShopDelivery(input: Input): ShopDelivery {
     nameNotice,
     search: { text, setText, run, results, busy: searching, error: searchError },
     locate: { run: locateMe, busy: locating, error: locateError },
+    pickup: {
+      points: points !== null && 'list' in points && points.key === basketKey ? points.list : null,
+      error: points !== null && 'error' in points && points.key === basketKey ? points.error : null,
+      chosen: chosenBranch,
+      choose: setChosenBranch,
+    },
   };
 }

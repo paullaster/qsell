@@ -12,6 +12,7 @@ import { OrderCreditNotesPanel } from '@/components/admin/OrderCreditNotesPanel'
 import { OrderReferencePanel } from './OrderReferencePanel';
 import { OrderTimelinePanel } from './OrderTimelinePanel';
 import { OrderStockPanel } from './OrderStockPanel';
+import { OrderCollectionPanel } from './OrderCollectionPanel';
 import { OrderTenderPanel } from '@/components/admin/pricing/OrderTenderPanel';
 import {
   FULFILMENT_STATUSES,
@@ -422,6 +423,7 @@ export function OrderDetailsModal({
         ) : null}
         <OrderTenderPanel orderId={order.id} onChanged={onChanged} />
         <OrderStockPanel orderId={order.id} canMove={order.status === 'pending' || order.status === 'processing'} />
+        <OrderCollectionPanel key={order.id} orderId={order.id} onChanged={onChanged} />
         <OrderTimelinePanel orderId={order.id} />
         <OrderCreditNotesPanel key={order.id} orderId={order.id} />
       </div>

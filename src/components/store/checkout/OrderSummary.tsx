@@ -7,7 +7,7 @@ import { AppImage } from '@/components/ui/AppImage';
 import { useStore } from '@/components/store/StoreContext';
 
 /** The lines of an order with tax, shipping and the total, as the shopper will be charged. */
-export function OrderSummary({ lines, delivery = null }: { lines: CartLine[]; delivery?: { gross: number; net: number; tax: number; branchName: string } | null }) {
+export function OrderSummary({ lines, delivery = null, collecting = false }: { lines: CartLine[]; delivery?: { gross: number; net: number; tax: number; branchName: string } | null; /** The order is collected from the branch, not delivered. */ collecting?: boolean }) {
   const { money } = useStore();
   const totals = cartTotals(lines);
   const taxRows = cartTaxRows(lines);
@@ -43,7 +43,7 @@ export function OrderSummary({ lines, delivery = null }: { lines: CartLine[]; de
         ))}
         {delivery === null ? null : (
           <div className="flex justify-between gap-3">
-            <dt className="min-w-0 truncate">Delivery from {delivery.branchName}</dt>
+            <dt className="min-w-0 truncate">{collecting ? 'Collect from' : 'Delivery from'} {delivery.branchName}</dt>
             <dd className="shrink-0 font-mono text-fg-strong">{delivery.gross === 0 ? 'Free' : money(delivery.gross)}</dd>
           </div>
         )}
