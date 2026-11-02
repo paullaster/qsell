@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { PublicProduct } from '@/types/index';
 import { packagingProductsByIdsAction, productsByIdsAction } from '@/server/domains/catalog/storefront-actions';
-import { addToCart, reconcileCart, savedLines, setCartQuantity, type AddOutcome, type CartLine } from '@/lib/cart-lines';
+import { addToCart, keepAddedDuringLoad, reconcileCart, savedLines, setCartQuantity, type AddOutcome, type CartLine } from '@/lib/cart-lines';
 import { CART_STORAGE_KEY, LEGACY_CART_STORAGE_KEY, parseSavedCart, serializeCart, type SavedCartLine } from '@/lib/cart-storage';
 import { cartBadgeCount } from '@/lib/cart-quantity';
 import { useStore } from '@/components/store/StoreContext';
@@ -62,10 +62,18 @@ export function CartProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const load = useCallback(async (saved: SavedCartLine[]) => {
+  /**
+   * `keepAdded`: on arrival the cart is read before the shopper can do anything, but the shop's answer takes a moment and the
+   * shopper may already have added something. That must survive the answer. A load caused by another tab is the opposite: whatever
+   * that tab removed is gone from here too.
+   */
+  const load = useCallback(async (saved: SavedCartLine[], options?: { keepAdded?: boolean }) => {
+    const keepAdded = options?.keepAdded === true;
     if (saved.length === 0) {
-      linesRef.current = [];
-      setLines([]);
+      if (!keepAdded) {
+        linesRef.current = [];
+        setLines([]);
+      }
       setReady(true);
       return;
     }
@@ -78,7 +86,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       ]);
       const fresh = [...catalog, ...packaging];
       const result = reconcileCart(saved, fresh, moneyRef.current);
-      commit(result.lines);
+      commit(keepAdded ? keepAddedDuringLoad(result.lines, linesRef.current, saved) : result.lines);
       for (const notice of result.notices) {
         toastRef.current({ type: 'warning', title: 'Your cart was updated', message: notice.message });
       }
@@ -93,7 +101,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // The saved cart exists only in the browser, so it can only be read here, after the page is drawn.
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reading browser storage once on arrival
-    void load(readSaved());
+    void load(readSaved(), { keepAdded: true });
     const onStorage = (event: StorageEvent) => {
       if (event.key === CART_STORAGE_KEY) void load(readSaved());
     };

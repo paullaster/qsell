@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PublicProduct } from '@/types/index';
-import { addToCart, reconcileCart, savedLines, setCartQuantity } from './cart-lines';
+import { addToCart, keepAddedDuringLoad, reconcileCart, savedLines, setCartQuantity } from './cart-lines';
 
 const product = (over: Partial<PublicProduct> = {}): PublicProduct =>
   ({ id: 'p1', name: 'Rice', price: 100, stockQuantity: 5, reservedQuantity: 0, baseUnitDecimals: 0, baseUnitCode: 'pc', ...over }) as PublicProduct;
@@ -119,5 +119,28 @@ describe('an item that has a least and most to buy', () => {
     const plain = product({ minOrderQty: null, maxOrderQty: null });
     expect(addToCart([], plain, 1).lines[0]?.quantity).toBe(1);
     expect(reconcileCart([{ productId: 'p1', quantity: 2, price: 100 }], [plain], money).notices).toEqual([]);
+  });
+});
+
+describe('what was added while the saved cart was being checked', () => {
+  const line = (id: string, quantity = 1) => ({ product: product({ id, name: id }), quantity });
+  const saved = (id: string, quantity = 1) => ({ productId: id, quantity, price: 40 });
+
+  it('is kept after what the shop says about the saved cart', () => {
+    const merged = keepAddedDuringLoad([line('goods')], [line('service')], [saved('goods')]);
+    expect(merged.map((l) => l.product.id)).toEqual(['goods', 'service']);
+  });
+
+  it('is nothing to add when nothing was added', () => {
+    expect(keepAddedDuringLoad([line('goods')], [], [saved('goods')]).map((l) => l.product.id)).toEqual(['goods']);
+  });
+
+  it('does not bring back a saved item the shop says is gone, nor repeat one that is already there', () => {
+    // 'gone' was saved but is no longer sold, so it is in neither the checked cart nor what the shopper added.
+    expect(keepAddedDuringLoad([line('goods')], [line('gone'), line('goods')], [saved('goods'), saved('gone')]).map((l) => l.product.id)).toEqual(['goods']);
+  });
+
+  it('keeps an addition when the saved cart was empty', () => {
+    expect(keepAddedDuringLoad([], [line('service')], []).map((l) => l.product.id)).toEqual(['service']);
   });
 });

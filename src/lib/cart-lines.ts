@@ -19,6 +19,15 @@ export interface CartNotice {
 export const savedLines = (lines: readonly CartLine[]): SavedCartLine[] =>
   lines.map(({ product, quantity }) => ({ productId: product.id, quantity, price: product.price ?? null }));
 
+/**
+ * The cart a page has once the shop has answered about the saved one. What the shopper put in while the answer was on its way is
+ * kept after it: that is not in the saved cart, so the answer knows nothing of it and would otherwise wipe it. Pure.
+ */
+export function keepAddedDuringLoad(checked: readonly CartLine[], nowInCart: readonly CartLine[], saved: readonly SavedCartLine[]): CartLine[] {
+  const known = new Set([...saved.map((line) => line.productId), ...checked.map((line) => line.product.id)]);
+  return [...checked, ...nowInCart.filter((line) => !known.has(line.product.id))];
+}
+
 /** `at_maximum`: more than the item's maximum was asked for; `short_of_minimum`: there is less in stock than the least that may be bought. */
 export type AddOutcome = 'added' | 'capped' | 'at_maximum' | 'short_of_minimum' | 'sold_out';
 
