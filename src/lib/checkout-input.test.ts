@@ -110,3 +110,41 @@ describe('the delivery part of a checkout', () => {
     expect(parse(delivery({ recipient: { name: '  ', phone: '' } }))).toMatchObject({ ok: true, value: { delivery: { recipient: null } } });
   });
 });
+
+describe('collecting an order from a branch', () => {
+  const noAddress = { street: '', city: '', countyOrState: '', country: 'Kenya' };
+  const collect = (d: Record<string, unknown>, address: unknown = noAddress) => parseCheckoutInput({ ...good(), shippingAddress: address, delivery: { method: 'pickup', ...d } });
+
+  it('needs a branch and no address, and asks for nothing else about a place', () => {
+    const r = collect({ pickupBranchId: ' branch-1 ', expectedCharge: 0 });
+    expect(r).toMatchObject({ ok: true, value: { delivery: { method: 'pickup', pickupBranchId: 'branch-1', pin: null, address: null, recipient: null, notes: null, expectedCharge: 0 } } });
+  });
+
+  it('ignores a pin, an address, a recipient and a rider’s note sent with it', () => {
+    const r = collect({ pickupBranchId: 'b', pin: { latitude: 1, longitude: 1 }, address: { county: 'X', town: 'Y', area: 'Z' }, recipient: { name: 'A', phone: '0722222222' }, notes: 'gate' });
+    expect(r).toMatchObject({ ok: true, value: { delivery: { pin: null, address: null, recipient: null, notes: null } } });
+  });
+
+  it('is refused without a branch, or with one that is not text or is far too long, in words', () => {
+    for (const bad of [{}, { pickupBranchId: '' }, { pickupBranchId: '   ' }, { pickupBranchId: 5 }, { pickupBranchId: 'x'.repeat(101) }]) {
+      expect(collect(bad), JSON.stringify(bad)).toMatchObject({ ok: false, error: expect.stringContaining('Choose the branch') as string });
+    }
+  });
+
+  it('refuses an amount that is not one, as a delivery does', () => {
+    expect(collect({ pickupBranchId: 'b', expectedCharge: -1 })).toMatchObject({ ok: false });
+    expect(collect({ pickupBranchId: 'b', expectedCharge: 'free' })).toMatchObject({ ok: false });
+  });
+
+  it('is the only kind of order that may leave the address empty', () => {
+    const delivered = parseCheckoutInput({ ...good(), shippingAddress: noAddress, delivery: { method: 'own_fleet', pin: { latitude: -1.2, longitude: 36.8 } } });
+    expect(delivered).toMatchObject({ ok: false, error: expect.stringContaining('delivery address') as string });
+    expect(parseCheckoutInput({ ...good(), shippingAddress: noAddress })).toMatchObject({ ok: false });
+  });
+
+  it('leaves a delivery’s own reading as it was, with no branch', () => {
+    const r = parseCheckoutInput({ ...good(), delivery: { method: 'own_fleet', pin: { latitude: -1.2921, longitude: 36.8219 }, pickupBranchId: 'ignored' } });
+    expect(r).toMatchObject({ ok: true, value: { delivery: { method: 'own_fleet', pickupBranchId: null } } });
+  });
+});
+

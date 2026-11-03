@@ -405,6 +405,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
     icon: 'Truck',
     subLinks: [
       {
+        id: 'delivery-deliveries',
+        title: 'Deliveries',
+        name: 'delivery-deliveries',
+        href: '/admin/delivery/deliveries',
+        description: 'The deliveries of orders: make them, pick, pack, send them out and mark them delivered',
+        icon: 'ClipboardCheck',
+        permission: 'deliveries:read',
+      },
+      {
         id: 'delivery-zones',
         title: 'Delivery zones',
         name: 'delivery-zones',

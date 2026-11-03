@@ -212,11 +212,11 @@ describe.skipIf(!has(url))('delivery for orders (database)', () => {
       expect(second).toEqual(first);
     });
 
-    it('asks for a pin or an address, and refuses a method it cannot yet serve', async () => {
+    it('asks for a pin or an address, and for a branch when the order is to be collected', async () => {
       const p = await product();
       expect(await plan([{ productId: p, quantity: 1 }], { pin: null })).toMatchObject({ ok: false, reason: 'no_destination' });
       expect(await plan([{ productId: p, quantity: 1 }], { address: { county: '  ' }, pin: null })).toMatchObject({ ok: false, reason: 'no_destination' });
-      expect(await plan([{ productId: p, quantity: 1 }], { method: 'pickup' })).toMatchObject({ ok: false, reason: 'method_not_available' });
+      expect(await plan([{ productId: p, quantity: 1 }], { method: 'pickup' })).toMatchObject({ ok: false, reason: 'no_branch', message: expect.stringContaining('Choose the branch') as string });
     });
 
     it('with only a written address the built-in map cannot place, chooses by what is held and still charges by zone', async () => {

@@ -897,6 +897,20 @@
       "when": 1793593120329,
       "tag": "0127_vendor_invitation_accepted_user_restrict",
       "breakpoints": true
+    },
+    {
+      "idx": 128,
+      "version": "7",
+      "when": 1793652188368,
+      "tag": "0128_order_collections",
+      "breakpoints": true
+    },
+    {
+      "idx": 129,
+      "version": "7",
+      "when": 1793654430371,
+      "tag": "0129_delivery_documents",
+      "breakpoints": true
     }
   ]
 }

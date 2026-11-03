@@ -9,6 +9,7 @@ import { clientAddress, waitMessage, type RateRuleName } from '@/lib/rate-limit'
 import { isRecord } from '@/lib/values';
 import type { AddressWords } from '@/lib/delivery-zones';
 import { choosePolicy } from './domain/select';
+import { leadTimeWords } from '@/lib/delivery-methods';
 import { toHeader } from './charge-policies';
 
 /** What the shop's delivery section answers: data, never a thrown error (a server action's error text is hidden in production). */
@@ -46,8 +47,8 @@ export interface ShopDeliveryOptions {
   canReverse: boolean;
   /** Where the map opens: the middle of the branches that have a pin, else Nairobi. */
   centre: GeoPoint;
-  /** The ways the shop delivers (a branch offers each). */
-  methods: ('own_fleet' | 'courier')[];
+  /** The ways the shop gets an order to the customer (a branch offers each; collection needs no charge policy). */
+  methods: ('own_fleet' | 'courier' | 'pickup')[];
 }
 
 /** Public: what the delivery section can offer in this shop. */
@@ -65,7 +66,10 @@ export async function shopDeliveryOptionsAction(): Promise<ShopResult<ShopDelive
     const headers = inForce.map((p) => toHeader(p.row));
     const at = new Date();
     const priced = new Set(active.filter((b) => choosePolicy(headers, { at, currency: 'KES', branchId: b.id, channel: 'ecommerce', salesType: 'cash' }).chosen !== null).map((b) => b.id));
-    const methods = (['own_fleet', 'courier'] as const).filter((m) => active.some((b) => priced.has(b.id) && (offered.get(b.id) ?? []).some((r) => r.method === m && r.isActive)));
+    const delivered = (['own_fleet', 'courier'] as const).filter((m) => active.some((b) => priced.has(b.id) && (offered.get(b.id) ?? []).some((r) => r.method === m && r.isActive)));
+    // Collecting costs nothing, so it needs a branch that offers it and no charge policy.
+    const collect = active.some((b) => (offered.get(b.id) ?? []).some((r) => r.method === 'pickup' && r.isActive));
+    const methods = collect ? [...delivered, 'pickup' as const] : delivered;
     return { ok: true, data: { clientMap: caps.clientMap, canSearch: caps.placeSearch, typeahead: caps.typeahead, canReverse: caps.reverseGeocode, centre, methods } };
   } catch (error) {
     console.error('[shop delivery] options', error);
@@ -115,7 +119,7 @@ function cautionOf(guess: boolean, estimated: boolean): string | null {
 }
 
 export interface ShopDeliveryQuote {
-  method: 'own_fleet' | 'courier';
+  method: 'own_fleet' | 'courier' | 'pickup';
   branchName: string;
   why: string;
   /** What the customer pays for delivery, with its parts. */
@@ -139,10 +143,12 @@ export interface ShopDeliveryQuote {
  */
 export async function shopQuoteDeliveryAction(raw: unknown): Promise<ShopResult<ShopDeliveryQuote>> {
   if (!isRecord(raw)) return { ok: false, error: 'Your delivery could not be read.' };
-  const method = raw.method === 'courier' ? 'courier' : 'own_fleet';
-  const pin = pointOf(raw.pin);
-  const address = addressWordsOf(raw.address);
-  if (pin === null && address === undefined) return { ok: false, error: 'Drop a pin on the map or write your area, so we can tell what delivery costs.' };
+  const method = raw.method === 'courier' ? 'courier' : raw.method === 'pickup' ? 'pickup' : 'own_fleet';
+  const pin = method === 'pickup' ? null : pointOf(raw.pin);
+  const address = method === 'pickup' ? undefined : addressWordsOf(raw.address);
+  const pickupBranchId = method === 'pickup' && typeof raw.pickupBranchId === 'string' && raw.pickupBranchId.length <= 100 ? raw.pickupBranchId : null;
+  if (method === 'pickup' && pickupBranchId === null) return { ok: false, error: 'Choose the branch you will collect from.' };
+  if (method !== 'pickup' && pin === null && address === undefined) return { ok: false, error: 'Drop a pin on the map or write your area, so we can tell what delivery costs.' };
   const items = Array.isArray(raw.items) ? raw.items.slice(0, 100) : [];
   const lines = items.flatMap((i) => (isRecord(i) && typeof i.productId === 'string' && i.productId.length <= 100 && typeof i.quantity === 'number' && Number.isFinite(i.quantity) && i.quantity > 0 && i.quantity <= 1_000_000 ? [{ productId: i.productId, quantity: i.quantity }] : []));
   if (lines.length === 0 || lines.length !== items.length) return { ok: false, error: 'Your basket could not be read.' };
@@ -162,6 +168,7 @@ export async function shopQuoteDeliveryAction(raw: unknown): Promise<ShopResult<
       currency: basket.currency,
       channel: 'ecommerce',
       method,
+      ...(pickupBranchId === null ? {} : { pickupBranchId }),
       lines: basket.stockLines,
       customerId,
       customerGroupId: await pricing.groupFor(company.id, customerId),
@@ -197,5 +204,46 @@ export async function shopQuoteDeliveryAction(raw: unknown): Promise<ShopResult<
   } catch (error) {
     console.error('[shop delivery] quote', error);
     return { ok: false, error: 'We could not work out your delivery just now. Please try again.' };
+  }
+}
+
+export interface ShopPickupPoint {
+  branchId: string;
+  name: string;
+  address: string;
+  phone: string | null;
+  landmark: string | null;
+  /** How long the branch needs to get the order ready, in words. */
+  ready: string;
+  note: string | null;
+  /** Whether the branch has everything in the basket now; one that does not cannot be chosen. */
+  holdsAll: boolean;
+}
+
+/**
+ * Public: the branches this basket can be collected from, with their address, phone and how soon the order is ready. The browser
+ * supplies only the basket's product ids and quantities; which branches offer collection and hold the goods is the server's answer.
+ */
+export async function shopPickupPointsAction(raw: unknown): Promise<ShopResult<ShopPickupPoint[]>> {
+  if (!isRecord(raw)) return { ok: false, error: 'Your basket could not be read.' };
+  const items = Array.isArray(raw.items) ? raw.items.slice(0, 100) : [];
+  const lines = items.flatMap((i) => (isRecord(i) && typeof i.productId === 'string' && i.productId.length <= 100 && typeof i.quantity === 'number' && Number.isFinite(i.quantity) && i.quantity > 0 && i.quantity < 1_000_000 ? [{ productId: i.productId, quantity: i.quantity }] : []));
+  if (lines.length === 0 || lines.length !== items.length) return { ok: false, error: 'Your basket could not be read.' };
+  const wait = await limited('shop_delivery_quote_ip');
+  if (wait !== null) return { ok: false, error: wait };
+  try {
+    const session = await auth();
+    const basket = await previewShopBasket(lines, session?.user.customerStoreId ?? null);
+    if (!basket.ok) return { ok: false, error: basket.error };
+    const { deliveryPlans, companySettings } = getContainer();
+    const company = await companySettings.ensureSeeded();
+    const points = await deliveryPlans.pickupPoints(company.id, { lines: basket.stockLines, channel: 'ecommerce' });
+    return {
+      ok: true,
+      data: points.map((p) => ({ branchId: p.branchId, name: p.name, address: p.address, phone: p.phone, landmark: p.landmark, ready: leadTimeWords(p.leadTimeMinutes), note: p.note, holdsAll: p.holdsAll })),
+    };
+  } catch (error) {
+    console.error('[shop delivery] pickup points', error);
+    return { ok: false, error: 'The branches you can collect from could not be loaded just now.' };
   }
 }

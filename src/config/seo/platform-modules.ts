@@ -113,6 +113,8 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'Try any delivery charge before it goes live and see exactly how it was worked out',
       'Choose whether delivery goes on the same tax invoice as the products or on its own invoice signed separately for KRA, with the tax shown for the products and for the delivery',
       'Choose the map service for addresses and distances (free OpenStreetMap or a paid one) and compare what each costs for your orders',
+      'Customers can collect an order from a branch with a code they show at the counter, and the counter hands it over once',
+      'Make a delivery for an order, or several when only some of it is ready, and take each from picking and packing to sent out and delivered, with the reason for any failed attempt',
     ],
     keywords: [
       'delivery management software Kenya',
@@ -122,8 +124,10 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'delivery areas by estate',
       'delivery charge calculator',
       'delivery fee by distance',
+      'dispatch and delivery tracking software',
+      'partial delivery and back order',
     ],
-    subModules: ['Delivery zones', 'Delivery charges', 'Delivery methods', 'Delivery invoicing', 'Map service'],
+    subModules: ['Deliveries', 'Delivery zones', 'Delivery charges', 'Delivery methods', 'Delivery invoicing', 'Map service'],
   },
   {
     navId: 'products-inventory',

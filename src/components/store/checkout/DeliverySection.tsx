@@ -5,6 +5,7 @@ import { useId } from 'react';
 import { LocateFixed, Search } from 'lucide-react';
 import { useStore } from '@/components/store/StoreContext';
 import type { ShopDelivery } from '@/components/store/checkout/useShopDelivery';
+import { PickupSection } from '@/components/store/checkout/PickupSection';
 
 // The map is drawn only in the browser, and only for a shop whose map service has one.
 const MapPicker = dynamic(() => import('@/components/store/checkout/MapPicker').then((m) => m.MapPicker), {
@@ -15,6 +16,8 @@ const MapPicker = dynamic(() => import('@/components/store/checkout/MapPicker').
 const inputClass =
   'min-h-11 w-full rounded-lg border border-line bg-surface px-3.5 py-2 text-sm text-fg-strong placeholder-fg-subtle focus:border-indigo-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40';
 const buttonClass = 'inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-lg border border-line-strong bg-surface-raised px-4 text-sm font-semibold text-fg-strong hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50';
+
+const METHOD_LABELS = { own_fleet: 'Our riders', courier: 'A courier', pickup: 'Collect from a branch' } as const;
 
 export interface Recipient {
   on: boolean;
@@ -38,23 +41,29 @@ export function DeliverySection({ delivery, recipient, onRecipient, notes, onNot
 
   return (
     <div className="space-y-4 rounded-xl border border-line bg-surface p-4" role="group" aria-label="Where to deliver and what it costs">
-      <div>
-        <h3 className="text-sm font-semibold text-fg-strong">Show us where to deliver</h3>
-        <p className="mt-1 text-xs text-fg-muted">Drop a pin on the map, or write your area in the address above. Either one tells us which branch sends your order and what delivery costs.</p>
-      </div>
+      {delivery.method === 'pickup' ? null : (
+        <div>
+          <h3 className="text-sm font-semibold text-fg-strong">Show us where to deliver</h3>
+          <p className="mt-1 text-xs text-fg-muted">Drop a pin on the map, or write your area in the address above. Either one tells us which branch sends your order and what delivery costs.</p>
+        </div>
+      )}
 
       {options.methods.length > 1 ? (
         <fieldset className="flex flex-wrap gap-4">
-          <legend className="sr-only">How should we deliver?</legend>
+          <legend className="sr-only">How should we get your order to you?</legend>
           {options.methods.map((m) => (
             <label key={m} className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-fg">
               <input type="radio" name={`${uid}-method`} className="h-4 w-4 accent-indigo-600" checked={delivery.method === m} onChange={() => delivery.setMethod(m)} />
-              {m === 'own_fleet' ? 'Our riders' : 'A courier'}
+              {METHOD_LABELS[m]}
             </label>
           ))}
         </fieldset>
       ) : null}
 
+      {delivery.method === 'pickup' ? <PickupSection delivery={delivery} /> : null}
+
+      {delivery.method === 'pickup' ? null : (
+      <>
       <div className="flex flex-wrap gap-2">
         <button type="button" className={buttonClass} onClick={delivery.locate.run} disabled={delivery.locate.busy}>
           <LocateFixed className="h-4 w-4" aria-hidden="true" />
@@ -195,6 +204,8 @@ export function DeliverySection({ delivery, recipient, onRecipient, notes, onNot
           </div>
         ) : null}
       </div>
+      </>
+      )}
     </div>
   );
 }

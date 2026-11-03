@@ -9,7 +9,9 @@ export const PAYMENT_PROVIDERS = ['mpesa_daraja', 'pesapal_v3', 'jenga_hq', 'kcb
 
 /** How the order is to be delivered: where to (a pin, a written area, or both), who receives it, and the charge the shopper was shown. */
 export interface DeliveryInput {
-  method: 'own_fleet' | 'courier';
+  method: 'own_fleet' | 'courier' | 'pickup';
+  /** For collection: the branch the customer chose. The server checks it; it is only a request. */
+  pickupBranchId: string | null;
   pin: GeoPoint | null;
   address: AddressWords | null;
   recipient: { name: string; phone: string } | null;
@@ -37,7 +39,15 @@ type DeliveryParsed = { ok: true; value: DeliveryInput | undefined } | { ok: fal
 function parseDelivery(raw: unknown): DeliveryParsed {
   if (raw === undefined || raw === null) return { ok: true, value: undefined };
   if (!isRecord(raw)) return { ok: false, error: 'Your delivery details could not be read.' };
-  if (raw.method !== 'own_fleet' && raw.method !== 'courier') return { ok: false, error: 'Please choose how you want your order delivered.' };
+  if (raw.method !== 'own_fleet' && raw.method !== 'courier' && raw.method !== 'pickup') return { ok: false, error: 'Please choose how you want your order delivered.' };
+  if (raw.method === 'pickup') {
+    // Collecting needs a branch and nothing else about a place: no pin, address, recipient or rider's note.
+    const branch = typeof raw.pickupBranchId === 'string' && raw.pickupBranchId.trim() !== '' && raw.pickupBranchId.length <= 100 ? raw.pickupBranchId.trim() : null;
+    if (branch === null) return { ok: false, error: 'Choose the branch you will collect from.' };
+    const charge = raw.expectedCharge;
+    if (charge !== undefined && charge !== null && (typeof charge !== 'number' || !Number.isFinite(charge) || charge < 0 || charge > 1_000_000_000)) return { ok: false, error: 'Your collection details could not be read. Please look at your order again.' };
+    return { ok: true, value: { method: 'pickup', pickupBranchId: branch, pin: null, address: null, recipient: null, notes: null, expectedCharge: typeof charge === 'number' ? charge : null } };
+  }
   let pin: GeoPoint | null = null;
   if (raw.pin !== undefined && raw.pin !== null) {
     const point = isRecord(raw.pin) ? readGeoPoint(raw.pin.latitude, raw.pin.longitude) : null;
@@ -62,7 +72,7 @@ function parseDelivery(raw: unknown): DeliveryParsed {
   if (notes === null) return { ok: false, error: 'The note for the rider is too long.' };
   const expected = raw.expectedCharge;
   if (expected !== undefined && expected !== null && (typeof expected !== 'number' || !Number.isFinite(expected) || expected < 0 || expected > 1_000_000_000)) return { ok: false, error: 'Your delivery charge could not be read. Please look at your order again.' };
-  return { ok: true, value: { method: raw.method, pin, address, recipient, notes: notes === '' ? null : notes, expectedCharge: typeof expected === 'number' ? expected : null } };
+  return { ok: true, value: { method: raw.method, pickupBranchId: null, pin, address, recipient, notes: notes === '' ? null : notes, expectedCharge: typeof expected === 'number' ? expected : null } };
 }
 
 type Parsed = { ok: true; value: CheckoutInput } | { ok: false; error: string };
@@ -92,7 +102,9 @@ export function parseCheckoutInput(raw: unknown): Parsed {
   if (phone === null || phone === '') return { ok: false, error: 'Please enter your mobile phone number.' };
   if (email === null) return { ok: false, error: 'That email address is too long.' };
   if (pin === null) return { ok: false, error: 'That tax PIN is too long.' };
-  if (street === null || street === '' || city === null || city === '' || county === null || country === null) {
+  // An order to be collected has no delivery address: the branch is where it goes, and the server writes that on the order.
+  const collecting = isRecord(raw.delivery) && raw.delivery.method === 'pickup';
+  if (street === null || county === null || country === null || city === null || (!collecting && (street === '' || city === ''))) {
     return { ok: false, error: 'Please enter your delivery address.' };
   }
   const delivery = parseDelivery(raw.delivery);

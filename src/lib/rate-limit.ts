@@ -26,6 +26,9 @@ export const RATE_RULES = {
   /** A shopper pricing their delivery, and searching places or naming a pin on the map (each can call a map service). */
   shop_delivery_quote_ip: { limit: 120, seconds: 600 },
   shop_map_search_ip: { limit: 40, seconds: 600 },
+  /** A customer looking up the code to collect an order: per address, and per order number so the number and contact cannot be guessed. */
+  collection_lookup_ip: { limit: 30, seconds: 600 },
+  collection_lookup_order: { limit: 8, seconds: 600 },
   /** A signed-in vendor sending files or documents. */
   vendor_upload: { limit: 60, seconds: 600 },
   /** A signed-in vendor submitting an invoice, credit note or quotation, or asking a question. */

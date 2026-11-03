@@ -1,5 +1,6 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { branches, customerGroups, deliveryZones, products } from '@/server/db/drizzle/schema';
+import { DELIVERY_STATUSES, FAILURE_REASONS, STATUS_WORDS } from '@/lib/delivery-document';
 import { acceptFilters, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
 import { CHANNELS } from '@/server/domains/pricing/domain/types';
 
@@ -87,4 +88,24 @@ const serviceProducts = tableSource({
   toOption: (row) => ({ id: text(row.id), label: `${text(row.label)} (${text(row.sku)})`, description: row.tax === null || row.tax === undefined ? 'No tax rate set' : `Tax ${text(row.tax)}%`, badge: null }),
 });
 
-export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts];
+/** The states a delivery can be in, for filtering the deliveries list. */
+const deliveryStatuses = staticSource({
+  key: 'delivery-statuses',
+  permission: 'deliveries:read',
+  items: ({ filters }) => {
+    acceptFilters(filters, {});
+    return DELIVERY_STATUSES.map((status) => ({ id: status, label: STATUS_WORDS[status], description: null, badge: null }));
+  },
+});
+
+/** Why a delivery attempt can fail, for the person who records it. */
+const deliveryFailureReasons = staticSource({
+  key: 'delivery-failure-reasons',
+  permission: 'deliveries:read',
+  items: ({ filters }) => {
+    acceptFilters(filters, {});
+    return FAILURE_REASONS.map((r) => ({ id: r.code, label: r.words, description: null, badge: null }));
+  },
+});
+
+export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts, deliveryStatuses, deliveryFailureReasons];

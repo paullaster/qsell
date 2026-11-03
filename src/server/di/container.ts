@@ -118,6 +118,8 @@ import type { DeliveryMethods } from '@/server/domains/delivery/methods';
 import type { ChargePolicies } from '@/server/domains/delivery/charge-policies';
 import type { DeliveryQuotes } from '@/server/domains/delivery/quote';
 import type { DeliveryPlans } from '@/server/domains/delivery/plan';
+import type { OrderCollections } from '@/server/domains/delivery/collection';
+import type { DeliveryDocuments } from '@/server/domains/delivery/documents';
 import type { OrderDeliveries } from '@/server/domains/delivery/order-delivery';
 import type { DeliveryBilling } from '@/server/domains/delivery/billing';
 import { KraConfigRepository } from '@/server/domains/kra/repository';
@@ -273,6 +275,8 @@ export interface AppContainer {
   deliveryPlans: DeliveryPlans;
   /** The delivery recorded on each order. */
   orderDeliveries: OrderDeliveries;
+  orderCollections: OrderCollections;
+  deliveryDocuments: DeliveryDocuments;
   /** How delivery is billed on invoices and at KRA. */
   deliveryBilling: DeliveryBilling;
   kraConfigs: KraConfigRepository;
@@ -471,7 +475,7 @@ export function getContainer(): AppContainer {
   const geo = new GeoService(new GeoPortRegistry(process.env, GEO_ADAPTERS, geoSettings.selection), undefined, (event) => {
     void geoCompanyId().then((id) => geoSettings.record(id, event)).catch(() => undefined);
   });
-  const deliveryServices = createDeliveryServices({ db: drizzleDb, decisionLog, geo, companySettings });
+  const deliveryServices = createDeliveryServices({ db: drizzleDb, decisionLog, geo, companySettings, numbering });
   const orderSla = new OrderSlaService(drizzleDb, new OrderSlaNotifier(email, companySettings));
   const vendorNotifier = new VendorNotifier(drizzleDb, email, companySettings);
   const prequalLifecycle = new PrequalLifecycle(drizzleDb, vendorNotifier);
@@ -609,6 +613,8 @@ export function getContainer(): AppContainer {
     deliveryQuotes: deliveryServices.deliveryQuotes,
     deliveryPlans: deliveryServices.deliveryPlans,
     orderDeliveries: deliveryServices.orderDeliveries,
+    orderCollections: deliveryServices.orderCollections,
+    deliveryDocuments: deliveryServices.deliveryDocuments,
     deliveryBilling: deliveryServices.deliveryBilling,
     kraConfigs,
     kraResolver,
