@@ -251,7 +251,7 @@ What happens to an order's stock is on the order's own timeline, with its server
 | Stage | When | Reason / detail |
 |---|---|---|
 | `stock_reserved` | The order is saved after its stock was set aside | `detail.kept` (`ledger` or `counters`), the number of products, and (ledger) the places and quantities |
-| `stock_issued` | The order is paid and its stock leaves | `detail.kept`; in the ledger the quantity issued and the holds used |
+| `stock_issued` | The order is paid and its stock leaves; or, when the shop issues stock as deliveries go out or arrive, each delivery's part leaves (one stage for each delivery) | `detail.kept`; in the ledger the quantity issued and the holds used; for a delivery `detail.at` (`dispatch` or `deliver`), `detail.delivery` |
 | `stock_released` | The stock is given back: cancelled, payment failed, or the hold ran out | `reasonCode` `cancelled`, `payment_failed`, `hold_expired` or `released`, and the words the caller gave |
 
 **Where.** `InventoryReservationService.recordReserved` (called by the order write service once the order exists), `fulfilOrder`, `releaseOrder`, and the `stock-reservation-expiry` task. Each is written after the settlement it describes and never stops it: a failure to write the event is logged. Each is said once per order and kind (`ref` = the order's stock settlement), so a retried payment message adds nothing.

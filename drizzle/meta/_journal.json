@@ -911,6 +911,13 @@
       "when": 1793654430371,
       "tag": "0129_delivery_documents",
       "breakpoints": true
+    },
+    {
+      "idx": 130,
+      "version": "7",
+      "when": 1793667830405,
+      "tag": "0130_delivery_goods_issue",
+      "breakpoints": true
     }
   ]
 }

@@ -126,8 +126,10 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'delivery fee by distance',
       'dispatch and delivery tracking software',
       'partial delivery and back order',
+      'stock issued when goods are dispatched',
+      'returned goods receipt and write-off',
     ],
-    subModules: ['Deliveries', 'Delivery zones', 'Delivery charges', 'Delivery methods', 'Delivery invoicing', 'Map service'],
+    subModules: ['Deliveries', 'Delivery zones', 'Delivery charges', 'Delivery methods', 'Delivery invoicing', 'Stock timing', 'Map service'],
   },
   {
     navId: 'products-inventory',

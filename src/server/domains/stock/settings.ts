@@ -2,6 +2,7 @@ import { eq, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { stockSettings } from '@/server/db/drizzle/schema';
 import type { CompanySettingsRepository } from '@/server/domains/company/repository';
+import { isIssueMoment, type IssueMoment } from '@/lib/stock-issue';
 import { StockError } from './errors';
 import type { StockShadow } from './shadow';
 
@@ -18,6 +19,8 @@ export interface StockMode {
   shadowWrite: boolean;
   ledgerMode: boolean;
   unpaidHoldMinutes: number;
+  /** When the stock of an order that is delivered leaves the shelf. Always 'payment' while the counters are the truth. */
+  issueMoment: IssueMoment;
 }
 
 const MAX_HOLD_MINUTES = 7 * 24 * 60;
@@ -35,7 +38,24 @@ export class StockSettingsService {
   async get(): Promise<StockMode> {
     const { id } = await this.company.ensureSeeded();
     const [row] = await this.db.select().from(stockSettings).where(eq(stockSettings.companyId, id)).limit(1);
-    return { shadowWrite: row?.shadowWrite ?? false, ledgerMode: row?.ledgerMode ?? false, unpaidHoldMinutes: row?.unpaidHoldMinutes ?? 0 };
+    const ledgerMode = row?.ledgerMode ?? false;
+    const moment = row?.issueMoment;
+    return { shadowWrite: row?.shadowWrite ?? false, ledgerMode, unpaidHoldMinutes: row?.unpaidHoldMinutes ?? 0, issueMoment: ledgerMode && isIssueMoment(moment) ? moment : 'payment' };
+  }
+
+  /**
+   * Chooses when the stock of an order that is delivered leaves the shelf. Anything but 'payment' needs the ledger, which can issue part
+   * of what an order holds; and an order already paid keeps its stock issued, so the change applies to orders paid from now on.
+   */
+  async setIssueMoment(companyId: string, moment: unknown): Promise<IssueMoment> {
+    if (!isIssueMoment(moment)) throw new StockError('Choose when the stock should leave the shelf.', 'BAD_MOMENT');
+    await this.db.insert(stockSettings).values({ companyId }).onConflictDoNothing();
+    if (moment !== 'payment') {
+      const [row] = await this.db.select({ ledgerMode: stockSettings.ledgerMode }).from(stockSettings).where(eq(stockSettings.companyId, companyId)).limit(1);
+      if (row?.ledgerMode !== true) throw new StockError('Issuing stock as deliveries go out or arrive needs stock to be kept by location. Switch that on first; until then the stock leaves when the order is paid.', 'NEEDS_LEDGER');
+    }
+    await this.db.update(stockSettings).set({ issueMoment: moment, updatedAt: sql`now()` }).where(eq(stockSettings.companyId, companyId));
+    return moment;
   }
 
   async isLedgerMode(): Promise<boolean> {
