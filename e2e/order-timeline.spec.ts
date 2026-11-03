@@ -40,7 +40,8 @@ test.describe('every stage of an order is timestamped, failures included', () =>
     // Someone else buys the last stock while this shopper is typing.
     setStock(`prod_rv_${tag}`, 0);
     await page.getByRole('button', { name: /^Pay / }).click();
-    await expect(page.locator('form').getByRole('alert')).toContainText(/Insufficient inventory|not enough|sold out/i, { timeout: 60_000 });
+    // The refusal may empty the cart (the item sold out), which replaces the form, so the alert is not looked for inside it.
+    await expect(page.getByRole('alert').filter({ hasText: /Insufficient inventory|not enough|sold out/i })).toBeVisible({ timeout: 60_000 });
     // It is on record with its time, where it stopped and why, and the guest is only a hash.
     await expect.poll(() => latestAttempt().outcome, { timeout: 30_000 }).toBe('refused');
     const attempt = latestAttempt();

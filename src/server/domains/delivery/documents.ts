@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, deliveries, deliveryEvents, deliveryLines, orderDeliveries, orderItems, orders, products, unitsOfMeasure } from '@/server/db/drizzle/schema';
+import { branches, deliveries, deliveryEvents, deliveryLines, deliveryReturns, orderDeliveries, orderItems, orders, products, stockSettings, unitsOfMeasure } from '@/server/db/drizzle/schema';
 import {
   ACTION_WORDS,
   MAX_DELIVERY_ATTEMPTS,
@@ -29,6 +29,9 @@ import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { NumberSeriesService } from '@/server/kernel/numbering/service';
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import { decodeCursor, encodeCursor } from '@/server/domains/lookups/request';
+import { DISPOSITION_WORDS, dispositionsFor, isIssueMoment, issuesAt, returnProblem, type IssueMoment, type ReturnDisposition, type ReturnableLine } from '@/lib/stock-issue';
+import type { StockReservations } from '@/server/domains/stock/reservations';
+import { StockError } from '@/server/domains/stock/errors';
 import { orderReadinessProblem } from './order-readiness';
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
@@ -53,6 +56,10 @@ export interface DeliveryLineView {
   quantity: number;
   picked: number | null;
   delivered: number;
+  /** How much of it has left the shelf for this delivery. */
+  issued: number;
+  /** For a returned delivery: how much could come back, what may be done with it, and the receipt once it is made. */
+  back: { could: number; choices: { id: ReturnDisposition; name: string; means: string }[]; receipt: { quantity: number; disposition: ReturnDisposition; words: string; receivedAt: string } | null } | null;
 }
 
 export interface DeliveryEventView {
@@ -125,6 +132,7 @@ const PAGE = 25;
 function eventWords(action: string): string {
   if (action === 'created') return 'Made';
   if (action === 'amend') return 'Details changed';
+  if (action === 'receive_return') return 'Returned goods received';
   return Object.prototype.hasOwnProperty.call(ACTION_WORDS, action) ? ACTION_WORDS[action as DeliveryAction] : action;
 }
 
@@ -139,6 +147,7 @@ export class DeliveryDocuments {
     private readonly db: DrizzleDb,
     private readonly decisions: DecisionLog,
     private readonly numbering: Pick<NumberSeriesService, 'assign'>,
+    private readonly stock: Pick<StockReservations, 'consumePartIn' | 'receiveBackIn' | 'writeOffIn'>,
   ) {}
 
   // ── Making a delivery ────────────────────────────────────────────────────────────────────────────────────────────
@@ -343,8 +352,12 @@ export class DeliveryDocuments {
         .where(eq(deliveries.id, id));
       await this.event(tx, id, action, actor, row.status, to, { reasonCode: outcome.reasonCode ?? null, note: outcome.note ?? null, detail: outcome.detail ?? {} });
 
+      // The stock leaves the shelf now if the shop issues it at this step; the part this delivery carries, nothing more.
+      const issuedNow = await this.issueIn(tx, actor, row, action);
+
       // The order's timeline, in the same transaction: each stage with who did it and why, once for each time it is reached.
       const stages: OrderStage[] = [...STAGES_FOR[action]] as OrderStage[];
+      if (issuedNow !== null) stages.push('stock_issued');
       if (action === 'deliver') stages.push(await afterDelivery());
       for (const stage of stages) {
         await OrderStages.moveIn(tx, row.orderId, stage, stage === 'delivery_attempted' || stage === 'delivery_failed' ? 'failed' : 'succeeded', {
@@ -352,11 +365,102 @@ export class DeliveryDocuments {
           ref: { type: 'delivery_stage', id: `${id}:${stage}:${String(row.failedAttempts)}:${String(row.version)}` },
           message: `${row.number} · ${ACTION_WORDS[action]}${outcome.note === undefined || outcome.note === null ? '' : `: ${outcome.note}`}`,
           ...(outcome.stageReason === undefined ? {} : { reasonCode: outcome.stageReason }),
-          detail: { delivery: row.number, ...(outcome.stageDetail ?? {}) },
+          detail: { delivery: row.number, ...(stage === 'stock_issued' ? { at: action, ...issuedNow } : {}), ...(outcome.stageDetail ?? {}) },
         });
       }
       if (action === 'cancel' || action === 'return' || action === 'fail_attempt') {
         await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery', id }, action: `delivery.${action}`, actor: { type: 'user', id: actor.userId }, from: row.status, to, reason: { ...(outcome.reasonCode === undefined || outcome.reasonCode === null ? {} : { code: outcome.reasonCode }), text: outcome.note ?? null } }, tx);
+      }
+      return { ok: true, data: await this.viewIn(tx, actor.companyId, id) };
+    });
+  }
+
+  /** The stock settings read inside the open transaction: one indexed row. Anything but the ledger issues at payment. */
+  private async momentIn(tx: Tx, companyId: string): Promise<IssueMoment> {
+    const [row] = await tx.select({ moment: stockSettings.issueMoment, ledger: stockSettings.ledgerMode }).from(stockSettings).where(eq(stockSettings.companyId, companyId));
+    return row?.ledger === true && isIssueMoment(row.moment) ? row.moment : 'payment';
+  }
+
+  /**
+   * Issues the stock this delivery carries, when the shop issues at this step: what was picked (or planned) less what has been issued,
+   * from what the order holds. A product the order no longer holds (it was issued when the order was paid) is left alone, so nothing
+   * is issued twice. Returns what was issued, or null when nothing was.
+   */
+  private async issueIn(tx: Tx, actor: DocActor, row: typeof deliveries.$inferSelect, action: DeliveryAction): Promise<{ issued: number; covered: number } | null> {
+    if (!issuesAt(await this.momentIn(tx, actor.companyId), action)) return null;
+    const lines = await tx.select().from(deliveryLines).where(eq(deliveryLines.deliveryId, row.id));
+    const wanted = new Map<string, number>();
+    for (const l of lines) {
+      const left = Math.round((Number(l.picked ?? l.quantity) - Number(l.issued)) * 1000) / 1000;
+      if (left > 0) wanted.set(l.productId, left);
+    }
+    if (wanted.size === 0) return null;
+    const done = await this.stock.consumePartIn(tx, { companyId: actor.companyId, refType: 'order', refId: row.orderId, actor: actor.userId, key: row.id }, wanted);
+    for (const [productId, covered] of done.coveredBy) await tx.update(deliveryLines).set({ issued: sql`${deliveryLines.issued} + ${covered}` }).where(and(eq(deliveryLines.deliveryId, row.id), eq(deliveryLines.productId, productId)));
+    return done.covered > 0 ? { issued: done.issued, covered: done.covered } : null;
+  }
+
+  /**
+   * Receives what came back with a returned delivery, product by product, with what is to be done with it. Goods this delivery issued
+   * are counted back onto the shelf where they were held (or counted back and written off if spoilt); goods that never left the books
+   * are written off if spoilt and otherwise need nothing; goods issued when the order was paid are kept for the order. The receipt is
+   * kept, a product is received once, and a restock puts `returned_to_stock` on the order's timeline.
+   */
+  async receiveReturn(actor: DocActor, id: string, input: { lines?: unknown; note?: unknown }): Promise<DocResult<DeliveryView>> {
+    const asked = Array.isArray(input.lines) ? (input.lines as unknown[]) : [];
+    const lines = asked.map((l) => {
+      const o = typeof l === 'object' && l !== null ? (l as Record<string, unknown>) : {};
+      return { productId: typeof o.productId === 'string' ? o.productId : '', quantity: typeof o.quantity === 'number' ? o.quantity : Number.NaN, disposition: typeof o.disposition === 'string' ? o.disposition : '' };
+    });
+    const note = text(input.note, 300);
+    try {
+      return await this.receiveReturnIn(actor, id, lines, note);
+    } catch (error) {
+      // The shelf could not hold the goods again: nothing was received, and the person is told why.
+      if (error instanceof StockError) return fail('conflict', error.message);
+      throw error;
+    }
+  }
+
+  private async receiveReturnIn(actor: DocActor, id: string, lines: { productId: string; quantity: number; disposition: string }[], note: string | null): Promise<DocResult<DeliveryView>> {
+    return await this.db.transaction(async (tx): Promise<DocResult<DeliveryView>> => {
+      const [row] = await tx.select().from(deliveries).where(and(eq(deliveries.id, id), eq(deliveries.companyId, actor.companyId))).for('update');
+      if (row === undefined) return fail('not_found', 'That delivery could not be found.');
+      if (row.status !== 'returned') return fail('not_allowed', 'Only a delivery that has been returned has goods to receive.');
+      const moment = await this.momentIn(tx, actor.companyId);
+      const [have, done] = await Promise.all([tx.select().from(deliveryLines).where(eq(deliveryLines.deliveryId, id)), tx.select({ productId: deliveryReturns.productId }).from(deliveryReturns).where(eq(deliveryReturns.deliveryId, id))]);
+      const received = new Set(done.map((d) => d.productId));
+      if (lines.some((l) => received.has(l.productId))) return fail('conflict', 'That product has already been received for this delivery.');
+      const back = new Map<string, ReturnableLine>(have.map((l) => [l.productId, { could: Number(Number(l.issued) > 0 ? l.issued : (l.picked ?? l.quantity)), issuedHere: Number(l.issued) > 0 }]));
+      const problem = returnProblem(moment, back, lines);
+      if (problem !== null) return fail('bad_input', problem);
+
+      let restocked = 0;
+      const detail: Record<string, unknown>[] = [];
+      for (const l of lines) {
+        const disposition = l.disposition as ReturnDisposition;
+        const could = back.get(l.productId);
+        let locationId: string | null = null;
+        if (l.quantity > 0 && disposition !== 'keep') {
+          const base = { companyId: actor.companyId, refType: 'order', refId: row.orderId, productId: l.productId, quantity: l.quantity, key: row.id, actor: actor.userId, note: `${row.number} returned: ${DISPOSITION_WORDS[disposition].name}` };
+          locationId = (could?.issuedHere === true ? await this.stock.receiveBackIn(tx, { ...base, writeOff: disposition === 'damaged' }) : await this.stock.writeOffIn(tx, base)).locationId;
+          if (disposition === 'restock') restocked += l.quantity;
+        }
+        await tx.insert(deliveryReturns).values({ companyId: actor.companyId, deliveryId: id, productId: l.productId, quantity: String(l.quantity), disposition, locationId, note, receivedBy: actor.userId });
+        detail.push({ productId: l.productId, quantity: l.quantity, disposition });
+      }
+      await tx.update(deliveries).set({ version: row.version + 1, updatedAt: new Date() }).where(eq(deliveries.id, id));
+      await this.event(tx, id, 'receive_return', actor, row.status, row.status, { note, detail: { lines: detail } });
+      if (restocked > 0) {
+        await OrderStages.moveIn(tx, row.orderId, 'returned_to_stock', 'succeeded', {
+          actor: { type: 'user', id: actor.userId },
+          ref: { type: 'delivery_stage', id: `${id}:returned_to_stock:${String(row.version)}` },
+          message: `${row.number} · goods counted back into stock`,
+          detail: { delivery: row.number, restocked },
+        });
+      }
+      if (detail.some((d) => d.disposition === 'damaged')) {
+        await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery', id }, action: 'delivery.return_written_off', actor: { type: 'user', id: actor.userId }, from: row.status, to: row.status, reason: { text: note ?? 'Goods came back damaged.' } }, tx);
       }
       return { ok: true, data: await this.viewIn(tx, actor.companyId, id) };
     });
@@ -421,9 +525,11 @@ export class DeliveryDocuments {
       if (nullable) return null;
       throw new Error(`The delivery ${id} vanished while it was locked.`);
     }
+    const returned = row.d.status === 'returned';
+    const [receipts, moment] = returned ? await Promise.all([db.select().from(deliveryReturns).where(eq(deliveryReturns.deliveryId, id)), this.momentIn(db as Tx, companyId)]) : [[], 'payment' as IssueMoment];
     const [lines, events] = await Promise.all([
       db
-        .select({ id: deliveryLines.id, productId: deliveryLines.productId, productName: products.name, sku: products.sku, quantity: deliveryLines.quantity, picked: deliveryLines.picked, delivered: deliveryLines.delivered })
+        .select({ id: deliveryLines.id, productId: deliveryLines.productId, productName: products.name, sku: products.sku, quantity: deliveryLines.quantity, picked: deliveryLines.picked, delivered: deliveryLines.delivered, issued: deliveryLines.issued })
         .from(deliveryLines)
         .innerJoin(products, eq(products.id, deliveryLines.productId))
         .where(eq(deliveryLines.deliveryId, id))
@@ -454,7 +560,28 @@ export class DeliveryDocuments {
       releasedAt: d.releasedAt?.toISOString() ?? null,
       dispatchedAt: d.dispatchedAt?.toISOString() ?? null,
       deliveredAt: d.deliveredAt?.toISOString() ?? null,
-      lines: lines.map((l) => ({ id: l.id, productId: l.productId, productName: l.productName, sku: l.sku, quantity: num(l.quantity), picked: l.picked === null ? null : Number(l.picked), delivered: num(l.delivered) })),
+      lines: lines.map((l) => {
+        const issuedHere = Number(l.issued) > 0;
+        const receipt = receipts.find((r) => r.productId === l.productId);
+        const disposition = receipt?.disposition as ReturnDisposition | undefined;
+        return {
+          id: l.id,
+          productId: l.productId,
+          productName: l.productName,
+          sku: l.sku,
+          quantity: num(l.quantity),
+          picked: l.picked === null ? null : Number(l.picked),
+          delivered: num(l.delivered),
+          issued: num(l.issued),
+          back: !returned
+            ? null
+            : {
+                could: issuedHere ? num(l.issued) : Number(l.picked ?? l.quantity),
+                choices: receipt === undefined ? dispositionsFor(moment, issuedHere).map((d) => ({ id: d, ...DISPOSITION_WORDS[d] })) : [],
+                receipt: receipt === undefined || disposition === undefined ? null : { quantity: Number(receipt.quantity), disposition, words: DISPOSITION_WORDS[disposition].name, receivedAt: receipt.receivedAt.toISOString() },
+              },
+        };
+      }),
       events: events.map((e) => ({
         sequence: e.sequence,
         action: e.action,

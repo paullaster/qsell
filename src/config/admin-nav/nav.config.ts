@@ -450,6 +450,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'deliveries:read',
       },
       {
+        id: 'delivery-stock',
+        title: 'Stock timing',
+        name: 'delivery-stock',
+        href: '/admin/delivery/stock',
+        description: 'When the stock of a delivered order leaves the shelf: when it is paid, when a delivery goes out, or when it arrives',
+        icon: 'Package',
+        permission: 'deliveries:read',
+      },
+      {
         id: 'delivery-maps',
         title: 'Map service',
         name: 'delivery-maps',

@@ -5,7 +5,7 @@
  *   tsx e2e/support/delivery-fixtures.ts order <order number>  what an order was given for delivery: branch, charge and its tax, who receives it, the order's own tax and total
  *   tsx e2e/support/delivery-fixtures.ts billing <with_goods|separate|reset>  how delivery is invoiced (an item named "E2E Delivery service" stands for the service); reset puts back the shop's default: one invoice, no item
  *   tsx e2e/support/delivery-fixtures.ts service <any>  makes "E2E Delivery service", a service with a 16% tax and no price or cost, if it is not there yet
- *   tsx e2e/support/delivery-fixtures.ts pay <order number>  marks an order paid, as the payment engine does when the money arrives
+ *   tsx e2e/support/delivery-fixtures.ts pay <order number> [settle]  marks an order paid, as the payment engine does when the money arrives; with settle, its stock is settled as well
  *   tsx e2e/support/delivery-fixtures.ts collection <order number>  an order's collection: its state, how it was handed over, the wrong tries, and the code the customer was given
  *   tsx e2e/support/delivery-fixtures.ts close <tag>   takes all of that out of play again, so the shop's other tests are not asked about delivery
  */
@@ -88,13 +88,15 @@ async function order(orderNumber: string): Promise<Record<string, string>> {
 }
 
 /** Marks an order paid, as the payment engine does when the money arrives, so the test does not wait for a payment that cannot complete here. */
-async function pay(orderNumber: string): Promise<Record<string, string>> {
+async function pay(orderNumber: string, settle = false): Promise<Record<string, string>> {
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
   const { orders } = await import('@/server/db/drizzle/schema');
   const { OrderStages } = await import('@/server/domains/orders/stages');
   const [order] = await db.select({ id: orders.id }).from(orders).where(eq(orders.orderNumber, orderNumber));
   if (order === undefined) throw new Error(`e2e fixture: no order ${orderNumber}`);
   await OrderStages.move(db, order.id, 'payment_confirmed', 'succeeded', {});
+  // With `settle`, the stock is settled too, as the payment engine does when the money arrives.
+  if (settle) await (await import('@/server/domains/inventory/reservation-service')).InventoryReservationService.fulfilOrder(order.id);
   return { paid: orderNumber };
 }
 
@@ -113,14 +115,14 @@ async function collection(orderNumber: string): Promise<Record<string, string>> 
 }
 
 async function main(): Promise<void> {
-  const [command, tag] = process.argv.slice(2);
+  const [command, tag, extra] = process.argv.slice(2);
   if (tag === undefined) throw new Error('usage: delivery-fixtures open|close|order|billing|service|pay|collection <tag>');
   let result: Record<string, string> | null = null;
   if (command === 'open') result = await open(tag);
   if (command === 'close') result = await close(tag);
   if (command === 'order') result = await order(tag);
   if (command === 'billing') result = await billing(tag);
-  if (command === 'pay') result = await pay(tag);
+  if (command === 'pay') result = await pay(tag, extra === 'settle');
   if (command === 'collection') result = await collection(tag);
   if (command === 'service') result = { id: await serviceItem(), name: SERVICE_NAME };
   if (result === null) throw new Error('usage: delivery-fixtures open|close|order|billing|service|pay|collection <tag>');

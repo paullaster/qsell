@@ -71,8 +71,9 @@ function DeliveryScreen({ initial, canFulfil }: { initial: DeliveryView; canFulf
   const [recipientName, setRecipientName] = useState(initial.recipientName ?? '');
   const [recipientPhone, setRecipientPhone] = useState(initial.recipientPhone ?? '');
   const [notes, setNotes] = useState(initial.notes ?? '');
+  const [back, setBack] = useState<Record<string, { quantity: string; disposition: Choice | null }>>({});
 
-  const run = async (step: DeliveryAction | 'amend', extra: Record<string, unknown>, done: string, after?: () => void) => {
+  const run = async (step: DeliveryAction | 'amend' | 'receive_return', extra: Record<string, unknown>, done: string, after?: () => void) => {
     setBusy(true);
     setNotice(null);
     const result = await attempt(deliveryStepAction({ deliveryId: view.id, step, expectedVersion: view.version, ...extra }));
@@ -161,6 +162,7 @@ function DeliveryScreen({ initial, canFulfil }: { initial: DeliveryView; canFulf
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold text-fg-strong">{line.productName}</p>
                 <p className="font-mono text-xs text-fg-muted">{line.sku}</p>
+                {line.issued > 0 ? <p className="text-xs text-fg-muted">Left the shelf: {qty(line.issued)}</p> : null}
               </div>
               <p className="text-sm text-fg">
                 <span className="text-xs text-fg-muted">Planned </span>
@@ -293,6 +295,53 @@ function DeliveryScreen({ initial, canFulfil }: { initial: DeliveryView; canFulf
               </Field>
               <InlineConfirm label="Cancel this delivery" action="Cancel the delivery" confirm="Yes, cancel it" busy={busy} onConfirm={() => void run('cancel', { reason }, DONE.cancel, () => setReason(''))} />
             </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {view.status === 'returned' ? (
+        <section aria-label="Goods that came back" className={`${cardClass} space-y-3`}>
+          <h2 className="text-sm font-bold text-fg-strong">Goods that came back</h2>
+          <ul className="divide-y divide-line">
+            {view.lines.map((line) => {
+              const open = line.back?.receipt === null && line.back.choices.length > 0;
+              const entry = back[line.productId] ?? { quantity: String(line.back?.could ?? 0), disposition: null };
+              return (
+                <li key={line.id} className="space-y-2 py-3">
+                  <p className="text-sm font-semibold text-fg-strong">{line.productName}</p>
+                  {line.back?.receipt ? (
+                    <p className="text-sm text-fg">
+                      Received {qty(line.back.receipt.quantity)}: {line.back.receipt.words} <span className="text-xs text-fg-muted">on {when(line.back.receipt.receivedAt)}</span>
+                    </p>
+                  ) : (
+                    <p className="text-xs text-fg-muted">Up to {qty(line.back?.could ?? 0)} could have come back. It can be: {line.back?.choices.map((c) => c.name).join(', ')}.</p>
+                  )}
+                  {open && canFulfil ? (
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-[8rem_1fr]">
+                      <Field id={`${uid}-bq-${line.id}`} label={`How many came back: ${line.productName}`}>
+                        <input id={`${uid}-bq-${line.id}`} inputMode="decimal" value={entry.quantity} onChange={(e) => setBack({ ...back, [line.productId]: { ...entry, quantity: e.target.value } })} className={`${fieldClass} font-mono`} autoComplete="off" />
+                      </Field>
+                      <ChoicePicker label={`What to do with it: ${line.productName}`} source="delivery-return-dispositions" choice={entry.disposition} onChoice={(c) => setBack({ ...back, [line.productId]: { ...entry, disposition: c } })} placeholder="Choose" clearable />
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+          {canFulfil && view.lines.some((l) => l.back?.receipt === null && l.back.choices.length > 0) ? (
+            <button
+              type="button"
+              className={primaryClass}
+              disabled={busy}
+              onClick={() => {
+                const lines = view.lines
+                  .filter((l) => l.back?.receipt === null && l.back.choices.length > 0)
+                  .map((l) => ({ productId: l.productId, quantity: Number(back[l.productId]?.quantity ?? l.back?.could ?? 0), disposition: back[l.productId]?.disposition?.id ?? '' }));
+                void run('receive_return', { lines }, 'The returned goods are received.', () => setBack({}));
+              }}
+            >
+              Receive these goods
+            </button>
           ) : null}
         </section>
       ) : null}

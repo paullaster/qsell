@@ -607,8 +607,11 @@ export const deliveryLines = pgTable(
     /** Null until it is counted. A short pick leaves the difference open on the order. */
     picked: numeric('picked', { precision: 14, scale: 3 }),
     delivered: numeric('delivered', { precision: 14, scale: 3 }).notNull().default('0'),
+    /** How much of this line has left the shelf, when the shop issues stock as deliveries go out or arrive. Never more than was picked. */
+    issued: numeric('issued', { precision: 14, scale: 3 }).notNull().default('0'),
   },
   (t) => [
+    check('delivery_lines_issued_chk', sql`${t.issued} >= 0 AND ${t.issued} <= COALESCE(${t.picked}, ${t.quantity})`),
     uniqueIndex('delivery_lines_delivery_product_uidx').on(t.deliveryId, t.productId),
     index('delivery_lines_product_idx').on(t.productId),
     check('delivery_lines_quantity_chk', sql`${t.quantity} > 0`),
@@ -647,6 +650,37 @@ export const deliveryEvents = pgTable(
 export type DeliveryRow = typeof deliveries.$inferSelect;
 export type DeliveryLineRow = typeof deliveryLines.$inferSelect;
 export type DeliveryEventRow = typeof deliveryEvents.$inferSelect;
+
+/** What came back with a returned delivery, product by product, and what was done with it. Kept: a receipt is never changed. */
+export const deliveryReturns = pgTable(
+  'delivery_returns',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    deliveryId: uuid('delivery_id')
+      .notNull()
+      .references(() => deliveries.id, { onDelete: 'restrict' }),
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    disposition: text('disposition').notNull(),
+    /** Where it was counted back, or written off from; null when nothing moved. */
+    locationId: uuid('location_id').references(() => stockLocations.id, { onDelete: 'restrict' }),
+    note: text('note'),
+    receivedBy: text('received_by').notNull(),
+    receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_returns_delivery_product_uidx').on(t.deliveryId, t.productId),
+    index('delivery_returns_company_idx').on(t.companyId, t.receivedAt),
+    check('delivery_returns_quantity_chk', sql`${t.quantity} >= 0`),
+    check('delivery_returns_disposition_chk', sql`${t.disposition} IN ('restock','damaged','keep')`),
+  ],
+);
+export type DeliveryReturnRow = typeof deliveryReturns.$inferSelect;
 
 /**
  * The map service a company has chosen, and its settings (addresses of servers, a contact email). Nothing secret is kept here: a
@@ -3221,11 +3255,16 @@ export const stockSettings = pgTable('stock_settings', {
     .default('0'),
   /** How long an unpaid shop order holds stock, in minutes. 0 holds it until the order is settled or released (today's behaviour). */
   unpaidHoldMinutes: integer('unpaid_hold_minutes').notNull().default(0),
+  /**
+   * When the stock of an order that is delivered leaves the shelf: 'payment' (always, and today's behaviour), 'dispatch' (as each
+   * delivery goes out) or 'delivery' (as each delivery arrives). The later two need the ledger, which can issue part of a hold.
+   */
+  issueMoment: text('issue_moment').notNull().default('payment'),
   /** Backfill progress: the last product id handled, and when it finished. */
   backfillCursor: text('backfill_cursor'),
   backfillDoneAt: timestamp('backfill_done_at', { withTimezone: true }),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [check('stock_settings_issue_moment_chk', sql`${t.issueMoment} IN ('payment','dispatch','delivery')`)]);
 export type StockLocationRow = typeof stockLocations.$inferSelect;
 export type StockBalanceRow = typeof stockBalances.$inferSelect;
 export type StockMovementRow = typeof stockMovements.$inferSelect;

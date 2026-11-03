@@ -5,6 +5,10 @@
  *   tsx e2e/support/stock-fixtures.ts product <tag> <quantity> [<place code>]  a product with this much stock at a place (the default one if none)
  *   tsx e2e/support/stock-fixtures.ts place <code> <name>                  a stock location, if it is not there yet
  *   tsx e2e/support/stock-fixtures.ts at <product name> <place code>       how much of a product is at a place
+ *   tsx e2e/support/stock-fixtures.ts onhand <product name>               how much of a product there is in all places together
+ *   tsx e2e/support/stock-fixtures.ts shopsees <product name>              how many of a product the web shop would offer
+ *   tsx e2e/support/stock-fixtures.ts stockup <product name> <quantity>   receive this much of a seeded product at the default place
+ *   tsx e2e/support/stock-fixtures.ts timing payment|dispatch|delivery    when stock leaves the shelf for delivered orders (needs the ledger on)
  *   tsx e2e/support/stock-fixtures.ts backfill                              bring every product across to the new ledger (the worker does this in a running shop)
  *   tsx e2e/support/stock-fixtures.ts forget                               remove the products these fixtures made, so a check of the whole company is not about them
  *   tsx e2e/support/stock-fixtures.ts receive <product id> <quantity> <place code>  more stock of a product at a place
@@ -61,6 +65,41 @@ async function at(name: string, code: string): Promise<Record<string, string>> {
   return { quantity: String(Number(row?.total ?? 0)) };
 }
 
+async function onhand(name: string): Promise<Record<string, string>> {
+  const { db, companyId } = await container();
+  const [row] = await db.execute<{ total: string }>(sql`
+    SELECT COALESCE(sum(b.on_hand), 0) AS total FROM stock_balances b JOIN products p ON p.id = b.product_id
+    WHERE p.name = ${name} AND b.company_id = ${companyId}::uuid`);
+  return { quantity: String(Number(row?.total ?? 0)) };
+}
+
+/** What the web shop would offer of a product: the stock it is told about, less what is promised, as the shop reads it. */
+async function shopsees(name: string): Promise<Record<string, string>> {
+  const { db } = await container();
+  const { withShopAvailability } = await import('@/server/domains/catalog/shop-availability');
+  const [row] = await db.execute<{ id: string }>(sql`SELECT id FROM products WHERE name = ${name} AND deleted_at IS NULL LIMIT 1`);
+  if (row === undefined) throw new Error(`e2e fixture: no product ${name}`);
+  const [seen] = await withShopAvailability([{ id: row.id, stockQuantity: 0, reservedQuantity: 0 } as never]);
+  const p = seen as unknown as { stockQuantity: number; reservedQuantity: number };
+  return { available: String(p.stockQuantity - p.reservedQuantity) };
+}
+
+/** Puts stock of a seeded product on the shelf of the default place, as a receipt would, so the shop can sell it with the ledger on. */
+async function stockup(name: string, quantity: string): Promise<Record<string, string>> {
+  const { c, db, companyId } = await container();
+  const [row] = await db.execute<{ id: string }>(sql`SELECT id FROM products WHERE name = ${name} AND deleted_at IS NULL LIMIT 1`);
+  if (row === undefined) throw new Error(`e2e fixture: no product ${name}`);
+  const target = (await c.stockLocations.ensureDefault(companyId)).id;
+  await db.transaction((tx) => c.stockLedger.post(tx, { companyId, productId: row.id, locationId: target ?? '', type: 'receipt', quantity: Number(quantity), unitCost: 10, documentType: 'e2e', documentId: randomUUID(), actor: { type: 'job' } }));
+  return { id: row.id };
+}
+
+/** Sets when stock leaves the shelf for delivered orders, as the Stock timing screen does. */
+async function timing(moment: string): Promise<Record<string, string>> {
+  const { c, companyId } = await container();
+  return { moment: await c.stockSettings.setIssueMoment(companyId, moment) };
+}
+
 async function backfill(): Promise<Record<string, string>> {
   const { c, companyId } = await container();
   let finished = false;
@@ -109,6 +148,10 @@ async function main(): Promise<void> {
   else if (command === 'place' && a !== undefined && b !== undefined) result = await place(a, b);
   else if (command === 'at' && a !== undefined && b !== undefined) result = await at(a, b);
   else if (command === 'backfill') result = await backfill();
+  else if (command === 'onhand' && a !== undefined) result = await onhand(a);
+  else if (command === 'timing' && a !== undefined) result = await timing(a);
+  else if (command === 'stockup' && a !== undefined && b !== undefined) result = await stockup(a, b);
+  else if (command === 'shopsees' && a !== undefined) result = await shopsees(a);
   else if (command === 'forget') result = await forget();
   else if (command === 'receive' && a !== undefined && b !== undefined && d !== undefined) result = await receive(a, b, d);
   else if (command === 'order' && a !== undefined && b !== undefined && d !== undefined) result = await order(a, b, d);

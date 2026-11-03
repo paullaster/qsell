@@ -14,6 +14,7 @@ import type { GeoService } from '@/server/domains/geo/service';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { StockAvailability } from '@/server/domains/stock/availability';
 import { StockSettingsService } from '@/server/domains/stock/settings';
+import type { StockReservations } from '@/server/domains/stock/reservations';
 
 /** Composes delivery collaborators outside the main container to keep initialization dependencies in one ordered scope. */
 export function createDeliveryServices(input: {
@@ -22,6 +23,7 @@ export function createDeliveryServices(input: {
   geo: GeoService;
   companySettings: CompanySettingsRepository;
   numbering: NumberSeriesService;
+  stockReservations: StockReservations;
 }) {
   const stockAvailability = new StockAvailability(input.db);
   const stockSettings = new StockSettingsService(input.db, input.companySettings);
@@ -39,7 +41,7 @@ export function createDeliveryServices(input: {
   );
   const orderDeliveries = new OrderDeliveries(input.db, input.decisionLog);
   const orderCollections = new OrderCollections(input.db, input.decisionLog);
-  const deliveryDocuments = new DeliveryDocuments(input.db, input.decisionLog, input.numbering);
+  const deliveryDocuments = new DeliveryDocuments(input.db, input.decisionLog, input.numbering, input.stockReservations);
   const deliveryBilling = new DeliveryBilling(input.db, input.decisionLog);
 
   return {
