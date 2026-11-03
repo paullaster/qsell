@@ -4,6 +4,13 @@ import { DeliveryBilling } from '@/server/domains/delivery/billing';
 import { DeliveryMethods } from '@/server/domains/delivery/methods';
 import { OrderCollections } from '@/server/domains/delivery/collection';
 import { DeliveryDocuments } from '@/server/domains/delivery/documents';
+import { DeliveryMessages } from '@/server/domains/delivery/messages';
+import { TrackingLinks } from '@/server/domains/delivery/tracking-links';
+import { TrackedOrders } from '@/server/domains/delivery/tracked-order';
+import type { EmailPort } from '@/server/ports/communications';
+import { StockReissue } from '@/server/domains/delivery/reissue';
+import { DeliveryRuns } from '@/server/domains/delivery/runs';
+import { CourierShipments } from '@/server/domains/delivery/shipments';
 import type { NumberSeriesService } from '@/server/kernel/numbering/service';
 import { OrderDeliveries } from '@/server/domains/delivery/order-delivery';
 import { DeliveryPlans } from '@/server/domains/delivery/plan';
@@ -24,6 +31,7 @@ export function createDeliveryServices(input: {
   companySettings: CompanySettingsRepository;
   numbering: NumberSeriesService;
   stockReservations: StockReservations;
+  email: EmailPort;
 }) {
   const stockAvailability = new StockAvailability(input.db);
   const stockSettings = new StockSettingsService(input.db, input.companySettings);
@@ -41,7 +49,13 @@ export function createDeliveryServices(input: {
   );
   const orderDeliveries = new OrderDeliveries(input.db, input.decisionLog);
   const orderCollections = new OrderCollections(input.db, input.decisionLog);
-  const deliveryDocuments = new DeliveryDocuments(input.db, input.decisionLog, input.numbering, input.stockReservations);
+  const trackingLinks = new TrackingLinks(input.db, input.decisionLog);
+  const deliveryMessages = new DeliveryMessages(input.db, input.email, input.companySettings, trackingLinks);
+  const deliveryDocuments = new DeliveryDocuments(input.db, input.decisionLog, input.numbering, input.stockReservations, deliveryMessages);
+  const deliveryRuns = new DeliveryRuns(input.db, input.decisionLog, input.numbering, deliveryDocuments);
+  const courierShipments = new CourierShipments(input.db, deliveryDocuments);
+  const trackedOrders = new TrackedOrders(input.db, input.companySettings, deliveryDocuments, orderCollections);
+  const stockReissue = new StockReissue(input.db, input.decisionLog, input.stockReservations);
   const deliveryBilling = new DeliveryBilling(input.db, input.decisionLog);
 
   return {
@@ -55,6 +69,12 @@ export function createDeliveryServices(input: {
     orderDeliveries,
     orderCollections,
     deliveryDocuments,
+    trackingLinks,
+    deliveryMessages,
+    trackedOrders,
+    stockReissue,
+    deliveryRuns,
+    courierShipments,
     deliveryBilling,
   };
 }

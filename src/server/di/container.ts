@@ -120,6 +120,12 @@ import type { DeliveryQuotes } from '@/server/domains/delivery/quote';
 import type { DeliveryPlans } from '@/server/domains/delivery/plan';
 import type { OrderCollections } from '@/server/domains/delivery/collection';
 import type { DeliveryDocuments } from '@/server/domains/delivery/documents';
+import type { StockReissue } from '@/server/domains/delivery/reissue';
+import type { DeliveryRuns } from '@/server/domains/delivery/runs';
+import type { CourierShipments } from '@/server/domains/delivery/shipments';
+import type { TrackingLinks } from '@/server/domains/delivery/tracking-links';
+import type { DeliveryMessages } from '@/server/domains/delivery/messages';
+import type { TrackedOrders } from '@/server/domains/delivery/tracked-order';
 import type { OrderDeliveries } from '@/server/domains/delivery/order-delivery';
 import type { DeliveryBilling } from '@/server/domains/delivery/billing';
 import { KraConfigRepository } from '@/server/domains/kra/repository';
@@ -277,6 +283,12 @@ export interface AppContainer {
   orderDeliveries: OrderDeliveries;
   orderCollections: OrderCollections;
   deliveryDocuments: DeliveryDocuments;
+  stockReissue: StockReissue;
+  deliveryRuns: DeliveryRuns;
+  courierShipments: CourierShipments;
+  trackingLinks: TrackingLinks;
+  deliveryMessages: DeliveryMessages;
+  trackedOrders: TrackedOrders;
   /** How delivery is billed on invoices and at KRA. */
   deliveryBilling: DeliveryBilling;
   kraConfigs: KraConfigRepository;
@@ -476,7 +488,7 @@ export function getContainer(): AppContainer {
     void geoCompanyId().then((id) => geoSettings.record(id, event)).catch(() => undefined);
   });
   const stockReservations = new StockReservations(drizzleDb, stockLedger, decisionLog);
-  const deliveryServices = createDeliveryServices({ db: drizzleDb, decisionLog, geo, companySettings, numbering, stockReservations });
+  const deliveryServices = createDeliveryServices({ db: drizzleDb, decisionLog, geo, companySettings, numbering, stockReservations, email });
   const orderSla = new OrderSlaService(drizzleDb, new OrderSlaNotifier(email, companySettings));
   const vendorNotifier = new VendorNotifier(drizzleDb, email, companySettings);
   const prequalLifecycle = new PrequalLifecycle(drizzleDb, vendorNotifier);
@@ -616,6 +628,12 @@ export function getContainer(): AppContainer {
     orderDeliveries: deliveryServices.orderDeliveries,
     orderCollections: deliveryServices.orderCollections,
     deliveryDocuments: deliveryServices.deliveryDocuments,
+    stockReissue: deliveryServices.stockReissue,
+    deliveryRuns: deliveryServices.deliveryRuns,
+    courierShipments: deliveryServices.courierShipments,
+    trackingLinks: deliveryServices.trackingLinks,
+    deliveryMessages: deliveryServices.deliveryMessages,
+    trackedOrders: deliveryServices.trackedOrders,
     deliveryBilling: deliveryServices.deliveryBilling,
     kraConfigs,
     kraResolver,

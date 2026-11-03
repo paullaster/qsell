@@ -1,6 +1,7 @@
 import { DISPOSITION_WORDS, ISSUE_MOMENTS, ISSUE_MOMENT_WORDS, RETURN_DISPOSITIONS } from '@/lib/stock-issue';
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { branches, customerGroups, deliveryZones, products } from '@/server/db/drizzle/schema';
+import { branches, customerGroups, deliveryRuns, deliveryZones, products } from '@/server/db/drizzle/schema';
+import { RUN_STATUSES, RUN_STATUS_WORDS } from '@/lib/dispatch-run';
 import { DELIVERY_STATUSES, FAILURE_REASONS, STATUS_WORDS } from '@/lib/delivery-document';
 import { acceptFilters, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
 import { CHANNELS } from '@/server/domains/pricing/domain/types';
@@ -129,4 +130,45 @@ const returnDispositions = staticSource({
   },
 });
 
-export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts, deliveryStatuses, deliveryFailureReasons, stockIssueMoments, returnDispositions];
+/** Runs still being planned, for putting a delivery on one. Newest day first. */
+const openRuns = tableSource({
+  key: 'delivery-open-runs',
+  permission: 'deliveries:dispatch',
+  table: deliveryRuns,
+  id: deliveryRuns.id,
+  label: deliveryRuns.number,
+  searchColumns: [deliveryRuns.number, deliveryRuns.riderName],
+  select: { rider: deliveryRuns.riderName, day: deliveryRuns.runDate },
+  scope: ({ filters, companyId }) => {
+    acceptFilters(filters, {});
+    return [and(eq(deliveryRuns.companyId, companyId), eq(deliveryRuns.status, 'planned')) ?? sql`false`];
+  },
+  toOption: (row) => ({ id: text(row.id), label: `${text(row.label)} · ${text(row.rider)} · ${text(row.day)}`, description: null, badge: null }),
+});
+
+/** The states a run can be in, for filtering the list of runs. */
+const runStatuses = staticSource({
+  key: 'delivery-run-statuses',
+  permission: 'deliveries:dispatch',
+  items: ({ filters }) => {
+    acceptFilters(filters, {});
+    return RUN_STATUSES.map((id) => ({ id, label: RUN_STATUS_WORDS[id], description: null, badge: null }));
+  },
+});
+
+/** What a courier can report about a parcel. */
+const courierNews = staticSource({
+  key: 'courier-news',
+  permission: 'deliveries:dispatch',
+  items: ({ filters }) => {
+    acceptFilters(filters, {});
+    return [
+      { id: 'in_transit', label: 'Still with the courier', description: 'Add a note or the courier’s tracking number', badge: null },
+      { id: 'delivered', label: 'Delivered', description: 'The courier says the customer has it', badge: null },
+      { id: 'exception', label: 'A problem', description: 'The courier could not deliver it', badge: null },
+    ];
+  },
+});
+
+// The zone picker stays first: other code (and its test) reaches it by position.
+export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts, deliveryStatuses, deliveryFailureReasons, stockIssueMoments, returnDispositions, openRuns, runStatuses, courierNews];

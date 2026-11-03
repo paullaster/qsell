@@ -1,7 +1,8 @@
 'use client';
 
-import { use, useState } from 'react';
-import { setStockTimingAction, type stockTimingAction } from '@/server/domains/delivery/document-actions';
+import { use, useEffect, useState } from 'react';
+import { setStockTimingAction, stockReissueApplyAction, stockReissuePreviewAction, type stockTimingAction } from '@/server/domains/delivery/document-actions';
+import { InlineConfirm } from '@/components/ui/InlineConfirm';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { Chip, LoadFailed, Message, PageHeader, attempt, cardClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
 import type { IssueMoment } from '@/lib/stock-issue';
@@ -56,6 +57,86 @@ function Screen({ initial }: { initial: Extract<Loaded, { ok: true }>['data'] })
           <p className="text-xs text-fg-muted">You can look at this, but changing it needs the stock switch-over permission.</p>
         )}
       </section>
+      {saved !== 'payment' && initial.canChange ? <ReissuePanel saved={saved} /> : null}
     </div>
+  );
+}
+
+type Preview = Extract<Awaited<ReturnType<typeof stockReissuePreviewAction>>, { ok: true }>['data'];
+
+/**
+ * Orders paid before the choice was made had their stock taken off the shelf at payment. For the goods that have not left yet, this
+ * counts the stock back and holds it for the order's deliveries, so the order behaves like one paid today.
+ */
+function ReissuePanel({ saved }: { saved: IssueMoment }) {
+  const [preview, setPreview] = useState<Preview | null>(null);
+  const [notice, setNotice] = useState<Notice>(null);
+  const [busy, setBusy] = useState(false);
+  const [version, setVersion] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    void stockReissuePreviewAction().then((r) => {
+      if (cancelled) return;
+      if (r.ok) setPreview(r.data);
+      else setNotice({ kind: 'error', text: r.error });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [saved, version]);
+
+  const apply = async () => {
+    setBusy(true);
+    setNotice(null);
+    let orders = 0;
+    let quantity = 0;
+    const skipped: { orderId: string; orderNumber: string; message: string }[] = [];
+    let failed: string | null = null;
+    for (let batch = 0; batch < 200; batch += 1) {
+      const result = await attempt(stockReissueApplyAction({ skip: skipped.map((s) => s.orderId) }));
+      if (!result.ok) {
+        failed = result.error;
+        break;
+      }
+      orders += result.data.orders;
+      quantity += result.data.quantity;
+      skipped.push(...result.data.skipped);
+      if (result.data.remaining === 0) break;
+    }
+    setBusy(false);
+    setVersion((v) => v + 1);
+    if (failed !== null) {
+      setNotice({ kind: 'error', text: failed });
+      return;
+    }
+    const left = skipped.length === 0 ? '' : ` ${String(skipped.length)} could not be changed: ${skipped.slice(0, 5).map((s) => `${s.orderNumber} (${s.message})`).join('; ')}${skipped.length > 5 ? '; and more' : ''}`;
+    setNotice({ kind: skipped.length === 0 ? 'ok' : 'error', text: `Done. ${String(orders)} ${orders === 1 ? 'order' : 'orders'} changed, ${String(quantity)} counted back and held for their deliveries.${left}` });
+  };
+
+  return (
+    <section aria-label="Orders already paid" className={`${cardClass} space-y-3`}>
+      <h2 className="text-sm font-bold text-fg-strong">Orders already paid</h2>
+      <Message notice={notice} />
+      {preview === null ? (
+        <p role="status" className="text-xs text-fg-muted">
+          Looking for orders paid before this choice…
+        </p>
+      ) : null}
+      {preview?.orders === 0 ? (
+        <p role="status" className="text-xs text-fg-muted">
+          No order paid before this choice has goods still to leave. Nothing to change.
+        </p>
+      ) : null}
+      {preview !== null && preview.orders > 0 ? (
+        <>
+          <p role="status" className="text-xs text-fg-muted">
+            {preview.atLeast ? 'At least ' : ''}
+            {preview.orders} {preview.orders === 1 ? 'order was' : 'orders were'} paid before this choice, with {preview.quantity} {preview.quantity === 1 ? 'item' : 'items'} that {preview.quantity === 1 ? 'has' : 'have'} not left yet. Their stock was taken off the shelf when they were paid. This counts it back and holds it for their deliveries, so they behave like an order paid today. Goods already sent stay as they are.
+          </p>
+          <InlineConfirm label="Apply the choice to orders already paid" action="Apply to these orders" confirm="Yes, change them" busy={busy} onConfirm={() => void apply()} />
+        </>
+      ) : null}
+    </section>
   );
 }

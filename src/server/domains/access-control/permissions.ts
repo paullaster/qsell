@@ -406,6 +406,12 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'Make deliveries for orders and take them through picking, packing, sending out, delivery, a failed attempt, return and cancelling',
   },
+  'deliveries:dispatch': {
+    resource: 'deliveries',
+    action: 'dispatch',
+    category: 'Orders & Sales',
+    description: 'Use the dispatch board: plan runs, put ready deliveries on them, order the stops, start and close runs, and record what a courier reports',
+  },
   'deliveries:handover': {
     resource: 'deliveries',
     action: 'handover',

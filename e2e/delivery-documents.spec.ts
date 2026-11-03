@@ -1,62 +1,8 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import { clickUntilVisible, noHorizontalScroll, noInnerHorizontalScroll, noNativeSelect, open } from './support/page';
 import { pick } from './support/quotes';
 import { deliveryTool } from './support/delivery-fixtures';
-import { stockTool } from './support/stock-fixtures';
-
-/** Two packets of salt in the cart, so the order can be delivered in two parts. */
-async function cartWithTwoSalt(page: Page): Promise<void> {
-  await page.goto('/?q=Salt 500g');
-  const add = page.getByRole('button', { name: 'Add Salt 500g to cart' });
-  await expect(add).toBeVisible({ timeout: 30_000 });
-  await expect(async () => {
-    await add.click();
-    await expect(page.getByRole('button', { name: 'Shopping Cart' })).toContainText('1', { timeout: 3000 });
-  }).toPass({ timeout: 60_000 });
-  await add.click();
-  await expect(page.getByRole('button', { name: 'Shopping Cart' })).toContainText('2', { timeout: 15_000 });
-}
-
-/** The shopper has two packets delivered to a written area; the order is placed (a payment cannot finish in the test shop) and then paid. */
-async function placeDeliveredOrder(page: Page, settle = false): Promise<string> {
-  await cartWithTwoSalt(page);
-  await page.goto('/checkout');
-  await expect(page.getByRole('heading', { name: 'Checkout', level: 1 })).toBeVisible({ timeout: 30_000 });
-  await page.getByLabel('Full name').fill('Wanjiru Documents');
-  await page.getByLabel('Mobile phone').fill('0711 000 666');
-  await page.getByLabel('Street, building or office').fill('1 Moi Avenue');
-  await page.getByLabel('City or town').fill('Nairobi');
-  await page.getByLabel('County or region').fill('Nairobi');
-  await page.getByLabel(/Estate or area/).fill('Westlands');
-  const section = page.getByRole('group', { name: 'Where to deliver and what it costs' });
-  await expect(section.getByRole('status').filter({ hasText: 'Delivery from' })).toContainText('348', { timeout: 30_000 });
-  await page.getByLabel(/number to pay from$/).fill('0733 555 666');
-  await page.getByRole('button', { name: /^Pay / }).click();
-  const failed = page.getByRole('region', { name: 'Payment not completed' });
-  const waiting = page.getByRole('region', { name: 'Waiting for payment' });
-  await expect(failed.or(waiting)).toBeVisible({ timeout: 90_000 });
-  const text = await page.locator('main, body').first().innerText();
-  const orderNumber = /order\s+([A-Z]{2,}-[A-Z0-9-]*\d[A-Z0-9-]*)/i.exec(text)?.[1];
-  expect(orderNumber, 'the page names the order').toBeTruthy();
-  if (settle) deliveryTool('pay', orderNumber ?? '', 'settle');
-  else deliveryTool('pay', orderNumber ?? '');
-  return orderNumber ?? '';
-}
-
-async function openOrder(page: Page, orderNumber: string): Promise<void> {
-  await open(page, '/admin/orders', /Customer Orders/);
-  await page.getByLabel('Search orders').fill(orderNumber);
-  const manage = page.getByRole('button', { name: /Manage/ }).first();
-  await expect(manage).toBeVisible({ timeout: 60_000 });
-  await manage.click();
-  await expect(page.getByRole('dialog')).toBeVisible({ timeout: 30_000 });
-}
-
-/** Presses a step and waits for the delivery to say it is done. */
-async function step(page: Page, button: string, done: string | RegExp): Promise<void> {
-  await page.getByRole('button', { name: button, exact: true }).click();
-  await expect(page.getByText(done).first()).toBeVisible({ timeout: 30_000 });
-}
+import { openOrder, placeDeliveredOrder, step } from './support/delivery-shop';
 
 test.describe('deliveries of an order', () => {
   test('an order is delivered in two parts, one with a failed attempt, and the order is delivered only when all of it is', async ({ page }, testInfo) => {
@@ -180,73 +126,6 @@ test.describe('deliveries of an order', () => {
       await expect(section.getByRole('button', { name: 'Receive these goods' })).toHaveCount(0);
       await expect(page.getByRole('region', { name: 'History' })).toContainText('Returned goods received');
     } finally {
-      deliveryTool('close', tag);
-    }
-  });
-
-  test('with stock kept by location and issued as a delivery goes out, the shelf moves with the delivery, the shop is not misled, and returned goods go back on the shelf', async ({ page }, testInfo) => {
-    test.slow();
-    const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}`;
-    deliveryTool('open', tag);
-    try {
-      stockTool('ledger', 'on');
-      stockTool('stockup', 'Salt 500g', '100');
-      await open(page, '/admin/delivery/stock', 'Stock timing');
-      await pick(page, page.getByRole('combobox', { name: 'The stock of a delivered order leaves the shelf' }), 'goes out', /When a delivery goes out/);
-      await page.getByRole('button', { name: 'Save', exact: true }).click();
-      await expect(page.getByText(/^Saved\./)).toBeVisible({ timeout: 30_000 });
-      await expect(page.getByText('In use now:')).toContainText('When a delivery goes out');
-
-      const shelf = () => Number(stockTool('onhand', 'Salt 500g').quantity);
-      const shop = () => Number(stockTool('shopsees', 'Salt 500g').available);
-      const before = shelf();
-      const shopBefore = shop();
-
-      // Paid, but not sent: the packets stay on the shelf, and the shop does not offer them.
-      const orderNumber = await placeDeliveredOrder(page, true);
-      expect(shelf()).toBe(before);
-      expect(shop()).toBe(shopBefore - 2);
-
-      await openOrder(page, orderNumber);
-      const panel = page.getByRole('region', { name: 'Deliveries' });
-      await panel.getByLabel(/Salt 500g \(up to 2\)/).fill('1');
-      await panel.getByRole('button', { name: 'Make the delivery' }).click();
-      const made = panel.getByRole('link', { name: /^DLV-/ }).first();
-      await expect(made).toBeVisible({ timeout: 30_000 });
-      await clickUntilVisible(made, page.getByRole('heading', { name: /^Delivery DLV-/, level: 2 }));
-      for (const [button, done] of [['Release for picking', 'Released for picking.'], ['Start picking', 'Picking started.'], ['Record what was picked', 'What was picked is recorded.'], ['Mark packed', 'Marked packed.'], ['Mark ready to go', 'Marked ready to go.']] as const) await step(page, button, done);
-      expect(shelf()).toBe(before);
-
-      // Sent out: only the one packet it carries leaves the shelf; what the shop offers does not change.
-      await step(page, 'Send out', 'Sent out.');
-      expect(shelf()).toBe(before - 1);
-      expect(shop()).toBe(shopBefore - 2);
-      await expect(page.getByText('Left the shelf: 1')).toBeVisible();
-
-      // It comes back: counted onto the shelf again, held again for the order, and the shop still offers no more than before.
-      await pick(page, page.getByRole('combobox', { name: 'Why it did not happen' }), 'Nobody', /Nobody was there/);
-      await step(page, 'Record a failed attempt', 'The failed attempt is recorded.');
-      await page.getByLabel('Why it is being returned').fill('Customer is away for a week');
-      await page.getByRole('button', { name: 'Return this delivery' }).click();
-      await page.getByRole('button', { name: 'Confirm: Return this delivery' }).click();
-      await expect(page.getByText(/^Returned\./).first()).toBeVisible({ timeout: 30_000 });
-      const section = page.getByRole('region', { name: 'Goods that came back' });
-      await expect(section).toContainText('It can be: Back on the shelf, Damaged or spoilt');
-      await noNativeSelect(page);
-      await noHorizontalScroll(page);
-      await pick(page, section.getByRole('combobox', { name: /What to do with it/ }), 'shelf', /Back on the shelf/);
-      await section.getByRole('button', { name: 'Receive these goods' }).click();
-      await expect(page.getByText('The returned goods are received.').first()).toBeVisible({ timeout: 30_000 });
-      await expect(section).toContainText('Received 1: Back on the shelf');
-      expect(shelf()).toBe(before);
-      expect(shop()).toBe(shopBefore - 2);
-
-      // The order's timeline says so.
-      await openOrder(page, orderNumber);
-      await expect(page.getByRole('dialog')).toContainText('Returned to stock');
-    } finally {
-      stockTool('timing', 'payment');
-      stockTool('ledger', 'off');
       deliveryTool('close', tag);
     }
   });

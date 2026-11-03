@@ -3,6 +3,7 @@
 import { use, useId, useState } from 'react';
 import Link from 'next/link';
 import { deliveryStepAction, type deliveryAction } from '@/server/domains/delivery/document-actions';
+import { courierNewsAction, deliveryExtrasAction } from '@/server/domains/delivery/run-actions';
 import type { DeliveryView } from '@/server/domains/delivery/documents';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
@@ -10,6 +11,7 @@ import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, car
 import { METHOD_WORDS } from '@/lib/delivery-methods';
 import type { DeliveryAction, DeliveryStatus } from '@/lib/delivery-document';
 import type { Choice } from '@/lib/payment-options';
+import { KIND_WORDS, isMessageKind } from '@/lib/delivery-messages';
 
 type Loaded = Awaited<ReturnType<typeof deliveryAction>>;
 
@@ -40,13 +42,18 @@ const DONE: Record<DeliveryAction, string> = {
   cancel: 'Cancelled. What it carried is open on the order again.',
 };
 
+const MESSAGE_TONE = { sent: 'green', failed: 'red', skipped: 'gray', queued: 'gray' } as const;
+const MESSAGE_WORDS = { sent: 'Sent', failed: 'Not sent yet', skipped: 'Not sent', queued: 'Waiting to send' } as const;
 const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' });
 const qty = (n: number): string => String(n);
 
-export function DeliveryDetailClient({ viewPromise, canFulfil }: { viewPromise: ReturnType<typeof deliveryAction>; canFulfil: Promise<boolean> }) {
+type Extras = Extract<Awaited<ReturnType<typeof deliveryExtrasAction>>, { ok: true }>['data'];
+
+export function DeliveryDetailClient({ viewPromise, canFulfil, extras }: { viewPromise: ReturnType<typeof deliveryAction>; canFulfil: Promise<boolean>; extras: ReturnType<typeof deliveryExtrasAction> }) {
   const res: Loaded = use(viewPromise);
   const allowed = use(canFulfil);
-  return res.ok ? <DeliveryScreen initial={res.data} canFulfil={allowed} /> : <LoadFailed error={res.error} />;
+  const more = use(extras);
+  return res.ok ? <DeliveryScreen initial={res.data} canFulfil={allowed} initialExtras={more.ok ? more.data : { shipment: null, run: null, canDispatch: false, messages: [] }} /> : <LoadFailed error={res.error} />;
 }
 
 function whereTo(view: DeliveryView): string {
@@ -56,9 +63,11 @@ function whereTo(view: DeliveryView): string {
   return [words, pin].filter((p) => p !== '').join(' · ');
 }
 
-function DeliveryScreen({ initial, canFulfil }: { initial: DeliveryView; canFulfil: boolean }) {
+function DeliveryScreen({ initial, canFulfil, initialExtras }: { initial: DeliveryView; canFulfil: boolean; initialExtras: Extras }) {
   const uid = useId();
   const [view, setView] = useState(initial);
+  const [extra, setExtra] = useState(initialExtras);
+  const [news, setNews] = useState<{ state: Choice | null; note: string; receivedBy: string; tracking: string }>({ state: null, note: '', receivedBy: '', tracking: '' });
   const [notice, setNotice] = useState<Notice>(null);
   const [busy, setBusy] = useState(false);
   const [picked, setPicked] = useState<Record<string, string>>({});
@@ -72,8 +81,9 @@ function DeliveryScreen({ initial, canFulfil }: { initial: DeliveryView; canFulf
   const [recipientPhone, setRecipientPhone] = useState(initial.recipientPhone ?? '');
   const [notes, setNotes] = useState(initial.notes ?? '');
   const [back, setBack] = useState<Record<string, { quantity: string; disposition: Choice | null }>>({});
+  const [fix, setFix] = useState<Record<string, { quantity: string; disposition: Choice | null; reason: string }>>({});
 
-  const run = async (step: DeliveryAction | 'amend' | 'receive_return', extra: Record<string, unknown>, done: string, after?: () => void) => {
+  const run = async (step: DeliveryAction | 'amend' | 'receive_return' | 'correct_return', extra: Record<string, unknown>, done: string, after?: () => void) => {
     setBusy(true);
     setNotice(null);
     const result = await attempt(deliveryStepAction({ deliveryId: view.id, step, expectedVersion: view.version, ...extra }));
@@ -83,6 +93,9 @@ function DeliveryScreen({ initial, canFulfil }: { initial: DeliveryView; canFulf
       return;
     }
     setView(result.data);
+    // A step can make or change the courier's shipment or take the delivery off a run, so these are read again.
+    const again = await deliveryExtrasAction(view.id);
+    if (again.ok) setExtra(again.data);
     setNotice({ kind: 'ok', text: done });
     after?.();
   };
@@ -107,6 +120,16 @@ function DeliveryScreen({ initial, canFulfil }: { initial: DeliveryView; canFulf
       <Link href="/admin/delivery/deliveries" className="inline-flex min-h-10 items-center text-xs font-semibold text-indigo-500 underline">
         ← All deliveries
       </Link>
+      {view.status === 'draft' || view.status === 'cancelled' ? null : (
+        <p className="flex flex-wrap gap-4 text-xs font-semibold">
+          <a href={`/api/admin/delivery/deliveries/${view.id}/note?inline=1`} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center text-indigo-500 underline">
+            Print the delivery note
+          </a>
+          <a href={`/api/admin/delivery/deliveries/${view.id}/note`} className="inline-flex min-h-10 items-center text-indigo-500 underline">
+            Download the delivery note (PDF)
+          </a>
+        </p>
+      )}
       <Message notice={notice} />
 
       <section aria-label="Where it goes" className={`${cardClass} space-y-2`}>
@@ -153,6 +176,72 @@ function DeliveryScreen({ initial, canFulfil }: { initial: DeliveryView; canFulf
           </details>
         ) : null}
       </section>
+
+      {extra.run === null ? null : (
+        <p className="text-sm text-fg-muted">
+          On run{' '}
+          <Link href={`/admin/delivery/runs/${extra.run.id}`} className="font-mono font-semibold text-indigo-600 hover:underline dark:text-indigo-400">
+            {extra.run.number}
+          </Link>{' '}
+          with {extra.run.riderName}.
+        </p>
+      )}
+      {extra.shipment === null ? null : (
+        <section aria-label="Courier" className={`${cardClass} space-y-3`}>
+          <h2 className="text-sm font-bold text-fg-strong">With the courier</h2>
+          <p className="text-sm text-fg">
+            {extra.shipment.courierName}
+            {extra.shipment.trackingNumber === null ? '' : ` · tracking number ${extra.shipment.trackingNumber}`} · <Chip tone={extra.shipment.status === 'exception' ? 'red' : 'sky'}>{extra.shipment.statusWords}</Chip>
+          </p>
+          {extra.shipment.lastNote === null ? null : <p className="text-xs text-fg-muted">{extra.shipment.lastNote}</p>}
+          {extra.canDispatch && view.status === 'out_for_delivery' ? (
+            <details className="text-sm">
+              <summary className="min-h-10 cursor-pointer py-2 font-semibold text-indigo-500">Record what the courier reported</summary>
+              <div className="grid grid-cols-1 gap-3 pt-2 sm:grid-cols-2">
+                <ChoicePicker label="What the courier reported" source="courier-news" choice={news.state} onChoice={(c) => setNews({ ...news, state: c })} placeholder="Choose" clearable />
+                <Field id={`${uid}-cn-note`} label="Note">
+                  <input id={`${uid}-cn-note`} value={news.note} onChange={(e) => setNews({ ...news, note: e.target.value })} maxLength={300} className={fieldClass} autoComplete="off" />
+                </Field>
+                {news.state?.id === 'delivered' ? (
+                  <Field id={`${uid}-cn-by`} label="Who received it">
+                    <input id={`${uid}-cn-by`} value={news.receivedBy} onChange={(e) => setNews({ ...news, receivedBy: e.target.value })} maxLength={120} className={fieldClass} autoComplete="off" />
+                  </Field>
+                ) : null}
+                <Field id={`${uid}-cn-tr`} label="Tracking number (if it changed)">
+                  <input id={`${uid}-cn-tr`} value={news.tracking} onChange={(e) => setNews({ ...news, tracking: e.target.value })} maxLength={120} className={`${fieldClass} font-mono`} autoComplete="off" />
+                </Field>
+                <div className="sm:col-span-2">
+                  <button
+                    type="button"
+                    className={buttonClass}
+                    disabled={busy || news.state === null}
+                    onClick={() =>
+                      void (async () => {
+                        setBusy(true);
+                        setNotice(null);
+                        const r = await attempt(courierNewsAction({ deliveryId: view.id, state: news.state?.id, note: news.note, receivedBy: news.receivedBy, trackingNumber: news.tracking }));
+                        if (!r.ok) {
+                          setBusy(false);
+                          setNotice({ kind: 'error', text: r.error });
+                          return;
+                        }
+                        setView(r.data);
+                        const again = await deliveryExtrasAction(view.id);
+                        if (again.ok) setExtra(again.data);
+                        setBusy(false);
+                        setNews({ state: null, note: '', receivedBy: '', tracking: '' });
+                        setNotice({ kind: 'ok', text: 'The courier’s news is recorded.' });
+                      })()
+                    }
+                  >
+                    Record the news
+                  </button>
+                </div>
+              </div>
+            </details>
+          ) : null}
+        </section>
+      )}
 
       <section aria-label="What it carries" className={`${cardClass} space-y-3`}>
         <h2 className="text-sm font-bold text-fg-strong">What it carries</h2>
@@ -310,9 +399,47 @@ function DeliveryScreen({ initial, canFulfil }: { initial: DeliveryView; canFulf
                 <li key={line.id} className="space-y-2 py-3">
                   <p className="text-sm font-semibold text-fg-strong">{line.productName}</p>
                   {line.back?.receipt ? (
-                    <p className="text-sm text-fg">
-                      Received {qty(line.back.receipt.quantity)}: {line.back.receipt.words} <span className="text-xs text-fg-muted">on {when(line.back.receipt.receivedAt)}</span>
-                    </p>
+                    <div className="space-y-2">
+                      <p className="text-sm text-fg">
+                        Received {qty(line.back.receipt.quantity)}: {line.back.receipt.words} <span className="text-xs text-fg-muted">on {when(line.back.receipt.receivedAt)}</span>
+                        {line.back.receipt.correctionReason === null ? null : <span className="text-xs text-fg-muted"> · corrected (revision {line.back.receipt.revision}): {line.back.receipt.correctionReason}</span>}
+                      </p>
+                      {line.back.earlier.map((e) => (
+                        <p key={e.revision} className="text-xs text-fg-muted">
+                          Before: {qty(e.quantity)}, {e.words} (revision {e.revision})
+                        </p>
+                      ))}
+                      {canFulfil && line.back.receipt.correctable ? (
+                        <details className="text-sm">
+                          <summary className="min-h-10 cursor-pointer py-2 font-semibold text-indigo-500">Correct this receipt</summary>
+                          <div className="grid grid-cols-1 gap-3 pt-2 sm:grid-cols-[8rem_1fr]">
+                            <Field id={`${uid}-fq-${line.id}`} label={`Corrected quantity: ${line.productName}`}>
+                              <input id={`${uid}-fq-${line.id}`} inputMode="decimal" value={fix[line.productId]?.quantity ?? String(line.back.receipt.quantity)} onChange={(e) => setFix({ ...fix, [line.productId]: { quantity: e.target.value, disposition: fix[line.productId]?.disposition ?? null, reason: fix[line.productId]?.reason ?? '' } })} className={`${fieldClass} font-mono`} autoComplete="off" />
+                            </Field>
+                            <ChoicePicker label={`Corrected choice: ${line.productName}`} source="delivery-return-dispositions" choice={fix[line.productId]?.disposition ?? null} onChoice={(c) => setFix({ ...fix, [line.productId]: { quantity: fix[line.productId]?.quantity ?? String(line.back?.receipt?.quantity ?? 0), disposition: c, reason: fix[line.productId]?.reason ?? '' } })} placeholder="Choose" clearable />
+                            <div className="sm:col-span-2">
+                              <Field id={`${uid}-fr-${line.id}`} label="Why it is being corrected">
+                                <input id={`${uid}-fr-${line.id}`} value={fix[line.productId]?.reason ?? ''} onChange={(e) => setFix({ ...fix, [line.productId]: { quantity: fix[line.productId]?.quantity ?? String(line.back?.receipt?.quantity ?? 0), disposition: fix[line.productId]?.disposition ?? null, reason: e.target.value } })} maxLength={300} className={fieldClass} autoComplete="off" />
+                              </Field>
+                            </div>
+                            <div className="sm:col-span-2">
+                              <button
+                                type="button"
+                                className={buttonClass}
+                                disabled={busy}
+                                onClick={() => {
+                                  const f = fix[line.productId];
+                                  void run('correct_return', { productId: line.productId, quantity: Number(f?.quantity ?? line.back?.receipt?.quantity ?? 0), disposition: f?.disposition?.id ?? '', reason: f?.reason ?? '' }, 'The receipt is corrected.', () => setFix({}));
+                                }}
+                              >
+                                Correct the receipt
+                              </button>
+                            </div>
+                          </div>
+                        </details>
+                      ) : null}
+                      {line.back.receipt.correctable ? null : <p className="text-xs text-fg-muted">These goods have gone out again, so the receipt can no longer be corrected. A stock adjustment puts right any difference.</p>}
+                    </div>
                   ) : (
                     <p className="text-xs text-fg-muted">Up to {qty(line.back?.could ?? 0)} could have come back. It can be: {line.back?.choices.map((c) => c.name).join(', ')}.</p>
                   )}
@@ -345,6 +472,25 @@ function DeliveryScreen({ initial, canFulfil }: { initial: DeliveryView; canFulf
           ) : null}
         </section>
       ) : null}
+
+      {extra.messages.length === 0 ? null : (
+        <section aria-label="Messages to the customer" className={`${cardClass} space-y-3`}>
+          <h2 className="text-sm font-bold text-fg-strong">Messages to the customer</h2>
+          <ul className="space-y-1.5">
+            {extra.messages.map((m) => (
+              <li key={m.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                <span className="font-semibold text-fg-strong">{isMessageKind(m.kind) ? KIND_WORDS[m.kind] : m.kind}</span>
+                <Chip tone={MESSAGE_TONE[m.status]}>{MESSAGE_WORDS[m.status]}</Chip>
+                <span className="text-xs text-fg-muted">
+                  {m.recipient === '' ? '' : `to ${m.recipient} · `}
+                  {when(m.sentAt ?? m.createdAt)}
+                </span>
+                {m.note === null ? null : <span className="text-xs text-fg-muted">{m.note}</span>}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section aria-label="History" className={`${cardClass} space-y-3`}>
         <h2 className="text-sm font-bold text-fg-strong">History</h2>

@@ -9,7 +9,7 @@ import type * as DocumentActions from './document-actions';
 import type { InventoryReservationService as ReservationType } from '@/server/domains/inventory/reservation-service';
 import type { OrderWriteService as OrderWriteServiceType } from '@/server/domains/orders/write-service';
 import type { OrderStages as OrderStagesType } from '@/server/domains/orders/stages';
-import { settleFinanceBacklog } from '@/server/domains/stock/test-support';
+import { holdLedgerSwitch, settleFinanceBacklog } from '@/server/domains/stock/test-support';
 
 const { requirePermission } = vi.hoisted(() => ({ requirePermission: vi.fn() }));
 vi.mock('@/server/domains/access-control/guard', async (original) => ({ ...(await original<Record<string, unknown>>()), requirePermission }));
@@ -38,6 +38,7 @@ describe.skipIf(!has(url))('stock issued with deliveries (database)', () => {
   let OrderStages: typeof OrderStagesType;
   let fulfilOrder: (typeof ReservationType)['fulfilOrder'];
   let companyId: string;
+  let releaseLedgerSwitch: (() => Promise<void>) | undefined;
   let itemTypeId: string;
   let wholeUnitId: string | null;
   let spy: { mockRestore: () => void } | undefined;
@@ -114,6 +115,8 @@ describe.skipIf(!has(url))('stock issued with deliveries (database)', () => {
   const stagesOf = async (orderId: string) => (await db.select({ stage: schema.orderStageEvents.stage, outcome: schema.orderStageEvents.outcome, reason: schema.orderStageEvents.reasonCode }).from(schema.orderStageEvents).where(eq(schema.orderStageEvents.orderId, orderId)).orderBy(schema.orderStageEvents.sequence));
 
   beforeAll(async () => {
+    // Files that switch stock-by-location for the whole company take turns, so none confuses another.
+    releaseLedgerSwitch = await holdLedgerSwitch(url);
     // An order that is collected has a code, sealed with the instance's data-encryption key.
     process.env.DATA_ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString('base64');
     const mod = await import('@/server/di/container');
@@ -137,7 +140,11 @@ describe.skipIf(!has(url))('stock issued with deliveries (database)', () => {
     await c.stockLocations.ensureDefault(companyId);
     await c.stockShadow.setShadow(companyId, false);
     await c.stockSettings.setLedgerMode(companyId, true, { requireCleanShadow: false });
-  }, 180_000);
+  }, 900_000);
+  // Registered first, so it runs last: the switch is given back only after this file has put everything right.
+  afterAll(async () => {
+    await releaseLedgerSwitch?.();
+  }, 60_000);
   afterAll(async () => {
     spy?.mockRestore();
     await c.stockSettings.setIssueMoment(companyId, 'payment');
@@ -219,6 +226,8 @@ describe.skipIf(!has(url))('stock issued with deliveries (database)', () => {
       // The old journal has one line for the product, with both parts in it.
       const journal = await db.select().from(schema.inventoryMovements).where(and(eq(schema.inventoryMovements.referenceId, o.id), eq(schema.inventoryMovements.productId, o.a), eq(schema.inventoryMovements.changeType, 'order_fulfillment')));
       expect(journal.map((j) => j.changeAmount)).toEqual([-5]);
+      // The line still says, in its before and after figures, what the goods that left came to.
+      expect(journal.map((j) => j.newStock - j.previousStock)).toEqual([-5]);
     });
 
     it('issues only what was picked when a pick is short, and the difference stays held for another delivery', async () => {
@@ -316,19 +325,19 @@ describe.skipIf(!has(url))('stock issued with deliveries (database)', () => {
       await sendBack(id);
       const v = await view(id);
       expect(v.status).toBe('returned');
-      expect(v.lines.find((l) => l.productId === o.a)?.back).toMatchObject({ could: 5, receipt: null, choices: [{ id: 'restock' }, { id: 'damaged' }] });
+      expect(v.lines.find((l) => l.productId === o.a)?.back).toMatchObject({ could: 5, receipt: null, choices: [{ id: 'return_to_stock' }, { id: 'quarantine' }, { id: 'scrap' }] });
 
-      const r = await c.deliveryDocuments.receiveReturn(staff(), id, { lines: [{ productId: o.a, quantity: 4, disposition: 'restock' }], note: 'One torn open' });
+      const r = await c.deliveryDocuments.receiveReturn(staff(), id, { lines: [{ productId: o.a, quantity: 4, disposition: 'return_to_stock' }], note: 'One torn open' });
       expect(r.ok).toBe(true);
       expect(await onHand(o.a)).toBe(49);
       expect((await moves(o.a, 'sale_return')).map((m) => m.quantity)).toEqual([4]);
       expect((await stagesOf(o.id)).filter((s) => s.stage === 'returned_to_stock')).toHaveLength(1);
       const after = await view(id);
-      expect(after.lines.find((l) => l.productId === o.a)?.back?.receipt).toMatchObject({ quantity: 4, disposition: 'restock' });
+      expect(after.lines.find((l) => l.productId === o.a)?.back?.receipt).toMatchObject({ quantity: 4, disposition: 'return_to_stock' });
       expect(after.events.map((e) => e.action)).toContain('receive_return');
       // A product is received once; the other one can still be.
-      expect(await c.deliveryDocuments.receiveReturn(staff(), id, { lines: [{ productId: o.a, quantity: 1, disposition: 'restock' }] })).toMatchObject({ ok: false, reason: 'conflict' });
-      expect((await c.deliveryDocuments.receiveReturn(staff(), id, { lines: [{ productId: o.b, quantity: 2, disposition: 'restock' }] })).ok).toBe(true);
+      expect(await c.deliveryDocuments.receiveReturn(staff(), id, { lines: [{ productId: o.a, quantity: 1, disposition: 'return_to_stock' }] })).toMatchObject({ ok: false, reason: 'conflict' });
+      expect((await c.deliveryDocuments.receiveReturn(staff(), id, { lines: [{ productId: o.b, quantity: 2, disposition: 'return_to_stock' }] })).ok).toBe(true);
       expect(await onHand(o.b)).toBe(50);
       // The goods are open on the order again, and going out again issues them again from the shelf.
       const again = await made(o);
@@ -343,14 +352,14 @@ describe.skipIf(!has(url))('stock issued with deliveries (database)', () => {
       const id = await made(o);
       await runTo(id);
       await sendBack(id);
-      const r = await c.deliveryDocuments.receiveReturn(staff(), id, { lines: [{ productId: o.a, quantity: 2, disposition: 'damaged' }] });
+      const r = await c.deliveryDocuments.receiveReturn(staff(), id, { lines: [{ productId: o.a, quantity: 2, disposition: 'scrap' }] });
       expect(r.ok).toBe(true);
       // Counted back and written off at once: the shelf is where the issue left it, and both movements are on record.
       expect(await onHand(o.a)).toBe(45);
       expect((await moves(o.a, 'sale_return')).map((m) => m.quantity)).toEqual([2]);
       expect((await moves(o.a, 'write_off')).map((m) => m.quantity)).toEqual([-2]);
       expect((await stagesOf(o.id)).filter((s) => s.stage === 'returned_to_stock')).toHaveLength(0);
-      const log = await db.select().from(schema.decisionLog).where(and(eq(schema.decisionLog.subjectId, id), eq(schema.decisionLog.action, 'delivery.return_written_off')));
+      const log = await db.select().from(schema.decisionLog).where(and(eq(schema.decisionLog.subjectId, id), eq(schema.decisionLog.action, 'delivery.return_set_aside')));
       expect(log).toHaveLength(1);
     });
 
@@ -363,8 +372,8 @@ describe.skipIf(!has(url))('stock issued with deliveries (database)', () => {
       await sendBack(id);
       expect(await onHand(o.a)).toBe(50);
       const choices = (await view(id)).lines.find((l) => l.productId === o.a)?.back?.choices.map((c0) => c0.id);
-      expect(choices).toEqual(['keep', 'damaged']);
-      expect((await c.deliveryDocuments.receiveReturn(staff(), id, { lines: [{ productId: o.a, quantity: 1, disposition: 'damaged' }, { productId: o.b, quantity: 2, disposition: 'keep' }] })).ok).toBe(true);
+      expect(choices).toEqual(['return_to_stock', 'quarantine', 'scrap']);
+      expect((await c.deliveryDocuments.receiveReturn(staff(), id, { lines: [{ productId: o.a, quantity: 1, disposition: 'scrap' }, { productId: o.b, quantity: 2, disposition: 'return_to_stock' }] })).ok).toBe(true);
       expect(await onHand(o.a)).toBe(49);
       expect(await onHand(o.b)).toBe(50);
       expect(await moves(o.b, 'sale_return')).toHaveLength(0);
@@ -379,11 +388,130 @@ describe.skipIf(!has(url))('stock issued with deliveries (database)', () => {
       await sendBack(id);
       const place = (await holdsOf(o.id, o.a))[0]?.locationId ?? '';
       await db.transaction((tx) => c.stockLedger.post(tx, { companyId, productId: o.a, locationId: place, type: 'write_off', quantity: -45, actor: { type: 'job' } }));
-      const r = await c.deliveryDocuments.receiveReturn(staff(), id, { lines: [{ productId: o.a, quantity: 5, disposition: 'damaged' }] });
+      const r = await c.deliveryDocuments.receiveReturn(staff(), id, { lines: [{ productId: o.a, quantity: 5, disposition: 'scrap' }] });
       expect(r).toMatchObject({ ok: false, reason: 'conflict', message: expect.stringContaining('not enough stock') as string });
       expect(await onHand(o.a)).toBe(0);
       expect((await view(id)).lines.find((l) => l.productId === o.a)?.back?.receipt).toBeNull();
       expect(await db.select().from(schema.deliveryReturns).where(eq(schema.deliveryReturns.deliveryId, id))).toHaveLength(0);
+    });
+
+    it('can be counted into a quarantine place, never sold from there, while the order is held a replacement from the shelf', async () => {
+      await on('dispatch');
+      const o = await order();
+      await fulfilOrder(o.id);
+      const id = await made(o);
+      await runTo(id);
+      await sendBack(id);
+      const q = await c.stockLocations.create(companyId, { code: code(), name: 'Look at these', kind: 'quarantine', isSellable: false });
+      madeLocations.push(q.id);
+      expect((await c.deliveryDocuments.receiveReturn(staff(), id, { lines: [{ productId: o.a, quantity: 2, disposition: 'quarantine' }] })).ok).toBe(true);
+      const back = await moves(o.a, 'sale_return');
+      expect(back.map((m) => [m.locationId, m.quantity])).toEqual([[q.id, 2]]);
+      const available = await c.stockAvailability.forProduct(o.a, 'ecommerce');
+      expect(available.onHand).toBe(45);
+      expect((await holdsOf(o.id, o.a)).filter((h) => h.state === 'held').reduce((n, h) => n + h.quantity, 0)).toBe(2);
+    });
+
+    it('is refused in words when there is no quarantine place to count the goods into', async () => {
+      await on('dispatch');
+      const o = await order();
+      await fulfilOrder(o.id);
+      const id = await made(o);
+      await runTo(id);
+      await sendBack(id);
+      const active = await db.select({ id: schema.stockLocations.id }).from(schema.stockLocations).where(and(eq(schema.stockLocations.companyId, companyId), eq(schema.stockLocations.kind, 'quarantine'), eq(schema.stockLocations.isActive, true)));
+      if (active.length > 0) await db.update(schema.stockLocations).set({ isActive: false }).where(inArray(schema.stockLocations.id, active.map((a) => a.id)));
+      try {
+        const r = await c.deliveryDocuments.receiveReturn(staff(), id, { lines: [{ productId: o.a, quantity: 1, disposition: 'quarantine' }] });
+        expect(r).toMatchObject({ ok: false, reason: 'conflict', message: expect.stringContaining('quarantine place') as string });
+        expect(await onHand(o.a)).toBe(45);
+      } finally {
+        if (active.length > 0) await db.update(schema.stockLocations).set({ isActive: true }).where(inArray(schema.stockLocations.id, active.map((a) => a.id)));
+      }
+    });
+
+    it('does not count the same goods twice in the old settlement journal when they go out again after coming back', async () => {
+      await on('dispatch');
+      const o = await order();
+      await fulfilOrder(o.id);
+      const id = await made(o);
+      await runTo(id);
+      await sendBack(id);
+      expect((await c.deliveryDocuments.receiveReturn(staff(), id, { lines: [{ productId: o.a, quantity: 5, disposition: 'return_to_stock' }, { productId: o.b, quantity: 2, disposition: 'return_to_stock' }] })).ok).toBe(true);
+      const journal = async () => (await db.select().from(schema.inventoryMovements).where(and(eq(schema.inventoryMovements.referenceId, o.id), eq(schema.inventoryMovements.productId, o.a), eq(schema.inventoryMovements.changeType, 'order_fulfillment')))).map((j) => j.changeAmount);
+      expect(await journal()).toEqual([0]);
+      await runTo(await made(o));
+      expect(await journal()).toEqual([-5]);
+      expect(await onHand(o.a)).toBe(45);
+      const [line] = await db.select().from(schema.inventoryMovements).where(and(eq(schema.inventoryMovements.referenceId, o.id), eq(schema.inventoryMovements.productId, o.a), eq(schema.inventoryMovements.changeType, 'order_fulfillment')));
+      expect((line?.newStock ?? 0) - (line?.previousStock ?? 0)).toBe(-5);
+    });
+
+    it('can be corrected: what the receipt did is undone and the corrected receipt done, kept as a new revision with its reason', async () => {
+      await on('dispatch');
+      const o = await order();
+      await fulfilOrder(o.id);
+      const id = await made(o);
+      await runTo(id);
+      await sendBack(id);
+      expect((await c.deliveryDocuments.receiveReturn(staff(), id, { lines: [{ productId: o.a, quantity: 5, disposition: 'return_to_stock' }] })).ok).toBe(true);
+      expect(await onHand(o.a)).toBe(50);
+
+      const fixed = await c.deliveryDocuments.correctReturn(staff(), id, { productId: o.a, quantity: 3, disposition: 'scrap', reason: 'Two were fine, three were crushed' });
+      expect(fixed.ok).toBe(true);
+      // Five were counted back, then the receipt was undone (45), then three were counted back and written off (45).
+      expect(await onHand(o.a)).toBe(45);
+      const line = (await view(id)).lines.find((l) => l.productId === o.a);
+      expect(line?.back?.receipt).toMatchObject({ revision: 2, quantity: 3, disposition: 'scrap', correctionReason: 'Two were fine, three were crushed', correctable: true });
+      expect(line?.back?.earlier).toMatchObject([{ revision: 1, quantity: 5 }]);
+      expect((await view(id)).events.map((e) => e.action)).toContain('correct_return');
+      const held = (await holdsOf(o.id, o.a)).filter((h) => h.state === 'held').reduce((n, h) => n + h.quantity, 0);
+      expect(held).toBe(3);
+      const log = await db.select().from(schema.decisionLog).where(and(eq(schema.decisionLog.subjectId, id), eq(schema.decisionLog.action, 'delivery.return_corrected')));
+      expect(log).toHaveLength(1);
+      // Both receipts are kept, and the second can be corrected again.
+      expect(await db.select().from(schema.deliveryReturns).where(and(eq(schema.deliveryReturns.deliveryId, id), eq(schema.deliveryReturns.productId, o.a)))).toHaveLength(2);
+      expect((await c.deliveryDocuments.correctReturn(staff(), id, { productId: o.a, quantity: 5, disposition: 'return_to_stock', reason: 'They were all fine after all' })).ok).toBe(true);
+      expect(await onHand(o.a)).toBe(50);
+    });
+
+    it('cannot be corrected once the goods have gone out again, and a correction needs a reason, a received product and a choice that fits', async () => {
+      await on('dispatch');
+      const o = await order();
+      await fulfilOrder(o.id);
+      const id = await made(o);
+      await runTo(id);
+      await sendBack(id);
+      const ask = (over: Record<string, unknown>) => c.deliveryDocuments.correctReturn(staff(), id, { productId: o.a, quantity: 5, disposition: 'scrap', reason: 'Counted wrongly', ...over });
+      expect(await ask({})).toMatchObject({ ok: false, reason: 'not_found' });
+      expect((await c.deliveryDocuments.receiveReturn(staff(), id, { lines: [{ productId: o.a, quantity: 5, disposition: 'return_to_stock' }] })).ok).toBe(true);
+      expect(await ask({ reason: 'no' })).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect(await ask({ quantity: 9 })).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect(await ask({ disposition: 'keep' })).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect(await ask({ productId: 'prod_other' })).toMatchObject({ ok: false });
+      expect(await c.deliveryDocuments.correctReturn({ companyId: randomUUID(), userId: 'x' }, id, { productId: o.a, quantity: 5, disposition: 'scrap', reason: 'Counted wrongly' })).toMatchObject({ ok: false, reason: 'not_found' });
+      expect(await onHand(o.a)).toBe(50);
+
+      await runTo(await made(o));
+      expect(await onHand(o.a)).toBe(45);
+      expect((await view(id)).lines.find((l) => l.productId === o.a)?.back?.receipt?.correctable).toBe(false);
+      expect(await ask({})).toMatchObject({ ok: false, reason: 'conflict', message: expect.stringContaining('gone out again') as string });
+      expect(await onHand(o.a)).toBe(45);
+    });
+
+    it('is corrected through the step action only by someone who may fulfil deliveries', async () => {
+      await on('dispatch');
+      const o = await order();
+      await fulfilOrder(o.id);
+      const id = await made(o);
+      await runTo(id);
+      await sendBack(id);
+      expect((await c.deliveryDocuments.receiveReturn(staff(), id, { lines: [{ productId: o.a, quantity: 5, disposition: 'return_to_stock' }] })).ok).toBe(true);
+      const body = { deliveryId: id, step: 'correct_return', productId: o.a, quantity: 4, disposition: 'scrap', reason: 'One was missing' };
+      requirePermission.mockImplementation((p: string) => (p === 'deliveries:read' ? Promise.resolve('reader-1') : Promise.reject(Object.assign(new Error('denied'), { name: 'AccessDeniedError' }))));
+      expect(await actions.deliveryStepAction(body)).toMatchObject({ ok: false });
+      requirePermission.mockResolvedValue('dispatcher-1');
+      expect(await actions.deliveryStepAction(body)).toMatchObject({ ok: true });
     });
 
     it('are kept for the order when the stock was issued at payment, and nothing else is offered', async () => {
@@ -394,7 +522,7 @@ describe.skipIf(!has(url))('stock issued with deliveries (database)', () => {
       await sendBack(id);
       const line = (await view(id)).lines[0];
       expect(line?.back?.choices.map((c0) => c0.id)).toEqual(['keep']);
-      expect(await c.deliveryDocuments.receiveReturn(staff(), id, { lines: [{ productId: o.a, quantity: 1, disposition: 'restock' }] })).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect(await c.deliveryDocuments.receiveReturn(staff(), id, { lines: [{ productId: o.a, quantity: 1, disposition: 'return_to_stock' }] })).toMatchObject({ ok: false, reason: 'bad_input' });
       expect((await c.deliveryDocuments.receiveReturn(staff(), id, { lines: [{ productId: o.a, quantity: 5, disposition: 'keep' }] })).ok).toBe(true);
       expect(await onHand(o.a)).toBe(45);
     });
@@ -404,16 +532,16 @@ describe.skipIf(!has(url))('stock issued with deliveries (database)', () => {
       const o = await order();
       await fulfilOrder(o.id);
       const id = await made(o);
-      expect(await c.deliveryDocuments.receiveReturn(staff(), id, { lines: [{ productId: o.a, quantity: 1, disposition: 'restock' }] })).toMatchObject({ ok: false, reason: 'not_allowed' });
+      expect(await c.deliveryDocuments.receiveReturn(staff(), id, { lines: [{ productId: o.a, quantity: 1, disposition: 'return_to_stock' }] })).toMatchObject({ ok: false, reason: 'not_allowed' });
       await runTo(id);
       await sendBack(id);
       const ask = (lines: unknown) => c.deliveryDocuments.receiveReturn(staff(), id, { lines });
       expect(await ask([])).toMatchObject({ ok: false, reason: 'bad_input', message: expect.stringContaining('what came back') as string });
-      expect(await ask([{ productId: o.a, quantity: 9, disposition: 'restock' }])).toMatchObject({ ok: false, message: expect.stringContaining('No more than 5') as string });
-      expect(await ask([{ productId: 'prod_other', quantity: 1, disposition: 'restock' }])).toMatchObject({ ok: false });
+      expect(await ask([{ productId: o.a, quantity: 9, disposition: 'return_to_stock' }])).toMatchObject({ ok: false, message: expect.stringContaining('No more than 5') as string });
+      expect(await ask([{ productId: 'prod_other', quantity: 1, disposition: 'return_to_stock' }])).toMatchObject({ ok: false });
       expect(await ask([{ productId: o.a, quantity: 1, disposition: 'sell_it' }])).toMatchObject({ ok: false });
       expect(await ask('not a list')).toMatchObject({ ok: false });
-      expect(await c.deliveryDocuments.receiveReturn({ companyId: randomUUID(), userId: 'x' }, id, { lines: [{ productId: o.a, quantity: 1, disposition: 'restock' }] })).toMatchObject({ ok: false, reason: 'not_found' });
+      expect(await c.deliveryDocuments.receiveReturn({ companyId: randomUUID(), userId: 'x' }, id, { lines: [{ productId: o.a, quantity: 1, disposition: 'return_to_stock' }] })).toMatchObject({ ok: false, reason: 'not_found' });
       expect(await onHand(o.a)).toBe(45);
     });
 
@@ -424,7 +552,7 @@ describe.skipIf(!has(url))('stock issued with deliveries (database)', () => {
       const id = await made(o);
       await runTo(id);
       await sendBack(id);
-      const results = await Promise.all([1, 2].map(() => c.deliveryDocuments.receiveReturn(staff(), id, { lines: [{ productId: o.a, quantity: 5, disposition: 'restock' }] })));
+      const results = await Promise.all([1, 2].map(() => c.deliveryDocuments.receiveReturn(staff(), id, { lines: [{ productId: o.a, quantity: 5, disposition: 'return_to_stock' }] })));
       expect(results.filter((r) => r.ok)).toHaveLength(1);
       expect(await onHand(o.a)).toBe(50);
       await expect(db.update(schema.deliveryReturns).set({ quantity: '1' }).where(eq(schema.deliveryReturns.deliveryId, id))).rejects.toThrow();
@@ -439,9 +567,9 @@ describe.skipIf(!has(url))('stock issued with deliveries (database)', () => {
       await runTo(id);
       await sendBack(id);
       requirePermission.mockImplementation((p: string) => (p === 'deliveries:read' ? Promise.resolve('reader-1') : Promise.reject(Object.assign(new Error('denied'), { name: 'AccessDeniedError' }))));
-      expect(await actions.deliveryStepAction({ deliveryId: id, step: 'receive_return', lines: [{ productId: o.a, quantity: 5, disposition: 'restock' }] })).toMatchObject({ ok: false });
+      expect(await actions.deliveryStepAction({ deliveryId: id, step: 'receive_return', lines: [{ productId: o.a, quantity: 5, disposition: 'return_to_stock' }] })).toMatchObject({ ok: false });
       requirePermission.mockResolvedValue('dispatcher-1');
-      expect(await actions.deliveryStepAction({ deliveryId: id, step: 'receive_return', lines: [{ productId: o.a, quantity: 5, disposition: 'restock' }] })).toMatchObject({ ok: true });
+      expect(await actions.deliveryStepAction({ deliveryId: id, step: 'receive_return', lines: [{ productId: o.a, quantity: 5, disposition: 'return_to_stock' }] })).toMatchObject({ ok: true });
       expect(await onHand(o.a)).toBe(50);
     });
   });

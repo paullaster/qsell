@@ -46,6 +46,11 @@ export const DOCUMENT_KINDS = {
     fiscal: false,
     suggested: { code: 'DLV', prefix: 'DLV-{YY}-', digits: 10, reset: 'yearly', blockSize: 200 },
   },
+  delivery_run: {
+    label: 'Delivery run',
+    fiscal: false,
+    suggested: { code: 'RUN', prefix: 'RUN-{YY}-', digits: 8, reset: 'yearly', blockSize: 50 },
+  },
   proforma_invoice: {
     label: 'Proforma invoice',
     fiscal: false,

@@ -72,6 +72,12 @@ export const providerSendOperation = async (payload: { operationId: string }) =>
   await getContainer().paymentEngine.daraja.send(payload.operationId);
 };
 
+/** Worker cron task: send the messages customers are due about their deliveries, and try again those that could not be sent. */
+export const deliveryMessagesSweep = async (_payload: unknown, helpers: JobHelpers) => {
+  const sent = await getContainer().deliveryMessages.flush(50);
+  if (sent > 0) helpers.logger.info(`Delivery messages sent: ${String(sent)}`);
+};
+
 /** Worker cron task: pick up whatever a lost job or a restart left half done. */
 export const providerSweep = async (_payload: unknown, helpers: JobHelpers) => {
   const r = await getContainer().paymentEngine.sweep();
@@ -408,6 +414,7 @@ export const tasks = {
   'provider-verify-transaction': providerVerifyTransaction,
   'provider-send-operation': providerSendOperation,
   'provider-sweep': providerSweep,
+  'delivery-messages-sweep': deliveryMessagesSweep,
   'provider-pull-sweep': providerPullSweep,
   'vendor-document-expiry': vendorDocumentExpiry,
   'vendor-bank-promote': vendorBankPromote,
