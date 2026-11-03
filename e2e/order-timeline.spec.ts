@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { noHorizontalScroll, noInnerHorizontalScroll, open } from './support/page';
+import { clickUntilVisible, noHorizontalScroll, noInnerHorizontalScroll, open } from './support/page';
 import { pick } from './support/quotes';
 import { latestAttempt, makeProduct, orderStages, setStock } from './support/storefront-fixtures';
 import { attemptTag } from './support/vendors';
@@ -27,8 +27,8 @@ async function openOrder(page: Page, orderNumber: string): Promise<void> {
   await page.getByLabel('Search orders').fill(orderNumber);
   const manage = page.getByRole('button', { name: /Manage/ }).first();
   await expect(manage).toBeVisible({ timeout: 60_000 });
-  await manage.click();
-  await expect(page.getByRole('dialog')).toBeVisible({ timeout: 30_000 });
+  // The button is drawn by the server before the page can act on a press, so a press that comes too early is lost: press until the dialog opens.
+  await clickUntilVisible(manage, page.getByRole('dialog'));
 }
 
 test.describe('every stage of an order is timestamped, failures included', () => {
