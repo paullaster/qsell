@@ -8,7 +8,7 @@ import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
 import type * as ShopActions from './shop-actions';
 import type * as StagesModule from '@/server/domains/orders/stages';
 import type { OrderWriteService as OrderWriteServiceType } from '@/server/domains/orders/write-service';
-import { settleFinanceBacklog } from '@/server/domains/stock/test-support';
+import { holdLedgerSwitch, settleFinanceBacklog } from '@/server/domains/stock/test-support';
 
 const { requirePermission } = vi.hoisted(() => ({ requirePermission: vi.fn() }));
 vi.mock('@/server/domains/access-control/guard', async (original) => ({ ...(await original<Record<string, unknown>>()), requirePermission }));
@@ -39,6 +39,7 @@ describe.skipIf(!has(url))('delivery for orders (database)', () => {
   let Stages: typeof StagesModule.OrderStages;
   let createOrder: (typeof OrderWriteServiceType)['createOrder'];
   let companyId: string;
+  let releaseLedgerSwitch: (() => Promise<void>) | undefined;
   let itemTypeId: string;
   let shop: typeof ShopActions;
   let spy: { mockRestore: () => void } | undefined;
@@ -83,6 +84,8 @@ describe.skipIf(!has(url))('delivery for orders (database)', () => {
     c.deliveryPlans.plan(companyId, { at: new Date(), currency: 'KES', channel: 'ecommerce', method: 'own_fleet', lines, pin: CUSTOMER, weightKg: 1, orderValue: 1000, ...over });
 
   beforeAll(async () => {
+    // Files that use the company-wide stock-by-location switch take turns, so none confuses another.
+    releaseLedgerSwitch = await holdLedgerSwitch(url);
     const mod = await import('@/server/di/container');
     db = (await import('@/server/db/drizzle/client')).drizzleDb;
     schema = await import('@/server/db/drizzle/schema');
@@ -101,7 +104,11 @@ describe.skipIf(!has(url))('delivery for orders (database)', () => {
     await c.stockLocations.ensureDefault(companyId);
     await c.stockShadow.setShadow(companyId, false);
     await c.stockSettings.setLedgerMode(companyId, true, { requireCleanShadow: false });
-  }, 180_000);
+  }, 900_000);
+  // Registered first, so it runs last: the switch is given back only after this file has put everything right.
+  afterAll(async () => {
+    await releaseLedgerSwitch?.();
+  }, 60_000);
   afterAll(async () => {
     spy?.mockRestore();
     await c.stockSettings.setLedgerMode(companyId, false);

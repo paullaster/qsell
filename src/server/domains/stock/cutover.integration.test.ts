@@ -11,7 +11,7 @@ import type * as TasksModule from '@/server/queue/tasks';
 import type { OrderWriteService as OrderWriteServiceType } from '@/server/domains/orders/write-service';
 import { StockCutover } from './cutover';
 import type { ShadowReport, StockShadow } from './shadow';
-import { settleFinanceBacklog } from './test-support';
+import { holdLedgerSwitch, settleFinanceBacklog } from './test-support';
 
 /**
  * Moving a company to the new stock ledger, against a real database: the old reservations becoming holds, the switch being one step
@@ -32,6 +32,7 @@ describe.skipIf(!has(url))('moving to the new stock ledger (database)', () => {
   let tasks: typeof TasksModule;
   let createOrder: (typeof OrderWriteServiceType)['createOrder'];
   let companyId: string;
+  let releaseLedgerSwitch: (() => Promise<void>) | undefined;
   let branchId: string;
   let itemTypeId: string;
   let main: string;
@@ -109,6 +110,8 @@ describe.skipIf(!has(url))('moving to the new stock ledger (database)', () => {
   };
 
   beforeAll(async () => {
+    // Files that switch stock-by-location for the whole company take turns, so none confuses another.
+    releaseLedgerSwitch = await holdLedgerSwitch(url);
     const mod = await import('@/server/di/container');
     db = (await import('@/server/db/drizzle/client')).drizzleDb;
     schema = await import('@/server/db/drizzle/schema');
@@ -126,7 +129,11 @@ describe.skipIf(!has(url))('moving to the new stock ledger (database)', () => {
     itemTypeId = `it_co_${randomUUID().slice(0, 8)}`;
     await db.insert(schema.itemTypes).values({ id: itemTypeId, code: Math.floor(Math.random() * 1e9), name: itemTypeId });
     main = (await c.stockLocations.ensureDefault(companyId)).id;
-  });
+  }, 900_000);
+  // Registered first, so it runs last: the switch is given back only after this file has put everything right.
+  afterAll(async () => {
+    await releaseLedgerSwitch?.();
+  }, 60_000);
   afterAll(async () => {
     await c.stockSettings.setLedgerMode(companyId, false);
     await c.stockShadow.setShadow(companyId, false);
