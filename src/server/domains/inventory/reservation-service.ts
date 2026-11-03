@@ -1,6 +1,8 @@
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { drizzleDb } from '@/server/db/drizzle/client';
-import { inventoryMovements, orders, orderItems, products, stockLocations, stockReservations } from '@/server/db/drizzle/schema';
+import { inventoryMovements, orderDeliveries, orders, orderItems, products, stockLocations, stockReservations } from '@/server/db/drizzle/schema';
+import { heldAtPayment } from '@/lib/stock-issue';
+import { isDeliveryMethod } from '@/lib/delivery-methods';
 import { roundQty } from '@/lib/decimal';
 import { getContainer } from '@/server/di/container';
 import { OrderStages } from '@/server/domains/orders/stages';
@@ -315,6 +317,15 @@ export class InventoryReservationService {
     const container = getContainer();
     if (await container.stockSettings.isLedgerMode()) {
       const company = await container.companySettings.ensureSeeded();
+      // A shop that issues stock as deliveries go out or arrive leaves a delivered order's stock held; the deliveries issue it.
+      const { issueMoment } = await container.stockSettings.get();
+      if (issueMoment !== 'payment') {
+        const [delivery] = await drizzleDb.select({ method: orderDeliveries.method }).from(orderDeliveries).where(eq(orderDeliveries.orderId, orderId)).limit(1);
+        if (heldAtPayment(issueMoment, isDeliveryMethod(delivery?.method) ? delivery.method : null)) {
+          await container.stockReservations.keepHeld({ companyId: company.id, refType: 'order', refId: orderId, actor: 'payment_reconciliation_engine' });
+          return;
+        }
+      }
       const done = await container.stockReservations.consume({ companyId: company.id, refType: 'order', refId: orderId, actor: 'payment_reconciliation_engine' });
       if (done.holds > 0) await this.recordStockStage(orderId, 'stock_issued', { detail: { kept: 'ledger', issued: done.issued, holds: done.holds } });
       void broadcastRealtime('inventory_update', { type: 'fulfillment', orderId });

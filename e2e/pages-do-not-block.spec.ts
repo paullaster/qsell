@@ -145,10 +145,11 @@ for (const [name, url, skeleton, heading] of screens) {
     page,
     context,
   }) => {
+    test.slow(); // the first visit compiles the route on the development server
     const title = page.getByRole('heading', { name: heading, level: 2 }).first();
     // Visit once without the delay so the development server has built the route, then once more to learn how long
     // this screen takes on this machine right now; only then slow the actions down.
-    await page.goto(url);
+    await page.goto(url, { timeout: 90_000 });
     await expect(title).toBeVisible({ timeout: 60_000 });
     const timed = Date.now();
     await page.goto(url);
@@ -158,8 +159,12 @@ for (const [name, url, skeleton, heading] of screens) {
     // apart from the data arriving.
     const delay = Math.max(DELAY, baseline + 1500);
     await context.addCookies([{ name: 'e2e-delay', value: String(delay), url: E2E_URL }]);
-    const started = Date.now();
-    await page.goto(url, { waitUntil: 'commit' });
+    // A navigation the page starts for itself can take over the frame and abort this one; the clock starts with the attempt that sticks.
+    let started = 0;
+    await expect(async () => {
+      started = Date.now();
+      await page.goto(url, { waitUntil: 'commit' });
+    }).toPass({ timeout: 15_000 });
     // The loading state is drawn first, while the slowed data is still on its way: the heading is not there yet when it shows.
     await expect(page.getByRole('status').filter({ hasText: skeleton })).toBeVisible({
       timeout: baseline + delay,

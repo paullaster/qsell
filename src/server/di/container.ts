@@ -475,7 +475,8 @@ export function getContainer(): AppContainer {
   const geo = new GeoService(new GeoPortRegistry(process.env, GEO_ADAPTERS, geoSettings.selection), undefined, (event) => {
     void geoCompanyId().then((id) => geoSettings.record(id, event)).catch(() => undefined);
   });
-  const deliveryServices = createDeliveryServices({ db: drizzleDb, decisionLog, geo, companySettings, numbering });
+  const stockReservations = new StockReservations(drizzleDb, stockLedger, decisionLog);
+  const deliveryServices = createDeliveryServices({ db: drizzleDb, decisionLog, geo, companySettings, numbering, stockReservations });
   const orderSla = new OrderSlaService(drizzleDb, new OrderSlaNotifier(email, companySettings));
   const vendorNotifier = new VendorNotifier(drizzleDb, email, companySettings);
   const prequalLifecycle = new PrequalLifecycle(drizzleDb, vendorNotifier);
@@ -538,7 +539,7 @@ export function getContainer(): AppContainer {
     stockAvailability: deliveryServices.stockAvailability,
     stockShadow,
     stockSettings: deliveryServices.stockSettings,
-    stockReservations: new StockReservations(drizzleDb, stockLedger, decisionLog),
+    stockReservations,
     stockTransfers: new TransferService({ db: drizzleDb, ledger: stockLedger, numbering, decisionLog }),
     stockCounts: new CountService({ db: drizzleDb, ledger: stockLedger, numbering, decisionLog }),
     stockCutover: new StockCutover(drizzleDb, stockShadow, stockLocations, decisionLog),

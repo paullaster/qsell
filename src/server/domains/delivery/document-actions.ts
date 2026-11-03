@@ -4,6 +4,8 @@ import { getContainer } from '@/server/di/container';
 import { canPermission } from '@/server/domains/access-control/guard';
 import { objectOf, runDelivery } from './action-support';
 import { DeliveryError, type DeliveryErrorCode } from './errors';
+import { ISSUE_MOMENTS, ISSUE_MOMENT_WORDS, type IssueMoment } from '@/lib/stock-issue';
+import { StockError } from '@/server/domains/stock/errors';
 import type { DocRefusal, DocResult } from './documents';
 
 const CODE_FOR: Record<DocRefusal, DeliveryErrorCode> = {
@@ -107,6 +109,8 @@ export async function deliveryStepAction(raw: unknown) {
           return dataOf(await docs.returnToStock(actor, id, { reason: i.reason }, version));
         case 'cancel':
           return dataOf(await docs.cancel(actor, id, { reason: i.reason }, version));
+        case 'receive_return':
+          return dataOf(await docs.receiveReturn(actor, id, { lines: i.lines, note: i.note }));
         case 'amend':
           return dataOf(await docs.amend(actor, id, { recipientName: i.recipientName, recipientPhone: i.recipientPhone, notes: i.notes }, version));
         default:
@@ -114,5 +118,43 @@ export async function deliveryStepAction(raw: unknown) {
       }
     },
     PATHS,
+  );
+}
+
+export interface StockTimingView {
+  moment: IssueMoment;
+  /** Whether stock is kept by location, which the later moments need. */
+  byLocation: boolean;
+  options: { id: IssueMoment; name: string; means: string }[];
+  canChange: boolean;
+}
+
+/** When the stock of a delivered order leaves the shelf, and whether this person can change it. */
+export async function stockTimingAction() {
+  return await runDelivery('deliveries:read', async (): Promise<StockTimingView> => {
+    const c = getContainer();
+    const mode = await c.stockSettings.get();
+    return { moment: mode.issueMoment, byLocation: mode.ledgerMode, options: ISSUE_MOMENTS.map((id) => ({ id, ...ISSUE_MOMENT_WORDS[id] })), canChange: await canPermission('stock:cutover') };
+  });
+}
+
+/** Chooses when the stock of a delivered order leaves the shelf. It applies to orders paid from now on, and is kept in the decision log. */
+export async function setStockTimingAction(raw: unknown) {
+  return await runDelivery(
+    'stock:cutover',
+    async (ctx): Promise<StockTimingView> => {
+      const c = getContainer();
+      const before = (await c.stockSettings.get()).issueMoment;
+      let moment: IssueMoment;
+      try {
+        moment = await c.stockSettings.setIssueMoment(ctx.companyId, objectOf(raw).moment);
+      } catch (error) {
+        if (error instanceof StockError) throw new DeliveryError(error.message, 'BAD_INPUT');
+        throw error;
+      }
+      if (moment !== before) await c.decisionLog.record({ companyId: ctx.companyId, subject: { type: 'stock_settings', id: ctx.companyId }, action: 'stock.issue_moment', actor: { type: 'user', id: ctx.userId }, from: before, to: moment, reason: { text: `Stock now leaves the shelf: ${ISSUE_MOMENT_WORDS[moment].name.toLowerCase()}.` } });
+      return { moment, byLocation: true, options: ISSUE_MOMENTS.map((id) => ({ id, ...ISSUE_MOMENT_WORDS[id] })), canChange: true };
+    },
+    ['/admin/delivery/stock'],
   );
 }

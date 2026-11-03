@@ -5,6 +5,7 @@ import type { CompanySettingsRepository } from '@/server/domains/company/reposit
 import type { GeoService } from '@/server/domains/geo/service';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { createDeliveryServices } from './delivery-wiring';
+import type { StockReservations } from '@/server/domains/stock/reservations';
 
 describe('createDeliveryServices', () => {
   it('constructs the quote and plan graph with initialized dependencies', () => {
@@ -12,6 +13,7 @@ describe('createDeliveryServices', () => {
       db: {} as DrizzleDb,
       decisionLog: {} as DecisionLog,
       numbering: {} as NumberSeriesService,
+      stockReservations: {} as StockReservations,
       geo: {} as GeoService,
       companySettings: {} as CompanySettingsRepository,
     });

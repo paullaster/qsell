@@ -181,7 +181,12 @@ export class StockReservations {
           actor: actor.slice(0, 200),
           note: note.slice(0, 250),
         })
-        .onConflictDoNothing();
+        .onConflictDoUpdate({
+          target: [inventoryMovements.referenceId, inventoryMovements.productId, inventoryMovements.changeType],
+          targetWhere: sql`${inventoryMovements.changeType} in ('order_fulfillment', 'order_cancellation_release')`,
+          // An order issued in parts (one delivery after another) adds each part to its one line.
+          set: { changeAmount: sql`${inventoryMovements.changeAmount} + excluded.change_amount`, newStock: sql`excluded.new_stock` },
+        });
     }
   }
 
@@ -244,6 +249,151 @@ export class StockReservations {
     }
     if (input.refType === 'order') await this.journalSettlement(tx, input.refId, input.actor, 'order_fulfillment', perProduct, `Fulfilled and finalized stock deduction for order ${input.refId}`);
     return { issued, holds: holds.length };
+  }
+
+  /**
+   * Issues only part of what a document holds: the quantities asked for, product by product, from the holds in their fixed order. A
+   * hold issued in part stays open for the rest. `key` names this part (a delivery), so the same part posted twice moves stock once.
+   * A product the document holds nothing of (its stock was issued already, for example when it was paid) issues nothing. `covered`
+   * is how much of what was asked the holds covered; the shelf can still have less than that, as with a whole issue.
+   */
+  async consumePartIn(tx: Tx, input: SettleInput & { key: string }, wanted: ReadonlyMap<string, number>): Promise<{ issued: number; covered: number; coveredBy: Map<string, number> }> {
+    const holds = await this.openHolds(tx, input.refType, input.refId);
+    const remaining = new Map(wanted);
+    const perProduct = new Map<string, number>();
+    const coveredBy = new Map<string, number>();
+    let issued = 0;
+    let covered = 0;
+    for (const h of holds) {
+      const want = remaining.get(h.productId) ?? 0;
+      const left = round(h.quantity - h.consumed - h.released);
+      if (want <= 0 || left <= 0) continue;
+      const take = Math.min(left, want);
+      const [b] = await tx
+        .select({ onHand: stockBalances.onHand })
+        .from(stockBalances)
+        .where(and(eq(stockBalances.productId, h.productId), eq(stockBalances.locationId, h.locationId), eq(stockBalances.shard, h.shard)))
+        .for('update')
+        .limit(1);
+      const issue = Math.min(take, Math.max(0, b?.onHand ?? 0));
+      if (issue > 0) {
+        const [p] = await tx.select({ cost: products.costPrice }).from(products).where(eq(products.id, h.productId)).limit(1);
+        await this.ledger.post(tx, {
+          companyId: input.companyId,
+          productId: h.productId,
+          locationId: h.locationId,
+          shard: h.shard,
+          type: 'sale_issue',
+          quantity: -issue,
+          unitCost: Number(p?.cost ?? 0),
+          documentType: input.refType,
+          documentId: input.refId,
+          documentLineId: `${h.id}:${input.key}`,
+          actor: { type: 'system', id: input.actor.slice(0, 200) },
+          note: `Issued ${String(issue)} for ${input.refType} ${input.refId} (${input.key})`,
+        });
+      }
+      await tx
+        .update(stockBalances)
+        .set({ reserved: sql`GREATEST(${stockBalances.reserved} - ${take}, 0)`, version: sql`${stockBalances.version} + 1`, updatedAt: sql`now()` })
+        .where(and(eq(stockBalances.productId, h.productId), eq(stockBalances.locationId, h.locationId), eq(stockBalances.shard, h.shard)));
+      await tx
+        .update(stockReservations)
+        .set({
+          consumed: sql`${stockReservations.consumed} + ${take}`,
+          state: take === left ? 'consumed' : 'partly_consumed',
+          stateChangedAt: sql`now()`,
+          ...(issue < take ? { reason: `short at issue: ${String(round(take - issue))} not on the shelf` } : {}),
+        })
+        .where(eq(stockReservations.id, h.id));
+      remaining.set(h.productId, round(want - take));
+      issued = round(issued + issue);
+      covered = round(covered + take);
+      coveredBy.set(h.productId, round((coveredBy.get(h.productId) ?? 0) + take));
+      perProduct.set(h.productId, round((perProduct.get(h.productId) ?? 0) + issue));
+    }
+    if (input.refType === 'order') await this.journalSettlement(tx, input.refId, input.actor, 'order_fulfillment', perProduct, `Fulfilled and finalized stock deduction for order ${input.refId}`);
+    return { issued, covered, coveredBy };
+  }
+
+  /** Where a product of a document was held (the place with the most), or the default location when it was not held. */
+  async placeOfIn(tx: Tx, companyId: string, refType: string, refId: string, productId: string): Promise<string> {
+    const [h] = await tx
+      .select({ locationId: stockReservations.locationId })
+      .from(stockReservations)
+      .where(and(eq(stockReservations.refType, refType), eq(stockReservations.refId, refId), eq(stockReservations.productId, productId)))
+      .orderBy(sql`${stockReservations.quantity} DESC`, asc(stockReservations.locationId))
+      .limit(1);
+    return h?.locationId ?? (await this.ledger.defaultLocationIn(tx)).locationId;
+  }
+
+  /**
+   * Counts goods that came back as sold stock back onto the shelf (`sale_return`), at the place they were held; optionally writes them
+   * off at once (spoilt goods that were issued come back to the books so the sale's cost is undone, then leave as a loss). Once for
+   * each `key`.
+   */
+  async receiveBackIn(tx: Tx, input: { companyId: string; refType: string; refId: string; productId: string; quantity: number; key: string; writeOff: boolean; actor: string; note: string }): Promise<{ locationId: string }> {
+    const locationId = await this.placeOfIn(tx, input.companyId, input.refType, input.refId, input.productId);
+    const [p] = await tx.select({ cost: products.costPrice }).from(products).where(eq(products.id, input.productId)).limit(1);
+    const base = { companyId: input.companyId, productId: input.productId, locationId, unitCost: Number(p?.cost ?? 0), documentType: 'delivery_return', documentId: input.key, actor: { type: 'system' as const, id: input.actor.slice(0, 200) }, note: input.note.slice(0, 250) };
+    await this.ledger.post(tx, { ...base, type: 'sale_return', quantity: input.quantity, documentLineId: `${input.productId}:back` });
+    if (input.writeOff) await this.ledger.post(tx, { ...base, type: 'write_off', quantity: -input.quantity, documentLineId: `${input.productId}:off`, reasonCode: 'damaged_in_delivery' });
+    // What came back is open on the order again, so it is held again to be issued when it next goes out; without a hold a second
+    // delivery would take it off the shelf with nothing on the books to say so.
+    await this.holdAgainIn(tx, { companyId: input.companyId, refType: input.refType, refId: input.refId, productId: input.productId, quantity: input.quantity, locationId, key: input.key, actor: input.actor });
+    return { locationId };
+  }
+
+  /** Holds `quantity` of a product at a place for a document again, after it was issued and has come back. Refused if the shelf cannot cover it. */
+  private async holdAgainIn(tx: Tx, input: { companyId: string; refType: string; refId: string; productId: string; quantity: number; locationId: string; key: string; actor: string }): Promise<void> {
+    const rows = await tx
+      .select()
+      .from(stockBalances)
+      .where(and(eq(stockBalances.productId, input.productId), eq(stockBalances.locationId, input.locationId)))
+      .orderBy(asc(stockBalances.shard))
+      .for('update');
+    let left = input.quantity;
+    for (const r of [...rows].sort((x, y) => round(y.onHand - y.reserved) - round(x.onHand - x.reserved))) {
+      const take = Math.min(left, Math.max(0, round(r.onHand - r.reserved)));
+      if (take <= 0) continue;
+      await tx
+        .update(stockBalances)
+        .set({ reserved: sql`${stockBalances.reserved} + ${take}`, version: sql`${stockBalances.version} + 1`, updatedAt: sql`now()` })
+        .where(and(eq(stockBalances.productId, input.productId), eq(stockBalances.locationId, input.locationId), eq(stockBalances.shard, r.shard)));
+      await tx.insert(stockReservations).values({
+        companyId: input.companyId,
+        productId: input.productId,
+        locationId: input.locationId,
+        shard: r.shard,
+        refType: input.refType,
+        refId: input.refId,
+        refLineId: `${input.productId}:again:${input.key}`,
+        quantity: take,
+        sourcing: { reason: 'came back with a returned delivery', delivery: input.key },
+        actor: input.actor.slice(0, 200),
+      });
+      left = round(left - take);
+      if (left <= 0) break;
+    }
+    if (left > 0) throw new StockError(`There is not enough stock to hold ${String(left)} again for the order. Count more stock in first, then receive these goods.`, 'CANNOT_HOLD_AGAIN');
+  }
+
+  /** Writes off goods that are still on the books (they were never issued, because the order is issued when it arrives). */
+  async writeOffIn(tx: Tx, input: { companyId: string; refType: string; refId: string; productId: string; quantity: number; key: string; actor: string; note: string }): Promise<{ locationId: string }> {
+    const locationId = await this.placeOfIn(tx, input.companyId, input.refType, input.refId, input.productId);
+    const [p] = await tx.select({ cost: products.costPrice }).from(products).where(eq(products.id, input.productId)).limit(1);
+    await this.ledger.post(tx, { companyId: input.companyId, productId: input.productId, locationId, unitCost: Number(p?.cost ?? 0), documentType: 'delivery_return', documentId: input.key, documentLineId: `${input.productId}:off`, type: 'write_off', quantity: -input.quantity, reasonCode: 'damaged_in_delivery', actor: { type: 'system', id: input.actor.slice(0, 200) }, note: input.note.slice(0, 250) });
+    return { locationId };
+  }
+
+  /** A paid order's holds no longer lapse: they are kept until the deliveries issue them, or the order is cancelled. */
+  async keepHeld(input: SettleInput): Promise<number> {
+    const done = await this.db
+      .update(stockReservations)
+      .set({ expiresAt: null })
+      .where(and(eq(stockReservations.refType, input.refType), eq(stockReservations.refId, input.refId), inArray(stockReservations.state, [...OPEN]), sql`${stockReservations.expiresAt} IS NOT NULL`))
+      .returning({ id: stockReservations.id });
+    return done.length;
   }
 
   async consume(input: SettleInput): Promise<{ issued: number; holds: number }> {

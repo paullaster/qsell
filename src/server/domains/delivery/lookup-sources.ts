@@ -1,3 +1,4 @@
+import { DISPOSITION_WORDS, ISSUE_MOMENTS, ISSUE_MOMENT_WORDS, RETURN_DISPOSITIONS } from '@/lib/stock-issue';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { branches, customerGroups, deliveryZones, products } from '@/server/db/drizzle/schema';
 import { DELIVERY_STATUSES, FAILURE_REASONS, STATUS_WORDS } from '@/lib/delivery-document';
@@ -108,4 +109,24 @@ const deliveryFailureReasons = staticSource({
   },
 });
 
-export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts, deliveryStatuses, deliveryFailureReasons];
+/** When the stock of a delivered order leaves the shelf. */
+const stockIssueMoments = staticSource({
+  key: 'stock-issue-moments',
+  permission: 'deliveries:read',
+  items: ({ filters }) => {
+    acceptFilters(filters, {});
+    return ISSUE_MOMENTS.map((id) => ({ id, label: ISSUE_MOMENT_WORDS[id].name, description: ISSUE_MOMENT_WORDS[id].means, badge: null }));
+  },
+});
+
+/** What can be done with goods that came back. Which of these fit a product is the server's to say when it is received. */
+const returnDispositions = staticSource({
+  key: 'delivery-return-dispositions',
+  permission: 'deliveries:read',
+  items: ({ filters }) => {
+    acceptFilters(filters, {});
+    return RETURN_DISPOSITIONS.map((id) => ({ id, label: DISPOSITION_WORDS[id].name, description: DISPOSITION_WORDS[id].means, badge: null }));
+  },
+});
+
+export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts, deliveryStatuses, deliveryFailureReasons, stockIssueMoments, returnDispositions];
