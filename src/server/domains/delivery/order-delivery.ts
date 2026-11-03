@@ -64,7 +64,7 @@ export class OrderDeliveries {
         actor: input.actor,
         to: plan.branch.code,
         reason: { code: plan.choice.reason, text: plan.choice.words },
-        policy: { id: plan.quote.policy.id, version: String(plan.quote.policy.version) },
+        ...(plan.quote.policy === null ? {} : { policy: { id: plan.quote.policy.id, version: String(plan.quote.policy.version) } }),
         inputs: {
           method: input.method,
           positionFrom: plan.destination.positionFrom,

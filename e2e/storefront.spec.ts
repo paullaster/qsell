@@ -295,14 +295,16 @@ test.describe('the cart and checkout', () => {
     await noHorizontalScroll(page);
     await noInnerHorizontalScroll(page);
 
-    // Tamper with the browser cart: checkout must reject less than the configured capacity-based requirement.
-    await page.evaluate((packagingId) => {
+    // Tamper with the browser cart: checkout must reject less than the configured capacity-based requirement. The cut-down cart is put
+    // in place before the next page loads: writing it into the page that is open can be undone by that page saving its own copy of the
+    // cart a moment later, and then nothing is tampered with.
+    await page.addInitScript((packagingId) => {
       const saved = JSON.parse(window.localStorage.getItem('qsell_cart_v2') ?? '[]') as { productId: string; quantity: number }[];
       const line = saved.find((item) => item.productId === packagingId);
       if (line !== undefined) line.quantity = 2;
       window.localStorage.setItem('qsell_cart_v2', JSON.stringify(saved));
     }, packaging.id);
-    await page.reload();
+    await page.goto('/checkout');
     await page.getByLabel('Full name').fill('Packaging Validation');
     await page.getByLabel('Mobile phone').fill('0711 000 111');
     await page.getByLabel('Street, building or office').fill('1 Moi Avenue');

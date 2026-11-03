@@ -118,9 +118,11 @@ function Charged({ answer }: { answer: Charge }) {
     <div className="space-y-3" role="status" aria-label="The charge">
       <p className="text-2xl font-bold text-fg-strong">{money(answer.currency, answer.amount)}</p>
       <p className="flex flex-wrap gap-1.5 text-xs">
-        <Chip tone="sky">
-          {answer.policy.name} ({answer.policy.code} v{answer.policy.version})
-        </Chip>
+        {answer.policy === null ? null : (
+          <Chip tone="sky">
+            {answer.policy.name} ({answer.policy.code} v{answer.policy.version})
+          </Chip>
+        )}
         {answer.zone === null ? <Chip tone="gray">No zone</Chip> : <Chip tone="green">Zone {answer.zone.name} ({answer.zone.by === 'pin' ? 'from the pin' : 'from the written address'})</Chip>}
         {answer.route === null ? null : (
           <Chip tone={answer.route.degraded || answer.route.approximate ? 'amber' : 'gray'}>

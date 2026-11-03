@@ -115,6 +115,8 @@ export const OrderWriteService = {
      */
     delivery?: {
       method: DeliveryMethod;
+      /** For collection from a branch: the branch the customer chose. It is checked here: it must offer collection and hold the goods. */
+      pickupBranchId?: string | null;
       pin?: GeoPoint | null;
       address?: AddressWords;
       /** Who receives it, when that is not the buyer. */
@@ -550,6 +552,7 @@ export const OrderWriteService = {
         currency: params.currency,
         channel: isSalesChannel(deliveryChannel) ? deliveryChannel : 'ecommerce',
         method: params.delivery.method,
+        ...(params.delivery.pickupBranchId === undefined ? {} : { pickupBranchId: params.delivery.pickupBranchId }),
         lines: stockItems,
         customerId: params.customerId ?? null,
         customerGroupId: await pricing.groupFor(companyId, params.customerId),
@@ -570,6 +573,11 @@ export const OrderWriteService = {
       }
       delivered = planned;
     }
+    // An order to be collected is addressed to the branch, as the server knows it; the customer's own address is not touched.
+    const orderAddress =
+      delivered?.pickup === undefined
+        ? params.shippingAddress
+        : { street: `Collect at ${delivered.pickup.name}${delivered.pickup.street === null || delivered.pickup.street.trim() === '' ? '' : `, ${delivered.pickup.street.trim()}`}`, city: orElse(delivered.pickup.city?.trim(), delivered.pickup.name), countyOrState: delivered.pickup.county?.trim() ?? '', country: orElse(params.shippingAddress.country, 'Kenya') };
     // A delivered order is charged what the quote said; any other keeps the shipping its caller worked out.
     const shippingFee = delivered?.quote.split.net ?? goodsTotals.shippingFee;
     // Tax on the charge joins the order's tax, so the books, the invoice and the total all agree.
@@ -615,7 +623,7 @@ export const OrderWriteService = {
       customerEmail: params.customerEmail,
       customerPhone: params.customerPhone,
       paymentPhone: params.paymentPhone ?? null,
-      shippingAddress: params.shippingAddress,
+      shippingAddress: orderAddress,
       items: orderItems,
       subtotal,
       tax: orderTax,
@@ -720,11 +728,13 @@ export const OrderWriteService = {
           if (delivered !== null && params.delivery !== undefined) {
             const actor = { type: 'user' as const, id: params.requestedBy ?? params.customerId ?? null };
             await getContainer().orderDeliveries.record(tx, { companyId: company.id, orderId: saved.id, method: params.delivery.method, plan: delivered, currency: params.currency, recipient: params.delivery.recipient ?? null, notes: params.delivery.notes ?? null, actor });
+            // An order collected from a branch gets its code in the same transaction, so there is never one without the other.
+            if (params.delivery.method === 'pickup') await getContainer().orderCollections.issue(tx, { companyId: company.id, orderId: saved.id, branchId: delivered.branch.id, actor });
             await OrderStages.moveIn(tx, saved.id, 'charge_quoted', 'succeeded', {
               ...placedBy(channel, params.customerId ?? null, params.requestedBy ?? null),
               ref: { type: 'delivery_quote', id: saved.id },
               message: delivered.choice.words,
-              detail: { charge: delivered.quote.split.gross, tax: delivered.quote.split.tax, policy: `${delivered.quote.policy.code} v${String(delivered.quote.policy.version)}`, branch: delivered.branch.code },
+              detail: { charge: delivered.quote.split.gross, tax: delivered.quote.split.tax, policy: delivered.quote.policy === null ? null : `${delivered.quote.policy.code} v${String(delivered.quote.policy.version)}`, branch: delivered.branch.code },
             });
           }
           // What the discounts used is recorded in the same transaction as the order.

@@ -46,7 +46,8 @@ export interface ChargeRecord {
   split: { net: number; tax: number; gross: number };
   taxRate: number;
   currency: string;
-  policy: { id: string; code: string; name: string; version: number; method: string };
+  /** Null for an order collected from a branch: nothing is charged, so no policy applies. */
+  policy: { id: string; code: string; name: string; version: number; method: string } | null;
   zone: { id: string; code: string; name: string; by: 'pin' | 'address' } | null;
   route: {
     km: number;

@@ -24,6 +24,8 @@ import { AppImage } from '@/components/ui/AppImage';
 import { shownPaymentReference } from '@/lib/paymentReference';
 import { lookupOrderAction } from '@/server/domains/orders/actions';
 import { OrderProgress } from '@/components/store/OrderProgress';
+import { CollectionPanel } from '@/components/store/CollectionPanel';
+import { useCollection } from '@/components/store/useCollection';
 
 interface OrderTrackerModalProps {
   isOpen: boolean;
@@ -37,6 +39,12 @@ interface OrderTrackerModalProps {
 export function OrderTrackerModal({ isOpen, onClose }: OrderTrackerModalProps) {
   // Opened fresh each time: nothing typed or found before is still there.
   return isOpen ? <OpenTracker onClose={onClose} /> : null;
+}
+
+/** Where to collect an order and the code to show, for an order the customer collects; nothing for one that is delivered. */
+function TrackedCollection({ orderNumber, contact }: { orderNumber: string; contact: string }) {
+  const { state, refresh } = useCollection(orderNumber, contact);
+  return <CollectionPanel state={state} onRefresh={refresh} />;
 }
 
 function OpenTracker({ onClose }: { onClose: () => void }) {
@@ -222,6 +230,8 @@ function OpenTracker({ onClose }: { onClose: () => void }) {
                   </span>
                 </div>
               </div>
+
+              <TrackedCollection orderNumber={matchedOrder.orderNumber} contact={contact} />
 
               {/* What happened to the order and when, from its own timeline */}
               <div className="space-y-3">

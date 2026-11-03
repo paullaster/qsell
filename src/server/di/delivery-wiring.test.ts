@@ -1,3 +1,4 @@
+import type { NumberSeriesService } from '@/server/kernel/numbering/service';
 import { describe, expect, it } from 'vitest';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import type { CompanySettingsRepository } from '@/server/domains/company/repository';
@@ -10,6 +11,7 @@ describe('createDeliveryServices', () => {
     const services = createDeliveryServices({
       db: {} as DrizzleDb,
       decisionLog: {} as DecisionLog,
+      numbering: {} as NumberSeriesService,
       geo: {} as GeoService,
       companySettings: {} as CompanySettingsRepository,
     });

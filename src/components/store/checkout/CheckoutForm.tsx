@@ -178,6 +178,8 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
   const totals = cartTotals(lines);
   const delivery = useShopDelivery({ items: lines.map((l) => ({ productId: l.product.id, quantity: l.quantity })), county: countyOrState, town: city, area, country });
   const deliveryOn = delivery.options !== null && delivery.options.methods.length > 0;
+  /** Collecting from a branch: there is no delivery address, and the branch is where the order goes. */
+  const collecting = deliveryOn && delivery.method === 'pickup';
   const deliveryQuote = delivery.quote.phase === 'ok' ? delivery.quote.quote : null;
   const payable = totals.totalAmount + (deliveryQuote?.gross ?? 0);
   const enabled = providers ?? [];
@@ -232,7 +234,7 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
   const submit = async (event: SyntheticEvent) => {
     event.preventDefault();
     setFormError(null);
-    if (!has(customerName) || !has(customerPhone) || !has(street) || !has(city)) {
+    if (!has(customerName) || !has(customerPhone) || (!collecting && (!has(street) || !has(city)))) {
       setFormError(isSignedIn && !hasSavedAddresses ? 'Add a delivery address to continue.' : 'Please fill in your name, phone number and delivery address.');
       return;
     }
@@ -251,15 +253,16 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
       return;
     }
     if (deliveryOn && deliveryQuote === null) {
-      setFormError(delivery.quote.phase === 'error' ? delivery.quote.error : 'Drop a pin or write your area, so we can work out what delivery costs.');
+      const missing = collecting ? 'Choose the branch you will collect from.' : 'Drop a pin or write your area, so we can work out what delivery costs.';
+      setFormError(delivery.quote.phase === 'error' ? delivery.quote.error : missing);
       return;
     }
-    if (deliveryOn && recipient.on && (recipient.name.trim() === '' || recipient.phone.trim() === '')) {
+    if (deliveryOn && !collecting && recipient.on && (recipient.name.trim() === '' || recipient.phone.trim() === '')) {
       setFormError('Please enter the name and mobile number of the person who will receive the order.');
       return;
     }
     try {
-      if (isSignedIn && (useNewAddress || !hasSavedAddresses)) {
+      if (isSignedIn && !collecting && (useNewAddress || !hasSavedAddresses)) {
         const { customer: updated } = await addCustomerAddressAction(customer.id, {
           label: hasSavedAddresses ? 'Delivery' : 'Primary',
           recipientName: customerName,
@@ -275,26 +278,33 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
     } catch {
       // The address could not be saved to the account; the order itself does not depend on it.
     }
+    // How the order gets to the customer: collected from the branch they chose, or delivered to the place they gave.
+    let deliveryInput: DeliveryInput | null = null;
+    if (deliveryOn && deliveryQuote !== null) {
+      if (collecting) {
+        deliveryInput = { method: 'pickup', pickupBranchId: delivery.pickup.chosen, pin: null, address: null, recipient: null, notes: null, expectedCharge: deliveryQuote.gross };
+      } else {
+        deliveryInput = {
+          method: deliveryQuote.method === 'pickup' ? 'own_fleet' : deliveryQuote.method,
+          pickupBranchId: null,
+          pin: delivery.pin,
+          address: { county: countyOrState.trim() === '' ? null : countyOrState.trim(), town: city.trim() === '' ? null : city.trim(), area: area.trim() === '' ? null : area.trim() },
+          recipient: recipient.on ? { name: recipient.name.trim(), phone: recipient.phone.trim() } : null,
+          notes: notes.trim() === '' ? null : notes.trim(),
+          expectedCharge: deliveryQuote.gross,
+        };
+      }
+    }
     await onSubmit({
       customerName,
       customerEmail: email.email,
       customerPhone,
       ...(paymentUsesPhone(paymentMethod) && payPhone.trim() !== '' ? { paymentPhone: payPhone.trim() } : {}),
       buyerKraPin: orElse(buyerKraPin.trim(), undefined),
-      shippingAddress: { street, city, countyOrState, country },
+      // An order to be collected is addressed to the branch by the server; no address of the customer's goes with it.
+      shippingAddress: collecting ? { street: '', city: '', countyOrState: '', country } : { street, city, countyOrState, country },
       paymentMethod,
-      ...(deliveryOn && deliveryQuote !== null
-        ? {
-            delivery: {
-              method: deliveryQuote.method,
-              pin: delivery.pin,
-              address: { county: countyOrState.trim() === '' ? null : countyOrState.trim(), town: city.trim() === '' ? null : city.trim(), area: area.trim() === '' ? null : area.trim() },
-              recipient: recipient.on ? { name: recipient.name.trim(), phone: recipient.phone.trim() } : null,
-              notes: notes.trim() === '' ? null : notes.trim(),
-              expectedCharge: deliveryQuote.gross,
-            },
-          }
-        : {}),
+      ...(deliveryInput === null ? {} : { delivery: deliveryInput }),
     });
   };
 
@@ -352,9 +362,9 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
           )}
         </section>
 
-        <section aria-label="Delivery address" className="space-y-4">
-          <SectionTitle number={2} icon={<MapPin className="h-4 w-4" aria-hidden="true" />}>Delivery address</SectionTitle>
-          {hasSavedAddresses ? (
+        <section aria-label={collecting ? 'Collection' : 'Delivery address'} className="space-y-4">
+          <SectionTitle number={2} icon={<MapPin className="h-4 w-4" aria-hidden="true" />}>{collecting ? 'Collection' : 'Delivery address'}</SectionTitle>
+          {hasSavedAddresses && !collecting ? (
             <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2" aria-label="Your saved addresses">
               {savedAddresses.map((address) => {
                 const selected = !useNewAddress && selectedAddressId === address.id;
@@ -381,7 +391,7 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
               })}
             </ul>
           ) : null}
-          {isSignedIn ? (
+          {isSignedIn && !collecting ? (
             <button
               type="button"
               onClick={() => {
@@ -402,7 +412,7 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
               {addressToggleLabel(hasSavedAddresses, useNewAddress)}
             </button>
           ) : null}
-          {showAddressFields ? (
+          {showAddressFields && !collecting ? (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field label="Street, building or office" className="sm:col-span-2">
                 {(id) => <input id={id} value={street} onChange={(e) => setStreet(e.target.value)} required autoComplete="street-address" className={inputClass} placeholder="Street address" />}
@@ -448,7 +458,7 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
       <aside aria-label="Order summary" className="space-y-5 self-start rounded-xl border border-line bg-surface p-4 sm:p-5 lg:sticky lg:top-24 lg:col-span-5">
         <h2 className="border-b border-line pb-2 text-base font-bold text-fg-strong">Order review ({lines.length} {lines.length === 1 ? 'item' : 'items'})</h2>
         <PackagingOptions />
-        <OrderSummary lines={lines} delivery={deliveryQuote === null ? null : { gross: deliveryQuote.gross, net: deliveryQuote.net, tax: deliveryQuote.tax, branchName: deliveryQuote.branchName }} />
+        <OrderSummary lines={lines} collecting={collecting} delivery={deliveryQuote === null ? null : { gross: deliveryQuote.gross, net: deliveryQuote.net, tax: deliveryQuote.tax, branchName: deliveryQuote.branchName }} />
         <button
           type="submit"
           disabled={submitting || providers === null || (deliveryOn && delivery.quote.phase === 'loading')}

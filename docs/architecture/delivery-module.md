@@ -430,3 +430,57 @@ What a service needs: no stock, **no cost of goods** (an empty cost is stored as
 The delivery invoicing screen offers only services, and saving refuses anything else. An item chosen before this stays working at signing; the screen flags it ("This item is not a service") so it can be replaced.
 
 Not done: a CSV import with a blank "Inventory_Kind" still means Inventory; it does not look at the classification.
+
+## 28. D-0e as built (2026-11-03): collecting an order from a branch
+
+**What the shopper sees.** At checkout, "Collect from a branch" is offered when at least one branch offers collection. Choosing it removes the delivery address and shows the branches that offer collection **and hold every line of the basket** (`DeliveryPlans.pickupPoints`), each with its address, phone, landmark, how soon an order is ready (the branch's preparation time) and any note. A branch without everything is shown but cannot be chosen. Collecting is free: the quote is a zero charge with no policy (`ChargeRecord.policy` and `QuoteResult.policy` are null for collection), the order summary says "Collect from <branch>: Free". After paying, the confirmation page and **Track my order** show the branch and a six-character **code** (`ABC-DEF`); once collected they show "You have collected this order" and no code.
+
+**What the server decides.** The browser sends only `pickupBranchId`. `planPickup` checks, again at the moment the order is placed, that the branch belongs to the company, is active, offers collection, and holds the whole order (with the per-location ledger on; without it there is no stock by branch). The order's shipping address is written by the server as "Collect at <branch>, <street>"; the customer's own saved address is never touched. The checkout parser (`parseCheckoutInput`) accepts an empty address only for collection.
+
+**The code.** Six characters from `ABCDEFGHJKMNPQRSTUVWXYZ23456789` (no 0, O, 1, I, L), drawn without bias (`src/lib/collection-code.ts`). It is made in the order's own transaction, so there is never an order without its code. At rest it is **sealed** with the data-encryption key (so the customer can be shown it again) and kept as a **keyed hash** over `orderId:code` (so a typed code is checked without opening anything, in constant time). Neither the decision log nor the timeline contains it. A pickup order needs `DATA_ENCRYPTION_KEY`, as payment credentials do; without it the order is refused rather than storing the code in the clear.
+
+**The table** `order_collections` (migration 0128): one row per collected order with `status` (`waiting`, `ready`, `collected`, `locked`, `cancelled`), the sealed code and its hash, wrong tries, and who handed it over, when and how. Database checks make the invalid states unstorable: *collected* means a time, a person and a way; an ID hand-over names the ID; a branch with orders cannot be deleted.
+
+**At the counter** (`OrderCollections`, panel "Collection" on the admin order screen):
+
+| Step | Permission | Rules |
+|---|---|---|
+| Mark ready | `deliveries:handover` | Records `ready` on the order's timeline. Refused for an unpaid, cancelled, refunded or approval-held order. |
+| Hand over with the code | `deliveries:handover` | Typed any way (capitals, spaces, hyphens). **Once**: the collection row is locked, so two counters typing the right code at once hand it over once. A wrong code is counted, recorded as a failed `delivery_attempted` stage with its reason, and after **five** the code is locked. The order becomes `delivered` with `collected` on its timeline. |
+| Hand over after an ID check | `deliveries:handover_override` | For a customer with no code (or a locked one). Needs what ID was seen and why; both are kept in the collection row, the timeline and the decision log. |
+| Give a new code | `deliveries:handover_override` | Needs a reason; the old code stops working, tries start again, a locked order opens. The new code is shown to the staff member once. |
+
+The customer's own look-up (`trackedCollectionAction`) uses the same proof as tracking an order (order number plus the email or phone it was placed with) and is limited by address and by order number (`collection_lookup_ip`, `collection_lookup_order`) so a number and contact cannot be guessed. Managers and administrators have both permissions by default.
+
+**Stock.** Unchanged: stock for the order is consumed when payment succeeds, as for every order. The design's "goods issue when collected" belongs to the goods-issue slice of D-1, which makes the moment configurable for all orders.
+
+**Verified.** Unit (`collection-code`, the checkout parser), integration (planning and the pick checked on the server, the order and code made together, the code never in the clear, unpaid and cancelled refused, ready then once-only hand-over including a race, wrong tries and the lock, ID check, a new code, company isolation, database checks, permissions, the customer's look-up) and end-to-end on desktop and phone (checkout, the customer finding the code, the counter, the ID check).
+
+**Not built yet.** The code is not emailed or texted (there is no message to the customer when an order is ready; that is D-1's messages). An order that is never collected is not expired or cancelled. Someone other than the buyer can collect only by showing the buyer's code or by an ID check at the counter; there is no "authorised collector" field.
+
+## 29. D-1a as built (2026-11-03): the delivery document
+
+**What it is.** A *delivery* is one go at getting some or all of an order to the customer: picked, packed, sent out, delivered. An order that is delivered by the shop's own riders or by a courier can have several (what is on the shelf now, the rest later). Orders that are collected from a branch have no delivery document: they have the collection code (§28). Visits come in D-4.
+
+**Tables** (migration 0129): `deliveries` (number from the `sales_delivery` series, `DLV-{YY}-…`; the method, branch and destination copied from the order's delivery record; recipient, notes, courier and tracking number; a `version` for the two-people-at-once check; the time of each step), `delivery_lines` (planned, picked, delivered per product, in the product's base unit, with checks that picked never exceeds planned and delivered never exceeds picked) and `delivery_events` (the delivery's own history: kept, a trigger refuses any change or delete). A finished delivery (delivered, returned or cancelled) cannot change state, even straight in the database.
+
+**States** (`src/lib/delivery-document.ts`, the only place that says what may follow what):
+
+```
+draft → released → picking → packed → ready → out_for_delivery → delivered
+                      ↺ record what was picked (until it is packed)
+out_for_delivery → failed_attempt → ready (try again, at most 3 times) | returned
+draft, released, picking, packed, ready → cancelled
+```
+
+**Splitting an order.** `allocate` gives a delivery everything the order has left, or what is asked for, never more than is left of each product. The order is locked while a delivery is made, so two people asking at once cannot take the same goods (the second is told there is nothing left). Quantities are checked against the product's unit (no half a piece). **A short pick** (less picked than planned) is recorded, and the difference is open on the order again, to go on another delivery or be cancelled; what is delivered is what was picked. A returned or cancelled delivery gives its goods back to the order the same way.
+
+**The order's delivery status is never stored.** `orderDeliveryStatus` works it out from the deliveries: not started, on its way, partly delivered, delivered, needs attention (a failed attempt). The order's own status becomes *shipped* when something is sent out, and *delivered* only when **every product is delivered in full**; before that a delivery that arrives records the new stage `part_delivered` ("Part of your order delivered", migration 0129 adds it to the stage check), which does not move the order's status.
+
+**Every step** (`DeliveryDocuments.step`) locks the delivery, checks its version when the screen sends one ("Someone else changed this delivery… reload"), checks the rules, changes it and writes its event and the order's stages in **one transaction**: `released_for_fulfilment`, `pick_started`, `picked`, `packed`, `ready`, `dispatched` and `out_for_delivery`, `delivery_attempted` (failed, with its reason), `delivered` or `part_delivered`, `delivery_failed`. Cancel, return and a failed attempt also go to the decision log with their reason. Releasing and sending out are refused for an order that is unpaid (a sale on account is paid later), cancelled, refunded or waiting for approval. Failure reasons come from a list (nobody there, refused, wrong address, unreachable, damaged, not safe, other, which needs words); returning and cancelling need a reason; a courier delivery says which courier has it.
+
+**Permissions.** `deliveries:read` to see; `deliveries:fulfil` for every step (administrators and managers have it). The list, each delivery and the order's own panel are read behind `deliveries:read`; the buttons are shown only to people who can use them, and the server checks again.
+
+**Screens.** Delivery › **Deliveries**: a list, newest first, kept to the server (keyset paging, search by delivery number, order number or customer, a state picker). Each delivery has its own screen with what it carries, the steps that fit its state, who receives it and its history. The order screen has a **Deliveries** panel: the order's delivery status, what is left of each product, its deliveries, and a form to make another from what is left.
+
+**Not built yet (the rest of D-1).** Stock does not move with these steps: it is still consumed at payment, and returning a delivery does not put stock back (so `returned_to_stock` is not recorded); the configurable goods issue and the return receipt with a disposition are the next slice. No dispatch board, runs or riders (D-1c, D-2), no public tracking page or messages to the customer (D-1d), no delivery note (D-1e), and a courier's status is typed in rather than received. A delivery is accepted whole: partial acceptance at the door (refused or damaged items) comes with the rider app.
