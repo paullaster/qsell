@@ -251,6 +251,12 @@ export function CheckoutScreen({ cartHandoff }: { cartHandoff?: string }) {
           <ShoppingBag className="h-7 w-7" aria-hidden="true" />
         </div>
         <h2 className="text-lg font-semibold text-fg-strong">Your cart is empty</h2>
+        {/* A refusal can empty the cart (the item sold out); the reason must outlive the form it was shown in. */}
+        {error !== null && (
+          <p role="alert" className="text-sm text-fg">
+            {error}
+          </p>
+        )}
         <p className="text-sm text-fg-muted">Add something from the shop to check out.</p>
         <Link
           href="/"
