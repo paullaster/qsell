@@ -53,7 +53,7 @@ One controlled list (a code constant with a test, like the movement types), grou
 | **Placement (delivery)** | `charge_quoted`: the delivery charge and the branch chosen for it, recorded when the order is placed with delivery (`detail`: charge, policy and version, branch; the message is the reason in words). Non-tracking, like the stock stages |
 | **Stock** | `stock_reserved` / `reservation_failed`, `stock_issued`, `stock_released` (reason: cancelled, payment failed, expired, re-sourced), `stock_returned` |
 | **Approval** | `approval_requested`, `approval_approved`, `approval_rejected`, `approval_escalated`, `approval_reopened`, `approval_withdrawn` |
-| **Payment** | `payment_started`, `prompt_sent`, `payment_pending_verification`, `payment_confirmed`, `payment_failed` (reason: declined, timeout, cancelled, wrong number), `payment_expired`, `payment_retried`, `payment_reconciled`, `payment_discrepancy`, `refund_requested`, `refund_completed`, `refund_failed` |
+| **Payment** | `payment_started`, `prompt_sent`, `payment_pending_verification`, `payment_confirmed`, `payment_partial`, `payment_reversed`, `payment_failed` (reason: declined, timeout, cancelled, wrong number), `payment_expired`, `payment_retried`, `payment_reconciled`, `payment_discrepancy`, `refund_requested`, `refund_completed`, `refund_failed` |
 | **Fulfilment** | `released_for_fulfilment`, `blocked` / `unblocked` (reason, owner), `pick_started`, `picked`, `packed`, `ready`, `dispatched`, `out_for_delivery`, `delivery_attempted` (result, reason), `delivered`, `part_delivered` (one of several deliveries arrived; the order is not delivered yet, so the order's status does not move), `delivery_failed`, `returned_to_stock`, `collected` (pickup) |
 | **Billing & compliance** | `invoice_issued`, `kra_submitted`, `kra_signed`, `kra_failed` (reason), `delivery_invoice_signed` / `delivery_invoice_failed` (reason) / `delivery_invoice_skipped` (a delivery billed on its own invoice; they do not change the order's KRA status), `credit_note_issued` |
 | **Closure** | `completed`, `cancelled` (reason, who), `failed` (reason), `refunded` |
@@ -265,3 +265,20 @@ What happens to an order's stock is on the order's own timeline, with its server
 * A hold moved from one place to another by a person is in the decision log and on the order's Stock panel (with its reason), not on the timeline.
 
 **Verified.** Unit (`order-stages.test.ts`): the non-tracking set. Integration (`stock-stages.integration.test.ts`): in both ways of keeping stock, reserved with the places, issued once, released with each reason once, nothing for an order already paid or never saved, the order's current stage and its time unchanged, the customer's timeline silent, and an expired hold recorded as given back for running out and then the payment as failed, in that order. The existing property test now reads "the last event that moves the order is its current stage".
+
+## Payment follows the customer ledger (receipts, wallet, credit notes)
+
+An order's payment state follows what the customer ledger shows settled on its invoices. Every route that settles an invoice (a receipt,
+the wallet, a credit note's excess spent elsewhere) goes through the ledger's apply and un-apply, which call `OrderPaymentSync` in the same
+transaction; it moves the order only through the stage writer.
+
+- Fully settled: `payment_confirmed` (`paid`). Part settled: `payment_partial` (`partially_paid`). Taken back (an application undone, a receipt
+  reversed, a cheque bounced): `payment_reversed`, which clears `paid_at` and returns the order to `partially_paid` or `unpaid`.
+- A credit note raised against the order's own invoice reduces what is owed; it is never a payment.
+- A cheque counts when it clears (default) or when received, per `finance_settings.cheque_counts_as_paid`. Changing the rule re-judges the
+  orders cheques were applied to at once.
+- Only `unpaid`, `partially_paid` and `paid` are moved; a payment in flight, reconciled, failed or refunded order is left alone. Fulfilment
+  status is never sent back; only a waiting order not held for approval is released by its payment.
+- History is caught up by `FinanceMaintenanceService.recheckOrderPayments` ("Re-check all orders" on Finance, Customer receipts). It is
+  batched, repeatable, and never changes fulfilment status.
+

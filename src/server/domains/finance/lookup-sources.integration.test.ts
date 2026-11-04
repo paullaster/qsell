@@ -173,7 +173,7 @@ describe.skipIf(url === '')('finance lookup sources (database)', () => {
   it('offers the fixed lists and asks for the customer before listing what is owed', async () => {
     expect((await search('receipt-statuses')).options.map((o) => o.id).sort()).toEqual(['cancelled', 'draft', 'posted', 'reversed']);
     expect((await search('refund-statuses', { query: 'paid' })).options.map((o) => o.id)).toContain('paid');
-    expect((await search('allocation-modes')).options.map((o) => o.id).sort()).toEqual(['none', 'oldest_first']);
+    expect((await search('allocation-modes')).options.map((o) => o.id).sort()).toEqual(['choose', 'none', 'oldest_first']);
     await expect(search('refund-sources')).rejects.toThrow();
     await expect(search('refund-sources', { filters: { customer: 'nope' } })).rejects.toThrow();
     expect((await search('refund-sources', { filters: { customer: randomUUID() } })).options).toEqual([]);

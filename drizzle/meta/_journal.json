@@ -946,6 +946,13 @@
       "when": 1793756377053,
       "tag": "0134_delivery_riders",
       "breakpoints": true
+    },
+    {
+      "idx": 135,
+      "version": "7",
+      "when": 1793760235142,
+      "tag": "0135_order_payment_from_receipts",
+      "breakpoints": true
     }
   ]
 }

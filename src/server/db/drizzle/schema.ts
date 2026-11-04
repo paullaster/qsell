@@ -6158,8 +6158,10 @@ export const financeSettings = pgTable('finance_settings', {
   outputTaxAccountId: uuid('output_tax_account_id').references((): AnyPgColumn => glAccounts.id, {
     onDelete: 'restrict',
   }),
+  /** When a cheque counts toward an order being paid: 'on_clearing' (once it clears) or 'on_receipt'. */
+  chequeCountsAsPaid: text('cheque_counts_as_paid').$type<'on_clearing' | 'on_receipt'>().notNull().default('on_clearing'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [check('finance_settings_cheque_counts_chk', sql`${t.chequeCountsAsPaid} IN ('on_clearing','on_receipt')`)]);
 
 export const glAccounts = pgTable(
   'gl_accounts',

@@ -16,6 +16,8 @@ import { findTemplate } from './domain/templates';
 import { FinanceError, type FinanceContext } from './errors';
 import type { FiscalService } from './fiscal-service';
 
+import { OrderPaymentSync } from './receivables/order-payment-sync';
+import { isChequeCountsMode, type ChequeCountsMode } from '@/lib/order-payment';
 import { has, required } from '@/lib/values';
 
 export interface AccountInput {
@@ -71,6 +73,33 @@ export class FinanceSetupService {
         tx,
       );
     });
+  }
+
+  /**
+   * When a cheque counts toward an order being paid. The orders that cheques were applied to are re-judged under the new rule straight
+   * away, so what the screens show always follows the rule in force. Returns how many orders moved.
+   */
+  async setChequeRule(ctx: FinanceContext, mode: ChequeCountsMode): Promise<{ moved: number }> {
+    if (!isChequeCountsMode(mode)) throw new FinanceError('INVALID', 'Choose when a cheque counts as payment.');
+    const s = await this.getSettings(ctx.companyId);
+    if (!s) throw new FinanceError('NOT_SET_UP', 'Apply a chart of accounts first.');
+    if (s.chequeCountsAsPaid === mode) return { moved: 0 };
+    await this.db.transaction(async (tx) => {
+      await tx.update(financeSettings).set({ chequeCountsAsPaid: mode, updatedAt: sql`now()` }).where(eq(financeSettings.companyId, ctx.companyId));
+      await this.decisions.record(
+        {
+          companyId: ctx.companyId,
+          subject: { type: 'finance_settings', id: ctx.companyId },
+          action: 'finance.cheque_rule_changed',
+          actor: ctx.actor,
+          inputs: { origin: ctx.origin, before: s.chequeCountsAsPaid },
+          outcome: { chequeCountsAsPaid: mode },
+        },
+        tx,
+      );
+    });
+    const { moved } = await OrderPaymentSync.recheckAll(this.db, ctx, { onlyCheques: true, action: 'cheque_rule_changed' });
+    return { moved };
   }
 
   // ── chart of accounts ──────────────────────────────────────────────────────

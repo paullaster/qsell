@@ -20,6 +20,7 @@ import {
 } from '../domain/receivables';
 import type { Tx } from '../engine';
 import { FinanceError, type FinanceContext } from '../errors';
+import { OrderPaymentSync } from './order-payment-sync';
 
 import { has } from '@/lib/values';
 
@@ -239,6 +240,8 @@ export class CustomerLedgerService {
     await this.shiftRemaining(tx, deltas);
     await this.moveBalance(tx, input.customerId, -total);
     await this.queueFx(tx, ctx.companyId, 'fx_application', applicationId, input.postingDate, credit.currency);
+    // Every route that settles an invoice (receipt, wallet, credit note) passes here, so the orders behind the invoices follow in the same transaction.
+    await OrderPaymentSync.syncIn(tx, ctx, planned.map((a) => a.entryId), { document: credit.documentNo, action: 'applied' });
 
     await this.decisions.record(
       {
@@ -308,6 +311,9 @@ export class CustomerLedgerService {
     await this.moveBalance(tx, original[0].customerId, restoredToInvoices);
     const [first] = await tx.select({ currency: customerLedgerEntries.currency }).from(customerLedgerEntries).where(eq(customerLedgerEntries.id, original[0].ledgerEntryId));
     await this.queueFx(tx, ctx.companyId, 'fx_unapplication', newApplication, input.postingDate, first?.currency ?? null);
+    const involved = [...new Set(original.flatMap((r) => (has(r.appliedToEntryId) ? [r.ledgerEntryId, r.appliedToEntryId] : [r.ledgerEntryId])))];
+    const docs = await tx.select({ type: customerLedgerEntries.documentType, no: customerLedgerEntries.documentNo }).from(customerLedgerEntries).where(inArray(customerLedgerEntries.id, involved));
+    await OrderPaymentSync.syncIn(tx, ctx, involved, { document: docs.find((d) => d.type !== 'invoice')?.no ?? 'ledger', action: 'unapplied' });
     await this.decisions.record(
       {
         companyId: ctx.companyId,

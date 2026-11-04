@@ -121,6 +121,7 @@ export const orderStateOf = (status: string): { label: string; tone: Tone; hint:
 const PAYMENT_STATE: Record<PaymentStatus, { label: string; tone: Tone }> = {
   unpaid: { label: 'Awaiting payment', tone: 'amber' },
   pending_verification: { label: 'Payment being confirmed', tone: 'amber' },
+  partially_paid: { label: 'Part paid', tone: 'amber' },
   paid: { label: 'Paid', tone: 'green' },
   reconciled: { label: 'Paid', tone: 'green' },
   discrepancy: { label: 'Payment being checked', tone: 'amber' },

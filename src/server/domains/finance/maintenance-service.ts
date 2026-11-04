@@ -5,6 +5,8 @@ import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import { formatAmount, parseAmount } from './domain/amount';
 import { registerHash } from './domain/hash';
+import type { FinanceContext } from './errors';
+import { OrderPaymentSync } from './receivables/order-payment-sync';
 import type { CustomerLedgerService } from './receivables/customer-ledger-service';
 import type { FinanceReportsService } from './reports-service';
 import type { SalesPostingService } from './sales-posting-service';
@@ -35,6 +37,11 @@ export class FinanceMaintenanceService {
     private readonly customerLedger: CustomerLedgerService,
     private readonly salesPosting: SalesPostingService,
   ) {}
+
+  /** Brings every order's payment state in step with the ledger (history from before orders followed receipts). Safe to run again. */
+  async recheckOrderPayments(ctx: FinanceContext) {
+    return await OrderPaymentSync.recheckAll(this.db, ctx, { onlyCheques: false, action: 'recheck' });
+  }
 
   /** Makes sure monthly ledger partitions exist from this month for `monthsAhead` months. */
   async ensurePartitions(monthsAhead = 24): Promise<number> {

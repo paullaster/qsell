@@ -253,27 +253,58 @@ export function renderReceiptPdf(receipt: ReceiptDocument, generatedOn: string):
         .fillColor('#FFFFFF')
         .font('Helvetica-Bold')
         .fontSize(8)
-        .text('INVOICE', M + 8, y + 6, { lineBreak: false });
-      doc.text('AMOUNT', M, y + 6, { width: CW - 8, align: 'right', lineBreak: false });
+        .text('INVOICE AND WHAT IT WAS FOR', M + 8, y + 6, { lineBreak: false });
+      doc.text('AMOUNT PAID', M, y + 6, { width: CW - 8, align: 'right', lineBreak: false });
       y += 20;
-      for (const [i, a] of receipt.applications.entries()) {
-        if (y + 22 > H - 120) {
+      const room = (needed: number) => {
+        if (y + needed > H - 120) {
           doc.addPage();
           bar();
           y = 30;
         }
-        if (i % 2 === 0) doc.rect(M, y, CW, 20).fill('#F9FAFB');
+      };
+      for (const [i, a] of receipt.applications.entries()) {
+        room(22);
+        if (i % 2 === 0) doc.rect(M, y, CW, 20 + a.lines.length * 11 + (a.moreLines > 0 ? 11 : 0)).fill('#F9FAFB');
+        doc
+          .fillColor(INK)
+          .font('Helvetica-Bold')
+          .fontSize(9)
+          .text(a.title, M + 8, y + 6, { lineBreak: false });
+        if (a.order !== null) {
+          doc
+            .fillColor(MUTED)
+            .font('Helvetica')
+            .fontSize(8)
+            .text(a.order, M + 8 + doc.widthOfString(a.title) + 8, y + 7, { lineBreak: false });
+        }
         doc
           .fillColor(INK)
           .font('Helvetica')
           .fontSize(9)
-          .text(a.invoiceNo, M + 8, y + 6, { lineBreak: false });
-        doc.text(money(a.amount, receipt.currency), M, y + 6, {
-          width: CW - 8,
-          align: 'right',
-          lineBreak: false,
-        });
+          .text(money(a.amount, receipt.currency), M, y + 6, {
+            width: CW - 8,
+            align: 'right',
+            lineBreak: false,
+          });
         y += 20;
+        // What the invoice was for, so the payer can see what this money settled.
+        for (const line of a.lines) {
+          room(12);
+          doc
+            .fillColor(MUTED)
+            .font('Helvetica')
+            .fontSize(8)
+            .text(line.text, M + 16, y, { width: CW * 0.7, lineBreak: false, ellipsis: true });
+          doc.text(money(line.total, receipt.currency), M, y, { width: CW - 8, align: 'right', lineBreak: false });
+          y += 11;
+        }
+        if (a.moreLines > 0) {
+          room(12);
+          doc.fillColor(MUTED).font('Helvetica-Oblique').fontSize(8).text(`and ${String(a.moreLines)} more ${a.moreLines === 1 ? 'line' : 'lines'}`, M + 16, y, { lineBreak: false });
+          y += 11;
+        }
+        y += 2;
       }
       y += 6;
     }

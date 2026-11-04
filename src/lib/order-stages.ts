@@ -80,6 +80,8 @@ export const ORDER_STAGES = {
   prompt_sent: { phase: 'payment', label: 'Payment prompt sent' },
   payment_pending_verification: { phase: 'payment', label: 'Payment waiting to be confirmed' },
   payment_confirmed: { phase: 'payment', label: 'Payment confirmed', customerLabel: 'Payment received' },
+  payment_partial: { phase: 'payment', label: 'Part of the payment received', customerLabel: 'Part payment received' },
+  payment_reversed: { phase: 'payment', label: 'Payment taken back' },
   payment_failed: { phase: 'payment', label: 'Payment failed' },
   payment_expired: { phase: 'payment', label: 'Payment expired' },
   payment_retried: { phase: 'payment', label: 'Payment tried again' },
@@ -159,6 +161,8 @@ export interface StageEffect {
   approvalStatus?: string;
   kraTransmissionStatus?: string;
   stamps?: readonly StageTimeColumn[];
+  /** Stage times this stage takes back (a payment taken back un-stamps the time it was paid). */
+  clears?: readonly StageTimeColumn[];
 }
 
 const NONE: StageEffect = {};
@@ -185,6 +189,9 @@ const EFFECTS: Partial<Record<OrderStage, EffectOf>> = {
   payment_started: (outcome) => (outcome === 'failed' ? NONE : { paymentStatus: 'pending_verification', stamps: ['paymentStartedAt'] }),
   payment_failed: { paymentStatus: 'failed', status: 'failed', stamps: ['failedAt'] },
   payment_confirmed: { paymentStatus: 'paid', status: 'processing', stamps: ['paidAt', 'releasedAt'] },
+  payment_partial: { paymentStatus: 'partially_paid' },
+  // Where the order ends up (part paid or unpaid) depends on what is still settled, so the writer's caller sets the column.
+  payment_reversed: { clears: ['paidAt'] },
   payment_reconciled: { paymentStatus: 'reconciled' },
   released_for_fulfilment: { status: 'processing', stamps: ['releasedAt'] },
   packed: { stamps: ['packedAt'] },
