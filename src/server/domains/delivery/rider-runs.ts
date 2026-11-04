@@ -1,7 +1,8 @@
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, deliveries, deliveryLines, deliveryRunStops, deliveryRuns, orders, products } from '@/server/db/drizzle/schema';
+import { branches, deliveries, deliveryRiderSettings, deliveryLines, deliveryRunStops, deliveryRuns, orders, products } from '@/server/db/drizzle/schema';
 import { RUN_STATUS_WORDS, type RunStatus } from '@/lib/dispatch-run';
+import { isProofRule, ruleFor, type ProofRule } from '@/lib/delivery-proof';
 import { STATUS_WORDS, type DeliveryStatus } from '@/lib/delivery-document';
 import type { GeoPoint } from '@/lib/geo';
 import { callLink, chatLink, navigateLink } from '@/lib/rider-links';
@@ -19,6 +20,10 @@ export interface RiderStopView {
   instructions: string | null;
   items: { name: string; quantity: number }[];
   links: { call: string | null; chat: string | null; navigate: string | null };
+  /** What the rider must show to mark this stop delivered. The code itself is the customer's, and never sent to the rider. */
+  proof: ProofRule;
+  /** The run is on the road and this stop is still to do. */
+  open: boolean;
 }
 
 export interface RiderRunItem {
@@ -35,6 +40,8 @@ export interface RiderRunItem {
 export interface RiderRunView extends RiderRunItem {
   notes: string | null;
   items: RiderStopView[];
+  /** On the road and every stop done or failed: the rider may close it. */
+  canFinish: boolean;
 }
 
 const words = (parts: (string | null | undefined)[]): string[] => parts.filter((p): p is string => typeof p === 'string' && p.trim() !== '').map((p) => p.trim());
@@ -103,6 +110,9 @@ export class RiderRuns {
     }
     const counts = new Map([[runId, stops.length]]);
     const r = row.r;
+    const [setting] = await this.db.select({ proof: deliveryRiderSettings.proof }).from(deliveryRiderSettings).where(eq(deliveryRiderSettings.companyId, self.companyId));
+    const company: ProofRule = setting !== undefined && isProofRule(setting.proof) ? setting.proof : 'none';
+    const onTheRoad = r.status === 'started';
     return {
       id: r.id,
       number: r.number,
@@ -131,8 +141,11 @@ export class RiderRuns {
           instructions: s.d.notes,
           items: byDelivery.get(s.d.id) ?? [],
           links: { call: callLink(phone), chat: chatLink(phone), navigate: navigateLink(pin, address) },
+          proof: ruleFor(company, s.d.handoverCode !== null),
+          open: onTheRoad && s.d.status === 'out_for_delivery',
         };
       }),
+      canFinish: onTheRoad && stops.length > 0 && stops.every((s) => s.d.status !== 'out_for_delivery'),
     };
   }
 }

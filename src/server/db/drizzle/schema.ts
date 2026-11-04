@@ -565,6 +565,10 @@ export const deliveries = pgTable(
     /** Who received it, said when it is marked delivered. */
     receivedBy: text('received_by'),
     failedAttempts: integer('failed_attempts').notNull().default(0),
+    /** The six digits the customer is sent when it goes out and says at the door, when the company asks for the code as proof. */
+    handoverCode: text('handover_code'),
+    /** Wrong codes typed at the door; past the limit the rider is sent to the office, so a six-digit code cannot be guessed. */
+    codeTries: integer('code_tries').notNull().default(0),
     /** Two people changing a delivery at once: the second is told to reload instead of overwriting the first. */
     version: integer('version').notNull().default(1),
     createdBy: text('created_by'),
@@ -586,6 +590,8 @@ export const deliveries = pgTable(
     check('deliveries_method_chk', sql`${t.method} IN ('own_fleet','courier')`),
     check('deliveries_attempts_chk', sql`${t.failedAttempts} >= 0`),
     check('deliveries_version_chk', sql`${t.version} >= 1`),
+    check('deliveries_code_tries_chk', sql`${t.codeTries} >= 0`),
+    check('deliveries_handover_code_chk', sql`${t.handoverCode} IS NULL OR ${t.handoverCode} ~ '^[0-9]{6}$'`),
     // Delivered means delivered at a time; a finished delivery (delivered, returned, cancelled) has a closing time.
     check('deliveries_delivered_chk', sql`(${t.status} = 'delivered') = (${t.deliveredAt} IS NOT NULL)`),
     check('deliveries_closed_chk', sql`${t.status} NOT IN ('delivered','returned','cancelled') OR ${t.closedAt} IS NOT NULL`),
@@ -655,6 +661,72 @@ export const deliveryRunStops = pgTable(
 );
 export type DeliveryRunStopRow = typeof deliveryRunStops.$inferSelect;
 
+/**
+ * One go at a door, by a rider, with its result. Kept for good (a trigger refuses any change): the delivery's state moves in the same
+ * transaction, and this row says who, where, when and why. `client_key` is made by the phone once per try, so a try sent twice (a
+ * dropped connection, a queue replayed) is one row and one change.
+ */
+export const deliveryAttempts = pgTable(
+  'delivery_attempts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    deliveryId: uuid('delivery_id')
+      .notNull()
+      .references(() => deliveries.id, { onDelete: 'restrict' }),
+    runId: uuid('run_id')
+      .notNull()
+      .references(() => deliveryRuns.id, { onDelete: 'restrict' }),
+    riderId: uuid('rider_id')
+      .notNull()
+      .references(() => deliveryRiders.id, { onDelete: 'restrict' }),
+    /** 1, 2, 3 ... per delivery, assigned under the delivery's row lock. */
+    attemptNo: integer('attempt_no').notNull(),
+    /** `delivered`, or why it did not happen (the failure reason codes). */
+    result: text('result').notNull(),
+    receivedBy: text('received_by'),
+    note: text('note'),
+    latitude: doublePrecision('latitude'),
+    longitude: doublePrecision('longitude'),
+    clientKey: text('client_key').notNull(),
+    /** The phone's own clock, kept beside the server's and never used for order or deadlines. */
+    clientTime: timestamp('client_time', { withTimezone: true }),
+    /** The server's clock. */
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_attempts_client_uidx').on(t.companyId, t.clientKey),
+    uniqueIndex('delivery_attempts_no_uidx').on(t.deliveryId, t.attemptNo),
+    index('delivery_attempts_rider_idx').on(t.riderId, t.occurredAt),
+    check('delivery_attempts_no_chk', sql`${t.attemptNo} >= 1`),
+    check('delivery_attempts_place_chk', sql`(${t.latitude} IS NULL) = (${t.longitude} IS NULL)`),
+  ],
+);
+export type DeliveryAttemptRow = typeof deliveryAttempts.$inferSelect;
+
+/** What a rider showed at a door: the customer's code (matched) or a photo. Kept with the attempt, and a photo is used once. */
+export const deliveryProofs = pgTable(
+  'delivery_proofs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    attemptId: uuid('attempt_id')
+      .notNull()
+      .references(() => deliveryAttempts.id, { onDelete: 'restrict' }),
+    kind: text('kind').$type<'code' | 'photo'>().notNull(),
+    mediaId: text('media_id').references(() => mediaAssets.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('delivery_proofs_attempt_idx').on(t.attemptId),
+    uniqueIndex('delivery_proofs_media_uidx').on(t.mediaId).where(sql`${t.mediaId} IS NOT NULL`),
+    check('delivery_proofs_kind_chk', sql`${t.kind} IN ('code','photo')`),
+    check('delivery_proofs_photo_chk', sql`(${t.kind} = 'photo') = (${t.mediaId} IS NOT NULL)`),
+  ],
+);
+export type DeliveryProofRow = typeof deliveryProofs.$inferSelect;
+
 /** Which kinds of rider a company uses: its own staff signing in to the rider app, riders with an account of their own, or both. */
 export const deliveryRiderSettings = pgTable(
   'delivery_rider_settings',
@@ -664,11 +736,16 @@ export const deliveryRiderSettings = pgTable(
       .references(() => companySettings.id, { onDelete: 'cascade' }),
     allowStaff: boolean('allow_staff').notNull().default(true),
     allowSeparate: boolean('allow_separate').notNull().default(false),
+    /** What a rider must show to mark a delivery delivered: nothing, the customer's code, a photo, or either. */
+    proof: text('proof').$type<'none' | 'code' | 'photo' | 'code_or_photo'>().notNull().default('none'),
     version: integer('version').notNull().default(1),
     updatedBy: text('updated_by'),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [check('delivery_rider_settings_one_chk', sql`${t.allowStaff} OR ${t.allowSeparate}`)],
+  (t) => [
+    check('delivery_rider_settings_one_chk', sql`${t.allowStaff} OR ${t.allowSeparate}`),
+    check('delivery_rider_settings_proof_chk', sql`${t.proof} IN ('none','code','photo','code_or_photo')`),
+  ],
 );
 
 /**

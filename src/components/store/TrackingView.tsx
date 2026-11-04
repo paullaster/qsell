@@ -69,6 +69,11 @@ export function TrackingView({ order, heading }: { order: TrackedOrder; heading?
                 {d.courier.trackingNumber === null ? '' : `, their tracking number is ${d.courier.trackingNumber}`}.
               </p>
             )}
+            {d.handoverCode === null ? null : (
+              <p className="rounded-lg border border-line bg-surface-sunken px-3 py-2 text-sm text-fg" role="note">
+                Your delivery code is <strong className="font-mono text-base tracking-widest">{d.handoverCode}</strong>. Give it to the rider when your order arrives, and to no one else.
+              </p>
+            )}
             {d.status === 'delivered' && d.receivedBy !== null ? (
               <p className="text-xs text-fg-muted">
                 Received by {d.receivedBy}

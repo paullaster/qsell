@@ -46,6 +46,17 @@ export async function deliveryAction(id: unknown) {
   });
 }
 
+/** A short-lived link to the photo a rider took at the door. Opened on demand, never stored in the page. */
+export async function proofPhotoLinkAction(proofId: unknown) {
+  return await runDelivery('deliveries:read', async (ctx) => {
+    const { deliveryDocuments, media } = getContainer();
+    const mediaId = await deliveryDocuments.proofPhoto(ctx.companyId, idOf(proofId, 'photo'));
+    const url = mediaId === null ? null : await media.deliveryUrlById(mediaId);
+    if (url === null) throw new DeliveryError('That photo could not be found.', 'NOT_FOUND');
+    return { url };
+  });
+}
+
 /** An order's deliveries and what it has left to deliver, for the order screen. */
 export async function orderDeliveriesAction(orderId: unknown) {
   return await runDelivery('deliveries:read', async (ctx) => {

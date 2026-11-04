@@ -53,7 +53,7 @@ export class TrackedOrders {
     for (const r of rows) {
       const carried = Number(r.linePicked ?? r.lineQuantity);
       visible.set(r.productId, (visible.get(r.productId) ?? 0) + carried);
-      const cur = byId.get(r.d.id) ?? { number: r.d.number, status: r.d.status, items: [], courier: null, receivedBy: r.d.status === 'delivered' ? r.d.receivedBy : null, deliveredAt: r.d.deliveredAt?.toISOString() ?? null, failedAttempts: r.d.failedAttempts };
+      const cur = byId.get(r.d.id) ?? { number: r.d.number, status: r.d.status, items: [], courier: null, receivedBy: r.d.status === 'delivered' ? r.d.receivedBy : null, deliveredAt: r.d.deliveredAt?.toISOString() ?? null, failedAttempts: r.d.failedAttempts, handoverCode: r.d.status === 'out_for_delivery' ? r.d.handoverCode : null };
       const quantity = Number(r.d.status === 'delivered' ? r.lineDelivered : (r.linePicked ?? r.lineQuantity));
       if (quantity > 0) cur.items.push({ name: r.lineProduct, quantity });
       const s = shipment.get(r.d.id);

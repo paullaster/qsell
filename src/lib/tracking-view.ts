@@ -41,6 +41,8 @@ export interface TrackedDelivery {
   receivedBy: string | null;
   deliveredAt: string | null;
   failedAttempts: number;
+  /** While it is out for delivery: the code to give the rider, when the company asks for one. */
+  handoverCode: string | null;
 }
 
 export interface TrackedCollection {

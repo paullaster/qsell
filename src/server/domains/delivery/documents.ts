@@ -1,8 +1,10 @@
+import { randomBytes } from 'node:crypto';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, deliveries, deliveryEvents, deliveryShipments, deliveryLines, deliveryReturns, orderDeliveries, orderItems, orders, products, stockReservations, stockSettings, unitsOfMeasure, type ReturnEffects } from '@/server/db/drizzle/schema';
+import { branches, deliveries, deliveryAttempts, deliveryEvents, deliveryProofs, deliveryRiderSettings, deliveryRiders, deliveryShipments, deliveryLines, deliveryReturns, orderDeliveries, orderItems, orders, products, stockReservations, stockSettings, unitsOfMeasure, type ReturnEffects } from '@/server/db/drizzle/schema';
 import {
   ACTION_WORDS,
+  FAILURE_REASONS,
   MAX_DELIVERY_ATTEMPTS,
   STAGES_FOR,
   STATUS_WORDS,
@@ -32,6 +34,7 @@ import { decodeCursor, encodeCursor } from '@/server/domains/lookups/request';
 import { DISPOSITION_WORDS, dispositionsFor, isIssueMoment, issuesAt, returnProblem, type IssueMoment, type ReturnDisposition, type ReturnableLine } from '@/lib/stock-issue';
 import type { StockReservations } from '@/server/domains/stock/reservations';
 import { StockError } from '@/server/domains/stock/errors';
+import { codeFromBytes, isProofRule, usesCode } from '@/lib/delivery-proof';
 import { kindForStep, messageKey } from '@/lib/delivery-messages';
 import type { DeliveryMessages } from './messages';
 import { orderReadinessProblem } from './order-readiness';
@@ -86,6 +89,21 @@ export interface DeliveryEventView {
   occurredAt: string;
 }
 
+/** One go at the door by a rider, with what they showed. A photo is opened through a signed link after an access check, never by its id. */
+export interface DeliveryAttemptView {
+  attemptNo: number;
+  result: string;
+  resultWords: string;
+  riderName: string;
+  receivedBy: string | null;
+  note: string | null;
+  place: { lat: number; lng: number } | null;
+  occurredAt: string;
+  /** The phone's own clock, only for the record. */
+  clientTime: string | null;
+  proofs: { id: string; kind: 'code' | 'photo' }[];
+}
+
 export interface DeliveryView {
   id: string;
   number: string;
@@ -104,6 +122,8 @@ export interface DeliveryView {
   trackingNumber: string | null;
   receivedBy: string | null;
   failedAttempts: number;
+  /** A code was made for the customer to say at the door. The code itself is the customer's, and is not shown here. */
+  hasCode: boolean;
   version: number;
   createdAt: string;
   releasedAt: string | null;
@@ -111,6 +131,7 @@ export interface DeliveryView {
   deliveredAt: string | null;
   lines: DeliveryLineView[];
   events: DeliveryEventView[];
+  attempts: DeliveryAttemptView[];
   /** What can be done next, with the words for the button. */
   actions: { action: DeliveryAction; words: string }[];
 }
@@ -289,7 +310,10 @@ export class DeliveryDocuments {
             .values({ companyId: actor.companyId, deliveryId: id, courierName, trackingNumber, status: 'in_transit' })
             .onConflictDoUpdate({ target: deliveryShipments.deliveryId, set: { courierName, trackingNumber, status: 'in_transit', lastUpdateAt: new Date() } });
         }
-        return { set: { dispatchedAt: new Date(), courierName: ctx.row.method === 'courier' ? courierName : null, trackingNumber }, note: input.note ?? null, detail: input.detail ?? {} };
+        // A delivery the shop's own rider carries gets the customer's code when the company asks for it as proof; a second try keeps the first.
+        const [proofRow] = ctx.row.method === 'own_fleet' ? await inner.select({ proof: deliveryRiderSettings.proof }).from(deliveryRiderSettings).where(eq(deliveryRiderSettings.companyId, actor.companyId)) : [];
+        const handoverCode = proofRow !== undefined && isProofRule(proofRow.proof) && usesCode(proofRow.proof) ? (ctx.row.handoverCode ?? codeFromBytes(randomBytes(4))) : ctx.row.handoverCode;
+        return { set: { dispatchedAt: new Date(), courierName: ctx.row.method === 'courier' ? courierName : null, trackingNumber, handoverCode }, note: input.note ?? null, detail: input.detail ?? {} };
       },
       tx,
     );
@@ -608,6 +632,16 @@ export class DeliveryDocuments {
     return new Map(rows.map((r) => [r.id, { decimals: r.decimals ?? 3, name: r.name ?? 'its unit' }]));
   }
 
+  /** The stored photo of a proof, only if the proof belongs to this company. The caller turns it into a short-lived link after its own permission check. */
+  async proofPhoto(companyId: string, proofId: string): Promise<string | null> {
+    const [row] = await this.db
+      .select({ mediaId: deliveryProofs.mediaId })
+      .from(deliveryProofs)
+      .innerJoin(deliveryAttempts, eq(deliveryAttempts.id, deliveryProofs.attemptId))
+      .where(and(eq(deliveryProofs.id, proofId), eq(deliveryAttempts.companyId, companyId)));
+    return row?.mediaId ?? null;
+  }
+
   async get(companyId: string, id: string): Promise<DeliveryView | null> {
     return await this.viewIn(this.db, companyId, id, true);
   }
@@ -630,7 +664,7 @@ export class DeliveryDocuments {
     // A receipt can be corrected while the holds it made are still untouched: one read of them all.
     const holdIds = receipts.flatMap((r) => r.effects.holds ?? []);
     const used = new Set(holdIds.length === 0 ? [] : (await db.select({ id: stockReservations.id, state: stockReservations.state, consumed: stockReservations.consumed, released: stockReservations.released }).from(stockReservations).where(inArray(stockReservations.id, holdIds))).filter((h) => h.state !== 'held' || h.consumed > 0 || h.released > 0).map((h) => h.id));
-    const [lines, events] = await Promise.all([
+    const [lines, events, attemptRows] = await Promise.all([
       db
         .select({ id: deliveryLines.id, productId: deliveryLines.productId, productName: products.name, sku: products.sku, quantity: deliveryLines.quantity, picked: deliveryLines.picked, delivered: deliveryLines.delivered, issued: deliveryLines.issued })
         .from(deliveryLines)
@@ -638,7 +672,14 @@ export class DeliveryDocuments {
         .where(eq(deliveryLines.deliveryId, id))
         .orderBy(asc(products.name), asc(deliveryLines.id)),
       db.select().from(deliveryEvents).where(eq(deliveryEvents.deliveryId, id)).orderBy(asc(deliveryEvents.sequence)),
+      db
+        .select({ a: deliveryAttempts, riderName: deliveryRiders.name })
+        .from(deliveryAttempts)
+        .innerJoin(deliveryRiders, eq(deliveryRiders.id, deliveryAttempts.riderId))
+        .where(eq(deliveryAttempts.deliveryId, id))
+        .orderBy(asc(deliveryAttempts.attemptNo)),
     ]);
+    const proofRows = attemptRows.length === 0 ? [] : await db.select({ id: deliveryProofs.id, attemptId: deliveryProofs.attemptId, kind: deliveryProofs.kind }).from(deliveryProofs).where(inArray(deliveryProofs.attemptId, attemptRows.map((r) => r.a.id))).orderBy(asc(deliveryProofs.createdAt));
     const d = row.d;
     return {
       id: d.id,
@@ -658,6 +699,7 @@ export class DeliveryDocuments {
       trackingNumber: d.trackingNumber,
       receivedBy: d.receivedBy,
       failedAttempts: d.failedAttempts,
+      hasCode: d.handoverCode !== null,
       version: d.version,
       createdAt: d.createdAt.toISOString(),
       releasedAt: d.releasedAt?.toISOString() ?? null,
@@ -700,6 +742,18 @@ export class DeliveryDocuments {
         note: e.note,
         detail: e.detail,
         occurredAt: e.occurredAt.toISOString(),
+      })),
+      attempts: attemptRows.map(({ a, riderName }) => ({
+        attemptNo: a.attemptNo,
+        result: a.result,
+        resultWords: a.result === 'delivered' ? 'Delivered' : (FAILURE_REASONS.find((r) => r.code === a.result)?.words ?? a.result),
+        riderName,
+        receivedBy: a.receivedBy,
+        note: a.note,
+        place: a.latitude === null || a.longitude === null ? null : { lat: a.latitude, lng: a.longitude },
+        occurredAt: a.occurredAt.toISOString(),
+        clientTime: a.clientTime?.toISOString() ?? null,
+        proofs: proofRows.filter((p) => p.attemptId === a.id).map((p) => ({ id: p.id, kind: p.kind })),
       })),
       actions: actionsFrom(d.status).map((action) => ({ action, words: ACTION_WORDS[action] })),
     };

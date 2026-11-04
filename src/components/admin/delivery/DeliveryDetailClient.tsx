@@ -2,7 +2,7 @@
 
 import { use, useId, useState } from 'react';
 import Link from 'next/link';
-import { deliveryStepAction, type deliveryAction } from '@/server/domains/delivery/document-actions';
+import { deliveryStepAction, proofPhotoLinkAction, type deliveryAction } from '@/server/domains/delivery/document-actions';
 import { courierNewsAction, deliveryExtrasAction } from '@/server/domains/delivery/run-actions';
 import type { DeliveryView } from '@/server/domains/delivery/documents';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
@@ -472,6 +472,58 @@ function DeliveryScreen({ initial, canFulfil, initialExtras }: { initial: Delive
           ) : null}
         </section>
       ) : null}
+
+      {view.attempts.length === 0 ? null : (
+        <section aria-label="At the door" className={`${cardClass} space-y-3`}>
+          <h2 className="text-sm font-bold text-fg-strong">At the door</h2>
+          <ol className="space-y-3">
+            {view.attempts.map((a) => (
+              <li key={a.attemptNo} className="space-y-1 text-sm">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="font-semibold text-fg-strong">
+                    Try {a.attemptNo}: {a.resultWords}
+                  </span>
+                  <Chip tone={a.result === 'delivered' ? 'green' : 'red'}>{a.result === 'delivered' ? 'Delivered' : 'Not delivered'}</Chip>
+                  <time dateTime={a.occurredAt} className="text-xs text-fg-muted">
+                    {when(a.occurredAt)}
+                  </time>
+                  <span className="text-xs text-fg-muted">by {a.riderName}</span>
+                </div>
+                {a.receivedBy === null ? null : <p className="text-fg">Received by {a.receivedBy}.</p>}
+                {a.note === null ? null : <p className="text-fg">{a.note}</p>}
+                <div className="flex flex-wrap items-center gap-2">
+                  {a.proofs.map((p) =>
+                    p.kind === 'code' ? (
+                      <Chip key={p.id} tone="sky">
+                        Customer&apos;s code matched
+                      </Chip>
+                    ) : (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className={buttonClass}
+                        onClick={async () => {
+                          setNotice(null);
+                          const r = await attempt(proofPhotoLinkAction(p.id));
+                          if (!r.ok) setNotice({ kind: 'error', text: r.error });
+                          else window.open(r.data.url, '_blank', 'noopener,noreferrer');
+                        }}
+                      >
+                        Open the photo
+                      </button>
+                    ),
+                  )}
+                  {a.place === null ? null : (
+                    <a className="text-xs font-medium text-brand underline" href={`https://www.openstreetmap.org/?mlat=${String(a.place.lat)}&mlon=${String(a.place.lng)}#map=18/${String(a.place.lat)}/${String(a.place.lng)}`} target="_blank" rel="noopener noreferrer">
+                      Where the rider was
+                    </a>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
 
       {extra.messages.length === 0 ? null : (
         <section aria-label="Messages to the customer" className={`${cardClass} space-y-3`}>

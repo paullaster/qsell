@@ -41,6 +41,8 @@ export interface MessageFacts {
   trackUrl: string;
   courierName: string | null;
   receivedBy: string | null;
+  /** The six digits the customer says at the door, when the company asks for them as proof. Only the "on its way" message carries it. */
+  handoverCode: string | null;
   reasonCode: string | null;
   /** How many tries are left, when a delivery failed and can be tried again. */
   triesLeft: number | null;
@@ -66,7 +68,14 @@ export function messageContent(kind: MessageKind, f: MessageFacts): MessageConte
   const withCourier = f.courierName === null ? base : [...base, ['Courier', f.courierName] as const];
   switch (kind) {
     case 'out_for_delivery':
-      return { subject: `Your order ${f.orderNumber} is on its way · ${store}`, heading: 'Your order is on its way', greeting, body: 'Your delivery has left us and is on its way to you. You can follow it on your tracking page.', details: withCourier, cta: 'Track my delivery' };
+      return {
+        subject: `Your order ${f.orderNumber} is on its way · ${store}`,
+        heading: 'Your order is on its way',
+        greeting,
+        body: `Your delivery has left us and is on its way to you. You can follow it on your tracking page.${f.handoverCode === null ? '' : ' Please give the rider the delivery code below when it arrives, and only then.'}`,
+        details: f.handoverCode === null ? withCourier : [...withCourier, ['Delivery code', f.handoverCode] as const],
+        cta: 'Track my delivery',
+      };
     case 'delivered':
       return { subject: `Your order ${f.orderNumber} was delivered · ${store}`, heading: 'Your order was delivered', greeting, body: f.receivedBy === null ? 'Your order was delivered. Thank you for shopping with us.' : `Your order was delivered and ${f.receivedBy} received it. Thank you for shopping with us.`, details: base, cta: 'See my delivery' };
     case 'part_delivered':

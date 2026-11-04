@@ -120,6 +120,7 @@ export class DeliveryMessages {
       trackUrl: url,
       courierName: row.d.method === 'courier' ? row.d.courierName : null,
       receivedBy: row.d.receivedBy,
+      handoverCode: m.kind === 'out_for_delivery' ? row.d.handoverCode : null,
       reasonCode: failed?.reason ?? null,
       triesLeft: Math.max(0, MAX_DELIVERY_ATTEMPTS - row.d.failedAttempts),
     });

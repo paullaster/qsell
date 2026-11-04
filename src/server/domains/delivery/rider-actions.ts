@@ -28,6 +28,11 @@ export async function setRiderKindsAction(raw: unknown) {
   return await runDelivery('riders:manage', async (ctx) => dataOf(await getContainer().deliveryRiders.setKinds({ companyId: ctx.companyId, userId: ctx.userId }, objectOf(raw))), PATHS);
 }
 
+/** What a rider must show at the door: nothing, the customer's code, a photo, or either. */
+export async function setRiderProofAction(raw: unknown) {
+  return await runDelivery('riders:manage', async (ctx) => dataOf(await getContainer().deliveryRiders.setProof({ companyId: ctx.companyId, userId: ctx.userId }, objectOf(raw))), PATHS);
+}
+
 export async function ridersPageAction(raw?: unknown) {
   return await runDelivery('riders:manage', async (ctx) => await getContainer().deliveryRiders.list(ctx.companyId, objectOf(raw)));
 }
