@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq, inArray, like } from 'drizzle-orm';
 import { has } from '@/lib/values';
+import { businessDate } from '@/server/kernel/numbering/business-date';
 import type * as mod_server_di_container from '@/server/di/container';
 import type * as mod_server_db_drizzle_client from '@/server/db/drizzle/client';
 import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
@@ -378,6 +379,143 @@ describe.skipIf(!has(url))('at the door (database)', () => {
       expect((await c.deliveryRuns.addStop(dispatcher(), run.id, at.deliveryId)).ok).toBe(true);
       expect((await c.deliveryRuns.start(dispatcher(), run.id)).ok).toBe(true);
       expect(await c.doorWork.deliver(at.self, { runId: run.id, deliveryId: at.deliveryId, clientKey: key(), receivedBy: 'Mama', photoId: await photoBy(rider.userId) })).toMatchObject({ ok: true, data: { attemptNo: 2, status: 'delivered' } });
+    });
+  });
+
+  describe('the customer took only part of it', () => {
+    const lineOf = async (deliveryId: string) => {
+      const [l] = await db.select().from(schema.deliveryLines).where(eq(schema.deliveryLines.deliveryId, deliveryId));
+      if (l === undefined) throw new Error('no line');
+      return l;
+    };
+
+    it('delivers what was taken, keeps why the rest was not, and leaves the rest open on the order', async () => {
+      const rider = await staffRider();
+      const at = await onTheRoad(rider);
+      const line = await lineOf(at.deliveryId);
+      const r = await c.doorWork.deliver(at.self, { runId: at.runId, deliveryId: at.deliveryId, clientKey: key(), receivedBy: 'Mama', accepted: [{ productId: line.productId, quantity: 2, reasonCode: 'damaged' }] });
+      expect(r).toMatchObject({ ok: true, data: { status: 'delivered', attemptNo: 1 } });
+      expect(Number((await lineOf(at.deliveryId)).delivered)).toBe(2);
+      const [a] = await attemptsOf(at.deliveryId);
+      expect(a?.result).toBe('part_accepted');
+      const kept = await db.select().from(schema.deliveryAttemptLines).where(eq(schema.deliveryAttemptLines.attemptId, a?.id ?? ''));
+      expect(kept).toHaveLength(1);
+      expect(kept[0]).toMatchObject({ reasonCode: 'damaged' });
+      expect([Number(kept[0]?.carried), Number(kept[0]?.accepted)]).toEqual([3, 2]);
+      const view = await c.deliveryDocuments.get(companyId, at.deliveryId);
+      expect(view?.attempts[0]).toMatchObject({ resultWords: 'Delivered, the customer took only part', taken: [{ accepted: 2, carried: 3, reasonWords: 'It was damaged' }] });
+      // The order is only partly delivered, and one packet is open on it again.
+      const [d] = await db.select({ orderId: schema.deliveries.orderId }).from(schema.deliveries).where(eq(schema.deliveries.id, at.deliveryId));
+      const order = await c.deliveryDocuments.forOrder(companyId, d?.orderId ?? '');
+      expect(order?.state).toBe('partly_delivered');
+      expect(order?.lines[0]).toMatchObject({ delivered: 2, open: 1 });
+      const stages = await db.select().from(schema.orderStageEvents).where(eq(schema.orderStageEvents.orderId, d?.orderId ?? ''));
+      expect(stages.map((x) => x.stage)).toContain('part_delivered');
+      expect(stages.map((x) => x.stage)).not.toContain('delivered');
+    });
+
+    it('the part not taken comes back to be received, no more than it was, once', async () => {
+      const at = await onTheRoad(await staffRider());
+      const line = await lineOf(at.deliveryId);
+      await c.doorWork.deliver(at.self, { runId: at.runId, deliveryId: at.deliveryId, clientKey: key(), receivedBy: 'Mama', accepted: [{ productId: line.productId, quantity: 1, reasonCode: 'refused' }] });
+      const view = await c.deliveryDocuments.get(companyId, at.deliveryId);
+      const back = view?.lines[0]?.back;
+      expect(back?.could).toBe(2);
+      const choice = back?.choices[0]?.id ?? 'keep';
+      expect(await c.deliveryDocuments.receiveReturn(dispatcher(), at.deliveryId, { lines: [{ productId: line.productId, quantity: 3, disposition: choice }] })).toMatchObject({ ok: false, reason: 'bad_input' });
+      const ok = await c.deliveryDocuments.receiveReturn(dispatcher(), at.deliveryId, { lines: [{ productId: line.productId, quantity: 2, disposition: choice }] });
+      expect(ok.ok).toBe(true);
+      expect(await c.deliveryDocuments.receiveReturn(dispatcher(), at.deliveryId, { lines: [{ productId: line.productId, quantity: 1, disposition: choice }] })).toMatchObject({ ok: false, reason: 'conflict' });
+    });
+
+    it('is refused without a reason, with more than was carried, with nothing taken, or with a line missing', async () => {
+      const at = await onTheRoad(await staffRider());
+      const line = await lineOf(at.deliveryId);
+      const base = { runId: at.runId, deliveryId: at.deliveryId, receivedBy: 'Mama' };
+      const p = line.productId;
+      for (const accepted of [[{ productId: p, quantity: 2 }], [{ productId: p, quantity: 4, reasonCode: 'damaged' }], [{ productId: p, quantity: 0, reasonCode: 'refused' }], [], [{ productId: p, quantity: 2, reasonCode: 'other' }], [{ productId: p, quantity: 2, reasonCode: 'customer_absent' }]]) {
+        const r = await c.doorWork.deliver(at.self, { ...base, clientKey: key(), accepted });
+        // An empty list means everything was taken; the others are refused.
+        if (accepted.length === 0) expect(r.ok).toBe(true);
+        else expect(r).toMatchObject({ ok: false, reason: 'bad_input' });
+        if (r.ok) break;
+      }
+      expect((await attemptsOf(at.deliveryId)).length).toBe(1);
+    });
+
+    it('when stock is issued on arrival, only what the customer took is issued', async () => {
+      await c.stockSettings.setIssueMoment(companyId, 'delivery');
+      try {
+        const at = await onTheRoad(await staffRider());
+        const line = await lineOf(at.deliveryId);
+        expect(Number(line.issued)).toBe(0);
+        expect(await c.doorWork.deliver(at.self, { runId: at.runId, deliveryId: at.deliveryId, clientKey: key(), receivedBy: 'Mama', accepted: [{ productId: line.productId, quantity: 2, reasonCode: 'refused' }] })).toMatchObject({ ok: true });
+        expect(Number((await lineOf(at.deliveryId)).issued)).toBe(2);
+        const back = (await c.deliveryDocuments.get(companyId, at.deliveryId))?.lines[0]?.back;
+        expect(back?.could).toBe(1);
+      } finally {
+        await c.stockSettings.setIssueMoment(companyId, 'payment');
+      }
+    });
+
+    it('a delivery taken in full is delivered in full, as before', async () => {
+      const at = await onTheRoad(await staffRider());
+      const line = await lineOf(at.deliveryId);
+      expect(await c.doorWork.deliver(at.self, { runId: at.runId, deliveryId: at.deliveryId, clientKey: key(), receivedBy: 'Mama', accepted: [{ productId: line.productId, quantity: 3 }] })).toMatchObject({ ok: true });
+      expect((await attemptsOf(at.deliveryId))[0]?.result).toBe('delivered');
+      expect(await c.deliveryDocuments.get(companyId, at.deliveryId).then((v) => v?.lines[0]?.back)).toBeNull();
+    });
+  });
+
+  describe('another day', () => {
+    const tomorrow = () => {
+      const d = new Date(`${businessDate()}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + 1);
+      return d.toISOString().slice(0, 10);
+    };
+    const failed = async () => {
+      const rider = await staffRider();
+      const at = await onTheRoad(rider);
+      await c.doorWork.fail(at.self, { runId: at.runId, deliveryId: at.deliveryId, clientKey: key(), reasonCode: 'customer_absent' });
+      await c.doorWork.finish(at.self, at.runId);
+      return at;
+    };
+
+    it('the office puts a failed delivery back for a chosen day, which the board shows, and a bad day is refused', async () => {
+      const at = await failed();
+      expect(await c.deliveryDocuments.reattempt(dispatcher(), at.deliveryId, { day: businessDate() })).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect(await c.deliveryDocuments.reattempt(dispatcher(), at.deliveryId, { day: '2099-01-01' })).toMatchObject({ ok: false, reason: 'bad_input' });
+      const r = await c.deliveryDocuments.reattempt(dispatcher(), at.deliveryId, { day: tomorrow(), note: 'Phone was off' });
+      expect(r).toMatchObject({ ok: true, data: { status: 'ready', scheduledFor: tomorrow() } });
+      const board = await c.deliveryRuns.board(companyId, {}, new Date());
+      expect(board.ready.find((x) => x.deliveryId === at.deliveryId)?.scheduledFor).toBe(tomorrow());
+      const events = await db.select().from(schema.deliveryEvents).where(eq(schema.deliveryEvents.deliveryId, at.deliveryId));
+      const e = events.find((x) => x.action === 'reattempt');
+      expect(e?.note).toContain(`Wanted on ${tomorrow()}`);
+      expect(e).toMatchObject({ actorType: 'user' });
+    });
+
+    it('the customer asks through their own link: recorded as theirs, only for a failed delivery of that order', async () => {
+      const at = await failed();
+      const [d] = await db.select({ orderId: schema.deliveries.orderId, number: schema.deliveries.number }).from(schema.deliveries).where(eq(schema.deliveries.id, at.deliveryId));
+      expect(await c.deliveryDocuments.idForOrderNumber(companyId, d?.orderId ?? '', d?.number ?? '')).toBe(at.deliveryId);
+      expect(await c.deliveryDocuments.idForOrderNumber(companyId, 'ord_other', d?.number ?? '')).toBeNull();
+      expect(await c.deliveryDocuments.idForOrderNumber(randomUUID(), d?.orderId ?? '', d?.number ?? '')).toBeNull();
+      const r = await c.deliveryDocuments.reattempt({ companyId, userId: 'customer', kind: 'customer' }, at.deliveryId, { day: tomorrow(), note: 'Asked for by the customer on their tracking page' });
+      expect(r).toMatchObject({ ok: true, data: { status: 'ready', scheduledFor: tomorrow() } });
+      const events = await db.select().from(schema.deliveryEvents).where(eq(schema.deliveryEvents.deliveryId, at.deliveryId));
+      expect(events.find((x) => x.action === 'reattempt')).toMatchObject({ actorType: 'customer', actorId: null });
+      // Now it is ready, so asking again is refused.
+      expect(await c.deliveryDocuments.reattempt({ companyId, userId: 'customer', kind: 'customer' }, at.deliveryId, { day: tomorrow() })).toMatchObject({ ok: false, reason: 'not_allowed' });
+      const tracked = await c.trackedOrders.forOrder(companyId, d?.orderId ?? '');
+      expect(tracked?.deliveries[0]).toMatchObject({ canReschedule: false, scheduledFor: tomorrow() });
+    });
+
+    it('is offered to the customer while a failed delivery has tries left', async () => {
+      const at = await failed();
+      const [d] = await db.select({ orderId: schema.deliveries.orderId }).from(schema.deliveries).where(eq(schema.deliveries.id, at.deliveryId));
+      const tracked = await c.trackedOrders.forOrder(companyId, d?.orderId ?? '');
+      expect(tracked?.deliveries[0]).toMatchObject({ canReschedule: true, scheduledFor: null });
     });
   });
 

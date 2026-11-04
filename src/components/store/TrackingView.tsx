@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { RescheduleForm } from './RescheduleForm';
 import { CUSTOMER_STATUS_WORDS, HEADLINE, collectionWords, customerTone, trackingSteps, type TrackedOrder } from '@/lib/tracking-view';
 
 const TONE: Record<ReturnType<typeof customerTone>, string> = {
@@ -21,7 +22,7 @@ const qty = (n: number): string => String(Math.round(n * 1000) / 1000);
  * What a customer sees of their order: how it stands, each delivery with the steps it has been through, what is in it, and what is
  * still to come. Used by the tracking page and by "Track my order", so they always say the same. Presentational only.
  */
-export function TrackingView({ order, heading }: { order: TrackedOrder; heading?: ReactNode }) {
+export function TrackingView({ order, heading, token }: { order: TrackedOrder; heading?: ReactNode; token?: string }) {
   const collected = order.kind === 'collection' ? order.collection : null;
   const words = collected === null ? null : collectionWords(collected);
   return (
@@ -69,6 +70,12 @@ export function TrackingView({ order, heading }: { order: TrackedOrder; heading?
                 {d.courier.trackingNumber === null ? '' : `, their tracking number is ${d.courier.trackingNumber}`}.
               </p>
             )}
+            {d.scheduledFor === null || d.status === 'delivered' ? null : (
+              <p className="text-sm text-fg" role="note">
+                We will try again on <strong>{d.scheduledFor}</strong>.
+              </p>
+            )}
+            {d.canReschedule && token !== undefined ? <RescheduleForm token={token} deliveryNumber={d.number} /> : null}
             {d.handoverCode === null ? null : (
               <p className="rounded-lg border border-line bg-surface-sunken px-3 py-2 text-sm text-fg" role="note">
                 Your delivery code is <strong className="font-mono text-base tracking-widest">{d.handoverCode}</strong>. Give it to the rider when your order arrives, and to no one else.

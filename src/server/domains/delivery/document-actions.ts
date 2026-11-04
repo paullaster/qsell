@@ -121,7 +121,7 @@ export async function deliveryStepAction(raw: unknown) {
         case 'fail_attempt':
           return sent(dataOf(await docs.failAttempt(actor, id, { reasonCode: i.reasonCode, note: i.note }, version)));
         case 'reattempt':
-          return dataOf(await docs.reattempt(actor, id, { note: i.note }, version));
+          return dataOf(await docs.reattempt(actor, id, { note: i.note, day: i.day }, version));
         case 'return':
           return sent(dataOf(await docs.returnToStock(actor, id, { reason: i.reason }, version)));
         case 'cancel':

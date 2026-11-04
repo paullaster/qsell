@@ -44,6 +44,14 @@ const DONE: Record<DeliveryAction, string> = {
 
 const MESSAGE_TONE = { sent: 'green', failed: 'red', skipped: 'gray', queued: 'gray' } as const;
 const MESSAGE_WORDS = { sent: 'Sent', failed: 'Not sent yet', skipped: 'Not sent', queued: 'Waiting to send' } as const;
+const ATTEMPT_TONE = (result: string): 'green' | 'amber' | 'red' => {
+  if (result === 'delivered') return 'green';
+  return result === 'part_accepted' ? 'amber' : 'red';
+};
+const ATTEMPT_CHIP = (result: string): string => {
+  if (result === 'delivered') return 'Delivered';
+  return result === 'part_accepted' ? 'Part accepted' : 'Not delivered';
+};
 const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' });
 const qty = (n: number): string => String(n);
 
@@ -74,6 +82,7 @@ function DeliveryScreen({ initial, canFulfil, initialExtras }: { initial: Delive
   const [reason, setReason] = useState('');
   const [note, setNote] = useState('');
   const [receivedBy, setReceivedBy] = useState('');
+  const [retryDay, setRetryDay] = useState('');
   const [courierName, setCourierName] = useState(initial.courierName ?? '');
   const [tracking, setTracking] = useState(initial.trackingNumber ?? '');
   const [failure, setFailure] = useState<Choice | null>(null);
@@ -360,10 +369,16 @@ function DeliveryScreen({ initial, canFulfil, initialExtras }: { initial: Delive
           {can('reattempt') || can('return') ? (
             <div className="space-y-3 rounded-lg border border-line bg-surface p-3">
               <h3 className="text-xs font-bold tracking-wider text-fg-muted uppercase">After a failed attempt ({view.failedAttempts} so far)</h3>
+              {view.scheduledFor === null ? null : <p className="text-sm text-fg">Wanted again on <strong>{view.scheduledFor}</strong>.</p>}
               {can('reattempt') ? (
-                <button type="button" className={primaryClass} disabled={busy} onClick={() => void run('reattempt', {}, DONE.reattempt)}>
-                  Try again
-                </button>
+                <div className="space-y-2">
+                  <Field id={`${uid}-rd`} label="Day it is wanted (optional)" hint="After today and within two weeks, for example the day the customer asked for.">
+                    <input id={`${uid}-rd`} type="date" value={retryDay} onChange={(e) => setRetryDay(e.target.value)} className={fieldClass} />
+                  </Field>
+                  <button type="button" className={primaryClass} disabled={busy} onClick={() => void run('reattempt', { day: retryDay }, DONE.reattempt, () => setRetryDay(''))}>
+                    Try again
+                  </button>
+                </div>
               ) : null}
               {can('return') ? (
                 <div className="space-y-2">
@@ -388,7 +403,7 @@ function DeliveryScreen({ initial, canFulfil, initialExtras }: { initial: Delive
         </section>
       ) : null}
 
-      {view.status === 'returned' ? (
+      {view.status === 'returned' || view.lines.some((l) => l.back !== null) ? (
         <section aria-label="Goods that came back" className={`${cardClass} space-y-3`}>
           <h2 className="text-sm font-bold text-fg-strong">Goods that came back</h2>
           <ul className="divide-y divide-line">
@@ -483,13 +498,23 @@ function DeliveryScreen({ initial, canFulfil, initialExtras }: { initial: Delive
                   <span className="font-semibold text-fg-strong">
                     Try {a.attemptNo}: {a.resultWords}
                   </span>
-                  <Chip tone={a.result === 'delivered' ? 'green' : 'red'}>{a.result === 'delivered' ? 'Delivered' : 'Not delivered'}</Chip>
+                  <Chip tone={ATTEMPT_TONE(a.result)}>{ATTEMPT_CHIP(a.result)}</Chip>
                   <time dateTime={a.occurredAt} className="text-xs text-fg-muted">
                     {when(a.occurredAt)}
                   </time>
                   <span className="text-xs text-fg-muted">by {a.riderName}</span>
                 </div>
                 {a.receivedBy === null ? null : <p className="text-fg">Received by {a.receivedBy}.</p>}
+                {a.taken.length === 0 ? null : (
+                  <ul className="text-fg" aria-label="What the customer took">
+                    {a.taken.map((t) => (
+                      <li key={t.productName}>
+                        {t.productName}: took {qty(t.accepted)} of {qty(t.carried)}
+                        {t.reasonWords === null ? '' : ` (${t.reasonWords}${t.note === null ? '' : `: ${t.note}`})`}
+                      </li>
+                    ))}
+                  </ul>
+                )}
                 {a.note === null ? null : <p className="text-fg">{a.note}</p>}
                 <div className="flex flex-wrap items-center gap-2">
                   {a.proofs.map((p) =>

@@ -30,7 +30,7 @@ async function signInAndChoosePassword(page: Page, email: string, first: string,
 }
 
 /** A run from the fixture's branch, given to the named rider, with a ready delivery on it; returns the run's and the delivery's numbers. */
-async function planRunFor(page: Page, tag: string, riderName: string): Promise<{ run: string; delivery: string; deliveryId: string }> {
+async function planRunFor(page: Page, tag: string, riderName: string): Promise<{ run: string; delivery: string; deliveryId: string; orderNumber: string }> {
   const orderNumber = await placeDeliveredOrder(page);
   const made = deliveryTool('ready', orderNumber);
   const delivery = made.number ?? '';
@@ -48,7 +48,7 @@ async function planRunFor(page: Page, tag: string, riderName: string): Promise<{
   await pick(page, ready.getByRole('combobox', { name: 'Put deliveries on this run' }), run, new RegExp(run));
   await ready.getByRole('button', { name: `Put ${delivery} on the run` }).click();
   await expect(page.getByText(`${delivery} is on the run.`)).toBeVisible({ timeout: 30_000 });
-  return { run, delivery, deliveryId: made.id ?? '' };
+  return { run, delivery, deliveryId: made.id ?? '', orderNumber };
 }
 
 /** The staff member is made a rider on the Riders screen; the page is left there. */
@@ -259,7 +259,7 @@ test.describe('the rider app', () => {
     deliveryTool('open', tag);
     try {
       await makeStaffRider(page, name);
-      const { run, delivery, deliveryId } = await planRunFor(page, tag, name);
+      const { run, delivery, deliveryId, orderNumber } = await planRunFor(page, tag, name);
       await startRun(page, run);
 
       const phone = await otherBrowserPage(browser, page);
@@ -286,6 +286,70 @@ test.describe('the rider app', () => {
       await expect(door).toContainText('Not delivered');
       await expect(door).toContainText('The gate was locked');
       await expect(page.getByText('Attempt failed').first()).toBeVisible();
+
+      // The customer chooses another day on their own tracking page; the office then sees it wanted that day.
+      const customer = await otherBrowserPage(browser, page);
+      const token = riderTool('token', orderNumber).token ?? '';
+      expect(token.length).toBeGreaterThan(20);
+      await customer.goto(`/track/${token}`);
+      const reschedule = customer.getByRole('form', { name: `Choose another day for ${delivery}` });
+      await expect(reschedule).toBeVisible({ timeout: 60_000 });
+      await noHorizontalScroll(customer);
+      await expect.poll(() => reschedule.getByLabel('Choose a day for us to try again').evaluate((el) => Object.keys(el).some((k) => k.startsWith('__reactProps'))).catch(() => false), { timeout: 60_000 }).toBe(true);
+      await reschedule.getByLabel('Choose a day for us to try again').fill(today());
+      await reschedule.getByRole('button', { name: 'Try again on this day' }).click();
+      await expect(reschedule.getByRole('alert')).toContainText(/after today/, { timeout: 30_000 });
+      const later = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
+      await reschedule.getByLabel('Choose a day for us to try again').fill(later);
+      await reschedule.getByRole('button', { name: 'Try again on this day' }).click();
+      await expect(customer.getByText(`We will try again on ${later}`)).toBeVisible({ timeout: 30_000 });
+      await expect(reschedule).toHaveCount(0);
+      await customer.context().close();
+      await open(page, `/admin/delivery/deliveries/${deliveryId}`, new RegExp(`^Delivery ${delivery}`));
+      await expect(page.getByText(/Wanted on /).first()).toBeVisible({ timeout: 30_000 });
+      await open(page, '/admin/delivery/dispatch', 'Dispatch board');
+      await expect(page.getByRole('region', { name: 'Ready to go' })).toContainText(`Wanted ${later}`, { timeout: 30_000 });
+    } finally {
+      deliveryTool('close', tag);
+    }
+  });
+
+  test('at the door: the customer takes only part of it, the rider says why, and the office sees what comes back', async ({ page, browser }, testInfo) => {
+    test.slow();
+    const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}`;
+    const staff = riderTool('staff', tag);
+    const name = staff.name ?? '';
+    deliveryTool('open', tag);
+    try {
+      await makeStaffRider(page, name);
+      const { run, delivery, deliveryId } = await planRunFor(page, tag, name);
+      await startRun(page, run);
+
+      const phone = await otherBrowserPage(browser, page);
+      await signInAndChoosePassword(phone, staff.email ?? '', staff.password ?? '', 'E2eStaffDoor-Pass6', /\/rider$/);
+      await clickUntilVisible(phone.getByRole('region', { name: 'To do' }).getByRole('link', { name: new RegExp(run) }), phone.getByRole('heading', { name: run, level: 1 }));
+      const stops = phone.getByRole('list', { name: 'Stops' });
+      await clickUntilVisible(stops.getByRole('button', { name: 'Delivered' }), phone.getByRole('form', { name: 'Mark delivered' }));
+      const form = phone.getByRole('form', { name: 'Mark delivered' });
+      await form.getByLabel('The customer took only part of it').check();
+      await noHorizontalScroll(phone);
+      const took = form.getByLabel(/Salt 500g: how many did they take/);
+      await took.fill('1');
+      // The reason is needed for what was not taken.
+      await form.getByRole('button', { name: 'Confirm delivered' }).click();
+      await expect(phone.getByRole('alert').filter({ hasText: /Say why some of it was not taken/ })).toBeVisible({ timeout: 30_000 });
+      await form.getByRole('radio', { name: 'It was damaged' }).check();
+      await form.getByRole('button', { name: 'Confirm delivered' }).click();
+      await expect(stops).toContainText('Delivered', { timeout: 30_000 });
+      await phone.context().close();
+
+      await open(page, `/admin/delivery/deliveries/${deliveryId}`, new RegExp(`^Delivery ${delivery}`));
+      const door = page.getByRole('region', { name: 'At the door' });
+      await expect(door).toContainText('Part accepted');
+      await expect(door).toContainText('Salt 500g: took 1 of 2 (It was damaged)');
+      await expect(page.getByRole('region', { name: 'Goods that came back' })).toBeVisible({ timeout: 30_000 });
+      await noHorizontalScroll(page);
+      await noInnerHorizontalScroll(page);
     } finally {
       deliveryTool('close', tag);
     }

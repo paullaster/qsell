@@ -1,6 +1,7 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { deliveries, deliveryAttempts, deliveryProofs, deliveryRiderSettings, deliveryRunStops, deliveryRuns, mediaAssets } from '@/server/db/drizzle/schema';
+import { deliveries, deliveryAttemptLines, deliveryAttempts, deliveryLines, deliveryProofs, deliveryRiderSettings, deliveryRunStops, deliveryRuns, mediaAssets } from '@/server/db/drizzle/schema';
+import { checkAcceptance, type AcceptedLine } from '@/lib/delivery-acceptance';
 import { FAILURE_REASONS, STATUS_WORDS, type DeliveryStatus } from '@/lib/delivery-document';
 import { MAX_CODE_TRIES, codesMatch, isClientKey, isProofRule, normaliseCode, placeFrom, proofProblem, proofsKept, ruleFor, usableClientTime, type ProofRule } from '@/lib/delivery-proof';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
@@ -33,6 +34,16 @@ export interface DoorInput {
 export interface DoorDeliverInput extends DoorInput {
   receivedBy?: unknown;
   code?: unknown;
+  /** What the customer took of each product, when not all of it: `{ productId, quantity, reasonCode, note }` for every product. Left out means all of it. */
+  accepted?: unknown;
+}
+
+interface TakenLine {
+  productId: string;
+  carried: number;
+  accepted: number;
+  reasonCode: string | null;
+  note: string | null;
 }
 
 export interface DoorFailInput extends DoorInput {
@@ -65,6 +76,12 @@ export class DoorWork {
     const receivedBy = text(input.receivedBy, 120);
     if (receivedBy === null) return fail('bad_input', 'Say who received it.');
     return await this.atTheDoor(self, input, now, async (tx, ctx) => {
+      // What the customer took: all of it unless the rider says otherwise, and a shortfall needs its reason.
+      const lineRows = await tx.select({ productId: deliveryLines.productId, quantity: deliveryLines.quantity, picked: deliveryLines.picked }).from(deliveryLines).where(eq(deliveryLines.deliveryId, ctx.row.id));
+      const carried = lineRows.map((l) => ({ productId: l.productId, quantity: Number(l.picked ?? l.quantity) }));
+      const given = Array.isArray(input.accepted) ? (input.accepted as AcceptedLine[]) : null;
+      const acceptance = checkAcceptance(carried, given);
+      if (!acceptance.ok) return fail('bad_input', acceptance.error);
       const [settings] = await tx.select({ proof: deliveryRiderSettings.proof }).from(deliveryRiderSettings).where(eq(deliveryRiderSettings.companyId, self.companyId));
       const company: ProofRule = settings !== undefined && isProofRule(settings.proof) ? settings.proof : 'none';
       const rule = ruleFor(company, ctx.row.handoverCode !== null);
@@ -85,10 +102,12 @@ export class DoorWork {
       if (!photo.ok) return photo;
       const problem = proofProblem(rule, { codeMatched, hasPhoto: photo.data !== null });
       if (problem !== null) return fail('bad_input', problem);
-      const done = await this.documents.deliver({ companyId: self.companyId, userId: self.userId }, ctx.row.id, { receivedBy, note: input.note }, undefined, tx);
+      const done = await this.documents.deliver({ companyId: self.companyId, userId: self.userId }, ctx.row.id, { receivedBy, note: input.note, accepted: acceptance.whole ? null : given }, undefined, tx);
       if (!done.ok) return done;
       const kept = proofsKept(rule, { codeMatched, hasPhoto: photo.data !== null });
-      return { ok: true, data: { result: 'delivered', receivedBy, kept, photoId: photo.data, status: done.data.status } };
+      const reasonOf = new Map(acceptance.notAccepted.map((n) => [n.productId, n]));
+      const taken: TakenLine[] = acceptance.whole ? [] : acceptance.accepted.map((a) => ({ productId: a.productId, carried: carried.find((c) => c.productId === a.productId)?.quantity ?? a.quantity, accepted: a.quantity, reasonCode: reasonOf.get(a.productId)?.reasonCode ?? null, note: reasonOf.get(a.productId)?.note ?? null }));
+      return { ok: true, data: { result: acceptance.whole ? 'delivered' : 'part_accepted', receivedBy, kept, photoId: photo.data, status: done.data.status, taken } };
     });
   }
 
@@ -100,7 +119,7 @@ export class DoorWork {
       if (!photo.ok) return photo;
       const done = await this.documents.failAttempt({ companyId: self.companyId, userId: self.userId }, ctx.row.id, { reasonCode: code, note: input.note }, undefined, tx);
       if (!done.ok) return done;
-      return { ok: true, data: { result: code, receivedBy: null, kept: photo.data === null ? [] : ['photo' as const], photoId: photo.data, status: done.data.status } };
+      return { ok: true, data: { result: code, receivedBy: null, kept: photo.data === null ? [] : ['photo' as const], photoId: photo.data, status: done.data.status, taken: [] } };
     });
   }
 
@@ -129,7 +148,7 @@ export class DoorWork {
     self: RiderSelf,
     input: DoorInput,
     now: Date,
-    work: (tx: Tx, ctx: { row: typeof deliveries.$inferSelect }) => Promise<DocResult<{ result: string; receivedBy: string | null; kept: ('code' | 'photo')[]; photoId: string | null; status: DeliveryStatus }>>,
+    work: (tx: Tx, ctx: { row: typeof deliveries.$inferSelect }) => Promise<DocResult<{ result: string; receivedBy: string | null; kept: ('code' | 'photo')[]; photoId: string | null; status: DeliveryStatus; taken: TakenLine[] }>>,
   ): Promise<DocResult<DoorResult>> {
     if (typeof input.runId !== 'string' || !UUID.test(input.runId) || typeof input.deliveryId !== 'string' || !UUID.test(input.deliveryId)) return fail('not_found', NOT_FOUND);
     if (!isClientKey(input.clientKey)) return fail('bad_input', 'This try could not be told apart from another. Reload the app and try again.');
@@ -175,6 +194,7 @@ export class DoorWork {
         })
         .returning({ id: deliveryAttempts.id });
       if (attempt === undefined) throw new Error('The attempt could not be saved.');
+      for (const t of outcome.data.taken) await tx.insert(deliveryAttemptLines).values({ attemptId: attempt.id, productId: t.productId, carried: t.carried, accepted: t.accepted, reasonCode: t.reasonCode, note: t.note });
       for (const kind of outcome.data.kept) await tx.insert(deliveryProofs).values({ attemptId: attempt.id, kind, mediaId: kind === 'photo' ? outcome.data.photoId : null });
       // A photo that is kept is no longer an unused upload, so the sweep leaves it.
       if (outcome.data.photoId !== null) await tx.update(mediaAssets).set({ status: 'ready', updatedAt: new Date() }).where(eq(mediaAssets.id, outcome.data.photoId));

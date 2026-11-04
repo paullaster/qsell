@@ -569,6 +569,8 @@ export const deliveries = pgTable(
     handoverCode: text('handover_code'),
     /** Wrong codes typed at the door; past the limit the rider is sent to the office, so a six-digit code cannot be guessed. */
     codeTries: integer('code_tries').notNull().default(0),
+    /** The day it is to be tried again, after a failed attempt: asked for by the customer or the office. Null when nobody asked. */
+    scheduledFor: date('scheduled_for'),
     /** Two people changing a delivery at once: the second is told to reload instead of overwriting the first. */
     version: integer('version').notNull().default(1),
     createdBy: text('created_by'),
@@ -705,6 +707,33 @@ export const deliveryAttempts = pgTable(
   ],
 );
 export type DeliveryAttemptRow = typeof deliveryAttempts.$inferSelect;
+
+/**
+ * What the customer took, line by line, when a delivery was only partly accepted at the door. Kept for good with the attempt: what
+ * the delivery carried, what was taken, and why the rest was not (refused, damaged, not what was ordered).
+ */
+export const deliveryAttemptLines = pgTable(
+  'delivery_attempt_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    attemptId: uuid('attempt_id')
+      .notNull()
+      .references(() => deliveryAttempts.id, { onDelete: 'restrict' }),
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    carried: quantity('carried').notNull(),
+    accepted: quantity('accepted').notNull(),
+    reasonCode: text('reason_code'),
+    note: text('note'),
+  },
+  (t) => [
+    uniqueIndex('delivery_attempt_lines_uidx').on(t.attemptId, t.productId),
+    check('delivery_attempt_lines_qty_chk', sql`${t.accepted} >= 0 AND ${t.accepted} <= ${t.carried}`),
+    check('delivery_attempt_lines_reason_chk', sql`(${t.accepted} < ${t.carried}) = (${t.reasonCode} IS NOT NULL)`),
+  ],
+);
+export type DeliveryAttemptLineRow = typeof deliveryAttemptLines.$inferSelect;
 
 /** What a rider showed at a door: the customer's code (matched) or a photo. Kept with the attempt, and a photo is used once. */
 export const deliveryProofs = pgTable(

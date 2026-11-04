@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { deliverStopAction, failStopAction } from '@/server/domains/delivery/rider-app-actions';
 import type { RiderStopView } from '@/server/domains/delivery/rider-runs';
 import { Field, Message, attempt, buttonClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
+import { NOT_ACCEPTED_REASONS } from '@/lib/delivery-acceptance';
 import { FAILURE_REASONS } from '@/lib/delivery-document';
 import { newTryKey, uploadProofPhoto, whereAmI } from './door-support';
 
@@ -27,6 +28,8 @@ export function StopDoor({ runId, stop }: { runId: string; stop: RiderStopView }
   const [code, setCode] = useState('');
   const [reason, setReason] = useState('');
   const [note, setNote] = useState('');
+  const [part, setPart] = useState(false);
+  const [took, setTook] = useState<Record<string, { quantity: string; reason: string; note: string }>>({});
   const id = useId();
 
   if (!stop.open) return null;
@@ -36,7 +39,12 @@ export function StopDoor({ runId, stop }: { runId: string; stop: RiderStopView }
     setNotice(null);
     setKey(newTryKey());
     setPhotoId(null);
+    setPart(false);
+    setTook({});
   };
+
+  const takenOf = (productId: string, carried: number): { quantity: string; reason: string; note: string } => took[productId] ?? { quantity: String(carried), reason: '', note: '' };
+  const change = (productId: string, carried: number, patch: Partial<{ quantity: string; reason: string; note: string }>): void => setTook({ ...took, [productId]: { ...takenOf(productId, carried), ...patch } });
 
   const needsCode = stop.proof === 'code' || stop.proof === 'code_or_photo';
   const needsPhoto = stop.proof === 'photo' || stop.proof === 'code_or_photo';
@@ -57,7 +65,7 @@ export function StopDoor({ runId, stop }: { runId: string; stop: RiderStopView }
     }
     const place = await whereAmI();
     const common = { runId, deliveryId: stop.deliveryId, clientKey: key, clientTime: new Date().toISOString(), note, photoId: uploaded, ...(place ?? {}) };
-    const result = await attempt(mode === 'deliver' ? deliverStopAction({ ...common, receivedBy, code }) : failStopAction({ ...common, reasonCode: reason }));
+    const result = await attempt(mode === 'deliver' ? deliverStopAction({ ...common, receivedBy, code, ...(part ? { accepted: stop.items.map((i) => ({ productId: i.productId, quantity: Number(takenOf(i.productId, i.quantity).quantity), reasonCode: takenOf(i.productId, i.quantity).reason, note: takenOf(i.productId, i.quantity).note })) } : {}) }) : failStopAction({ ...common, reasonCode: reason }));
     setBusy(false);
     if (!result.ok) {
       setNotice({ kind: 'error', text: result.error });
@@ -101,6 +109,39 @@ export function StopDoor({ runId, stop }: { runId: string; stop: RiderStopView }
           <Field id={`${id}-by`} label="Who received it">
             <input id={`${id}-by`} className={fieldClass} value={receivedBy} onChange={(e) => setReceivedBy(e.target.value)} maxLength={120} required autoComplete="off" />
           </Field>
+          <label className="flex min-h-11 items-center gap-3 text-sm text-fg">
+            <input type="checkbox" className="size-5" checked={part} onChange={(e) => setPart(e.target.checked)} />
+            The customer took only part of it
+          </label>
+          {part ? (
+            <ul className="space-y-3" aria-label="What the customer took">
+              {stop.items.map((i) => {
+                const t = takenOf(i.productId, i.quantity);
+                const short = Number(t.quantity) < i.quantity;
+                return (
+                  <li key={i.productId} className="space-y-2 rounded-lg border border-line p-2">
+                    <Field id={`${id}-q-${i.productId}`} label={`${i.name}: how many did they take (of ${String(i.quantity)})?`}>
+                      <input id={`${id}-q-${i.productId}`} className={fieldClass} inputMode="decimal" value={t.quantity} onChange={(e) => change(i.productId, i.quantity, { quantity: e.target.value })} autoComplete="off" />
+                    </Field>
+                    {short ? (
+                      <fieldset className="space-y-1">
+                        <legend className="text-xs font-semibold text-fg-muted">Why was the rest not taken?</legend>
+                        {NOT_ACCEPTED_REASONS.map((r) => (
+                          <label key={r.code} className="flex min-h-11 items-center gap-3 text-sm text-fg">
+                            <input type="radio" name={`${id}-nr-${i.productId}`} className="size-5" checked={t.reason === r.code} onChange={() => change(i.productId, i.quantity, { reason: r.code })} />
+                            {r.words}
+                          </label>
+                        ))}
+                        {t.reason === 'other' ? (
+                          <input aria-label={`What happened to the ${i.name} that was not taken`} className={fieldClass} value={t.note} onChange={(e) => change(i.productId, i.quantity, { note: e.target.value })} maxLength={300} />
+                        ) : null}
+                      </fieldset>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
           {needsCode ? (
             <Field id={`${id}-code`} label="The customer's code" hint="Six digits. The customer was sent it when the delivery left.">
               <input id={`${id}-code`} className={fieldClass} value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="off" maxLength={12} />

@@ -18,7 +18,7 @@ export interface RiderStopView {
   receiver: { name: string; phone: string | null };
   address: string[];
   instructions: string | null;
-  items: { name: string; quantity: number }[];
+  items: { productId: string; name: string; quantity: number }[];
   links: { call: string | null; chat: string | null; navigate: string | null };
   /** What the rider must show to mark this stop delivered. The code itself is the customer's, and never sent to the rider. */
   proof: ProofRule;
@@ -97,16 +97,16 @@ export class RiderRuns {
       .where(and(eq(deliveryRunStops.runId, runId), isNull(deliveryRunStops.leftAt)))
       .orderBy(asc(deliveryRunStops.sequence));
     const lines = stops.length === 0 ? [] : await this.db
-      .select({ deliveryId: deliveryLines.deliveryId, name: products.name, quantity: deliveryLines.quantity, picked: deliveryLines.picked })
+      .select({ deliveryId: deliveryLines.deliveryId, productId: deliveryLines.productId, name: products.name, quantity: deliveryLines.quantity, picked: deliveryLines.picked })
       .from(deliveryLines)
       .innerJoin(products, eq(products.id, deliveryLines.productId))
       .where(inArray(deliveryLines.deliveryId, stops.map((s) => s.d.id)))
       .orderBy(asc(products.name));
-    const byDelivery = new Map<string, { name: string; quantity: number }[]>();
+    const byDelivery = new Map<string, { productId: string; name: string; quantity: number }[]>();
     for (const l of lines) {
       const quantity = Number(l.picked ?? l.quantity);
       if (quantity <= 0) continue;
-      byDelivery.set(l.deliveryId, [...(byDelivery.get(l.deliveryId) ?? []), { name: l.name, quantity }]);
+      byDelivery.set(l.deliveryId, [...(byDelivery.get(l.deliveryId) ?? []), { productId: l.productId, name: l.name, quantity }]);
     }
     const counts = new Map([[runId, stops.length]]);
     const r = row.r;

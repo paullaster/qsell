@@ -206,8 +206,9 @@ export function orderDeliveryStatus(ordered: readonly QuantityLine[], deliveries
     for (const d of live) {
       for (const l of d.lines) {
         if (l.productId !== productId) continue;
-        committed = roundQty(committed + carried(l));
-        delivered = roundQty(delivered + (d.status === 'delivered' ? carried(l) : l.delivered));
+        // A delivery that arrived commits only what the customer took: a part they did not take is open on the order again.
+        committed = roundQty(committed + (d.status === 'delivered' ? l.delivered : carried(l)));
+        delivered = roundQty(delivered + l.delivered);
       }
     }
     return { productId, ordered: quantity, committed, delivered, open: roundQty(quantity - committed) };
