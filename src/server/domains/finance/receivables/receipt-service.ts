@@ -19,6 +19,8 @@ import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { NumberSeriesService } from '@/server/kernel/numbering/service';
 import type { ReasonCodes } from '@/server/kernel/reason-codes/service';
 import { businessDate } from '@/server/kernel/numbering/business-date';
+import { loadInvoiceReferences } from './invoice-references';
+import { OrderPaymentSync } from './order-payment-sync';
 import { TransactionLedgerService } from '@/server/domains/transactions/ledger-service';
 import { checkReceiptAgainstMethod, fromCents, toCents, type PlannedApplication } from '../domain/receivables';
 import type { PostingRequest } from '../domain/types';
@@ -111,6 +113,16 @@ export class ReceiptService {
       actorId: ctx.actor.id,
       origin: ctx.origin,
     });
+  }
+
+  /**
+   * A cheque clearing changes what counts as paid without touching the ledger, so the orders behind the invoices it was applied to are
+   * brought in step here. (Applying, un-applying and bouncing go through the ledger, which does this itself.)
+   */
+  private async syncOrdersForCheque(tx: Tx, ctx: FinanceContext, receipt: Pick<CustomerReceiptRow, 'ledgerEntryId' | 'number'>) {
+    if (!has(receipt.ledgerEntryId)) return;
+    const invoices = await OrderPaymentSync.invoicesTouchedBy(tx, ctx.companyId, receipt.ledgerEntryId);
+    await OrderPaymentSync.syncIn(tx, ctx, invoices, { document: receipt.number, action: 'cheque_cleared' });
   }
 
   private async lock(tx: Tx, ctx: FinanceContext, id: string): Promise<CustomerReceiptRow> {
@@ -769,6 +781,7 @@ export class ReceiptService {
         { companyId: ctx.companyId, bankAccountId: dest.id, glAccountId: destMethod.glAccountId, postingDate: date, documentType: 'cheque_clearing', documentNo: r.number, documentId: id, description: 'Cheque cleared', amount: r.amount, currency: r.currency, registerId, createdBy: ctx.actor.id },
       ]);
       await tx.update(customerReceipts).set({ chequeStatus: 'cleared', updatedAt: new Date() }).where(eq(customerReceipts.id, id));
+      await this.syncOrdersForCheque(tx, ctx, r);
       await this.event(tx, ctx, id, 'cheque_cleared', 'deposited', 'cleared', { data: { date, gl: live, registerId } });
       await this.decisions.record(
         { companyId: ctx.companyId, subject: { type: 'customer_receipt', id }, action: 'finance.cheque_cleared', actor: ctx.actor, from: 'deposited', to: 'cleared', inputs: { origin: ctx.origin, date }, outcome: { gl: live, registerId } },
@@ -944,6 +957,8 @@ export class ReceiptService {
             .where(eq(customerLedgerEntries.id, head.receipt.ledgerEntryId))
         : Promise.resolve([]),
     ]);
+    // The invoice number the customer was given, the order and the lines sold, for every invoice this receipt paid: one batch.
+    const refs = await loadInvoiceReferences(this.db, companyId, applications.map((a) => a.invoice_id));
     const unappliedCents = remaining[0] ? -toCents(remaining[0].remaining) : 0;
     // People, not ids: who did each step.
     const actorIds = [...new Set([...events.map((e) => e.actorId), head.receipt.postedBy, head.receipt.createdBy])].filter(
@@ -963,7 +978,7 @@ export class ReceiptService {
       depositedInto: deposit ? `${deposit.code} — ${deposit.name}` : null,
       events,
       attachments,
-      applications: [...applications],
+      applications: [...applications].map((a) => ({ ...a, ref: refs.get(a.invoice_id) ?? null })),
       unappliedCents: head.receipt.status === 'posted' ? Math.max(unappliedCents, 0) : 0,
     };
   }

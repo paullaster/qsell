@@ -13,6 +13,7 @@ import { GeoPortRegistry } from '@/server/adapters/geo/registry';
 import { BuiltinGeoAdapter } from '@/server/adapters/geo/builtin.adapter';
 import type { GeoPort } from '@/server/ports/geo';
 import { DeliveryQuotes } from './quote';
+import { holdLedgerSwitch } from '@/server/domains/stock/test-support';
 
 const { requirePermission } = vi.hoisted(() => ({ requirePermission: vi.fn() }));
 vi.mock('@/server/domains/access-control/guard', async (original) => ({ ...(await original<Record<string, unknown>>()), requirePermission }));
@@ -34,6 +35,7 @@ describe.skipIf(!has(url))('delivery charge policies (database)', () => {
   let actions: typeof PolicyActions;
   let zoneActions: typeof Actions;
   let companyId: string;
+  let releaseLedgerSwitch: (() => Promise<void>) | undefined;
   let otherCompany: string;
   let spy: { mockRestore: () => void };
   const tag = randomUUID().slice(0, 6).toUpperCase();
@@ -70,6 +72,8 @@ describe.skipIf(!has(url))('delivery charge policies (database)', () => {
   const row = async (id: string) => (await db.select().from(schema.chargePolicies).where(eq(schema.chargePolicies.id, id)))[0];
 
   beforeAll(async () => {
+    // Files that use the company-wide stock-by-location switch take turns, so none confuses another.
+    releaseLedgerSwitch = await holdLedgerSwitch(url);
     const mod = await import('@/server/di/container');
     db = (await import('@/server/db/drizzle/client')).drizzleDb;
     schema = await import('@/server/db/drizzle/schema');
@@ -82,7 +86,11 @@ describe.skipIf(!has(url))('delivery charge policies (database)', () => {
     await db.insert(schema.currencies).values({ code: 'KES', name: 'Kenyan Shilling', symbol: 'KSh', isBaseCurrency: true }).onConflictDoNothing();
     const o = await db.insert(schema.companySettings).values({ legalName: `Other ${tag}`, tradingName: `Other ${tag}`, email: `o-${tag}@example.test`, phone: '0', streetAddress: '1', city: 'N', countyOrState: 'N', postalCode: '0', kraPin: `P${tag}` }).returning();
     otherCompany = o[0]?.id ?? '';
-  });
+  }, 900_000);
+  // Registered first, so it runs last: the switch is given back only after this file has put everything right.
+  afterAll(async () => {
+    await releaseLedgerSwitch?.();
+  }, 60_000);
   afterAll(async () => {
     spy.mockRestore();
     const mine = await db.select({ id: schema.chargePolicies.id }).from(schema.chargePolicies).where(like(schema.chargePolicies.code, `CP${tag}%`));

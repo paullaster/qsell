@@ -86,6 +86,12 @@ export async function deliveryStepAction(raw: unknown) {
       const id = idOf(i.deliveryId, 'delivery');
       const version = versionOf(i.expectedVersion);
       const docs = getContainer().deliveryDocuments;
+      // After the step is committed, whatever it queued for the customer is sent (and never holds the step up).
+      const sendSoon = () => void getContainer().deliveryMessages.flush(5).catch((e: unknown) => console.error('[delivery.messages] flush', e));
+      const sent = <T,>(value: T): T => {
+        sendSoon();
+        return value;
+      };
       switch (i.step) {
         case 'release':
           return dataOf(await docs.release(actor, id, version));
@@ -98,17 +104,19 @@ export async function deliveryStepAction(raw: unknown) {
         case 'mark_ready':
           return dataOf(await docs.markReady(actor, id, version));
         case 'dispatch':
-          return dataOf(await docs.dispatch(actor, id, { courierName: i.courierName, trackingNumber: i.trackingNumber }, version));
+          return sent(dataOf(await docs.dispatch(actor, id, { courierName: i.courierName, trackingNumber: i.trackingNumber }, version)));
         case 'deliver':
-          return dataOf(await docs.deliver(actor, id, { receivedBy: i.receivedBy, note: i.note }, version));
+          return sent(dataOf(await docs.deliver(actor, id, { receivedBy: i.receivedBy, note: i.note }, version)));
         case 'fail_attempt':
-          return dataOf(await docs.failAttempt(actor, id, { reasonCode: i.reasonCode, note: i.note }, version));
+          return sent(dataOf(await docs.failAttempt(actor, id, { reasonCode: i.reasonCode, note: i.note }, version)));
         case 'reattempt':
           return dataOf(await docs.reattempt(actor, id, { note: i.note }, version));
         case 'return':
-          return dataOf(await docs.returnToStock(actor, id, { reason: i.reason }, version));
+          return sent(dataOf(await docs.returnToStock(actor, id, { reason: i.reason }, version)));
         case 'cancel':
           return dataOf(await docs.cancel(actor, id, { reason: i.reason }, version));
+        case 'correct_return':
+          return dataOf(await docs.correctReturn(actor, id, { productId: i.productId, quantity: i.quantity, disposition: i.disposition, reason: i.reason }));
         case 'receive_return':
           return dataOf(await docs.receiveReturn(actor, id, { lines: i.lines, note: i.note }));
         case 'amend':
@@ -154,6 +162,27 @@ export async function setStockTimingAction(raw: unknown) {
       }
       if (moment !== before) await c.decisionLog.record({ companyId: ctx.companyId, subject: { type: 'stock_settings', id: ctx.companyId }, action: 'stock.issue_moment', actor: { type: 'user', id: ctx.userId }, from: before, to: moment, reason: { text: `Stock now leaves the shelf: ${ISSUE_MOMENT_WORDS[moment].name.toLowerCase()}.` } });
       return { moment, byLocation: true, options: ISSUE_MOMENTS.map((id) => ({ id, ...ISSUE_MOMENT_WORDS[id] })), canChange: true };
+    },
+    ['/admin/delivery/stock'],
+  );
+}
+
+/** How many orders were paid before the stock timing was chosen, with goods that have not left yet. */
+export async function stockReissuePreviewAction() {
+  return await runDelivery('stock:cutover', async (ctx) => {
+    const c = getContainer();
+    return await c.stockReissue.preview(ctx.companyId, (await c.stockSettings.get()).issueMoment);
+  });
+}
+
+/** Counts the stock of those orders back and holds it for their deliveries, a batch at a time. */
+export async function stockReissueApplyAction(raw?: unknown) {
+  return await runDelivery(
+    'stock:cutover',
+    async (ctx) => {
+      const c = getContainer();
+      const skip = Array.isArray(objectOf(raw).skip) ? (objectOf(raw).skip as unknown[]).filter((s): s is string => typeof s === 'string').slice(0, 1000) : [];
+      return await c.stockReissue.apply({ companyId: ctx.companyId, userId: ctx.userId }, (await c.stockSettings.get()).issueMoment, skip);
     },
     ['/admin/delivery/stock'],
   );

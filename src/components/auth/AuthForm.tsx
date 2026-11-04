@@ -56,9 +56,12 @@ export function AuthForm({ mode = 'login' }: { mode?: 'login' | 'register' }) {
         let destination: string;
         if (res.role === 'vendor' || res.vendorId !== null) {
           destination = safeCallbackUrl?.startsWith('/vendor') === true ? safeCallbackUrl : '/vendor';
+        } else if (res.role === 'rider') {
+          // An account made only for riding opens the rider app and nothing else.
+          destination = safeCallbackUrl?.startsWith('/rider') === true ? safeCallbackUrl : '/rider';
         } else if (res.isStaff) {
-          // Staff must land in admin — ignore storefront callback leftovers (e.g. "/").
-          destination = safeCallbackUrl?.startsWith('/admin') === true ? safeCallbackUrl : '/admin';
+          // Staff must land in admin — ignore storefront callback leftovers (e.g. "/"). A staff rider may be sent to the rider app.
+          destination = safeCallbackUrl?.startsWith('/admin') === true || safeCallbackUrl?.startsWith('/rider') === true ? safeCallbackUrl : '/admin';
         } else {
           // Shoppers never land on admin routes, even if a stale callback points there.
           destination =

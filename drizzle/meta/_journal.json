@@ -918,6 +918,41 @@
       "when": 1793667830405,
       "tag": "0130_delivery_goods_issue",
       "breakpoints": true
+    },
+    {
+      "idx": 131,
+      "version": "7",
+      "when": 1793673769558,
+      "tag": "0131_delivery_return_corrections",
+      "breakpoints": true
+    },
+    {
+      "idx": 132,
+      "version": "7",
+      "when": 1793675601019,
+      "tag": "0132_delivery_runs_shipments",
+      "breakpoints": true
+    },
+    {
+      "idx": 133,
+      "version": "7",
+      "when": 1793678328283,
+      "tag": "0133_delivery_tracking_messages",
+      "breakpoints": true
+    },
+    {
+      "idx": 134,
+      "version": "7",
+      "when": 1793756377053,
+      "tag": "0134_delivery_riders",
+      "breakpoints": true
+    },
+    {
+      "idx": 135,
+      "version": "7",
+      "when": 1793760235142,
+      "tag": "0135_order_payment_from_receipts",
+      "breakpoints": true
     }
   ]
 }

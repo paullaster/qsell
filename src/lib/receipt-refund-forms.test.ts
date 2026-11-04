@@ -26,6 +26,13 @@ describe('receipt form', () => {
     expect(receiptProblem({ ...form, customerId: null })).toBe('Choose the customer who paid.');
     expect(receiptProblem({ ...form, methodId: null })).toBe('Choose how the customer paid.');
     expect(receiptProblem(form)).toBeNull();
+    // Choosing invoices: something must be chosen, and not more than the receipt, but only when posting.
+    const choose: ReceiptForm = { ...form, amount: '1000', allocate: 'choose', chosen: {} };
+    expect(receiptProblem(choose)).toBeNull();
+    expect(receiptProblem(choose, true)).toMatch(/at least one invoice/);
+    expect(receiptProblem({ ...choose, chosen: { a: '1200' } }, true)).toMatch(/more than the receipt/);
+    expect(receiptProblem({ ...choose, chosen: { a: '600', b: '400' } }, true)).toBeNull();
+    expect(receiptProblem({ ...choose, deposit: true }, true)).toBeNull();
   });
 
   it('builds the input, trimming text, leaving blanks null and the rate only for a foreign method', () => {
@@ -39,6 +46,9 @@ describe('receipt form', () => {
     expect(postOptions(form, false)).toBeUndefined();
     expect(postOptions(form, true)).toEqual({ allocate: 'oldest_first' });
     expect(postOptions({ ...form, deposit: true }, true)).toEqual({ allocate: 'none' });
+    expect(postOptions({ ...form, allocate: 'none' }, true)).toEqual({ allocate: 'none' });
+    expect(postOptions({ ...form, allocate: 'choose', chosen: { a: '400.00', b: '0', c: '' } }, true)).toEqual({ allocate: [{ entryId: 'a', amount: '400.00' }] });
+    expect(postOptions({ ...form, allocate: 'choose', chosen: { a: '400.00' }, deposit: true }, true)).toEqual({ allocate: 'none' });
   });
 
   it('routes to the receipt, with the reason when posting failed', () => {

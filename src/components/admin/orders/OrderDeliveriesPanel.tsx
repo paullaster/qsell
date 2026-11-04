@@ -4,6 +4,8 @@ import { useEffect, useId, useState } from 'react';
 import Link from 'next/link';
 import { Truck } from 'lucide-react';
 import { createDeliveryAction, orderDeliveriesAction } from '@/server/domains/delivery/document-actions';
+import { replaceTrackingLinkAction, trackingLinkAction, type TrackingLinkView } from '@/server/domains/delivery/tracking-actions';
+import { InlineConfirm } from '@/components/ui/InlineConfirm';
 import { Chip, attempt, fieldClass, primaryClass } from '@/components/ui/screen-kit';
 import { ORDER_STATE_WORDS, type DeliveryStatus, type OrderDeliveryState } from '@/lib/delivery-document';
 
@@ -26,6 +28,19 @@ export function OrderDeliveriesPanel({ orderId, onChanged }: { orderId: string; 
   const [busy, setBusy] = useState(false);
   const [asked, setAsked] = useState<Record<string, string>>({});
   const [version, setVersion] = useState(0);
+  const [link, setLink] = useState<TrackingLinkView | null>(null);
+  const [why, setWhy] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void trackingLinkAction(orderId).then((r) => {
+      if (!cancelled && r.ok) setLink(r.data);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [orderId, version]);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,6 +120,83 @@ export function OrderDeliveriesPanel({ orderId, onChanged }: { orderId: string; 
         <p role="status" className="text-xs text-emerald-700">
           Delivery <Link href={`/admin/delivery/deliveries/${notice.id}`} className="font-mono font-semibold underline">{notice.number}</Link> is made.
         </p>
+      )}
+
+      {link === null ? null : (
+        <div className="space-y-2 border-t border-line pt-3">
+          <h4 className="text-xs font-semibold text-fg-muted">The customer’s tracking link</h4>
+          {link.url === null ? (
+            <p className="text-xs text-fg-muted">The link is turned off. The customer’s messages point to the shop instead.</p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <input readOnly aria-label="Tracking link" value={link.url} className={`${fieldClass} min-w-0 flex-1 font-mono text-xs`} onFocus={(e) => e.currentTarget.select()} />
+              <button
+                type="button"
+                className={primaryClass}
+                onClick={() => {
+                  void navigator.clipboard.writeText(link.url ?? '').then(() => setCopied(true));
+                }}
+              >
+                {copied ? 'Copied' : 'Copy the link'}
+              </button>
+            </div>
+          )}
+          <p className="text-xs text-fg-muted">
+            Opened {link.views} {link.views === 1 ? 'time' : 'times'}
+            {link.lastViewedAt === null ? '' : `, last on ${new Date(link.lastViewedAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' })}`}.
+          </p>
+          {link.canManage ? (
+            <div className="space-y-2">
+              <label htmlFor={`${uid}-why`} className="block text-xs text-fg-muted">
+                Why the link is being replaced
+              </label>
+              <input id={`${uid}-why`} value={why} onChange={(e) => setWhy(e.target.value)} maxLength={300} className={fieldClass} autoComplete="off" />
+              <div className="flex flex-wrap gap-2">
+                <InlineConfirm
+                  label="Make a new tracking link for this order"
+                  action="Make a new link"
+                  confirm="Yes, make a new one"
+                  busy={busy}
+                  onConfirm={() =>
+                    void (async () => {
+                      setBusy(true);
+                      const r = await attempt(replaceTrackingLinkAction({ orderId, renew: true, reason: why }));
+                      setBusy(false);
+                      if (!r.ok) setError(r.error);
+                      else {
+                        setError(null);
+                        setWhy('');
+                        setCopied(false);
+                        setVersion((v) => v + 1);
+                      }
+                    })()
+                  }
+                />
+                {link.url === null ? null : (
+                  <InlineConfirm
+                    label="Turn off the tracking link of this order"
+                    action="Turn the link off"
+                    confirm="Yes, turn it off"
+                    busy={busy}
+                    onConfirm={() =>
+                      void (async () => {
+                        setBusy(true);
+                        const r = await attempt(replaceTrackingLinkAction({ orderId, renew: false, reason: why }));
+                        setBusy(false);
+                        if (!r.ok) setError(r.error);
+                        else {
+                          setError(null);
+                          setWhy('');
+                          setVersion((v) => v + 1);
+                        }
+                      })()
+                    }
+                  />
+                )}
+              </div>
+            </div>
+          ) : null}
+        </div>
       )}
 
       {data.canFulfil && open.length > 0 ? (

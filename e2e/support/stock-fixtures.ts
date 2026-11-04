@@ -13,6 +13,7 @@
  *   tsx e2e/support/stock-fixtures.ts forget                               remove the products these fixtures made, so a check of the whole company is not about them
  *   tsx e2e/support/stock-fixtures.ts receive <product id> <quantity> <place code>  more stock of a product at a place
  *   tsx e2e/support/stock-fixtures.ts order <tag> <product id> <quantity>  an order for a product, placed the way the shop places it (the stock is held)
+ *   tsx e2e/support/stock-fixtures.ts drop-holds                            let go of every promise still held for an order, as cancelling those orders would
  */
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -140,6 +141,14 @@ async function order(tag: string, productId: string, quantity: string): Promise<
   return { orderNumber: number };
 }
 
+async function dropHolds(): Promise<Record<string, string>> {
+  const { db } = await container();
+  const { InventoryReservationService } = await import('@/server/domains/inventory/reservation-service');
+  const rows = [...(await db.execute<{ ref_id: string }>(sql`SELECT DISTINCT ref_id FROM stock_reservations WHERE state IN ('held', 'partly_consumed') AND ref_type = 'order'`))];
+  for (const row of rows) await InventoryReservationService.releaseOrder(row.ref_id, 'released by an end-to-end test');
+  return { released: String(rows.length) };
+}
+
 async function main(): Promise<void> {
   const [command, a, b, d] = process.argv.slice(2);
   let result: Record<string, string>;
@@ -152,6 +161,7 @@ async function main(): Promise<void> {
   else if (command === 'timing' && a !== undefined) result = await timing(a);
   else if (command === 'stockup' && a !== undefined && b !== undefined) result = await stockup(a, b);
   else if (command === 'shopsees' && a !== undefined) result = await shopsees(a);
+  else if (command === 'drop-holds') result = await dropHolds();
   else if (command === 'forget') result = await forget();
   else if (command === 'receive' && a !== undefined && b !== undefined && d !== undefined) result = await receive(a, b, d);
   else if (command === 'order' && a !== undefined && b !== undefined && d !== undefined) result = await order(a, b, d);
@@ -188,3 +198,6 @@ if (process.argv[1]?.endsWith('stock-fixtures.ts') === true) {
     },
   );
 }
+
+/** Lets go of the promises other specs left open for their orders, which the old way could not settle. */
+export const dropStockHolds = (): void => void stockTool('drop-holds');

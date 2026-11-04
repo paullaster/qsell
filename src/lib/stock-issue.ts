@@ -1,5 +1,6 @@
 import type { DeliveryAction } from './delivery-document';
 import type { DeliveryMethod } from './delivery-methods';
+import { dispositionLabel } from './return-form';
 
 /** When the stock of an order that is delivered leaves the shelf. */
 export const ISSUE_MOMENTS = ['payment', 'dispatch', 'delivery'] as const;
@@ -25,26 +26,29 @@ export const issuesAt = (moment: IssueMoment, action: DeliveryAction): boolean =
  */
 export const heldAtPayment = (moment: IssueMoment, method: DeliveryMethod | null): boolean => moment !== 'payment' && (method === 'own_fleet' || method === 'courier');
 
-/** What happens to goods that come back with a returned delivery. */
-export const RETURN_DISPOSITIONS = ['restock', 'damaged', 'keep'] as const;
+/**
+ * What happens to goods that come back with a returned delivery. The first three are the finance returns' own words and mean the
+ * same: goods in good condition go back to the shelf, goods to be looked at go to a quarantine place, goods that are no use are
+ * written off. `keep` is for a delivery only: the goods stay with the order, and nothing moves in stock.
+ */
+export const RETURN_DISPOSITIONS = ['return_to_stock', 'quarantine', 'scrap', 'keep'] as const;
 export type ReturnDisposition = (typeof RETURN_DISPOSITIONS)[number];
 export const isReturnDisposition = (value: unknown): value is ReturnDisposition => typeof value === 'string' && (RETURN_DISPOSITIONS as readonly string[]).includes(value);
 
 export const DISPOSITION_WORDS: Record<ReturnDisposition, { name: string; means: string }> = {
-  restock: { name: 'Back on the shelf', means: 'In good condition: counted back into stock.' },
-  damaged: { name: 'Damaged or spoilt', means: 'Not fit to sell: not counted back, and written off.' },
+  return_to_stock: { name: dispositionLabel('return_to_stock'), means: 'In good condition: counted back into stock, and held again for the order, which is still owed it.' },
+  quarantine: { name: dispositionLabel('quarantine'), means: 'To be looked at before it is sold: counted into a quarantine place, never sold from there. The order is held a replacement from the shelf.' },
+  scrap: { name: dispositionLabel('scrap'), means: 'No use: counted back and written off, so the sale is undone and the loss is recorded. The order is held a replacement from the shelf.' },
   keep: { name: 'Keep for the order', means: 'Stays with the order for another delivery. Nothing moves in stock.' },
 };
 
 /**
- * The choices for goods that came back, by what happened to their stock. Stock this delivery issued must be counted back (or counted
- * back and written off, if spoilt) before it can go out again. Stock that was never issued because the order is issued when it arrives
- * is still on the books: good goods need nothing, spoilt goods are written off. Stock that was issued some other way (when the order
- * was paid) is the order's own: it is kept for the order, and nothing else is offered.
+ * The choices for goods that came back, by what happened to their stock. Stock this delivery issued, and stock that was never issued
+ * because the order is issued when it arrives, can go back, to quarantine or be written off. Stock that was issued some other way
+ * (when the order was paid) is the order's own: it is kept for the order, and nothing else is offered.
  */
 export function dispositionsFor(moment: IssueMoment, issuedHere: boolean): readonly ReturnDisposition[] {
-  if (issuedHere) return ['restock', 'damaged'];
-  return moment === 'delivery' ? ['keep', 'damaged'] : ['keep'];
+  return issuedHere || moment === 'delivery' ? ['return_to_stock', 'quarantine', 'scrap'] : ['keep'];
 }
 
 export interface ReturnLineCheck {

@@ -42,6 +42,8 @@ export async function startWorker(): Promise<void> {
       '*/5 * * * * sweep-overdue-approvals',
       // Payments: pick up anything a lost job left half done, and compare with what Safaricom has received.
       '* * * * * provider-sweep',
+      // Customers are told as their delivery moves; a mail that could not be sent is tried again.
+      '* * * * * delivery-messages-sweep',
       '*/10 * * * * provider-pull-sweep',
       // Vendors: documents past their date, and bank changes whose cool-off has passed.
       '22 5 * * * vendor-document-expiry',

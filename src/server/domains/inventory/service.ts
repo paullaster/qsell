@@ -68,6 +68,10 @@ interface StockDelta {
  * and oversell the same units.
  */
 export async function applyStockDelta(tx: Tx, params: StockDelta): Promise<number> {
+  // The cut-over to the per-location ledger locks `products` while it switches. A change that read "the ledger is not on yet" and only
+  // then waited for that lock would write the old way after the switch, and the ledger would never hear of it. So the lock is taken
+  // first, and whether the ledger is on is read after it: a change made while the switch is under way waits, then follows the switch.
+  await tx.execute(sql`LOCK TABLE products IN ROW EXCLUSIVE MODE`);
   const locked = (
     await tx.select().from(products).where(eq(products.id, params.productId)).for('update').limit(1)
   ).at(0);

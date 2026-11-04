@@ -592,6 +592,211 @@ export const deliveries = pgTable(
   ],
 );
 
+/** A rider's trip: several ready deliveries taken out together, in an order. Planned, then on the road, then closed. */
+export const deliveryRuns = pgTable(
+  'delivery_runs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    number: text('number').notNull(),
+    branchId: uuid('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'restrict' }),
+    runDate: date('run_date').notNull(),
+    riderName: text('rider_name').notNull(),
+    /** The rider's account, when the run is given to someone who uses the rider app. The name above is kept as it was when the run was made. */
+    riderId: uuid('rider_id').references(() => deliveryRiders.id, { onDelete: 'restrict' }),
+    vehicle: text('vehicle'),
+    notes: text('notes'),
+    status: text('status').$type<'planned' | 'started' | 'completed' | 'cancelled'>().notNull().default('planned'),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    version: integer('version').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_runs_company_number_uidx').on(t.companyId, t.number),
+    index('delivery_runs_day_idx').on(t.companyId, t.runDate, t.status),
+    index('delivery_runs_rider_idx').on(t.riderId, t.runDate).where(sql`${t.riderId} IS NOT NULL`),
+    check('delivery_runs_status_chk', sql`${t.status} IN ('planned','started','completed','cancelled')`),
+    check('delivery_runs_closed_chk', sql`(${t.status} IN ('completed','cancelled')) = (${t.closedAt} IS NOT NULL)`),
+  ],
+);
+export type DeliveryRunRow = typeof deliveryRuns.$inferSelect;
+
+/** A delivery on a run, in the run's order. A stop that leaves (taken off, or the delivery did not get through) keeps its row with when and why. */
+export const deliveryRunStops = pgTable(
+  'delivery_run_stops',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    runId: uuid('run_id')
+      .notNull()
+      .references(() => deliveryRuns.id, { onDelete: 'restrict' }),
+    deliveryId: uuid('delivery_id')
+      .notNull()
+      .references(() => deliveries.id, { onDelete: 'restrict' }),
+    sequence: integer('sequence').notNull(),
+    addedBy: text('added_by').notNull(),
+    addedAt: timestamp('added_at', { withTimezone: true }).notNull().defaultNow(),
+    leftAt: timestamp('left_at', { withTimezone: true }),
+    leftReason: text('left_reason'),
+  },
+  (t) => [
+    // A delivery is on one run at a time; once a stop has left, the delivery can be put on another.
+    uniqueIndex('delivery_run_stops_live_uidx').on(t.deliveryId).where(sql`${t.leftAt} IS NULL`),
+    index('delivery_run_stops_run_idx').on(t.runId, t.sequence),
+    check('delivery_run_stops_sequence_chk', sql`${t.sequence} >= 1`),
+    check('delivery_run_stops_left_chk', sql`(${t.leftAt} IS NULL) = (${t.leftReason} IS NULL)`),
+  ],
+);
+export type DeliveryRunStopRow = typeof deliveryRunStops.$inferSelect;
+
+/** Which kinds of rider a company uses: its own staff signing in to the rider app, riders with an account of their own, or both. */
+export const deliveryRiderSettings = pgTable(
+  'delivery_rider_settings',
+  {
+    companyId: uuid('company_id')
+      .primaryKey()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    allowStaff: boolean('allow_staff').notNull().default(true),
+    allowSeparate: boolean('allow_separate').notNull().default(false),
+    version: integer('version').notNull().default(1),
+    updatedBy: text('updated_by'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check('delivery_rider_settings_one_chk', sql`${t.allowStaff} OR ${t.allowSeparate}`)],
+);
+
+/**
+ * A person who carries deliveries. `kind` says what kind of account they sign in with: a staff member's own (`staff`) or an account
+ * made only for riding (`separate`, which can never open the back office). The rider app lets someone in by this row, not by a
+ * back-office permission, because a separate account is not staff. One row per person; leaving ends it, and it can be resumed.
+ */
+export const deliveryRiders = pgTable(
+  'delivery_riders',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    kind: text('kind').$type<'staff' | 'separate'>().notNull(),
+    /** The name the rider goes by on runs and lists, kept here so those never need the account. */
+    name: text('name').notNull(),
+    phone: text('phone'),
+    vehicle: text('vehicle'),
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+    status: text('status').$type<'active' | 'paused' | 'ended'>().notNull().default('active'),
+    statusReason: text('status_reason'),
+    statusChangedAt: timestamp('status_changed_at', { withTimezone: true }).notNull().defaultNow(),
+    version: integer('version').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_riders_company_user_uidx').on(t.companyId, t.userId),
+    index('delivery_riders_status_idx').on(t.companyId, t.status, t.kind),
+    check('delivery_riders_name_chk', sql`btrim(${t.name}) <> ''`),
+    check('delivery_riders_kind_chk', sql`${t.kind} IN ('staff','separate')`),
+    check('delivery_riders_status_chk', sql`${t.status} IN ('active','paused','ended')`),
+    check('delivery_riders_reason_chk', sql`(${t.status} = 'active') OR (${t.statusReason} IS NOT NULL)`),
+  ],
+);
+export type DeliveryRiderRow = typeof deliveryRiders.$inferSelect;
+
+/**
+ * The customer's own link to follow an order, by a token nobody can guess. The token is kept sealed (so the link can be sent again)
+ * and as a keyed hash (so it is found without opening anything). One per order; it can be switched off.
+ */
+export const orderTrackingLinks = pgTable(
+  'order_tracking_links',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    orderId: text('order_id')
+      .notNull()
+      .references(() => orders.id, { onDelete: 'restrict' }),
+    tokenSealed: jsonb('token_sealed').$type<EncryptedCredentialsBlob>().notNull(),
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    views: integer('views').notNull().default(0),
+    lastViewedAt: timestamp('last_viewed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('order_tracking_links_order_uidx').on(t.orderId), uniqueIndex('order_tracking_links_hash_uidx').on(t.tokenHash), check('order_tracking_links_views_chk', sql`${t.views} >= 0`)],
+);
+export type OrderTrackingLinkRow = typeof orderTrackingLinks.$inferSelect;
+
+/** A message to a customer about their delivery, queued in the same transaction as the step that caused it and sent after. One for each thing that happened. */
+export const deliveryMessages = pgTable(
+  'delivery_messages',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    orderId: text('order_id')
+      .notNull()
+      .references(() => orders.id, { onDelete: 'restrict' }),
+    deliveryId: uuid('delivery_id').references(() => deliveries.id, { onDelete: 'restrict' }),
+    kind: text('kind').notNull(),
+    channel: text('channel').notNull().default('email'),
+    recipient: text('recipient'),
+    messageKey: text('message_key').notNull(),
+    status: text('status').$type<'queued' | 'sent' | 'failed' | 'skipped'>().notNull().default('queued'),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+    nextTryAt: timestamp('next_try_at', { withTimezone: true }).notNull().defaultNow(),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_messages_key_uidx').on(t.companyId, t.messageKey),
+    index('delivery_messages_due_idx').on(t.status, t.nextTryAt),
+    index('delivery_messages_delivery_idx').on(t.deliveryId, t.createdAt),
+    check('delivery_messages_status_chk', sql`${t.status} IN ('queued','sent','failed','skipped')`),
+    check('delivery_messages_attempts_chk', sql`${t.attempts} >= 0`),
+  ],
+);
+export type DeliveryMessageRow = typeof deliveryMessages.$inferSelect;
+
+/** What a courier company has told us about a delivery sent with them. One per delivery; the courier's own news is typed in until an adapter brings it. */
+export const deliveryShipments = pgTable(
+  'delivery_shipments',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    deliveryId: uuid('delivery_id')
+      .notNull()
+      .references(() => deliveries.id, { onDelete: 'restrict' }),
+    adapter: text('adapter').notNull().default('manual'),
+    courierName: text('courier_name').notNull(),
+    trackingNumber: text('tracking_number'),
+    status: text('status').$type<'booked' | 'in_transit' | 'delivered' | 'exception'>().notNull().default('in_transit'),
+    lastNote: text('last_note'),
+    lastUpdateAt: timestamp('last_update_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_shipments_delivery_uidx').on(t.deliveryId),
+    index('delivery_shipments_company_idx').on(t.companyId, t.status),
+    check('delivery_shipments_status_chk', sql`${t.status} IN ('booked','in_transit','delivered','exception')`),
+  ],
+);
+export type DeliveryShipmentRow = typeof deliveryShipments.$inferSelect;
+
 /** What a delivery carries, product by product: planned, then picked (possibly short), then delivered. */
 export const deliveryLines = pgTable(
   'delivery_lines',
@@ -651,7 +856,14 @@ export type DeliveryRow = typeof deliveries.$inferSelect;
 export type DeliveryLineRow = typeof deliveryLines.$inferSelect;
 export type DeliveryEventRow = typeof deliveryEvents.$inferSelect;
 
-/** What came back with a returned delivery, product by product, and what was done with it. Kept: a receipt is never changed. */
+/** What a return receipt did to stock. A correction undoes these and does the new thing. */
+export interface ReturnEffects {
+  movements?: { type: string; locationId: string; quantity: number }[];
+  holds?: string[];
+  journalBack?: number;
+}
+
+/** What came back with a returned delivery, product by product, and what was done with it. Kept: a receipt is never changed; a correction is a new revision. */
 export const deliveryReturns = pgTable(
   'delivery_returns',
   {
@@ -666,18 +878,25 @@ export const deliveryReturns = pgTable(
       .notNull()
       .references(() => products.id, { onDelete: 'restrict' }),
     quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    /** The same words the finance returns use: return_to_stock, quarantine, scrap; and keep, for goods that stay with the order. */
     disposition: text('disposition').notNull(),
     /** Where it was counted back, or written off from; null when nothing moved. */
     locationId: uuid('location_id').references(() => stockLocations.id, { onDelete: 'restrict' }),
     note: text('note'),
     receivedBy: text('received_by').notNull(),
     receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+    /** 1 for the receipt; each correction is a new row with the next number, and the highest is the one in force. */
+    revision: integer('revision').notNull().default(1),
+    correctionReason: text('correction_reason'),
+    /** What this receipt did to stock, so that a correction can undo exactly that: the movements, the holds made again and the journal. */
+    effects: jsonb('effects').$type<ReturnEffects>().notNull().default(sql`'{}'::jsonb`),
   },
   (t) => [
-    uniqueIndex('delivery_returns_delivery_product_uidx').on(t.deliveryId, t.productId),
+    uniqueIndex('delivery_returns_delivery_product_rev_uidx').on(t.deliveryId, t.productId, t.revision),
+    check('delivery_returns_revision_chk', sql`${t.revision} >= 1 AND (${t.revision} = 1 OR ${t.correctionReason} IS NOT NULL)`),
     index('delivery_returns_company_idx').on(t.companyId, t.receivedAt),
     check('delivery_returns_quantity_chk', sql`${t.quantity} >= 0`),
-    check('delivery_returns_disposition_chk', sql`${t.disposition} IN ('restock','damaged','keep')`),
+    check('delivery_returns_disposition_chk', sql`${t.disposition} IN ('return_to_stock','quarantine','scrap','keep')`),
   ],
 );
 export type DeliveryReturnRow = typeof deliveryReturns.$inferSelect;
@@ -5939,8 +6158,10 @@ export const financeSettings = pgTable('finance_settings', {
   outputTaxAccountId: uuid('output_tax_account_id').references((): AnyPgColumn => glAccounts.id, {
     onDelete: 'restrict',
   }),
+  /** When a cheque counts toward an order being paid: 'on_clearing' (once it clears) or 'on_receipt'. */
+  chequeCountsAsPaid: text('cheque_counts_as_paid').$type<'on_clearing' | 'on_receipt'>().notNull().default('on_clearing'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [check('finance_settings_cheque_counts_chk', sql`${t.chequeCountsAsPaid} IN ('on_clearing','on_receipt')`)]);
 
 export const glAccounts = pgTable(
   'gl_accounts',

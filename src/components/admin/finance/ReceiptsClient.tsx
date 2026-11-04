@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { use, useState } from 'react';
 import { listReceiptsAction } from '@/server/domains/finance/receivables/actions';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { ChequeRuleCard } from './ChequeRuleCard';
 import { ReceiptPdfActions } from './ReceiptPdfActions';
 import { CHEQUE_STATUS, RECEIPT_STATUS, statusInfo } from '@/lib/finance-statuses';
 import { listArgs } from '@/lib/finance-list-filters';
@@ -71,6 +72,7 @@ function ReceiptsView({ initial }: { initial: Page }) {
         intro="Money received from customers: cash, bank, cheque, M-Pesa and other. A receipt is posted once, then applied to invoices; if it was wrong it is reversed with a reason, never edited."
         actions={initial.can.create ? <Link href="/admin/finance/receipts/new" className={primaryClass}>New receipt</Link> : null}
       />
+      <ChequeRuleCard mode={initial.chequeRule.mode} canEdit={initial.chequeRule.canEdit} />
       <form onSubmit={(e) => void apply(e)} className={`${cardClass} grid grid-cols-1 gap-3 sm:grid-cols-3`} aria-label="Filter receipts">
         <Field id="receipts-q" label="Search" hint="Receipt number, reference, customer name or number.">
           <input id="receipts-q" type="search" value={q} onChange={(e) => setQ(e.target.value)} className={fieldClass} autoComplete="off" />

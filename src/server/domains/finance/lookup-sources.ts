@@ -12,6 +12,7 @@ import type { PermissionKey } from '@/server/domains/access-control/permissions'
 import { getContainer } from '@/server/di/container';
 import { ACCOUNT_CATEGORIES, ACCOUNT_TYPES, CALENDAR_SHAPES, DIMENSION_RULES, NORMAL_BALANCES } from '@/lib/gl-options';
 import { BANK_KINDS } from '@/lib/bank-account-form';
+import { CHEQUE_COUNTS_CHOICES } from '@/lib/order-payment';
 import { DATE_FORMATS } from '@/lib/statement-import-form';
 import { CERTAINTY_CHOICES, SUGGEST_CHOICES } from '@/lib/bank-match-form';
 import { acceptFilters, LookupFilterError, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
@@ -415,6 +416,7 @@ export const FINANCE_LOOKUP_SOURCES: readonly LookupSource[] = [
   statementVendorMethods,
   statementVendorModes,
   reasons('statement-reasons', 'bank_statements:read'),
+  fixedChoices('cheque-count-modes', 'receipts:read', CHEQUE_COUNTS_CHOICES),
   fixedChoices('bank-account-kinds', 'bank_accounts:read', BANK_KINDS),
   fixedChoices('statement-allocation-modes', 'bank_statements:create_receipt', ALLOCATION_CHOICES),
   fixedChoices('match-certainty-modes', 'bank_statements:read', CERTAINTY_CHOICES),
@@ -427,7 +429,7 @@ export const FINANCE_LOOKUP_SOURCES: readonly LookupSource[] = [
   chequeDepositMethods,
   payoutMethods('refund-payout-methods', 'refunds:record_manual_payout'),
   payoutMethods('refund-return-methods', 'refunds:record_return'),
-  fixedChoices('allocation-modes', 'receipts:read', ALLOCATION_CHOICES),
+  fixedChoices('allocation-modes', 'receipts:read', [...ALLOCATION_CHOICES, { id: 'choose', label: 'Let me choose the invoices' }]),
   reasons('wallet-reasons', 'wallet:read'),
   reasons('return-close-reasons', 'return_receipts:read'),
   fixedChoices('wallet-overpayment-modes', 'wallet:read', OVERPAYMENT_MODES),

@@ -5,11 +5,15 @@ import { getContainer } from '@/server/di/container';
 import { postingPermissions, run } from '../action-runner';
 import { FinanceError } from '../errors';
 import { PostingError } from '../engine';
+import { loadInvoiceReferences } from './invoice-references';
 import type { BankAccountInput } from './bank-account-service';
 import type { PaymentMethodInput } from './payment-method-service';
 import type { AllocateMode, ReceiptInput, ReceiptListFilter } from './receipt-service';
 import { fromCents } from '../domain/receivables';
 
+import { isChequeCountsMode } from '@/lib/order-payment';
+import { parseAllocationRequest, type AllocationRequest } from '@/lib/allocation-request';
+import { invoiceTitle, lineText, printableLines } from '@/lib/invoice-reference';
 import { has } from '@/lib/values';
 
 const fin = () => getContainer().finance;
@@ -17,6 +21,17 @@ const ROOT = '/admin/finance';
 const BANK = `${ROOT}/bank-accounts`;
 const METHODS = '/admin/settings/payments';
 const RECEIPTS = `${ROOT}/receipts`;
+
+/**
+ * Turns the browser's request into what the service takes. Named invoices need the permission to apply (a person who may only post
+ * may let the system pick the oldest, not choose where money goes); the ledger re-checks every figure against the locked rows.
+ */
+async function allocationFrom(request: AllocationRequest): Promise<AllocateMode> {
+  const parsed = parseAllocationRequest(request);
+  if (!parsed.ok) throw new FinanceError('INVALID', parsed.error);
+  if (parsed.named && !(await canPermission('receipts:apply'))) throw new FinanceError('CANNOT_APPLY', 'You may not choose the invoices a receipt is applied to.');
+  return parsed.value;
+}
 
 // ── bank accounts ─────────────────────────────────────────────────────────
 
@@ -182,8 +197,35 @@ export async function listReceiptsAction(filter: ReceiptListFilter = {}) {
       can: {
         create: await canPermission('receipts:create'),
       },
+      chequeRule: {
+        mode: (await fin().setup.getSettings(ctx.companyId))?.chequeCountsAsPaid ?? 'on_clearing',
+        canEdit: await canPermission('finance_settings:edit'),
+      },
     };
   });
+}
+
+/** Chooses when a cheque counts toward an order being paid. */
+export async function setChequeRuleAction(mode: string) {
+  return run(
+    'finance_settings:edit',
+    { surface: 'finance/receipts', action: 'change_cheque_rule' },
+    (ctx) => {
+      if (!isChequeCountsMode(mode)) throw new FinanceError('INVALID', 'Choose when a cheque counts as payment.');
+      return fin().setup.setChequeRule(ctx, mode);
+    },
+    [RECEIPTS],
+  );
+}
+
+/** Brings every order's payment state in step with the receipts, wallet use and credit notes recorded against its invoices. Safe to repeat. */
+export async function recheckOrderPaymentsAction() {
+  return run(
+    'finance_settings:edit',
+    { surface: 'finance/receipts', action: 'recheck_order_payments' },
+    (ctx) => fin().maintenance.recheckOrderPayments(ctx),
+    [RECEIPTS],
+  );
 }
 
 export async function receiptDetailAction(id: string) {
@@ -234,13 +276,21 @@ export async function receiptDetailAction(id: string) {
         const p = await getContainer().finance.creditPolicy.forCustomer(getContainer().db, ctx.companyId, d.customer.id, d.receipt.postingDate);
         return { enabled: p.walletEnabled, label: p.label };
       })(),
-      applications: d.applications.map((a) => ({
+      applications: d.applications.map((a) => {
+        const ref = a.ref ?? { documentNo: a.document_no, invoiceNo: null, orderNumber: null, lines: [] };
+        const named = invoiceTitle(ref);
+        const { shown, more } = printableLines(ref.lines, 50);
+        return {
         applicationId: a.application_id,
-        invoiceNo: a.document_no,
+        invoiceNo: named.title,
+        order: named.order,
+        lines: shown.map((l) => ({ text: lineText(l), total: l.total })),
+        moreLines: more,
         amount: a.amount,
         at: a.at,
         undone: a.undone,
-      })),
+        };
+      }),
       events: d.events.map((e) => ({
         id: String(e.id),
         event: e.event,
@@ -278,7 +328,7 @@ export async function receiptDetailAction(id: string) {
  * lost connection can never leave the form half-done, and the trail shows each step with the
  * permission that allowed it. If posting is refused the draft is kept and the reason is returned.
  */
-export async function createReceiptAction(input: ReceiptInput, post?: { allocate: AllocateMode }) {
+export async function createReceiptAction(input: ReceiptInput, post?: { allocate: AllocationRequest }) {
   return run(
     'receipts:create',
     { surface: 'finance/receipts/new', action: post ? 'create_and_post' : 'create_draft' },
@@ -289,13 +339,14 @@ export async function createReceiptAction(input: ReceiptInput, post?: { allocate
       if (post && !(await canPermission('receipts:post'))) {
         throw new FinanceError('CANNOT_POST', 'You may record receipts but not post them. Save it as a draft instead.');
       }
+      const allocate = post ? await allocationFrom(post.allocate) : 'none';
       const created = await fin().receipts.create(ctx, { ...input, source: 'manual' });
       if (!post) return { ...created, posted: false, postError: null as string | null };
       try {
         await fin().receipts.post(
           { ...ctx, origin: { ...ctx.origin, permissionUsed: 'receipts:post' } },
           created.id,
-          { allocate: post.allocate, permissions: await postingPermissions() },
+          { allocate, permissions: await postingPermissions() },
         );
         return { ...created, posted: true, postError: null as string | null };
       } catch (error) {
@@ -310,8 +361,9 @@ export async function createReceiptAction(input: ReceiptInput, post?: { allocate
   );
 }
 
-export async function postReceiptAction(id: string, allocate: AllocateMode = 'oldest_first') {
+export async function postReceiptAction(id: string, allocation: AllocationRequest = 'oldest_first') {
   return run('receipts:post', { surface: 'finance/receipts/detail', action: 'post' }, async (ctx) => {
+    const allocate = await allocationFrom(allocation);
     const out = await fin().receipts.post(ctx, id, { allocate, permissions: await postingPermissions() });
     return { number: out.number, applied: fromCents(out.appliedCents), glPosted: out.glPosted };
   }, [RECEIPTS, `${RECEIPTS}/${id}`]);
@@ -323,11 +375,12 @@ export async function cancelReceiptAction(id: string, reason: { code: string; te
   }, [RECEIPTS, `${RECEIPTS}/${id}`]);
 }
 
-export async function applyReceiptAction(id: string, applications: { entryId: string; amount: string }[] | 'oldest_first') {
+export async function applyReceiptAction(id: string, applications: AllocationRequest) {
   return run('receipts:apply', { surface: 'finance/receipts/detail', action: 'apply' }, async (ctx) => {
-    const { toCents } = await import('../domain/receivables');
-    const planned = applications === 'oldest_first' ? 'oldest_first' : applications.map((a) => ({ entryId: a.entryId, amountCents: toCents(a.amount) }));
-    const out = await fin().receipts.apply(ctx, id, planned);
+    const parsed = parseAllocationRequest(applications);
+    if (!parsed.ok) throw new FinanceError('INVALID', parsed.error);
+    if (parsed.value === 'none') throw new FinanceError('INVALID', 'Choose the invoices to apply to, or the oldest first.');
+    const out = await fin().receipts.apply(ctx, id, parsed.value);
     return { applied: fromCents(out.appliedCents) };
   }, [RECEIPTS, `${RECEIPTS}/${id}`]);
 }
@@ -363,20 +416,27 @@ export async function bounceChequeAction(id: string, reason: { code: string; tex
   }, [RECEIPTS, `${RECEIPTS}/${id}`]);
 }
 
-/** Open invoices and unapplied credit of one customer, for the "apply" panel. */
+/** Open invoices of one customer, for choosing where a receipt's money goes: the invoice number, the order, what was sold, when due, what is still owed. */
 export async function receiptApplyOptionsAction(customerId: string) {
   return run('receipts:apply', { surface: 'finance/receipts/detail', action: 'apply_options' }, async (ctx) => {
-    const items = await fin().customerLedger.openItems(ctx.companyId, customerId);
-    return items
-      .filter((i) => Number(i.remainingAmount) > 0 && i.documentType === 'invoice')
-      .map((i) => ({
+    const items = (await fin().customerLedger.openItems(ctx.companyId, customerId)).filter((i) => Number(i.remainingAmount) > 0 && i.documentType === 'invoice');
+    const refs = await loadInvoiceReferences(getContainer().db, ctx.companyId, items.map((i) => i.id));
+    return items.map((i) => {
+      const ref = refs.get(i.id) ?? { documentNo: i.documentNo, invoiceNo: null, orderNumber: null, lines: [] };
+      const named = invoiceTitle(ref);
+      const { shown, more } = printableLines(ref.lines, 50);
+      return {
         entryId: i.id,
-        documentNo: i.documentNo,
+        documentNo: named.title,
+        order: named.order,
+        lines: shown.map((l) => ({ text: lineText(l), total: l.total })),
+        moreLines: more,
         remaining: i.remainingAmount,
         amount: i.amount,
         currency: i.currency,
         dueDate: i.dueDate ? i.dueDate.toISOString().slice(0, 10) : null,
-      }));
+      };
+    });
   });
 }
 
