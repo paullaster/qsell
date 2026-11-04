@@ -59,3 +59,29 @@ describe('product specification editing rules', () => {
     ).toMatch(/value must be/);
   });
 });
+
+describe('moveSpecification', () => {
+  const rows = ['a', 'b', 'c', 'd'];
+  it('moves a row up, down and to either end, leaving the others in order', async () => {
+    const { moveSpecification } = await import('./product-specifications');
+    expect(moveSpecification(rows, 3, 2)).toEqual(['a', 'b', 'd', 'c']);
+    expect(moveSpecification(rows, 0, 1)).toEqual(['b', 'a', 'c', 'd']);
+    expect(moveSpecification(rows, 0, 3)).toEqual(['b', 'c', 'd', 'a']);
+    expect(moveSpecification(rows, 3, 0)).toEqual(['d', 'a', 'b', 'c']);
+  });
+  it('never changes the list it was given, and ignores moves that go nowhere or off the list', async () => {
+    const { moveSpecification } = await import('./product-specifications');
+    const before = [...rows];
+    moveSpecification(rows, 0, 3);
+    expect(rows).toEqual(before);
+    for (const [from, to] of [[1, 1], [-1, 2], [2, -1], [4, 0], [0, 4], [1.5, 2], [Number.NaN, 0]]) {
+      expect(moveSpecification(rows, from, to)).toEqual(rows);
+    }
+    expect(moveSpecification([], 0, 1)).toEqual([]);
+  });
+  it('keeps the order the shop shows after the server tidies the rows', async () => {
+    const { visibleSpecifications, moveSpecification } = await import('./product-specifications');
+    const ordered = moveSpecification([{ key: ' RAM ', value: '16GB' }, { key: 'Colour', value: 'Black' }, { key: 'Empty', value: '  ' }, { key: 'Weight', value: '2kg' }], 3, 0);
+    expect(visibleSpecifications(ordered).map((s) => s.key)).toEqual(['Weight', 'RAM', 'Colour']);
+  });
+});
