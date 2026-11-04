@@ -8,14 +8,16 @@ import type { PublicCompany } from '@/lib/company-view';
 export function AdminOrdersClient({
   firstPage,
   companyPromise,
+  canEditProductsPromise,
 }: {
   firstPage: ReturnType<typeof ordersPageAction>;
   companyPromise: Promise<PublicCompany>;
+  canEditProductsPromise: Promise<boolean>;
 }) {
   return (
     <div className="space-y-4">
       <OrderFlowPanel />
-      <AdminOrders firstPage={firstPage} companyPromise={companyPromise} />
+      <AdminOrders firstPage={firstPage} companyPromise={companyPromise} canEditProductsPromise={canEditProductsPromise} />
     </div>
   );
 }

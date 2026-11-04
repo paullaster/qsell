@@ -1,5 +1,6 @@
 'use client';
 
+import { ProductEditLink } from '@/components/admin/ProductEditLink';
 import { useEffect, useState } from 'react';
 import { DollarSign, FileText, Mail, MapPin, Phone, Printer, Truck, User } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
@@ -40,6 +41,8 @@ export interface FulfilmentChange {
 
 interface Props {
   order: Order;
+  /** The person may update products: each line offers a shortcut to the product's edit window. The order keeps what was sold. */
+  canEditProducts?: boolean;
   busy: boolean;
   invoiceBusy: boolean;
   error: string | null;
@@ -59,6 +62,7 @@ const linkButton =
 /** One order opened for work: who and what it is, the invoice, the lifecycle form, payments and credit notes. */
 export function OrderDetailsModal({
   order,
+  canEditProducts = false,
   busy,
   invoiceBusy,
   error,
@@ -283,7 +287,10 @@ export function OrderDetailsModal({
                 key={`${item.productId}:${item.unitId ?? ''}:${String(item.quantity)}`}
                 className="rounded-xl border border-line bg-surface p-3"
               >
-                <div className="font-medium text-fg-strong">{item.productName}</div>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="font-medium text-fg-strong">{item.productName}</div>
+                  <ProductEditLink productId={item.productId} name={item.productName} canEdit={canEditProducts} />
+                </div>
                 <div className="font-mono text-[10px] text-fg-muted">{item.sku}</div>
                 <div className="mt-1 font-mono">
                   {quantityWords(lineFromRow(item))} ×{' '}
@@ -307,7 +314,10 @@ export function OrderDetailsModal({
                 {order.items.map((item) => (
                   <tr key={`${item.productId}:${item.unitId ?? ''}:${String(item.quantity)}`}>
                     <td className="px-4 py-3 font-medium text-fg-strong">
-                      {item.productName}
+                      <div className="flex items-start justify-between gap-2">
+                        <span>{item.productName}</span>
+                        <ProductEditLink productId={item.productId} name={item.productName} canEdit={canEditProducts} />
+                      </div>
                       <div className="font-mono text-[10px] text-fg-muted">{item.sku}</div>
                     </td>
                     <td className="px-4 py-3 text-right font-mono">

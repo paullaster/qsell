@@ -1,7 +1,11 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useCustomerCreated } from '@/components/admin/customer-created';
+import { useProductUpdated } from '@/components/admin/product-updated';
+import { ProductEditLink } from '@/components/admin/ProductEditLink';
+import { refreshLinesForProduct, type RefreshNote } from '@/lib/quote-product-refresh';
+import { getQuoteCatalogueProductAction } from '@/server/domains/quotes/actions';
 
 import { FilePlus2, X } from 'lucide-react';
 import { buildCatalogueIndex, type CatalogueProduct } from '@/lib/catalogue-entry';
@@ -57,10 +61,16 @@ export function QuoteEditor({
   initial,
   quoteNumber,
   notices = [],
+  canEditProducts = false,
+  onProductRefreshed,
   onClose,
   onSave,
 }: {
   products: CatalogueProduct[];
+  /** The person may update products: each line then offers a shortcut to the product's edit window. */
+  canEditProducts?: boolean;
+  /** A product was changed from a line's shortcut and read again; the caller keeps its own copy of the catalogue current. */
+  onProductRefreshed?: (product: CatalogueProduct) => void;
   initial: QuoteInput;
   quoteNumber?: string;
   /** Things changed or worth knowing when the saved quote was opened (a unit its product no longer has). */
@@ -73,12 +83,43 @@ export function QuoteEditor({
   const [error, setError] = useState<string | null>(null);
   const [catalogSectionId, setCatalogSectionId] = useState<string | null>(null);
   const [catalogOpen, setCatalogOpen] = useState(false);
-  const catalogueIndex = useMemo(() => buildCatalogueIndex(products), [products]);
-  const productById = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
+  // Products changed from a line's shortcut: what was read again after the save wins over the catalogue loaded when the editor opened.
+  const [refreshed, setRefreshed] = useState<Record<string, CatalogueProduct>>({});
+  const [priceRefresh, setPriceRefresh] = useState(0);
+  const [refreshNotes, setRefreshNotes] = useState<RefreshNote[]>([]);
+  const current = useMemo(() => products.map((p) => refreshed[p.id] ?? p), [products, refreshed]);
+  const catalogueIndex = useMemo(() => buildCatalogueIndex(current), [current]);
+  const productById = useMemo(() => new Map(current.map((p) => [p.id, p])), [current]);
+  const known = useRef(productById);
+  const onRefreshed = useRef(onProductRefreshed);
+  const currency = useRef('');
+  const latest = useRef(initial);
   const [bulkOpen, setBulkOpen] = useState(false);
   const lastAdded = useRef<{ productId: string; sectionId: string | null } | null>(null);
   const [focusLine, setFocusLine] = useState<{ index: number; nonce: number } | null>(null);
   const [draftPreviewOpen, setDraftPreviewOpen] = useState(false);
+  useEffect(() => {
+    currency.current = input.currency;
+    latest.current = input;
+    known.current = productById;
+    onRefreshed.current = onProductRefreshed;
+  });
+  // A product was saved in its edit window (opened from a line): read it again and bring the open quote's lines up to date.
+  const productSaved = useCallback((productId: string) => {
+    const before = known.current.get(productId);
+    if (before === undefined) return;
+    void (async () => {
+      const fresh = await getQuoteCatalogueProductAction(productId).catch(() => null);
+      if (fresh === null) return;
+      setRefreshed((r) => ({ ...r, [fresh.id]: fresh }));
+      onRefreshed.current?.(fresh);
+      setPriceRefresh((n) => n + 1);
+      const out = refreshLinesForProduct(latest.current.lines, before, fresh, (v) => money(v, currency.current));
+      setRefreshNotes((n) => [...n.filter((x) => x.productId !== fresh.id), ...out.notes]);
+      if (out.lines.some((l, i) => l !== latest.current.lines[i])) setInput((c) => ({ ...c, lines: refreshLinesForProduct(c.lines, before, fresh, (v) => money(v, currency.current)).lines }));
+    })();
+  }, []);
+  useProductUpdated(productSaved);
   // What the quote comes to is worked out on the server; this only shows the answer.
   const { totals } = useQuoteTotals(input);
   const linesPreview = input.lines.map((line, index) => ({
@@ -166,7 +207,7 @@ export function QuoteEditor({
       unitPrice: product.price == null ? undefined : Math.round(product.price * perUnit * 1e4) / 1e4,
     });
   };
-  const { traces, problems } = useQuotePricePreview(input, setInput);
+  const { traces, problems } = useQuotePricePreview(input, setInput, priceRefresh);
   const guards = useQuoteGuardPreview(input);
   const [swap, setSwap] = useState<{
     summary: SwapSummary;
@@ -276,6 +317,15 @@ export function QuoteEditor({
                 <li key={`${String(n.line)}-${n.message}`}>
                   Line {n.line + 1}: {n.message}
                 </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {refreshNotes.length > 0 && (
+          <div role="status" aria-label="Products changed while this quote was open" className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            <ul className="list-disc space-y-1 pl-5">
+              {refreshNotes.map((n) => (
+                <li key={n.message}>{n.message}</li>
               ))}
             </ul>
           </div>
@@ -463,7 +513,10 @@ export function QuoteEditor({
               return (
                 <>
                   <td className="p-3">
-                    <div className="font-medium text-fg-strong">{entry.product?.name}</div>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="font-medium text-fg-strong">{entry.product?.name}</div>
+                      <ProductEditLink productId={line.productId} name={entry.product?.name ?? 'item'} canEdit={canEditProducts} />
+                    </div>
                     <div className="text-xs text-fg-muted">
                       {entry.product?.sku} · tax {entry.product?.taxRate ?? 0}%
                     </div>

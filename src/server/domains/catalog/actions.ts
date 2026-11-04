@@ -1,7 +1,7 @@
 'use server';
 
 import { withShopAvailability } from './shop-availability';
-import { AccessDeniedError, requirePermission } from '@/server/domains/access-control/guard';
+import { AccessDeniedError, canPermission, requirePermission } from '@/server/domains/access-control/guard';
 import { revalidatePath } from 'next/cache';
 import { randomUUID } from 'node:crypto';
 import * as Sentry from '@sentry/nextjs';
@@ -54,6 +54,14 @@ export async function listSellableProductsAction(): Promise<PublicProduct[]> {
 export async function getProductAction(id: string): Promise<Product | null> {
   await requirePermission('products:read');
   return (await CatalogService.getProductWithMedia(id)) ?? null;
+}
+
+/**
+ * Whether this person may change products, for screens that offer a shortcut to the product's edit window. A super admin always may
+ * (the access engine lets them through); the server still checks again when the product is saved.
+ */
+export async function canEditProductsAction(): Promise<boolean> {
+  return canPermission('products:update');
 }
 
 /** Public lookup — published, sellable products only, without staff-only fields. */
