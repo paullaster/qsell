@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { noHorizontalScroll, noInnerHorizontalScroll, noNativeSelect, open } from './support/page';
-import { backfillStock, forgetStockFixtures, setLedger } from './support/stock-fixtures';
+import { backfillStock, dropStockHolds, forgetStockFixtures, setLedger } from './support/stock-fixtures';
 
 // The steps change a company-wide setting, so they run one after another, from the old way, and leave it as they found it.
 test.describe.configure({ mode: 'serial' });
@@ -52,6 +52,8 @@ test.describe('moving the company to the new stock ledger', () => {
     await open(page, '/admin/inventory/transfers', /Stock transfers/);
     await expect(page.getByRole('link', { name: 'New transfer' })).toBeVisible({ timeout: 30_000 });
 
+    // Going back is refused while orders still hold stock (other specs leave some open), so they are let go first.
+    dropStockHolds();
     // Going back needs a reason.
     await open(page, '/admin/inventory/ledger', /Stock ledger/);
     const back = page.getByRole('region', { name: 'Going back' });

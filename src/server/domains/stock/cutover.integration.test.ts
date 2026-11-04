@@ -174,6 +174,18 @@ describe.skipIf(!has(url))('moving to the new stock ledger (database)', () => {
       expect(after).toMatchObject({ trigger: 'manual', ok: true, ranBy: 'admin-1' });
       expect(after?.at).not.toBe(before?.at);
     });
+
+    it('agrees while an order is still reserved the old way, as the switch will, and leaves no hold behind', async () => {
+      await dayBefore();
+      const p = await legacyProduct(6);
+      const order = await place(p, 2);
+      await finishBackfill();
+      const { ok, report } = await cutoverWith(scoped()).check(companyId, 'manual', 'admin-1');
+      expect(report.reservationsDiffer).toBe(0);
+      expect(ok).toBe(true);
+      expect(await holds(order)).toEqual([]);
+      expect(await cutover.status(companyId)).toMatchObject({ mode: 'shadow' });
+    });
   });
 
   describe('switching over', () => {
