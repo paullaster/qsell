@@ -9,6 +9,7 @@ import type { NumberSeriesService } from '@/server/kernel/numbering/service';
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import { decodeCursor, encodeCursor } from '@/server/domains/lookups/request';
 import type { DeliveryDocuments, DocActor, DocRefusal, DocResult } from './documents';
+import type { DeliveryRiders } from './riders';
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
@@ -37,6 +38,8 @@ export interface RunView {
   branch: { id: string; name: string };
   runDate: string;
   riderName: string;
+  /** The rider's account row when the run is given to someone who uses the rider app; null for a name typed in. */
+  riderId: string | null;
   vehicle: string | null;
   notes: string | null;
   status: RunStatus;
@@ -109,11 +112,20 @@ export class DeliveryRuns {
     private readonly decisions: DecisionLog,
     private readonly numbering: Pick<NumberSeriesService, 'assign'>,
     private readonly documents: Pick<DeliveryDocuments, 'dispatch'>,
+    private readonly riders: Pick<DeliveryRiders, 'carrier'>,
   ) {}
 
-  async create(actor: DocActor, input: { branchId?: unknown; runDate?: unknown; riderName?: unknown; vehicle?: unknown; notes?: unknown }): Promise<DocResult<{ id: string; number: string }>> {
+  /** The rider a run is given to: someone from the rider list who may carry now (their name is kept on the run as it is today), or a name typed in. */
+  private async riderFor(tx: Tx, companyId: string, input: { riderId?: unknown; riderName?: unknown }): Promise<DocResult<{ riderId: string | null; riderName: string }>> {
+    if (typeof input.riderId === 'string' && input.riderId !== '') {
+      const rider = await this.riders.carrier(tx, companyId, input.riderId);
+      return rider === null ? fail('not_allowed', 'That rider cannot be given a run now: they are paused, have left, or their kind of rider is switched off.') : { ok: true, data: { riderId: rider.id, riderName: rider.name } };
+    }
     const riderName = text(input.riderName, 120);
-    if (riderName === null) return fail('bad_input', 'Say who the rider is.');
+    return riderName === null ? fail('bad_input', 'Say who the rider is.') : { ok: true, data: { riderId: null, riderName } };
+  }
+
+  async create(actor: DocActor, input: { branchId?: unknown; runDate?: unknown; riderId?: unknown; riderName?: unknown; vehicle?: unknown; notes?: unknown }): Promise<DocResult<{ id: string; number: string }>> {
     const runDate = typeof input.runDate === 'string' && DATE.test(input.runDate) && !Number.isNaN(Date.parse(input.runDate)) ? input.runDate : null;
     if (runDate === null) return fail('bad_input', 'Choose the day of the run.');
     if (typeof input.branchId !== 'string' || input.branchId === '') return fail('bad_input', 'Choose the branch the run leaves from.');
@@ -121,11 +133,27 @@ export class DeliveryRuns {
     return await this.db.transaction(async (tx): Promise<DocResult<{ id: string; number: string }>> => {
       const [branch] = await tx.select({ id: branches.id }).from(branches).where(and(eq(branches.id, branchId), eq(branches.companyId, actor.companyId), eq(branches.isActive, true)));
       if (branch === undefined) return fail('not_found', 'That branch could not be found.');
+      const who = await this.riderFor(tx, actor.companyId, input);
+      if (!who.ok) return who;
+      const { riderId, riderName } = who.data;
       const id = crypto.randomUUID();
       const { number } = await this.numbering.assign('delivery_run', { companyId: actor.companyId, date: businessDate(), document: { kind: 'delivery_run', id } }, tx);
-      await tx.insert(deliveryRuns).values({ id, companyId: actor.companyId, number, branchId, runDate, riderName, vehicle: text(input.vehicle, 80), notes: text(input.notes, 300), createdBy: actor.userId });
+      await tx.insert(deliveryRuns).values({ id, companyId: actor.companyId, number, branchId, runDate, riderName, riderId, vehicle: text(input.vehicle, 80), notes: text(input.notes, 300), createdBy: actor.userId });
       await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_run', id }, action: 'run.created', actor: { type: 'user', id: actor.userId }, to: 'planned', reason: { text: `${riderName}, ${runDate}` } }, tx);
       return { ok: true, data: { id, number } };
+    });
+  }
+
+  /** Gives a run that has not gone out to another rider (from the list, or a name typed in). */
+  async assignRider(actor: DocActor, runId: string, input: { riderId?: unknown; riderName?: unknown }, expectedVersion?: number): Promise<DocResult<RunView>> {
+    return await this.db.transaction(async (tx): Promise<DocResult<RunView>> => {
+      const run = await this.editable(tx, actor, runId, expectedVersion);
+      if ('ok' in run) return run;
+      const who = await this.riderFor(tx, actor.companyId, input);
+      if (!who.ok) return who;
+      await tx.update(deliveryRuns).set({ riderId: who.data.riderId, riderName: who.data.riderName, version: run.version + 1, updatedAt: new Date() }).where(eq(deliveryRuns.id, runId));
+      await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_run', id: runId }, action: 'run.rider_changed', actor: { type: 'user', id: actor.userId }, reason: { text: `${run.riderName} to ${who.data.riderName}` } }, tx);
+      return { ok: true, data: await this.viewIn(tx, actor.companyId, runId) };
     });
   }
 
@@ -310,6 +338,7 @@ export class DeliveryRuns {
       branch: { id: r.branchId, name: row.branchName },
       runDate: r.runDate,
       riderName: r.riderName,
+      riderId: r.riderId,
       vehicle: r.vehicle,
       notes: r.notes,
       status: r.status,

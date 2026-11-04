@@ -9,7 +9,10 @@ import { TrackingLinks } from '@/server/domains/delivery/tracking-links';
 import { TrackedOrders } from '@/server/domains/delivery/tracked-order';
 import type { EmailPort } from '@/server/ports/communications';
 import { StockReissue } from '@/server/domains/delivery/reissue';
+import { DeliveryRiders } from '@/server/domains/delivery/riders';
+import { RiderRuns } from '@/server/domains/delivery/rider-runs';
 import { DeliveryRuns } from '@/server/domains/delivery/runs';
+import type { UsersAdminRepository } from '@/server/domains/users/repository';
 import { CourierShipments } from '@/server/domains/delivery/shipments';
 import type { NumberSeriesService } from '@/server/kernel/numbering/service';
 import { OrderDeliveries } from '@/server/domains/delivery/order-delivery';
@@ -32,6 +35,7 @@ export function createDeliveryServices(input: {
   numbering: NumberSeriesService;
   stockReservations: StockReservations;
   email: EmailPort;
+  usersAdmin: Pick<UsersAdminRepository, 'createUser' | 'resetPassword'>;
 }) {
   const stockAvailability = new StockAvailability(input.db);
   const stockSettings = new StockSettingsService(input.db, input.companySettings);
@@ -52,7 +56,9 @@ export function createDeliveryServices(input: {
   const trackingLinks = new TrackingLinks(input.db, input.decisionLog);
   const deliveryMessages = new DeliveryMessages(input.db, input.email, input.companySettings, trackingLinks);
   const deliveryDocuments = new DeliveryDocuments(input.db, input.decisionLog, input.numbering, input.stockReservations, deliveryMessages);
-  const deliveryRuns = new DeliveryRuns(input.db, input.decisionLog, input.numbering, deliveryDocuments);
+  const deliveryRiders = new DeliveryRiders(input.db, input.decisionLog, input.usersAdmin);
+  const riderRuns = new RiderRuns(input.db);
+  const deliveryRuns = new DeliveryRuns(input.db, input.decisionLog, input.numbering, deliveryDocuments, deliveryRiders);
   const courierShipments = new CourierShipments(input.db, deliveryDocuments);
   const trackedOrders = new TrackedOrders(input.db, input.companySettings, deliveryDocuments, orderCollections);
   const stockReissue = new StockReissue(input.db, input.decisionLog, input.stockReservations);
@@ -74,6 +80,8 @@ export function createDeliveryServices(input: {
     trackedOrders,
     stockReissue,
     deliveryRuns,
+    deliveryRiders,
+    riderRuns,
     courierShipments,
     deliveryBilling,
   };

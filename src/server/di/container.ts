@@ -121,6 +121,8 @@ import type { DeliveryPlans } from '@/server/domains/delivery/plan';
 import type { OrderCollections } from '@/server/domains/delivery/collection';
 import type { DeliveryDocuments } from '@/server/domains/delivery/documents';
 import type { StockReissue } from '@/server/domains/delivery/reissue';
+import type { RiderRuns } from '@/server/domains/delivery/rider-runs';
+import type { DeliveryRiders } from '@/server/domains/delivery/riders';
 import type { DeliveryRuns } from '@/server/domains/delivery/runs';
 import type { CourierShipments } from '@/server/domains/delivery/shipments';
 import type { TrackingLinks } from '@/server/domains/delivery/tracking-links';
@@ -285,6 +287,8 @@ export interface AppContainer {
   deliveryDocuments: DeliveryDocuments;
   stockReissue: StockReissue;
   deliveryRuns: DeliveryRuns;
+  deliveryRiders: DeliveryRiders;
+  riderRuns: RiderRuns;
   courierShipments: CourierShipments;
   trackingLinks: TrackingLinks;
   deliveryMessages: DeliveryMessages;
@@ -488,7 +492,7 @@ export function getContainer(): AppContainer {
     void geoCompanyId().then((id) => geoSettings.record(id, event)).catch(() => undefined);
   });
   const stockReservations = new StockReservations(drizzleDb, stockLedger, decisionLog);
-  const deliveryServices = createDeliveryServices({ db: drizzleDb, decisionLog, geo, companySettings, numbering, stockReservations, email });
+  const deliveryServices = createDeliveryServices({ db: drizzleDb, decisionLog, geo, companySettings, numbering, stockReservations, email, usersAdmin });
   const orderSla = new OrderSlaService(drizzleDb, new OrderSlaNotifier(email, companySettings));
   const vendorNotifier = new VendorNotifier(drizzleDb, email, companySettings);
   const prequalLifecycle = new PrequalLifecycle(drizzleDb, vendorNotifier);
@@ -630,6 +634,8 @@ export function getContainer(): AppContainer {
     deliveryDocuments: deliveryServices.deliveryDocuments,
     stockReissue: deliveryServices.stockReissue,
     deliveryRuns: deliveryServices.deliveryRuns,
+    deliveryRiders: deliveryServices.deliveryRiders,
+    riderRuns: deliveryServices.riderRuns,
     courierShipments: deliveryServices.courierShipments,
     trackingLinks: deliveryServices.trackingLinks,
     deliveryMessages: deliveryServices.deliveryMessages,

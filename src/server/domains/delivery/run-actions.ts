@@ -64,6 +64,8 @@ export async function runStepAction(raw: unknown) {
           return dataOf(await runs.removeStop(actor, id, idOf(i.deliveryId, 'delivery'), version));
         case 'reorder':
           return dataOf(await runs.reorder(actor, id, i.order, version));
+        case 'assign_rider':
+          return dataOf(await runs.assignRider(actor, id, { riderId: i.riderId, riderName: i.riderName }, version));
         case 'arrange':
           return dataOf(await runs.arrange(actor, id, version));
         case 'start':

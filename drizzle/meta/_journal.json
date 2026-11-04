@@ -939,6 +939,13 @@
       "when": 1793678328283,
       "tag": "0133_delivery_tracking_messages",
       "breakpoints": true
+    },
+    {
+      "idx": 134,
+      "version": "7",
+      "when": 1793756377053,
+      "tag": "0134_delivery_riders",
+      "breakpoints": true
     }
   ]
 }

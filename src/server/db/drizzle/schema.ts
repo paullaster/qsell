@@ -606,6 +606,8 @@ export const deliveryRuns = pgTable(
       .references(() => branches.id, { onDelete: 'restrict' }),
     runDate: date('run_date').notNull(),
     riderName: text('rider_name').notNull(),
+    /** The rider's account, when the run is given to someone who uses the rider app. The name above is kept as it was when the run was made. */
+    riderId: uuid('rider_id').references(() => deliveryRiders.id, { onDelete: 'restrict' }),
     vehicle: text('vehicle'),
     notes: text('notes'),
     status: text('status').$type<'planned' | 'started' | 'completed' | 'cancelled'>().notNull().default('planned'),
@@ -619,6 +621,7 @@ export const deliveryRuns = pgTable(
   (t) => [
     uniqueIndex('delivery_runs_company_number_uidx').on(t.companyId, t.number),
     index('delivery_runs_day_idx').on(t.companyId, t.runDate, t.status),
+    index('delivery_runs_rider_idx').on(t.riderId, t.runDate).where(sql`${t.riderId} IS NOT NULL`),
     check('delivery_runs_status_chk', sql`${t.status} IN ('planned','started','completed','cancelled')`),
     check('delivery_runs_closed_chk', sql`(${t.status} IN ('completed','cancelled')) = (${t.closedAt} IS NOT NULL)`),
   ],
@@ -651,6 +654,62 @@ export const deliveryRunStops = pgTable(
   ],
 );
 export type DeliveryRunStopRow = typeof deliveryRunStops.$inferSelect;
+
+/** Which kinds of rider a company uses: its own staff signing in to the rider app, riders with an account of their own, or both. */
+export const deliveryRiderSettings = pgTable(
+  'delivery_rider_settings',
+  {
+    companyId: uuid('company_id')
+      .primaryKey()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    allowStaff: boolean('allow_staff').notNull().default(true),
+    allowSeparate: boolean('allow_separate').notNull().default(false),
+    version: integer('version').notNull().default(1),
+    updatedBy: text('updated_by'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check('delivery_rider_settings_one_chk', sql`${t.allowStaff} OR ${t.allowSeparate}`)],
+);
+
+/**
+ * A person who carries deliveries. `kind` says what kind of account they sign in with: a staff member's own (`staff`) or an account
+ * made only for riding (`separate`, which can never open the back office). The rider app lets someone in by this row, not by a
+ * back-office permission, because a separate account is not staff. One row per person; leaving ends it, and it can be resumed.
+ */
+export const deliveryRiders = pgTable(
+  'delivery_riders',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    kind: text('kind').$type<'staff' | 'separate'>().notNull(),
+    /** The name the rider goes by on runs and lists, kept here so those never need the account. */
+    name: text('name').notNull(),
+    phone: text('phone'),
+    vehicle: text('vehicle'),
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+    status: text('status').$type<'active' | 'paused' | 'ended'>().notNull().default('active'),
+    statusReason: text('status_reason'),
+    statusChangedAt: timestamp('status_changed_at', { withTimezone: true }).notNull().defaultNow(),
+    version: integer('version').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_riders_company_user_uidx').on(t.companyId, t.userId),
+    index('delivery_riders_status_idx').on(t.companyId, t.status, t.kind),
+    check('delivery_riders_name_chk', sql`btrim(${t.name}) <> ''`),
+    check('delivery_riders_kind_chk', sql`${t.kind} IN ('staff','separate')`),
+    check('delivery_riders_status_chk', sql`${t.status} IN ('active','paused','ended')`),
+    check('delivery_riders_reason_chk', sql`(${t.status} = 'active') OR (${t.statusReason} IS NOT NULL)`),
+  ],
+);
+export type DeliveryRiderRow = typeof deliveryRiders.$inferSelect;
 
 /**
  * The customer's own link to follow an order, by a token nobody can guess. The token is kept sealed (so the link can be sent again)

@@ -6,6 +6,7 @@ import type { GeoService } from '@/server/domains/geo/service';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { createDeliveryServices } from './delivery-wiring';
 import type { StockReservations } from '@/server/domains/stock/reservations';
+import type { UsersAdminRepository } from '@/server/domains/users/repository';
 import type { EmailPort } from '@/server/ports/communications';
 
 describe('createDeliveryServices', () => {
@@ -18,6 +19,7 @@ describe('createDeliveryServices', () => {
       email: {} as EmailPort,
       geo: {} as GeoService,
       companySettings: {} as CompanySettingsRepository,
+      usersAdmin: {} as UsersAdminRepository,
     });
 
     expect(services.deliveryQuotes).toHaveProperty('policies', services.chargePolicies);
@@ -26,5 +28,6 @@ describe('createDeliveryServices', () => {
     expect(services.deliveryPlans).toHaveProperty('quotes', services.deliveryQuotes);
     expect(services.deliveryPlans).toHaveProperty('availability', services.stockAvailability);
     expect(services.deliveryPlans).toHaveProperty('stockSettings', services.stockSettings);
+    expect(services.deliveryRuns).toHaveProperty('riders', services.deliveryRiders);
   });
 });

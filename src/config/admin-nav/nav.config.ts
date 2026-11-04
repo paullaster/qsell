@@ -441,6 +441,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'deliveries:dispatch',
       },
       {
+        id: 'delivery-riders',
+        title: 'Riders',
+        name: 'delivery-riders',
+        href: '/admin/delivery/riders',
+        description: 'Who carries deliveries: your own staff, riders with an account of their own, or both',
+        icon: 'Users',
+        permission: 'riders:manage',
+      },
+      {
         id: 'delivery-charges',
         title: 'Delivery charges',
         name: 'delivery-charges',

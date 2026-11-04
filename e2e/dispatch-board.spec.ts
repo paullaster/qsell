@@ -28,7 +28,7 @@ test.describe('the dispatch board', () => {
       const plan = page.getByRole('region', { name: 'Plan a run' });
       await pick(page, plan.getByRole('combobox', { name: 'Leaves from' }), `Delivery ${tag}`, new RegExp(`Delivery ${tag}`));
       await plan.getByLabel('Day').fill(today());
-      await plan.getByLabel('Rider').fill('Otieno');
+      await plan.getByLabel('Or a name, for someone not using the app').fill('Otieno');
       await plan.getByLabel('Vehicle (optional)').fill('KMFA 123A');
       await plan.getByRole('button', { name: 'Plan the run' }).click();
       const planned = page.getByText(/^Run RUN-.* is planned/);

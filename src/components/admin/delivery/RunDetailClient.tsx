@@ -6,6 +6,8 @@ import { runStepAction, type runAction } from '@/server/domains/delivery/run-act
 import type { RunView } from '@/server/domains/delivery/runs';
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
+import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import type { Choice } from '@/lib/payment-options';
 import { moveStop, type RunAction, type RunStatus } from '@/lib/dispatch-run';
 
 type Loaded = Awaited<ReturnType<typeof runAction>>;
@@ -29,6 +31,7 @@ function Screen({ initial }: { initial: RunView }) {
   const [notice, setNotice] = useState<Notice>(null);
   const [busy, setBusy] = useState(false);
   const [reason, setReason] = useState('');
+  const [rider, setRider] = useState<Choice | null>(null);
 
   const run = async (body: Record<string, unknown>, done: string, after?: () => void) => {
     setBusy(true);
@@ -62,6 +65,18 @@ function Screen({ initial }: { initial: RunView }) {
         ← Dispatch board
       </Link>
       <Message notice={notice} />
+
+      {view.editable ? (
+        <section aria-label="Rider" className={`${cardClass} flex flex-wrap items-end gap-3`}>
+          <div className="min-w-0 flex-1 basis-64">
+            <ChoicePicker label="Give the run to another rider" source="delivery-riders" choice={rider} onChoice={setRider} placeholder="Choose a rider" clearable />
+          </div>
+          <button type="button" className={buttonClass} disabled={busy || rider === null} onClick={() => void run({ step: 'assign_rider', riderId: rider?.id ?? '' }, 'The run is with the new rider.', () => setRider(null))}>
+            Give the run
+          </button>
+          {view.riderId === null ? <p className="basis-full text-xs text-fg-muted">{view.riderName} is a name typed in: they do not see this run in the rider app.</p> : null}
+        </section>
+      ) : null}
 
       <section aria-label="Totals" className={`${cardClass} grid grid-cols-2 gap-3 sm:grid-cols-4`}>
         <div>

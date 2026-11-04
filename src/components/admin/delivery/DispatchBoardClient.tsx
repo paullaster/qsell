@@ -29,6 +29,7 @@ function Board({ initial }: { initial: Board }) {
   const [notice, setNotice] = useState<Notice>(null);
   const [busy, setBusy] = useState(false);
   const [rider, setRider] = useState('');
+  const [riderChoice, setRiderChoice] = useState<Choice | null>(null);
   const [vehicle, setVehicle] = useState('');
   const [day, setDay] = useState('');
   const [runBranch, setRunBranch] = useState<Choice | null>(null);
@@ -78,15 +79,16 @@ function Board({ initial }: { initial: Board }) {
           className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"
           onSubmit={(event) => {
             event.preventDefault();
-            void act(() => createRunAction({ branchId: runBranch?.id ?? '', runDate: day, riderName: rider, vehicle }), (d) => `Run ${d.number} is planned. Pick it below and put deliveries on it.`);
+            void act(() => createRunAction({ branchId: runBranch?.id ?? '', runDate: day, riderId: riderChoice?.id ?? '', riderName: rider, vehicle }), (d) => `Run ${d.number} is planned. Pick it below and put deliveries on it.`);
           }}
         >
           <ChoicePicker label="Leaves from" source="delivery-branches" choice={runBranch} onChoice={setRunBranch} placeholder="Choose the branch" />
           <Field id={`${uid}-day`} label="Day">
             <input id={`${uid}-day`} type="date" value={day} onChange={(e) => setDay(e.target.value)} className={fieldClass} />
           </Field>
-          <Field id={`${uid}-rider`} label="Rider">
-            <input id={`${uid}-rider`} value={rider} onChange={(e) => setRider(e.target.value)} maxLength={120} className={fieldClass} autoComplete="off" />
+          <ChoicePicker label="Rider" source="delivery-riders" choice={riderChoice} onChoice={setRiderChoice} placeholder="Choose a rider" clearable />
+          <Field id={`${uid}-rider`} label="Or a name, for someone not using the app">
+            <input id={`${uid}-rider`} value={rider} onChange={(e) => setRider(e.target.value)} maxLength={120} className={fieldClass} autoComplete="off" disabled={riderChoice !== null} />
           </Field>
           <Field id={`${uid}-veh`} label="Vehicle (optional)">
             <input id={`${uid}-veh`} value={vehicle} onChange={(e) => setVehicle(e.target.value)} maxLength={80} className={fieldClass} autoComplete="off" />
