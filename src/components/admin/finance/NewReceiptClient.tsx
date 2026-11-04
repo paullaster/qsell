@@ -4,6 +4,7 @@ import { use, useId, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createReceiptAction, type receiptFormOptionsAction, type receiptPresetCustomerAction } from '@/server/domains/finance/receivables/actions';
 import type { walletFormOptionsAction } from '@/server/domains/finance/wallet-actions';
+import { InvoiceAllocator } from './InvoiceAllocator';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { amountHint, customerStanding, isForeign, methodTraits, postOptions, receiptInput, receiptProblem, receiptRoute, type ReceiptForm } from '@/lib/receipt-form';
 import type { Choice } from '@/lib/payment-options';
@@ -39,7 +40,8 @@ function NewReceiptView({ baseCurrency, presetCustomer, wallet }: { baseCurrency
   const [cheque, setCheque] = useState({ chequeNo: '', bank: '', drawer: '', chequeDate: '' });
   const [narration, setNarration] = useState('');
   const [rate, setRate] = useState('');
-  const [allocate, setAllocate] = useState<'oldest_first' | 'none'>('oldest_first');
+  const [allocate, setAllocate] = useState<'oldest_first' | 'none' | 'choose'>('oldest_first');
+  const [chosen, setChosen] = useState<Record<string, string>>({});
   const [deposit, setDeposit] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
@@ -48,11 +50,11 @@ function NewReceiptView({ baseCurrency, presetCustomer, wallet }: { baseCurrency
   const traits = methodTraits(method?.meta);
   const foreign = isForeign(traits, baseCurrency);
   const form: ReceiptForm = {
-    customerId: customer?.id ?? null, methodId: method?.id ?? null, traits, amount, date, reference, payer, cheque, narration, rate, deposit, allocate,
+    customerId: customer?.id ?? null, methodId: method?.id ?? null, traits, amount, date, reference, payer, cheque, narration, rate, deposit, allocate, chosen,
   };
 
   const submit = async (post: boolean) => {
-    const problem = receiptProblem(form);
+    const problem = receiptProblem(form, post);
     if (problem !== null) {
       setNotice({ kind: 'error', text: problem });
       return;
@@ -134,8 +136,19 @@ function NewReceiptView({ baseCurrency, presetCustomer, wallet }: { baseCurrency
           </label>
           <label className="flex min-h-10 items-center gap-2 text-sm text-fg">
             <input type="radio" name={`${uid}-alloc`} checked={allocate === 'none'} onChange={() => setAllocate('none')} className="h-4 w-4" />
-            Leave it unapplied; I will choose the invoices
+            Leave it unapplied for now
           </label>
+          <label className="flex min-h-10 items-center gap-2 text-sm text-fg">
+            <input type="radio" name={`${uid}-alloc`} checked={allocate === 'choose'} onChange={() => setAllocate('choose')} className="h-4 w-4" />
+            Let me choose which invoices, and how much to each
+          </label>
+          {allocate === 'choose' && !deposit && customer === null ? <p className="text-sm text-fg-muted">Choose the customer first.</p> : null}
+          {allocate === 'choose' && !deposit && customer !== null ? (
+            <div className="pt-2">
+              <InvoiceAllocator customerId={customer.id} available={amount === '' ? '0' : amount} currency={traits?.currency ?? baseCurrency} amounts={chosen} onAmounts={setChosen} />
+              <p className="mt-1 text-xs text-fg-muted">Used when you choose &ldquo;Save and post&rdquo;. A draft is applied from its own page.</p>
+            </div>
+          ) : null}
         </fieldset>
 
         {traits?.requiresEvidence === true ? (

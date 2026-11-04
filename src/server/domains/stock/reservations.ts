@@ -159,34 +159,37 @@ export class StockReservations {
   /**
    * The old journal still has one line per product for an order that was issued or given back. The books are fed from it, and the old
    * way uses it to know an order is already settled, so it must exist whichever way the order was settled. One line per product however
-   * many places it came from; a second call adds nothing.
+   * many places it came from; a second call adds nothing. (Issuing an order in parts, one delivery after another, is the one case that
+   * adds each part to its line: `accumulate`. A whole-order settlement never does, since the old way and the new may both settle one
+   * order across the switch, and the second must not count it again.)
    */
-  private async journalSettlement(tx: Tx, orderId: string, actor: string, type: 'order_fulfillment' | 'order_cancellation_release', perProduct: Map<string, number>, note: string): Promise<void> {
+  private async journalSettlement(tx: Tx, orderId: string, actor: string, type: 'order_fulfillment' | 'order_cancellation_release', perProduct: Map<string, number>, note: string, accumulate = false): Promise<void> {
     for (const [productId, quantity] of perProduct) {
       if (quantity <= 0) continue;
       const [p] = await tx.select({ name: products.name }).from(products).where(eq(products.id, productId)).limit(1);
       const total = Number([...(await tx.execute<{ total: string }>(sql`SELECT COALESCE(sum(on_hand), 0) AS total FROM stock_balances WHERE product_id = ${productId}`))][0]?.total ?? 0);
       const issued = type === 'order_fulfillment';
-      await tx
-        .insert(inventoryMovements)
-        .values({
-          id: `ledger_${crypto.randomUUID()}`,
-          productId,
-          productName: p?.name ?? '',
-          changeAmount: issued ? -quantity : quantity,
-          previousStock: issued ? round(total + quantity) : total,
-          newStock: total,
-          changeType: type,
-          referenceId: orderId,
-          actor: actor.slice(0, 200),
-          note: note.slice(0, 250),
-        })
-        .onConflictDoUpdate({
-          target: [inventoryMovements.referenceId, inventoryMovements.productId, inventoryMovements.changeType],
-          targetWhere: sql`${inventoryMovements.changeType} in ('order_fulfillment', 'order_cancellation_release')`,
-          // An order issued in parts (one delivery after another) adds each part to its one line.
-          set: { changeAmount: sql`${inventoryMovements.changeAmount} + excluded.change_amount`, newStock: sql`excluded.new_stock` },
-        });
+      const line = tx.insert(inventoryMovements).values({
+        id: `ledger_${crypto.randomUUID()}`,
+        productId,
+        productName: p?.name ?? '',
+        changeAmount: issued ? -quantity : quantity,
+        previousStock: issued ? round(total + quantity) : total,
+        newStock: total,
+        changeType: type,
+        referenceId: orderId,
+        actor: actor.slice(0, 200),
+        note: note.slice(0, 250),
+      });
+      // Whole-order settlement: a second call adds nothing. Part by part: each part is added to the one line.
+      await (accumulate
+        ? line.onConflictDoUpdate({
+            target: [inventoryMovements.referenceId, inventoryMovements.productId, inventoryMovements.changeType],
+            targetWhere: sql`${inventoryMovements.changeType} in ('order_fulfillment', 'order_cancellation_release')`,
+            // The line's stock after is what it was plus the part, so that after less before is always the sum of the parts.
+            set: { changeAmount: sql`${inventoryMovements.changeAmount} + excluded.change_amount`, newStock: sql`${inventoryMovements.newStock} + excluded.change_amount` },
+          })
+        : line.onConflictDoNothing());
     }
   }
 
@@ -312,7 +315,7 @@ export class StockReservations {
       coveredBy.set(h.productId, round((coveredBy.get(h.productId) ?? 0) + take));
       perProduct.set(h.productId, round((perProduct.get(h.productId) ?? 0) + issue));
     }
-    if (input.refType === 'order') await this.journalSettlement(tx, input.refId, input.actor, 'order_fulfillment', perProduct, `Fulfilled and finalized stock deduction for order ${input.refId}`);
+    if (input.refType === 'order') await this.journalSettlement(tx, input.refId, input.actor, 'order_fulfillment', perProduct, `Fulfilled and finalized stock deduction for order ${input.refId}`, true);
     return { issued, covered, coveredBy };
   }
 
@@ -327,31 +330,15 @@ export class StockReservations {
     return h?.locationId ?? (await this.ledger.defaultLocationIn(tx)).locationId;
   }
 
-  /**
-   * Counts goods that came back as sold stock back onto the shelf (`sale_return`), at the place they were held; optionally writes them
-   * off at once (spoilt goods that were issued come back to the books so the sale's cost is undone, then leave as a loss). Once for
-   * each `key`.
-   */
-  async receiveBackIn(tx: Tx, input: { companyId: string; refType: string; refId: string; productId: string; quantity: number; key: string; writeOff: boolean; actor: string; note: string }): Promise<{ locationId: string }> {
-    const locationId = await this.placeOfIn(tx, input.companyId, input.refType, input.refId, input.productId);
-    const [p] = await tx.select({ cost: products.costPrice }).from(products).where(eq(products.id, input.productId)).limit(1);
-    const base = { companyId: input.companyId, productId: input.productId, locationId, unitCost: Number(p?.cost ?? 0), documentType: 'delivery_return', documentId: input.key, actor: { type: 'system' as const, id: input.actor.slice(0, 200) }, note: input.note.slice(0, 250) };
-    await this.ledger.post(tx, { ...base, type: 'sale_return', quantity: input.quantity, documentLineId: `${input.productId}:back` });
-    if (input.writeOff) await this.ledger.post(tx, { ...base, type: 'write_off', quantity: -input.quantity, documentLineId: `${input.productId}:off`, reasonCode: 'damaged_in_delivery' });
-    // What came back is open on the order again, so it is held again to be issued when it next goes out; without a hold a second
-    // delivery would take it off the shelf with nothing on the books to say so.
-    await this.holdAgainIn(tx, { companyId: input.companyId, refType: input.refType, refId: input.refId, productId: input.productId, quantity: input.quantity, locationId, key: input.key, actor: input.actor });
-    return { locationId };
-  }
-
   /** Holds `quantity` of a product at a place for a document again, after it was issued and has come back. Refused if the shelf cannot cover it. */
-  private async holdAgainIn(tx: Tx, input: { companyId: string; refType: string; refId: string; productId: string; quantity: number; locationId: string; key: string; actor: string }): Promise<void> {
+  private async holdAgainIn(tx: Tx, input: { companyId: string; refType: string; refId: string; productId: string; quantity: number; locationId: string; key: string; actor: string }): Promise<string[]> {
     const rows = await tx
       .select()
       .from(stockBalances)
       .where(and(eq(stockBalances.productId, input.productId), eq(stockBalances.locationId, input.locationId)))
       .orderBy(asc(stockBalances.shard))
       .for('update');
+    const made: string[] = [];
     let left = input.quantity;
     for (const r of [...rows].sort((x, y) => round(y.onHand - y.reserved) - round(x.onHand - x.reserved))) {
       const take = Math.min(left, Math.max(0, round(r.onHand - r.reserved)));
@@ -360,30 +347,124 @@ export class StockReservations {
         .update(stockBalances)
         .set({ reserved: sql`${stockBalances.reserved} + ${take}`, version: sql`${stockBalances.version} + 1`, updatedAt: sql`now()` })
         .where(and(eq(stockBalances.productId, input.productId), eq(stockBalances.locationId, input.locationId), eq(stockBalances.shard, r.shard)));
-      await tx.insert(stockReservations).values({
-        companyId: input.companyId,
-        productId: input.productId,
-        locationId: input.locationId,
-        shard: r.shard,
-        refType: input.refType,
-        refId: input.refId,
-        refLineId: `${input.productId}:again:${input.key}`,
-        quantity: take,
-        sourcing: { reason: 'came back with a returned delivery', delivery: input.key },
-        actor: input.actor.slice(0, 200),
-      });
+      const [hold] = await tx
+        .insert(stockReservations)
+        .values({
+          companyId: input.companyId,
+          productId: input.productId,
+          locationId: input.locationId,
+          shard: r.shard,
+          refType: input.refType,
+          refId: input.refId,
+          refLineId: `${input.productId}:again:${input.key}`,
+          quantity: take,
+          sourcing: { reason: 'came back with a returned delivery', delivery: input.key },
+          actor: input.actor.slice(0, 200),
+        })
+        .returning({ id: stockReservations.id });
+      if (hold !== undefined) made.push(hold.id);
       left = round(left - take);
       if (left <= 0) break;
     }
     if (left > 0) throw new StockError(`There is not enough stock to hold ${String(left)} again for the order. Count more stock in first, then receive these goods.`, 'CANNOT_HOLD_AGAIN');
+    return made;
   }
 
-  /** Writes off goods that are still on the books (they were never issued, because the order is issued when it arrives). */
-  async writeOffIn(tx: Tx, input: { companyId: string; refType: string; refId: string; productId: string; quantity: number; key: string; actor: string; note: string }): Promise<{ locationId: string }> {
-    const locationId = await this.placeOfIn(tx, input.companyId, input.refType, input.refId, input.productId);
+  /** The place goods are counted into to be looked at: a quarantine location, the order's branch first. Refused if the company has none. */
+  async quarantinePlaceIn(tx: Tx, companyId: string, nearLocationId: string): Promise<string> {
+    const [near] = await tx.select({ branchId: stockLocations.branchId }).from(stockLocations).where(eq(stockLocations.id, nearLocationId)).limit(1);
+    const [q] = await tx
+      .select({ id: stockLocations.id })
+      .from(stockLocations)
+      .where(and(eq(stockLocations.companyId, companyId), eq(stockLocations.kind, 'quarantine'), eq(stockLocations.isActive, true)))
+      .orderBy(sql`COALESCE(${stockLocations.branchId} = ${near?.branchId ?? null}::uuid, false) DESC`, asc(stockLocations.code))
+      .limit(1);
+    if (q === undefined) throw new StockError('There is no quarantine place to count these goods into. Set one up under stock locations first, or choose another way.', 'NO_QUARANTINE');
+    return q.id;
+  }
+
+  /** Takes goods that went back out of the old settlement journal's line for the order, since they are no longer shipped. */
+  private async journalGiveBackIn(tx: Tx, orderId: string, productId: string, quantity: number): Promise<void> {
+    await tx
+      .update(inventoryMovements)
+      // Both figures move, so the line still says (after less before) what the goods that stayed out came to.
+      .set({ changeAmount: sql`${inventoryMovements.changeAmount} + ${quantity}`, newStock: sql`${inventoryMovements.newStock} + ${quantity}` })
+      .where(and(eq(inventoryMovements.referenceId, orderId), eq(inventoryMovements.productId, productId), eq(inventoryMovements.changeType, 'order_fulfillment')));
+  }
+
+  /**
+   * Does what a return receipt says to the stock of one product, and says exactly what it did so that a correction can undo it.
+   *  - `return_to_stock`: stock the delivery issued is counted back (`sale_return`) where it was held; stock that never left the books needs nothing.
+   *  - `quarantine`: counted into a quarantine place (issued stock comes back there; stock still on the books is moved there).
+   *  - `scrap`: counted back and written off (issued), or written off (still on the books).
+   * What was issued and came back is open on the order again, so it is held again at the place it was held, to be issued when it next
+   * goes out; if the shelf cannot cover that, nothing is done. Everything is once for each `key`.
+   */
+  async receiveGoodsBackIn(
+    tx: Tx,
+    input: { companyId: string; orderId: string; productId: string; quantity: number; key: string; disposition: 'return_to_stock' | 'quarantine' | 'scrap'; issuedHere: boolean; actor: string; note: string },
+  ): Promise<{ locationId: string | null; effects: { movements: { type: string; locationId: string; quantity: number }[]; holds: string[]; journalBack: number } }> {
+    const effects: { movements: { type: string; locationId: string; quantity: number }[]; holds: string[]; journalBack: number } = { movements: [], holds: [], journalBack: 0 };
+    const q = input.quantity;
+    const place = await this.placeOfIn(tx, input.companyId, 'order', input.orderId, input.productId);
     const [p] = await tx.select({ cost: products.costPrice }).from(products).where(eq(products.id, input.productId)).limit(1);
-    await this.ledger.post(tx, { companyId: input.companyId, productId: input.productId, locationId, unitCost: Number(p?.cost ?? 0), documentType: 'delivery_return', documentId: input.key, documentLineId: `${input.productId}:off`, type: 'write_off', quantity: -input.quantity, reasonCode: 'damaged_in_delivery', actor: { type: 'system', id: input.actor.slice(0, 200) }, note: input.note.slice(0, 250) });
-    return { locationId };
+    const base = { companyId: input.companyId, productId: input.productId, unitCost: Number(p?.cost ?? 0), documentType: 'delivery_return', documentId: input.key, actor: { type: 'system' as const, id: input.actor.slice(0, 200) }, note: input.note.slice(0, 250) };
+    const move = async (type: 'sale_return' | 'write_off' | 'transfer_out' | 'transfer_in', locationId: string, quantity: number, line: string, reasonCode?: string) => {
+      await this.ledger.post(tx, { ...base, type, locationId, quantity, documentLineId: `${input.productId}:${line}`, ...(reasonCode === undefined ? {} : { reasonCode }) });
+      effects.movements.push({ type, locationId, quantity });
+    };
+    let where: string | null = null;
+    if (input.disposition === 'return_to_stock' && input.issuedHere) {
+      await move('sale_return', place, q, 'back');
+      where = place;
+    } else if (input.disposition === 'quarantine') {
+      const quarantine = await this.quarantinePlaceIn(tx, input.companyId, place);
+      if (input.issuedHere) await move('sale_return', quarantine, q, 'back');
+      else {
+        await move('transfer_out', place, -q, 'out');
+        await move('transfer_in', quarantine, q, 'in');
+      }
+      where = quarantine;
+    } else if (input.disposition === 'scrap') {
+      if (input.issuedHere) await move('sale_return', place, q, 'back');
+      await move('write_off', place, -q, 'off', 'damaged_in_delivery');
+      where = place;
+    }
+    if (input.issuedHere) {
+      await this.journalGiveBackIn(tx, input.orderId, input.productId, q);
+      effects.journalBack = q;
+      // What came back is open on the order again, so it is held again to be issued when it next goes out; without a hold a second
+      // delivery would take it off the shelf with nothing on the books to say so.
+      effects.holds = await this.holdAgainIn(tx, { companyId: input.companyId, refType: 'order', refId: input.orderId, productId: input.productId, quantity: q, locationId: place, key: input.key, actor: input.actor });
+    }
+    return { locationId: where, effects };
+  }
+
+  /**
+   * Undoes what a receipt did (for a correction): the movements are reversed with adjustments, the holds made again are given back, and
+   * the journal line takes the goods again. Refused if a hold made again has been used since (the goods have gone out again), because
+   * then the receipt can no longer be taken back without changing what was shipped.
+   */
+  async undoReceiptIn(tx: Tx, input: { companyId: string; orderId: string; productId: string; key: string; actor: string; effects: { movements?: { type: string; locationId: string; quantity: number }[]; holds?: string[]; journalBack?: number } }): Promise<void> {
+    const holds = input.effects.holds ?? [];
+    const rows = holds.length === 0 ? [] : await tx.select().from(stockReservations).where(inArray(stockReservations.id, holds)).orderBy(asc(stockReservations.productId), asc(stockReservations.locationId), asc(stockReservations.shard)).for('update');
+    if (rows.some((r) => r.state !== 'held' || r.consumed > 0 || r.released > 0)) {
+      throw new StockError('The goods from this receipt have gone out again since, so it can no longer be corrected. Put right any difference with a stock adjustment.', 'RECEIPT_IN_USE');
+    }
+    for (const r of rows) {
+      await tx
+        .update(stockBalances)
+        .set({ reserved: sql`GREATEST(${stockBalances.reserved} - ${r.quantity}, 0)`, version: sql`${stockBalances.version} + 1`, updatedAt: sql`now()` })
+        .where(and(eq(stockBalances.productId, r.productId), eq(stockBalances.locationId, r.locationId), eq(stockBalances.shard, r.shard)));
+      await tx.update(stockReservations).set({ released: r.quantity, state: 'released', reason: 'the return receipt was corrected', stateChangedAt: sql`now()` }).where(eq(stockReservations.id, r.id));
+    }
+    const [p] = await tx.select({ cost: products.costPrice }).from(products).where(eq(products.id, input.productId)).limit(1);
+    let n = 0;
+    for (const m of [...(input.effects.movements ?? [])].reverse()) {
+      n += 1;
+      await this.ledger.post(tx, { companyId: input.companyId, productId: input.productId, locationId: m.locationId, type: 'adjustment', quantity: -m.quantity, unitCost: Number(p?.cost ?? 0), documentType: 'delivery_return', documentId: input.key, documentLineId: `${input.productId}:undo:${String(n)}`, reasonCode: 'return_corrected', actor: { type: 'system', id: input.actor.slice(0, 200) }, note: 'Undoing a return receipt that was corrected' });
+    }
+    if ((input.effects.journalBack ?? 0) > 0) await this.journalGiveBackIn(tx, input.orderId, input.productId, -(input.effects.journalBack ?? 0));
   }
 
   /** A paid order's holds no longer lapse: they are kept until the deliveries issue them, or the order is cancelled. */

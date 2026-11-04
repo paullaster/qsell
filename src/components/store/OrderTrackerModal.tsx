@@ -26,6 +26,8 @@ import { lookupOrderAction } from '@/server/domains/orders/actions';
 import { OrderProgress } from '@/components/store/OrderProgress';
 import { CollectionPanel } from '@/components/store/CollectionPanel';
 import { useCollection } from '@/components/store/useCollection';
+import { useTrackedDelivery } from '@/components/store/useTrackedDelivery';
+import { TrackingView } from '@/components/store/TrackingView';
 
 interface OrderTrackerModalProps {
   isOpen: boolean;
@@ -45,6 +47,36 @@ export function OrderTrackerModal({ isOpen, onClose }: OrderTrackerModalProps) {
 function TrackedCollection({ orderNumber, contact }: { orderNumber: string; contact: string }) {
   const { state, refresh } = useCollection(orderNumber, contact);
   return <CollectionPanel state={state} onRefresh={refresh} />;
+}
+
+/**
+ * Where a delivered order stands: each delivery with the steps it has been through, and a link to keep. Nothing for an order that has
+ * not been given a delivery yet beyond the plain line that it is being got ready.
+ */
+function TrackedDeliveries({ orderNumber, contact }: { orderNumber: string; contact: string }) {
+  const state = useTrackedDelivery(orderNumber, contact);
+  if (state.phase === 'loading') {
+    return (
+      <p role="status" className="text-xs text-fg-muted">
+        Looking for the deliveries of this order…
+      </p>
+    );
+  }
+  if (state.phase !== 'ok' || state.tracking.order.kind === 'collection') return null;
+  return (
+    <div className="space-y-3 border-t border-line pt-4">
+      <TrackingView order={state.tracking.order} />
+      {state.tracking.link === null ? null : (
+        <p className="text-xs text-fg-muted">
+          To follow this order without searching, open{' '}
+          <a href={state.tracking.link} className="font-semibold text-indigo-600 underline dark:text-indigo-400">
+            your tracking page
+          </a>
+          .
+        </p>
+      )}
+    </div>
+  );
 }
 
 function OpenTracker({ onClose }: { onClose: () => void }) {
@@ -232,6 +264,7 @@ function OpenTracker({ onClose }: { onClose: () => void }) {
               </div>
 
               <TrackedCollection orderNumber={matchedOrder.orderNumber} contact={contact} />
+              <TrackedDeliveries orderNumber={matchedOrder.orderNumber} contact={contact} />
 
               {/* What happened to the order and when, from its own timeline */}
               <div className="space-y-3">

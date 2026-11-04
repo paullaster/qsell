@@ -31,6 +31,13 @@ function modeOf(ledger: boolean, shadow: boolean): LedgerMode {
 }
 
 /** Thrown inside the switch's transaction to undo it, carrying the check that found the difference. */
+/** Carries a trial comparison out of the transaction that is rolled back after it. */
+class Trial extends Error {
+  constructor(readonly report: ShadowReport) {
+    super('Trial comparison');
+  }
+}
+
 class Refused extends Error {
   constructor(readonly report: ShadowReport) {
     super('The two sides differ');
@@ -77,9 +84,29 @@ export class StockCutover {
     await this.decisionLog.record({ companyId, subject: { type: 'stock_ledger', id: companyId }, action: 'stock.ledger.shadow_started', actor: { type: 'user', id: actor }, from: 'off', to: 'shadow' });
   }
 
+  /**
+   * The comparison the switch would make. While the shadow runs, orders reserved the old way have no holds yet (the switch makes
+   * them), so the holds are made here too, inside a transaction that is always rolled back, and nothing is left behind.
+   */
+  private async compareAsAtSwitch(companyId: string): Promise<ShadowReport> {
+    const now = await this.status(companyId);
+    if (now.mode !== 'shadow') return await this.shadow.compare({ holds: true, journal: true });
+    const place = await this.locations.ensureDefault(companyId);
+    try {
+      await this.db.transaction(async (tx) => {
+        await this.shadow.convertLegacyHolds(tx, companyId, place.id);
+        throw new Trial(await this.shadow.compare({ holds: true, journal: true, executor: tx }));
+      });
+    } catch (error) {
+      if (error instanceof Trial) return error.report;
+      throw error;
+    }
+    return await this.shadow.compare({ holds: true, journal: true });
+  }
+
   /** Compares the new ledger with the old counters, keeps the result, and says whether they agree. */
   async check(companyId: string, trigger: 'manual' | 'nightly' | 'cutover', actor: string | null): Promise<{ ok: boolean; report: ShadowReport }> {
-    const report = await this.shadow.compare({ holds: true, journal: true });
+    const report = await this.compareAsAtSwitch(companyId);
     const ok = differences(report) === 0;
     await this.db.insert(stockIntegrityRuns).values({ companyId, trigger, ok, report: report as unknown as Record<string, unknown>, ranBy: actor });
     return { ok, report };

@@ -11,16 +11,16 @@ import {
   clearChequeAction,
   depositChequeAction,
   postReceiptAction,
-  receiptApplyOptionsAction,
   reverseReceiptAction,
   unapplyReceiptAction,
   type receiptDetailAction,
 } from '@/server/domains/finance/receivables/actions';
+import { InvoiceAllocator } from './InvoiceAllocator';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { ReceiptPdfActions } from './ReceiptPdfActions';
 import { CHEQUE_STATUS, RECEIPT_STATUS, statusInfo } from '@/lib/finance-statuses';
 import { has, plain, recordValue } from '@/lib/finance-history';
-import { applications, canApply, chosenCents, fillOldest, fromCents, groupApplications, needsComment, postedMessage } from '@/lib/receipt-detail';
+import { allocationFor, applications, canApply, fromCents, groupApplications, needsComment, postedMessage } from '@/lib/receipt-detail';
 import type { Choice } from '@/lib/payment-options';
 import { Chip, Field, LoadFailed, Message, PageHeader, buttonClass, cardClass, dangerClass, fieldClass, money, primaryClass, today, type Notice, attempt } from './ui';
 
@@ -62,8 +62,8 @@ function ReceiptDetailView({ view, postingFailed }: { view: View; postingFailed?
   const [notice, setNotice] = useState<Notice>(postingFailed !== undefined && postingFailed !== '' ? { kind: 'error', text: `It was saved as a draft but could not be posted: ${postingFailed}` } : null);
   const [reason, setReason] = useState<ReasonState>(NO_REASON);
   const [allocate, setAllocate] = useState<Choice | null>(OLDEST_FIRST);
-  const [open, setOpen] = useState<{ entryId: string; documentNo: string; remaining: string; dueDate: string | null; currency: string | null }[] | null>(null);
   const [amounts, setAmounts] = useState<Record<string, string>>({});
+  const [chosenDraft, setChosenDraft] = useState<Record<string, string>>({});
   const [bank, setBank] = useState<Choice | null>(null);
   const [paidOn, setPaidOn] = useState(today());
   const fileRef = useRef<HTMLInputElement>(null);
@@ -81,7 +81,13 @@ function ReceiptDetailView({ view, postingFailed }: { view: View; postingFailed?
   const post = async () => {
     setBusy(true);
     setNotice(null);
-    const res = await attempt(postReceiptAction(r.id, allocate?.id === 'none' ? 'none' : 'oldest_first'));
+    const mode = allocate?.id;
+    if (mode === 'choose' && !canApply(chosenDraft, r.amount)) {
+      setBusy(false);
+      setNotice({ kind: 'error', text: 'Type an amount against at least one invoice, up to the receipt amount, or choose another way to apply it.' });
+      return;
+    }
+    const res = await attempt(postReceiptAction(r.id, allocationFor(mode, chosenDraft)));
     finish(res, res.ok ? postedMessage(res.data.applied, res.data.glPosted, money) : '');
   };
   const submitReason = (fn: (reason: { code: string; text?: string }) => Promise<{ ok: true } | { ok: false; error: string }>, okText: string) => async (e: React.SyntheticEvent) => {
@@ -92,15 +98,10 @@ function ReceiptDetailView({ view, postingFailed }: { view: View; postingFailed?
     finish(await fn({ code: reason.choice?.id ?? '', text: text === '' ? undefined : text }), okText);
   };
 
-  const openApply = async () => {
-    setPanel('apply');
-    setOpen(null);
-    const res = await attempt(receiptApplyOptionsAction(view.customer.id));
-    if (!res.ok) { setNotice({ kind: 'error', text: res.error }); return; }
-    setOpen(res.data);
+  const openApply = () => {
     setAmounts({});
+    setPanel('apply');
   };
-  const chosenTotal = chosenCents(amounts);
   const applyNow = async (e: React.SyntheticEvent) => {
     e.preventDefault();
     setBusy(true);
@@ -170,6 +171,13 @@ function ReceiptDetailView({ view, postingFailed }: { view: View; postingFailed?
         {r.registerId !== null ? <div className="col-span-full text-xs text-fg-muted">In the general ledger as document {r.number}; see it under <Link className="text-indigo-600 hover:underline" href="/admin/finance/registers">Postings</Link>.</div> : null}
       </section>
 
+      {r.status === 'draft' && view.can.post && allocate?.id === 'choose' ? (
+        <section className={`${cardClass} space-y-2`} aria-label="Choose the invoices to apply to">
+          <h3 className="text-sm font-bold text-fg-strong">Which invoices should this payment go to?</h3>
+          <InvoiceAllocator customerId={view.customer.id} available={r.amount} currency={r.currency} amounts={chosenDraft} onAmounts={setChosenDraft} />
+        </section>
+      ) : null}
+
       {/* Actions the person may take now */}
       <div className="flex flex-wrap gap-2" role="group" aria-label="Receipt actions">
         {r.status === 'draft' && view.can.post ? (
@@ -179,7 +187,7 @@ function ReceiptDetailView({ view, postingFailed }: { view: View; postingFailed?
           </>
         ) : null}
         {r.status === 'draft' && view.can.cancel ? <button type="button" className={buttonClass} disabled={busy} onClick={() => setPanel('cancel')}>Cancel draft</button> : null}
-        {r.status === 'posted' && view.can.apply && Number(view.unapplied) > 0 ? <button type="button" className={primaryClass} disabled={busy} onClick={() => void openApply()}>Apply to invoices</button> : null}
+        {r.status === 'posted' && view.can.apply && Number(view.unapplied) > 0 ? <button type="button" className={primaryClass} disabled={busy} onClick={openApply}>Apply to invoices</button> : null}
         {r.status === 'posted' && view.wallet.enabled && view.can.moveToWallet && Number(view.unapplied) > 0 ? (
           <button type="button" className={buttonClass} disabled={busy} onClick={async () => { setBusy(true); setNotice(null); const res = await attempt(moveReceiptToWalletAction(r.id)); finish(res, res.ok ? `${money(res.data.moved)} moved to the ${view.wallet.label.toLowerCase()}.` : ''); }}>
             Move the unapplied {money(view.unapplied)} to the {view.wallet.label.toLowerCase()}
@@ -227,43 +235,8 @@ function ReceiptDetailView({ view, postingFailed }: { view: View; postingFailed?
       ) : null}
       {panel === 'apply' ? (
         <form onSubmit={applyNow} className={`${cardClass} space-y-3`} aria-label="Apply to invoices">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm text-fg">Available to apply: <strong className="tabular-nums">{r.currency} {money(view.unapplied)}</strong></p>
-            <button type="button" className={buttonClass} onClick={() => setAmounts(fillOldest(open ?? [], view.unapplied))}>Fill oldest first</button>
-          </div>
-          {open === null ? <p className="text-sm text-fg-muted">Loading the customer&apos;s unpaid invoices…</p> : null}
-          {open !== null && open.length === 0 ? <p className="text-sm text-fg-muted">This customer has no unpaid invoices.</p> : null}
-          {open !== null && open.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[30rem] text-left text-xs">
-                <caption className="sr-only">Unpaid invoices of {view.customer.name}</caption>
-                <thead className="text-fg-muted"><tr><th scope="col" className="py-1 pr-3">Invoice</th><th scope="col" className="pr-3">Due</th><th scope="col" className="pr-3 text-right">Still owed</th><th scope="col" className="text-right">Apply</th></tr></thead>
-                <tbody>
-                  {open.map((inv) => (
-                    <tr key={inv.entryId} className="border-t border-line">
-                      <td className="py-1.5 pr-3 font-semibold">{inv.documentNo}</td>
-                      <td className="pr-3 whitespace-nowrap">{inv.dueDate ?? '—'}</td>
-                      <td className="pr-3 text-right tabular-nums">{money(inv.remaining)}</td>
-                      <td className="text-right">
-                        <input
-                          aria-label={`Amount to apply to ${inv.documentNo}`}
-                          value={amounts[inv.entryId] ?? ''}
-                          onChange={(e) => setAmounts({ ...amounts, [inv.entryId]: e.target.value })}
-                          className={`${fieldClass} ml-auto w-28 text-right tabular-nums`}
-                          inputMode="decimal"
-                          placeholder="0.00"
-                          autoComplete="off"
-                        />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-          <p className={`text-sm ${chosenTotal > 0 && !canApply(amounts, view.unapplied) ? 'text-red-700' : 'text-fg'}`} aria-live="polite">
-            Applying {r.currency} {money(fromCents(chosenTotal))} of {money(view.unapplied)}.
-          </p>
+          <p className="text-sm text-fg">Available to apply: <strong className="tabular-nums">{r.currency} {money(view.unapplied)}</strong></p>
+          <InvoiceAllocator customerId={view.customer.id} available={view.unapplied} currency={r.currency} amounts={amounts} onAmounts={setAmounts} />
           <div className="flex gap-2"><button type="submit" className={primaryClass} disabled={busy || !canApply(amounts, view.unapplied)}>Apply</button><button type="button" className={buttonClass} onClick={close}>Cancel</button></div>
         </form>
       ) : null}
@@ -290,13 +263,24 @@ function ReceiptDetailView({ view, postingFailed }: { view: View; postingFailed?
                   </button>
                 ) : null}
               </div>
-              <div className="mt-2 overflow-x-auto">
-                <table className="w-full min-w-[18rem] text-left text-xs">
+              <div className="mt-2">
+                <table className="w-full text-left text-xs">
                   <caption className="sr-only">Invoices in the application of {g.at.slice(0, 10)}</caption>
                   <thead className="text-fg-muted"><tr><th scope="col" className="py-1 pr-3">Invoice</th><th scope="col" className="text-right">Amount</th></tr></thead>
                   <tbody>
                     {g.rows.map((x) => (
-                      <tr key={x.invoiceNo} className="border-t border-line"><td className="py-1.5 pr-3 font-semibold">{x.invoiceNo}</td><td className="text-right tabular-nums">{money(x.amount)}</td></tr>
+                      <tr key={x.invoiceNo} className="border-t border-line align-top">
+                        <td className="py-1.5 pr-3">
+                          <span className="font-semibold">{x.invoiceNo}</span>{x.order !== null ? <span className="ml-2 text-fg-muted">{x.order}</span> : null}
+                          {x.lines.length > 0 ? (
+                            <ul className="mt-1 space-y-0.5 text-fg">
+                              {x.lines.map((l, i) => <li key={`${l.text}-${String(i)}`} className="flex justify-between gap-3"><span className="min-w-0 break-words">{l.text}</span><span className="tabular-nums">{money(l.total)}</span></li>)}
+                              {x.moreLines > 0 ? <li className="text-fg-muted">and {x.moreLines} more</li> : null}
+                            </ul>
+                          ) : null}
+                        </td>
+                        <td className="text-right tabular-nums">{money(x.amount)}</td>
+                      </tr>
                     ))}
                   </tbody>
                 </table>

@@ -70,6 +70,9 @@ const STAFF_REVALIDATE_MS = 60_000;
 /** Portal pages anyone may open: signing up. Everything else under /vendor needs a vendor session. */
 const PUBLIC_VENDOR_PATHS = new Set(['/vendor/register', '/vendor/invitations/accept']);
 
+/** A phone fetches the app's manifest without sign-in cookies, so it must be open for the app to be installable. */
+const RIDER_MANIFEST_PATH = '/rider/manifest.webmanifest';
+
 const authConfig = {
   secret: authSecret,
   trustHost: true,
@@ -131,6 +134,15 @@ const authConfig = {
       if (path.startsWith('/admin')) {
         if (auth?.user.isStaff !== true) return false;
         if (auth?.user.mustChangePassword === true) {
+          const target = new URL('/change-password', request.nextUrl);
+          target.searchParams.set('callbackUrl', `${path}${request.nextUrl.search}`);
+          return Response.redirect(target);
+        }
+      }
+      if (path.startsWith('/rider') && path !== RIDER_MANIFEST_PATH) {
+        // Anyone signed in may reach the door; the pages and actions decide whether they are a rider.
+        if (auth?.user === undefined) return false;
+        if (auth.user.mustChangePassword) {
           const target = new URL('/change-password', request.nextUrl);
           target.searchParams.set('callbackUrl', `${path}${request.nextUrl.search}`);
           return Response.redirect(target);

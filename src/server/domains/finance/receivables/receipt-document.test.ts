@@ -8,7 +8,7 @@ const company: CompanyProfile = {
   countyOrState: 'Nairobi', postalCode: '00100', country: 'Kenya', kraPin: 'P000', invoicePrefix: 'INV', primaryColor: '#111827', accentColor: '#4F46E5',
 };
 
-const detail = (over: Record<string, unknown> = {}, apps: { document_no: string; amount: string; undone: boolean }[] = []) =>
+const detail = (over: Record<string, unknown> = {}, apps: { document_no: string; amount: string; undone: boolean; ref?: unknown }[] = []) =>
   ({
     receipt: {
       number: 'PAY-0001', status: 'posted', currency: 'KES', amount: '1500.00', rate: '1', paymentDate: '2026-10-20', postingDate: '2026-10-20',
@@ -30,10 +30,25 @@ describe('receipt document', () => {
 
   it('lists only applications that still stand, and names who received it', () => {
     const doc = buildReceiptDocument(detail({}, [{ document_no: 'INV-1', amount: '1000.00', undone: false }, { document_no: 'INV-2', amount: '500.00', undone: true }]), company);
-    expect(doc.applications).toEqual([{ invoiceNo: 'INV-1', amount: '1000.00' }]);
+    expect(doc.applications).toEqual([{ title: 'INV-1', order: null, amount: '1000.00', lines: [], moreLines: 0 }]);
     expect(doc.receivedBy).toBe('Wanjiru');
     expect(doc.rate).toBeNull();
     expect(doc.reversedOn).toBeNull();
+  });
+
+  it('names the invoice the customer was given and what it was for, never the order number as an invoice number', () => {
+    const line = (name: string, quantity: string, total: string) => ({ name, sku: 'S', quantity, unit: null, unitPrice: '1.00', total, gift: false });
+    const issued = { documentNo: 'ORD-77', invoiceNo: 'INV-0042', orderNumber: 'ORD-77', lines: [line('Blue shirt', '2', '1000.00'), line('Cap', '1', '500.00')] };
+    const unissued = { documentNo: 'ORD-78', invoiceNo: null, orderNumber: 'ORD-78', lines: [line('Socks', '3', '300.00')] };
+    const doc = buildReceiptDocument(
+      detail({}, [
+        { document_no: 'ORD-77', amount: '1500.00', undone: false, ref: issued },
+        { document_no: 'ORD-78', amount: '300.00', undone: false, ref: unissued },
+      ]),
+      company,
+    );
+    expect(doc.applications[0]).toMatchObject({ title: 'Invoice INV-0042', order: 'Order ORD-77', lines: [{ text: '2 × Blue shirt', total: '1000.00' }, { text: '1 × Cap', total: '500.00' }] });
+    expect(doc.applications[1]).toMatchObject({ title: 'Order ORD-78', order: null });
   });
 
   it('carries cheque details, the foreign rate and the reversal date', () => {

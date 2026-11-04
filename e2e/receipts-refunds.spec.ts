@@ -78,6 +78,55 @@ test.describe('receipts', () => {
     await noHorizontalScroll(page);
   });
 
+  test('a receipt goes to the exact invoice chosen, and the receipt names that invoice and what was sold', async ({ page, request }, testInfo) => {
+    test.slow();
+    const label = testInfo.project.name === 'phone' ? 'Phone' : 'Desktop';
+    // The same amount by the same method within a day is refused as a repeat, so each project asks for its own.
+    const amount = label === 'Phone' ? '1.12' : '1.11';
+    await open(page, '/admin/finance/receipts/new', 'New receipt');
+    await pick(page, page.getByRole('combobox', { name: 'Customer' }), `Invoiced buyer ${label}`, new RegExp(`Invoiced buyer ${label}`));
+    await pick(page, page.getByRole('combobox', { name: 'Payment method' }), 'E2E', /E2E Cash/);
+    await page.getByLabel(/^Amount/).fill(amount);
+    // Three ways to apply it: the oldest invoices, nowhere yet, or the invoices the person names.
+    await expect(page.getByRole('radio', { name: /oldest unpaid invoices first/ })).toBeChecked();
+    await expect(page.getByRole('radio', { name: /Leave it unapplied/ })).toBeVisible();
+    await page.getByRole('radio', { name: /choose which invoices/ }).check();
+    const invoices = page.getByRole('list', { name: 'Unpaid invoices' });
+    await expect(invoices).toBeVisible({ timeout: 30_000 });
+    // The invoice is named by its invoice number, with the order beside it and the lines sold: never the order number alone.
+    await expect(invoices.getByText(`Invoice E2E-TI-${label.toUpperCase()}`, { exact: true })).toBeVisible();
+    await expect(invoices.getByText(`Order E2E-CR-${label.toUpperCase()}`, { exact: true })).toBeVisible();
+    await invoices.getByText(/1 item/).first().click();
+    await expect(invoices.getByText(/Fish kg Shop/).first()).toBeVisible();
+    await noHorizontalScroll(page);
+    await expect(page.locator('select')).toHaveCount(0);
+    // Posting with nothing typed against an invoice is refused before anything is saved.
+    await page.getByRole('button', { name: 'Save and post' }).click();
+    await expect(page.getByText(/Type an amount against at least one invoice/)).toBeVisible();
+    await page.getByLabel(`Amount to apply to Invoice E2E-TI-${label.toUpperCase()}`).fill(amount);
+    await page.getByRole('button', { name: 'Save and post' }).click();
+    await expect(page).toHaveURL(/\/admin\/finance\/receipts\/[0-9a-f-]{36}$/, { timeout: 30_000 });
+    await expect(page.getByText('Applied to invoices')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(`Invoice E2E-TI-${label.toUpperCase()}`, { exact: true }).first()).toBeVisible();
+    await expect(page.getByText(/Fish kg Shop/).first()).toBeVisible();
+    await noHorizontalScroll(page);
+    const href = (await page.getByRole('link', { name: /^Download receipt/ }).getAttribute('href')) ?? '';
+    const file = await request.get(href);
+    expect(file.status()).toBe(200);
+    expect((await file.body()).subarray(0, 5).toString()).toBe('%PDF-');
+  });
+
+  test('the cheque rule is set from the receipts screen, with a picker, and orders can be re-checked', async ({ page }) => {
+    await open(page, '/admin/finance/receipts', 'Customer receipts');
+    const card = page.getByRole('region', { name: 'When a cheque counts as payment' });
+    await expect(card).toBeVisible();
+    await expect(page.locator('select')).toHaveCount(0);
+    await expect(card.getByRole('combobox', { name: 'A cheque counts' })).toHaveValue(/clears/);
+    await noHorizontalScroll(page);
+    await card.getByRole('button', { name: 'Re-check all orders' }).click();
+    await expect(card.getByText(/^Checked \d+ invoices?; \d+ orders? (was|were) updated\./)).toBeVisible({ timeout: 60_000 });
+  });
+
   test('a draft is cancelled with a reason picked from the list', async ({ page }) => {
     await open(page, '/admin/finance/receipts/new', 'New receipt');
     await pick(page, page.getByRole('combobox', { name: 'Customer' }), 'Bulk customer 01', /Bulk customer 01/);

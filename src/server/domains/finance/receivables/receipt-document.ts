@@ -1,4 +1,5 @@
 import { has, orElse } from '@/lib/values';
+import { invoiceTitle, lineText, printableLines } from '@/lib/invoice-reference';
 import type { CompanyProfile } from '@/server/ports/communications';
 import { fromCents, toCents } from '../domain/receivables';
 import { FinanceError } from '../errors';
@@ -23,7 +24,16 @@ export interface ReceiptDocument {
   payer: string | null;
   narration: string | null;
   cheque: { number: string; bank: string; drawer: string; date: string } | null;
-  applications: { invoiceNo: string; amount: string }[];
+  applications: {
+    /** "Invoice INV-0001" when one was issued, otherwise "Order ORD-1"; never the order number passed off as an invoice number. */
+    title: string;
+    /** The order behind an issued invoice, when there is one. */
+    order: string | null;
+    amount: string;
+    lines: { text: string; total: string }[];
+    /** Lines left out of the printout to keep it one page of reading. */
+    moreLines: number;
+  }[];
   unapplied: string;
   isDeposit: boolean;
   receivedBy: string | null;
@@ -61,7 +71,12 @@ export function buildReceiptDocument(detail: Detail, company: CompanyProfile): R
     payer: text(r.payerName ?? undefined),
     narration: text(r.narration ?? undefined),
     cheque: chequeNo === null ? null : { number: chequeNo, bank: orElse(cp.bank, ''), drawer: orElse(cp.drawer, ''), date: orElse(cp.chequeDate, '') },
-    applications: live.map((a) => ({ invoiceNo: a.document_no, amount: a.amount })),
+    applications: live.map((a) => {
+      const ref = a.ref ?? { documentNo: a.document_no, invoiceNo: null, orderNumber: null, lines: [] };
+      const { title, order } = invoiceTitle(ref);
+      const { shown, more } = printableLines(ref.lines);
+      return { title, order, amount: a.amount, lines: shown.map((l) => ({ text: lineText(l), total: l.total })), moreLines: more };
+    }),
     unapplied: fromCents(detail.unappliedCents),
     isDeposit: r.isDeposit,
     receivedBy: has(r.postedBy) ? (detail.actors[r.postedBy] ?? null) : null,

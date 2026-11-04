@@ -9,7 +9,7 @@ import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
 import type * as CollectionActions from './collection-actions';
 import type { OrderWriteService as OrderWriteServiceType } from '@/server/domains/orders/write-service';
 import type { OrderStages as OrderStagesType } from '@/server/domains/orders/stages';
-import { settleFinanceBacklog } from '@/server/domains/stock/test-support';
+import { holdLedgerSwitch, settleFinanceBacklog } from '@/server/domains/stock/test-support';
 
 const { requirePermission } = vi.hoisted(() => ({ requirePermission: vi.fn() }));
 vi.mock('@/server/domains/access-control/guard', async (original) => ({ ...(await original<Record<string, unknown>>()), requirePermission }));
@@ -35,6 +35,7 @@ describe.skipIf(!has(url))('collecting an order from a branch (database)', () =>
   let createOrder: (typeof OrderWriteServiceType)['createOrder'];
   let OrderStages: typeof OrderStagesType;
   let companyId: string;
+  let releaseLedgerSwitch: (() => Promise<void>) | undefined;
   let itemTypeId: string;
   let spy: { mockRestore: () => void } | undefined;
   const tag = randomUUID().slice(0, 6).toUpperCase();
@@ -91,6 +92,8 @@ describe.skipIf(!has(url))('collecting an order from a branch (database)', () =>
   const stagesOf = async (orderId: string) => (await db.select({ stage: schema.orderStageEvents.stage, outcome: schema.orderStageEvents.outcome, reason: schema.orderStageEvents.reasonCode }).from(schema.orderStageEvents).where(eq(schema.orderStageEvents.orderId, orderId)).orderBy(schema.orderStageEvents.sequence));
 
   beforeAll(async () => {
+    // Files that use the company-wide stock-by-location switch take turns, so none confuses another.
+    releaseLedgerSwitch = await holdLedgerSwitch(url);
     // The code is sealed with the instance's data-encryption key, as provider credentials are.
     process.env.DATA_ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString('base64');
     const mod = await import('@/server/di/container');
@@ -111,7 +114,11 @@ describe.skipIf(!has(url))('collecting an order from a branch (database)', () =>
     await c.stockLocations.ensureDefault(companyId);
     await c.stockShadow.setShadow(companyId, false);
     await c.stockSettings.setLedgerMode(companyId, true, { requireCleanShadow: false });
-  }, 180_000);
+  }, 900_000);
+  // Registered first, so it runs last: the switch is given back only after this file has put everything right.
+  afterAll(async () => {
+    await releaseLedgerSwitch?.();
+  }, 60_000);
   afterAll(async () => {
     spy?.mockRestore();
     await c.stockSettings.setLedgerMode(companyId, false);

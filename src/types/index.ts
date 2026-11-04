@@ -275,7 +275,7 @@ export type OrderStatus =
   | 'cancelled'
   | 'refunded';
 export type PaymentStatus =
-  'unpaid' | 'pending_verification' | 'paid' | 'reconciled' | 'discrepancy' | 'failed';
+  'unpaid' | 'pending_verification' | 'partially_paid' | 'paid' | 'reconciled' | 'discrepancy' | 'failed';
 
 export interface OrderItem {
   productId: string;

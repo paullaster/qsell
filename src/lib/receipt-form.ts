@@ -2,6 +2,8 @@
  * What the "new receipt" form turns its fields into, and what it asks for from the chosen payment
  * method. Pure: the screen only collects text; the server checks everything again on save.
  */
+import { applications, chosenCents, toCents } from './receipt-detail';
+
 export interface MethodTraits {
   currency: string;
   requiresReference: boolean;
@@ -54,13 +56,21 @@ export interface ReceiptForm {
   narration: string;
   rate: string;
   deposit: boolean;
-  allocate: 'oldest_first' | 'none';
+  /** Where the money goes when posted: the oldest invoices, nowhere yet, or the invoices named in `chosen`. */
+  allocate: 'oldest_first' | 'none' | 'choose';
+  /** Invoice ledger entry id -> amount typed against it (used when `allocate` is 'choose'). */
+  chosen?: Record<string, string>;
 }
 
 /** The first thing missing before a receipt can be saved, in words, or null. */
-export function receiptProblem(form: ReceiptForm): string | null {
+export function receiptProblem(form: ReceiptForm, posting = false): string | null {
   if (form.customerId === null) return 'Choose the customer who paid.';
   if (form.methodId === null) return 'Choose how the customer paid.';
+  if (posting && !form.deposit && form.allocate === 'choose') {
+    const chosen = chosenCents(form.chosen ?? {});
+    if (chosen <= 0) return 'Type an amount against at least one invoice, or choose another way to apply it.';
+    if (chosen > toCents(form.amount)) return 'The amounts typed against the invoices are more than the receipt.';
+  }
   return null;
 }
 
@@ -88,8 +98,12 @@ export function receiptInput(form: ReceiptForm, idempotencyKey: string, baseCurr
 }
 
 /** What to do with the new receipt: nothing (draft), or post it and apply as chosen. */
-export const postOptions = (form: ReceiptForm, post: boolean): { allocate: 'oldest_first' | 'none' } | undefined =>
-  post ? { allocate: form.deposit ? 'none' : form.allocate } : undefined;
+export function postOptions(form: ReceiptForm, post: boolean): { allocate: 'oldest_first' | 'none' | { entryId: string; amount: string }[] } | undefined {
+  if (!post) return undefined;
+  if (form.deposit) return { allocate: 'none' };
+  if (form.allocate === 'choose') return { allocate: applications(form.chosen ?? {}) };
+  return { allocate: form.allocate };
+}
 
 /** Where to go after saving: the receipt, carrying the reason when posting failed. */
 export function receiptRoute(id: string, postError: string | null): string {

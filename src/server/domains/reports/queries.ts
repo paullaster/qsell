@@ -455,7 +455,7 @@ export async function orderFlow(
             when o.status in ('failed', 'cancelled', 'refunded') or o.payment_status = 'failed' then 'lost'
             when o.approval_status in ('rejected', 'draft') then 'blocked'
             when o.payment_status in ('paid', 'reconciled') then 'paid'
-            when o.payment_status in ('pending_verification', 'discrepancy') then 'awaiting'
+            when o.payment_status in ('pending_verification', 'discrepancy', 'partially_paid') then 'awaiting'
             when o.trade_customer_id is not null then 'credit'
             else 'unpaid'
           end as bucket

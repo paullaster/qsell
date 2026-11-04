@@ -50,7 +50,7 @@ export interface MoveOptions {
   detail?: Record<string, unknown>;
   fields?: OrderFields;
   /** Columns to set beyond what the stage sets (a refund's resulting payment state, a cancellation that also fails the payment). */
-  set?: Omit<StageEffect, 'stamps'>;
+  set?: Omit<StageEffect, 'stamps' | 'clears'>;
   /** Refuse the moves an order's approval state refuses (the administrator's status change). */
   checkHold?: boolean;
   clientTime?: Date;
@@ -151,6 +151,7 @@ export class OrderStages {
     const changes = changesFor(currentColumns(row), effect);
     const times = stageTimes(row);
     const stamps = (stageEffect(stage, outcome).stamps ?? []).filter((column) => times[column] === null);
+    const clears = (stageEffect(stage, outcome).clears ?? []).filter((column) => times[column] !== null);
     const informational = Object.keys(stageEffect(stage, outcome)).length === 0 && options.set === undefined;
 
     let skip = false;
@@ -169,7 +170,7 @@ export class OrderStages {
         )
         .limit(1);
       skip = seen !== undefined;
-    } else if (!informational && Object.keys(changes).length === 0 && stamps.length === 0) {
+    } else if (!informational && Object.keys(changes).length === 0 && stamps.length === 0 && clears.length === 0) {
       skip = true;
     }
     if (skip) {
@@ -192,6 +193,7 @@ export class OrderStages {
       if (next !== undefined && next !== null) set[column] = next;
     }
     for (const column of stamps) set[column] = sql`clock_timestamp()`;
+    for (const column of clears) set[column] = null;
     const [updated] = await tx.update(orders).set(set).where(eq(orders.id, orderId)).returning();
     if (updated === undefined) return { recorded: false, order: null };
 
