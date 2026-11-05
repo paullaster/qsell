@@ -319,7 +319,17 @@ describe.skipIf(!has(url))('delivery charge policies (database)', () => {
     // Nairobi CBD for the branch and a customer about 10 km away.
     const branchPin = { latitude: -1.2864, longitude: 36.8172 };
     const customerPin = { latitude: -1.2195, longitude: 36.8895 };
-    const wednesday = new Date('2026-11-04T09:00:00Z');
+    // A Wednesday and the Saturday after it, at midday in Nairobi, in the coming days: a policy takes effect when it is activated, so
+    // the time quoted for must not be in the past (a fixed date stops working the day it passes).
+    const comingDay = (weekday: number): Date => {
+      const d = new Date();
+      d.setUTCHours(9, 0, 0, 0);
+      d.setUTCDate(d.getUTCDate() + 1);
+      while (d.getUTCDay() !== weekday) d.setUTCDate(d.getUTCDate() + 1);
+      return d;
+    };
+    const wednesday = comingDay(3);
+    const saturday = comingDay(6);
     const quote = (branchId: string, over: Record<string, unknown> = {}) => actions.quoteDeliveryAction({ branchId, at: wednesday.toISOString(), weightKg: 2, orderValue: 1500, ...over });
 
     it('prices a flat fee from the policy that fits the branch, and shows how it chose', async () => {
@@ -375,8 +385,8 @@ describe.skipIf(!has(url))('delivery charge policies (database)', () => {
     it('uses the time of the order for time rules, in the business’s time zone', async () => {
       const b = await branch();
       await live(b, { surcharges: [{ label: 'Weekend', kind: 'fixed', amount: 50, days: [0, 6] }] });
-      expect(await quote(b, { at: '2026-11-04T09:00:00Z' })).toMatchObject({ ok: true, data: { amount: 250 } });
-      expect(await quote(b, { at: '2026-11-07T09:00:00Z' })).toMatchObject({ ok: true, data: { amount: 300 } });
+      expect(await quote(b, { at: wednesday.toISOString() })).toMatchObject({ ok: true, data: { amount: 250 } });
+      expect(await quote(b, { at: saturday.toISOString() })).toMatchObject({ ok: true, data: { amount: 300 } });
     });
 
     it('places a written address on the map when the map service can, and says the distance is approximate; it falls back when the map is down', async () => {

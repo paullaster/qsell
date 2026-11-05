@@ -1,5 +1,6 @@
 'use client';
 
+import { ProductEditLink } from '@/components/admin/ProductEditLink';
 import { AppImage } from '@/components/ui/AppImage';
 import { Modal } from '@/components/ui/Modal';
 import { addressLine, isOrderPaid, money } from '@/lib/order-admin';
@@ -11,6 +12,7 @@ import { has } from '@/lib/values';
 
 interface Props {
   order: Order;
+  canEditProducts?: boolean;
   company: PublicCompany;
   busy: boolean;
   onClose: () => void;
@@ -19,7 +21,7 @@ interface Props {
 }
 
 /** The tax invoice as it will print, from the company's and the order's own data. */
-export function OrderInvoicePreview({ order, company, busy, onClose, onEmail, onDownload }: Props) {
+export function OrderInvoicePreview({ order, canEditProducts = false, company, busy, onClose, onEmail, onDownload }: Props) {
   const companyAddress = [
     company.streetAddress,
     company.city,
@@ -113,7 +115,10 @@ export function OrderInvoicePreview({ order, company, busy, onClose, onEmail, on
               role="listitem"
               className="rounded border border-line-strong p-2 text-xs"
             >
-              <div className="font-semibold">{item.productName}</div>
+              <div className="flex items-start justify-between gap-2">
+                <div className="font-semibold">{item.productName}</div>
+                <ProductEditLink productId={item.productId} name={item.productName} canEdit={canEditProducts} />
+              </div>
               <div className="font-mono">
                 {quantityWords(lineFromRow(item))} ×{' '}
                 {money(lineDisplay(lineFromRow(item)).unitPrice, order.currency)} ={' '}
@@ -135,7 +140,10 @@ export function OrderInvoicePreview({ order, company, busy, onClose, onEmail, on
             {order.items.map((item) => (
               <tr key={`${item.productId}:${item.unitId ?? ''}:${String(item.quantity)}`}>
                 <td className="p-2">
-                  <div className="font-semibold">{item.productName}</div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="font-semibold">{item.productName}</div>
+                    <ProductEditLink productId={item.productId} name={item.productName} canEdit={canEditProducts} />
+                  </div>
                 </td>
                 <td className="p-2 text-center font-mono font-bold">
                   {quantityWords(lineFromRow(item))}

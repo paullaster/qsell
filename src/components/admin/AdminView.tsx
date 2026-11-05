@@ -41,6 +41,9 @@ import { AdminProductModal } from './AdminProductModal';
 import { SkeletonMetrics, SkeletonTable } from '@/components/ui/Skeletons';
 import { getCompanySettingsAction } from '@/server/domains/company/actions';
 
+/** This older combined view has no product shortcut; the orders page has its own. */
+const NO_PRODUCT_EDIT = Promise.resolve(false);
+
 export type AdminTab =
   | 'dashboard'
   | 'products'
@@ -219,7 +222,7 @@ export function AdminView({
 
       {activeTab === 'orders' && (
         <Suspense fallback={<SkeletonTable />}>
-          <AdminOrders firstPage={ordersPromise} companyPromise={companyPromise} />
+          <AdminOrders firstPage={ordersPromise} companyPromise={companyPromise} canEditProductsPromise={NO_PRODUCT_EDIT} />
         </Suspense>
       )}
 

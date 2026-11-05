@@ -6,6 +6,7 @@ import { BadgeCheck, Ban, Check, FilePlus2, ShoppingCart, Files, X } from 'lucid
 import type { SalesQuote } from '@/server/domains/quotes/service';
 
 import { Modal } from '@/components/ui/Modal';
+import { ProductEditLink } from '@/components/admin/ProductEditLink';
 import { hasText, joinPresent, money, orElse } from '@/lib/quote-display';
 import { statusText } from '@/lib/quote-statuses';
 
@@ -14,6 +15,7 @@ export function QuoteDetails({
   canApprove,
   canDelete,
   canRevise,
+  canEditProducts = false,
   onTemplate,
   busy,
   error,
@@ -31,6 +33,8 @@ export function QuoteDetails({
   canApprove: boolean;
   canDelete: boolean;
   canRevise: boolean;
+  /** The person may update products: each line offers a shortcut to the product's edit window. The quote keeps what it was sold at. */
+  canEditProducts?: boolean;
   /** Make a template from this quote; offered to anyone who may create quotes. */
   onTemplate: () => void;
   busy: boolean;
@@ -149,7 +153,10 @@ export function QuoteDetails({
                   return (
                     <tr role="row" key={line.id} className="block md:table-row">
                       <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3" data-label="Item">
-                        <div className="font-medium text-fg-strong">{line.description}</div>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="font-medium text-fg-strong">{line.description}</div>
+                          <ProductEditLink productId={line.productId} name={line.description} canEdit={canEditProducts} />
+                        </div>
                         <div className="text-xs text-fg-muted">
                           {line.sku} · tax {Number(line.taxRate)}%
                         </div>
@@ -197,7 +204,10 @@ export function QuoteDetails({
                     return (
                       <tr role="row" key={line.id} className="block md:table-row">
                         <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell p-3" data-label="Item">
+                          <div className="flex items-start justify-between gap-2">
                           <div className="font-medium text-fg-strong">{line.description}</div>
+                          <ProductEditLink productId={line.productId} name={line.description} canEdit={canEditProducts} />
+                        </div>
                           <div className="text-xs text-fg-muted">
                             {line.sku} · tax {Number(line.taxRate)}%
                           </div>

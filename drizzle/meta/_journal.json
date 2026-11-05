@@ -953,6 +953,20 @@
       "when": 1793760235142,
       "tag": "0135_order_payment_from_receipts",
       "breakpoints": true
+    },
+    {
+      "idx": 136,
+      "version": "7",
+      "when": 1793763721155,
+      "tag": "0136_delivery_door_work",
+      "breakpoints": true
+    },
+    {
+      "idx": 137,
+      "version": "7",
+      "when": 1793783039596,
+      "tag": "0137_delivery_partial_and_reschedule",
+      "breakpoints": true
     }
   ]
 }

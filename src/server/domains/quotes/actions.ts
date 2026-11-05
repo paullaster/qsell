@@ -6,12 +6,15 @@ import { parseQuoteListRequest } from './quote-list';
 import { parseTemplateListRequest } from './template-list';
 import { runQuoteAction } from './run';
 import type { CatalogueProduct } from '@/lib/catalogue-entry';
-import { listProductsAction } from '@/server/domains/catalog/actions';
+import { getProductAction, listProductsAction } from '@/server/domains/catalog/actions';
+import type { Product } from '@/types/index';
 import { listTradeCustomersAction } from '@/server/domains/customers/master-actions';
 import type { KitAllocation } from '@/server/domains/pricing/domain/kits';
 import { SalesQuoteService, type QuoteInput, type QuoteTemplateInput } from './service';
 import { SectionTemplateService } from './section-template-service';
 
+/** Product ids are text keys (`prod_<uuid>`), not bare UUIDs; this only keeps absurd input from reaching the lookup. */
+const PRODUCT_ID = /^[\w-]{1,100}$/;
 const service = () => new SalesQuoteService();
 const run = runQuoteAction;
 
@@ -65,22 +68,9 @@ async function editorKits(): Promise<EditorKit[]> {
   }));
 }
 
-/**
- * What the quote editor and the template screens need up front: the catalogue to add items from,
- * the kits (so a kit's cost and tax show as the server will work them out) and the settings. The
- * lists people choose from (customers, templates, currencies) are not here: they are searched on
- * the server as the person types.
- */
-export async function getSalesQuoteEditorDataAction() {
-  await requirePermission('quotes:read');
-  const [products, settings, kits] = await Promise.all([
-    listProductsAction(),
-    service().getSettings(),
-    editorKits(),
-  ]);
-  // Only what the editors use: descriptions, specifications and media would make a long catalogue
-  // slow to open, and nothing on the screen shows them.
-  const slim: CatalogueProduct[] = products.map((p) => ({
+/** The few fields the quote screens use from a product (see `CatalogueProduct`). */
+function toCatalogueProduct(p: Product): CatalogueProduct {
+  return {
     id: p.id,
     sku: p.sku,
     stockCode: p.stockCode,
@@ -98,7 +88,36 @@ export async function getSalesQuoteEditorDataAction() {
     baseUnitId: p.baseUnitId,
     baseUnitCode: p.baseUnitCode,
     baseUnitName: p.baseUnitName,
-  }));
+  };
+}
+
+/**
+ * One product as the quote screens see it, read again after someone changed it from the shortcut on a line. A product that is gone
+ * (or an id that is not valid) is answered with no product, not an error: the line then keeps what it shows.
+ */
+export async function getQuoteCatalogueProductAction(id: unknown): Promise<CatalogueProduct | null> {
+  await requirePermission('quotes:read');
+  if (typeof id !== 'string' || !PRODUCT_ID.test(id)) return null;
+  const product = await getProductAction(id);
+  return product === null ? null : toCatalogueProduct(product);
+}
+
+/**
+ * What the quote editor and the template screens need up front: the catalogue to add items from,
+ * the kits (so a kit's cost and tax show as the server will work them out) and the settings. The
+ * lists people choose from (customers, templates, currencies) are not here: they are searched on
+ * the server as the person types.
+ */
+export async function getSalesQuoteEditorDataAction() {
+  await requirePermission('quotes:read');
+  const [products, settings, kits] = await Promise.all([
+    listProductsAction(),
+    service().getSettings(),
+    editorKits(),
+  ]);
+  // Only what the editors use: descriptions, specifications and media would make a long catalogue
+  // slow to open, and nothing on the screen shows them.
+  const slim = products.map(toCatalogueProduct);
   return { products: slim, settings, kits };
 }
 
@@ -320,12 +339,13 @@ export async function respondToPublicSalesQuoteAction(token: string, accepted: b
 }
 
 export async function getSalesQuoteCapabilitiesAction() {
-  const [canCreate, canUpdate, canApprove, canDelete, canConfigure] = await Promise.all([
+  const [canCreate, canUpdate, canApprove, canDelete, canConfigure, canEditProducts] = await Promise.all([
     canPermission('quotes:create'),
     canPermission('quotes:update'),
     canPermission('quotes:approve'),
     canPermission('quotes:delete'),
     canPermission('settings:manage'),
+    canPermission('products:update'),
   ]);
-  return { canCreate, canUpdate, canApprove, canDelete, canConfigure };
+  return { canCreate, canUpdate, canApprove, canDelete, canConfigure, canEditProducts };
 }

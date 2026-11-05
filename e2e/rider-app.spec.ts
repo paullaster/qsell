@@ -30,9 +30,10 @@ async function signInAndChoosePassword(page: Page, email: string, first: string,
 }
 
 /** A run from the fixture's branch, given to the named rider, with a ready delivery on it; returns the run's and the delivery's numbers. */
-async function planRunFor(page: Page, tag: string, riderName: string): Promise<{ run: string; delivery: string }> {
+async function planRunFor(page: Page, tag: string, riderName: string): Promise<{ run: string; delivery: string; deliveryId: string; orderNumber: string }> {
   const orderNumber = await placeDeliveredOrder(page);
-  const delivery = deliveryTool('ready', orderNumber).number ?? '';
+  const made = deliveryTool('ready', orderNumber);
+  const delivery = made.number ?? '';
   await open(page, '/admin/delivery/dispatch', 'Dispatch board');
   const ready = page.getByRole('region', { name: 'Ready to go' });
   await expect(ready).toContainText(delivery, { timeout: 30_000 });
@@ -47,7 +48,25 @@ async function planRunFor(page: Page, tag: string, riderName: string): Promise<{
   await pick(page, ready.getByRole('combobox', { name: 'Put deliveries on this run' }), run, new RegExp(run));
   await ready.getByRole('button', { name: `Put ${delivery} on the run` }).click();
   await expect(page.getByText(`${delivery} is on the run.`)).toBeVisible({ timeout: 30_000 });
-  return { run, delivery };
+  return { run, delivery, deliveryId: made.id ?? '', orderNumber };
+}
+
+/** The staff member is made a rider on the Riders screen; the page is left there. */
+async function makeStaffRider(page: Page, name: string): Promise<void> {
+  await open(page, '/admin/delivery/riders', 'Riders');
+  const add = page.getByRole('region', { name: 'Add a member of staff' });
+  await pick(page, add.getByRole('combobox', { name: 'Staff member' }), name, new RegExp(name));
+  await add.getByRole('button', { name: 'Make a rider' }).click();
+  await expect(page.getByText(/can now be given runs/)).toBeVisible({ timeout: 30_000 });
+}
+
+/** The office sends the run out, from the run's own screen. */
+async function startRun(page: Page, run: string): Promise<void> {
+  await open(page, '/admin/delivery/dispatch', 'Dispatch board');
+  const link = page.getByRole('region', { name: 'Runs to do' }).getByRole('link', { name: run });
+  await clickUntilVisible(link, page.getByRole('heading', { name: /^Run RUN-/ }).first());
+  await page.getByRole('button', { name: 'Start the run' }).click();
+  await expect(page.getByText(/^The run is on the road/)).toBeVisible({ timeout: 30_000 });
 }
 
 async function otherBrowserPage(browser: Browser, page: Page): Promise<Page> {
@@ -162,6 +181,249 @@ test.describe('the rider app', () => {
       await expect(phone.getByRole('region', { name: 'To do' })).toContainText(run, { timeout: 60_000 });
       await noHorizontalScroll(phone);
       await phone.context().close();
+    } finally {
+      deliveryTool('close', tag);
+    }
+  });
+
+  test('at the door: the rider needs the customer\'s code to mark a stop delivered, then finishes the run, and the office sees it', async ({ page, browser }, testInfo) => {
+    test.slow();
+    const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}`;
+    const staff = riderTool('staff', tag);
+    const name = staff.name ?? '';
+    deliveryTool('open', tag);
+    try {
+      // The company asks for the customer's code.
+      await open(page, '/admin/delivery/riders', 'Riders');
+      const proof = page.getByRole('region', { name: 'Proof at the door' });
+      await proof.getByRole('radio', { name: /^The customer's code The customer is sent/ }).check();
+      await proof.getByRole('button', { name: 'Save' }).click();
+      await expect(page.getByText(/Riders are asked for this from now on/)).toBeVisible({ timeout: 30_000 });
+      await noNativeSelect(page);
+      await makeStaffRider(page, name);
+      const { run, delivery, deliveryId } = await planRunFor(page, tag, name);
+      await startRun(page, run);
+
+      const phone = await otherBrowserPage(browser, page);
+      await signInAndChoosePassword(phone, staff.email ?? '', staff.password ?? '', 'E2eStaffDoor-Pass4', /\/rider$/);
+      const runs = phone.getByRole('region', { name: 'To do' });
+      await clickUntilVisible(runs.getByRole('link', { name: new RegExp(run) }), phone.getByRole('heading', { name: run, level: 1 }));
+      const stops = phone.getByRole('list', { name: 'Stops' });
+      await expect(stops).toContainText('Out for delivery');
+      await clickUntilVisible(stops.getByRole('button', { name: 'Delivered' }), phone.getByRole('form', { name: 'Mark delivered' }));
+      await noHorizontalScroll(phone);
+      const form = phone.getByRole('form', { name: 'Mark delivered' });
+      await expect(form.getByLabel('Who received it')).toHaveValue('Wanjiru Documents');
+
+      // No code: refused. A wrong code: refused, with the tries left. The customer's code: delivered.
+      await form.getByRole('button', { name: 'Confirm delivered' }).click();
+      await expect(phone.getByRole('alert').filter({ hasText: /six-digit code/ })).toBeVisible({ timeout: 30_000 });
+      await form.getByLabel("The customer's code").fill('000000');
+      const real = riderTool('code', delivery).code ?? '';
+      expect(real).toMatch(/^\d{6}$/);
+      if (real === '000000') await form.getByLabel("The customer's code").fill('000001');
+      await form.getByRole('button', { name: 'Confirm delivered' }).click();
+      await expect(phone.getByRole('alert').filter({ hasText: /not the customer's code/ })).toBeVisible({ timeout: 30_000 });
+      await form.getByLabel("The customer's code").fill(real);
+      await form.getByRole('button', { name: 'Confirm delivered' }).click();
+      await expect(stops).toContainText('Delivered', { timeout: 30_000 });
+      await expect(stops.getByRole('button', { name: 'Delivered' })).toHaveCount(0);
+
+      // Every stop is done, so the rider can hand the run back.
+      const finish = phone.getByRole('region', { name: 'Finish the run' });
+      await expect(finish).toBeVisible({ timeout: 30_000 });
+      await finish.getByRole('button', { name: 'Finish this run' }).click();
+      await finish.getByRole('button', { name: 'Confirm: Finish this run' }).click();
+      await expect(phone.getByText('Completed')).toBeVisible({ timeout: 30_000 });
+      await noHorizontalScroll(phone);
+      await phone.context().close();
+
+      // The office sees the try, who made it and the proof.
+      await open(page, `/admin/delivery/deliveries/${deliveryId}`, new RegExp(`^Delivery ${delivery}`));
+      const door = page.getByRole('region', { name: 'At the door' });
+      await expect(door).toContainText('Try 1: Delivered');
+      await expect(door).toContainText(name);
+      await expect(door).toContainText("Customer's code matched");
+      await noHorizontalScroll(page);
+      await noInnerHorizontalScroll(page);
+    } finally {
+      deliveryTool('close', tag);
+    }
+  });
+
+  test('at the door: a stop that could not be delivered needs a reason, is recorded with it, and the office sees it', async ({ page, browser }, testInfo) => {
+    test.slow();
+    const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}`;
+    const staff = riderTool('staff', tag);
+    const name = staff.name ?? '';
+    riderTool('proof', 'none');
+    deliveryTool('open', tag);
+    try {
+      await makeStaffRider(page, name);
+      const { run, delivery, deliveryId, orderNumber } = await planRunFor(page, tag, name);
+      await startRun(page, run);
+
+      const phone = await otherBrowserPage(browser, page);
+      await signInAndChoosePassword(phone, staff.email ?? '', staff.password ?? '', 'E2eStaffDoor-Pass5', /\/rider$/);
+      await clickUntilVisible(phone.getByRole('region', { name: 'To do' }).getByRole('link', { name: new RegExp(run) }), phone.getByRole('heading', { name: run, level: 1 }));
+      const stops = phone.getByRole('list', { name: 'Stops' });
+      await clickUntilVisible(stops.getByRole('button', { name: 'Could not deliver' }), phone.getByRole('form', { name: 'Could not deliver' }));
+      const form = phone.getByRole('form', { name: 'Could not deliver' });
+      await noHorizontalScroll(phone);
+      await noNativeSelect(phone);
+      await form.getByRole('radio', { name: 'Another reason (say which)' }).check();
+      await form.getByLabel('What happened').fill('The gate was locked and nobody answered the bell');
+      await form.getByRole('button', { name: 'Record that it was not delivered' }).click();
+      await expect(stops).toContainText('Attempt failed', { timeout: 30_000 });
+      await expect(stops.getByRole('button', { name: 'Could not deliver' })).toHaveCount(0);
+      await phone.getByRole('region', { name: 'Finish the run' }).getByRole('button', { name: 'Finish this run' }).click();
+      await phone.getByRole('button', { name: 'Confirm: Finish this run' }).click();
+      await expect(phone.getByText('Completed')).toBeVisible({ timeout: 30_000 });
+      await phone.context().close();
+
+      await open(page, `/admin/delivery/deliveries/${deliveryId}`, new RegExp(`^Delivery ${delivery}`));
+      const door = page.getByRole('region', { name: 'At the door' });
+      await expect(door).toContainText('Try 1: Another reason (say which)');
+      await expect(door).toContainText('Not delivered');
+      await expect(door).toContainText('The gate was locked');
+      await expect(page.getByText('Attempt failed').first()).toBeVisible();
+
+      // The customer chooses another day on their own tracking page; the office then sees it wanted that day.
+      const customer = await otherBrowserPage(browser, page);
+      const token = riderTool('token', orderNumber).token ?? '';
+      expect(token.length).toBeGreaterThan(20);
+      await customer.goto(`/track/${token}`);
+      const reschedule = customer.getByRole('form', { name: `Choose another day for ${delivery}` });
+      await expect(reschedule).toBeVisible({ timeout: 60_000 });
+      await noHorizontalScroll(customer);
+      await expect.poll(() => reschedule.getByLabel('Choose a day for us to try again').evaluate((el) => Object.keys(el).some((k) => k.startsWith('__reactProps'))).catch(() => false), { timeout: 60_000 }).toBe(true);
+      await reschedule.getByLabel('Choose a day for us to try again').fill(today());
+      await reschedule.getByRole('button', { name: 'Try again on this day' }).click();
+      await expect(reschedule.getByRole('alert')).toContainText(/after today/, { timeout: 30_000 });
+      const later = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
+      await reschedule.getByLabel('Choose a day for us to try again').fill(later);
+      await reschedule.getByRole('button', { name: 'Try again on this day' }).click();
+      await expect(customer.getByText(`We will try again on ${later}`)).toBeVisible({ timeout: 30_000 });
+      await expect(reschedule).toHaveCount(0);
+      await customer.context().close();
+      await open(page, `/admin/delivery/deliveries/${deliveryId}`, new RegExp(`^Delivery ${delivery}`));
+      await expect(page.getByText(/Wanted on /).first()).toBeVisible({ timeout: 30_000 });
+      await open(page, '/admin/delivery/dispatch', 'Dispatch board');
+      await expect(page.getByRole('region', { name: 'Ready to go' })).toContainText(`Wanted ${later}`, { timeout: 30_000 });
+    } finally {
+      deliveryTool('close', tag);
+    }
+  });
+
+  test('at the door: the customer takes only part of it, the rider says why, and the office sees what comes back', async ({ page, browser }, testInfo) => {
+    test.slow();
+    const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}`;
+    const staff = riderTool('staff', tag);
+    const name = staff.name ?? '';
+    riderTool('proof', 'none');
+    deliveryTool('open', tag);
+    try {
+      await makeStaffRider(page, name);
+      const { run, delivery, deliveryId } = await planRunFor(page, tag, name);
+      await startRun(page, run);
+
+      const phone = await otherBrowserPage(browser, page);
+      await signInAndChoosePassword(phone, staff.email ?? '', staff.password ?? '', 'E2eStaffDoor-Pass6', /\/rider$/);
+      await clickUntilVisible(phone.getByRole('region', { name: 'To do' }).getByRole('link', { name: new RegExp(run) }), phone.getByRole('heading', { name: run, level: 1 }));
+      const stops = phone.getByRole('list', { name: 'Stops' });
+      await clickUntilVisible(stops.getByRole('button', { name: 'Delivered' }), phone.getByRole('form', { name: 'Mark delivered' }));
+      const form = phone.getByRole('form', { name: 'Mark delivered' });
+      await form.getByLabel('The customer took only part of it').check();
+      await noHorizontalScroll(phone);
+      const took = form.getByLabel(/Salt 500g: how many did they take/);
+      await took.fill('1');
+      // The reason is needed for what was not taken.
+      await form.getByRole('button', { name: 'Confirm delivered' }).click();
+      await expect(phone.getByRole('alert').filter({ hasText: /Say why some of it was not taken/ })).toBeVisible({ timeout: 30_000 });
+      await form.getByRole('radio', { name: 'It was damaged' }).check();
+      await form.getByRole('button', { name: 'Confirm delivered' }).click();
+      await expect(stops).toContainText('Delivered', { timeout: 30_000 });
+      await phone.context().close();
+
+      await open(page, `/admin/delivery/deliveries/${deliveryId}`, new RegExp(`^Delivery ${delivery}`));
+      const door = page.getByRole('region', { name: 'At the door' });
+      await expect(door).toContainText('Part accepted');
+      await expect(door).toContainText('Salt 500g: took 1 of 2 (It was damaged)');
+      await expect(page.getByRole('region', { name: 'Goods that came back' })).toBeVisible({ timeout: 30_000 });
+      await noHorizontalScroll(page);
+      await noInnerHorizontalScroll(page);
+    } finally {
+      deliveryTool('close', tag);
+    }
+  });
+
+  test('without signal: a run opened before is still there, what is done at the door is saved on the phone and sent once, when the signal returns', async ({ page, browser }, testInfo) => {
+    // The development server does not serve the app the way a phone gets it (its pages cannot start without the server), so this runs
+    // against a production build: `next build`, `next start -p 3100` with the e2e environment, then E2E_REUSE_SERVER=1 E2E_PRODUCTION_SERVER=1.
+    test.skip(process.env.E2E_PRODUCTION_SERVER !== '1', 'needs a production build of the app');
+    test.slow();
+    const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}`;
+    const staff = riderTool('staff', tag);
+    const name = staff.name ?? '';
+    deliveryTool('open', tag);
+    try {
+      await makeStaffRider(page, name);
+      const { run, delivery, deliveryId } = await planRunFor(page, tag, name);
+      await startRun(page, run);
+
+      const phone = await otherBrowserPage(browser, page);
+      await signInAndChoosePassword(phone, staff.email ?? '', staff.password ?? '', 'E2eStaffDoor-Pass7', /\/rider$/);
+      const runs = phone.getByRole('region', { name: 'To do' });
+      await expect(runs).toContainText(run, { timeout: 60_000 });
+      // The app's worker takes over, and the run's screen is kept for later.
+      await phone.evaluate(async () => {
+        await navigator.serviceWorker.ready;
+      });
+      await phone.reload();
+      await expect.poll(() => phone.evaluate(() => navigator.serviceWorker.controller !== null), { timeout: 60_000 }).toBe(true);
+      await expect(phone.getByRole('region', { name: 'To do' })).toContainText(run, { timeout: 60_000 });
+      await clickUntilVisible(phone.getByRole('region', { name: 'To do' }).getByRole('link', { name: new RegExp(run) }), phone.getByRole('heading', { name: run, level: 1 }));
+      await expect(phone.getByRole('list', { name: 'Stops' })).toContainText('Wanjiru Documents');
+      await phone.reload();
+      await expect(phone.getByRole('heading', { name: run, level: 1 })).toBeVisible({ timeout: 60_000 });
+      await expect.poll(() => phone.evaluate(async () => (await (await caches.open('rider-app-pages-v1')).keys()).length), { timeout: 30_000 }).toBeGreaterThan(0);
+
+      // The signal goes. The run opens again from the phone's copy.
+      await phone.context().setOffline(true);
+      await phone.reload();
+      await expect(phone.getByRole('heading', { name: run, level: 1 })).toBeVisible({ timeout: 60_000 });
+      await expect(phone.getByText(/You have no signal/)).toBeVisible({ timeout: 30_000 });
+      const stops = phone.getByRole('list', { name: 'Stops' });
+      await expect(stops).toContainText('Wanjiru Documents');
+      await noHorizontalScroll(phone);
+
+      // At the door, with no signal: saved on the phone, the stop says so, and the run can be finished from what the phone knows.
+      await clickUntilVisible(stops.getByRole('button', { name: 'Delivered' }), phone.getByRole('form', { name: 'Mark delivered' }));
+      const form = phone.getByRole('form', { name: 'Mark delivered' });
+      await form.getByRole('button', { name: 'Confirm delivered' }).click();
+      await expect(stops).toContainText('Saved on this phone, waiting to be sent', { timeout: 30_000 });
+      await expect(phone.getByText(/1 thing is saved on this phone/)).toBeVisible();
+      const finish = phone.getByRole('region', { name: 'Finish the run' });
+      await expect(finish).toBeVisible({ timeout: 30_000 });
+      await finish.getByRole('button', { name: 'Finish this run' }).click();
+      await phone.getByRole('button', { name: 'Confirm: Finish this run' }).click();
+      await expect(phone.getByText(/Finishing this run is saved on this phone/)).toBeVisible({ timeout: 30_000 });
+      await noHorizontalScroll(phone);
+
+      // The shop has heard nothing yet.
+      await open(page, `/admin/delivery/deliveries/${deliveryId}`, new RegExp(`^Delivery ${delivery}`));
+      await expect(page.getByRole('region', { name: 'At the door' })).toHaveCount(0);
+
+      // The signal returns: the stop is sent, then the finish, each once.
+      await phone.context().setOffline(false);
+      await expect(phone.getByText('Completed')).toBeVisible({ timeout: 90_000 });
+      await expect(phone.getByText(/saved on this phone/)).toHaveCount(0);
+      await phone.context().close();
+
+      await open(page, `/admin/delivery/deliveries/${deliveryId}`, new RegExp(`^Delivery ${delivery}`));
+      const door = page.getByRole('region', { name: 'At the door' });
+      await expect(door).toContainText('Try 1: Delivered');
+      await expect(door.getByRole('listitem')).toHaveCount(1);
     } finally {
       deliveryTool('close', tag);
     }

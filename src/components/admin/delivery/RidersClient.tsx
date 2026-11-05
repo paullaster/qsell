@@ -1,11 +1,12 @@
 'use client';
 
 import { use, useId, useState } from 'react';
-import { addStaffRiderAction, changeRiderAction, createOwnRiderAction, resetRiderPasswordAction, ridersPageAction, riderSettingsAction, setRiderKindsAction } from '@/server/domains/delivery/rider-actions';
+import { addStaffRiderAction, changeRiderAction, createOwnRiderAction, resetRiderPasswordAction, ridersPageAction, riderSettingsAction, setRiderKindsAction, setRiderProofAction } from '@/server/domains/delivery/rider-actions';
 import type { RiderView } from '@/server/domains/delivery/riders';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
 import { usePagedList } from '@/components/ui/usePagedList';
+import { PROOF_HELP, PROOF_RULES, PROOF_WORDS, type ProofRule } from '@/lib/delivery-proof';
 import { RIDER_KIND_HELP, RIDER_KIND_WORDS, type RiderChange, type RiderStatus } from '@/lib/delivery-rider';
 import type { Choice } from '@/lib/payment-options';
 
@@ -46,6 +47,7 @@ function Screen({ initial }: { initial: Settings }) {
       <PageHeader title="Riders" intro="The people who carry deliveries. Choose whether your own staff ride, whether riders get an account of their own, or both." />
       <Message notice={notice} />
       <KindsPanel settings={settings} onSaved={(s) => { setSettings(s); setNotice({ kind: 'ok', text: 'Saved. This is who can be a rider from now on.' }); }} onError={(text) => setNotice({ kind: 'error', text })} />
+      <ProofPanel settings={settings} onSaved={(s) => { setSettings(s); setNotice({ kind: 'ok', text: 'Saved. Riders are asked for this from now on.' }); }} onError={(text) => setNotice({ kind: 'error', text })} />
       <AddPanel settings={settings} onAdded={(text) => void changed(text)} onError={(text) => setNotice({ kind: 'error', text })} />
 
       <section aria-label="Riders" className="space-y-3">
@@ -119,6 +121,40 @@ function KindsPanel({ settings, onSaved, onError }: { settings: Settings; onSave
         </label>
       </fieldset>
       <button type="button" className={primaryClass} disabled={busy || (staff === settings.allowStaff && own === settings.allowSeparate)} onClick={() => void save()}>
+        Save
+      </button>
+    </section>
+  );
+}
+
+function ProofPanel({ settings, onSaved, onError }: { settings: Settings; onSaved: (s: Settings) => void; onError: (text: string) => void }) {
+  const uid = useId();
+  const [proof, setProof] = useState<ProofRule>(settings.proof);
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    setBusy(true);
+    const result = await attempt(setRiderProofAction({ proof, expectedVersion: settings.version }));
+    setBusy(false);
+    if (result.ok) onSaved(result.data);
+    else onError(result.error);
+  };
+  return (
+    <section aria-label="Proof at the door" className={`${cardClass} space-y-3`}>
+      <h3 className="text-sm font-bold text-fg-strong">Proof at the door</h3>
+      <p className="text-xs text-fg-muted">What a rider must show before a delivery can be marked delivered. A delivery that could not be made never needs proof.</p>
+      <fieldset className="space-y-1">
+        <legend className="sr-only">What a rider must show at the door</legend>
+        {PROOF_RULES.map((rule) => (
+          <label key={rule} htmlFor={`${uid}-${rule}`} className="flex min-h-10 items-start gap-3 rounded-lg px-1 py-1">
+            <input id={`${uid}-${rule}`} type="radio" name={`${uid}-proof`} className="mt-1 h-5 w-5" checked={proof === rule} onChange={() => setProof(rule)} />
+            <span>
+              <span className="block text-sm font-semibold text-fg-strong">{PROOF_WORDS[rule]}</span>
+              <span className="block text-xs text-fg-muted">{PROOF_HELP[rule]}</span>
+            </span>
+          </label>
+        ))}
+      </fieldset>
+      <button type="button" className={primaryClass} disabled={busy || proof === settings.proof} onClick={() => void save()}>
         Save
       </button>
     </section>
