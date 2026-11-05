@@ -94,6 +94,9 @@ import { RequisitionService } from '@/server/domains/vendors/requisition-service
 import { PurchaseReturnService } from '@/server/domains/vendors/purchase-return-service';
 import { VendorRefundService } from '@/server/domains/vendors/refund-service';
 import { RateLimitService } from '@/server/kernel/rate-limit/service';
+import { DoorMpesa } from '@/server/domains/delivery/door-mpesa';
+import { amountDue } from '@/server/domains/orders/amount-due';
+import { waitMessage } from '@/lib/rate-limit';
 import { VendorInsightsService } from '@/server/domains/vendors/insights-service';
 import { PettyCashService } from '@/server/domains/vendors/petty-cash-service';
 import { TransactionLedgerService } from '@/server/domains/transactions/ledger-service';
@@ -295,6 +298,7 @@ export interface AppContainer {
   doorWork: DoorWork;
   doorPayments: DoorPayments;
   doorHandIns: DoorHandIns;
+  doorMpesa: DoorMpesa;
   courierShipments: CourierShipments;
   trackingLinks: TrackingLinks;
   deliveryMessages: DeliveryMessages;
@@ -498,6 +502,7 @@ export function getContainer(): AppContainer {
     void geoCompanyId().then((id) => geoSettings.record(id, event)).catch(() => undefined);
   });
   const stockReservations = new StockReservations(drizzleDb, stockLedger, decisionLog);
+  const rateLimits = new RateLimitService(drizzleDb);
   const deliveryServices = createDeliveryServices({ db: drizzleDb, decisionLog, geo, companySettings, numbering, stockReservations, email, usersAdmin, customers });
   const orderSla = new OrderSlaService(drizzleDb, new OrderSlaNotifier(email, companySettings));
   const vendorNotifier = new VendorNotifier(drizzleDb, email, companySettings);
@@ -602,7 +607,7 @@ export function getContainer(): AppContainer {
     paymentTerms: new PaymentTermsService(drizzleDb, vendors),
     creditMemoPortal: new CreditMemoPortalService(drizzleDb, numbering, vendorFiles, vendorNotifier),
     vendorInsights,
-    rateLimits: new RateLimitService(drizzleDb),
+    rateLimits,
     purchaseReturns: new PurchaseReturnService(drizzleDb, numbering, vendorNotifier),
     contracts: new ContractService(drizzleDb, numbering, vendorNotifier),
     landedCosts: new LandedCostService(drizzleDb, numbering),
@@ -645,6 +650,18 @@ export function getContainer(): AppContainer {
     doorWork: deliveryServices.doorWork,
     doorPayments: deliveryServices.doorPayments,
     doorHandIns: new DoorHandIns(drizzleDb, decisionLog, finance.engine, numbering),
+    doorMpesa: new DoorMpesa(drizzleDb, {
+      // Loaded when used: starting a payment reads the container, so it is not imported while the container is being made.
+      start: async (input) => await (await import('@/server/domains/payments/start-payment')).startOrderPayment(input),
+      amountDue: async (orderId) => {
+        const order = await orders.getById(orderId);
+        return order === null ? null : amountDue(order);
+      },
+      limit: async (rule, subject) => {
+        const verdict = await rateLimits.hit(rule, subject);
+        return verdict.allowed ? null : waitMessage(verdict.retryAfterSeconds);
+      },
+    }),
     courierShipments: deliveryServices.courierShipments,
     trackingLinks: deliveryServices.trackingLinks,
     deliveryMessages: deliveryServices.deliveryMessages,

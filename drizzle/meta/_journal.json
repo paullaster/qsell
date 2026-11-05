@@ -981,6 +981,13 @@
       "when": 1793875359108,
       "tag": "0139_delivery_cash_hand_ins",
       "breakpoints": true
+    },
+    {
+      "idx": 140,
+      "version": "7",
+      "when": 1793881463568,
+      "tag": "0140_delivery_door_prompts",
+      "breakpoints": true
     }
   ]
 }

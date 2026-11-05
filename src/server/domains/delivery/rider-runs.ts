@@ -26,6 +26,8 @@ export interface RiderStopView {
   open: boolean;
   /** Cash to collect here, in shillings, when the shop marked this delivery to be paid at the door. The rider collects exactly this. */
   collect: string | null;
+  /** The order is already paid (by M-Pesa at the door, or some other way), so no cash is to be taken at this door. */
+  paid: boolean;
 }
 
 export interface RiderRunItem {
@@ -94,7 +96,7 @@ export class RiderRuns {
       .where(and(eq(deliveryRuns.id, runId), eq(deliveryRuns.riderId, self.riderId), eq(deliveryRuns.companyId, self.companyId)));
     if (row === undefined) return null;
     const stops = await this.db
-      .select({ sequence: deliveryRunStops.sequence, d: deliveries, orderNumber: orders.orderNumber, orderPhone: orders.customerPhone, customerName: orders.customerName, address: orders.shippingAddress })
+      .select({ sequence: deliveryRunStops.sequence, d: deliveries, orderNumber: orders.orderNumber, orderPhone: orders.customerPhone, orderPaid: orders.paymentStatus, customerName: orders.customerName, address: orders.shippingAddress })
       .from(deliveryRunStops)
       .innerJoin(deliveries, eq(deliveries.id, deliveryRunStops.deliveryId))
       .innerJoin(orders, eq(orders.id, deliveries.orderId))
@@ -149,6 +151,7 @@ export class RiderRuns {
           proof: ruleFor(company, s.d.handoverCode !== null),
           open: onTheRoad && s.d.status === 'out_for_delivery',
           collect: s.d.doorAmount,
+          paid: s.orderPaid === 'paid',
         };
       }),
       canFinish: onTheRoad && stops.length > 0 && stops.every((s) => s.d.status !== 'out_for_delivery'),

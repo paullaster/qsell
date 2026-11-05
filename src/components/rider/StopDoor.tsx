@@ -1,14 +1,16 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { deliverStopAction, failStopAction } from '@/server/domains/delivery/rider-app-actions';
+import { deliverStopAction, failStopAction, mpesaStatusAction, promptMpesaAction } from '@/server/domains/delivery/rider-app-actions';
+import type { DoorPromptStatus } from '@/server/domains/delivery/door-mpesa';
 import type { RiderStopView } from '@/server/domains/delivery/rider-runs';
 import { Chip, Field, Message, buttonClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
 import { NOT_ACCEPTED_REASONS } from '@/lib/delivery-acceptance';
 import { FAILURE_REASONS } from '@/lib/delivery-document';
 import { putItem } from './door-queue';
 import { newTryKey, uploadProofPhoto, whereAmI } from './door-support';
+import { useOnline } from './useDoorQueue';
 
 type Mode = 'idle' | 'deliver' | 'fail';
 
@@ -31,8 +33,42 @@ export function StopDoor({ runId, riderId, stop, waiting }: { runId: string; rid
   const [note, setNote] = useState('');
   const [part, setPart] = useState(false);
   const [cash, setCash] = useState('');
+  const online = useOnline();
+  const [payMode, setPayMode] = useState<'cash' | 'mpesa'>('cash');
+  const [phone, setPhone] = useState(stop.receiver.phone ?? '');
+  const [prompt, setPrompt] = useState<DoorPromptStatus | null>(null);
+  const [prompting, setPrompting] = useState(false);
+  const [promptNote, setPromptNote] = useState<string | null>(null);
   const [took, setTook] = useState<Record<string, { quantity: string; reason: string; note: string }>>({});
   const id = useId();
+
+  // While a prompt is out the rider's screen asks the shop whether it was paid; the platform's word, not the customer's or the rider's.
+  const promptOut = prompt?.state === 'waiting' && mode === 'deliver';
+  useEffect(() => {
+    if (!promptOut) return;
+    const timer = setInterval(() => {
+      void mpesaStatusAction({ runId, deliveryId: stop.deliveryId }).then((r) => {
+        if (r.ok) setPrompt(r.data);
+      });
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [promptOut, runId, stop.deliveryId]);
+  const paidNow = stop.paid || prompt?.state === 'paid';
+  // Opening the form on a stop where a prompt is already out (the app was reopened, or the screen reloaded) picks that up.
+  const asksToPay = mode === 'deliver' && stop.collect !== null && !stop.paid && online;
+  useEffect(() => {
+    if (!asksToPay) return;
+    let live = true;
+    void mpesaStatusAction({ runId, deliveryId: stop.deliveryId }).then((r) => {
+      if (live && r.ok && r.data.state !== 'none') {
+        setPrompt(r.data);
+        if (r.data.state === 'waiting' || r.data.state === 'paid') setPayMode('mpesa');
+      }
+    });
+    return () => {
+      live = false;
+    };
+  }, [asksToPay, runId, stop.deliveryId]);
 
   if (!stop.open) return null;
   if (waiting) return <Chip tone="amber">Saved on this phone, waiting to be sent</Chip>;
@@ -61,7 +97,7 @@ export function StopDoor({ runId, riderId, stop, waiting }: { runId: string; rid
     if (mode === 'deliver') {
       payload.receivedBy = receivedBy;
       payload.code = code;
-      if (stop.collect !== null) payload.cashCollected = Number(cash);
+      if (stop.collect !== null && !paidNow) payload.cashCollected = Number(cash);
       if (part) payload.accepted = stop.items.map((i) => ({ productId: i.productId, quantity: Number(takenOf(i.productId, i.quantity).quantity), reasonCode: takenOf(i.productId, i.quantity).reason, note: takenOf(i.productId, i.quantity).note }));
     } else {
       payload.reasonCode = reason;
@@ -143,12 +179,67 @@ export function StopDoor({ runId, riderId, stop, waiting }: { runId: string; rid
           <Field id={`${id}-by`} label="Who received it">
             <input id={`${id}-by`} className={fieldClass} value={receivedBy} onChange={(e) => setReceivedBy(e.target.value)} maxLength={120} required autoComplete="off" />
           </Field>
-          {stop.collect === null ? null : (
-            <div className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-900">
-              <p className="text-sm font-semibold">Collect KSh {stop.collect} in cash before you hand it over.</p>
-              <Field id={`${id}-cash`} label="Cash collected (KSh)" hint="Exactly the amount above. If the customer cannot pay it all, go back and record that it could not be delivered.">
-                <input id={`${id}-cash`} className={fieldClass} inputMode="decimal" value={cash} onChange={(e) => setCash(e.target.value)} required autoComplete="off" />
-              </Field>
+          {stop.collect === null ? null : paidNow ? (
+            <p role="status" className="rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm font-semibold text-emerald-900">
+              KSh {stop.collect} is paid. Hand over the goods; no cash is to be taken.
+            </p>
+          ) : (
+            <div className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-900">
+              <p className="text-sm font-semibold">KSh {stop.collect} is to be paid at this door.</p>
+              <fieldset className="flex flex-wrap gap-4">
+                <legend className="sr-only">How the customer pays</legend>
+                {(['cash', 'mpesa'] as const).map((m) => (
+                  <label key={m} className="flex min-h-11 items-center gap-2 text-sm">
+                    <input type="radio" name={`${id}-paymode`} className="size-5" checked={payMode === m} onChange={() => setPayMode(m)} />
+                    {m === 'cash' ? 'Cash' : 'M-Pesa'}
+                  </label>
+                ))}
+              </fieldset>
+              {payMode === 'cash' ? (
+                <Field id={`${id}-cash`} label="Cash collected (KSh)" hint="Exactly the amount above. If the customer cannot pay it all, go back and record that it could not be delivered.">
+                  <input id={`${id}-cash`} className={fieldClass} inputMode="decimal" value={cash} onChange={(e) => setCash(e.target.value)} required autoComplete="off" />
+                </Field>
+              ) : (
+                <div className="space-y-2">
+                  <Field id={`${id}-phone`} label="The number the customer pays from" hint="An M-Pesa prompt goes to this phone. Ask the customer to enter their PIN.">
+                    <input id={`${id}-phone`} className={fieldClass} inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} autoComplete="off" />
+                  </Field>
+                  {online ? null : <p className="text-sm">There is no signal, so a prompt cannot be sent. Take cash, or wait for the signal.</p>}
+                  {prompt?.state === 'waiting' ? (
+                    <p role="status" className="text-sm font-semibold">
+                      Waiting for the customer to enter their PIN on the phone ending {prompt.phoneEnding ?? ''}…
+                    </p>
+                  ) : null}
+                  {prompt?.state === 'failed' && prompt.message !== null ? (
+                    <p role="alert" className="text-sm font-semibold text-red-800">
+                      {prompt.message}
+                    </p>
+                  ) : null}
+                  {promptNote === null ? null : (
+                    <p role="alert" className="text-sm font-semibold text-red-800">
+                      {promptNote}
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    className={`${buttonClass} min-h-11`}
+                    disabled={!online || prompting || prompt?.state === 'waiting' || (prompt !== null && prompt.promptsLeft === 0 && prompt.state !== 'none')}
+                    onClick={() => {
+                      void (async () => {
+                        setPrompting(true);
+                        setPromptNote(null);
+                        const r = await promptMpesaAction({ runId, deliveryId: stop.deliveryId, phone }).catch(() => null);
+                        setPrompting(false);
+                        if (r === null) setPromptNote('The prompt could not be sent. Check your signal and try again.');
+                        else if (r.ok) setPrompt(r.data);
+                        else setPromptNote(r.error);
+                      })();
+                    }}
+                  >
+                    {prompting ? 'Sending…' : prompt === null || prompt.state === 'none' ? 'Send the M-Pesa prompt' : 'Send another prompt'}
+                  </button>
+                </div>
+              )}
             </div>
           )}
           {stop.collect !== null ? null : <label className="flex min-h-11 items-center gap-3 text-sm text-fg">
@@ -209,7 +300,7 @@ export function StopDoor({ runId, riderId, stop, waiting }: { runId: string; rid
       </Field>
       <p className="text-xs text-fg-muted">Where you are is saved with this stop only if your phone allows it. It is not tracked in between.</p>
       <div className="flex flex-wrap gap-2">
-        <button type="submit" className={`${primaryClass} min-h-11 flex-1`} disabled={busy}>
+        <button type="submit" className={`${primaryClass} min-h-11 flex-1`} disabled={busy || (mode === 'deliver' && stop.collect !== null && !paidNow && payMode === 'mpesa')}>
           {busy ? 'Saving…' : submitWords[mode]}
         </button>
         <button type="button" className={`${buttonClass} min-h-11`} disabled={busy} onClick={() => setMode('idle')}>
