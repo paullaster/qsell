@@ -1,10 +1,12 @@
 'use client';
 
-import { use, useEffect, useState } from 'react';
-import { doorBalancesAction, doorEntriesAction, finishDoorPostingAction, setDoorCashMethodAction, type doorSettingsAction } from '@/server/domains/delivery/door-payment-actions';
-import type { CustodyEntryView, CustodyRiderView } from '@/server/domains/delivery/door-payments';
+import { use, useEffect, useId, useState } from 'react';
+import { approveHandInAction, doorBalancesAction, doorEntriesAction, finishDoorPostingAction, handInsAction, recordHandInAction, refuseHandInAction, setDoorCashMethodAction, setDoorDifferencesAction, type doorSettingsAction } from '@/server/domains/delivery/door-payment-actions';
+import type { HandInView } from '@/server/domains/delivery/door-hand-ins';
+import type { CustodyEntryView, CustodyRiderView, DoorSettingsView } from '@/server/domains/delivery/door-payments';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
-import { Chip, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
+import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
+import { HAND_IN_WORDS, handInCheck, toCents, type HandInStatus } from '@/lib/door-payment';
 import { usePagedList } from '@/components/ui/usePagedList';
 import type { Choice } from '@/lib/payment-options';
 
@@ -33,6 +35,15 @@ function Screen({ initial }: { initial: Settings }) {
     filters: {},
   });
 
+  const handIns = usePagedList<HandInView, Record<string, never>>({
+    load: async (_filters, cursor) => {
+      const result = await handInsAction({ cursor });
+      if (!result.ok) return { ok: false, error: result.error };
+      return { ok: true, data: { rows: result.data.rows, nextCursor: result.data.nextCursor } };
+    },
+    filters: {},
+  });
+
   const readBalances = async (): Promise<void> => {
     const r = await attempt(doorBalancesAction());
     if (r.ok) {
@@ -55,8 +66,17 @@ function Screen({ initial }: { initial: Settings }) {
       <MethodPanel
         settings={settings}
         onSaved={(s) => {
-          setSettings(s);
+          // The method and the differences share one saved record, so one version: a save of either moves both.
+          setSettings({ ...settings, ...s, differences: { ...settings.differences, version: s.version } });
           setNotice({ kind: 'ok', text: 'Saved. Cash taken at doors is received through this method from now on.' });
+        }}
+        onError={(text) => setNotice({ kind: 'error', text })}
+      />
+      <DifferencesPanel
+        settings={settings}
+        onSaved={(differences) => {
+          setSettings({ ...settings, version: differences.version, differences });
+          setNotice({ kind: 'ok', text: 'Saved. A hand-in that is out by more than this waits for a second person.' });
         }}
         onError={(text) => setNotice({ kind: 'error', text })}
       />
@@ -86,6 +106,18 @@ function Screen({ initial }: { initial: Settings }) {
                 Collected today KSh {b.collectedToday}
                 {b.lastAt === null ? '' : ` · last on ${when(b.lastAt)}`}
               </p>
+              {settings.canHandIn && toCents(b.balance) > 0 ? (
+                <HandInForm
+                  rider={b}
+                  onDone={(view) => {
+                    setNotice({ kind: 'ok', text: view.status === 'posted' ? `${view.number}: KSh ${view.counted} handed in by ${view.riderName}.` : `${view.number} is waiting for approval: the count is out by KSh ${view.difference.replace('-', '')}.` });
+                    void readBalances();
+                    list.reload();
+                    handIns.reload();
+                  }}
+                  onError={(text) => setNotice({ kind: 'error', text })}
+                />
+              ) : null}
             </li>
           ))}
         </ul>
@@ -107,6 +139,49 @@ function Screen({ initial }: { initial: Settings }) {
             Finish any collection not yet booked
           </button>
         </div>
+      </section>
+
+      <section aria-label="Hand-ins" className="space-y-3">
+        <h3 className="text-sm font-bold text-fg-strong">Hand-ins</h3>
+        {handIns.phase === 'loading' ? (
+          <p role="status" className="text-sm text-fg-muted">
+            Loading…
+          </p>
+        ) : null}
+        {handIns.phase === 'error' ? (
+          <p role="alert" className="text-sm text-red-700 dark:text-red-300">
+            {handIns.error}{' '}
+            <button type="button" className={buttonClass} onClick={handIns.retry}>
+              Try again
+            </button>
+          </p>
+        ) : null}
+        {handIns.phase !== 'loading' && handIns.phase !== 'error' && handIns.rows.length === 0 ? (
+          <p role="status" className="rounded-xl border border-line bg-surface-raised p-8 text-center text-sm text-fg-muted">
+            No cash has been handed in yet.
+          </p>
+        ) : null}
+        <ul className="space-y-2" aria-label="Hand-in list">
+          {handIns.rows.map((h) => (
+            <HandInRow
+              key={h.id}
+              h={h}
+              canApprove={settings.canApprove}
+              onDone={(text) => {
+                setNotice({ kind: 'ok', text });
+                void readBalances();
+                list.reload();
+                handIns.reload();
+              }}
+              onError={(text) => setNotice({ kind: 'error', text })}
+            />
+          ))}
+        </ul>
+        {handIns.cursor !== null ? (
+          <button type="button" className={buttonClass} onClick={handIns.loadMore} disabled={handIns.phase === 'more'}>
+            {handIns.phase === 'more' ? 'Loading…' : 'Show more'}
+          </button>
+        ) : null}
       </section>
 
       <section aria-label="Custody ledger" className="space-y-3">
@@ -154,7 +229,7 @@ function Screen({ initial }: { initial: Settings }) {
   );
 }
 
-function MethodPanel({ settings, onSaved, onError }: { settings: Settings; onSaved: (s: Settings) => void; onError: (text: string) => void }) {
+function MethodPanel({ settings, onSaved, onError }: { settings: Settings; onSaved: (s: DoorSettingsView) => void; onError: (text: string) => void }) {
   const [choice, setChoice] = useState<Choice | null>(settings.cashMethodId === null ? null : { id: settings.cashMethodId, label: settings.cashMethodName ?? '' });
   const [busy, setBusy] = useState(false);
   const save = async () => {
@@ -176,5 +251,148 @@ function MethodPanel({ settings, onSaved, onError }: { settings: Settings; onSav
         Save
       </button>
     </section>
+  );
+}
+
+const TONE: Record<HandInStatus, 'green' | 'amber' | 'red'> = { posted: 'green', pending_approval: 'amber', rejected: 'red' };
+
+function DifferencesPanel({ settings, onSaved, onError }: { settings: Settings; onSaved: (d: Settings['differences']) => void; onError: (text: string) => void }) {
+  const uid = useId();
+  const [limit, setLimit] = useState(settings.differences.varianceLimit);
+  const [account, setAccount] = useState<Choice | null>(settings.differences.varianceGlAccountId === null ? null : { id: settings.differences.varianceGlAccountId, label: settings.differences.varianceAccountName ?? '' });
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    setBusy(true);
+    const result = await attempt(setDoorDifferencesAction({ varianceLimit: Number(limit), varianceGlAccountId: account?.id ?? '', expectedVersion: settings.differences.version }));
+    setBusy(false);
+    if (result.ok) onSaved(result.data);
+    else onError(result.error);
+  };
+  return (
+    <section aria-label="Differences" className={`${cardClass} space-y-3`}>
+      <h3 className="text-sm font-bold text-fg-strong">Differences at a hand-in</h3>
+      <p className="text-xs text-fg-muted">When the cash counted is not what the rider held, a difference up to this size is recorded at once with its reason. A bigger one waits for a second person to approve it. A difference is written to the account you choose.</p>
+      <Field id={`${uid}-limit`} label="Largest difference allowed without approval (KSh)">
+        <input id={`${uid}-limit`} className={fieldClass} inputMode="decimal" value={limit} onChange={(e) => setLimit(e.target.value)} autoComplete="off" />
+      </Field>
+      <ChoicePicker label="Account a difference is written to" source="door-variance-accounts" choice={account} onChoice={setAccount} placeholder="Choose an account (for example cash over and short)" clearable />
+      <button type="button" className={primaryClass} disabled={busy || Number.isNaN(Number(limit)) || limit.trim() === ''} onClick={() => void save()}>
+        Save
+      </button>
+    </section>
+  );
+}
+
+/** Counting a rider's cash in, in front of a witness: what they hold, what was counted, and where it goes. */
+function HandInForm({ rider, onDone, onError }: { rider: CustodyRiderView; onDone: (view: HandInView) => void; onError: (text: string) => void }) {
+  const uid = useId();
+  const [open, setOpen] = useState(false);
+  const [counted, setCounted] = useState('');
+  const [to, setTo] = useState<Choice | null>(null);
+  const [witness, setWitness] = useState<Choice | null>(null);
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const typed = counted.trim() === '' ? null : Number(counted);
+  const diff = typed === null || Number.isNaN(typed) ? null : handInCheck(toCents(rider.balance), toCents(typed), 0).diffCents;
+  if (!open) {
+    return (
+      <button type="button" className={primaryClass} onClick={() => setOpen(true)} aria-label={`Record a hand-in from ${rider.name}`}>
+        Record a hand-in
+      </button>
+    );
+  }
+  return (
+    <form
+      aria-label={`Hand-in from ${rider.name}`}
+      className="space-y-3 rounded-lg border border-line bg-surface-raised p-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void (async () => {
+          setBusy(true);
+          const r = await attempt(recordHandInAction({ riderId: rider.riderId, counted: typed, toBankAccountId: to?.id ?? '', witnessUserId: witness?.id ?? '', note }));
+          setBusy(false);
+          if (!r.ok) {
+            onError(r.error);
+            return;
+          }
+          setOpen(false);
+          setCounted('');
+          setNote('');
+          onDone(r.data);
+        })();
+      }}
+    >
+      <p className="text-sm text-fg">
+        {rider.name} is expected to hand in <strong>KSh {rider.balance}</strong>.
+      </p>
+      <Field id={`${uid}-counted`} label="Cash counted (KSh)">
+        <input id={`${uid}-counted`} className={fieldClass} inputMode="decimal" value={counted} onChange={(e) => setCounted(e.target.value)} required autoComplete="off" />
+      </Field>
+      {diff === null || diff === 0 ? null : (
+        <p role="status" className="text-sm text-amber-800 dark:text-amber-300">
+          That is {diff < 0 ? 'short' : 'over'} by KSh {(Math.abs(diff) / 100).toFixed(2)}. Say why below.
+        </p>
+      )}
+      <ChoicePicker label="Cash goes into" source="door-hand-in-accounts" choice={to} onChoice={setTo} placeholder="Choose the till or bank account" />
+      <ChoicePicker label="Witness" source="door-hand-in-witnesses" choice={witness} onChoice={setWitness} placeholder="Who saw it counted" />
+      <Field id={`${uid}-note`} label={diff === null || diff === 0 ? 'A note (optional)' : 'Why it is out'}>
+        <input id={`${uid}-note`} className={fieldClass} value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} autoComplete="off" required={diff !== null && diff !== 0} />
+      </Field>
+      <div className="flex flex-wrap gap-2">
+        <button type="submit" className={primaryClass} disabled={busy || to === null || witness === null}>
+          {busy ? 'Saving…' : 'Record the hand-in'}
+        </button>
+        <button type="button" className={buttonClass} disabled={busy} onClick={() => setOpen(false)}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function HandInRow({ h, canApprove, onDone, onError }: { h: HandInView; canApprove: boolean; onDone: (text: string) => void; onError: (text: string) => void }) {
+  const uid = useId();
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const decide = async (kind: 'approve' | 'refuse'): Promise<void> => {
+    setBusy(true);
+    const r = kind === 'approve' ? await attempt(approveHandInAction({ handInId: h.id })) : await attempt(refuseHandInAction({ handInId: h.id, reason }));
+    setBusy(false);
+    if (!r.ok) onError(r.error);
+    else onDone(kind === 'approve' ? `${h.number} is approved and posted.` : `${h.number} is not accepted.`);
+  };
+  return (
+    <li className="space-y-2 rounded-xl border border-line bg-surface-raised p-3 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <span className="font-semibold text-fg-strong">
+          {h.number} · {h.riderName}
+        </span>
+        <Chip tone={TONE[h.status]}>{HAND_IN_WORDS[h.status]}</Chip>
+      </div>
+      <p className="text-fg">
+        Counted {h.currency} {h.counted} of {h.expected} · into {h.toAccount} · witnessed by {h.witnessName}
+        {Number(h.difference) === 0 ? '' : ` · ${Number(h.difference) < 0 ? 'short' : 'over'} by ${h.difference.replace('-', '')}`}
+      </p>
+      <p className="text-xs text-fg-muted">
+        {when(h.createdAt)}
+        {h.note === null ? '' : ` · ${h.note}`}
+        {h.decisionReason === null ? '' : ` · refused: ${h.decisionReason}`}
+      </p>
+      {h.status === 'pending_approval' && canApprove ? (
+        <div className="space-y-2">
+          <Field id={`${uid}-why`} label="Why it is refused (if you refuse it)">
+            <input id={`${uid}-why`} className={fieldClass} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={300} autoComplete="off" />
+          </Field>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className={primaryClass} disabled={busy} onClick={() => void decide('approve')} aria-label={`Approve ${h.number}`}>
+              Approve
+            </button>
+            <button type="button" className={buttonClass} disabled={busy} onClick={() => void decide('refuse')} aria-label={`Refuse ${h.number}`}>
+              Refuse
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </li>
   );
 }

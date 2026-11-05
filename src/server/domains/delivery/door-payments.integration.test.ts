@@ -37,6 +37,10 @@ describe.skipIf(!has(url))('cash at the door (database)', () => {
   let spy: { mockRestore: () => void } | undefined;
   let cashMethod = '';
   let otherMethod = '';
+  // For hand-ins: a method of its own whose account stands for cash with riders, the till cash goes into, and where differences are written.
+  let ridersMethod = '';
+  let tillBankId = '';
+  let varianceGl = '';
   const tag = randomUUID().slice(0, 6).toUpperCase();
   let n = 0;
   const code = () => `DP${tag}${String((n += 1)).padStart(3, '0')}`;
@@ -167,6 +171,14 @@ describe.skipIf(!has(url))('cash at the door (database)', () => {
     const methods = await db.select().from(schema.paymentMethods).where(eq(schema.paymentMethods.companyId, companyId));
     cashMethod = methods.find((m) => m.kind === 'cash')?.id ?? '';
     otherMethod = methods.find((m) => m.kind !== 'cash')?.id ?? '';
+    const till = methods.find((m) => m.kind === 'cash');
+    tillBankId = till?.balancingBankAccountId ?? '';
+    const [ridersGl] = await db.insert(schema.glAccounts).values({ companyId, no: `119${tag}`.slice(0, 8), name: 'Cash with riders', type: 'posting', category: 'assets', normalBalance: 'debit' }).returning();
+    const [overShort] = await db.insert(schema.glAccounts).values({ companyId, no: `699${tag}`.slice(0, 8), name: 'Cash over and short', type: 'posting', category: 'expense', normalBalance: 'debit' }).returning();
+    varianceGl = overShort?.id ?? '';
+    const ridersBank = await c.finance.bankAccounts.create(ctx, { code: `RC${tag}`, name: 'Cash with riders', kind: 'cash', currency: 'KES' });
+    const created = await c.finance.paymentMethods.create(ctx, { code: `RIDERS${tag}`, name: 'Cash with riders', kind: 'cash', balancingBankAccountId: ridersBank.id, providerId: till?.providerId ?? '', glAccountId: ridersGl?.id ?? '', usableFor: ['customer_receipt'], settlementMode: 'immediate' });
+    ridersMethod = created.id;
     await c.stockLocations.ensureDefault(companyId);
     await c.stockShadow.setShadow(companyId, false);
     await c.stockSettings.setLedgerMode(companyId, true, { requireCleanShadow: false });
@@ -386,6 +398,219 @@ describe.skipIf(!has(url))('cash at the door (database)', () => {
       expect(page.rows.length).toBeGreaterThanOrEqual(2);
       expect(page.rows.map((r) => r.createdAt)).toEqual([...page.rows.map((r) => r.createdAt)].sort().reverse());
       expect(await c.doorPayments.finishPosting(companyId)).toMatchObject({ checked: expect.any(Number) as number });
+    });
+  });
+
+  describe('handing the cash in', () => {
+    const cashier = () => ({ companyId, userId: 'cashier-1' });
+    const boss = () => ({ companyId, userId: 'boss-1' });
+    let witnessId = '';
+    const useRidersAccount = async (limit = 0) => {
+      const now = await c.doorPayments.settings(companyId);
+      const set = await c.doorPayments.setCashMethod(dispatcher(), { cashMethodId: ridersMethod, expectedVersion: now.version });
+      if (!set.ok) throw new Error(set.message);
+      const d = await c.doorHandIns.differences(companyId);
+      const diff = await c.doorHandIns.setDifferences(dispatcher(), { varianceLimit: limit, varianceGlAccountId: varianceGl, expectedVersion: d.version });
+      if (!diff.ok) throw new Error(diff.message);
+    };
+    /** A rider who has collected cash at a door (and so holds it), the way a rider does. */
+    const holding = async () => {
+      const rider = await staffRider();
+      const at = await onTheRoad(rider, { atDoor: true });
+      const r = await c.doorWork.deliver(at.self, { runId: at.runId, deliveryId: at.deliveryId, clientKey: key(), receivedBy: 'Mama', cashCollected: at.total });
+      if (!r.ok) throw new Error(r.message);
+      await c.doorWork.finish(at.self, at.runId);
+      return { rider, held: at.total, self: at.self };
+    };
+    const hand = (riderId: string, counted: unknown, over: Record<string, unknown> = {}) => c.doorHandIns.record(cashier(), { riderId, counted, toBankAccountId: tillBankId, witnessUserId: witnessId, note: null, ...over });
+    const balanceOf = async (riderId: string) => {
+      const rows = await db.select().from(schema.cashCustodyEntries).where(eq(schema.cashCustodyEntries.riderId, riderId));
+      return rows.reduce((n, r) => n + Math.round(Number(r.amount) * 100), 0) / 100;
+    };
+
+    beforeAll(async () => {
+      const [w] = await db.insert(schema.users).values({ id: randomUUID(), email: `wit-${tag}@handin.test`, passwordHash: 'x', name: `Witness ${tag}`, role: 'super_admin' }).returning();
+      witnessId = w?.id ?? '';
+      madeUsers.push(witnessId);
+    });
+    beforeEach(async () => {
+      await useRidersAccount(0);
+    });
+    afterAll(async () => {
+      const now = await c.doorPayments.settings(companyId);
+      await c.doorPayments.setCashMethod(dispatcher(), { cashMethodId: cashMethod, expectedVersion: now.version });
+    });
+
+    it('differences: a limit and an account, versioned, validated and logged', async () => {
+      const d = await c.doorHandIns.differences(companyId);
+      expect(d).toMatchObject({ varianceLimit: '0.00', varianceGlAccountId: varianceGl });
+      expect(await c.doorHandIns.setDifferences(dispatcher(), { varianceLimit: -1, varianceGlAccountId: varianceGl })).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect(await c.doorHandIns.setDifferences(dispatcher(), { varianceLimit: 10, varianceGlAccountId: randomUUID() })).toMatchObject({ ok: false, reason: 'not_found' });
+      expect(await c.doorHandIns.setDifferences(dispatcher(), { varianceLimit: 10, varianceGlAccountId: varianceGl, expectedVersion: d.version + 9 })).toMatchObject({ ok: false, reason: 'conflict' });
+      const ok = await c.doorHandIns.setDifferences(dispatcher(), { varianceLimit: 10, varianceGlAccountId: varianceGl, expectedVersion: d.version });
+      expect(ok).toMatchObject({ ok: true, data: { varianceLimit: '10.00' } });
+      const log = await db.select().from(schema.decisionLog).where(eq(schema.decisionLog.subjectId, companyId));
+      expect(log.map((l) => l.action)).toContain('door_payments.differences_set');
+    });
+
+    it('an exact count posts at once: custody is nothing, the cash moves between the two accounts, and it is kept', async () => {
+      const { rider, held } = await holding();
+      expect(await balanceOf(rider.id)).toBe(held);
+      const r = await hand(rider.id, held);
+      expect(r).toMatchObject({ ok: true, data: { status: 'posted', difference: '0.00', counted: held.toFixed(2), expected: held.toFixed(2) } });
+      expect(await balanceOf(rider.id)).toBe(0);
+      const [h] = await db.select().from(schema.cashHandIns).where(eq(schema.cashHandIns.riderId, rider.id));
+      expect(h).toMatchObject({ status: 'posted', witnessUserId: witnessId, countedBy: 'cashier-1' });
+      const entries = await db.select().from(schema.cashCustodyEntries).where(eq(schema.cashCustodyEntries.handInId, h?.id ?? ''));
+      expect(entries.map((e) => e.kind)).toEqual(['handed_in']);
+      expect(entries[0]?.amount).toBe((-held).toFixed(2));
+      const bank = await db.select().from(schema.bankLedgerEntries).where(eq(schema.bankLedgerEntries.documentId, h?.id ?? ''));
+      expect(bank.map((b) => Number(b.amount)).sort((a, b) => a - b)).toEqual([-held, held]);
+      expect(bank.find((b) => Number(b.amount) > 0)?.bankAccountId).toBe(tillBankId);
+      const log = await db.select().from(schema.decisionLog).where(eq(schema.decisionLog.subjectId, h?.id ?? ''));
+      expect(log.map((l) => l.action)).toContain('door_payments.hand_in_recorded');
+      expect(await c.doorPayments.heldBy(await selfOf(rider.userId))).toBe('0.00');
+    });
+
+    it('a difference within the limit posts at once, with its reason: the rider holds nothing and the difference is an adjustment', async () => {
+      await useRidersAccount(50);
+      const { rider, held } = await holding();
+      expect(await hand(rider.id, held - 10)).toMatchObject({ ok: false, message: expect.stringMatching(/short by KSh 10.00/) as string });
+      const r = await hand(rider.id, held - 10, { note: 'A note was torn and not accepted' });
+      expect(r).toMatchObject({ ok: true, data: { status: 'posted', difference: '-10.00' } });
+      expect(await balanceOf(rider.id)).toBe(0);
+      const [h] = await db.select().from(schema.cashHandIns).where(eq(schema.cashHandIns.riderId, rider.id));
+      const entries = await db.select().from(schema.cashCustodyEntries).where(eq(schema.cashCustodyEntries.handInId, h?.id ?? ''));
+      expect(entries.map((e) => [e.kind, e.amount, e.note])).toEqual(expect.arrayContaining([['handed_in', (-(held - 10)).toFixed(2), null], ['adjusted', '-10.00', 'A note was torn and not accepted']]));
+      const bank = await db.select().from(schema.bankLedgerEntries).where(eq(schema.bankLedgerEntries.documentId, h?.id ?? ''));
+      // The riders' account is cleared of all they held; the till takes what was counted.
+      expect(bank.map((b) => Number(b.amount)).sort((a, b) => a - b)).toEqual([-held, held - 10]);
+      expect(h?.varianceGlAccountId).toBe(varianceGl);
+    });
+
+    it('an over count within the limit is the other way round', async () => {
+      await useRidersAccount(50);
+      const { rider, held } = await holding();
+      const r = await hand(rider.id, held + 5, { note: 'The customer rounded up' });
+      expect(r).toMatchObject({ ok: true, data: { status: 'posted', difference: '5.00' } });
+      expect(await balanceOf(rider.id)).toBe(0);
+    });
+
+    it('a bigger difference waits: nothing posts and the rider still holds the cash, until another person approves it', async () => {
+      const { rider, held } = await holding();
+      const r = await hand(rider.id, held - 20, { note: 'Twenty shillings are missing' });
+      expect(r).toMatchObject({ ok: true, data: { status: 'pending_approval', statusWords: 'Waiting for approval' } });
+      const id = r.ok ? r.data.id : '';
+      expect(await balanceOf(rider.id)).toBe(held);
+      expect(await c.doorHandIns.waiting(companyId)).toBeGreaterThanOrEqual(1);
+      expect(await hand(rider.id, held)).toMatchObject({ ok: false, reason: 'conflict' });
+      expect(await c.doorHandIns.approve(cashier(), id)).toMatchObject({ ok: false, reason: 'not_allowed', message: expect.stringMatching(/someone other/) as string });
+      expect(await balanceOf(rider.id)).toBe(held);
+      const done = await c.doorHandIns.approve(boss(), id);
+      expect(done).toMatchObject({ ok: true, data: { status: 'posted', approvedBy: 'boss-1' } });
+      expect(await balanceOf(rider.id)).toBe(0);
+      expect(await c.doorHandIns.approve(boss(), id)).toMatchObject({ ok: false, reason: 'not_allowed' });
+      const log = await db.select().from(schema.decisionLog).where(eq(schema.decisionLog.subjectId, id));
+      expect(log.map((l) => l.action)).toEqual(expect.arrayContaining(['door_payments.hand_in_waiting', 'door_payments.hand_in_approved']));
+    });
+
+    it('can be refused with a reason, which frees the rider to be counted again', async () => {
+      const { rider, held } = await holding();
+      const r = await hand(rider.id, held - 30, { note: 'Thirty shillings are missing' });
+      const id = r.ok ? r.data.id : '';
+      expect(await c.doorHandIns.reject(boss(), id, { reason: 'x' })).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect(await c.doorHandIns.reject(boss(), id, { reason: 'Count it again with the rider present' })).toMatchObject({ ok: true, data: { status: 'rejected', decisionReason: 'Count it again with the rider present' } });
+      expect(await balanceOf(rider.id)).toBe(held);
+      expect(await hand(rider.id, held)).toMatchObject({ ok: true, data: { status: 'posted' } });
+      expect(await balanceOf(rider.id)).toBe(0);
+    });
+
+    it('is refused for approval if the rider\'s cash changed while it waited', async () => {
+      const rider = await staffRider();
+      const first = await onTheRoad(rider, { atDoor: true });
+      await c.doorWork.deliver(first.self, { runId: first.runId, deliveryId: first.deliveryId, clientKey: key(), receivedBy: 'A', cashCollected: first.total });
+      await c.doorWork.finish(first.self, first.runId);
+      const r = await hand(rider.id, first.total - 20, { note: 'Twenty shillings are missing' });
+      const id = r.ok ? r.data.id : '';
+      const second = await onTheRoad(rider, { atDoor: true });
+      await c.doorWork.deliver(second.self, { runId: second.runId, deliveryId: second.deliveryId, clientKey: key(), receivedBy: 'B', cashCollected: second.total });
+      const stale = await c.doorHandIns.approve(boss(), id);
+      expect(stale).toMatchObject({ ok: false, reason: 'conflict', message: expect.stringMatching(/Refuse it and count again/) as string });
+      expect(await c.doorHandIns.reject(boss(), id, { reason: 'More cash arrived since' })).toMatchObject({ ok: true });
+    });
+
+    it('once the books are live it is a balanced journal: the till takes what was counted, the riders\' account is cleared, a shortage goes to the difference account', async () => {
+      await db.update(schema.financeSettings).set({ salesGlGoLive: '2026-01-01' }).where(eq(schema.financeSettings.companyId, companyId));
+      try {
+        await useRidersAccount(50);
+        const { rider, held } = await holding();
+        const r = await hand(rider.id, held - 10, { note: 'A note was torn and not accepted' });
+        expect(r).toMatchObject({ ok: true, data: { status: 'posted' } });
+        const [h] = await db.select().from(schema.cashHandIns).where(eq(schema.cashHandIns.riderId, rider.id));
+        expect(h?.registerId).not.toBeNull();
+        const lines = await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, h?.registerId ?? ''));
+        const sum = (rows: typeof lines, key: 'debit' | 'credit') => rows.reduce((n, l) => n + Math.round(Number(l[key]) * 100), 0);
+        expect(sum(lines, 'debit')).toBe(sum(lines, 'credit'));
+        expect(sum(lines, 'debit')).toBe(Math.round(held * 100));
+        expect(lines.find((l) => l.accountId === varianceGl)).toMatchObject({ debit: '10.0000' });
+        const [ridersGl] = await db.select({ gl: schema.paymentMethods.glAccountId }).from(schema.paymentMethods).where(eq(schema.paymentMethods.id, ridersMethod));
+        expect(Number(lines.find((l) => l.accountId === ridersGl?.gl)?.credit)).toBe(held);
+        // Counted exactly, there is no difference line at all.
+        const second = await holding();
+        const ok = await hand(second.rider.id, second.held);
+        expect(ok).toMatchObject({ ok: true, data: { status: 'posted' } });
+        const [h2] = await db.select().from(schema.cashHandIns).where(eq(schema.cashHandIns.riderId, second.rider.id));
+        const lines2 = await db.select().from(schema.glEntries).where(eq(schema.glEntries.registerId, h2?.registerId ?? ''));
+        expect(lines2).toHaveLength(2);
+      } finally {
+        await db.update(schema.financeSettings).set({ salesGlGoLive: null }).where(eq(schema.financeSettings.companyId, companyId));
+      }
+    });
+
+    it('is refused for what cannot be right', async () => {
+      const { rider, held } = await holding();
+      expect(await hand(rider.id, held, { witnessUserId: '' })).toMatchObject({ ok: false, message: expect.stringMatching(/witness/) as string });
+      expect(await hand(rider.id, held, { witnessUserId: 'cashier-1' })).toMatchObject({ ok: false, reason: 'not_found' });
+      expect(await hand(rider.id, held, { toBankAccountId: '' })).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect(await hand(rider.id, held, { toBankAccountId: randomUUID() })).toMatchObject({ ok: false, reason: 'not_found' });
+      expect(await hand(rider.id, 'ten')).toMatchObject({ ok: false, message: expect.stringMatching(/how much cash/) as string });
+      expect(await hand(randomUUID(), held)).toMatchObject({ ok: false, reason: 'not_found' });
+      const noOne = await staffRider();
+      expect(await hand(noOne.id, 10)).toMatchObject({ ok: false, message: expect.stringMatching(/holds no cash/) as string });
+      const [custodyBank] = await db.select({ b: schema.paymentMethods.balancingBankAccountId }).from(schema.paymentMethods).where(eq(schema.paymentMethods.id, ridersMethod));
+      expect(await hand(rider.id, held, { toBankAccountId: custodyBank?.b })).toMatchObject({ ok: false, message: expect.stringMatching(/not the account riders/) as string });
+      expect(await balanceOf(rider.id)).toBe(held);
+    });
+
+    it('is refused for a difference when no account is chosen for it', async () => {
+      const { rider, held } = await holding();
+      await db.update(schema.deliveryDoorSettings).set({ varianceGlAccountId: null }).where(eq(schema.deliveryDoorSettings.companyId, companyId));
+      expect(await hand(rider.id, held - 5, { note: 'Five shillings short' })).toMatchObject({ ok: false, message: expect.stringMatching(/Differences/) as string });
+      expect(await hand(rider.id, held)).toMatchObject({ ok: true });
+    });
+
+    it('is kept for good: a decided hand-in cannot be changed or removed, and a waiting one only decided', async () => {
+      const { rider, held } = await holding();
+      const waiting = await hand(rider.id, held - 20, { note: 'Twenty shillings are missing' });
+      const wid = waiting.ok ? waiting.data.id : '';
+      await expect(db.update(schema.cashHandIns).set({ countedAmount: '1.00', difference: '1.00' }).where(eq(schema.cashHandIns.id, wid))).rejects.toThrow();
+      await c.doorHandIns.approve(boss(), wid);
+      await expect(db.update(schema.cashHandIns).set({ note: 'edited' }).where(eq(schema.cashHandIns.id, wid))).rejects.toThrow();
+      await expect(db.delete(schema.cashHandIns).where(eq(schema.cashHandIns.id, wid))).rejects.toThrow();
+      const [entry] = await db.select().from(schema.cashCustodyEntries).where(eq(schema.cashCustodyEntries.handInId, wid));
+      await expect(db.delete(schema.cashCustodyEntries).where(eq(schema.cashCustodyEntries.id, entry?.id ?? ''))).rejects.toThrow();
+    });
+
+    it('is listed newest first, by state, and riders with cash to hand in are offered', async () => {
+      const { rider, held } = await holding();
+      const withCash = await c.doorHandIns.ridersWithCash(companyId);
+      expect(withCash.find((r) => r.riderId === rider.id)).toMatchObject({ held: held.toFixed(2) });
+      const waiting = await hand(rider.id, held - 20, { note: 'Twenty shillings are missing' });
+      const list = await c.doorHandIns.list(companyId, { status: 'pending_approval', riderId: rider.id });
+      expect(list.rows.map((r) => r.id)).toEqual([waiting.ok ? waiting.data.id : '']);
+      expect(list.rows[0]).toMatchObject({ riderName: expect.any(String) as string, witnessName: `Witness ${tag}`, toAccount: expect.stringContaining(' · ') as string });
+      expect((await c.doorHandIns.list(companyId, {})).rows.length).toBeGreaterThanOrEqual(1);
+      expect(await c.doorHandIns.ridersWithCash(companyId).then((r) => r.some((x) => x.riderId === rider.id))).toBe(true);
     });
   });
 });

@@ -768,6 +768,10 @@ export const deliveryDoorSettings = pgTable('delivery_door_settings', {
     .primaryKey()
     .references(() => companySettings.id, { onDelete: 'cascade' }),
   cashMethodId: uuid('cash_method_id').references(() => paymentMethods.id, { onDelete: 'restrict' }),
+  /** A hand-in that comes out short or over by no more than this posts at once; a bigger difference waits for a second person. */
+  varianceLimit: numeric('variance_limit', { precision: 14, scale: 2 }).notNull().default('0'),
+  /** Where a difference at a hand-in is written (a cash over and short account). */
+  varianceGlAccountId: uuid('variance_gl_account_id').references(() => glAccounts.id, { onDelete: 'restrict' }),
   version: integer('version').notNull().default(1),
   updatedBy: text('updated_by'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -796,10 +800,13 @@ export const cashCustodyEntries = pgTable(
     orderId: text('order_id').references(() => orders.id, { onDelete: 'restrict' }),
     key: text('key').notNull(),
     note: text('note'),
+    /** The hand-in that took this cash out of custody, for a handed-in entry (and the difference that came with it). */
+    handInId: uuid('hand_in_id').references((): AnyPgColumn => cashHandIns.id, { onDelete: 'restrict' }),
     actorId: text('actor_id').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    check('cash_custody_handin_chk', sql`${t.kind} <> 'handed_in' OR ${t.handInId} IS NOT NULL`),
     uniqueIndex('cash_custody_key_uidx').on(t.companyId, t.key),
     index('cash_custody_rider_idx').on(t.riderId, t.createdAt),
     index('cash_custody_delivery_idx').on(t.deliveryId),
@@ -810,6 +817,62 @@ export const cashCustodyEntries = pgTable(
   ],
 );
 export type CashCustodyEntryRow = typeof cashCustodyEntries.$inferSelect;
+
+/**
+ * A rider handing in the cash they hold: counted by one person in front of a witness, against what the rider is expected to hold.
+ * A difference within the company's limit posts at once; a bigger one waits for a second person, and nothing is posted or taken out of
+ * custody until then. Posted, it moves the cash from the account riders' cash is held in to the till or bank, and writes any difference
+ * to the difference account. Kept for good: a trigger refuses changes to a posted or rejected hand-in.
+ */
+export const cashHandIns = pgTable(
+  'cash_hand_ins',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    number: text('number').notNull(),
+    riderId: uuid('rider_id')
+      .notNull()
+      .references(() => deliveryRiders.id, { onDelete: 'restrict' }),
+    status: text('status').$type<'pending_approval' | 'posted' | 'rejected'>().notNull(),
+    /** What the rider was expected to hold when it was counted, what was counted, and the difference (counted less held). */
+    expectedAmount: numeric('expected_amount', { precision: 14, scale: 2 }).notNull(),
+    countedAmount: numeric('counted_amount', { precision: 14, scale: 2 }).notNull(),
+    difference: numeric('difference', { precision: 14, scale: 2 }).notNull(),
+    currency: text('currency').notNull(),
+    /** The account riders' cash was held in, and the till or bank account the cash went into. */
+    custodyBankAccountId: uuid('custody_bank_account_id')
+      .notNull()
+      .references(() => bankAccounts.id, { onDelete: 'restrict' }),
+    toBankAccountId: uuid('to_bank_account_id')
+      .notNull()
+      .references(() => bankAccounts.id, { onDelete: 'restrict' }),
+    varianceGlAccountId: uuid('variance_gl_account_id').references(() => glAccounts.id, { onDelete: 'restrict' }),
+    witnessUserId: text('witness_user_id').notNull(),
+    witnessName: text('witness_name').notNull(),
+    note: text('note'),
+    countedBy: text('counted_by').notNull(),
+    approvedBy: text('approved_by'),
+    decisionReason: text('decision_reason'),
+    registerId: uuid('register_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('cash_hand_ins_number_uidx').on(t.companyId, t.number),
+    index('cash_hand_ins_rider_idx').on(t.riderId, t.createdAt),
+    index('cash_hand_ins_status_idx').on(t.companyId, t.status, t.createdAt),
+    // At most one waiting hand-in per rider, so two cannot both be counted against the same cash.
+    uniqueIndex('cash_hand_ins_one_pending_uidx').on(t.riderId).where(sql`${t.status} = 'pending_approval'`),
+    check('cash_hand_ins_status_chk', sql`${t.status} IN ('pending_approval','posted','rejected')`),
+    check('cash_hand_ins_amounts_chk', sql`${t.expectedAmount} > 0 AND ${t.countedAmount} >= 0 AND ${t.difference} = ${t.countedAmount} - ${t.expectedAmount}`),
+    check('cash_hand_ins_accounts_chk', sql`${t.custodyBankAccountId} <> ${t.toBankAccountId}`),
+    check('cash_hand_ins_variance_chk', sql`${t.difference} = 0 OR (${t.varianceGlAccountId} IS NOT NULL AND ${t.note} IS NOT NULL)`),
+    check('cash_hand_ins_decided_chk', sql`(${t.status} = 'pending_approval') = (${t.decidedAt} IS NULL)`),
+  ],
+);
+export type CashHandInRow = typeof cashHandIns.$inferSelect;
 
 /** Which kinds of rider a company uses: its own staff signing in to the rider app, riders with an account of their own, or both. */
 export const deliveryRiderSettings = pgTable(

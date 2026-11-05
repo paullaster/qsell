@@ -58,27 +58,43 @@ async function doorSetup(): Promise<Record<string, string>> {
   const c = getContainer();
   const company = await c.companySettings.ensureSeeded();
   const ctx = { companyId: company.id, actor: { type: 'user' as const, id: 'e2e' }, origin: { surface: 'e2e', action: 'door-setup' } };
-  let [cash] = await db.select().from(paymentMethods).where(and(eq(paymentMethods.companyId, company.id), eq(paymentMethods.kind, 'cash')));
-  if (cash === undefined) {
+  let [till] = await db.select().from(paymentMethods).where(and(eq(paymentMethods.companyId, company.id), eq(paymentMethods.kind, 'cash')));
+  if (till === undefined) {
     await c.finance.paymentMethods.seedStandard(ctx);
-    [cash] = await db.select().from(paymentMethods).where(and(eq(paymentMethods.companyId, company.id), eq(paymentMethods.kind, 'cash')));
+    [till] = await db.select().from(paymentMethods).where(and(eq(paymentMethods.companyId, company.id), eq(paymentMethods.kind, 'cash')));
   }
-  if (cash === undefined) throw new Error('e2e fixture: no cash payment method could be made');
+  if (till === undefined) throw new Error('e2e fixture: no cash payment method could be made');
+  // A method of its own whose account stands for "cash with riders", and an account for differences, made once.
+  const { bankAccounts, glAccounts } = await import('@/server/db/drizzle/schema');
+  const [tillBank] = await db.select({ name: bankAccounts.name }).from(bankAccounts).where(eq(bankAccounts.id, till.balancingBankAccountId));
+  let [riders] = await db.select().from(paymentMethods).where(and(eq(paymentMethods.companyId, company.id), eq(paymentMethods.code, 'E2ERIDERS')));
+  if (riders === undefined) {
+    const [gl] = await db.insert(glAccounts).values({ companyId: company.id, no: '1199E2E', name: 'Cash with riders', type: 'posting', category: 'assets', normalBalance: 'debit' }).returning();
+    await db.insert(glAccounts).values({ companyId: company.id, no: '6999E2E', name: 'Cash over and short E2E', type: 'posting', category: 'expense', normalBalance: 'debit' });
+    const bank = await c.finance.bankAccounts.create(ctx, { code: 'E2ERIDERS', name: 'Cash with riders', kind: 'cash', currency: 'KES' });
+    const made = await c.finance.paymentMethods.create(ctx, { code: 'E2ERIDERS', name: 'Cash with riders', kind: 'cash', balancingBankAccountId: bank.id, providerId: till.providerId, glAccountId: gl?.id ?? '', usableFor: ['customer_receipt'], settlementMode: 'immediate' });
+    [riders] = await db.select().from(paymentMethods).where(eq(paymentMethods.id, made.id));
+  }
+  if (riders === undefined) throw new Error('e2e fixture: the cash with riders method could not be made');
   // Start from "not chosen yet", so the test chooses it on the screen.
   await db.delete(deliveryDoorSettings).where(eq(deliveryDoorSettings.companyId, company.id));
-  return { name: cash.name, id: cash.id };
+  return { name: riders.name, id: riders.id, till: tillBank?.name ?? '', variance: 'Cash over and short E2E' };
 }
 
 async function doorState(number: string): Promise<Record<string, string>> {
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
-  const { deliveries, orders, cashCustodyEntries, financeSalesPostings } = await import('@/server/db/drizzle/schema');
+  const { deliveries, orders, cashCustodyEntries, cashHandIns, financeSalesPostings } = await import('@/server/db/drizzle/schema');
   const { and, eq } = await import('drizzle-orm');
   const [d] = await db.select().from(deliveries).where(eq(deliveries.number, number));
   if (d === undefined) throw new Error(`no delivery ${number}`);
   const [o] = await db.select({ paymentStatus: orders.paymentStatus, paymentMethod: orders.paymentMethod }).from(orders).where(eq(orders.id, d.orderId));
   const entries = await db.select().from(cashCustodyEntries).where(eq(cashCustodyEntries.deliveryId, d.id));
   const queued = await db.select().from(financeSalesPostings).where(and(eq(financeSalesPostings.subjectId, d.orderId), eq(financeSalesPostings.kind, 'cash_sale')));
-  return { status: d.status, door: d.doorAmount ?? '', paymentStatus: o?.paymentStatus ?? '', paymentMethod: o?.paymentMethod ?? '', custody: String(entries.length), custodyAmount: entries[0]?.amount ?? '', queued: String(queued.length) };
+  const riderId = entries[0]?.riderId;
+  const mine = riderId === undefined ? [] : await db.select().from(cashCustodyEntries).where(eq(cashCustodyEntries.riderId, riderId));
+  const held = mine.reduce((n, e) => n + Math.round(Number(e.amount) * 100), 0) / 100;
+  const handIns = riderId === undefined ? [] : await db.select().from(cashHandIns).where(eq(cashHandIns.riderId, riderId));
+  return { status: d.status, door: d.doorAmount ?? '', paymentStatus: o?.paymentStatus ?? '', paymentMethod: o?.paymentMethod ?? '', custody: String(entries.length), custodyAmount: entries[0]?.amount ?? '', queued: String(queued.length), held: held.toFixed(2), handIns: String(handIns.length), handInStatus: handIns[0]?.status ?? '' };
 }
 
 async function reset(): Promise<Record<string, string>> {
