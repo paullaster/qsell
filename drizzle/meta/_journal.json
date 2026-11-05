@@ -988,6 +988,13 @@
       "when": 1793881463568,
       "tag": "0140_delivery_door_prompts",
       "breakpoints": true
+    },
+    {
+      "idx": 141,
+      "version": "7",
+      "when": 1793888661468,
+      "tag": "0141_delivery_pay_on_delivery",
+      "breakpoints": true
     }
   ]
 }

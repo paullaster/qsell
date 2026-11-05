@@ -113,7 +113,8 @@ export async function placeOrderAction(raw: unknown): Promise<CheckoutResult<Che
   revalidatePath('/admin/customers');
   revalidatePath('/admin/inventory');
   revalidatePath('/');
-  if (method === 'on_account') return { ok: true, data: { order, payment: { kind: 'none' } } };
+  // On account is paid on its invoice; pay on delivery is paid to the rider at the door. Neither starts a payment now.
+  if (method === 'on_account' || method === 'pay_on_delivery') return { ok: true, data: { order, payment: { kind: 'none' } } };
   // Card payments go through the hosted checkout, as before.
   const provider: PaymentProviderCode = method === 'card_direct' ? 'pesapal_v3' : method;
   return { ok: true, data: { order, payment: await startPayment(order.id, provider, payerPhone ?? promptTo) } };

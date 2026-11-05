@@ -14,8 +14,11 @@ import { useCollection } from '@/components/store/useCollection';
 import { has } from '@/lib/values';
 
 /** The order as the shop has it (read again from the server after payment), with the invoice to keep. */
-export function OrderComplete({ order, receipt, onAccount }: { order: Order; receipt: string | null; onAccount: boolean }) {
+export function OrderComplete({ order, receipt, onAccount, payOnDelivery = false }: { order: Order; receipt: string | null; onAccount: boolean; payOnDelivery?: boolean }) {
   const { money, sessionName } = useStore();
+  let totalLabel = 'Total';
+  if (onAccount) totalLabel = 'Total on your account';
+  else if (payOnDelivery) totalLabel = 'Total to pay on delivery';
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -45,12 +48,18 @@ export function OrderComplete({ order, receipt, onAccount }: { order: Order; rec
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-emerald-500/20 bg-emerald-500/10 text-emerald-600">
           <CheckCircle2 className="h-8 w-8" aria-hidden="true" />
         </div>
-        <h1 className="text-2xl font-bold tracking-tight text-fg-strong">{onAccount ? 'Your order is placed' : 'Thank you, your order is confirmed'}</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-fg-strong">{onAccount || payOnDelivery ? 'Your order is placed' : 'Thank you, your order is confirmed'}</h1>
         <p className="text-sm text-fg-muted">
           Order <span className="font-mono font-semibold text-fg-strong">{order.orderNumber}</span>
           {has(receipt) ? <> · payment reference <span className="font-mono text-fg-strong">{receipt}</span></> : null}
         </p>
       </div>
+
+      {payOnDelivery ? (
+        <p role="status" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+          You pay when your order arrives. Have <strong>{money(order.totalAmount)}</strong> ready for the rider, in cash or by M-Pesa, and keep your phone on so they can reach you.
+        </p>
+      ) : null}
 
       <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className="rounded-xl border border-line bg-surface p-4">
@@ -69,7 +78,7 @@ export function OrderComplete({ order, receipt, onAccount }: { order: Order; rec
           </div>
         )}
         <div className="rounded-xl border border-line bg-surface p-4 sm:col-span-2">
-          <dt className="text-xs font-semibold tracking-wider text-fg-muted uppercase">{onAccount ? 'Total on your account' : 'Total'}</dt>
+          <dt className="text-xs font-semibold tracking-wider text-fg-muted uppercase">{totalLabel}</dt>
           <dd className="font-mono text-2xl font-bold text-fg-strong">{money(order.totalAmount)}</dd>
         </div>
       </dl>
@@ -85,6 +94,7 @@ export function OrderComplete({ order, receipt, onAccount }: { order: Order; rec
       {notice === null ? null : <p role="status" className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{notice}</p>}
       {error === null ? null : <p role="alert" className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200">{error}</p>}
 
+      {payOnDelivery ? null : (
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <button type="button" disabled={busy} onClick={() => void invoice('download')} className="flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-lg border border-line-strong bg-surface-sunken px-4 py-3 text-sm font-semibold text-fg-strong hover:bg-hover disabled:opacity-50">
           <Printer className="h-4 w-4" aria-hidden="true" />{busy ? 'Working…' : 'Download tax invoice'}
@@ -95,6 +105,7 @@ export function OrderComplete({ order, receipt, onAccount }: { order: Order; rec
           </button>
         )}
       </div>
+      )}
       <Link href="/" className="flex min-h-12 items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-600/20 hover:bg-indigo-500">
         Continue shopping <ArrowRight className="h-4 w-4" aria-hidden="true" />
       </Link>

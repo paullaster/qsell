@@ -768,6 +768,9 @@ export const deliveryDoorSettings = pgTable('delivery_door_settings', {
     .primaryKey()
     .references(() => companySettings.id, { onDelete: 'cascade' }),
   cashMethodId: uuid('cash_method_id').references(() => paymentMethods.id, { onDelete: 'restrict' }),
+  /** Shoppers may choose "Pay on delivery" at checkout, and the largest order taken that way (null: no limit). */
+  payOnDelivery: boolean('pay_on_delivery').notNull().default(false),
+  payOnDeliveryMax: numeric('pay_on_delivery_max', { precision: 14, scale: 2 }),
   /** A hand-in that comes out short or over by no more than this posts at once; a bigger difference waits for a second person. */
   varianceLimit: numeric('variance_limit', { precision: 14, scale: 2 }).notNull().default('0'),
   /** Where a difference at a hand-in is written (a cash over and short account). */

@@ -40,6 +40,30 @@ export async function placeDeliveredOrder(page: Page, options: { pay?: boolean }
   return orderNumber ?? '';
 }
 
+/** The shopper has two packets delivered to a written area and chooses Pay on delivery; nothing is paid. Returns the order number. */
+export async function placePayOnDeliveryOrder(page: Page): Promise<string> {
+  await cartWithTwoSalt(page);
+  await page.goto('/checkout');
+  await expect(page.getByRole('heading', { name: 'Checkout', level: 1 })).toBeVisible({ timeout: 30_000 });
+  await page.getByLabel('Full name').fill('Wanjiru Documents');
+  await page.getByLabel('Mobile phone').fill('0711 000 666');
+  await page.getByLabel('Street, building or office').fill('1 Moi Avenue');
+  await page.getByLabel('City or town').fill('Nairobi');
+  await page.getByLabel('County or region').fill('Nairobi');
+  await page.getByLabel(/Estate or area/).fill('Westlands');
+  const section = page.getByRole('group', { name: 'Where to deliver and what it costs' });
+  await expect(section.getByRole('status').filter({ hasText: 'Delivery from' })).toContainText('348', { timeout: 30_000 });
+  const option = page.getByRole('radio', { name: /Pay on delivery/ });
+  await expect(option).toBeVisible({ timeout: 30_000 });
+  await option.check();
+  await page.getByRole('button', { name: /^Place my order/ }).click();
+  const done = page.getByRole('region', { name: 'Order confirmation' });
+  await expect(done).toBeVisible({ timeout: 90_000 });
+  const orderNumber = /Order\s+([A-Z]{2,}-[A-Z0-9-]*\d[A-Z0-9-]*)/i.exec(await done.innerText())?.[1];
+  expect(orderNumber, 'the page names the order').toBeTruthy();
+  return orderNumber ?? '';
+}
+
 export async function openOrder(page: Page, orderNumber: string): Promise<void> {
   await open(page, '/admin/orders', /Customer Orders/);
   await page.getByLabel('Search orders').fill(orderNumber);

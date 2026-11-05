@@ -244,7 +244,7 @@ export interface InventoryLedgerEntry {
 }
 
 export type PaymentProvider =
-  'mpesa_daraja' | 'pesapal_v3' | 'jenga_hq' | 'kcb_buni' | 'card_direct' | 'on_account';
+  'mpesa_daraja' | 'pesapal_v3' | 'jenga_hq' | 'kcb_buni' | 'card_direct' | 'on_account' | 'pay_on_delivery';
 
 export interface PaymentGatewayConfig {
   id: string;

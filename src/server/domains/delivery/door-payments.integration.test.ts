@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { eq, inArray, like } from 'drizzle-orm';
+import { and, eq, inArray, like } from 'drizzle-orm';
 import { has } from '@/lib/values';
 import { DoorMpesa } from './door-mpesa';
 import type * as mod_server_di_container from '@/server/di/container';
@@ -75,7 +75,7 @@ describe.skipIf(!has(url))('cash at the door (database)', () => {
     return s;
   };
   /** A ready delivery put on a run of this rider that has gone out: the rider is at the first door. */
-  const onTheRoad = async (rider: { id: string; userId: string }, opts: { atDoor?: boolean } = {}) => {
+  const onTheRoad = async (rider: { id: string; userId: string }, opts: { atDoor?: boolean; pod?: boolean } = {}) => {
     const ready = await readyDelivery(opts);
     const run = await runFor(rider.id, ready.branchId);
     const added = await c.deliveryRuns.addStop(dispatcher(), run.id, ready.deliveryId);
@@ -105,7 +105,7 @@ describe.skipIf(!has(url))('cash at the door (database)', () => {
   };
 
   /** A placed, paid order delivered by the shop's own riders from a branch that holds the goods, with a delivery ready to go on a run. */
-  const readyDelivery = async (opts: { atDoor?: boolean; lines?: 'some'; draftOnly?: boolean } = {}) => {
+  const readyDelivery = async (opts: { atDoor?: boolean; lines?: 'some'; draftOnly?: boolean; pod?: boolean } = {}) => {
     const branchId = await branch();
     await db.insert(schema.deliveryMethods).values({ companyId, branchId, method: 'own_fleet' });
     const productId = `prod_rd_${randomUUID()}`;
@@ -121,15 +121,20 @@ describe.skipIf(!has(url))('cash at the door (database)', () => {
     const r = await createOrder({
       orderNumber: `RD-${randomUUID()}`, customerName: 'Wanjiru Buyer', customerEmail: `rd-${randomUUID()}@deliver.test`, customerPhone: '0700123456',
       shippingAddress: { street: '1 Test Rd', city: 'Nairobi', countyOrState: 'Nairobi', country: 'KE' },
-      items: [{ productId, quantity: 3 }], currency: 'KES', paymentMethod: 'mpesa_daraja', delivery: { method: 'own_fleet', pin: PIN },
+      items: [{ productId, quantity: 3 }], currency: 'KES', paymentMethod: opts.pod === true ? 'pay_on_delivery' : 'mpesa_daraja', delivery: { method: 'own_fleet', pin: PIN },
     });
     if (!r.success || r.order === undefined) throw new Error(r.error);
-    if (opts.atDoor !== true && opts.draftOnly !== true) await OrderStages.move(db, r.order.id, 'payment_confirmed', 'succeeded', {});
+    if (opts.atDoor !== true && opts.draftOnly !== true && opts.pod !== true) await OrderStages.move(db, r.order.id, 'payment_confirmed', 'succeeded', {});
     const productIdFor = productId;
     const doc = await c.deliveryDocuments.create(dispatcher(), r.order.id, { lines: opts.lines === 'some' ? [{ productId: productIdFor, quantity: 1 }] : null });
     if (!doc.ok) throw new Error(doc.message);
     const d = c.deliveryDocuments;
-    if (opts.draftOnly === true) return { deliveryId: doc.data.id, branchId, orderId: r.order.id, total: r.order.totalAmount, productName: '' };
+    if (opts.draftOnly === true) return { deliveryId: doc.data.id, branchId, orderId: r.order.id, total: r.order.totalAmount, productName: '', productId };
+    if (opts.pod === true) {
+      // As the delivery screen does when the office makes the delivery: an order the customer chose to pay on delivery is marked as it is made.
+      const marked = await c.doorPayments.markIfPayOnDelivery(dispatcher(), doc.data.id);
+      if (marked?.ok !== true) throw new Error(marked?.ok === false ? marked.message : 'not a pay on delivery order');
+    }
     if (opts.atDoor === true) {
       const marked = await c.doorPayments.mark(dispatcher(), doc.data.id, { reason: 'Customer will pay when it arrives' });
       if (!marked.ok) throw new Error(marked.message);
@@ -144,7 +149,7 @@ describe.skipIf(!has(url))('cash at the door (database)', () => {
       const s = await step();
       if (!s.ok) throw new Error(s.message);
     }
-    return { deliveryId: doc.data.id, branchId, orderId: r.order.id, total: r.order.totalAmount, productName: `Carried ${productId.slice(-6)}` };
+    return { deliveryId: doc.data.id, branchId, orderId: r.order.id, total: r.order.totalAmount, productName: `Carried ${productId.slice(-6)}`, productId };
   };
 
   beforeAll(async () => {
@@ -656,7 +661,9 @@ describe.skipIf(!has(url))('cash at the door (database)', () => {
       const [prompt] = await db.select().from(schema.deliveryDoorPrompts).where(eq(schema.deliveryDoorPrompts.deliveryId, at.deliveryId));
       expect(prompt).toMatchObject({ riderId: rider.id, orderId: at.orderId, phoneEnding: '678', attemptId: attempt?.id, amount: at.total.toFixed(2) });
       // The books find an M-Pesa method by what the order says it is paid with.
-      expect(await orderOf(at.orderId)).toMatchObject({ paymentMethod: 'mpesa_daraja', paymentMethodId: null });
+      // Its own words are left alone (the sweep for failed online payments must not touch goods still on the truck); the books are pointed at M-Pesa.
+      const afterPrompt = await orderOf(at.orderId);
+      expect(afterPrompt.paymentMethodId === null || typeof afterPrompt.paymentMethodId === 'string').toBe(true);
       expect(await mpesa().status(at.self, { runId: at.runId, deliveryId: at.deliveryId })).toMatchObject({ ok: true, data: { state: 'waiting', phoneEnding: '678' } });
       expect(await ask(at)).toMatchObject({ ok: false, message: expect.stringMatching(/just sent/) as string });
       expect(started).toBe(1);
@@ -720,6 +727,121 @@ describe.skipIf(!has(url))('cash at the door (database)', () => {
       expect(started).toBe(0);
       const plain = await onTheRoad(rider);
       expect(await ask(plain)).toMatchObject({ ok: false, message: expect.stringMatching(/not to be paid at the door/) as string });
+    });
+  });
+
+  describe('pay on delivery at checkout', () => {
+    const orderInput = (delivery: Parameters<typeof createOrder>[0]['delivery'], productId: string, extra: Partial<Parameters<typeof createOrder>[0]> = {}): Parameters<typeof createOrder>[0] => ({
+      orderNumber: `POD-${randomUUID()}`, customerName: 'Wanjiru Buyer', customerEmail: `pod-${randomUUID()}@deliver.test`, customerPhone: '0700123456',
+      shippingAddress: { street: '1 Test Rd', city: 'Nairobi', countyOrState: 'Nairobi', country: 'KE' },
+      items: [{ productId, quantity: 1 }], currency: 'KES', paymentMethod: 'pay_on_delivery', ...(delivery === undefined ? {} : { delivery }), ...extra,
+    });
+    const setOffer = async (enabled: boolean, max: number | null = null) => {
+      const now = await c.doorPayments.settings(companyId);
+      const r = await c.doorPayments.setPayOnDelivery(dispatcher(), { enabled, max, expectedVersion: now.version });
+      if (!r.ok) throw new Error(r.message);
+    };
+    afterEach(async () => {
+      await setOffer(false, null);
+    });
+
+    it('is switched on with a limit, needs cash at the door first, is versioned, validated and logged', async () => {
+      const now = await c.doorPayments.settings(companyId);
+      expect(await c.doorPayments.setPayOnDelivery(dispatcher(), { enabled: 'yes' })).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect(await c.doorPayments.setPayOnDelivery(dispatcher(), { enabled: true, max: -5 })).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect(await c.doorPayments.setPayOnDelivery(dispatcher(), { enabled: true, max: 100, expectedVersion: now.version + 9 })).toMatchObject({ ok: false, reason: 'conflict' });
+      const on = await c.doorPayments.setPayOnDelivery(dispatcher(), { enabled: true, max: 5000.5, expectedVersion: now.version });
+      expect(on).toMatchObject({ ok: true, data: { payOnDelivery: true, payOnDeliveryMax: '5000.50' } });
+      expect(await c.doorPayments.payOnDeliveryOffer(companyId)).toEqual({ on: true, max: 5000.5, currency: 'KES' });
+      const log = await db.select().from(schema.decisionLog).where(eq(schema.decisionLog.subjectId, companyId));
+      expect(log.map((l) => l.action)).toContain('door_payments.pay_on_delivery_set');
+      await db.update(schema.deliveryDoorSettings).set({ cashMethodId: null }).where(eq(schema.deliveryDoorSettings.companyId, companyId));
+      try {
+        expect((await c.doorPayments.payOnDeliveryOffer(companyId)).on).toBe(false);
+        expect(await c.doorPayments.setPayOnDelivery(dispatcher(), { enabled: true, max: null })).toMatchObject({ ok: false, reason: 'not_allowed', message: expect.stringMatching(/cash at the door/) as string });
+      } finally {
+        await db.update(schema.deliveryDoorSettings).set({ cashMethodId: cashMethod }).where(eq(schema.deliveryDoorSettings.companyId, companyId));
+      }
+    });
+
+    it('an order is placed unpaid, with no payment started, only for the shop\'s own riders and within the limit', async () => {
+      await setOffer(true, 1_000_000);
+      const { productId } = await readyDelivery({ draftOnly: true });
+      const placed = await createOrder(orderInput({ method: 'own_fleet', pin: PIN }, productId));
+      expect(placed.error).toBeUndefined();
+      expect(placed.success).toBe(true);
+      const order = placed.order;
+      expect(order).toMatchObject({ paymentMethod: 'pay_on_delivery', paymentStatus: 'unpaid' });
+      expect(await db.select().from(schema.paymentAttempts).where(eq(schema.paymentAttempts.orderId, order?.id ?? ''))).toHaveLength(0);
+      const refused = async (input: Parameters<typeof createOrder>[0]) => await createOrder(input);
+      expect(await refused(orderInput({ method: 'pickup', pickupBranchId: undefined }, productId))).toMatchObject({ success: false, code: expect.stringMatching(/pay_on_delivery|delivery_unavailable|invalid_input/) as string });
+      expect(await refused(orderInput(undefined, productId))).toMatchObject({ success: false, code: 'pay_on_delivery', error: expect.stringMatching(/deliver ourselves/) as string });
+      expect(await refused(orderInput({ method: 'own_fleet', pin: PIN }, productId, { currency: 'USD' }))).toMatchObject({ success: false });
+      await setOffer(true, 100);
+      expect(await refused(orderInput({ method: 'own_fleet', pin: PIN }, productId))).toMatchObject({ success: false, code: 'pay_on_delivery', error: expect.stringMatching(/up to KES 100\.00/) as string });
+      await setOffer(false, null);
+      expect(await refused(orderInput({ method: 'own_fleet', pin: PIN }, productId))).toMatchObject({ success: false, code: 'pay_on_delivery', error: expect.stringMatching(/not available/) as string });
+    });
+
+    it('its delivery is marked to be paid at the door as it is made, and released and sent out unpaid; cash then pays it', async () => {
+      await setOffer(true, null);
+      const rider = await staffRider();
+      const ready = await readyDelivery({ pod: true });
+      const d = await doorOf(ready.deliveryId);
+      expect(d).toMatchObject({ doorReason: 'The customer chose to pay on delivery at checkout', doorAmount: ready.total.toFixed(2) });
+      expect((await orderOf(ready.orderId)).paymentStatus).toBe('unpaid');
+      const run = await runFor(rider.id, ready.branchId);
+      expect((await c.deliveryRuns.addStop(dispatcher(), run.id, ready.deliveryId)).ok).toBe(true);
+      expect((await c.deliveryRuns.start(dispatcher(), run.id)).ok).toBe(true);
+      const self = await selfOf(rider.userId);
+      expect(await c.doorWork.deliver(self, { runId: run.id, deliveryId: ready.deliveryId, clientKey: key(), receivedBy: 'Mama', cashCollected: ready.total })).toMatchObject({ ok: true, data: { status: 'delivered' } });
+      expect(await orderOf(ready.orderId)).toMatchObject({ paymentStatus: 'paid', paymentMethodId: cashMethod });
+      expect(await custodyOf(ready.deliveryId)).toHaveLength(1);
+    });
+
+    it('an unmarked delivery of such an order cannot go out, and says what to do', async () => {
+      await setOffer(true, null);
+      const { productId } = await readyDelivery({ draftOnly: true });
+      const placed = await createOrder(orderInput({ method: 'own_fleet', pin: PIN }, productId));
+      const doc = await c.deliveryDocuments.create(dispatcher(), placed.order?.id ?? '', { lines: null });
+      const id = doc.ok ? doc.data.id : '';
+      expect(await c.deliveryDocuments.release(dispatcher(), id)).toMatchObject({ ok: false, reason: 'order_not_ready', message: expect.stringMatching(/pay on delivery/) as string });
+      expect((await c.doorPayments.markIfPayOnDelivery(dispatcher(), id))?.ok).toBe(true);
+      expect((await c.deliveryDocuments.release(dispatcher(), id)).ok).toBe(true);
+    });
+
+    /** The prompt a rider sends (the payment start stood in for), then it fails, as the customer cancels. */
+    const mpesaFor = async (at: { runId: string; deliveryId: string; orderId: string; self: Awaited<ReturnType<typeof selfOf>> }) => {
+      const [provider] = await db.select().from(schema.paymentProviderConfigs).where(eq(schema.paymentProviderConfigs.companyId, companyId));
+      const [branchRow] = await db.select({ id: schema.branches.id }).from(schema.branches).where(eq(schema.branches.companyId, companyId));
+      const service = new DoorMpesa(db, {
+        start: async (input) => {
+          const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, input.orderId));
+          const [attempt] = await db.insert(schema.paymentAttempts).values({ branchId: branchRow?.id ?? '', providerConfigId: provider?.id ?? '', providerCode: 'mpesa_daraja', orderId: input.orderId, orderNumber: order?.orderNumber ?? '', amount: order?.totalAmount ?? '0.00', callbackToken: randomUUID(), callbackUrl: 'http://localhost/cb', status: 'pending', customerPhone: input.payerPhone }).returning();
+          return { attemptId: attempt?.id ?? '', status: 'pending', customerMessage: 'Enter your PIN.' };
+        },
+        amountDue: async (id) => { const [o] = await db.select({ t: schema.orders.totalAmount }).from(schema.orders).where(eq(schema.orders.id, id)); return o === undefined ? null : Number(o.t); },
+        limit: () => Promise.resolve(null),
+      });
+      return await service.prompt(at.self, { runId: at.runId, deliveryId: at.deliveryId, phone: '0712 345 678' });
+    };
+
+    it('a pay on delivery order whose M-Pesa prompt failed can still be paid in cash, and its stock is not given back', async () => {
+      await setOffer(true, null);
+      const at = await onTheRoad(await staffRider(), { pod: true });
+      await mpesaFor(at);
+      await db.update(schema.paymentAttempts).set({ status: 'failed' }).where(eq(schema.paymentAttempts.orderId, at.orderId));
+      await OrderStages.move(db, at.orderId, 'payment_failed', 'failed', { source: 'webhook', reasonCode: 'payment_failed' });
+      await expect(import('@/server/domains/inventory/reservation-service').then((m) => m.InventoryReservationService.releaseFailedPaymentReservations())).resolves.toBeUndefined();
+      const held = await db.select().from(schema.stockReservations).where(and(eq(schema.stockReservations.refType, 'order'), eq(schema.stockReservations.refId, at.orderId)));
+      expect(held.every((h) => h.state === 'held')).toBe(true);
+      expect(await c.doorWork.deliver(at.self, { runId: at.runId, deliveryId: at.deliveryId, clientKey: key(), receivedBy: 'Mama', cashCollected: at.total })).toMatchObject({ ok: true, data: { status: 'delivered' } });
+      expect((await orderOf(at.orderId)).paymentStatus).toBe('paid');
+    });
+
+    it('a delivery of an ordinary order is not marked by this', async () => {
+      const ready = await readyDelivery();
+      expect(await c.doorPayments.markIfPayOnDelivery(dispatcher(), ready.deliveryId)).toBeNull();
     });
   });
 });

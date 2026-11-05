@@ -5,7 +5,7 @@ import { toKenyanMsisdn } from '@/lib/phone';
 import { readGeoPoint, type GeoPoint } from '@/lib/geo';
 import type { AddressWords } from '@/lib/delivery-zones';
 
-export const PAYMENT_PROVIDERS = ['mpesa_daraja', 'pesapal_v3', 'jenga_hq', 'kcb_buni', 'card_direct', 'on_account'] as const satisfies readonly PaymentProvider[];
+export const PAYMENT_PROVIDERS = ['mpesa_daraja', 'pesapal_v3', 'jenga_hq', 'kcb_buni', 'card_direct', 'on_account', 'pay_on_delivery'] as const satisfies readonly PaymentProvider[];
 
 /** How the order is to be delivered: where to (a pin, a written area, or both), who receives it, and the charge the shopper was shown. */
 export interface DeliveryInput {

@@ -10,6 +10,8 @@ import { cartTotals } from '@/lib/cartMoney';
 import { readOptionalEmail } from '@/lib/guest-contact';
 import { has, nth, orElse } from '@/lib/values';
 import { paymentUsesPhone, resolvePaymentPhone } from '@/lib/payment-phone';
+import { PAY_ON_DELIVERY, PAY_ON_DELIVERY_HELP, PAY_ON_DELIVERY_WORDS, offerPayOnDelivery, type PayOnDeliveryOffer } from '@/lib/pay-on-delivery';
+import { payOnDeliveryOfferAction } from '@/server/domains/delivery/shop-actions';
 import { PayFromField } from '@/components/store/checkout/PayFromField';
 import { fetchCustomerAccountAction, listEnabledCheckoutProvidersAction, lookupCheckoutCustomerAction, addCustomerAddressAction } from '@/server/actions';
 import { useStore } from '@/components/store/StoreContext';
@@ -103,6 +105,7 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
   const [recipient, setRecipient] = useState<Recipient>({ on: false, name: '', phone: '' });
   const [notes, setNotes] = useState('');
   const [chosenMethod, setPaymentMethod] = useState<PaymentProvider | ''>('');
+  const [podOffer, setPodOffer] = useState<PayOnDeliveryOffer | null>(null);
   const [providers, setProviders] = useState<{ code: PaymentProviderCode; label: string; description: string }[] | null>(null);
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
   const [useNewAddress, setUseNewAddress] = useState(false);
@@ -154,6 +157,7 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
         setCustomer(null);
         setUseNewAddress(true);
       });
+    void payOnDeliveryOfferAction().then((r) => setPodOffer(r.ok ? r.data : null)).catch(() => setPodOffer(null));
     listEnabledCheckoutProvidersAction()
       .then((list) => {
         setProviders(list);
@@ -186,8 +190,13 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
   const creditAvailable = accountCustomer?.accountType === 'credit' ? accountCustomer.creditLimit - accountCustomer.balance : 0;
   const canPayOnAccount = accountCustomer?.found === true && accountCustomer.accountType === 'credit' && !accountCustomer.blocked && creditAvailable >= payable;
   // On account is open only to a credit customer with room; otherwise the first enabled provider stands.
-  const paymentMethod: PaymentProvider | '' = chosenMethod === 'on_account' && !canPayOnAccount ? (enabled[0]?.code ?? '') : chosenMethod;
-  const payLabel = paymentMethod === 'on_account' ? 'On account' : enabled.find((provider) => provider.code === paymentMethod)?.label;
+  // Pay on delivery is open only for a delivery by the shop's own rider, within the company's limit: the server checks it again.
+  const canPayOnDelivery = offerPayOnDelivery(podOffer, deliveryOn ? delivery.method : null, payable);
+  let paymentMethod: PaymentProvider | '' = chosenMethod;
+  if ((chosenMethod === 'on_account' && !canPayOnAccount) || (chosenMethod === PAY_ON_DELIVERY && !canPayOnDelivery)) paymentMethod = enabled[0]?.code ?? '';
+  const payingOnDelivery = paymentMethod === PAY_ON_DELIVERY;
+  const labelOf: Record<string, string | undefined> = { on_account: 'On account', [PAY_ON_DELIVERY]: PAY_ON_DELIVERY_WORDS };
+  const payLabel = labelOf[paymentMethod] ?? enabled.find((provider) => provider.code === paymentMethod)?.label;
   const savedAddresses = customer?.addresses ?? [];
   const hasSavedAddresses = savedAddresses.length > 0;
   const showAddressFields = !isSignedIn || useNewAddress || !hasSavedAddresses;
@@ -198,7 +207,7 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
     paymentBody = (
             <p role="status" className="text-sm text-fg-muted">Loading the ways to pay…</p>
     );
-  } else if (enabled.length === 0 && !canPayOnAccount) {
+  } else if (enabled.length === 0 && !canPayOnAccount && !canPayOnDelivery) {
     paymentBody = (
             <p className="rounded-lg border border-line bg-surface-raised px-3 py-3 text-sm text-fg-muted">Online payment is unavailable right now. Please try again later or contact us for help.</p>
     );
@@ -215,6 +224,15 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
                       {accountCustomer.name} · credit available {money(creditAvailable)}
                       {accountCustomer.transmitInvoicesToKra ? ' · invoice will be marked for KRA' : ' · invoice will not be sent to KRA'}
                     </span>
+                  </span>
+                </label>
+              ) : null}
+              {canPayOnDelivery ? (
+                <label className={`flex min-h-11 cursor-pointer items-start gap-3 rounded-xl border p-3.5 transition-all ${payingOnDelivery ? 'border-indigo-500/60 bg-indigo-500/10' : 'border-line bg-surface hover:border-line-strong'}`}>
+                  <input type="radio" name="payment_provider" checked={payingOnDelivery} onChange={() => setPaymentMethod(PAY_ON_DELIVERY)} className="mt-1 h-4 w-4 accent-indigo-600" />
+                  <span>
+                    <span className="block text-sm font-semibold text-fg-strong">{PAY_ON_DELIVERY_WORDS}</span>
+                    <span className="mt-0.5 block text-xs text-fg-muted">{PAY_ON_DELIVERY_HELP}</span>
                   </span>
                 </label>
               ) : null}
@@ -471,8 +489,8 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
             </>
           ) : (
             <>
-              Pay {money(payable)}
-              {has(payLabel) ? ` with ${payLabel}` : ''}
+              {payingOnDelivery ? 'Place my order' : `Pay ${money(payable)}`}
+              {has(payLabel) && !payingOnDelivery ? ` with ${payLabel}` : ''}
               <ArrowRight className="h-4 w-4" aria-hidden="true" />
             </>
           )}

@@ -1,0 +1,2 @@
+ALTER TABLE "delivery_door_settings" ADD COLUMN "pay_on_delivery" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "delivery_door_settings" ADD COLUMN "pay_on_delivery_max" numeric(14, 2);

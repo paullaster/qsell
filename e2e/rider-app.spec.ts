@@ -2,7 +2,7 @@ import { expect, test, type Browser, type Page } from '@playwright/test';
 import { clickUntilVisible, followLink, noHorizontalScroll, noInnerHorizontalScroll, noNativeSelect, open } from './support/page';
 import { pick } from './support/quotes';
 import { deliveryTool } from './support/delivery-fixtures';
-import { placeDeliveredOrder } from './support/delivery-shop';
+import { placeDeliveredOrder, placePayOnDeliveryOrder } from './support/delivery-shop';
 import { riderTool } from './support/rider-fixtures';
 
 // The choice of rider kinds is company-wide, so the steps run one after another and put it back at the end.
@@ -647,6 +647,65 @@ test.describe('the rider app', () => {
       await phone.context().close();
 
       expect(riderTool('door', delivery)).toMatchObject({ status: 'delivered', paymentStatus: 'paid', paymentMethod: 'mpesa_daraja', custody: '0' });
+    } finally {
+      deliveryTool('close', tag);
+    }
+  });
+
+  test('pay on delivery at checkout: the shopper places the order unpaid, its delivery is marked for the door, and the rider takes the cash', async ({ page, browser }, testInfo) => {
+    test.slow();
+    const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}`;
+    const staff = riderTool('staff', tag);
+    const name = staff.name ?? '';
+    riderTool('proof', 'none');
+    const setup = riderTool('door-setup', 'x');
+    deliveryTool('open', tag);
+    try {
+      // The office chooses how cash is received and lets shoppers pay on delivery, with no limit.
+      await open(page, '/admin/delivery/door-payments', 'Door payments');
+      await noNativeSelect(page);
+      const how = page.getByRole('region', { name: 'How cash is received' });
+      await pick(page, how.getByRole('combobox', { name: 'Payment method' }), setup.name ?? '', new RegExp(setup.name ?? ''));
+      await how.getByRole('button', { name: 'Save' }).click();
+      await expect(page.getByText(/Cash taken at doors is received through this method/)).toBeVisible({ timeout: 30_000 });
+      const pod = page.getByRole('region', { name: 'Pay on delivery' });
+      await pod.getByLabel('Let shoppers pay on delivery').check();
+      await pod.getByRole('button', { name: 'Save' }).click();
+      await expect(page.getByText('Saved. Shoppers can now choose to pay on delivery.')).toBeVisible({ timeout: 30_000 });
+      await noHorizontalScroll(page);
+
+      // The shopper chooses it, and the order is placed with nothing to pay now.
+      const orderNumber = await placePayOnDeliveryOrder(page);
+      const done = page.getByRole('region', { name: 'Order confirmation' });
+      await expect(done).toContainText('Your order is placed');
+      await expect(done).toContainText(/You pay when your order arrives/);
+      await expect(done).toContainText('Total to pay on delivery');
+      await noHorizontalScroll(page);
+
+      // The office makes the delivery: it is marked to be paid at the door because of what the shopper chose.
+      await makeStaffRider(page, name);
+      const made = deliveryTool('ready', orderNumber, 'pod');
+      const delivery = made.number ?? '';
+      await open(page, `/admin/delivery/deliveries/${made.id ?? ''}`, new RegExp(`^Delivery ${delivery}`));
+      const doorPanel = page.getByRole('region', { name: 'Paid at the door' });
+      await expect(doorPanel).toContainText(/The rider will collect KSh [\d.]+ in cash/);
+      await expect(doorPanel).toContainText('The customer chose to pay on delivery at checkout');
+      const amount = /KSh ([\d.]+) in cash/.exec(await doorPanel.innerText())?.[1] ?? '';
+
+      const run = await planRunForReady(page, tag, name, delivery);
+      await startRun(page, run);
+      const phone = await otherBrowserPage(browser, page);
+      await signInAndChoosePassword(phone, staff.email ?? '', staff.password ?? '', 'E2eStaffPod-Pass1', /\/rider$/);
+      await openRun(phone, run);
+      const stops = phone.getByRole('list', { name: 'Stops' });
+      await clickUntilVisible(stops.getByRole('button', { name: 'Delivered' }), phone.getByRole('form', { name: 'Mark delivered' }));
+      const form = phone.getByRole('form', { name: 'Mark delivered' });
+      await expect(form).toContainText(`KSh ${amount} is to be paid at this door`);
+      await form.getByLabel('Cash collected (KSh)').fill(amount);
+      await form.getByRole('button', { name: 'Confirm delivered' }).click();
+      await expect(stops).toContainText('Delivered', { timeout: 30_000 });
+      await phone.context().close();
+      expect(riderTool('door', delivery)).toMatchObject({ status: 'delivered', paymentStatus: 'paid', custody: '1', custodyAmount: amount, queued: '1' });
     } finally {
       deliveryTool('close', tag);
     }
