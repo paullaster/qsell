@@ -46,6 +46,11 @@ export const DOCUMENT_KINDS = {
     fiscal: false,
     suggested: { code: 'DLV', prefix: 'DLV-{YY}-', digits: 10, reset: 'yearly', blockSize: 200 },
   },
+  cash_hand_in: {
+    label: 'Rider cash hand-in',
+    fiscal: false,
+    suggested: { code: 'HND', prefix: 'HND-{YY}-', digits: 8, reset: 'yearly', blockSize: 50 },
+  },
   delivery_run: {
     label: 'Delivery run',
     fiscal: false,

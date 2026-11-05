@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collectedProblem, custodyBalance, custodySign, doorAmount, fromCents, markProblem, toCents, type MarkFacts } from './door-payment';
+import { approverProblem, collectedProblem, custodyBalance, custodySign, custodyWrites, doorAmount, fromCents, handInCheck, handInLines, handInProblem, markProblem, toCents, type HandInFacts, type MarkFacts } from './door-payment';
 
 const ok: MarkFacts = { method: 'own_fleet', status: 'ready', orderPaymentStatus: 'unpaid', orderPaymentMethod: 'mpesa_daraja', orderStatus: 'processing', orderCurrency: 'KES', baseCurrency: 'KES', tendered: 0, unplanned: 0, carriedElsewhere: 0, methodChosen: true, alreadyMarked: false };
 
@@ -47,5 +47,61 @@ describe('what a rider holds', () => {
     expect(custodyBalance([{ kind: 'collected', cents: 123450 }, { kind: 'collected', cents: 50000 }, { kind: 'handed_in', cents: -100000 }, { kind: 'adjusted', cents: -50 }])).toBe(73400);
     expect(custodySign('collected')).toBe(1);
     expect(custodySign('handed_in')).toBe(-1);
+  });
+});
+
+const facts: HandInFacts = { expectedCents: 100000, counted: 1000, note: null, hasVarianceAccount: true, recorderId: 'cashier', witnessId: 'witness', riderUserId: 'rider', sameAccount: false };
+
+describe('handing the cash in', () => {
+  it('is exact, within the limit, or needs a second person', () => {
+    expect(handInCheck(100000, 100000, 0)).toMatchObject({ diffCents: 0, kind: 'exact' });
+    expect(handInCheck(100000, 99500, 1000)).toMatchObject({ diffCents: -500, kind: 'within_limit' });
+    expect(handInCheck(100000, 100500, 1000)).toMatchObject({ diffCents: 500, kind: 'within_limit' });
+    expect(handInCheck(100000, 98000, 1000)).toMatchObject({ diffCents: -2000, kind: 'needs_approval' });
+    expect(handInCheck(100000, 99999, 0)).toMatchObject({ kind: 'needs_approval' });
+  });
+
+  it('is refused for what cannot be right, one reason at a time', () => {
+    expect(handInProblem({ ...facts, expectedCents: 0 }, 0)).toMatchObject({ error: expect.stringMatching(/holds no cash/) as string });
+    for (const counted of ['10', -1, Number.NaN, null]) expect(handInProblem({ ...facts, counted }, 0)).toMatchObject({ error: expect.stringMatching(/how much cash/) as string });
+    expect(handInProblem({ ...facts, sameAccount: true }, 0)).toMatchObject({ error: expect.stringMatching(/not the account riders/) as string });
+    expect(handInProblem({ ...facts, witnessId: null }, 0)).toMatchObject({ error: expect.stringMatching(/witness/) as string });
+    expect(handInProblem({ ...facts, witnessId: 'cashier' }, 0)).toMatchObject({ error: expect.stringMatching(/person recording/) as string });
+    expect(handInProblem({ ...facts, witnessId: 'rider' }, 0)).toMatchObject({ error: expect.stringMatching(/rider handing in/) as string });
+  });
+
+  it('needs words and an account for a difference, but not for an exact count', () => {
+    expect(handInProblem({ ...facts, counted: 1000 }, 0)).toMatchObject({ countedCents: 100000, check: { kind: 'exact' } });
+    expect(handInProblem({ ...facts, counted: 990 }, 0)).toMatchObject({ error: expect.stringMatching(/short by KSh 10.00/) as string });
+    expect(handInProblem({ ...facts, counted: 1010 }, 0)).toMatchObject({ error: expect.stringMatching(/over by KSh 10.00/) as string });
+    expect(handInProblem({ ...facts, counted: 990, note: 'Dropped a note' }, 0)).toMatchObject({ countedCents: 99000, check: { diffCents: -1000 } });
+    expect(handInProblem({ ...facts, counted: 990, note: 'Dropped a note', hasVarianceAccount: false }, 0)).toMatchObject({ error: expect.stringMatching(/Differences/) as string });
+  });
+
+  it('is approved by someone other than whoever recorded it', () => {
+    expect(approverProblem('boss', 'cashier')).toBeNull();
+    expect(approverProblem('cashier', 'cashier')).toMatch(/someone other/);
+  });
+
+  it('brings what the rider holds to nothing, however it comes out', () => {
+    for (const counted of [100000, 98000, 101500, 0]) {
+      const check = handInCheck(100000, counted, 0);
+      const held = 100000 + custodyWrites(check, 'why').reduce((n, w) => n + w.cents, 0);
+      expect(held).toBe(0);
+    }
+    expect(custodyWrites(handInCheck(100000, 100000, 0), null)).toEqual([{ kind: 'handed_in', cents: -100000, note: null }]);
+    expect(custodyWrites(handInCheck(100000, 98000, 0), 'Lost a note')[1]).toEqual({ kind: 'adjusted', cents: -2000, note: 'Lost a note' });
+  });
+
+  it('books balanced lines: debits equal credits, for exact, short and over', () => {
+    for (const counted of [100000, 98000, 101500, 0]) {
+      const lines = handInLines(handInCheck(100000, counted, 0));
+      const debit = lines.filter((l) => l.side === 'debit').reduce((n, l) => n + l.cents, 0);
+      const credit = lines.filter((l) => l.side === 'credit').reduce((n, l) => n + l.cents, 0);
+      expect(debit).toBe(credit);
+    }
+    expect(handInLines(handInCheck(100000, 98000, 0)).find((l) => l.account === 'variance')).toEqual({ side: 'debit', account: 'variance', cents: 2000 });
+    expect(handInLines(handInCheck(100000, 101500, 0)).find((l) => l.account === 'variance')).toEqual({ side: 'credit', account: 'variance', cents: 1500 });
+    expect(handInLines(handInCheck(100000, 100000, 0)).some((l) => l.account === 'variance')).toBe(false);
   });
 });
