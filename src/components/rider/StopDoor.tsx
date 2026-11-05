@@ -145,6 +145,9 @@ export function StopDoor({ runId, riderId, stop, waiting }: { runId: string; rid
     router.refresh();
   };
 
+  const firstPrompt = prompt === null || prompt.state === 'none';
+  let promptWords = firstPrompt ? 'Send the M-Pesa prompt' : 'Send another prompt';
+  if (prompting) promptWords = 'Sending…';
   const photoLabels: Record<'photo' | 'code_or_photo' | 'other', string> = { photo: 'A photo of the goods at the door', code_or_photo: 'Or a photo of the goods at the door', other: 'A photo (optional)' };
   let photoKey: keyof typeof photoLabels = 'other';
   if (mode === 'deliver' && needsPhoto) photoKey = stop.proof === 'photo' ? 'photo' : 'code_or_photo';
@@ -179,11 +182,12 @@ export function StopDoor({ runId, riderId, stop, waiting }: { runId: string; rid
           <Field id={`${id}-by`} label="Who received it">
             <input id={`${id}-by`} className={fieldClass} value={receivedBy} onChange={(e) => setReceivedBy(e.target.value)} maxLength={120} required autoComplete="off" />
           </Field>
-          {stop.collect === null ? null : paidNow ? (
+          {stop.collect !== null && paidNow ? (
             <p role="status" className="rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm font-semibold text-emerald-900">
               KSh {stop.collect} is paid. Hand over the goods; no cash is to be taken.
             </p>
-          ) : (
+          ) : null}
+          {stop.collect !== null && !paidNow ? (
             <div className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-900">
               <p className="text-sm font-semibold">KSh {stop.collect} is to be paid at this door.</p>
               <fieldset className="flex flex-wrap gap-4">
@@ -236,12 +240,12 @@ export function StopDoor({ runId, riderId, stop, waiting }: { runId: string; rid
                       })();
                     }}
                   >
-                    {prompting ? 'Sending…' : prompt === null || prompt.state === 'none' ? 'Send the M-Pesa prompt' : 'Send another prompt'}
+                    {promptWords}
                   </button>
                 </div>
               )}
             </div>
-          )}
+          ) : null}
           {stop.collect !== null ? null : <label className="flex min-h-11 items-center gap-3 text-sm text-fg">
             <input type="checkbox" className="size-5" checked={part} onChange={(e) => setPart(e.target.checked)} />
             The customer took only part of it

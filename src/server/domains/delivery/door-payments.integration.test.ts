@@ -628,11 +628,11 @@ describe.skipIf(!has(url))('cash at the door (database)', () => {
       const [branchRow] = await db.select({ id: schema.branches.id }).from(schema.branches).where(eq(schema.branches.companyId, companyId));
       const [attempt] = await db
         .insert(schema.paymentAttempts)
-        .values({ branchId: branchRow?.id ?? '', providerConfigId: provider?.id ?? '', providerCode: 'mpesa_daraja', orderId: input.orderId, orderNumber: order?.orderNumber ?? '', amount: String(order?.totalAmount ?? '0'), callbackToken: randomUUID(), callbackUrl: 'http://localhost/cb', status: 'pending', customerPhone: input.payerPhone })
+        .values({ branchId: branchRow?.id ?? '', providerConfigId: provider?.id ?? '', providerCode: 'mpesa_daraja', orderId: input.orderId, orderNumber: order?.orderNumber ?? '', amount: order?.totalAmount ?? '0.00', callbackToken: randomUUID(), callbackUrl: 'http://localhost/cb', status: 'pending', customerPhone: input.payerPhone })
         .returning();
       return { attemptId: attempt?.id ?? '', status: 'pending', customerMessage: 'Enter your PIN.' };
     };
-    const mpesa = () => new DoorMpesa(db, { start: fakeStart as never, amountDue: async (id) => { const [o] = await db.select({ t: schema.orders.totalAmount, tendered: schema.orders.tenderedAmount }).from(schema.orders).where(eq(schema.orders.id, id)); return o === undefined ? null : Number(o.t) - Number(o.tendered); }, limit: () => Promise.resolve(limited) });
+    const mpesa = () => new DoorMpesa(db, { start: fakeStart, amountDue: async (id) => { const [o] = await db.select({ t: schema.orders.totalAmount, tendered: schema.orders.tenderedAmount }).from(schema.orders).where(eq(schema.orders.id, id)); return o === undefined ? null : Number(o.t) - Number(o.tendered); }, limit: () => Promise.resolve(limited) });
     const ask = (at: { runId: string; deliveryId: string; self: Awaited<ReturnType<typeof selfOf>> }, phone: unknown = '0712 345 678') => mpesa().prompt(at.self, { runId: at.runId, deliveryId: at.deliveryId, phone });
     const attemptRows = async (orderId: string) => await db.select().from(schema.paymentAttempts).where(eq(schema.paymentAttempts.orderId, orderId));
     const confirm = async (orderId: string) => {

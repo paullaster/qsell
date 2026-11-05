@@ -232,7 +232,6 @@ test.describe('the rider app', () => {
 
       const phone = await otherBrowserPage(browser, page);
       await signInAndChoosePassword(phone, staff.email ?? '', staff.password ?? '', 'E2eStaffDoor-Pass4', /\/rider$/);
-      const runs = phone.getByRole('region', { name: 'To do' });
       await openRun(phone, run);
       const stops = phone.getByRole('list', { name: 'Stops' });
       await expect(stops).toContainText('Out for delivery');
