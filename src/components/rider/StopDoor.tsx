@@ -30,6 +30,7 @@ export function StopDoor({ runId, riderId, stop, waiting }: { runId: string; rid
   const [reason, setReason] = useState('');
   const [note, setNote] = useState('');
   const [part, setPart] = useState(false);
+  const [cash, setCash] = useState('');
   const [took, setTook] = useState<Record<string, { quantity: string; reason: string; note: string }>>({});
   const id = useId();
 
@@ -60,6 +61,7 @@ export function StopDoor({ runId, riderId, stop, waiting }: { runId: string; rid
     if (mode === 'deliver') {
       payload.receivedBy = receivedBy;
       payload.code = code;
+      if (stop.collect !== null) payload.cashCollected = Number(cash);
       if (part) payload.accepted = stop.items.map((i) => ({ productId: i.productId, quantity: Number(takenOf(i.productId, i.quantity).quantity), reasonCode: takenOf(i.productId, i.quantity).reason, note: takenOf(i.productId, i.quantity).note }));
     } else {
       payload.reasonCode = reason;
@@ -141,11 +143,19 @@ export function StopDoor({ runId, riderId, stop, waiting }: { runId: string; rid
           <Field id={`${id}-by`} label="Who received it">
             <input id={`${id}-by`} className={fieldClass} value={receivedBy} onChange={(e) => setReceivedBy(e.target.value)} maxLength={120} required autoComplete="off" />
           </Field>
-          <label className="flex min-h-11 items-center gap-3 text-sm text-fg">
+          {stop.collect === null ? null : (
+            <div className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-900">
+              <p className="text-sm font-semibold">Collect KSh {stop.collect} in cash before you hand it over.</p>
+              <Field id={`${id}-cash`} label="Cash collected (KSh)" hint="Exactly the amount above. If the customer cannot pay it all, go back and record that it could not be delivered.">
+                <input id={`${id}-cash`} className={fieldClass} inputMode="decimal" value={cash} onChange={(e) => setCash(e.target.value)} required autoComplete="off" />
+              </Field>
+            </div>
+          )}
+          {stop.collect !== null ? null : <label className="flex min-h-11 items-center gap-3 text-sm text-fg">
             <input type="checkbox" className="size-5" checked={part} onChange={(e) => setPart(e.target.checked)} />
             The customer took only part of it
-          </label>
-          {part ? (
+          </label>}
+          {part && stop.collect === null ? (
             <ul className="space-y-3" aria-label="What the customer took">
               {stop.items.map((i) => {
                 const t = takenOf(i.productId, i.quantity);

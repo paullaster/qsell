@@ -25,7 +25,7 @@ export function RiderHome({ runsPromise }: { runsPromise: ReturnType<typeof myRu
 }
 
 function Home({ data }: { data: Extract<Awaited<ReturnType<typeof myRunsAction>>, { ok: true }>['data'] }) {
-  const { self, open, recent } = data;
+  const { self, open, recent, held } = data;
   const keep = open.map((r) => r.id).join(',');
   // The runs still to do are kept on the phone while there is signal, so each can be opened without it later.
   useEffect(() => {
@@ -38,6 +38,11 @@ function Home({ data }: { data: Extract<Awaited<ReturnType<typeof myRunsAction>>
         <h1 className="text-xl font-bold text-fg-strong">Hello, {self.name}</h1>
         <p className="text-sm text-fg-muted">Your runs are below.</p>
       </div>
+      {Number(held) > 0 ? (
+        <p role="status" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          You are holding <strong>KSh {held}</strong> in cash collected at doors. Hand it in to the shop.
+        </p>
+      ) : null}
       <RunList title="To do" runs={open} empty="You have no run to do. When the shop gives you one, it shows here." />
       {recent.length > 0 ? <RunList title="Finished lately" runs={recent} empty="" /> : null}
     </div>

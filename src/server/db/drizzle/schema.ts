@@ -571,6 +571,11 @@ export const deliveries = pgTable(
     codeTries: integer('code_tries').notNull().default(0),
     /** The day it is to be tried again, after a failed attempt: asked for by the customer or the office. Null when nobody asked. */
     scheduledFor: date('scheduled_for'),
+    /** Cash to be collected at the door: the order's total, set when the office marks the delivery to be paid there. Null when it is not. */
+    doorAmount: numeric('door_amount', { precision: 14, scale: 2 }),
+    doorMarkedBy: text('door_marked_by'),
+    doorMarkedAt: timestamp('door_marked_at', { withTimezone: true }),
+    doorReason: text('door_reason'),
     /** Two people changing a delivery at once: the second is told to reload instead of overwriting the first. */
     version: integer('version').notNull().default(1),
     createdBy: text('created_by'),
@@ -592,6 +597,7 @@ export const deliveries = pgTable(
     check('deliveries_method_chk', sql`${t.method} IN ('own_fleet','courier')`),
     check('deliveries_attempts_chk', sql`${t.failedAttempts} >= 0`),
     check('deliveries_version_chk', sql`${t.version} >= 1`),
+    check('deliveries_door_chk', sql`(${t.doorAmount} IS NULL) = (${t.doorMarkedAt} IS NULL) AND (${t.doorAmount} IS NULL OR ${t.doorAmount} > 0)`),
     check('deliveries_code_tries_chk', sql`${t.codeTries} >= 0`),
     check('deliveries_handover_code_chk', sql`${t.handoverCode} IS NULL OR ${t.handoverCode} ~ '^[0-9]{6}$'`),
     // Delivered means delivered at a time; a finished delivery (delivered, returned, cancelled) has a closing time.
@@ -755,6 +761,55 @@ export const deliveryProofs = pgTable(
   ],
 );
 export type DeliveryProofRow = typeof deliveryProofs.$inferSelect;
+
+/** How the company receives cash at the door: the payment method (of kind cash) that cash collected by riders is booked through. */
+export const deliveryDoorSettings = pgTable('delivery_door_settings', {
+  companyId: uuid('company_id')
+    .primaryKey()
+    .references(() => companySettings.id, { onDelete: 'cascade' }),
+  cashMethodId: uuid('cash_method_id').references(() => paymentMethods.id, { onDelete: 'restrict' }),
+  version: integer('version').notNull().default(1),
+  updatedBy: text('updated_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Cash in a rider's hands: what they collected at doors and what they handed in (the hand-in comes in a later slice). Kept for good
+ * (a trigger refuses any change): a mistake is put right by an adjustment with its reason, never by editing. `key` makes a collection
+ * happen once however often it is sent.
+ */
+export const cashCustodyEntries = pgTable(
+  'cash_custody_entries',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    riderId: uuid('rider_id')
+      .notNull()
+      .references(() => deliveryRiders.id, { onDelete: 'restrict' }),
+    kind: text('kind').$type<'collected' | 'handed_in' | 'adjusted'>().notNull(),
+    /** Positive into the rider's custody (collected), negative out of it (handed in); an adjustment carries its own sign. */
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    currency: text('currency').notNull(),
+    deliveryId: uuid('delivery_id').references(() => deliveries.id, { onDelete: 'restrict' }),
+    orderId: text('order_id').references(() => orders.id, { onDelete: 'restrict' }),
+    key: text('key').notNull(),
+    note: text('note'),
+    actorId: text('actor_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('cash_custody_key_uidx').on(t.companyId, t.key),
+    index('cash_custody_rider_idx').on(t.riderId, t.createdAt),
+    index('cash_custody_delivery_idx').on(t.deliveryId),
+    check('cash_custody_kind_chk', sql`${t.kind} IN ('collected','handed_in','adjusted')`),
+    check('cash_custody_sign_chk', sql`(${t.kind} = 'collected' AND ${t.amount} > 0) OR (${t.kind} = 'handed_in' AND ${t.amount} < 0) OR (${t.kind} = 'adjusted' AND ${t.amount} <> 0)`),
+    check('cash_custody_collected_chk', sql`${t.kind} <> 'collected' OR (${t.deliveryId} IS NOT NULL AND ${t.orderId} IS NOT NULL)`),
+    check('cash_custody_adjust_chk', sql`${t.kind} <> 'adjusted' OR ${t.note} IS NOT NULL`),
+  ],
+);
+export type CashCustodyEntryRow = typeof cashCustodyEntries.$inferSelect;
 
 /** Which kinds of rider a company uses: its own staff signing in to the rider app, riders with an account of their own, or both. */
 export const deliveryRiderSettings = pgTable(
