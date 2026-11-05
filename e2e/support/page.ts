@@ -53,3 +53,13 @@ export const noInnerHorizontalScroll = async (page: Page): Promise<void> => {
   );
   expect(wide).toEqual([]);
 };
+
+/**
+ * Follows a link to another page. The development server may still be compiling that page, so the link is tapped once and the
+ * new page awaited; tapping again would find the link gone and wait on it until the test times out.
+ */
+export async function followLink(link: Locator, page: Page, url: RegExp, arrived: Locator): Promise<void> {
+  await link.click();
+  await expect(page).toHaveURL(url, { timeout: 90_000 });
+  await expect(arrived).toBeVisible({ timeout: 60_000 });
+}

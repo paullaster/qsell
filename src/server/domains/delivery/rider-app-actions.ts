@@ -67,6 +67,19 @@ export async function failStopAction(raw: unknown) {
   return await runRider(async (self) => dataOf(await getContainer().doorWork.fail(self, objectOf(raw))));
 }
 
+/**
+ * An M-Pesa prompt for what is due at this door, to the number the customer says. The amount and the order are the shop's; the phone
+ * says only which stop and which number. Whether it is paid is the platform's word, not the app's.
+ */
+export async function promptMpesaAction(raw: unknown) {
+  return await runRider(async (self) => dataOf(await getContainer().doorMpesa.prompt(self, objectOf(raw))));
+}
+
+/** Where the M-Pesa prompt at this door stands: waiting, paid, or did not go through. */
+export async function mpesaStatusAction(raw: unknown) {
+  return await runRider(async (self) => dataOf(await getContainer().doorMpesa.status(self, objectOf(raw))));
+}
+
 /** Every stop is done or failed: close the run. */
 export async function finishRunAction(runId: unknown) {
   return await runRider(async (self) => dataOf(await getContainer().doorWork.finish(self, runId)));

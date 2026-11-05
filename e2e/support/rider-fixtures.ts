@@ -6,6 +6,7 @@
  *   tsx e2e/support/rider-fixtures.ts proof <rule>  sets what a rider must show at the door (none, code, photo, code_or_photo), so a test does not depend on the one before it
  *   tsx e2e/support/rider-fixtures.ts door-setup <any>  makes sure there is a payment method of kind cash to receive cash at the door through, and prints its name
  *   tsx e2e/support/rider-fixtures.ts door <delivery number>  what cash at the door did: the order's payment, the custody entries and whether the sale was queued for the books
+ *   tsx e2e/support/rider-fixtures.ts mpesa-sent <delivery number>  makes it look as if the rider had sent an M-Pesa prompt for the delivery that is still waiting for the customer
  *   tsx e2e/support/rider-fixtures.ts reset <tag>   ends every rider and puts the choice of rider kinds back to the default (staff only), so other tests are not asked about riders
  */
 import { execFileSync } from 'node:child_process';
@@ -97,6 +98,29 @@ async function doorState(number: string): Promise<Record<string, string>> {
   return { status: d.status, door: d.doorAmount ?? '', paymentStatus: o?.paymentStatus ?? '', paymentMethod: o?.paymentMethod ?? '', custody: String(entries.length), custodyAmount: entries[0]?.amount ?? '', queued: String(queued.length), held: held.toFixed(2), handIns: String(handIns.length), handInStatus: handIns[0]?.status ?? '' };
 }
 
+async function mpesaSent(number: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { deliveries, deliveryDoorPrompts, deliveryRunStops, deliveryRuns, orders, paymentAttempts, paymentProviderConfigs, branches } = await import('@/server/db/drizzle/schema');
+  const { and, eq, isNull } = await import('drizzle-orm');
+  const company = await getContainer().companySettings.ensureSeeded();
+  const [d] = await db.select().from(deliveries).where(eq(deliveries.number, number));
+  if (d === undefined) throw new Error(`no delivery ${number}`);
+  const [o] = await db.select().from(orders).where(eq(orders.id, d.orderId));
+  const [run] = await db.select({ riderId: deliveryRuns.riderId }).from(deliveryRunStops).innerJoin(deliveryRuns, eq(deliveryRuns.id, deliveryRunStops.runId)).where(and(eq(deliveryRunStops.deliveryId, d.id), isNull(deliveryRunStops.leftAt)));
+  const [provider] = await db.select({ id: paymentProviderConfigs.id }).from(paymentProviderConfigs).where(eq(paymentProviderConfigs.companyId, company.id));
+  const [branch] = await db.select({ id: branches.id }).from(branches).where(eq(branches.companyId, company.id));
+  if (o === undefined || run?.riderId == null || provider === undefined || branch === undefined) throw new Error('e2e fixture: the delivery is not on a rider\'s run');
+  await db.update(orders).set({ paymentMethod: 'mpesa_daraja', paymentMethodId: null }).where(eq(orders.id, o.id));
+  const [attempt] = await db
+    .insert(paymentAttempts)
+    .values({ branchId: branch.id, providerConfigId: provider.id, providerCode: 'mpesa_daraja', orderId: o.id, orderNumber: o.orderNumber, amount: d.doorAmount ?? '0', callbackToken: crypto.randomUUID(), callbackUrl: 'http://localhost/cb', status: 'pending', customerPhone: '254712345678' })
+    .returning({ id: paymentAttempts.id });
+  if (attempt === undefined) throw new Error('e2e fixture: no attempt');
+  await db.insert(deliveryDoorPrompts).values({ companyId: company.id, deliveryId: d.id, orderId: o.id, riderId: run.riderId, attemptId: attempt.id, phoneEnding: '678', amount: d.doorAmount ?? '0' });
+  return { attemptId: attempt.id };
+}
+
 async function reset(): Promise<Record<string, string>> {
   const { getContainer } = await import('@/server/di/container');
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
@@ -119,8 +143,9 @@ async function main(): Promise<void> {
   if (command === 'proof' && tag !== undefined) result = await setProof(tag);
   if (command === 'door-setup') result = await doorSetup();
   if (command === 'door' && tag !== undefined) result = await doorState(tag);
+  if (command === 'mpesa-sent' && tag !== undefined) result = await mpesaSent(tag);
   if (command === 'reset') result = await reset();
-  if (result === null) throw new Error('usage: rider-fixtures staff <tag> | code <delivery number> | token <order number> | proof <rule> | door-setup | door <delivery number> | reset');
+  if (result === null) throw new Error('usage: rider-fixtures staff <tag> | code <delivery number> | token <order number> | proof <rule> | door-setup | door <delivery number> | mpesa-sent <delivery number> | reset');
   process.stdout.write(`FIXTURE ${JSON.stringify(result)}\n`);
 }
 

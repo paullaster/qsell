@@ -1,6 +1,6 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { deliveries, deliveryAttemptLines, deliveryAttempts, deliveryLines, deliveryProofs, deliveryRiderSettings, deliveryRunStops, deliveryRuns, mediaAssets } from '@/server/db/drizzle/schema';
+import { deliveries, orders, deliveryAttemptLines, deliveryAttempts, deliveryLines, deliveryProofs, deliveryRiderSettings, deliveryRunStops, deliveryRuns, mediaAssets } from '@/server/db/drizzle/schema';
 import { checkAcceptance, type AcceptedLine } from '@/lib/delivery-acceptance';
 import { FAILURE_REASONS, STATUS_WORDS, type DeliveryStatus } from '@/lib/delivery-document';
 import { MAX_CODE_TRIES, codesMatch, isClientKey, isProofRule, normaliseCode, placeFrom, proofProblem, proofsKept, ruleFor, usableClientTime, type ProofRule } from '@/lib/delivery-proof';
@@ -91,9 +91,18 @@ export class DoorWork {
     const result = await this.atTheDoor(self, input, now, async (tx, ctx) => {
       // A delivery paid at the door is taken whole, and the cash collected is exactly what is due: both are checked before anything else is counted.
       const atDoor = ctx.row.doorAmount !== null;
+      // Cash is taken only while the order is unpaid. Paid already (the customer paid by M-Pesa at the door, or some other way meanwhile) nothing is collected.
+      let takesCash = false;
       if (atDoor) {
-        const said = collectedProblem(ctx.row.doorAmount ?? '0', input.cashCollected);
-        if (!said.ok) return fail('bad_input', said.error);
+        const [owed] = await tx.select({ paymentStatus: orders.paymentStatus }).from(orders).where(eq(orders.id, ctx.row.orderId));
+        const paidAlready = owed?.paymentStatus === 'paid';
+        const saidCash = input.cashCollected !== undefined && input.cashCollected !== null && input.cashCollected !== '';
+        if (paidAlready && saidCash) return fail('conflict', 'This order has already been paid, so no cash is to be taken. Tell the office.');
+        takesCash = !paidAlready;
+        if (takesCash) {
+          const said = collectedProblem(ctx.row.doorAmount ?? '0', input.cashCollected);
+          if (!said.ok) return fail('bad_input', said.error);
+        }
         if (Array.isArray(input.accepted) && input.accepted.length > 0) return fail('bad_input', 'A delivery paid at the door is taken whole. If the customer will not take all of it, record that it could not be delivered.');
       }
       // What the customer took: all of it unless the rider says otherwise, and a shortfall needs its reason.
@@ -124,7 +133,7 @@ export class DoorWork {
       if (problem !== null) return fail('bad_input', problem);
       const done = await this.documents.deliver({ companyId: self.companyId, userId: self.userId }, ctx.row.id, { receivedBy, note: input.note, accepted: acceptance.whole ? null : given }, undefined, tx);
       if (!done.ok) return done;
-      if (atDoor) {
+      if (takesCash) {
         // The cash goes into the rider's custody and the order is paid in the same transaction as the delivery: both or neither.
         const taken = await this.payments.collectIn(tx, self, ctx.row);
         if (!taken.ok) throw new DoorRollback(taken);

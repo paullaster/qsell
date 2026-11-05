@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { approverProblem, collectedProblem, custodyBalance, custodySign, custodyWrites, doorAmount, fromCents, handInCheck, handInLines, handInProblem, markProblem, toCents, type HandInFacts, type MarkFacts } from './door-payment';
+import { approverProblem, collectedProblem, custodyBalance, custodySign, custodyWrites, doorAmount, fromCents, handInCheck, handInLines, handInProblem, markProblem, promptProblem, promptState, toCents, MAX_DOOR_PROMPTS, type HandInFacts, type MarkFacts, type PromptFacts } from './door-payment';
 
 const ok: MarkFacts = { method: 'own_fleet', status: 'ready', orderPaymentStatus: 'unpaid', orderPaymentMethod: 'mpesa_daraja', orderStatus: 'processing', orderCurrency: 'KES', baseCurrency: 'KES', tendered: 0, unplanned: 0, carriedElsewhere: 0, methodChosen: true, alreadyMarked: false };
 
@@ -103,5 +103,38 @@ describe('handing the cash in', () => {
     expect(handInLines(handInCheck(100000, 98000, 0)).find((l) => l.account === 'variance')).toEqual({ side: 'debit', account: 'variance', cents: 2000 });
     expect(handInLines(handInCheck(100000, 101500, 0)).find((l) => l.account === 'variance')).toEqual({ side: 'credit', account: 'variance', cents: 1500 });
     expect(handInLines(handInCheck(100000, 100000, 0)).some((l) => l.account === 'variance')).toBe(false);
+  });
+});
+
+const prompt: PromptFacts = { runOnTheRoad: true, deliveryStatus: 'out_for_delivery', doorAmount: '1234.50', amountDue: 1234.5, orderPaymentStatus: 'unpaid', phone: '254712345678', promptsSent: 0, lastAttempt: null };
+
+describe('an M-Pesa prompt at the door', () => {
+  it('can be sent for a stop that is out, to be paid at the door, unpaid, for exactly what was marked', () => {
+    expect(promptProblem(prompt)).toBeNull();
+    expect(promptProblem({ ...prompt, lastAttempt: { status: 'failed', ageSeconds: 5 } })).toBeNull();
+    expect(promptProblem({ ...prompt, lastAttempt: { status: 'pending', ageSeconds: 200 } })).toBeNull();
+  });
+
+  it('says why not', () => {
+    expect(promptProblem({ ...prompt, runOnTheRoad: false })).toMatch(/not on the road/);
+    expect(promptProblem({ ...prompt, deliveryStatus: 'delivered' })).toMatch(/not out for delivery/);
+    expect(promptProblem({ ...prompt, doorAmount: null })).toMatch(/not to be paid at the door/);
+    expect(promptProblem({ ...prompt, orderPaymentStatus: 'paid' })).toMatch(/already been paid/);
+    expect(promptProblem({ ...prompt, amountDue: 1000 })).toMatch(/amount due has changed/);
+    expect(promptProblem({ ...prompt, phone: null })).toMatch(/number the customer will pay from/);
+    expect(promptProblem({ ...prompt, promptsSent: MAX_DOOR_PROMPTS })).toMatch(/Take the cash instead/);
+    expect(promptProblem({ ...prompt, lastAttempt: { status: 'pending', ageSeconds: 10 } })).toMatch(/just sent/);
+  });
+
+  it('is waiting, paid or failed from the order and the last prompt', () => {
+    expect(promptState(false, null)).toBe('none');
+    expect(promptState(false, { status: 'pending' })).toBe('waiting');
+    expect(promptState(false, { status: 'initiated' })).toBe('waiting');
+    expect(promptState(false, { status: 'failed' })).toBe('failed');
+    expect(promptState(false, { status: 'expired' })).toBe('failed');
+    expect(promptState(true, { status: 'successful' })).toBe('paid');
+    expect(promptState(true, null)).toBe('paid');
+    // Money confirmed by the provider but the order not yet marked paid: still waiting, never "failed".
+    expect(promptState(false, { status: 'successful' })).toBe('waiting');
   });
 });
