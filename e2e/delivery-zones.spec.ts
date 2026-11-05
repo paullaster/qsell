@@ -57,8 +57,9 @@ test.describe('delivery zones', () => {
     await expect(westPlaces.getByRole('list', { name: `Places in ${west}` })).toContainText(`Westlands, Nairobi ${tag}`);
     await expect(westRow).toContainText('1 place');
 
-    await southRow.getByRole('button', { name: `Show the places in ${south}` }).click();
+    // Adding the place above reloads the list; a tap that lands in that reload is lost, so it is repeated until the panel opens.
     const southPlaces = page.getByRole('region', { name: `Places in ${south}` });
+    await clickUntilVisible(southRow.getByRole('button', { name: `Show the places in ${south}` }), southPlaces);
     await southPlaces.getByRole('button', { name: 'Add many at once' }).click();
     await southPlaces.getByLabel('Places, one on each line').fill(`Nairobi ${tag}, westlands\nNairobi ${tag}, Karen\n,,\nNairobi ${tag}, KAREN`);
     await southPlaces.getByRole('button', { name: 'Add these places' }).click();

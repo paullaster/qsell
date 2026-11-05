@@ -430,6 +430,18 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'Choose how cash taken at the door is received, see what each rider holds, and correct a rider\'s custody with a reason',
   },
+  'door_payments:handin': {
+    resource: 'door_payments',
+    action: 'handin',
+    category: 'Orders & Sales',
+    description: 'Count the cash a rider hands in, in front of a witness, and record it',
+  },
+  'door_payments:approve': {
+    resource: 'door_payments',
+    action: 'approve',
+    category: 'Orders & Sales',
+    description: 'Approve or refuse a hand-in whose count came out short or over by more than the limit (never your own)',
+  },
   'deliveries:handover': {
     resource: 'deliveries',
     action: 'handover',

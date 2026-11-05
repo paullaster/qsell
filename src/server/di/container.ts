@@ -121,6 +121,7 @@ import type { DeliveryPlans } from '@/server/domains/delivery/plan';
 import type { OrderCollections } from '@/server/domains/delivery/collection';
 import type { DeliveryDocuments } from '@/server/domains/delivery/documents';
 import type { StockReissue } from '@/server/domains/delivery/reissue';
+import { DoorHandIns } from '@/server/domains/delivery/door-hand-ins';
 import type { DoorPayments } from '@/server/domains/delivery/door-payments';
 import type { DoorWork } from '@/server/domains/delivery/door';
 import type { RiderRuns } from '@/server/domains/delivery/rider-runs';
@@ -293,6 +294,7 @@ export interface AppContainer {
   riderRuns: RiderRuns;
   doorWork: DoorWork;
   doorPayments: DoorPayments;
+  doorHandIns: DoorHandIns;
   courierShipments: CourierShipments;
   trackingLinks: TrackingLinks;
   deliveryMessages: DeliveryMessages;
@@ -642,6 +644,7 @@ export function getContainer(): AppContainer {
     riderRuns: deliveryServices.riderRuns,
     doorWork: deliveryServices.doorWork,
     doorPayments: deliveryServices.doorPayments,
+    doorHandIns: new DoorHandIns(drizzleDb, decisionLog, finance.engine, numbering),
     courierShipments: deliveryServices.courierShipments,
     trackingLinks: deliveryServices.trackingLinks,
     deliveryMessages: deliveryServices.deliveryMessages,

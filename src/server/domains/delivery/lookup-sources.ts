@@ -1,6 +1,6 @@
 import { DISPOSITION_WORDS, ISSUE_MOMENTS, ISSUE_MOMENT_WORDS, RETURN_DISPOSITIONS } from '@/lib/stock-issue';
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { branches, customerGroups, deliveryRiderSettings, deliveryRiders, deliveryRuns, deliveryZones, paymentMethods, products, users } from '@/server/db/drizzle/schema';
+import { branches, customerGroups, deliveryRiderSettings, deliveryRiders, bankAccounts, deliveryRuns, deliveryZones, glAccounts, paymentMethods, products, users } from '@/server/db/drizzle/schema';
 import { RIDER_KINDS, RIDER_KIND_WORDS, RIDER_STATUSES, RIDER_STATUS_WORDS } from '@/lib/delivery-rider';
 import { RUN_STATUSES, RUN_STATUS_WORDS } from '@/lib/dispatch-run';
 import { DELIVERY_STATUSES, FAILURE_REASONS, STATUS_WORDS } from '@/lib/delivery-document';
@@ -248,4 +248,52 @@ const doorCashMethods = tableSource({
   toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.code), badge: null }),
 });
 
-export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts, deliveryStatuses, deliveryFailureReasons, stockIssueMoments, returnDispositions, openRuns, runStatuses, courierNews, riders, staffToRide, riderKinds, riderStatuses, doorCashMethods];
+/** Till and bank accounts a rider's cash can be handed in to. Blocked accounts are not offered. */
+const handInAccounts = tableSource({
+  key: 'door-hand-in-accounts',
+  permission: 'door_payments:handin',
+  table: bankAccounts,
+  id: bankAccounts.id,
+  label: bankAccounts.name,
+  searchColumns: [bankAccounts.name, bankAccounts.code],
+  select: { code: bankAccounts.code, kind: bankAccounts.kind },
+  scope: ({ filters, companyId }) => {
+    acceptFilters(filters, {});
+    return [and(eq(bankAccounts.companyId, companyId), eq(bankAccounts.blocked, false), sql`${bankAccounts.kind} IN ('cash','bank')`) ?? sql`false`];
+  },
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.code), badge: text(row.kind) }),
+});
+
+/** Staff who can witness a count: active members of staff. */
+const handInWitnesses = tableSource({
+  key: 'door-hand-in-witnesses',
+  permission: 'door_payments:handin',
+  table: users,
+  id: users.id,
+  label: users.name,
+  searchColumns: [users.name, users.email],
+  select: { email: users.email },
+  scope: ({ filters }) => {
+    acceptFilters(filters, {});
+    return [and(eq(users.status, 'active'), eq(users.isActive, true), sql`(${users.role} = 'super_admin' OR EXISTS (SELECT 1 FROM roles r WHERE r.key = ${users.role} AND r.is_staff AND r.is_active))`) ?? sql`false`];
+  },
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.email), badge: null }),
+});
+
+/** Books accounts a difference at a hand-in can be written to: open accounts that take postings. */
+const varianceAccounts = tableSource({
+  key: 'door-variance-accounts',
+  permission: 'door_payments:manage',
+  table: glAccounts,
+  id: glAccounts.id,
+  label: glAccounts.name,
+  searchColumns: [glAccounts.name, glAccounts.no],
+  select: { no: glAccounts.no },
+  scope: ({ filters, companyId }) => {
+    acceptFilters(filters, {});
+    return [and(eq(glAccounts.companyId, companyId), eq(glAccounts.type, 'posting'), eq(glAccounts.blocked, false)) ?? sql`false`];
+  },
+  toOption: (row) => ({ id: text(row.id), label: `${text(row.no)} ${text(row.label)}`.trim(), description: null, badge: null }),
+});
+
+export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts, deliveryStatuses, deliveryFailureReasons, stockIssueMoments, returnDispositions, openRuns, runStatuses, courierNews, riders, staffToRide, riderKinds, riderStatuses, doorCashMethods, handInAccounts, handInWitnesses, varianceAccounts];
