@@ -6,6 +6,8 @@ import { FAILURE_REASONS, STATUS_WORDS, type DeliveryStatus } from '@/lib/delive
 import { MAX_CODE_TRIES, codesMatch, isClientKey, isProofRule, normaliseCode, placeFrom, proofProblem, proofsKept, ruleFor, usableClientTime, type ProofRule } from '@/lib/delivery-proof';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { DeliveryDocuments, DocActor, DocRefusal, DocResult } from './documents';
+import { collectedProblem } from '@/lib/door-payment';
+import type { DoorPayments } from './door-payments';
 import type { DeliveryRuns } from './runs';
 import type { RiderSelf } from './riders';
 
@@ -18,6 +20,13 @@ const NOT_FOUND = 'That stop could not be found on your run.';
 
 /** Where the photos a rider takes at a door are kept. Private: a signed, expiring link is given only after an access check. */
 export const PROOF_PURPOSE = 'delivery_proof';
+
+/** Undoes the whole try: money that cannot be taken must not leave the delivery marked delivered. */
+class DoorRollback extends Error {
+  constructor(readonly refusal: { ok: false; reason: DocRefusal; message: string }) {
+    super(refusal.message);
+  }
+}
 
 export interface DoorInput {
   runId?: unknown;
@@ -34,6 +43,8 @@ export interface DoorInput {
 export interface DoorDeliverInput extends DoorInput {
   receivedBy?: unknown;
   code?: unknown;
+  /** Cash collected, in shillings, for a delivery that is paid at the door. It must be exactly what is due. */
+  cashCollected?: unknown;
   /** What the customer took of each product, when not all of it: `{ productId, quantity, reasonCode, note }` for every product. Left out means all of it. */
   accepted?: unknown;
 }
@@ -70,12 +81,21 @@ export class DoorWork {
     private readonly documents: Pick<DeliveryDocuments, 'deliver' | 'failAttempt'>,
     private readonly runs: Pick<DeliveryRuns, 'complete'>,
     private readonly decisions: DecisionLog,
+    private readonly payments: Pick<DoorPayments, 'collectIn' | 'followUp'>,
   ) {}
 
   async deliver(self: RiderSelf, input: DoorDeliverInput, now: Date = new Date()): Promise<DocResult<DoorResult>> {
     const receivedBy = text(input.receivedBy, 120);
     if (receivedBy === null) return fail('bad_input', 'Say who received it.');
-    return await this.atTheDoor(self, input, now, async (tx, ctx) => {
+    const paid: { orderId: string | null } = { orderId: null };
+    const result = await this.atTheDoor(self, input, now, async (tx, ctx) => {
+      // A delivery paid at the door is taken whole, and the cash collected is exactly what is due: both are checked before anything else is counted.
+      const atDoor = ctx.row.doorAmount !== null;
+      if (atDoor) {
+        const said = collectedProblem(ctx.row.doorAmount ?? '0', input.cashCollected);
+        if (!said.ok) return fail('bad_input', said.error);
+        if (Array.isArray(input.accepted) && input.accepted.length > 0) return fail('bad_input', 'A delivery paid at the door is taken whole. If the customer will not take all of it, record that it could not be delivered.');
+      }
       // What the customer took: all of it unless the rider says otherwise, and a shortfall needs its reason.
       const lineRows = await tx.select({ productId: deliveryLines.productId, quantity: deliveryLines.quantity, picked: deliveryLines.picked }).from(deliveryLines).where(eq(deliveryLines.deliveryId, ctx.row.id));
       const carried = lineRows.map((l) => ({ productId: l.productId, quantity: Number(l.picked ?? l.quantity) }));
@@ -104,11 +124,20 @@ export class DoorWork {
       if (problem !== null) return fail('bad_input', problem);
       const done = await this.documents.deliver({ companyId: self.companyId, userId: self.userId }, ctx.row.id, { receivedBy, note: input.note, accepted: acceptance.whole ? null : given }, undefined, tx);
       if (!done.ok) return done;
+      if (atDoor) {
+        // The cash goes into the rider's custody and the order is paid in the same transaction as the delivery: both or neither.
+        const taken = await this.payments.collectIn(tx, self, ctx.row);
+        if (!taken.ok) throw new DoorRollback(taken);
+        paid.orderId = taken.data.orderId;
+      }
       const kept = proofsKept(rule, { codeMatched, hasPhoto: photo.data !== null });
       const reasonOf = new Map(acceptance.notAccepted.map((n) => [n.productId, n]));
       const taken: TakenLine[] = acceptance.whole ? [] : acceptance.accepted.map((a) => ({ productId: a.productId, carried: carried.find((c) => c.productId === a.productId)?.quantity ?? a.quantity, accepted: a.quantity, reasonCode: reasonOf.get(a.productId)?.reasonCode ?? null, note: reasonOf.get(a.productId)?.note ?? null }));
       return { ok: true, data: { result: acceptance.whole ? 'delivered' : 'part_accepted', receivedBy, kept, photoId: photo.data, status: done.data.status, taken } };
     });
+    // After the commit: the order is stocked and its sale queued for the books. If that fails it is finished later (finishPosting).
+    if (result.ok && !result.data.replayed && paid.orderId !== null) await this.payments.followUp(paid.orderId);
+    return result;
   }
 
   async fail(self: RiderSelf, input: DoorFailInput, now: Date = new Date()): Promise<DocResult<DoorResult>> {
@@ -154,6 +183,7 @@ export class DoorWork {
     if (!isClientKey(input.clientKey)) return fail('bad_input', 'This try could not be told apart from another. Reload the app and try again.');
     const { runId, deliveryId, clientKey } = { runId: input.runId, deliveryId: input.deliveryId, clientKey: input.clientKey };
     const actor: DocActor = { companyId: self.companyId, userId: self.userId };
+    try {
     return await this.db.transaction(async (tx): Promise<DocResult<DoorResult>> => {
       // The same try sent again: say what happened the first time, and do nothing more.
       const [again] = await tx.select().from(deliveryAttempts).where(and(eq(deliveryAttempts.companyId, actor.companyId), eq(deliveryAttempts.clientKey, clientKey)));
@@ -200,6 +230,10 @@ export class DoorWork {
       if (outcome.data.photoId !== null) await tx.update(mediaAssets).set({ status: 'ready', updatedAt: new Date() }).where(eq(mediaAssets.id, outcome.data.photoId));
       return { ok: true, data: { attemptNo: n + 1, status: outcome.data.status, statusWords: STATUS_WORDS[outcome.data.status], replayed: false } };
     });
+    } catch (error) {
+      if (error instanceof DoorRollback) return error.refusal;
+      throw error;
+    }
   }
 
   /**

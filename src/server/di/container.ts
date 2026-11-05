@@ -121,6 +121,7 @@ import type { DeliveryPlans } from '@/server/domains/delivery/plan';
 import type { OrderCollections } from '@/server/domains/delivery/collection';
 import type { DeliveryDocuments } from '@/server/domains/delivery/documents';
 import type { StockReissue } from '@/server/domains/delivery/reissue';
+import type { DoorPayments } from '@/server/domains/delivery/door-payments';
 import type { DoorWork } from '@/server/domains/delivery/door';
 import type { RiderRuns } from '@/server/domains/delivery/rider-runs';
 import type { DeliveryRiders } from '@/server/domains/delivery/riders';
@@ -291,6 +292,7 @@ export interface AppContainer {
   deliveryRiders: DeliveryRiders;
   riderRuns: RiderRuns;
   doorWork: DoorWork;
+  doorPayments: DoorPayments;
   courierShipments: CourierShipments;
   trackingLinks: TrackingLinks;
   deliveryMessages: DeliveryMessages;
@@ -494,7 +496,7 @@ export function getContainer(): AppContainer {
     void geoCompanyId().then((id) => geoSettings.record(id, event)).catch(() => undefined);
   });
   const stockReservations = new StockReservations(drizzleDb, stockLedger, decisionLog);
-  const deliveryServices = createDeliveryServices({ db: drizzleDb, decisionLog, geo, companySettings, numbering, stockReservations, email, usersAdmin });
+  const deliveryServices = createDeliveryServices({ db: drizzleDb, decisionLog, geo, companySettings, numbering, stockReservations, email, usersAdmin, customers });
   const orderSla = new OrderSlaService(drizzleDb, new OrderSlaNotifier(email, companySettings));
   const vendorNotifier = new VendorNotifier(drizzleDb, email, companySettings);
   const prequalLifecycle = new PrequalLifecycle(drizzleDb, vendorNotifier);
@@ -639,6 +641,7 @@ export function getContainer(): AppContainer {
     deliveryRiders: deliveryServices.deliveryRiders,
     riderRuns: deliveryServices.riderRuns,
     doorWork: deliveryServices.doorWork,
+    doorPayments: deliveryServices.doorPayments,
     courierShipments: deliveryServices.courierShipments,
     trackingLinks: deliveryServices.trackingLinks,
     deliveryMessages: deliveryServices.deliveryMessages,

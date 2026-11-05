@@ -102,6 +102,7 @@ export async function deliveryExtrasAction(deliveryId: unknown) {
     const id = idOf(deliveryId, 'delivery');
     const c = getContainer();
     const [shipment, run, canDispatch, messages] = await Promise.all([c.courierShipments.forDelivery(ctx.companyId, id), c.deliveryRuns.runOf(ctx.companyId, id), canPermission('deliveries:dispatch'), c.deliveryMessages.forDelivery(ctx.companyId, id)]);
-    return { shipment, run, canDispatch, messages };
+    const canAllowDoor = await canPermission('door_payments:allow');
+    return { shipment, run, canDispatch, messages, canAllowDoor };
   });
 }

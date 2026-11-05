@@ -16,7 +16,7 @@ export async function cartWithTwoSalt(page: Page): Promise<void> {
 }
 
 /** The shopper has two packets delivered to a written area; the order is placed (a payment cannot finish in the test shop) and then paid. */
-export async function placeDeliveredOrder(page: Page): Promise<string> {
+export async function placeDeliveredOrder(page: Page, options: { pay?: boolean } = {}): Promise<string> {
   await cartWithTwoSalt(page);
   await page.goto('/checkout');
   await expect(page.getByRole('heading', { name: 'Checkout', level: 1 })).toBeVisible({ timeout: 30_000 });
@@ -36,7 +36,7 @@ export async function placeDeliveredOrder(page: Page): Promise<string> {
   const text = await page.locator('main, body').first().innerText();
   const orderNumber = /order\s+([A-Z]{2,}-[A-Z0-9-]*\d[A-Z0-9-]*)/i.exec(text)?.[1];
   expect(orderNumber, 'the page names the order').toBeTruthy();
-  deliveryTool('pay', orderNumber ?? '');
+  if (options.pay !== false) deliveryTool('pay', orderNumber ?? '');
   return orderNumber ?? '';
 }
 

@@ -123,7 +123,7 @@ async function collection(orderNumber: string): Promise<Record<string, string>> 
  * Makes a delivery for the whole of an order and takes it to ready to go, as a person would on its screen, so a test of the dispatch
  * board need not click through all of that. Prints the delivery number.
  */
-async function ready(orderNumber: string): Promise<Record<string, string>> {
+async function ready(orderNumber: string, mode?: string): Promise<Record<string, string>> {
   const { getContainer } = await import('@/server/di/container');
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
   const { orders } = await import('@/server/db/drizzle/schema');
@@ -136,6 +136,22 @@ async function ready(orderNumber: string): Promise<Record<string, string>> {
   const made = await d.create(actor, order.id, { lines: null });
   if (!made.ok) throw new Error(`e2e fixture: ${made.message}`);
   const id = made.data.id;
+  // `draft` stops here, for a test that goes on from the screen; `door` lets the delivery of an unpaid order go out to be paid at the door.
+  if (mode === 'draft') return { number: made.data.number, id };
+  if (mode === 'door') {
+    const marked = await c.doorPayments.mark(actor, id, { reason: 'Customer pays at the door (end-to-end test)' });
+    if (!marked.ok) throw new Error(`e2e fixture: ${marked.message}`);
+  }
+  return await advance(id, made.data.number);
+}
+
+/** Takes a delivery from draft to ready to go. */
+async function advance(id: string, number: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const c = getContainer();
+  const company = await c.companySettings.ensureSeeded();
+  const actor = { companyId: company.id, userId: 'e2e' };
+  const d = c.deliveryDocuments;
   for (const step of [() => d.release(actor, id), () => d.startPicking(actor, id)]) {
     const r = await step();
     if (!r.ok) throw new Error(`e2e fixture: ${r.message}`);
@@ -146,7 +162,7 @@ async function ready(orderNumber: string): Promise<Record<string, string>> {
     const r = await step();
     if (!r.ok) throw new Error(`e2e fixture: ${r.message}`);
   }
-  return { number: made.data.number, id };
+  return { number, id };
 }
 
 /** A paid order for one salt that is to be sent by courier from the fixture's branch, placed the way the shop places it. */
@@ -209,7 +225,8 @@ async function main(): Promise<void> {
   if (command === 'billing') result = await billing(tag);
   if (command === 'pay') result = await pay(tag);
   if (command === 'collection') result = await collection(tag);
-  if (command === 'ready') result = await ready(tag);
+  if (command === 'ready') result = await ready(tag, extra);
+  if (command === 'advance' && extra !== undefined) result = await advance(tag, extra);
   if (command === 'set-email' && extra !== undefined) result = await setEmail(tag, extra);
   if (command === 'messages') result = await messages(tag);
   if (command === 'courier-order') result = await courierOrder(tag);

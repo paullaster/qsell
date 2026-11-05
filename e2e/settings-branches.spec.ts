@@ -10,7 +10,8 @@ test.describe('branches', () => {
     const list = page.getByRole('list', { name: 'Branches' });
     await expect(list.getByRole('listitem').first()).toBeVisible({ timeout: 30_000 });
     const original = list.getByRole('listitem').filter({ hasText: 'Default' }).first();
-    const originalName = (await original.locator('p').first().innerText()).split('·')[1]?.replace('Default', '').trim() ?? '';
+    // The heading also carries chips ("Default", "Closed"), so take the code from its own span and search by that.
+    const originalCode = (await original.locator('span.font-mono').first().innerText()).trim();
 
     const form = page.getByRole('form', { name: 'Add branch' });
     await form.getByLabel('Code').fill('bad code!');
@@ -38,8 +39,8 @@ test.describe('branches', () => {
     await row.getByRole('button', { name: `Make E2E ${code} the default` }).click();
     await expect(page.getByText(`E2E ${code} is now the default.`)).toBeVisible({ timeout: 30_000 });
     // Put the default back where it was, so nothing else is disturbed.
-    await page.getByLabel('Search branches').fill(originalName);
-    const back = list.getByRole('listitem').filter({ hasText: originalName }).first();
+    await page.getByLabel('Search branches').fill(originalCode);
+    const back = list.getByRole('listitem').filter({ hasText: originalCode }).first();
     await back.getByRole('button', { name: /Make .* the default/ }).click();
     await expect(page.getByText(/is now the default\./).first()).toBeVisible({ timeout: 30_000 });
     await noHorizontalScroll(page);

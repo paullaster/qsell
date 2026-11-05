@@ -418,6 +418,18 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'Choose how the company uses riders (staff, riders with their own account, or both), add and remove riders, make accounts for them and give runs to them',
   },
+  'door_payments:allow': {
+    resource: 'door_payments',
+    action: 'allow',
+    category: 'Orders & Sales',
+    description: 'Let a delivery of an unpaid order go out to be paid in cash at the door, or take that back before it goes out',
+  },
+  'door_payments:manage': {
+    resource: 'door_payments',
+    action: 'manage',
+    category: 'Orders & Sales',
+    description: 'Choose how cash taken at the door is received, see what each rider holds, and correct a rider\'s custody with a reason',
+  },
   'deliveries:handover': {
     resource: 'deliveries',
     action: 'handover',

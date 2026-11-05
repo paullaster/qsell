@@ -4,6 +4,8 @@
  *   tsx e2e/support/rider-fixtures.ts code <delivery number>  the code the customer was sent for a delivery, the way they read it in their message
  *   tsx e2e/support/rider-fixtures.ts token <order number>  the customer's tracking link token for an order
  *   tsx e2e/support/rider-fixtures.ts proof <rule>  sets what a rider must show at the door (none, code, photo, code_or_photo), so a test does not depend on the one before it
+ *   tsx e2e/support/rider-fixtures.ts door-setup <any>  makes sure there is a payment method of kind cash to receive cash at the door through, and prints its name
+ *   tsx e2e/support/rider-fixtures.ts door <delivery number>  what cash at the door did: the order's payment, the custody entries and whether the sale was queued for the books
  *   tsx e2e/support/rider-fixtures.ts reset <tag>   ends every rider and puts the choice of rider kinds back to the default (staff only), so other tests are not asked about riders
  */
 import { execFileSync } from 'node:child_process';
@@ -48,6 +50,37 @@ async function setProof(rule: string): Promise<Record<string, string>> {
   return { proof: rule };
 }
 
+async function doorSetup(): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { paymentMethods, deliveryDoorSettings } = await import('@/server/db/drizzle/schema');
+  const { and, eq } = await import('drizzle-orm');
+  const c = getContainer();
+  const company = await c.companySettings.ensureSeeded();
+  const ctx = { companyId: company.id, actor: { type: 'user' as const, id: 'e2e' }, origin: { surface: 'e2e', action: 'door-setup' } };
+  let [cash] = await db.select().from(paymentMethods).where(and(eq(paymentMethods.companyId, company.id), eq(paymentMethods.kind, 'cash')));
+  if (cash === undefined) {
+    await c.finance.paymentMethods.seedStandard(ctx);
+    [cash] = await db.select().from(paymentMethods).where(and(eq(paymentMethods.companyId, company.id), eq(paymentMethods.kind, 'cash')));
+  }
+  if (cash === undefined) throw new Error('e2e fixture: no cash payment method could be made');
+  // Start from "not chosen yet", so the test chooses it on the screen.
+  await db.delete(deliveryDoorSettings).where(eq(deliveryDoorSettings.companyId, company.id));
+  return { name: cash.name, id: cash.id };
+}
+
+async function doorState(number: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { deliveries, orders, cashCustodyEntries, financeSalesPostings } = await import('@/server/db/drizzle/schema');
+  const { and, eq } = await import('drizzle-orm');
+  const [d] = await db.select().from(deliveries).where(eq(deliveries.number, number));
+  if (d === undefined) throw new Error(`no delivery ${number}`);
+  const [o] = await db.select({ paymentStatus: orders.paymentStatus, paymentMethod: orders.paymentMethod }).from(orders).where(eq(orders.id, d.orderId));
+  const entries = await db.select().from(cashCustodyEntries).where(eq(cashCustodyEntries.deliveryId, d.id));
+  const queued = await db.select().from(financeSalesPostings).where(and(eq(financeSalesPostings.subjectId, d.orderId), eq(financeSalesPostings.kind, 'cash_sale')));
+  return { status: d.status, door: d.doorAmount ?? '', paymentStatus: o?.paymentStatus ?? '', paymentMethod: o?.paymentMethod ?? '', custody: String(entries.length), custodyAmount: entries[0]?.amount ?? '', queued: String(queued.length) };
+}
+
 async function reset(): Promise<Record<string, string>> {
   const { getContainer } = await import('@/server/di/container');
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
@@ -68,8 +101,10 @@ async function main(): Promise<void> {
   if (command === 'code' && tag !== undefined) result = await codeOf(tag);
   if (command === 'token' && tag !== undefined) result = await tokenOf(tag);
   if (command === 'proof' && tag !== undefined) result = await setProof(tag);
+  if (command === 'door-setup') result = await doorSetup();
+  if (command === 'door' && tag !== undefined) result = await doorState(tag);
   if (command === 'reset') result = await reset();
-  if (result === null) throw new Error('usage: rider-fixtures staff <tag> | code <delivery number> | token <order number> | proof <rule> | reset');
+  if (result === null) throw new Error('usage: rider-fixtures staff <tag> | code <delivery number> | token <order number> | proof <rule> | door-setup | door <delivery number> | reset');
   process.stdout.write(`FIXTURE ${JSON.stringify(result)}\n`);
 }
 
