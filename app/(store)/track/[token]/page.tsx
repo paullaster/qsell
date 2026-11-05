@@ -47,7 +47,7 @@ export default async function TrackPage({ params }: { params: Promise<{ token: s
           </p>
         }
       >
-        <TrackingLoader order={order} />
+        <TrackingLoader order={order} token={token} />
       </Suspense>
     </main>
   );

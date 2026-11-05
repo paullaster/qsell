@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import { RegisterWorker } from '@/components/rider/RegisterWorker';
 import { RiderShell } from '@/components/rider/RiderShell';
 
 /** The rider app is for signed-in riders only and is never listed by search engines. */
@@ -12,5 +13,10 @@ export const metadata: Metadata = {
 export const viewport: Viewport = { width: 'device-width', initialScale: 1, viewportFit: 'cover' };
 
 export default function RiderLayout({ children }: { children: React.ReactNode }) {
-  return <RiderShell>{children}</RiderShell>;
+  return (
+    <RiderShell>
+      <RegisterWorker />
+      {children}
+    </RiderShell>
+  );
 }

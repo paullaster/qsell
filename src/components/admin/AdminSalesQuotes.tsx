@@ -2,6 +2,7 @@
 
 import { Suspense, use, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useProductUpdated } from '@/components/admin/product-updated';
 import { Plus, RefreshCw, Settings2, Files, LayoutList } from 'lucide-react';
 import type { CatalogueProduct } from '@/lib/catalogue-entry';
 
@@ -14,6 +15,7 @@ import {
   createSalesQuoteAction,
   generateSalesQuotePdfAction,
   getSalesQuoteAction,
+  getQuoteCatalogueProductAction,
   getSalesQuoteEditorDataAction,
   sendSalesQuoteAction,
   reviseSalesQuoteAction,
@@ -81,6 +83,7 @@ export function AdminSalesQuotes({
     canApprove: boolean;
     canDelete: boolean;
     canConfigure: boolean;
+    canEditProducts: boolean;
   }>;
 }) {
   const capabilities = use(capabilitiesPromise);
@@ -96,6 +99,17 @@ export function AdminSalesQuotes({
   const [editorData, setEditorData] = useState<EditorData | null>(null);
   const [loadingEditorData, setLoadingEditorData] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
+  // A product saved from a quote's shortcut while the editor is closed: keep the cached catalogue current so the next editor opens right.
+  // (While the editor is open it reads the product itself, because it also has to bring its own lines up to date.)
+  const refreshCached = (productId: string) => {
+    if (editorOpen) return;
+    void getQuoteCatalogueProductAction(productId)
+      .then((fresh) => {
+        if (fresh !== null) setEditorData((d) => (d === null ? d : { ...d, products: d.products.map((p) => (p.id === fresh.id ? fresh : p)) }));
+      })
+      .catch(() => undefined);
+  };
+  useProductUpdated(refreshCached);
   /** The quote being edited (null for a new one) and the form the editor starts from. */
   const [editNotices, setEditNotices] = useState<{ line: number; message: string }[]>([]);
   const [editing, setEditing] = useState<{ id: string; quoteNumber: string } | null>(null);
@@ -407,6 +421,8 @@ export function AdminSalesQuotes({
           initial={startForm}
           quoteNumber={editing?.quoteNumber}
           notices={editing === null ? [] : editNotices}
+          canEditProducts={capabilities.canEditProducts}
+          onProductRefreshed={(fresh) => setEditorData((d) => (d === null ? d : { ...d, products: d.products.map((p) => (p.id === fresh.id ? fresh : p)) }))}
           onClose={() => setEditorOpen(false)}
           onSave={async (input) => {
             const quote = editing
@@ -427,6 +443,7 @@ export function AdminSalesQuotes({
           canApprove={capabilities.canApprove}
           canDelete={capabilities.canDelete}
           canRevise={capabilities.canCreate}
+          canEditProducts={capabilities.canEditProducts}
           onTemplate={() => startTemplate(details)}
           busy={busyId === details.id}
           error={error}

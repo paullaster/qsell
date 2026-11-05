@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { isMessageKind, kindForStep, messageContent, messageKey, reasonForCustomer, MESSAGE_KINDS, type MessageFacts } from './delivery-messages';
 
-const facts: MessageFacts = { tradingName: 'Test Traders', firstName: 'Wanjiru', orderNumber: 'ORD-77', deliveryNumber: 'DLV-26-0000000007', trackUrl: 'https://shop.example.test/track/abc', courierName: null, receivedBy: null, reasonCode: null, triesLeft: null };
+const facts: MessageFacts = { tradingName: 'Test Traders', firstName: 'Wanjiru', orderNumber: 'ORD-77', deliveryNumber: 'DLV-26-0000000007', trackUrl: 'https://shop.example.test/track/abc', courierName: null, receivedBy: null,
+  handoverCode: null, reasonCode: null, triesLeft: null };
 
 describe('which step sends which message', () => {
   it('sends one for going out, arriving (whole or in part), a failed attempt and a return, and none for the quiet steps', () => {
@@ -46,5 +47,19 @@ describe('the words', () => {
   it('never carries an address, a phone number or a payment detail', () => {
     const everything = MESSAGE_KINDS.map((k) => JSON.stringify(messageContent(k, { ...facts, courierName: 'Swift', receivedBy: 'Gate guard', reasonCode: 'refused', triesLeft: 1 }))).join(' ');
     expect(everything).not.toMatch(/\b0[17]\d{8}\b|\+254|street|road|mpesa|card/i);
+  });
+});
+
+describe('the delivery code', () => {
+  it('is in the "on its way" message when there is one, and asks for it to be given only to the rider', () => {
+    const m = messageContent('out_for_delivery', { ...facts, handoverCode: '048213' });
+    expect(m.details).toContainEqual(['Delivery code', '048213']);
+    expect(m.body).toContain('delivery code');
+  });
+
+  it('is not in the message when the company does not ask for one', () => {
+    const m = messageContent('out_for_delivery', facts);
+    expect(m.details.some(([k]) => k === 'Delivery code')).toBe(false);
+    expect(m.body).not.toContain('delivery code');
   });
 });

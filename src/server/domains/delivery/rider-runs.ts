@@ -1,7 +1,8 @@
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, deliveries, deliveryLines, deliveryRunStops, deliveryRuns, orders, products } from '@/server/db/drizzle/schema';
+import { branches, deliveries, deliveryRiderSettings, deliveryLines, deliveryRunStops, deliveryRuns, orders, products } from '@/server/db/drizzle/schema';
 import { RUN_STATUS_WORDS, type RunStatus } from '@/lib/dispatch-run';
+import { isProofRule, ruleFor, type ProofRule } from '@/lib/delivery-proof';
 import { STATUS_WORDS, type DeliveryStatus } from '@/lib/delivery-document';
 import type { GeoPoint } from '@/lib/geo';
 import { callLink, chatLink, navigateLink } from '@/lib/rider-links';
@@ -17,8 +18,12 @@ export interface RiderStopView {
   receiver: { name: string; phone: string | null };
   address: string[];
   instructions: string | null;
-  items: { name: string; quantity: number }[];
+  items: { productId: string; name: string; quantity: number }[];
   links: { call: string | null; chat: string | null; navigate: string | null };
+  /** What the rider must show to mark this stop delivered. The code itself is the customer's, and never sent to the rider. */
+  proof: ProofRule;
+  /** The run is on the road and this stop is still to do. */
+  open: boolean;
 }
 
 export interface RiderRunItem {
@@ -33,8 +38,12 @@ export interface RiderRunItem {
 }
 
 export interface RiderRunView extends RiderRunItem {
+  /** The rider's own id, so the phone keeps its unsent work apart from another rider's. */
+  riderId: string;
   notes: string | null;
   items: RiderStopView[];
+  /** On the road and every stop done or failed: the rider may close it. */
+  canFinish: boolean;
 }
 
 const words = (parts: (string | null | undefined)[]): string[] => parts.filter((p): p is string => typeof p === 'string' && p.trim() !== '').map((p) => p.trim());
@@ -90,19 +99,22 @@ export class RiderRuns {
       .where(and(eq(deliveryRunStops.runId, runId), isNull(deliveryRunStops.leftAt)))
       .orderBy(asc(deliveryRunStops.sequence));
     const lines = stops.length === 0 ? [] : await this.db
-      .select({ deliveryId: deliveryLines.deliveryId, name: products.name, quantity: deliveryLines.quantity, picked: deliveryLines.picked })
+      .select({ deliveryId: deliveryLines.deliveryId, productId: deliveryLines.productId, name: products.name, quantity: deliveryLines.quantity, picked: deliveryLines.picked })
       .from(deliveryLines)
       .innerJoin(products, eq(products.id, deliveryLines.productId))
       .where(inArray(deliveryLines.deliveryId, stops.map((s) => s.d.id)))
       .orderBy(asc(products.name));
-    const byDelivery = new Map<string, { name: string; quantity: number }[]>();
+    const byDelivery = new Map<string, { productId: string; name: string; quantity: number }[]>();
     for (const l of lines) {
       const quantity = Number(l.picked ?? l.quantity);
       if (quantity <= 0) continue;
-      byDelivery.set(l.deliveryId, [...(byDelivery.get(l.deliveryId) ?? []), { name: l.name, quantity }]);
+      byDelivery.set(l.deliveryId, [...(byDelivery.get(l.deliveryId) ?? []), { productId: l.productId, name: l.name, quantity }]);
     }
     const counts = new Map([[runId, stops.length]]);
     const r = row.r;
+    const [setting] = await this.db.select({ proof: deliveryRiderSettings.proof }).from(deliveryRiderSettings).where(eq(deliveryRiderSettings.companyId, self.companyId));
+    const company: ProofRule = setting !== undefined && isProofRule(setting.proof) ? setting.proof : 'none';
+    const onTheRoad = r.status === 'started';
     return {
       id: r.id,
       number: r.number,
@@ -112,6 +124,7 @@ export class RiderRuns {
       statusWords: RUN_STATUS_WORDS[r.status],
       stops: counts.get(runId) ?? 0,
       vehicle: r.vehicle,
+      riderId: self.riderId,
       notes: r.notes,
       items: stops.map((s): RiderStopView => {
         const place = s.d.destination.address;
@@ -131,8 +144,11 @@ export class RiderRuns {
           instructions: s.d.notes,
           items: byDelivery.get(s.d.id) ?? [],
           links: { call: callLink(phone), chat: chatLink(phone), navigate: navigateLink(pin, address) },
+          proof: ruleFor(company, s.d.handoverCode !== null),
+          open: onTheRoad && s.d.status === 'out_for_delivery',
         };
       }),
+      canFinish: onTheRoad && stops.length > 0 && stops.every((s) => s.d.status !== 'out_for_delivery'),
     };
   }
 }

@@ -11,7 +11,7 @@ const view = (over: Partial<DeliveryView> = {}): DeliveryView => ({
     destination: { pin: null, address: { area: 'Westlands', town: 'Nairobi', county: 'Nairobi' }, positionFrom: 'address', approximate: true },
     recipientName: null, recipientPhone: null, notes: 'Gate code 4411', courierName: null, trackingNumber: null, receivedBy: null, failedAttempts: 0, version: 3, createdAt: '2026-11-03T09:00:00Z', releasedAt: null, dispatchedAt: null, deliveredAt: null,
     lines: [{ id: 'l1', productId: 'p1', productName: 'Salt 500g', sku: 'SALT-500', quantity: 5, picked: 4, delivered: 0, issued: 0, back: null }, { id: 'l2', productId: 'p2', productName: 'Rice 5kg', sku: 'RICE-5', quantity: 2, picked: 0, delivered: 0, issued: 0, back: null }],
-    events: [], actions: [], ...over,
+    events: [], attempts: [], hasCode: false, scheduledFor: null, actions: [], ...over,
   });
 
 describe('the delivery note', () => {

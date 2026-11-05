@@ -41,6 +41,12 @@ export interface TrackedDelivery {
   receivedBy: string | null;
   deliveredAt: string | null;
   failedAttempts: number;
+  /** While it is out for delivery: the code to give the rider, when the company asks for one. */
+  handoverCode: string | null;
+  /** After a failed attempt with tries left: the customer may choose another day. */
+  canReschedule: boolean;
+  /** The day it is wanted again, once chosen. */
+  scheduledFor: string | null;
 }
 
 export interface TrackedCollection {

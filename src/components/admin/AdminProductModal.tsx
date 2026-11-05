@@ -12,7 +12,6 @@ import {
   Save,
   AlertTriangle,
   Layers,
-  Trash2,
   AlignLeft,
   ShieldCheck,
 } from 'lucide-react';
@@ -22,7 +21,6 @@ import {
   type ItemType,
   type TaxCategory,
   type ProductMediaItem,
-  type ProductSpecification,
 } from '@/types/index';
 import {
   createProductAction,
@@ -30,6 +28,7 @@ import {
   fetchTaxCategoriesAction,
   listItemTypesAction,
 } from '@/server/actions';
+import { ProductSpecificationList, type EditableProductSpecification } from '@/components/admin/ProductSpecificationList';
 import { ProductDescriptionEditor } from '@/components/admin/ProductDescriptionEditor';
 import {
   CATALOG_SHORTCUT_CREATED,
@@ -111,7 +110,6 @@ export function AdminProductModal({ isOpen, ...props }: AdminProductModalProps) 
   );
 }
 
-type EditableProductSpecification = ProductSpecification & { rowId: string };
 interface PackagingFitDraft { key: string; productId: string; choice: Choice | null; capacity: string }
 type AdminProductModalFormProps = Omit<AdminProductModalProps, 'isOpen'>;
 
@@ -350,16 +348,6 @@ function AdminProductModalForm({
       setNewSpecKey('');
       setNewSpecValue('');
     }
-  };
-
-  const handleUpdateSpec = (index: number, field: keyof ProductSpecification, value: string) => {
-    setSpecifications((current) =>
-      current.map((spec, specIndex) => (specIndex === index ? { ...spec, [field]: value } : spec)),
-    );
-  };
-
-  const handleRemoveSpec = (index: number) => {
-    setSpecifications((current) => current.filter((_, specIndex) => specIndex !== index));
   };
 
   const focusTabForError = (message: string) => {
@@ -1143,37 +1131,7 @@ function AdminProductModalForm({
                       No specifications yet. Add key attributes below.
                     </p>
                   ) : (
-                    specifications.map((spec, idx) => (
-                      <div
-                        key={spec.rowId}
-                        className="grid grid-cols-1 items-center gap-2 rounded-lg border border-line bg-surface p-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_auto]"
-                      >
-                        <input
-                          type="text"
-                          aria-label={`Specification name ${idx + 1}`}
-                          value={spec.key}
-                          onChange={(event) => handleUpdateSpec(idx, 'key', event.target.value)}
-                          maxLength={PRODUCT_SPECIFICATION_KEY_MAX_LENGTH}
-                          className={`${fieldClass} min-w-0`}
-                        />
-                        <input
-                          type="text"
-                          aria-label={`Specification value ${idx + 1}`}
-                          value={spec.value}
-                          onChange={(event) => handleUpdateSpec(idx, 'value', event.target.value)}
-                          maxLength={PRODUCT_SPECIFICATION_VALUE_MAX_LENGTH}
-                          className={`${fieldClass} min-w-0`}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveSpec(idx)}
-                          className="inline-flex min-h-10 min-w-10 cursor-pointer items-center justify-center rounded-lg text-fg-subtle hover:bg-red-50 hover:text-red-600"
-                          aria-label={`Remove ${spec.key}`}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    ))
+                    <ProductSpecificationList specifications={specifications} onChange={setSpecifications} />
                   )}
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">

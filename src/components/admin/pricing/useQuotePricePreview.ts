@@ -14,6 +14,8 @@ import type { PriceTrace } from '@/server/domains/pricing/domain/types';
 export function useQuotePricePreview(
   input: QuoteInput,
   setInput: React.Dispatch<React.SetStateAction<QuoteInput>>,
+  /** Changes when something the price lists read changed outside the quote (a product was edited): the lines are priced again. */
+  refresh = 0,
 ) {
   const [traces, setTraces] = useState<Record<number, PriceTrace>>({});
   const [problems, setProblems] = useState<Record<number, string>>({});
@@ -21,6 +23,7 @@ export function useQuotePricePreview(
 
   const modes = input.lines.map((l) => l.priceMode ?? (l.unitPrice != null ? 'manual' : 'catalog'));
   const signature = JSON.stringify([
+    refresh,
     input.customerId ?? null,
     input.paymentMethod,
     input.lines.map((l, i) => [l.productId, l.quantity, modes[i], l.unitId ?? null]),

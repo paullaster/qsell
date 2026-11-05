@@ -1,9 +1,15 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useCustomerCreated } from '@/components/admin/customer-created';
+import { useProductUpdated } from '@/components/admin/product-updated';
+import { ProductEditLink } from '@/components/admin/ProductEditLink';
+import { ReplaceProductDialog } from '../quote-layout/ReplaceProductDialog';
+import { canReplaceLine, replaceLineProduct } from '@/lib/quote-replace';
+import { refreshLinesForProduct, type RefreshNote } from '@/lib/quote-product-refresh';
+import { getQuoteCatalogueProductAction } from '@/server/domains/quotes/actions';
 
-import { FilePlus2, X } from 'lucide-react';
+import { ArrowLeftRight, FilePlus2, X } from 'lucide-react';
 import { buildCatalogueIndex, type CatalogueProduct } from '@/lib/catalogue-entry';
 
 import type { QuoteInput } from '@/server/domains/quotes/service';
@@ -57,10 +63,16 @@ export function QuoteEditor({
   initial,
   quoteNumber,
   notices = [],
+  canEditProducts = false,
+  onProductRefreshed,
   onClose,
   onSave,
 }: {
   products: CatalogueProduct[];
+  /** The person may update products: each line then offers a shortcut to the product's edit window. */
+  canEditProducts?: boolean;
+  /** A product was changed from a line's shortcut and read again; the caller keeps its own copy of the catalogue current. */
+  onProductRefreshed?: (product: CatalogueProduct) => void;
   initial: QuoteInput;
   quoteNumber?: string;
   /** Things changed or worth knowing when the saved quote was opened (a unit its product no longer has). */
@@ -73,12 +85,47 @@ export function QuoteEditor({
   const [error, setError] = useState<string | null>(null);
   const [catalogSectionId, setCatalogSectionId] = useState<string | null>(null);
   const [catalogOpen, setCatalogOpen] = useState(false);
-  const catalogueIndex = useMemo(() => buildCatalogueIndex(products), [products]);
-  const productById = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
+  // Products changed from a line's shortcut: what was read again after the save wins over the catalogue loaded when the editor opened.
+  const [refreshed, setRefreshed] = useState<Record<string, CatalogueProduct>>({});
+  /** The line whose product is being swapped (by position; nothing else can change while the dialog is open). */
+  const [replacing, setReplacing] = useState<number | null>(null);
+  /** The last swap, kept so it can be undone in one click. */
+  const [replaced, setReplaced] = useState<{ index: number; before: QuoteLineInput; fromName: string; toId: string; toName: string } | null>(null);
+  const [priceRefresh, setPriceRefresh] = useState(0);
+  const [refreshNotes, setRefreshNotes] = useState<RefreshNote[]>([]);
+  const current = useMemo(() => products.map((p) => refreshed[p.id] ?? p), [products, refreshed]);
+  const catalogueIndex = useMemo(() => buildCatalogueIndex(current), [current]);
+  const productById = useMemo(() => new Map(current.map((p) => [p.id, p])), [current]);
+  const known = useRef(productById);
+  const onRefreshed = useRef(onProductRefreshed);
+  const currency = useRef('');
+  const latest = useRef(initial);
   const [bulkOpen, setBulkOpen] = useState(false);
   const lastAdded = useRef<{ productId: string; sectionId: string | null } | null>(null);
   const [focusLine, setFocusLine] = useState<{ index: number; nonce: number } | null>(null);
   const [draftPreviewOpen, setDraftPreviewOpen] = useState(false);
+  useEffect(() => {
+    currency.current = input.currency;
+    latest.current = input;
+    known.current = productById;
+    onRefreshed.current = onProductRefreshed;
+  });
+  // A product was saved in its edit window (opened from a line): read it again and bring the open quote's lines up to date.
+  const productSaved = useCallback((productId: string) => {
+    const before = known.current.get(productId);
+    if (before === undefined) return;
+    void (async () => {
+      const fresh = await getQuoteCatalogueProductAction(productId).catch(() => null);
+      if (fresh === null) return;
+      setRefreshed((r) => ({ ...r, [fresh.id]: fresh }));
+      onRefreshed.current?.(fresh);
+      setPriceRefresh((n) => n + 1);
+      const out = refreshLinesForProduct(latest.current.lines, before, fresh, (v) => money(v, currency.current));
+      setRefreshNotes((n) => [...n.filter((x) => x.productId !== fresh.id), ...out.notes]);
+      if (out.lines.some((l, i) => l !== latest.current.lines[i])) setInput((c) => ({ ...c, lines: refreshLinesForProduct(c.lines, before, fresh, (v) => money(v, currency.current)).lines }));
+    })();
+  }, []);
+  useProductUpdated(productSaved);
   // What the quote comes to is worked out on the server; this only shows the answer.
   const { totals } = useQuoteTotals(input);
   const linesPreview = input.lines.map((line, index) => ({
@@ -144,6 +191,24 @@ export function QuoteEditor({
     slot === null
       ? 'the individual items'
       : `section ${input.sections.find((x) => x.id === slot)?.title ?? ''}`.trim();
+  /** Swaps the product on a line for another; the line keeps its place, quantity and discount and is priced again for the new item. */
+  const replaceProduct = (index: number, product: CatalogueProduct) => {
+    const line = input.lines[index];
+    setReplacing(null);
+    if (line === undefined || line.productId === product.id) return;
+    const fromName = productById.get(line.productId)?.name ?? 'the item';
+    setReplaced({ index, before: line, fromName, toId: product.id, toName: product.name });
+    setField('lines', input.lines.map((l, i) => (i === index ? replaceLineProduct(l, product) : l)));
+    setFocusLine((c) => ({ index, nonce: (c?.nonce ?? 0) + 1 }));
+  };
+  /** Puts the old item back, unless the line was changed since: then there is nothing safe to put back. */
+  const undoReplace = () => {
+    const r = replaced;
+    setReplaced(null);
+    if (r === null || input.lines[r.index]?.productId !== r.toId) return;
+    setField('lines', input.lines.map((l, i) => (i === r.index ? r.before : l)));
+    setFocusLine((c) => ({ index: r.index, nonce: (c?.nonce ?? 0) + 1 }));
+  };
   const patchLine = (index: number, patch: Partial<QuoteLineInput>) =>
     setField(
       'lines',
@@ -166,7 +231,7 @@ export function QuoteEditor({
       unitPrice: product.price == null ? undefined : Math.round(product.price * perUnit * 1e4) / 1e4,
     });
   };
-  const { traces, problems } = useQuotePricePreview(input, setInput);
+  const { traces, problems } = useQuotePricePreview(input, setInput, priceRefresh);
   const guards = useQuoteGuardPreview(input);
   const [swap, setSwap] = useState<{
     summary: SwapSummary;
@@ -276,6 +341,26 @@ export function QuoteEditor({
                 <li key={`${String(n.line)}-${n.message}`}>
                   Line {n.line + 1}: {n.message}
                 </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {replaced !== null && (
+          <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200">
+            <span>
+              Replaced {replaced.fromName} with {replaced.toName}. Quantity and discount kept; the price follows the price lists.
+            </span>
+            <span className="flex gap-2">
+              <button type="button" onClick={undoReplace} className="min-h-10 cursor-pointer rounded-lg border border-emerald-400 px-3 font-semibold hover:bg-emerald-100 dark:hover:bg-emerald-900/40">Undo</button>
+              <button type="button" onClick={() => setReplaced(null)} aria-label="Dismiss" className="min-h-10 min-w-10 cursor-pointer rounded-lg px-2 hover:bg-emerald-100 dark:hover:bg-emerald-900/40"><X className="mx-auto h-4 w-4" aria-hidden /></button>
+            </span>
+          </div>
+        )}
+        {refreshNotes.length > 0 && (
+          <div role="status" aria-label="Products changed while this quote was open" className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            <ul className="list-disc space-y-1 pl-5">
+              {refreshNotes.map((n) => (
+                <li key={n.message}>{n.message}</li>
               ))}
             </ul>
           </div>
@@ -463,7 +548,24 @@ export function QuoteEditor({
               return (
                 <>
                   <td className="p-3">
-                    <div className="font-medium text-fg-strong">{entry.product?.name}</div>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="font-medium text-fg-strong">{entry.product?.name}</div>
+                      <div className="flex shrink-0 items-center">
+                        {canReplaceLine(line) ? (
+                          <button
+                            type="button"
+                            onClick={() => setReplacing(index)}
+                            title="Replace this item with another product"
+                            aria-label={`Replace ${entry.product?.name ?? 'item'}`}
+                            className="inline-flex min-h-10 min-w-10 cursor-pointer items-center justify-center gap-1 rounded-lg px-2 text-xs font-medium text-indigo-600 hover:bg-surface-sunken focus-visible:outline-2 focus-visible:outline-indigo-500"
+                          >
+                            <ArrowLeftRight className="h-3.5 w-3.5" aria-hidden="true" />
+                            <span className="hidden sm:inline">Replace</span>
+                          </button>
+                        ) : null}
+                        <ProductEditLink productId={line.productId} name={entry.product?.name ?? 'item'} canEdit={canEditProducts} />
+                      </div>
+                    </div>
                     <div className="text-xs text-fg-muted">
                       {entry.product?.sku} · tax {entry.product?.taxRate ?? 0}%
                     </div>
@@ -770,6 +872,16 @@ export function QuoteEditor({
           </button>
         </footer>
       </form>
+      {replacing !== null && input.lines[replacing] !== undefined && (
+        <ReplaceProductDialog
+          index={catalogueIndex}
+          currency={input.currency}
+          current={{ id: input.lines[replacing].productId, name: productById.get(input.lines[replacing].productId)?.name ?? 'item' }}
+          onHere={(productId) => heldIn(productId, input.lines[replacing].sectionId ?? null)}
+          onChoose={(product) => replaceProduct(replacing, product)}
+          onClose={() => setReplacing(null)}
+        />
+      )}
       {catalogOpen && (
         <CataloguePicker
           title="Product catalogue"

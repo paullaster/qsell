@@ -5,7 +5,7 @@ import type { TrackedOrder } from '@/lib/tracking-view';
 import { TrackingView } from './TrackingView';
 
 /** Reads the order's tracking data as it arrives, so the page itself is not held up by it. */
-export function TrackingLoader({ order, heading }: { order: Promise<TrackedOrder | null>; heading?: ReactNode }) {
+export function TrackingLoader({ order, heading, token }: { order: Promise<TrackedOrder | null>; heading?: ReactNode; token?: string }) {
   const found = use(order);
   if (found === null) {
     return (
@@ -14,5 +14,5 @@ export function TrackingLoader({ order, heading }: { order: Promise<TrackedOrder
       </p>
     );
   }
-  return <TrackingView order={found} heading={heading} />;
+  return <TrackingView order={found} heading={heading} token={token} />;
 }

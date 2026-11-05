@@ -187,3 +187,11 @@ describe('the order’s own delivery status', () => {
     expect(orderDeliveryStatus([], []).state).toBe('not_started');
   });
 });
+
+describe('a delivery the customer took only part of', () => {
+  it('leaves what was not taken open on the order, and the order is partly delivered', () => {
+    const status = orderDeliveryStatus([{ productId: 'a', quantity: 4 }], [{ status: 'delivered', lines: [{ productId: 'a', quantity: 4, picked: 4, delivered: 3 }] }]);
+    expect(status.state).toBe('partly_delivered');
+    expect(status.lines).toEqual([{ productId: 'a', ordered: 4, committed: 3, delivered: 3, open: 1 }]);
+  });
+});

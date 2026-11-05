@@ -75,6 +75,8 @@ export interface ReadyDelivery {
   units: number;
   value: number;
   waiting: { hours: number; late: boolean } | null;
+  /** The day someone asked for it to be tried again, after a failed attempt. */
+  scheduledFor: string | null;
 }
 
 export interface WithCourier {
@@ -469,7 +471,7 @@ export class DeliveryRuns {
     ]);
     const [facts, counts] = await Promise.all([this.loadFacts(this.db, ready.map((r) => ({ deliveryId: r.d.id, orderId: r.d.orderId }))), this.stopCounts(open.map((o) => o.r.id))]);
     return {
-      ready: ready.map((r) => ({ deliveryId: r.d.id, number: r.d.number, orderNumber: r.orderNumber, customerName: r.customerName, area: areaOf(r.d.destination), branchId: r.d.branchId, branchName: r.branchName, units: facts.get(r.d.id)?.units ?? 0, value: facts.get(r.d.id)?.value ?? 0, waiting: waitingSince(r.d.readyAt, now) })),
+      ready: ready.map((r) => ({ deliveryId: r.d.id, number: r.d.number, orderNumber: r.orderNumber, customerName: r.customerName, area: areaOf(r.d.destination), branchId: r.d.branchId, branchName: r.branchName, units: facts.get(r.d.id)?.units ?? 0, value: facts.get(r.d.id)?.value ?? 0, waiting: waitingSince(r.d.readyAt, now), scheduledFor: r.d.scheduledFor })),
       runs: open.map((o) => ({ id: o.r.id, number: o.r.number, runDate: o.r.runDate, riderName: o.r.riderName, branchName: o.branchName, status: o.r.status, statusWords: RUN_STATUS_WORDS[o.r.status], stops: counts.get(o.r.id) ?? 0 })),
       withCouriers: couriers.map((c) => ({ deliveryId: c.d.id, number: c.d.number, orderNumber: c.orderNumber, customerName: c.customerName, courierName: c.s.courierName, trackingNumber: c.s.trackingNumber, status: c.s.status, lastNote: c.s.lastNote, lastUpdateAt: c.s.lastUpdateAt.toISOString() })),
     };

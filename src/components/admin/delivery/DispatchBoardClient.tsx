@@ -143,6 +143,7 @@ function Board({ initial }: { initial: Board }) {
                   <Link href={`/admin/delivery/deliveries/${d.deliveryId}`} className="min-h-10 py-2 font-mono text-sm font-semibold text-indigo-600 hover:underline dark:text-indigo-400">
                     {d.number}
                   </Link>
+                  {d.scheduledFor === null ? null : <Chip tone="sky">{`Wanted ${d.scheduledFor}`}</Chip>}
                   {d.waiting === null ? null : <Chip tone={d.waiting.late ? 'red' : 'gray'}>{d.waiting.late ? `Waiting ${String(d.waiting.hours)}h` : `${String(d.waiting.hours)}h`}</Chip>}
                 </div>
                 <p className="text-sm text-fg-strong">{d.customerName}</p>

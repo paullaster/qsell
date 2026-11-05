@@ -29,5 +29,6 @@ describe('createDeliveryServices', () => {
     expect(services.deliveryPlans).toHaveProperty('availability', services.stockAvailability);
     expect(services.deliveryPlans).toHaveProperty('stockSettings', services.stockSettings);
     expect(services.deliveryRuns).toHaveProperty('riders', services.deliveryRiders);
+    expect(services.doorWork).toHaveProperty('runs', services.deliveryRuns);
   });
 });

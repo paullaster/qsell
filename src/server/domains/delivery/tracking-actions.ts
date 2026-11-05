@@ -75,3 +75,33 @@ export async function replaceTrackingLinkAction(raw: unknown) {
     ['/admin/orders'],
   );
 }
+
+/**
+ * Public: the customer chooses another day for a delivery that could not be made, from their own tracking page. The link is the proof
+ * (as for viewing), limited by address and by link; only a delivery of that order that failed with tries left can be moved, to a day
+ * after today within two weeks. The change is recorded as the customer's, with no account behind it.
+ */
+export async function rescheduleByLinkAction(raw: unknown): Promise<{ ok: true } | { ok: false; error: string }> {
+  const input = objectOf(raw);
+  const { token, deliveryNumber, day } = input;
+  if (typeof deliveryNumber !== 'string' || deliveryNumber.length > 60) return { ok: false, error: 'That delivery could not be found.' };
+  try {
+    const { isWellFormedTrackingToken } = await import('@/lib/tracking-token');
+    if (!isWellFormedTrackingToken(token)) return { ok: false, error: 'That link is not valid.' };
+    const { fingerprintSecret } = await import('@/server/domains/payments/crypto');
+    const c = getContainer();
+    const h = await headers();
+    const byAddress = await c.rateLimits.hit('tracking_ip', clientAddress(h.get('x-real-ip'), h.get('x-forwarded-for')));
+    const byLink = await c.rateLimits.hit('tracking_token', fingerprintSecret(token).slice(0, 24));
+    if (!byAddress.allowed || !byLink.allowed) return { ok: false, error: waitMessage(Math.max(byAddress.retryAfterSeconds, byLink.retryAfterSeconds)) };
+    const link = await c.trackingLinks.resolve(token);
+    if (link === null) return { ok: false, error: 'That link is not valid.' };
+    const found = await c.deliveryDocuments.idForOrderNumber(link.companyId, link.orderId, deliveryNumber);
+    if (found === null) return { ok: false, error: 'That delivery could not be found.' };
+    const done = await c.deliveryDocuments.reattempt({ companyId: link.companyId, userId: 'customer', kind: 'customer' }, found, { day, note: 'Asked for by the customer on their tracking page' });
+    return done.ok ? { ok: true } : { ok: false, error: done.message };
+  } catch (error: unknown) {
+    console.error('[delivery] reschedule by link', error);
+    return { ok: false, error: 'The change could not be made just now. Please try again.' };
+  }
+}

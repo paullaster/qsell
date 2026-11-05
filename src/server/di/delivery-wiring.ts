@@ -10,6 +10,7 @@ import { TrackedOrders } from '@/server/domains/delivery/tracked-order';
 import type { EmailPort } from '@/server/ports/communications';
 import { StockReissue } from '@/server/domains/delivery/reissue';
 import { DeliveryRiders } from '@/server/domains/delivery/riders';
+import { DoorWork } from '@/server/domains/delivery/door';
 import { RiderRuns } from '@/server/domains/delivery/rider-runs';
 import { DeliveryRuns } from '@/server/domains/delivery/runs';
 import type { UsersAdminRepository } from '@/server/domains/users/repository';
@@ -59,6 +60,7 @@ export function createDeliveryServices(input: {
   const deliveryRiders = new DeliveryRiders(input.db, input.decisionLog, input.usersAdmin);
   const riderRuns = new RiderRuns(input.db);
   const deliveryRuns = new DeliveryRuns(input.db, input.decisionLog, input.numbering, deliveryDocuments, deliveryRiders);
+  const doorWork = new DoorWork(input.db, deliveryDocuments, deliveryRuns, input.decisionLog);
   const courierShipments = new CourierShipments(input.db, deliveryDocuments);
   const trackedOrders = new TrackedOrders(input.db, input.companySettings, deliveryDocuments, orderCollections);
   const stockReissue = new StockReissue(input.db, input.decisionLog, input.stockReservations);
@@ -82,6 +84,7 @@ export function createDeliveryServices(input: {
     deliveryRuns,
     deliveryRiders,
     riderRuns,
+    doorWork,
     courierShipments,
     deliveryBilling,
   };

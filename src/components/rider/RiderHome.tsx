@@ -1,11 +1,13 @@
 'use client';
 
-import { use } from 'react';
+import { use, useEffect } from 'react';
 import Link from 'next/link';
 import type { myRunsAction } from '@/server/domains/delivery/rider-app-actions';
 import type { RiderRunItem } from '@/server/domains/delivery/rider-runs';
 import { Chip } from '@/components/ui/screen-kit';
 import type { RunStatus } from '@/lib/dispatch-run';
+import { OfflineBar } from './OfflineBar';
+import { keepRunScreen } from './RegisterWorker';
 
 const TONE: Record<RunStatus, 'green' | 'amber' | 'red' | 'sky' | 'gray'> = { planned: 'sky', started: 'amber', completed: 'green', cancelled: 'gray' };
 
@@ -19,9 +21,19 @@ export function RiderHome({ runsPromise }: { runsPromise: ReturnType<typeof myRu
       </p>
     );
   }
-  const { self, open, recent } = res.data;
+  return <Home data={res.data} />;
+}
+
+function Home({ data }: { data: Extract<Awaited<ReturnType<typeof myRunsAction>>, { ok: true }>['data'] }) {
+  const { self, open, recent } = data;
+  const keep = open.map((r) => r.id).join(',');
+  // The runs still to do are kept on the phone while there is signal, so each can be opened without it later.
+  useEffect(() => {
+    for (const id of keep === '' ? [] : keep.split(',')) keepRunScreen(id);
+  }, [keep]);
   return (
     <div className="space-y-5">
+      <OfflineBar riderId={self.id} />
       <div>
         <h1 className="text-xl font-bold text-fg-strong">Hello, {self.name}</h1>
         <p className="text-sm text-fg-muted">Your runs are below.</p>

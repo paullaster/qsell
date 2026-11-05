@@ -121,6 +121,7 @@ import type { DeliveryPlans } from '@/server/domains/delivery/plan';
 import type { OrderCollections } from '@/server/domains/delivery/collection';
 import type { DeliveryDocuments } from '@/server/domains/delivery/documents';
 import type { StockReissue } from '@/server/domains/delivery/reissue';
+import type { DoorWork } from '@/server/domains/delivery/door';
 import type { RiderRuns } from '@/server/domains/delivery/rider-runs';
 import type { DeliveryRiders } from '@/server/domains/delivery/riders';
 import type { DeliveryRuns } from '@/server/domains/delivery/runs';
@@ -289,6 +290,7 @@ export interface AppContainer {
   deliveryRuns: DeliveryRuns;
   deliveryRiders: DeliveryRiders;
   riderRuns: RiderRuns;
+  doorWork: DoorWork;
   courierShipments: CourierShipments;
   trackingLinks: TrackingLinks;
   deliveryMessages: DeliveryMessages;
@@ -636,6 +638,7 @@ export function getContainer(): AppContainer {
     deliveryRuns: deliveryServices.deliveryRuns,
     deliveryRiders: deliveryServices.deliveryRiders,
     riderRuns: deliveryServices.riderRuns,
+    doorWork: deliveryServices.doorWork,
     courierShipments: deliveryServices.courierShipments,
     trackingLinks: deliveryServices.trackingLinks,
     deliveryMessages: deliveryServices.deliveryMessages,

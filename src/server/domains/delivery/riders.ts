@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { branches, deliveryRiderSettings, deliveryRiders, deliveryRuns, roles, users } from '@/server/db/drizzle/schema';
 import { RIDER_KIND_WORDS, RIDER_STATUS_WORDS, RIDER_STATUSES, dialable, isRiderKind, kindsProblem, mayCarry, riderStatusAfter, type RiderKind, type RiderKinds, type RiderStatus } from '@/lib/delivery-rider';
+import { isProofRule, type ProofRule } from '@/lib/delivery-proof';
 import { validatePassword } from '@/lib/passwordPolicy';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { decodeCursor, encodeCursor } from '@/server/domains/lookups/request';
@@ -18,6 +19,8 @@ const PAGE = 25;
 export const RIDER_ROLE = 'rider';
 
 export interface RiderSettingsView extends RiderKinds {
+  /** What a rider must show to mark a delivery delivered. */
+  proof: ProofRule;
   version: number;
   /** People riding or paused, by kind: what blocks switching a kind off. */
   working: Record<RiderKind, number>;
@@ -78,7 +81,7 @@ export class DeliveryRiders {
       .groupBy(deliveryRiders.kind);
     const working: Record<RiderKind, number> = { staff: 0, separate: 0 };
     for (const c of counts) working[c.kind] = c.n;
-    return { allowStaff: row?.allowStaff ?? true, allowSeparate: row?.allowSeparate ?? false, version: row?.version ?? 0, working };
+    return { allowStaff: row?.allowStaff ?? true, allowSeparate: row?.allowSeparate ?? false, proof: row?.proof ?? 'none', version: row?.version ?? 0, working };
   }
 
   async setKinds(actor: DocActor, input: { allowStaff?: unknown; allowSeparate?: unknown; expectedVersion?: unknown }): Promise<DocResult<RiderSettingsView>> {
@@ -97,6 +100,24 @@ export class DeliveryRiders {
       if (row.allowStaff !== next.allowStaff || row.allowSeparate !== next.allowSeparate) {
         await tx.update(deliveryRiderSettings).set({ ...next, version: row.version + 1, updatedBy: actor.userId, updatedAt: new Date() }).where(eq(deliveryRiderSettings.companyId, actor.companyId));
         await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_riders', id: actor.companyId }, action: 'riders.kinds_set', actor: { type: 'user', id: actor.userId }, from: JSON.stringify({ staff: row.allowStaff, separate: row.allowSeparate }), to: JSON.stringify({ staff: next.allowStaff, separate: next.allowSeparate }) }, tx);
+      }
+      return { ok: true, data: await this.settingsIn(tx, actor.companyId) };
+    });
+  }
+
+  /** What a rider must show at the door. Versioned like the kinds, and every change is in the decision log. */
+  async setProof(actor: DocActor, input: { proof?: unknown; expectedVersion?: unknown }): Promise<DocResult<RiderSettingsView>> {
+    if (!isProofRule(input.proof)) return fail('bad_input', 'Choose what a rider must show at the door.');
+    const proof = input.proof;
+    const version = typeof input.expectedVersion === 'number' ? input.expectedVersion : 0;
+    return await this.db.transaction(async (tx): Promise<DocResult<RiderSettingsView>> => {
+      await tx.insert(deliveryRiderSettings).values({ companyId: actor.companyId }).onConflictDoNothing();
+      const [row] = await tx.select().from(deliveryRiderSettings).where(eq(deliveryRiderSettings.companyId, actor.companyId)).for('update');
+      if (row === undefined) return fail('not_found', 'The setting could not be found.');
+      if (version !== 0 && version !== row.version) return fail('conflict', 'Someone else changed this while you were looking. Reload to see their change.');
+      if (row.proof !== proof) {
+        await tx.update(deliveryRiderSettings).set({ proof, version: row.version + 1, updatedBy: actor.userId, updatedAt: new Date() }).where(eq(deliveryRiderSettings.companyId, actor.companyId));
+        await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_riders', id: actor.companyId }, action: 'riders.proof_set', actor: { type: 'user', id: actor.userId }, from: row.proof, to: proof }, tx);
       }
       return { ok: true, data: await this.settingsIn(tx, actor.companyId) };
     });

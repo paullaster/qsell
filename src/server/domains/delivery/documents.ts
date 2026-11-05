@@ -1,8 +1,10 @@
+import { randomBytes } from 'node:crypto';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, deliveries, deliveryEvents, deliveryShipments, deliveryLines, deliveryReturns, orderDeliveries, orderItems, orders, products, stockReservations, stockSettings, unitsOfMeasure, type ReturnEffects } from '@/server/db/drizzle/schema';
+import { branches, deliveries, deliveryAttemptLines, deliveryAttempts, deliveryEvents, deliveryProofs, deliveryRiderSettings, deliveryRiders, deliveryShipments, deliveryLines, deliveryReturns, orderDeliveries, orderItems, orders, products, stockReservations, stockSettings, unitsOfMeasure, type ReturnEffects } from '@/server/db/drizzle/schema';
 import {
   ACTION_WORDS,
+  FAILURE_REASONS,
   MAX_DELIVERY_ATTEMPTS,
   STAGES_FOR,
   STATUS_WORDS,
@@ -21,6 +23,7 @@ import {
   type OrderDeliveryStatus,
   type QuantityLine,
 } from '@/lib/delivery-document';
+import { NOT_ACCEPTED_REASONS, checkAcceptance, checkRescheduleDay, type AcceptedLine } from '@/lib/delivery-acceptance';
 import { quantityProblem } from '@/lib/unit-rules';
 import type { DestinationRecord } from '@/lib/order-delivery';
 import { OrderStages } from '@/server/domains/orders/stages';
@@ -32,6 +35,7 @@ import { decodeCursor, encodeCursor } from '@/server/domains/lookups/request';
 import { DISPOSITION_WORDS, dispositionsFor, isIssueMoment, issuesAt, returnProblem, type IssueMoment, type ReturnDisposition, type ReturnableLine } from '@/lib/stock-issue';
 import type { StockReservations } from '@/server/domains/stock/reservations';
 import { StockError } from '@/server/domains/stock/errors';
+import { codeFromBytes, isProofRule, usesCode } from '@/lib/delivery-proof';
 import { kindForStep, messageKey } from '@/lib/delivery-messages';
 import type { DeliveryMessages } from './messages';
 import { orderReadinessProblem } from './order-readiness';
@@ -41,6 +45,8 @@ type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 export interface DocActor {
   companyId: string;
   userId: string;
+  /** The customer, acting through their own tracking link, has no account: their steps are recorded as theirs, without an id. */
+  kind?: 'customer';
 }
 
 export type DocRefusal = 'not_found' | 'bad_input' | 'not_allowed' | 'conflict' | 'order_not_ready' | 'nothing_left' | 'wrong_method';
@@ -86,6 +92,29 @@ export interface DeliveryEventView {
   occurredAt: string;
 }
 
+/** One go at the door by a rider, with what they showed. A photo is opened through a signed link after an access check, never by its id. */
+const attemptWords = (result: string): string => {
+  if (result === 'delivered') return 'Delivered';
+  if (result === 'part_accepted') return 'Delivered, the customer took only part';
+  return FAILURE_REASONS.find((r) => r.code === result)?.words ?? result;
+};
+
+export interface DeliveryAttemptView {
+  attemptNo: number;
+  result: string;
+  resultWords: string;
+  riderName: string;
+  receivedBy: string | null;
+  note: string | null;
+  place: { lat: number; lng: number } | null;
+  occurredAt: string;
+  /** The phone's own clock, only for the record. */
+  clientTime: string | null;
+  proofs: { id: string; kind: 'code' | 'photo' }[];
+  /** For a delivery the customer took only part of: what was carried, what was taken and why the rest was not. */
+  taken: { productName: string; carried: number; accepted: number; reasonWords: string | null; note: string | null }[];
+}
+
 export interface DeliveryView {
   id: string;
   number: string;
@@ -104,6 +133,10 @@ export interface DeliveryView {
   trackingNumber: string | null;
   receivedBy: string | null;
   failedAttempts: number;
+  /** A code was made for the customer to say at the door. The code itself is the customer's, and is not shown here. */
+  hasCode: boolean;
+  /** The day it is wanted again after a failed attempt, if someone asked. */
+  scheduledFor: string | null;
   version: number;
   createdAt: string;
   releasedAt: string | null;
@@ -111,6 +144,7 @@ export interface DeliveryView {
   deliveredAt: string | null;
   lines: DeliveryLineView[];
   events: DeliveryEventView[];
+  attempts: DeliveryAttemptView[];
   /** What can be done next, with the words for the button. */
   actions: { action: DeliveryAction; words: string }[];
 }
@@ -289,14 +323,17 @@ export class DeliveryDocuments {
             .values({ companyId: actor.companyId, deliveryId: id, courierName, trackingNumber, status: 'in_transit' })
             .onConflictDoUpdate({ target: deliveryShipments.deliveryId, set: { courierName, trackingNumber, status: 'in_transit', lastUpdateAt: new Date() } });
         }
-        return { set: { dispatchedAt: new Date(), courierName: ctx.row.method === 'courier' ? courierName : null, trackingNumber }, note: input.note ?? null, detail: input.detail ?? {} };
+        // A delivery the shop's own rider carries gets the customer's code when the company asks for it as proof; a second try keeps the first.
+        const [proofRow] = ctx.row.method === 'own_fleet' ? await inner.select({ proof: deliveryRiderSettings.proof }).from(deliveryRiderSettings).where(eq(deliveryRiderSettings.companyId, actor.companyId)) : [];
+        const handoverCode = proofRow !== undefined && isProofRule(proofRow.proof) && usesCode(proofRow.proof) ? (ctx.row.handoverCode ?? codeFromBytes(randomBytes(4))) : ctx.row.handoverCode;
+        return { set: { dispatchedAt: new Date(), courierName: ctx.row.method === 'courier' ? courierName : null, trackingNumber, handoverCode, scheduledFor: null }, note: input.note ?? null, detail: input.detail ?? {} };
       },
       tx,
     );
   }
 
   /** Delivered, to someone who is named. Everything that was picked is delivered; a part of the order delivered is not the order delivered. */
-  async deliver(actor: DocActor, id: string, input: { receivedBy?: unknown; note?: unknown }, expectedVersion?: number, tx?: Tx) {
+  async deliver(actor: DocActor, id: string, input: { receivedBy?: unknown; note?: unknown; accepted?: unknown }, expectedVersion?: number, tx?: Tx) {
     const receivedBy = text(input.receivedBy, 120);
     if (receivedBy === null) return fail('bad_input', 'Say who received it.');
     return await this.step(
@@ -304,9 +341,15 @@ export class DeliveryDocuments {
       id,
       'deliver',
       expectedVersion,
-      async (inner) => {
-        await inner.update(deliveryLines).set({ delivered: sql`COALESCE(${deliveryLines.picked}, ${deliveryLines.quantity})` }).where(eq(deliveryLines.deliveryId, id));
-        return { set: { deliveredAt: new Date(), receivedBy }, note: text(input.note, 300), detail: { receivedBy } };
+      async (inner, ctx) => {
+        // The customer may have taken only part of it: what they took is delivered, and the rest comes back (see receiveReturn).
+        const carried = ctx.lines.map((l) => ({ productId: l.productId, quantity: Number(l.picked ?? l.quantity) }));
+        const given = Array.isArray(input.accepted) ? (input.accepted as AcceptedLine[]) : null;
+        const check = checkAcceptance(carried, given);
+        if (!check.ok) return fail('bad_input', check.error);
+        for (const a of check.accepted) await inner.update(deliveryLines).set({ delivered: String(a.quantity) }).where(and(eq(deliveryLines.deliveryId, id), eq(deliveryLines.productId, a.productId)));
+        const detail: Record<string, unknown> = check.whole ? { receivedBy } : { receivedBy, partial: true, notAccepted: check.notAccepted.map((n) => ({ productId: n.productId, quantity: n.quantity, reason: n.reasonCode })) };
+        return { set: { deliveredAt: new Date(), receivedBy }, note: text(input.note, 300), detail, accepted: new Map(check.accepted.map((a) => [a.productId, a.quantity])) };
       },
       tx,
     );
@@ -321,11 +364,22 @@ export class DeliveryDocuments {
     return await this.step(actor, id, 'fail_attempt', expectedVersion, () => Promise.resolve({ set: {}, bump: { failedAttempts: sql`${deliveries.failedAttempts} + 1` }, reasonCode, note, stageReason: reasonCode }), tx);
   }
 
-  /** Another try: only while the limit has not been reached, and with a note on why it should work this time. */
-  async reattempt(actor: DocActor, id: string, input: { note?: unknown }, expectedVersion?: number) {
+  /**
+   * Another try: only while the limit has not been reached. It may name the day it is wanted (the customer asks through their tracking
+   * link, or the office on their behalf): after today and within two weeks, kept on the delivery and in its history. Without a day it is
+   * ready to go again as before.
+   */
+  async reattempt(actor: DocActor, id: string, input: { note?: unknown; day?: unknown }, expectedVersion?: number, today: string = businessDate()) {
+    const wanted = input.day === undefined || input.day === null || input.day === '' ? null : checkRescheduleDay(input.day, today);
+    if (wanted !== null && !wanted.ok) return fail('bad_input', wanted.error);
     return await this.step(actor, id, 'reattempt', expectedVersion, (_tx, ctx) => {
       if (ctx.row.failedAttempts >= MAX_DELIVERY_ATTEMPTS) return Promise.resolve(fail('not_allowed', `This delivery has been tried ${String(MAX_DELIVERY_ATTEMPTS)} times. Return it to stock, or cancel the order.`));
-      return Promise.resolve({ set: {}, note: text(input.note, 300) });
+      const note = text(input.note, 300);
+      return Promise.resolve({
+        set: { scheduledFor: wanted?.date ?? null },
+        note: wanted === null ? note : `Wanted on ${wanted.date}${note === null ? '' : `: ${note}`}`,
+        detail: wanted === null ? {} : { scheduledFor: wanted.date, by: actor.kind ?? 'office' },
+      });
     });
   }
 
@@ -378,13 +432,15 @@ export class DeliveryDocuments {
       const [order] = await tx.select({ id: orders.id, status: orders.status, paymentStatus: orders.paymentStatus, approvalStatus: orders.approvalStatus, paymentMethod: orders.paymentMethod, orderNumber: orders.orderNumber }).from(orders).where(eq(orders.id, row.orderId));
       if (order === undefined) return fail('not_found', 'The order of this delivery could not be found.');
       const lines = await tx.select().from(deliveryLines).where(eq(deliveryLines.deliveryId, id));
+      let taken: Map<string, number> | null = null;
       const afterDelivery = async (): Promise<'delivered' | 'part_delivered'> => {
-        const facts = await this.factsIn(tx, row.orderId, new Map([[id, { status: to, lines: lines.map((l) => ({ productId: l.productId, quantity: Number(l.quantity), picked: l.picked === null ? null : Number(l.picked), delivered: Number(l.picked ?? l.quantity) })) }]]));
+        const facts = await this.factsIn(tx, row.orderId, new Map([[id, { status: to, lines: lines.map((l) => ({ productId: l.productId, quantity: Number(l.quantity), picked: l.picked === null ? null : Number(l.picked), delivered: taken?.get(l.productId) ?? Number(l.picked ?? l.quantity) })) }]]));
         const ordered = await tx.select({ productId: orderItems.productId, quantity: orderItems.quantity }).from(orderItems).where(eq(orderItems.orderId, row.orderId));
         return orderDeliveryStatus(ordered.map((o) => ({ productId: o.productId, quantity: o.quantity })), facts).state === 'delivered' ? 'delivered' : 'part_delivered';
       };
       const outcome = await work(tx, { row, lines, order, afterDelivery });
       if ('ok' in outcome) return outcome;
+      taken = outcome.accepted ?? null;
 
       const closing = isOver(to);
       await tx
@@ -435,7 +491,9 @@ export class DeliveryDocuments {
     const lines = await tx.select().from(deliveryLines).where(eq(deliveryLines.deliveryId, row.id));
     const wanted = new Map<string, number>();
     for (const l of lines) {
-      const left = Math.round((Number(l.picked ?? l.quantity) - Number(l.issued)) * 1000) / 1000;
+      // Arriving issues only what the customer took; what they did not take never left the books.
+      const carriedNow = action === 'deliver' ? Number(l.delivered) : Number(l.picked ?? l.quantity);
+      const left = Math.round((carriedNow - Number(l.issued)) * 1000) / 1000;
       if (left > 0) wanted.set(l.productId, left);
     }
     if (wanted.size === 0) return null;
@@ -467,9 +525,19 @@ export class DeliveryDocuments {
   }
 
   /** What a returned delivery's line could have brought back, and whether this delivery issued its stock. */
-  private couldBack(l: typeof deliveryLines.$inferSelect): ReturnableLine {
+  private couldBack(l: typeof deliveryLines.$inferSelect, status: DeliveryStatus): ReturnableLine {
+    const carriedQty = Number(l.picked ?? l.quantity);
+    if (status === 'delivered') {
+      // Only what the customer did not take comes back.
+      return { could: Math.max(0, Math.round((carriedQty - Number(l.delivered)) * 1000) / 1000), issuedHere: Number(l.issued) >= carriedQty && Number(l.issued) > 0 };
+    }
     const issuedHere = Number(l.issued) > 0;
-    return { could: Number(issuedHere ? l.issued : (l.picked ?? l.quantity)), issuedHere };
+    return { could: Number(issuedHere ? l.issued : carriedQty), issuedHere };
+  }
+
+  /** Whether this delivery has goods to receive back: it was returned, or it arrived and the customer took only part. */
+  private hasGoodsBack(status: DeliveryStatus, lines: readonly (typeof deliveryLines.$inferSelect)[]): boolean {
+    return status === 'returned' || (status === 'delivered' && lines.some((l) => Number(l.delivered) < Number(l.picked ?? l.quantity)));
   }
 
   /** Does one line of a receipt to stock, once for `key`, and says what it did. */
@@ -482,12 +550,12 @@ export class DeliveryDocuments {
     return await this.db.transaction(async (tx): Promise<DocResult<DeliveryView>> => {
       const [row] = await tx.select().from(deliveries).where(and(eq(deliveries.id, id), eq(deliveries.companyId, actor.companyId))).for('update');
       if (row === undefined) return fail('not_found', 'That delivery could not be found.');
-      if (row.status !== 'returned') return fail('not_allowed', 'Only a delivery that has been returned has goods to receive.');
       const moment = await this.momentIn(tx, actor.companyId);
       const [have, done] = await Promise.all([tx.select().from(deliveryLines).where(eq(deliveryLines.deliveryId, id)), tx.select({ productId: deliveryReturns.productId }).from(deliveryReturns).where(eq(deliveryReturns.deliveryId, id))]);
+      if (!this.hasGoodsBack(row.status, have)) return fail('not_allowed', 'Only a delivery that has been returned, or that the customer took only part of, has goods to receive.');
       const received = new Set(done.map((d) => d.productId));
       if (lines.some((l) => received.has(l.productId))) return fail('conflict', 'That product has already been received for this delivery. To change it, correct the receipt.');
-      const back = new Map<string, ReturnableLine>(have.map((l) => [l.productId, this.couldBack(l)]));
+      const back = new Map<string, ReturnableLine>(have.map((l) => [l.productId, this.couldBack(l, row.status)]));
       const problem = returnProblem(moment, back, lines);
       if (problem !== null) return fail('bad_input', problem);
 
@@ -533,11 +601,11 @@ export class DeliveryDocuments {
       return await this.db.transaction(async (tx): Promise<DocResult<DeliveryView>> => {
         const [row] = await tx.select().from(deliveries).where(and(eq(deliveries.id, id), eq(deliveries.companyId, actor.companyId))).for('update');
         if (row === undefined) return fail('not_found', 'That delivery could not be found.');
-        if (row.status !== 'returned') return fail('not_allowed', 'Only a delivery that has been returned has a receipt.');
+        const have = await tx.select().from(deliveryLines).where(eq(deliveryLines.deliveryId, id));
+        if (!this.hasGoodsBack(row.status, have)) return fail('not_allowed', 'Only a delivery that has been returned, or that the customer took only part of, has a receipt.');
         const [current] = await tx.select().from(deliveryReturns).where(and(eq(deliveryReturns.deliveryId, id), eq(deliveryReturns.productId, line.productId))).orderBy(desc(deliveryReturns.revision)).limit(1);
         if (current === undefined) return fail('not_found', 'That product has not been received yet. Receive it first.');
-        const have = await tx.select().from(deliveryLines).where(eq(deliveryLines.deliveryId, id));
-        const back = new Map<string, ReturnableLine>(have.map((l) => [l.productId, this.couldBack(l)]));
+        const back = new Map<string, ReturnableLine>(have.map((l) => [l.productId, this.couldBack(l, row.status)]));
         const problem = returnProblem(await this.momentIn(tx, actor.companyId), back, [line]);
         if (problem !== null) return fail('bad_input', problem);
         const disposition = line.disposition as ReturnDisposition;
@@ -568,18 +636,19 @@ export class DeliveryDocuments {
 
   private async event(tx: Tx, deliveryId: string, action: string, actor: DocActor, from: string | null, to: string | null, extra: { reasonCode?: string | null; note?: string | null; detail?: Record<string, unknown> } = {}): Promise<void> {
     const [last] = await tx.select({ seq: sql<number>`COALESCE(MAX(${deliveryEvents.sequence}), 0)` }).from(deliveryEvents).where(eq(deliveryEvents.deliveryId, deliveryId));
-    await tx.insert(deliveryEvents).values({ deliveryId, sequence: (last?.seq ?? 0) + 1, action, fromStatus: from, toStatus: to, actorType: 'user', actorId: actor.userId, reasonCode: extra.reasonCode ?? null, note: extra.note ?? null, detail: extra.detail ?? {} });
+    await tx.insert(deliveryEvents).values({ deliveryId, sequence: (last?.seq ?? 0) + 1, action, fromStatus: from, toStatus: to, actorType: actor.kind ?? 'user', actorId: actor.kind === undefined ? actor.userId : null, reasonCode: extra.reasonCode ?? null, note: extra.note ?? null, detail: extra.detail ?? {} });
   }
 
   // ── Reading ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
   private async committedIn(tx: Tx | DrizzleDb, orderId: string): Promise<QuantityLine[]> {
     const rows = await tx
-      .select({ productId: deliveryLines.productId, quantity: deliveryLines.quantity, picked: deliveryLines.picked, status: deliveries.status })
+      .select({ productId: deliveryLines.productId, quantity: deliveryLines.quantity, picked: deliveryLines.picked, delivered: deliveryLines.delivered, status: deliveries.status })
       .from(deliveryLines)
       .innerJoin(deliveries, eq(deliveries.id, deliveryLines.deliveryId))
       .where(eq(deliveries.orderId, orderId));
-    return rows.filter((r) => isLive(r.status)).map((r) => ({ productId: r.productId, quantity: Number(r.picked ?? r.quantity) }));
+    // A delivery that arrived commits what the customer took; a part they did not take is open on the order again.
+    return rows.filter((r) => isLive(r.status)).map((r) => ({ productId: r.productId, quantity: r.status === 'delivered' ? Number(r.delivered) : Number(r.picked ?? r.quantity) }));
   }
 
   /** The facts of every delivery of an order, with the given ones replaced (what it would be after a change being made). */
@@ -608,6 +677,22 @@ export class DeliveryDocuments {
     return new Map(rows.map((r) => [r.id, { decimals: r.decimals ?? 3, name: r.name ?? 'its unit' }]));
   }
 
+  /** A delivery of an order by its number, for the customer's own link: only if it belongs to that order and company. */
+  async idForOrderNumber(companyId: string, orderId: string, number: string): Promise<string | null> {
+    const [row] = await this.db.select({ id: deliveries.id }).from(deliveries).where(and(eq(deliveries.companyId, companyId), eq(deliveries.orderId, orderId), eq(deliveries.number, number)));
+    return row?.id ?? null;
+  }
+
+  /** The stored photo of a proof, only if the proof belongs to this company. The caller turns it into a short-lived link after its own permission check. */
+  async proofPhoto(companyId: string, proofId: string): Promise<string | null> {
+    const [row] = await this.db
+      .select({ mediaId: deliveryProofs.mediaId })
+      .from(deliveryProofs)
+      .innerJoin(deliveryAttempts, eq(deliveryAttempts.id, deliveryProofs.attemptId))
+      .where(and(eq(deliveryProofs.id, proofId), eq(deliveryAttempts.companyId, companyId)));
+    return row?.mediaId ?? null;
+  }
+
   async get(companyId: string, id: string): Promise<DeliveryView | null> {
     return await this.viewIn(this.db, companyId, id, true);
   }
@@ -625,12 +710,15 @@ export class DeliveryDocuments {
       if (nullable) return null;
       throw new Error(`The delivery ${id} vanished while it was locked.`);
     }
-    const returned = row.d.status === 'returned';
+    // Goods come back with a delivery that was returned, and with what the customer did not take of one that arrived in part.
+    const [shortOnes] = row.d.status === 'delivered' ? await db.select({ n: sql<number>`count(*)::int` }).from(deliveryLines).where(and(eq(deliveryLines.deliveryId, id), sql`${deliveryLines.delivered} < COALESCE(${deliveryLines.picked}, ${deliveryLines.quantity})`)) : [];
+    const partial = (shortOnes?.n ?? 0) > 0;
+    const returned = row.d.status === 'returned' || partial;
     const [receipts, moment] = returned ? await Promise.all([db.select().from(deliveryReturns).where(eq(deliveryReturns.deliveryId, id)).orderBy(asc(deliveryReturns.revision)), this.momentIn(db as Tx, companyId)]) : [[], 'payment' as IssueMoment];
     // A receipt can be corrected while the holds it made are still untouched: one read of them all.
     const holdIds = receipts.flatMap((r) => r.effects.holds ?? []);
     const used = new Set(holdIds.length === 0 ? [] : (await db.select({ id: stockReservations.id, state: stockReservations.state, consumed: stockReservations.consumed, released: stockReservations.released }).from(stockReservations).where(inArray(stockReservations.id, holdIds))).filter((h) => h.state !== 'held' || h.consumed > 0 || h.released > 0).map((h) => h.id));
-    const [lines, events] = await Promise.all([
+    const [lines, events, attemptRows] = await Promise.all([
       db
         .select({ id: deliveryLines.id, productId: deliveryLines.productId, productName: products.name, sku: products.sku, quantity: deliveryLines.quantity, picked: deliveryLines.picked, delivered: deliveryLines.delivered, issued: deliveryLines.issued })
         .from(deliveryLines)
@@ -638,7 +726,15 @@ export class DeliveryDocuments {
         .where(eq(deliveryLines.deliveryId, id))
         .orderBy(asc(products.name), asc(deliveryLines.id)),
       db.select().from(deliveryEvents).where(eq(deliveryEvents.deliveryId, id)).orderBy(asc(deliveryEvents.sequence)),
+      db
+        .select({ a: deliveryAttempts, riderName: deliveryRiders.name })
+        .from(deliveryAttempts)
+        .innerJoin(deliveryRiders, eq(deliveryRiders.id, deliveryAttempts.riderId))
+        .where(eq(deliveryAttempts.deliveryId, id))
+        .orderBy(asc(deliveryAttempts.attemptNo)),
     ]);
+    const takenRows = attemptRows.length === 0 ? [] : await db.select({ attemptId: deliveryAttemptLines.attemptId, productName: products.name, carried: deliveryAttemptLines.carried, accepted: deliveryAttemptLines.accepted, reasonCode: deliveryAttemptLines.reasonCode, note: deliveryAttemptLines.note }).from(deliveryAttemptLines).innerJoin(products, eq(products.id, deliveryAttemptLines.productId)).where(inArray(deliveryAttemptLines.attemptId, attemptRows.map((r) => r.a.id))).orderBy(asc(products.name));
+    const proofRows = attemptRows.length === 0 ? [] : await db.select({ id: deliveryProofs.id, attemptId: deliveryProofs.attemptId, kind: deliveryProofs.kind }).from(deliveryProofs).where(inArray(deliveryProofs.attemptId, attemptRows.map((r) => r.a.id))).orderBy(asc(deliveryProofs.createdAt));
     const d = row.d;
     return {
       id: d.id,
@@ -658,13 +754,18 @@ export class DeliveryDocuments {
       trackingNumber: d.trackingNumber,
       receivedBy: d.receivedBy,
       failedAttempts: d.failedAttempts,
+      hasCode: d.handoverCode !== null,
+      scheduledFor: d.scheduledFor,
       version: d.version,
       createdAt: d.createdAt.toISOString(),
       releasedAt: d.releasedAt?.toISOString() ?? null,
       dispatchedAt: d.dispatchedAt?.toISOString() ?? null,
       deliveredAt: d.deliveredAt?.toISOString() ?? null,
       lines: lines.map((l) => {
-        const issuedHere = Number(l.issued) > 0;
+        const carriedQty = Number(l.picked ?? l.quantity);
+        const lineShort = partial ? Math.round((carriedQty - Number(l.delivered)) * 1000) / 1000 : null;
+        // A part not taken never left the books if stock is issued on arrival; it did if stock was issued when the delivery went out.
+        const issuedHere = partial ? Number(l.issued) >= carriedQty && Number(l.issued) > 0 : Number(l.issued) > 0;
         const mine = receipts.filter((r) => r.productId === l.productId);
         const receipt = mine[mine.length - 1];
         const disposition = receipt?.disposition as ReturnDisposition | undefined;
@@ -678,10 +779,10 @@ export class DeliveryDocuments {
           picked: l.picked === null ? null : Number(l.picked),
           delivered: num(l.delivered),
           issued: num(l.issued),
-          back: !returned
+          back: !returned || (lineShort !== null && lineShort <= 0)
             ? null
             : {
-                could: issuedHere ? num(l.issued) : Number(l.picked ?? l.quantity),
+                could: lineShort ?? (issuedHere ? num(l.issued) : carriedQty),
                 choices: receipt === undefined ? dispositionsFor(moment, issuedHere).map((d) => ({ id: d, ...DISPOSITION_WORDS[d] })) : [],
                 receipt: receipt === undefined || disposition === undefined ? null : { quantity: Number(receipt.quantity), disposition, words: words(disposition), receivedAt: receipt.receivedAt.toISOString(), revision: receipt.revision, correctionReason: receipt.correctionReason, correctable: !(receipt.effects.holds ?? []).some((h) => used.has(h)) },
                 earlier: mine.slice(0, -1).map((r) => ({ revision: r.revision, quantity: Number(r.quantity), words: words(r.disposition), receivedAt: r.receivedAt.toISOString(), correctionReason: r.correctionReason })),
@@ -700,6 +801,19 @@ export class DeliveryDocuments {
         note: e.note,
         detail: e.detail,
         occurredAt: e.occurredAt.toISOString(),
+      })),
+      attempts: attemptRows.map(({ a, riderName }) => ({
+        attemptNo: a.attemptNo,
+        result: a.result,
+        resultWords: attemptWords(a.result),
+        riderName,
+        receivedBy: a.receivedBy,
+        note: a.note,
+        place: a.latitude === null || a.longitude === null ? null : { lat: a.latitude, lng: a.longitude },
+        occurredAt: a.occurredAt.toISOString(),
+        clientTime: a.clientTime?.toISOString() ?? null,
+        proofs: proofRows.filter((p) => p.attemptId === a.id).map((p) => ({ id: p.id, kind: p.kind })),
+        taken: takenRows.filter((t) => t.attemptId === a.id).map((t) => ({ productName: t.productName, carried: t.carried, accepted: t.accepted, reasonWords: t.reasonCode === null ? null : (NOT_ACCEPTED_REASONS.find((r) => r.code === t.reasonCode)?.words ?? t.reasonCode), note: t.note })),
       })),
       actions: actionsFrom(d.status).map((action) => ({ action, words: ACTION_WORDS[action] })),
     };
@@ -789,5 +903,7 @@ interface StepOutcome {
   stageDetail?: Record<string, unknown>;
   /** The reason recorded on the order's timeline for a failure. */
   stageReason?: string;
+  /** For a delivery that arrived: what the customer took of each product, so the order's state follows it. */
+  accepted?: Map<string, number>;
 }
 

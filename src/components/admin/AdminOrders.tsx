@@ -23,15 +23,18 @@ interface AdminOrdersProps {
   /** The first page, already on its way when the screen is drawn. */
   firstPage: Promise<PageResult<Order>>;
   companyPromise: Promise<PublicCompany>;
+  /** Whether the person may update products: order lines then offer a shortcut to the product's edit window. */
+  canEditProductsPromise: Promise<boolean>;
 }
 
 const messageOf = (error: unknown, fallback: string): string =>
   error instanceof Error ? error.message : fallback;
 
 /** The orders, a page at a time: search, narrow by state, and open one to fulfil, invoice, take payment on or credit. */
-export function AdminOrders({ firstPage, companyPromise }: AdminOrdersProps) {
+export function AdminOrders({ firstPage, companyPromise, canEditProductsPromise }: AdminOrdersProps) {
   const first = use(firstPage);
   const company = use(companyPromise);
+  const canEditProducts = use(canEditProductsPromise);
 
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<Choice | null>(null);
@@ -342,6 +345,7 @@ export function AdminOrders({ firstPage, companyPromise }: AdminOrdersProps) {
         <OrderDetailsModal
           key={selected.id}
           order={selected}
+          canEditProducts={canEditProducts}
           busy={busy}
           invoiceBusy={invoiceBusy}
           error={error}
@@ -358,6 +362,7 @@ export function AdminOrders({ firstPage, companyPromise }: AdminOrdersProps) {
       {previewing && selected !== null ? (
         <OrderInvoicePreview
           order={selected}
+          canEditProducts={canEditProducts}
           company={company}
           busy={invoiceBusy}
           onClose={() => setPreviewing(false)}

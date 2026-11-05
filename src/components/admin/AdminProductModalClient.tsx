@@ -3,6 +3,7 @@
 import { use, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AdminProductModal } from '@/components/admin/AdminProductModal';
+import { publishProductUpdated } from '@/components/admin/product-updated';
 import type { Product, Category, ItemType, TaxCategory } from '@/types/index';
 
 export function AdminProductModalClient({
@@ -11,12 +12,15 @@ export function AdminProductModalClient({
   categoriesPromise,
   itemTypesPromise,
   taxesPromise,
+  returnOnSave = false,
 }: {
   productPromise: Promise<Product | null>;
   duplicateFromPromise?: Promise<Product | null>;
   categoriesPromise: Promise<Category[]>;
   itemTypesPromise: Promise<ItemType[]>;
   taxesPromise: Promise<TaxCategory[]>;
+  /** Opened from a line on another screen: after saving, say which product changed and go back there (not to the list). */
+  returnOnSave?: boolean;
 }) {
   const router = useRouter();
   const product = use(productPromise);
@@ -43,6 +47,11 @@ export function AdminProductModalClient({
       itemTypes={itemTypes}
       taxCategories={taxes}
       onSuccess={() => {
+        if (returnOnSave && product !== null) {
+          // The modal then closes itself with onClose, which goes back to the screen the person came from.
+          publishProductUpdated(product.id);
+          return;
+        }
         setOpen(false);
         router.push('/admin/products');
         router.refresh();

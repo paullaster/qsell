@@ -5,9 +5,18 @@ import { AccessDeniedError } from '@/server/domains/access-control/engine';
 import { getContainer } from '@/server/di/container';
 import { injectedDelay } from '@/server/domains/finance/action-runner';
 import { DeliveryError } from './errors';
+import type { DocRefusal, DocResult } from './documents';
+import { objectOf } from './action-support';
 import type { RiderSelf } from './riders';
 
 export type RiderResult<T> = { ok: true; data: T } | { ok: false; error: string; code?: string; forbidden?: true };
+
+const CODE_FOR: Record<DocRefusal, DeliveryError['code']> = { not_found: 'NOT_FOUND', bad_input: 'BAD_INPUT', not_allowed: 'NOT_ALLOWED', conflict: 'CONFLICT', order_not_ready: 'NOT_ALLOWED', nothing_left: 'BAD_INPUT', wrong_method: 'BAD_INPUT' };
+
+function dataOf<T>(result: DocResult<T>): T {
+  if (result.ok) return result.data;
+  throw new DeliveryError(result.message, CODE_FOR[result.reason]);
+}
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -33,7 +42,7 @@ async function runRider<T>(fn: (self: RiderSelf) => Promise<T>): Promise<RiderRe
 
 /** Who is using the app, and their runs still to do and the few most recently finished. */
 export async function myRunsAction() {
-  return await runRider(async (self) => ({ self: { name: self.name, kind: self.kind }, ...(await getContainer().riderRuns.mine(self)) }));
+  return await runRider(async (self) => ({ self: { id: self.riderId, name: self.name, kind: self.kind }, ...(await getContainer().riderRuns.mine(self)) }));
 }
 
 /** One of the rider's own runs with its stops. Another rider's run answers "not found". */
@@ -43,4 +52,22 @@ export async function myRunAction(runId: unknown) {
     if (found === null) throw new DeliveryError('That run could not be found.', 'NOT_FOUND');
     return found;
   });
+}
+
+/**
+ * The stop is delivered. The rider, the run and the company come from the server; the phone sends the stop, who received it, the
+ * customer's code or the photo it uploaded, and a key made once per try so a repeat is one try.
+ */
+export async function deliverStopAction(raw: unknown) {
+  return await runRider(async (self) => dataOf(await getContainer().doorWork.deliver(self, objectOf(raw))));
+}
+
+/** The stop could not be delivered: why, and optionally a photo. */
+export async function failStopAction(raw: unknown) {
+  return await runRider(async (self) => dataOf(await getContainer().doorWork.fail(self, objectOf(raw))));
+}
+
+/** Every stop is done or failed: close the run. */
+export async function finishRunAction(runId: unknown) {
+  return await runRider(async (self) => dataOf(await getContainer().doorWork.finish(self, runId)));
 }

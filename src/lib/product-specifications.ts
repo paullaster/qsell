@@ -41,3 +41,17 @@ export function visibleSpecifications(
     return key === '' || value === '' ? [] : [{ key, value }];
   });
 }
+
+/**
+ * Moves one specification to a new place in the list, keeping every other row in its order. Pure: returns a new list, and the same
+ * list when the move is out of range or changes nothing. The order is what shoppers see, so it is part of the product.
+ */
+export function moveSpecification<T>(list: readonly T[], from: number, to: number): T[] {
+  const last = list.length - 1;
+  if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < 0 || from > last || to > last || from === to) return [...list];
+  const next = [...list];
+  const [moved] = next.splice(from, 1);
+  if (moved === undefined) return [...list];
+  next.splice(to, 0, moved);
+  return next;
+}

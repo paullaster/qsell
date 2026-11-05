@@ -1,5 +1,6 @@
 import { ordersPageAction } from '@/server/domains/orders/actions';
 import { getCompanySettingsAction } from '@/server/domains/company/actions';
+import { canEditProductsAction } from '@/server/domains/catalog/actions';
 import { AdminOrdersClient } from '@/components/admin/AdminOrdersClient';
 
 export default function Page() {
@@ -8,6 +9,7 @@ export default function Page() {
     <AdminOrdersClient
       firstPage={ordersPageAction({})}
       companyPromise={getCompanySettingsAction()}
+      canEditProductsPromise={canEditProductsAction()}
     />
   );
 }
