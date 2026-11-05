@@ -40,3 +40,33 @@ test.describe('the edit-product shortcut on a quote line', () => {
     await noHorizontalScroll(page);
   });
 });
+
+test.describe('replacing the item on a quote line', () => {
+  test('swaps the product in place, keeps the quantity, and can be undone', async ({ page }) => {
+    const dialog = await openNewQuote(page);
+    await dialog.getByRole('combobox', { name: /Quick add to/ }).fill('Flour');
+    await page.getByRole('option', { name: /Flour 2kg/ }).first().click();
+    await dialog.getByRole('button', { name: 'Add', exact: true }).first().click();
+    const quantity = dialog.getByRole('spinbutton', { name: 'Quantity of Flour 2kg' });
+    await quantity.fill('3');
+
+    await expect(async () => {
+      await dialog.getByRole('button', { name: 'Replace Flour 2kg' }).click();
+      await expect(page.getByRole('dialog', { name: 'Replace Flour 2kg' })).toBeVisible({ timeout: 5000 });
+    }).toPass({ timeout: 30_000 });
+    const picker = page.getByRole('dialog', { name: 'Replace Flour 2kg' });
+    await expect(picker.getByRole('combobox')).toBeFocused();
+    await picker.getByRole('combobox').fill('Salt');
+    await picker.getByRole('option', { name: /Salt 500g/ }).getByRole('button').click();
+
+    await expect(picker).toBeHidden();
+    await expect(dialog.getByRole('status').filter({ hasText: 'Replaced Flour 2kg with Salt 500g' })).toBeVisible();
+    await expect(dialog.getByRole('spinbutton', { name: 'Quantity of Salt 500g' })).toHaveValue('3');
+    await expect(dialog.getByRole('spinbutton', { name: 'Quantity of Flour 2kg' })).toHaveCount(0);
+
+    await dialog.getByRole('button', { name: 'Undo' }).click();
+    await expect(dialog.getByRole('spinbutton', { name: 'Quantity of Flour 2kg' })).toHaveValue('3');
+    await expect(dialog.getByRole('spinbutton', { name: 'Quantity of Salt 500g' })).toHaveCount(0);
+    await noHorizontalScroll(page);
+  });
+});
