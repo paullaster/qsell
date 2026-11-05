@@ -256,6 +256,7 @@ test.describe('the rider app', () => {
     const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}`;
     const staff = riderTool('staff', tag);
     const name = staff.name ?? '';
+    riderTool('proof', 'none');
     deliveryTool('open', tag);
     try {
       await makeStaffRider(page, name);
@@ -319,6 +320,7 @@ test.describe('the rider app', () => {
     const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}`;
     const staff = riderTool('staff', tag);
     const name = staff.name ?? '';
+    riderTool('proof', 'none');
     deliveryTool('open', tag);
     try {
       await makeStaffRider(page, name);
@@ -350,6 +352,78 @@ test.describe('the rider app', () => {
       await expect(page.getByRole('region', { name: 'Goods that came back' })).toBeVisible({ timeout: 30_000 });
       await noHorizontalScroll(page);
       await noInnerHorizontalScroll(page);
+    } finally {
+      deliveryTool('close', tag);
+    }
+  });
+
+  test('without signal: a run opened before is still there, what is done at the door is saved on the phone and sent once, when the signal returns', async ({ page, browser }, testInfo) => {
+    // The development server does not serve the app the way a phone gets it (its pages cannot start without the server), so this runs
+    // against a production build: `next build`, `next start -p 3100` with the e2e environment, then E2E_REUSE_SERVER=1 E2E_PRODUCTION_SERVER=1.
+    test.skip(process.env.E2E_PRODUCTION_SERVER !== '1', 'needs a production build of the app');
+    test.slow();
+    const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}`;
+    const staff = riderTool('staff', tag);
+    const name = staff.name ?? '';
+    deliveryTool('open', tag);
+    try {
+      await makeStaffRider(page, name);
+      const { run, delivery, deliveryId } = await planRunFor(page, tag, name);
+      await startRun(page, run);
+
+      const phone = await otherBrowserPage(browser, page);
+      await signInAndChoosePassword(phone, staff.email ?? '', staff.password ?? '', 'E2eStaffDoor-Pass7', /\/rider$/);
+      const runs = phone.getByRole('region', { name: 'To do' });
+      await expect(runs).toContainText(run, { timeout: 60_000 });
+      // The app's worker takes over, and the run's screen is kept for later.
+      await phone.evaluate(async () => {
+        await navigator.serviceWorker.ready;
+      });
+      await phone.reload();
+      await expect.poll(() => phone.evaluate(() => navigator.serviceWorker.controller !== null), { timeout: 60_000 }).toBe(true);
+      await expect(phone.getByRole('region', { name: 'To do' })).toContainText(run, { timeout: 60_000 });
+      await clickUntilVisible(phone.getByRole('region', { name: 'To do' }).getByRole('link', { name: new RegExp(run) }), phone.getByRole('heading', { name: run, level: 1 }));
+      await expect(phone.getByRole('list', { name: 'Stops' })).toContainText('Wanjiru Documents');
+      await phone.reload();
+      await expect(phone.getByRole('heading', { name: run, level: 1 })).toBeVisible({ timeout: 60_000 });
+      await expect.poll(() => phone.evaluate(async () => (await (await caches.open('rider-app-pages-v1')).keys()).length), { timeout: 30_000 }).toBeGreaterThan(0);
+
+      // The signal goes. The run opens again from the phone's copy.
+      await phone.context().setOffline(true);
+      await phone.reload();
+      await expect(phone.getByRole('heading', { name: run, level: 1 })).toBeVisible({ timeout: 60_000 });
+      await expect(phone.getByText(/You have no signal/)).toBeVisible({ timeout: 30_000 });
+      const stops = phone.getByRole('list', { name: 'Stops' });
+      await expect(stops).toContainText('Wanjiru Documents');
+      await noHorizontalScroll(phone);
+
+      // At the door, with no signal: saved on the phone, the stop says so, and the run can be finished from what the phone knows.
+      await clickUntilVisible(stops.getByRole('button', { name: 'Delivered' }), phone.getByRole('form', { name: 'Mark delivered' }));
+      const form = phone.getByRole('form', { name: 'Mark delivered' });
+      await form.getByRole('button', { name: 'Confirm delivered' }).click();
+      await expect(stops).toContainText('Saved on this phone, waiting to be sent', { timeout: 30_000 });
+      await expect(phone.getByText(/1 thing is saved on this phone/)).toBeVisible();
+      const finish = phone.getByRole('region', { name: 'Finish the run' });
+      await expect(finish).toBeVisible({ timeout: 30_000 });
+      await finish.getByRole('button', { name: 'Finish this run' }).click();
+      await phone.getByRole('button', { name: 'Confirm: Finish this run' }).click();
+      await expect(phone.getByText(/Finishing this run is saved on this phone/)).toBeVisible({ timeout: 30_000 });
+      await noHorizontalScroll(phone);
+
+      // The shop has heard nothing yet.
+      await open(page, `/admin/delivery/deliveries/${deliveryId}`, new RegExp(`^Delivery ${delivery}`));
+      await expect(page.getByRole('region', { name: 'At the door' })).toHaveCount(0);
+
+      // The signal returns: the stop is sent, then the finish, each once.
+      await phone.context().setOffline(false);
+      await expect(phone.getByText('Completed')).toBeVisible({ timeout: 90_000 });
+      await expect(phone.getByText(/saved on this phone/)).toHaveCount(0);
+      await phone.context().close();
+
+      await open(page, `/admin/delivery/deliveries/${deliveryId}`, new RegExp(`^Delivery ${delivery}`));
+      const door = page.getByRole('region', { name: 'At the door' });
+      await expect(door).toContainText('Try 1: Delivered');
+      await expect(door.getByRole('listitem')).toHaveCount(1);
     } finally {
       deliveryTool('close', tag);
     }

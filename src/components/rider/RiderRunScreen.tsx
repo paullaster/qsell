@@ -6,8 +6,13 @@ import Link from 'next/link';
 import { finishRunAction, type myRunAction } from '@/server/domains/delivery/rider-app-actions';
 import type { RiderStopView } from '@/server/domains/delivery/rider-runs';
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
-import { Chip, Message, attempt, type Notice } from '@/components/ui/screen-kit';
+import { Chip, Message, type Notice } from '@/components/ui/screen-kit';
+import { canFinishHere, hasFinishWaiting, pendingStops } from '@/lib/rider-queue';
+import { putItem } from './door-queue';
+import { OfflineBar } from './OfflineBar';
+import { newTryKey } from './door-support';
 import { StopDoor } from './StopDoor';
+import { useDoorQueue } from './useDoorQueue';
 import type { RunStatus } from '@/lib/dispatch-run';
 
 const TONE: Record<RunStatus, 'green' | 'amber' | 'red' | 'sky' | 'gray'> = { planned: 'sky', started: 'amber', completed: 'green', cancelled: 'gray' };
@@ -27,9 +32,17 @@ export function RiderRunScreen({ runPromise }: { runPromise: ReturnType<typeof m
       </p>
     );
   }
-  const run = res.data;
+  return <Run run={res.data} />;
+}
+
+function Run({ run }: { run: Extract<Awaited<ReturnType<typeof myRunAction>>, { ok: true }>['data'] }) {
+  const { items } = useDoorQueue();
+  const pending = pendingStops(items, run.riderId, run.id);
+  const finishWaiting = hasFinishWaiting(items, run.riderId, run.id);
+  const canFinish = !finishWaiting && (run.canFinish || canFinishHere({ status: run.status, stops: run.items }, pending));
   return (
     <div className="space-y-4">
+      <OfflineBar riderId={run.riderId} />
       <Link href="/rider" className="inline-flex min-h-11 items-center text-sm font-semibold text-indigo-600 underline dark:text-indigo-400">
         ← My runs
       </Link>
@@ -56,16 +69,21 @@ export function RiderRunScreen({ runPromise }: { runPromise: ReturnType<typeof m
       ) : (
         <ol className="space-y-3" aria-label="Stops">
           {run.items.map((s) => (
-            <Stop key={s.deliveryId} stop={s} runId={run.id} />
+            <Stop key={s.deliveryId} stop={s} runId={run.id} riderId={run.riderId} waiting={pending.has(s.deliveryId)} />
           ))}
         </ol>
       )}
-      {run.canFinish ? <Finish runId={run.id} /> : null}
+      {canFinish ? <Finish runId={run.id} riderId={run.riderId} label={run.number} /> : null}
+      {finishWaiting ? (
+        <p role="status" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          Finishing this run is saved on this phone and will be sent when you have signal.
+        </p>
+      ) : null}
     </div>
   );
 }
 
-function Finish({ runId }: { runId: string }) {
+function Finish({ runId, riderId, label }: { runId: string; riderId: string; label: string }) {
   const router = useRouter();
   const [notice, setNotice] = useState<Notice>(null);
   const [busy, setBusy] = useState(false);
@@ -80,7 +98,22 @@ function Finish({ runId }: { runId: string }) {
         busy={busy}
         onConfirm={async () => {
           setBusy(true);
-          const r = await attempt(finishRunAction(runId));
+          const keep = async (): Promise<void> => {
+            const saved = await putItem({ id: newTryKey(), riderId, kind: 'finish', runId, deliveryId: null, label, payload: {}, photo: null, photoId: null, createdAt: new Date().toISOString(), state: 'waiting', message: null, tries: 0, nextAt: 0 });
+            setBusy(false);
+            if (!saved) setNotice({ kind: 'error', text: 'This phone could not save it to send later. Try again when you have signal.' });
+          };
+          if (!navigator.onLine) {
+            await keep();
+            return;
+          }
+          let r: Awaited<ReturnType<typeof finishRunAction>>;
+          try {
+            r = await finishRunAction(runId);
+          } catch {
+            await keep();
+            return;
+          }
           setBusy(false);
           if (!r.ok) setNotice({ kind: 'error', text: r.error });
           else router.refresh();
@@ -90,7 +123,7 @@ function Finish({ runId }: { runId: string }) {
   );
 }
 
-function Stop({ stop, runId }: { stop: RiderStopView; runId: string }) {
+function Stop({ stop, runId, riderId, waiting }: { stop: RiderStopView; runId: string; riderId: string; waiting: boolean }) {
   return (
     <li className="space-y-3 rounded-xl border border-line bg-surface-raised p-4">
       <div className="flex items-start justify-between gap-3">
@@ -136,7 +169,7 @@ function Stop({ stop, runId }: { stop: RiderStopView; runId: string }) {
           </a>
         )}
       </div>
-      <StopDoor runId={runId} stop={stop} />
+      <StopDoor runId={runId} riderId={riderId} stop={stop} waiting={waiting} />
     </li>
   );
 }

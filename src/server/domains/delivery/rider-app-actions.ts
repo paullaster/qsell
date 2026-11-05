@@ -42,7 +42,7 @@ async function runRider<T>(fn: (self: RiderSelf) => Promise<T>): Promise<RiderRe
 
 /** Who is using the app, and their runs still to do and the few most recently finished. */
 export async function myRunsAction() {
-  return await runRider(async (self) => ({ self: { name: self.name, kind: self.kind }, ...(await getContainer().riderRuns.mine(self)) }));
+  return await runRider(async (self) => ({ self: { id: self.riderId, name: self.name, kind: self.kind }, ...(await getContainer().riderRuns.mine(self)) }));
 }
 
 /** One of the rider's own runs with its stops. Another rider's run answers "not found". */

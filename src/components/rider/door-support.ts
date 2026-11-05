@@ -35,7 +35,8 @@ export function whereAmI(): Promise<{ lat: number; lng: number } | null> {
 /** A key for one try at a door: made when the form opens, sent with every retry of it, so a repeat is the same try. */
 export const newTryKey = (): string => crypto.randomUUID().replace(/-/g, '');
 
-export type PhotoUpload = { ok: true; photoId: string } | { ok: false; error: string };
+/** `network` says the photo never reached the shop (no signal), as against the shop refusing it. */
+export type PhotoUpload = { ok: true; photoId: string } | { ok: false; error: string; network: boolean };
 
 export async function uploadProofPhoto(file: File): Promise<PhotoUpload> {
   try {
@@ -44,8 +45,8 @@ export async function uploadProofPhoto(file: File): Promise<PhotoUpload> {
     const response = await fetch('/api/rider/proof-photo', { method: 'POST', body });
     const json = (await response.json()) as { ok?: boolean; error?: string; data?: { photoId?: string } };
     if (json.ok === true && typeof json.data?.photoId === 'string') return { ok: true, photoId: json.data.photoId };
-    return { ok: false, error: json.error ?? 'The photo could not be saved. Try again.' };
+    return { ok: false, error: json.error ?? 'The photo could not be saved. Try again.', network: false };
   } catch {
-    return { ok: false, error: 'The photo could not be sent. Check your connection and try again.' };
+    return { ok: false, error: 'The photo could not be sent. Check your connection and try again.', network: true };
   }
 }

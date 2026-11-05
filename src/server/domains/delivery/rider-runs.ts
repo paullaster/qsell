@@ -38,6 +38,8 @@ export interface RiderRunItem {
 }
 
 export interface RiderRunView extends RiderRunItem {
+  /** The rider's own id, so the phone keeps its unsent work apart from another rider's. */
+  riderId: string;
   notes: string | null;
   items: RiderStopView[];
   /** On the road and every stop done or failed: the rider may close it. */
@@ -122,6 +124,7 @@ export class RiderRuns {
       statusWords: RUN_STATUS_WORDS[r.status],
       stops: counts.get(runId) ?? 0,
       vehicle: r.vehicle,
+      riderId: self.riderId,
       notes: r.notes,
       items: stops.map((s): RiderStopView => {
         const place = s.d.destination.address;

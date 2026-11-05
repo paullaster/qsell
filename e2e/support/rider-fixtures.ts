@@ -3,6 +3,7 @@
  *   tsx e2e/support/rider-fixtures.ts staff <tag>   a member of staff (a plain account that may sign in to the back office), printed with the email and first password
  *   tsx e2e/support/rider-fixtures.ts code <delivery number>  the code the customer was sent for a delivery, the way they read it in their message
  *   tsx e2e/support/rider-fixtures.ts token <order number>  the customer's tracking link token for an order
+ *   tsx e2e/support/rider-fixtures.ts proof <rule>  sets what a rider must show at the door (none, code, photo, code_or_photo), so a test does not depend on the one before it
  *   tsx e2e/support/rider-fixtures.ts reset <tag>   ends every rider and puts the choice of rider kinds back to the default (staff only), so other tests are not asked about riders
  */
 import { execFileSync } from 'node:child_process';
@@ -37,6 +38,16 @@ async function tokenOf(orderNumber: string): Promise<Record<string, string>> {
   return { token: (await getContainer().trackingLinks.tokenFor(company.id, order.id)) ?? '' };
 }
 
+async function setProof(rule: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { deliveryRiderSettings } = await import('@/server/db/drizzle/schema');
+  const company = await getContainer().companySettings.ensureSeeded();
+  await db.insert(deliveryRiderSettings).values({ companyId: company.id }).onConflictDoNothing();
+  await db.update(deliveryRiderSettings).set({ proof: rule as 'none' }).where((await import('drizzle-orm')).eq(deliveryRiderSettings.companyId, company.id));
+  return { proof: rule };
+}
+
 async function reset(): Promise<Record<string, string>> {
   const { getContainer } = await import('@/server/di/container');
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
@@ -56,8 +67,9 @@ async function main(): Promise<void> {
   if (command === 'staff' && tag !== undefined) result = await staff(tag);
   if (command === 'code' && tag !== undefined) result = await codeOf(tag);
   if (command === 'token' && tag !== undefined) result = await tokenOf(tag);
+  if (command === 'proof' && tag !== undefined) result = await setProof(tag);
   if (command === 'reset') result = await reset();
-  if (result === null) throw new Error('usage: rider-fixtures staff <tag> | code <delivery number> | token <order number> | reset');
+  if (result === null) throw new Error('usage: rider-fixtures staff <tag> | code <delivery number> | token <order number> | proof <rule> | reset');
   process.stdout.write(`FIXTURE ${JSON.stringify(result)}\n`);
 }
 

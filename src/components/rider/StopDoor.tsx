@@ -4,9 +4,10 @@ import { useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { deliverStopAction, failStopAction } from '@/server/domains/delivery/rider-app-actions';
 import type { RiderStopView } from '@/server/domains/delivery/rider-runs';
-import { Field, Message, attempt, buttonClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
+import { Chip, Field, Message, buttonClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
 import { NOT_ACCEPTED_REASONS } from '@/lib/delivery-acceptance';
 import { FAILURE_REASONS } from '@/lib/delivery-document';
+import { putItem } from './door-queue';
 import { newTryKey, uploadProofPhoto, whereAmI } from './door-support';
 
 type Mode = 'idle' | 'deliver' | 'fail';
@@ -16,7 +17,7 @@ type Mode = 'idle' | 'deliver' | 'fail';
  * why it could not be done. The try has its own key from the moment the form opens, so pressing again after a dropped connection is
  * the same try and never two. The photo is uploaded once and its id is kept for the retry.
  */
-export function StopDoor({ runId, stop }: { runId: string; stop: RiderStopView }) {
+export function StopDoor({ runId, riderId, stop, waiting }: { runId: string; riderId: string; stop: RiderStopView; waiting: boolean }) {
   const router = useRouter();
   const [mode, setMode] = useState<Mode>('idle');
   const [notice, setNotice] = useState<Notice>(null);
@@ -33,6 +34,7 @@ export function StopDoor({ runId, stop }: { runId: string; stop: RiderStopView }
   const id = useId();
 
   if (!stop.open) return null;
+  if (waiting) return <Chip tone="amber">Saved on this phone, waiting to be sent</Chip>;
 
   const open = (next: Mode): void => {
     setMode(next);
@@ -52,10 +54,35 @@ export function StopDoor({ runId, stop }: { runId: string; stop: RiderStopView }
   const send = async (): Promise<void> => {
     setBusy(true);
     setNotice(null);
+    // Where the rider is and the phone's time are taken now, at the door, whether or not it can be sent now.
+    const place = await whereAmI();
+    const payload: Record<string, unknown> = { note, clientTime: new Date().toISOString(), ...(place ?? {}) };
+    if (mode === 'deliver') {
+      payload.receivedBy = receivedBy;
+      payload.code = code;
+      if (part) payload.accepted = stop.items.map((i) => ({ productId: i.productId, quantity: Number(takenOf(i.productId, i.quantity).quantity), reasonCode: takenOf(i.productId, i.quantity).reason, note: takenOf(i.productId, i.quantity).note }));
+    } else {
+      payload.reasonCode = reason;
+    }
+    // Saved on this phone to be sent when there is signal. The try keeps its key, so it can never be done twice.
+    const keep = async (uploaded: string | null): Promise<void> => {
+      const saved = await putItem({ id: key, riderId, kind: mode === 'deliver' ? 'deliver' : 'fail', runId, deliveryId: stop.deliveryId, label: stop.number, payload, photo, photoId: uploaded, createdAt: new Date().toISOString(), state: 'waiting', message: null, tries: 0, nextAt: 0 });
+      setBusy(false);
+      if (saved) setMode('idle');
+      else setNotice({ kind: 'error', text: 'This phone could not save it to send later. Try again when you have signal.' });
+    };
+    if (!navigator.onLine) {
+      await keep(photoId);
+      return;
+    }
     let uploaded = photoId;
     if (photo !== null && uploaded === null) {
       const up = await uploadProofPhoto(photo);
       if (!up.ok) {
+        if (up.network) {
+          await keep(null);
+          return;
+        }
         setNotice({ kind: 'error', text: up.error });
         setBusy(false);
         return;
@@ -63,9 +90,14 @@ export function StopDoor({ runId, stop }: { runId: string; stop: RiderStopView }
       uploaded = up.photoId;
       setPhotoId(up.photoId);
     }
-    const place = await whereAmI();
-    const common = { runId, deliveryId: stop.deliveryId, clientKey: key, clientTime: new Date().toISOString(), note, photoId: uploaded, ...(place ?? {}) };
-    const result = await attempt(mode === 'deliver' ? deliverStopAction({ ...common, receivedBy, code, ...(part ? { accepted: stop.items.map((i) => ({ productId: i.productId, quantity: Number(takenOf(i.productId, i.quantity).quantity), reasonCode: takenOf(i.productId, i.quantity).reason, note: takenOf(i.productId, i.quantity).note })) } : {}) }) : failStopAction({ ...common, reasonCode: reason }));
+    let result: Awaited<ReturnType<typeof deliverStopAction>>;
+    try {
+      const sent = { ...payload, runId, deliveryId: stop.deliveryId, clientKey: key, photoId: uploaded };
+      result = await (mode === 'deliver' ? deliverStopAction(sent) : failStopAction(sent));
+    } catch {
+      await keep(uploaded);
+      return;
+    }
     setBusy(false);
     if (!result.ok) {
       setNotice({ kind: 'error', text: result.error });
