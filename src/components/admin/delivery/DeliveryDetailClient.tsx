@@ -2,7 +2,8 @@
 
 import { use, useId, useState } from 'react';
 import Link from 'next/link';
-import { deliveryStepAction, proofPhotoLinkAction, type deliveryAction } from '@/server/domains/delivery/document-actions';
+import { deliveryAction, deliveryStepAction, proofPhotoLinkAction } from '@/server/domains/delivery/document-actions';
+import { markDoorPaymentAction, unmarkDoorPaymentAction } from '@/server/domains/delivery/door-payment-actions';
 import { courierNewsAction, deliveryExtrasAction } from '@/server/domains/delivery/run-actions';
 import type { DeliveryView } from '@/server/domains/delivery/documents';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
@@ -61,7 +62,7 @@ export function DeliveryDetailClient({ viewPromise, canFulfil, extras }: { viewP
   const res: Loaded = use(viewPromise);
   const allowed = use(canFulfil);
   const more = use(extras);
-  return res.ok ? <DeliveryScreen initial={res.data} canFulfil={allowed} initialExtras={more.ok ? more.data : { shipment: null, run: null, canDispatch: false, messages: [] }} /> : <LoadFailed error={res.error} />;
+  return res.ok ? <DeliveryScreen initial={res.data} canFulfil={allowed} initialExtras={more.ok ? more.data : { shipment: null, run: null, canDispatch: false, messages: [], canAllowDoor: false }} /> : <LoadFailed error={res.error} />;
 }
 
 function whereTo(view: DeliveryView): string {
@@ -307,6 +308,8 @@ function DeliveryScreen({ initial, canFulfil, initialExtras }: { initial: Delive
           </div>
         ) : null}
       </section>
+
+      <DoorPanel view={view} canAllow={extra.canAllowDoor} onChanged={(next, text) => { setView(next); setNotice({ kind: 'ok', text }); }} onError={(text) => setNotice({ kind: 'error', text })} />
 
       {canFulfil && view.actions.length > 0 ? (
         <section aria-label="Next steps" className={`${cardClass} space-y-4`}>
@@ -586,5 +589,50 @@ function DeliveryScreen({ initial, canFulfil, initialExtras }: { initial: Delive
         </ol>
       </section>
     </div>
+  );
+}
+
+/** Letting a delivery of an unpaid order go out to be paid in cash at the door, and taking that back before it goes. */
+function DoorPanel({ view, canAllow, onChanged, onError }: { view: DeliveryView; canAllow: boolean; onChanged: (next: DeliveryView, text: string) => void; onError: (text: string) => void }) {
+  const uid = useId();
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const before = ['draft', 'released', 'picking', 'packed', 'ready'].includes(view.status);
+  if (view.door === null && !(canAllow && before && view.method === 'own_fleet')) return null;
+  const change = async (kind: 'mark' | 'unmark'): Promise<void> => {
+    setBusy(true);
+    const r = kind === 'mark' ? await attempt(markDoorPaymentAction({ deliveryId: view.id, reason })) : await attempt(unmarkDoorPaymentAction({ deliveryId: view.id, reason }));
+    if (!r.ok) {
+      setBusy(false);
+      onError(r.error);
+      return;
+    }
+    const again = await attempt(deliveryAction(view.id));
+    setBusy(false);
+    setReason('');
+    if (again.ok) onChanged(again.data, kind === 'mark' ? 'This delivery will be paid in cash at the door.' : 'This delivery is no longer to be paid at the door.');
+  };
+  return (
+    <section aria-label="Paid at the door" className={`${cardClass} space-y-3`}>
+      <h2 className="text-sm font-bold text-fg-strong">Paid at the door</h2>
+      {view.door === null ? (
+        <p className="text-sm text-fg-muted">Not marked. If the customer will pay in cash when it arrives, mark it here before it goes out. The whole order must be on this delivery.</p>
+      ) : (
+        <p className="text-sm text-fg">
+          The rider will collect <strong>KSh {view.door.amount}</strong> in cash.
+          {view.door.reason === null ? '' : ` Allowed because: ${view.door.reason}.`}
+        </p>
+      )}
+      {canAllow && before ? (
+        <div className="space-y-2">
+          <Field id={`${uid}-dr`} label={view.door === null ? 'Why it may be paid at the door' : 'Why it is no longer to be paid at the door'}>
+            <input id={`${uid}-dr`} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={300} className={fieldClass} autoComplete="off" />
+          </Field>
+          <button type="button" className={view.door === null ? primaryClass : buttonClass} disabled={busy} onClick={() => void change(view.door === null ? 'mark' : 'unmark')}>
+            {view.door === null ? 'Mark to be paid at the door' : 'Take that back'}
+          </button>
+        </div>
+      ) : null}
+    </section>
   );
 }

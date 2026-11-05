@@ -10,7 +10,9 @@ import { TrackedOrders } from '@/server/domains/delivery/tracked-order';
 import type { EmailPort } from '@/server/ports/communications';
 import { StockReissue } from '@/server/domains/delivery/reissue';
 import { DeliveryRiders } from '@/server/domains/delivery/riders';
+import { DoorPayments } from '@/server/domains/delivery/door-payments';
 import { DoorWork } from '@/server/domains/delivery/door';
+import type { CustomerMasterService } from '@/server/domains/customers/master-service';
 import { RiderRuns } from '@/server/domains/delivery/rider-runs';
 import { DeliveryRuns } from '@/server/domains/delivery/runs';
 import type { UsersAdminRepository } from '@/server/domains/users/repository';
@@ -37,6 +39,7 @@ export function createDeliveryServices(input: {
   stockReservations: StockReservations;
   email: EmailPort;
   usersAdmin: Pick<UsersAdminRepository, 'createUser' | 'resetPassword'>;
+  customers: Pick<CustomerMasterService, 'applyOrderPayment'>;
 }) {
   const stockAvailability = new StockAvailability(input.db);
   const stockSettings = new StockSettingsService(input.db, input.companySettings);
@@ -60,7 +63,8 @@ export function createDeliveryServices(input: {
   const deliveryRiders = new DeliveryRiders(input.db, input.decisionLog, input.usersAdmin);
   const riderRuns = new RiderRuns(input.db);
   const deliveryRuns = new DeliveryRuns(input.db, input.decisionLog, input.numbering, deliveryDocuments, deliveryRiders);
-  const doorWork = new DoorWork(input.db, deliveryDocuments, deliveryRuns, input.decisionLog);
+  const doorPayments = new DoorPayments(input.db, input.decisionLog, deliveryDocuments, input.customers);
+  const doorWork = new DoorWork(input.db, deliveryDocuments, deliveryRuns, input.decisionLog, doorPayments);
   const courierShipments = new CourierShipments(input.db, deliveryDocuments);
   const trackedOrders = new TrackedOrders(input.db, input.companySettings, deliveryDocuments, orderCollections);
   const stockReissue = new StockReissue(input.db, input.decisionLog, input.stockReservations);
@@ -85,6 +89,7 @@ export function createDeliveryServices(input: {
     deliveryRiders,
     riderRuns,
     doorWork,
+    doorPayments,
     courierShipments,
     deliveryBilling,
   };

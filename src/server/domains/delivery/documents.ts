@@ -137,6 +137,8 @@ export interface DeliveryView {
   hasCode: boolean;
   /** The day it is wanted again after a failed attempt, if someone asked. */
   scheduledFor: string | null;
+  /** Cash to collect at the door, and who allowed it and why; null when the delivery is not paid there. */
+  door: { amount: string; markedAt: string; markedBy: string | null; reason: string | null } | null;
   version: number;
   createdAt: string;
   releasedAt: string | null;
@@ -180,6 +182,8 @@ function eventWords(action: string): string {
   if (action === 'receive_return') return 'Returned goods received';
   if (action === 'correct_return') return 'Receipt corrected';
   if (action === 'courier_update') return 'Courier news';
+  if (action === 'door_marked') return 'Marked to be paid at the door';
+  if (action === 'door_unmarked') return 'No longer to be paid at the door';
   return Object.prototype.hasOwnProperty.call(ACTION_WORDS, action) ? ACTION_WORDS[action as DeliveryAction] : action;
 }
 
@@ -253,7 +257,7 @@ export class DeliveryDocuments {
 
   async release(actor: DocActor, id: string, expectedVersion?: number) {
     return await this.step(actor, id, 'release', expectedVersion, (_tx, ctx) => {
-      const problem = orderReadinessProblem(ctx.order);
+      const problem = orderReadinessProblem(ctx.order, { paidAtDoor: ctx.row.doorAmount !== null });
       if (problem !== null) return Promise.resolve(fail('order_not_ready', problem.message));
       return Promise.resolve({ set: { releasedAt: new Date() } });
     });
@@ -312,7 +316,7 @@ export class DeliveryDocuments {
       'dispatch',
       expectedVersion,
       async (inner, ctx) => {
-        const problem = orderReadinessProblem(ctx.order);
+        const problem = orderReadinessProblem(ctx.order, { paidAtDoor: ctx.row.doorAmount !== null });
         if (problem !== null) return fail('order_not_ready', problem.message);
         const courierName = text(input.courierName, 120);
         if (ctx.row.method === 'courier' && courierName === null) return fail('bad_input', 'Say which courier has it.');
@@ -627,7 +631,7 @@ export class DeliveryDocuments {
   }
 
   /** Writes something that happened to a delivery that does not change its state (news from a courier): one more line of its history and a new version. */
-  async recordNote(tx: Tx, actor: DocActor, id: string, action: 'courier_update', note: string | null, detail: Record<string, unknown>): Promise<void> {
+  async recordNote(tx: Tx, actor: DocActor, id: string, action: 'courier_update' | 'door_marked' | 'door_unmarked', note: string | null, detail: Record<string, unknown>): Promise<void> {
     const [row] = await tx.select({ status: deliveries.status, version: deliveries.version }).from(deliveries).where(and(eq(deliveries.id, id), eq(deliveries.companyId, actor.companyId)));
     if (row === undefined) return;
     await tx.update(deliveries).set({ version: row.version + 1, updatedAt: new Date() }).where(eq(deliveries.id, id));
@@ -756,6 +760,7 @@ export class DeliveryDocuments {
       failedAttempts: d.failedAttempts,
       hasCode: d.handoverCode !== null,
       scheduledFor: d.scheduledFor,
+      door: d.doorAmount === null || d.doorMarkedAt === null ? null : { amount: d.doorAmount, markedAt: d.doorMarkedAt.toISOString(), markedBy: d.doorMarkedBy, reason: d.doorReason },
       version: d.version,
       createdAt: d.createdAt.toISOString(),
       releasedAt: d.releasedAt?.toISOString() ?? null,

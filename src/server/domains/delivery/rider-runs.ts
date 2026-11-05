@@ -24,6 +24,8 @@ export interface RiderStopView {
   proof: ProofRule;
   /** The run is on the road and this stop is still to do. */
   open: boolean;
+  /** Cash to collect here, in shillings, when the shop marked this delivery to be paid at the door. The rider collects exactly this. */
+  collect: string | null;
 }
 
 export interface RiderRunItem {
@@ -146,6 +148,7 @@ export class RiderRuns {
           links: { call: callLink(phone), chat: chatLink(phone), navigate: navigateLink(pin, address) },
           proof: ruleFor(company, s.d.handoverCode !== null),
           open: onTheRoad && s.d.status === 'out_for_delivery',
+          collect: s.d.doorAmount,
         };
       }),
       canFinish: onTheRoad && stops.length > 0 && stops.every((s) => s.d.status !== 'out_for_delivery'),

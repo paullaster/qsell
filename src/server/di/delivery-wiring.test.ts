@@ -4,6 +4,7 @@ import type { DrizzleDb } from '@/server/db/drizzle/client';
 import type { CompanySettingsRepository } from '@/server/domains/company/repository';
 import type { GeoService } from '@/server/domains/geo/service';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
+import type { CustomerMasterService } from '@/server/domains/customers/master-service';
 import { createDeliveryServices } from './delivery-wiring';
 import type { StockReservations } from '@/server/domains/stock/reservations';
 import type { UsersAdminRepository } from '@/server/domains/users/repository';
@@ -20,6 +21,7 @@ describe('createDeliveryServices', () => {
       geo: {} as GeoService,
       companySettings: {} as CompanySettingsRepository,
       usersAdmin: {} as UsersAdminRepository,
+      customers: {} as CustomerMasterService,
     });
 
     expect(services.deliveryQuotes).toHaveProperty('policies', services.chargePolicies);
@@ -30,5 +32,6 @@ describe('createDeliveryServices', () => {
     expect(services.deliveryPlans).toHaveProperty('stockSettings', services.stockSettings);
     expect(services.deliveryRuns).toHaveProperty('riders', services.deliveryRiders);
     expect(services.doorWork).toHaveProperty('runs', services.deliveryRuns);
+    expect(services.doorWork).toHaveProperty('payments', services.doorPayments);
   });
 });

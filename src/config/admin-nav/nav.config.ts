@@ -450,6 +450,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'riders:manage',
       },
       {
+        id: 'delivery-door-payments',
+        title: 'Door payments',
+        name: 'delivery-door-payments',
+        href: '/admin/delivery/door-payments',
+        description: 'Cash riders collect at the door: how it is received and what each rider holds',
+        icon: 'Wallet',
+        permission: 'door_payments:manage',
+      },
+      {
         id: 'delivery-charges',
         title: 'Delivery charges',
         name: 'delivery-charges',
