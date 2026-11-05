@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq, inArray, like } from 'drizzle-orm';
 import { has } from '@/lib/values';
+import { DoorMpesa } from './door-mpesa';
 import type * as mod_server_di_container from '@/server/di/container';
 import type * as mod_server_db_drizzle_client from '@/server/db/drizzle/client';
 import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
@@ -611,6 +612,114 @@ describe.skipIf(!has(url))('cash at the door (database)', () => {
       expect(list.rows[0]).toMatchObject({ riderName: expect.any(String) as string, witnessName: `Witness ${tag}`, toAccount: expect.stringContaining(' · ') as string });
       expect((await c.doorHandIns.list(companyId, {})).rows.length).toBeGreaterThanOrEqual(1);
       expect(await c.doorHandIns.ridersWithCash(companyId).then((r) => r.some((x) => x.riderId === rider.id))).toBe(true);
+    });
+  });
+
+  describe('M-Pesa at the door', () => {
+    let limited: string | null = null;
+    let startFails = false;
+    let started = 0;
+    /** The shop's own payment start, stood in for: it makes the attempt row the engine would, with the order and number it was given. */
+    const fakeStart = async (input: { orderId: string; payerPhone: string }) => {
+      if (startFails) throw new Error('provider down');
+      started += 1;
+      const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, input.orderId));
+      const [provider] = await db.select().from(schema.paymentProviderConfigs).where(eq(schema.paymentProviderConfigs.companyId, companyId));
+      const [branchRow] = await db.select({ id: schema.branches.id }).from(schema.branches).where(eq(schema.branches.companyId, companyId));
+      const [attempt] = await db
+        .insert(schema.paymentAttempts)
+        .values({ branchId: branchRow?.id ?? '', providerConfigId: provider?.id ?? '', providerCode: 'mpesa_daraja', orderId: input.orderId, orderNumber: order?.orderNumber ?? '', amount: String(order?.totalAmount ?? '0'), callbackToken: randomUUID(), callbackUrl: 'http://localhost/cb', status: 'pending', customerPhone: input.payerPhone })
+        .returning();
+      return { attemptId: attempt?.id ?? '', status: 'pending', customerMessage: 'Enter your PIN.' };
+    };
+    const mpesa = () => new DoorMpesa(db, { start: fakeStart as never, amountDue: async (id) => { const [o] = await db.select({ t: schema.orders.totalAmount, tendered: schema.orders.tenderedAmount }).from(schema.orders).where(eq(schema.orders.id, id)); return o === undefined ? null : Number(o.t) - Number(o.tendered); }, limit: () => Promise.resolve(limited) });
+    const ask = (at: { runId: string; deliveryId: string; self: Awaited<ReturnType<typeof selfOf>> }, phone: unknown = '0712 345 678') => mpesa().prompt(at.self, { runId: at.runId, deliveryId: at.deliveryId, phone });
+    const attemptRows = async (orderId: string) => await db.select().from(schema.paymentAttempts).where(eq(schema.paymentAttempts.orderId, orderId));
+    const confirm = async (orderId: string) => {
+      await db.update(schema.paymentAttempts).set({ status: 'successful', paidAt: new Date() }).where(eq(schema.paymentAttempts.orderId, orderId));
+      await OrderStages.move(db, orderId, 'payment_confirmed', 'succeeded', { source: 'webhook', detail: { provider: 'mpesa_daraja' } });
+    };
+
+    beforeEach(() => {
+      limited = null;
+      startFails = false;
+      started = 0;
+    });
+
+    it('sends a prompt for what is due at this door, once at a time, to a number the customer says, and keeps who asked', async () => {
+      const rider = await staffRider();
+      const at = await onTheRoad(rider, { atDoor: true });
+      const sent = await ask(at, '0712 345 678');
+      expect(sent).toMatchObject({ ok: true, data: { state: 'waiting', phoneEnding: '678', promptsLeft: 2 } });
+      const [attempt] = await attemptRows(at.orderId);
+      expect(attempt).toMatchObject({ providerCode: 'mpesa_daraja', customerPhone: '254712345678', status: 'pending' });
+      const [prompt] = await db.select().from(schema.deliveryDoorPrompts).where(eq(schema.deliveryDoorPrompts.deliveryId, at.deliveryId));
+      expect(prompt).toMatchObject({ riderId: rider.id, orderId: at.orderId, phoneEnding: '678', attemptId: attempt?.id, amount: at.total.toFixed(2) });
+      // The books find an M-Pesa method by what the order says it is paid with.
+      expect(await orderOf(at.orderId)).toMatchObject({ paymentMethod: 'mpesa_daraja', paymentMethodId: null });
+      expect(await mpesa().status(at.self, { runId: at.runId, deliveryId: at.deliveryId })).toMatchObject({ ok: true, data: { state: 'waiting', phoneEnding: '678' } });
+      expect(await ask(at)).toMatchObject({ ok: false, message: expect.stringMatching(/just sent/) as string });
+      expect(started).toBe(1);
+      await expect(db.delete(schema.deliveryDoorPrompts).where(eq(schema.deliveryDoorPrompts.deliveryId, at.deliveryId))).rejects.toThrow();
+    });
+
+    it('says when it did not go through, allows another prompt, and stops after three', async () => {
+      const at = await onTheRoad(await staffRider(), { atDoor: true });
+      for (let i = 0; i < 3; i += 1) {
+        expect(await ask(at)).toMatchObject({ ok: true });
+        await db.update(schema.paymentAttempts).set({ status: i === 0 ? 'cancelled' : 'expired' }).where(eq(schema.paymentAttempts.orderId, at.orderId));
+        const st = await mpesa().status(at.self, { runId: at.runId, deliveryId: at.deliveryId });
+        expect(st).toMatchObject({ ok: true, data: { state: 'failed' } });
+        expect(st.ok && st.data.message).toMatch(i === 0 ? /cancelled/ : /timed out/);
+      }
+      expect(await ask(at)).toMatchObject({ ok: false, message: expect.stringMatching(/Take the cash instead/) as string });
+      expect(started).toBe(3);
+    });
+
+    it('when the platform confirms it the order is paid and the rider takes no cash: nothing enters their custody', async () => {
+      const rider = await staffRider();
+      const at = await onTheRoad(rider, { atDoor: true });
+      await ask(at);
+      expect(await mpesa().status(at.self, { runId: at.runId, deliveryId: at.deliveryId })).toMatchObject({ data: { state: 'waiting' } });
+      await confirm(at.orderId);
+      expect(await mpesa().status(at.self, { runId: at.runId, deliveryId: at.deliveryId })).toMatchObject({ ok: true, data: { state: 'paid' } });
+      expect((await c.riderRuns.one(at.self, at.runId))?.items[0]).toMatchObject({ paid: true, collect: at.total.toFixed(2) });
+      const base = { runId: at.runId, deliveryId: at.deliveryId, receivedBy: 'Mama' };
+      // Claiming cash for an order that is already paid is refused, and nothing changes.
+      expect(await c.doorWork.deliver(at.self, { ...base, clientKey: key(), cashCollected: at.total })).toMatchObject({ ok: false, reason: 'conflict', message: expect.stringMatching(/already been paid/) as string });
+      expect((await doorOf(at.deliveryId)).status).toBe('out_for_delivery');
+      expect(await c.doorWork.deliver(at.self, { ...base, clientKey: key() })).toMatchObject({ ok: true, data: { status: 'delivered' } });
+      expect(await custodyOf(at.deliveryId)).toHaveLength(0);
+      expect(await c.doorPayments.heldBy(at.self)).toBe('0.00');
+      expect((await orderOf(at.orderId)).paymentStatus).toBe('paid');
+    });
+
+    it('a door delivery whose order was paid some other way meanwhile is delivered with no cash, and a part taken is still refused', async () => {
+      const at = await onTheRoad(await staffRider(), { atDoor: true });
+      await OrderStages.move(db, at.orderId, 'payment_confirmed', 'succeeded', {});
+      const [line] = await db.select().from(schema.deliveryLines).where(eq(schema.deliveryLines.deliveryId, at.deliveryId));
+      const base = { runId: at.runId, deliveryId: at.deliveryId, receivedBy: 'Mama' };
+      expect(await c.doorWork.deliver(at.self, { ...base, clientKey: key(), accepted: [{ productId: line?.productId, quantity: 1, reasonCode: 'damaged' }] })).toMatchObject({ ok: false, message: expect.stringMatching(/taken whole/) as string });
+      expect(await c.doorWork.deliver(at.self, { ...base, clientKey: key() })).toMatchObject({ ok: true });
+      expect(await custodyOf(at.deliveryId)).toHaveLength(0);
+    });
+
+    it('is refused for what cannot be right', async () => {
+      const rider = await staffRider();
+      const at = await onTheRoad(rider, { atDoor: true });
+      const other = await selfOf((await staffRider()).userId);
+      expect(await mpesa().prompt(other, { runId: at.runId, deliveryId: at.deliveryId, phone: '0712345678' })).toMatchObject({ ok: false, reason: 'not_found' });
+      expect(await mpesa().status(other, { runId: at.runId, deliveryId: at.deliveryId })).toMatchObject({ ok: false, reason: 'not_found' });
+      expect(await mpesa().prompt(at.self, { runId: 'nope', deliveryId: at.deliveryId })).toMatchObject({ ok: false, reason: 'not_found' });
+      expect(await ask(at, 'not a number')).toMatchObject({ ok: false, message: expect.stringMatching(/number the customer will pay from/) as string });
+      limited = 'Too many prompts. Wait a few minutes.';
+      expect(await ask(at)).toMatchObject({ ok: false, message: 'Too many prompts. Wait a few minutes.' });
+      limited = null;
+      startFails = true;
+      expect(await ask(at)).toMatchObject({ ok: false, message: expect.stringMatching(/could not be sent/) as string });
+      expect(started).toBe(0);
+      const plain = await onTheRoad(rider);
+      expect(await ask(plain)).toMatchObject({ ok: false, message: expect.stringMatching(/not to be paid at the door/) as string });
     });
   });
 });

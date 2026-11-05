@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { clickUntilVisible, noHorizontalScroll, noInnerHorizontalScroll, noNativeSelect, open } from './support/page';
+import { followLink, noHorizontalScroll, noInnerHorizontalScroll, noNativeSelect, open } from './support/page';
 import { pick } from './support/quotes';
 import { deliveryTool } from './support/delivery-fixtures';
 import { placeDeliveredOrder, step } from './support/delivery-shop';
@@ -47,7 +47,7 @@ test.describe('the dispatch board', () => {
 
       // The run: stops in order, moved, taken off and put back, then sent out together.
       const runLink = page.getByRole('region', { name: 'Runs to do' }).getByRole('link', { name: runNumber });
-      await clickUntilVisible(runLink, page.getByRole('heading', { name: /^Run RUN-/, level: 2 }));
+      await followLink(runLink, page, /\/admin\/delivery\/runs\//, page.getByRole('heading', { name: /^Run RUN-/, level: 2 }));
       await noHorizontalScroll(page);
       const stops = page.getByRole('region', { name: 'Stops' });
       await expect(stops).toContainText(first);

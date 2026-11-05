@@ -183,3 +183,56 @@ export function handInLines(check: HandInCheck): HandInLine[] {
   if (check.diffCents > 0) lines.push({ side: 'credit', account: 'variance', cents: check.diffCents });
   return lines.filter((l) => l.cents > 0);
 }
+
+// ── M-Pesa at the door ───────────────────────────────────────────────────────────────────────────────────────────────
+
+/** How many prompts the rider may send for one delivery: after that, cash, or the office. */
+export const MAX_DOOR_PROMPTS = 3;
+/** A prompt that has not been answered is left alone for this long before another can be sent. */
+export const PROMPT_WAIT_SECONDS = 90;
+
+const IN_FLIGHT = ['initiated', 'pending', 'awaiting_redirect'] as const;
+
+export interface PromptFacts {
+  runOnTheRoad: boolean;
+  deliveryStatus: string;
+  /** What the office marked to be collected, and what the order really has left to pay now. */
+  doorAmount: string | null;
+  amountDue: number;
+  orderPaymentStatus: string;
+  /** The number the prompt goes to, already read as a Kenyan mobile number; null when it is not one. */
+  phone: string | null;
+  promptsSent: number;
+  lastAttempt: { status: string; ageSeconds: number } | null;
+}
+
+/** Why a prompt cannot be sent now, in words for the rider, or null when it can. */
+export function promptProblem(f: PromptFacts): string | null {
+  if (!f.runOnTheRoad) return 'This run is not on the road.';
+  if (f.deliveryStatus !== 'out_for_delivery') return 'This stop is not out for delivery.';
+  if (f.doorAmount === null) return 'This delivery is not to be paid at the door.';
+  if (f.orderPaymentStatus === 'paid') return 'This order has already been paid.';
+  if (toCents(f.amountDue) !== toCents(f.doorAmount)) return 'The amount due has changed since this delivery went out. Ask the office.';
+  if (f.phone === null) return 'Type the number the customer will pay from, for example 0712 345 678.';
+  if (f.promptsSent >= MAX_DOOR_PROMPTS) return `${String(MAX_DOOR_PROMPTS)} prompts have been sent for this delivery. Take the cash instead, or ask the office.`;
+  if (f.lastAttempt !== null && (IN_FLIGHT as readonly string[]).includes(f.lastAttempt.status) && f.lastAttempt.ageSeconds < PROMPT_WAIT_SECONDS) {
+    return 'A prompt was just sent. Wait for the customer to answer it, or for it to time out.';
+  }
+  return null;
+}
+
+export type PromptState = 'none' | 'waiting' | 'paid' | 'failed';
+
+/** Where the M-Pesa prompt at this door stands: the order is paid, or the last prompt is still out, or it did not go through. */
+export function promptState(orderPaid: boolean, last: { status: string } | null): PromptState {
+  if (orderPaid) return 'paid';
+  if (last === null) return 'none';
+  if ((IN_FLIGHT as readonly string[]).includes(last.status)) return 'waiting';
+  return last.status === 'successful' ? 'waiting' : 'failed';
+}
+
+export const PROMPT_FAILED_WORDS: Record<string, string> = {
+  failed: 'The payment did not go through (the customer may have cancelled, or had too little in M-Pesa).',
+  cancelled: 'The customer cancelled the payment.',
+  expired: 'The prompt timed out before the customer answered.',
+};

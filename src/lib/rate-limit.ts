@@ -23,6 +23,8 @@ export const RATE_RULES = {
   /** Payment prompts sent to a phone at checkout: per address, and per number so nobody's phone can be flooded. */
   payment_prompt_ip: { limit: 20, seconds: 900 },
   payment_prompt_phone: { limit: 4, seconds: 900 },
+  /** A rider asking for prompts at the doors of a run: per rider, so one account cannot be used to flood phones. */
+  door_prompt_rider: { limit: 12, seconds: 900 },
   /** A shopper pricing their delivery, and searching places or naming a pin on the map (each can call a map service). */
   shop_delivery_quote_ip: { limit: 120, seconds: 600 },
   shop_map_search_ip: { limit: 40, seconds: 600 },

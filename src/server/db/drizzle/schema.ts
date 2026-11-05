@@ -819,6 +819,37 @@ export const cashCustodyEntries = pgTable(
 export type CashCustodyEntryRow = typeof cashCustodyEntries.$inferSelect;
 
 /**
+ * An M-Pesa prompt a rider sent from a door, for the amount the delivery is to be paid at the door. The payment attempt itself (and the
+ * platform's confirmation) is the payment engine's; this says which delivery, which rider and which number it was for. Kept for good.
+ */
+export const deliveryDoorPrompts = pgTable(
+  'delivery_door_prompts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    deliveryId: uuid('delivery_id')
+      .notNull()
+      .references(() => deliveries.id, { onDelete: 'restrict' }),
+    orderId: text('order_id')
+      .notNull()
+      .references(() => orders.id, { onDelete: 'restrict' }),
+    riderId: uuid('rider_id')
+      .notNull()
+      .references(() => deliveryRiders.id, { onDelete: 'restrict' }),
+    attemptId: uuid('attempt_id')
+      .notNull()
+      .references(() => paymentAttempts.id, { onDelete: 'restrict' }),
+    /** The last three digits of the number the prompt went to; the whole number is on the payment attempt. */
+    phoneEnding: text('phone_ending').notNull(),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('delivery_door_prompts_attempt_uidx').on(t.attemptId), index('delivery_door_prompts_delivery_idx').on(t.deliveryId, t.createdAt), check('delivery_door_prompts_amount_chk', sql`${t.amount} > 0`)],
+);
+
+/**
  * A rider handing in the cash they hold: counted by one person in front of a witness, against what the rider is expected to hold.
  * A difference within the company's limit posts at once; a bigger one waits for a second person, and nothing is posted or taken out of
  * custody until then. Posted, it moves the cash from the account riders' cash is held in to the till or bank, and writes any difference
