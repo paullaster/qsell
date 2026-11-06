@@ -710,4 +710,66 @@ test.describe('the rider app', () => {
       deliveryTool('close', tag);
     }
   });
+
+  test('rider pay: the office sets what a rider earns, the rider delivers and finishes the run, the pay is counted once and a cost can be taken back', async ({ page, browser }, testInfo) => {
+    test.slow();
+    const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}`;
+    const staff = riderTool('staff', tag);
+    const name = staff.name ?? '';
+    riderTool('proof', 'none');
+    deliveryTool('open', tag);
+    try {
+      await open(page, '/admin/delivery/costs', 'Delivery costs');
+      await noNativeSelect(page);
+      await noHorizontalScroll(page);
+      const rules = page.getByRole('region', { name: 'Rider pay' });
+      await rules.getByLabel('For each delivery (KSh)').fill('50');
+      await rules.getByLabel('For each day on a run (KSh)').fill('200');
+      await rules.getByRole('button', { name: 'Save' }).click();
+      await expect(page.getByText(/Riders earn this from now on/)).toBeVisible({ timeout: 30_000 });
+
+      await makeStaffRider(page, name);
+      const { run, delivery, deliveryId } = await planRunFor(page, tag, name);
+      await startRun(page, run);
+      const phone = await otherBrowserPage(browser, page);
+      await signInAndChoosePassword(phone, staff.email ?? '', staff.password ?? '', 'E2eStaffPay-Pass1', /\/rider$/);
+      await openRun(phone, run);
+      const stops = phone.getByRole('list', { name: 'Stops' });
+      await clickUntilVisible(stops.getByRole('button', { name: 'Delivered' }), phone.getByRole('form', { name: 'Mark delivered' }));
+      await phone.getByRole('form', { name: 'Mark delivered' }).getByRole('button', { name: 'Confirm delivered' }).click();
+      await expect(stops).toContainText('Delivered', { timeout: 30_000 });
+      const finish = phone.getByRole('region', { name: 'Finish the run' });
+      await finish.getByRole('button', { name: 'Finish this run' }).click();
+      await phone.getByRole('button', { name: 'Confirm: Finish this run' }).click();
+      await expect(phone.getByText('Completed')).toBeVisible({ timeout: 30_000 });
+      await phone.context().close();
+
+      // The pay is counted: for the delivery, and for the day.
+      await open(page, '/admin/delivery/costs', 'Delivery costs');
+      const list = page.getByRole('list', { name: 'Cost list' });
+      await expect(list).toContainText('Rider pay for a delivery', { timeout: 30_000 });
+      await expect(list).toContainText(`${delivery} · ${name}`);
+      await expect(list).toContainText('KES 50.00');
+      await expect(list).toContainText('Rider pay for a day on a run');
+      await expect(list).toContainText('KES 200.00');
+      await noHorizontalScroll(page);
+      await noInnerHorizontalScroll(page);
+
+      // It is on the delivery's own screen, too.
+      await open(page, `/admin/delivery/deliveries/${deliveryId}`, new RegExp(`^Delivery ${delivery}`));
+      await expect(page.getByRole('region', { name: 'What it cost' })).toContainText('KES 50.00', { timeout: 30_000 });
+
+      // Taken back, with a reason: the entry stays and a reversal sits beside it.
+      await open(page, '/admin/delivery/costs', 'Delivery costs');
+      const day = list.getByRole('listitem').filter({ hasText: 'Rider pay for a day on a run' }).first();
+      await day.getByLabel('Why it is being taken back').fill('The rider did not work that day');
+      await day.getByRole('button', { name: /^Take back the rider pay for a day/ }).click();
+      await day.getByRole('button', { name: /^Confirm: Take back/ }).click();
+      await expect(page.getByText('The cost is taken back.')).toBeVisible({ timeout: 30_000 });
+      await expect(list).toContainText('KES -200.00');
+      await expect(list).toContainText('Was taken back');
+    } finally {
+      deliveryTool('close', tag);
+    }
+  });
 });

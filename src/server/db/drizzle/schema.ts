@@ -821,6 +821,65 @@ export const cashCustodyEntries = pgTable(
 );
 export type CashCustodyEntryRow = typeof cashCustodyEntries.$inferSelect;
 
+/** What the company pays riders: an amount for each delivery made and an amount for each day a rider works a run (each may be nothing). */
+export const deliveryPaySettings = pgTable(
+  'delivery_pay_settings',
+  {
+    companyId: uuid('company_id')
+      .primaryKey()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    perDelivery: numeric('per_delivery', { precision: 14, scale: 2 }).notNull().default('0'),
+    perDay: numeric('per_day', { precision: 14, scale: 2 }).notNull().default('0'),
+    version: integer('version').notNull().default(1),
+    updatedBy: text('updated_by'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check('delivery_pay_settings_chk', sql`${t.perDelivery} >= 0 AND ${t.perDay} >= 0`)],
+);
+
+/**
+ * What delivery cost the company: rider pay earned (for a delivery made, and for a day on a run), what a courier charged, anything
+ * else. Kept for good (a trigger refuses any change): a mistake is put right by a reversing entry with its reason, never by editing.
+ * `key` makes each cost happen once however often it is sent.
+ */
+export const deliveryCosts = pgTable(
+  'delivery_costs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    kind: text('kind').$type<'rider_delivery' | 'rider_day' | 'courier' | 'other'>().notNull(),
+    /** Positive is a cost; a reversal carries the opposite sign. */
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    currency: text('currency').notNull(),
+    deliveryId: uuid('delivery_id').references(() => deliveries.id, { onDelete: 'restrict' }),
+    runId: uuid('run_id').references(() => deliveryRuns.id, { onDelete: 'restrict' }),
+    riderId: uuid('rider_id').references(() => deliveryRiders.id, { onDelete: 'restrict' }),
+    courierName: text('courier_name'),
+    note: text('note'),
+    key: text('key').notNull(),
+    /** The cost this entry takes back. */
+    reversesId: uuid('reverses_id').references((): AnyPgColumn => deliveryCosts.id, { onDelete: 'restrict' }),
+    actorId: text('actor_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_costs_key_uidx').on(t.companyId, t.key),
+    index('delivery_costs_delivery_idx').on(t.deliveryId),
+    index('delivery_costs_rider_idx').on(t.riderId, t.createdAt),
+    index('delivery_costs_company_time_idx').on(t.companyId, t.createdAt),
+    check('delivery_costs_kind_chk', sql`${t.kind} IN ('rider_delivery','rider_day','courier','other')`),
+    check('delivery_costs_amount_chk', sql`${t.amount} <> 0`),
+    check('delivery_costs_rider_chk', sql`${t.kind} NOT IN ('rider_delivery','rider_day') OR ${t.riderId} IS NOT NULL`),
+    check('delivery_costs_delivery_chk', sql`${t.kind} NOT IN ('rider_delivery','courier') OR ${t.deliveryId} IS NOT NULL`),
+    check('delivery_costs_courier_chk', sql`${t.kind} <> 'courier' OR ${t.courierName} IS NOT NULL`),
+    // A cost is positive; only a reversal is negative, and it names the cost it takes back.
+    check('delivery_costs_reversal_chk', sql`(${t.reversesId} IS NULL) = (${t.amount} > 0)`),
+  ],
+);
+export type DeliveryCostRow = typeof deliveryCosts.$inferSelect;
+
 /**
  * An M-Pesa prompt a rider sent from a door, for the amount the delivery is to be paid at the door. The payment attempt itself (and the
  * platform's confirmation) is the payment engine's; this says which delivery, which rider and which number it was for. Kept for good.

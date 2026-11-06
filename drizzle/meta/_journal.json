@@ -995,6 +995,13 @@
       "when": 1793888661468,
       "tag": "0141_delivery_pay_on_delivery",
       "breakpoints": true
+    },
+    {
+      "idx": 142,
+      "version": "7",
+      "when": 1793935022367,
+      "tag": "0142_delivery_costs",
+      "breakpoints": true
     }
   ]
 }

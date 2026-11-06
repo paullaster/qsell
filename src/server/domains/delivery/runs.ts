@@ -1,3 +1,4 @@
+import type { DeliveryCosts } from './costs';
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { branches, deliveries, deliveryLines, deliveryRunStops, deliveryRuns, deliveryShipments, orderItems, orders, products } from '@/server/db/drizzle/schema';
@@ -115,6 +116,7 @@ export class DeliveryRuns {
     private readonly numbering: Pick<NumberSeriesService, 'assign'>,
     private readonly documents: Pick<DeliveryDocuments, 'dispatch'>,
     private readonly riders: Pick<DeliveryRiders, 'carrier'>,
+    private readonly costs: Pick<DeliveryCosts, 'accrueDayIn' | 'accrueDeliveryIn'>,
   ) {}
 
   /** The rider a run is given to: someone from the rider list who may carry now (their name is kept on the run as it is today), or a name typed in. */
@@ -292,6 +294,12 @@ export class DeliveryRuns {
       }
       await tx.update(deliveryRuns).set({ status: 'completed', closedAt: new Date(), version: run.version + 1, updatedAt: new Date() }).where(eq(deliveryRuns.id, runId));
       const delivered = live.filter((s) => states.get(s.deliveryId) === 'delivered').length;
+      // A day on a run earns the rider's day pay once, when something was delivered on it.
+      // A stop the office delivered on the rider's behalf still earned the rider the pay for a delivery (the same key, so nothing is counted twice).
+      if (run.riderId !== null) {
+        for (const s of live) if (states.get(s.deliveryId) === 'delivered') await this.costs.accrueDeliveryIn(tx, { companyId: actor.companyId, deliveryId: s.deliveryId, runId, riderId: run.riderId, actorId: actor.userId });
+      }
+      await this.costs.accrueDayIn(tx, { companyId: actor.companyId, runId, riderId: run.riderId, runDate: run.runDate, delivered, actorId: actor.userId });
       await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_run', id: runId }, action: 'run.completed', actor: { type: 'user', id: actor.userId }, from: 'started', to: 'completed', reason: { text: `${String(delivered)} of ${String(live.length)} delivered` } }, tx);
       return { ok: true, data: await this.viewIn(tx, actor.companyId, runId) };
     });

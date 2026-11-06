@@ -1,6 +1,7 @@
 import { DISPOSITION_WORDS, ISSUE_MOMENTS, ISSUE_MOMENT_WORDS, RETURN_DISPOSITIONS } from '@/lib/stock-issue';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { branches, customerGroups, deliveryRiderSettings, deliveryRiders, bankAccounts, deliveryRuns, deliveryZones, glAccounts, paymentMethods, products, users } from '@/server/db/drizzle/schema';
+import { COST_KINDS, COST_WORDS } from '@/lib/delivery-cost';
 import { RIDER_KINDS, RIDER_KIND_WORDS, RIDER_STATUSES, RIDER_STATUS_WORDS } from '@/lib/delivery-rider';
 import { RUN_STATUSES, RUN_STATUS_WORDS } from '@/lib/dispatch-run';
 import { DELIVERY_STATUSES, FAILURE_REASONS, STATUS_WORDS } from '@/lib/delivery-document';
@@ -296,4 +297,13 @@ const varianceAccounts = tableSource({
   toOption: (row) => ({ id: text(row.id), label: `${text(row.no)} ${text(row.label)}`.trim(), description: null, badge: null }),
 });
 
-export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts, deliveryStatuses, deliveryFailureReasons, stockIssueMoments, returnDispositions, openRuns, runStatuses, courierNews, riders, staffToRide, riderKinds, riderStatuses, doorCashMethods, handInAccounts, handInWitnesses, varianceAccounts];
+const costKinds = staticSource({
+  key: 'delivery-cost-kinds',
+  permission: 'delivery_costs:manage',
+  items: ({ filters }) => {
+    acceptFilters(filters, {});
+    return COST_KINDS.map((id) => ({ id, label: COST_WORDS[id], description: null, badge: null }));
+  },
+});
+
+export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts, deliveryStatuses, deliveryFailureReasons, stockIssueMoments, returnDispositions, openRuns, runStatuses, courierNews, riders, staffToRide, riderKinds, riderStatuses, doorCashMethods, handInAccounts, handInWitnesses, varianceAccounts, costKinds];

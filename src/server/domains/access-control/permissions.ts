@@ -442,6 +442,12 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'Approve or refuse a hand-in whose count came out short or over by more than the limit (never your own)',
   },
+  'delivery_costs:manage': {
+    resource: 'delivery_costs',
+    action: 'manage',
+    category: 'Orders & Sales',
+    description: 'Set what riders are paid, record what a courier charged, take a delivery cost back with a reason, and see what delivery costs',
+  },
   'deliveries:handover': {
     resource: 'deliveries',
     action: 'handover',

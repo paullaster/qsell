@@ -459,6 +459,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'door_payments:manage',
       },
       {
+        id: 'delivery-costs',
+        title: 'Delivery costs',
+        name: 'delivery-costs',
+        href: '/admin/delivery/costs',
+        description: 'What riders earn and couriers charge, and what delivery has cost',
+        icon: 'Wallet',
+        permission: 'delivery_costs:manage',
+      },
+      {
         id: 'delivery-charges',
         title: 'Delivery charges',
         name: 'delivery-charges',
