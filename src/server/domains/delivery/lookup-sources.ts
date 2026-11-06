@@ -297,6 +297,38 @@ const varianceAccounts = tableSource({
   toOption: (row) => ({ id: text(row.id), label: `${text(row.no)} ${text(row.label)}`.trim(), description: null, badge: null }),
 });
 
+/** Books accounts rider pay can be booked to: open accounts that take postings. */
+const costAccounts = tableSource({
+  key: 'delivery-cost-accounts',
+  permission: 'delivery_costs:manage',
+  table: glAccounts,
+  id: glAccounts.id,
+  label: glAccounts.name,
+  searchColumns: [glAccounts.name, glAccounts.no],
+  select: { no: glAccounts.no },
+  scope: ({ filters, companyId }) => {
+    acceptFilters(filters, {});
+    return [and(eq(glAccounts.companyId, companyId), eq(glAccounts.type, 'posting'), eq(glAccounts.blocked, false)) ?? sql`false`];
+  },
+  toOption: (row) => ({ id: text(row.id), label: `${text(row.no)} ${text(row.label)}`.trim(), description: null, badge: null }),
+});
+
+/** Payment methods a rider can be paid through: cash, mobile money or the bank, switched on. */
+const payoutMethods = tableSource({
+  key: 'rider-payout-methods',
+  permission: 'delivery_costs:manage',
+  table: paymentMethods,
+  id: paymentMethods.id,
+  label: paymentMethods.name,
+  searchColumns: [paymentMethods.name, paymentMethods.code],
+  select: { code: paymentMethods.code, kind: paymentMethods.kind },
+  scope: ({ filters, companyId }) => {
+    acceptFilters(filters, {});
+    return [and(eq(paymentMethods.companyId, companyId), eq(paymentMethods.enabled, true), sql`${paymentMethods.kind} IN ('cash','mobile_money','bank_transfer','bank_deposit')`) ?? sql`false`];
+  },
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.code), badge: text(row.kind) }),
+});
+
 const costKinds = staticSource({
   key: 'delivery-cost-kinds',
   permission: 'delivery_costs:manage',
@@ -306,4 +338,4 @@ const costKinds = staticSource({
   },
 });
 
-export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts, deliveryStatuses, deliveryFailureReasons, stockIssueMoments, returnDispositions, openRuns, runStatuses, courierNews, riders, staffToRide, riderKinds, riderStatuses, doorCashMethods, handInAccounts, handInWitnesses, varianceAccounts, costKinds];
+export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts, deliveryStatuses, deliveryFailureReasons, stockIssueMoments, returnDispositions, openRuns, runStatuses, courierNews, riders, staffToRide, riderKinds, riderStatuses, doorCashMethods, handInAccounts, handInWitnesses, varianceAccounts, costKinds, payoutMethods, costAccounts];

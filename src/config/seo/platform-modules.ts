@@ -132,9 +132,10 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'delivery riders with their own accounts or your staff',
       'cash on delivery and cash collected by riders',
       'what delivery costs: rider pay and courier charges',
+      'delivery margin and delivery reports',
       'courier parcel tracking',
     ],
-    subModules: ['Deliveries', 'Dispatch board', 'Delivery runs', 'Riders', 'Door payments', 'Delivery costs', 'Delivery zones', 'Delivery charges', 'Delivery methods', 'Delivery invoicing', 'Stock timing', 'Map service'],
+    subModules: ['Deliveries', 'Dispatch board', 'Delivery runs', 'Riders', 'Door payments', 'Delivery costs', 'Delivery report', 'Delivery zones', 'Delivery charges', 'Delivery methods', 'Delivery invoicing', 'Stock timing', 'Map service'],
   },
   {
     navId: 'products-inventory',

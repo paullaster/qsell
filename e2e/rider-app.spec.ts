@@ -768,6 +768,41 @@ test.describe('the rider app', () => {
       await expect(page.getByText('The cost is taken back.')).toBeVisible({ timeout: 30_000 });
       await expect(list).toContainText('KES -200.00');
       await expect(list).toContainText('Was taken back');
+
+      // In the books: the two accounts are chosen, and the rider is paid what is owed (the delivery pay; the day pay and its reversal cancel).
+      const accounts = riderTool('pay-accounts', 'x');
+      await open(page, '/admin/delivery/costs', 'Delivery costs');
+      const books = page.getByRole('region', { name: 'In the books' });
+      await pick(page, books.getByRole('combobox', { name: 'Account rider pay is booked to' }), accounts.expense ?? '', new RegExp(accounts.expense ?? ''));
+      await pick(page, books.getByRole('combobox', { name: 'Account that holds what is owed to riders' }), accounts.payable ?? '', new RegExp(accounts.payable ?? ''));
+      await books.getByRole('button', { name: 'Save' }).click();
+      await expect(page.getByText(/Rider pay is booked to these accounts from now on/)).toBeVisible({ timeout: 30_000 });
+      const owed = page.getByRole('region', { name: 'Owed to riders' });
+      await expect(owed).toContainText(name, { timeout: 30_000 });
+      await expect(owed).toContainText('KSh 50.00');
+      await owed.getByRole('button', { name: `Pay ${name}` }).click();
+      const payForm = owed.getByRole('form', { name: `Pay ${name}` });
+      await pick(page, payForm.getByRole('combobox', { name: 'Paid by' }), accounts.method ?? '', new RegExp(accounts.method ?? ''));
+      await payForm.getByLabel(/Reference/).fill('SLIP-E2E-1');
+      await payForm.getByRole('button', { name: 'Pay KSh 50.00' }).click();
+      await expect(page.getByText(/RPY-.*KSh 50\.00 paid to/)).toBeVisible({ timeout: 30_000 });
+      await expect(owed).toContainText('Nothing is owed to any rider');
+      await expect(page.getByRole('list', { name: 'Payout list' })).toContainText('SLIP-E2E-1');
+      await noHorizontalScroll(page);
+      await noInnerHorizontalScroll(page);
+
+      // The report: the shared test shop has other deliveries in these days, so what is checked is this rider's own row (one delivery, the
+      // pay for it, the day pay having been taken back) and that the totals are shown; the sums themselves are proved against the database.
+      await open(page, '/admin/delivery/reports', 'Delivery report');
+      const margin = page.getByRole('region', { name: 'Margin' });
+      await expect(margin).toContainText('Customers paid for delivery');
+      await expect(margin).toContainText(/Rider pay [\d.]+ · courier [\d.]+ · other [\d.]+/);
+      const mine = page.getByRole('region', { name: 'By rider' }).getByRole('listitem').filter({ hasText: name });
+      await expect(mine).toContainText('KSh 50.00');
+      await expect(mine).toContainText(/Delivered:?\s*1/);
+      await noNativeSelect(page);
+      await noHorizontalScroll(page);
+      await noInnerHorizontalScroll(page);
     } finally {
       deliveryTool('close', tag);
     }

@@ -468,6 +468,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'delivery_costs:manage',
       },
       {
+        id: 'delivery-report',
+        title: 'Delivery report',
+        name: 'delivery-report',
+        href: '/admin/delivery/reports',
+        description: 'What delivery earned and cost: margin, by rider, courier and zone, and why attempts failed',
+        icon: 'Wallet',
+        permission: 'delivery_costs:manage',
+      },
+      {
         id: 'delivery-charges',
         title: 'Delivery charges',
         name: 'delivery-charges',

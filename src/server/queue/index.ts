@@ -31,6 +31,7 @@ export async function startWorker(): Promise<void> {
       '47 3 * * * expire-loyalty-points',
       // Sales reach the ledger within a minute; failures retry with a growing delay.
       '* * * * * finance-post-sales',
+      '* * * * * delivery-cost-post',
       '* * * * * finance-post-inventory',
       '7 3 * * * finance-ensure-partitions',
       '12 4 * * * wallet-expiry',

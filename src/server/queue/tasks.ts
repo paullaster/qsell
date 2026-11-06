@@ -321,6 +321,12 @@ export const financePostSales = async (_payload: unknown, helpers: JobHelpers) =
   if (r.posted > 0 || r.failed > 0) helpers.logger.info(`Sales posting: ${r.posted} posted, ${r.failed} waiting to be fixed`);
 };
 
+/** Worker cron task: post rider pay that was earned to the general ledger (also retries failed ones). */
+export const deliveryCostPost = async (_payload: unknown, helpers: JobHelpers) => {
+  const r = await getContainer().deliveryCostBooks.processDue(200);
+  if (r.posted > 0 || r.failed > 0) helpers.logger.info(`Rider pay posting: ${r.posted} posted, ${r.failed} waiting to be fixed`);
+};
+
 /** Worker cron task: customer credit nobody used for as long as the policy allows lapses (once for each last use). */
 export const walletExpiry = async (_payload: unknown, helpers: JobHelpers) => {
   const r = await getContainer().finance.creditAdjustments.expireDormant(new Date());
@@ -403,6 +409,7 @@ export const tasks = {
   'sweep-overdue-approvals': sweepOverdueApprovals,
   'expire-loyalty-points': expireLoyaltyPoints,
   'finance-post-sales': financePostSales,
+  'delivery-cost-post': deliveryCostPost,
   'wallet-expiry': walletExpiry,
   'finance-post-inventory': financePostInventory,
   'fx-reverse-revaluations': fxReverseRevaluations,

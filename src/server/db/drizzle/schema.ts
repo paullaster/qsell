@@ -830,6 +830,9 @@ export const deliveryPaySettings = pgTable(
       .references(() => companySettings.id, { onDelete: 'cascade' }),
     perDelivery: numeric('per_delivery', { precision: 14, scale: 2 }).notNull().default('0'),
     perDay: numeric('per_day', { precision: 14, scale: 2 }).notNull().default('0'),
+    /** Where rider pay is booked: the cost, and what is owed to riders until it is paid out. Both are needed before anything posts. */
+    expenseGlAccountId: uuid('expense_gl_account_id').references(() => glAccounts.id, { onDelete: 'restrict' }),
+    payableGlAccountId: uuid('payable_gl_account_id').references(() => glAccounts.id, { onDelete: 'restrict' }),
     version: integer('version').notNull().default(1),
     updatedBy: text('updated_by'),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -879,6 +882,74 @@ export const deliveryCosts = pgTable(
   ],
 );
 export type DeliveryCostRow = typeof deliveryCosts.$inferSelect;
+
+/**
+ * Whether a rider-pay cost has reached the books. A queue: the cost is saved first and posted afterwards, retrying with a growing
+ * delay, so a mistake in the accounts can never stop a rider's delivery. One row for each cost.
+ */
+export const deliveryCostPostings = pgTable(
+  'delivery_cost_postings',
+  {
+    costId: uuid('cost_id')
+      .primaryKey()
+      .references(() => deliveryCosts.id, { onDelete: 'restrict' }),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    status: text('status').$type<'posted' | 'failed'>().notNull(),
+    registerId: uuid('register_id'),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+    lastError: text('last_error'),
+    postedAt: timestamp('posted_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('delivery_cost_postings_due_idx').on(t.status, t.nextAttemptAt), check('delivery_cost_postings_chk', sql`(${t.status} = 'posted') = (${t.registerId} IS NOT NULL OR ${t.postedAt} IS NOT NULL)`)],
+);
+
+/** Pay handed to a rider: all that was owed them at the time, in one payout. Kept for good; each cost is in at most one payout. */
+export const deliveryPayPayouts = pgTable(
+  'delivery_pay_payouts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    number: text('number').notNull(),
+    riderId: uuid('rider_id')
+      .notNull()
+      .references(() => deliveryRiders.id, { onDelete: 'restrict' }),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    currency: text('currency').notNull(),
+    paymentMethodId: uuid('payment_method_id')
+      .notNull()
+      .references(() => paymentMethods.id, { onDelete: 'restrict' }),
+    bankAccountId: uuid('bank_account_id')
+      .notNull()
+      .references(() => bankAccounts.id, { onDelete: 'restrict' }),
+    paidOn: date('paid_on', { mode: 'string' }).notNull(),
+    reference: text('reference'),
+    note: text('note'),
+    paidBy: text('paid_by').notNull(),
+    registerId: uuid('register_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('delivery_pay_payouts_number_uidx').on(t.companyId, t.number), index('delivery_pay_payouts_rider_idx').on(t.riderId, t.createdAt), check('delivery_pay_payouts_amount_chk', sql`${t.amount} > 0`)],
+);
+export type DeliveryPayPayoutRow = typeof deliveryPayPayouts.$inferSelect;
+
+export const deliveryPayPayoutItems = pgTable(
+  'delivery_pay_payout_items',
+  {
+    payoutId: uuid('payout_id')
+      .notNull()
+      .references(() => deliveryPayPayouts.id, { onDelete: 'restrict' }),
+    costId: uuid('cost_id')
+      .notNull()
+      .references(() => deliveryCosts.id, { onDelete: 'restrict' }),
+  },
+  (t) => [primaryKey({ columns: [t.payoutId, t.costId] }), uniqueIndex('delivery_pay_payout_items_cost_uidx').on(t.costId)],
+);
 
 /**
  * An M-Pesa prompt a rider sent from a door, for the amount the delivery is to be paid at the door. The payment attempt itself (and the

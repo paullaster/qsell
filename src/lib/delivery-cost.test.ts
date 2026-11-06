@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { byKind, courierChargeProblem, dayPayKey, deliveryPayKey, isCostKind, money, readPayRules, reversalKey, totalCents } from './delivery-cost';
+import { byKind, costPostingLines, courierChargeProblem, dayPayKey, deliveryPayKey, isCostKind, isPayoutMethodKind, isRiderPay, money, marginCents, payoutPostingLines, payoutProblem, readPayRules, readPeriod, retryAfterSeconds, sharePercent, reversalKey, totalCents } from './delivery-cost';
 
 describe('rider pay rules', () => {
   it('are two amounts, each nothing or more, kept to the cent', () => {
@@ -32,5 +32,53 @@ describe('costs', () => {
   it('a courier charge is more than nothing', () => {
     expect(courierChargeProblem(300.5)).toEqual({ cents: 30050 });
     for (const bad of [0, -5, Number.NaN, '300', undefined]) expect(courierChargeProblem(bad)).toMatchObject({ error: expect.any(String) as string });
+  });
+});
+
+describe('the books for rider pay', () => {
+  it('only rider pay is posted and paid out here', () => {
+    expect(isRiderPay('rider_delivery')).toBe(true);
+    expect(isRiderPay('rider_day')).toBe(true);
+    expect(isRiderPay('courier')).toBe(false);
+    expect(isRiderPay('other')).toBe(false);
+  });
+
+  it('earned pay is a cost owed to the rider, and taking it back goes the other way; always balanced', () => {
+    expect(costPostingLines(5000)).toEqual([{ side: 'debit', account: 'expense', cents: 5000 }, { side: 'credit', account: 'payable', cents: 5000 }]);
+    expect(costPostingLines(-5000)).toEqual([{ side: 'debit', account: 'payable', cents: 5000 }, { side: 'credit', account: 'expense', cents: 5000 }]);
+    for (const c of [1, 5000, -1, -7777]) {
+      const lines = costPostingLines(c);
+      expect(lines.filter((l) => l.side === 'debit').reduce((n, l) => n + l.cents, 0)).toBe(lines.filter((l) => l.side === 'credit').reduce((n, l) => n + l.cents, 0));
+    }
+    expect(payoutPostingLines(12000)).toEqual([{ side: 'debit', account: 'payable', cents: 12000 }, { side: 'credit', account: 'bank', cents: 12000 }]);
+  });
+
+  it('a payout needs something owed', () => {
+    expect(payoutProblem(0, 0)).toMatch(/Nothing is owed/);
+    expect(payoutProblem(0, 2)).toMatch(/come to nothing/);
+    expect(payoutProblem(-500, 1)).toMatch(/set against their next pay/);
+    expect(payoutProblem(500, 1)).toBeNull();
+  });
+
+  it('knows the ways to pay and waits longer after each failed posting', () => {
+    expect(['cash', 'mobile_money', 'bank_transfer', 'bank_deposit', 'cheque', 'card'].map(isPayoutMethodKind)).toEqual([true, true, true, true, false, false]);
+    expect([0, 1, 2, 3, 20].map(retryAfterSeconds)).toEqual([60, 60, 120, 240, 3600]);
+  });
+});
+
+describe('report arithmetic and days', () => {
+  it('margin is what was earned less what it cost, and a share needs a whole', () => {
+    expect(marginCents(60000, 25000)).toBe(35000);
+    expect(marginCents(10000, 25000)).toBe(-15000);
+    expect(sharePercent(1, 3)).toBe(33);
+    expect(sharePercent(5, 0)).toBeNull();
+  });
+
+  it('a report covers the days typed, or the last 30 days, and not more than a year', () => {
+    expect(readPeriod('2026-11-01', '2026-11-05', '2026-11-06')).toEqual({ ok: true, period: { from: '2026-11-01', to: '2026-11-05' } });
+    expect(readPeriod(undefined, undefined, '2026-11-06')).toEqual({ ok: true, period: { from: '2026-10-08', to: '2026-11-06' } });
+    expect(readPeriod('2026-11-05', '2026-11-01', '2026-11-06')).toMatchObject({ ok: false });
+    expect(readPeriod('2024-01-01', '2026-11-01', '2026-11-06')).toMatchObject({ ok: false, error: expect.stringMatching(/a year/) as string });
+    expect(readPeriod('junk', 'junk', '2026-11-06')).toEqual({ ok: true, period: { from: '2026-10-08', to: '2026-11-06' } });
   });
 });

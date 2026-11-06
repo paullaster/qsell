@@ -1,8 +1,9 @@
 'use client';
 
-import { use, useId, useState } from 'react';
-import { costsPageAction, reverseCostAction, setPayRulesAction, type payRulesAction } from '@/server/domains/delivery/cost-actions';
+import { use, useEffect, useId, useState } from 'react';
+import { costBooksAction, costsPageAction, payRiderAction, payoutsPageAction, postCostsNowAction, reverseCostAction, setCostAccountsAction, setPayRulesAction, type payRulesAction } from '@/server/domains/delivery/cost-actions';
 import type { CostView } from '@/server/domains/delivery/costs';
+import type { OwedView, PayoutView } from '@/server/domains/delivery/cost-books';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
@@ -45,6 +46,7 @@ function Screen({ initial }: { initial: Rules }) {
         }}
         onError={(text) => setNotice({ kind: 'error', text })}
       />
+      <BooksPanel onNotice={setNotice} onChanged={() => list.reload()} />
       <section aria-label="Costs" className="space-y-3">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <ChoicePicker label="Kind of cost" source="delivery-cost-kinds" choice={kind} onChoice={setKind} placeholder="All kinds" clearable />
@@ -164,6 +166,206 @@ function CostRow({ cost, onDone, onError }: { cost: CostView; onDone: (text: str
             }}
           />
         </div>
+      ) : null}
+    </li>
+  );
+}
+
+type Books = Extract<Awaited<ReturnType<typeof costBooksAction>>, { ok: true }>['data'];
+
+/** Where rider pay is booked, what each rider is owed, paying them, and what has been paid. */
+function BooksPanel({ onNotice, onChanged }: { onNotice: (n: Notice) => void; onChanged: () => void }) {
+  const [books, setBooks] = useState<Books | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const load = (): void => {
+    void attempt(costBooksAction()).then((r) => {
+      if (r.ok) setBooks(r.data);
+      else setLoadError(r.error);
+    });
+  };
+  useEffect(load, []);
+  const payouts = usePagedList<PayoutView, Record<string, never>>({
+    load: async (_f, cursor) => {
+      const result = await payoutsPageAction({ cursor });
+      if (!result.ok) return { ok: false, error: result.error };
+      return { ok: true, data: { rows: result.data.rows, nextCursor: result.data.nextCursor } };
+    },
+    filters: {},
+  });
+  if (loadError !== null) return <p role="alert" className="text-sm text-red-700 dark:text-red-300">{loadError}</p>;
+  if (books === null) {
+    return (
+      <p role="status" className="text-sm text-fg-muted">
+        Loading…
+      </p>
+    );
+  }
+  return (
+    <>
+      <AccountsPanel books={books} onSaved={(accounts) => { setBooks({ ...books, accounts }); onNotice({ kind: 'ok', text: 'Saved. Rider pay is booked to these accounts from now on.' }); }} onNotice={onNotice} onPosted={() => { load(); onChanged(); }} />
+      <section aria-label="Owed to riders" className={`${cardClass} space-y-3`}>
+        <h3 className="text-sm font-bold text-fg-strong">Owed to riders</h3>
+        {books.owed.length === 0 ? (
+          <p role="status" className="text-sm text-fg-muted">
+            Nothing is owed to any rider.
+          </p>
+        ) : null}
+        <ul className="space-y-3" aria-label="Riders and what they are owed">
+          {books.owed.map((o) => (
+            <PayRow
+              key={o.riderId}
+              owed={o}
+              onPaid={(view) => {
+                onNotice({ kind: 'ok', text: `${view.number}: KSh ${view.amount} paid to ${view.riderName}.` });
+                load();
+                payouts.reload();
+              }}
+              onError={(text) => onNotice({ kind: 'error', text })}
+            />
+          ))}
+        </ul>
+      </section>
+      <section aria-label="Payouts" className="space-y-3">
+        <h3 className="text-sm font-bold text-fg-strong">Paid to riders</h3>
+        {payouts.phase !== 'loading' && payouts.phase !== 'error' && payouts.rows.length === 0 ? (
+          <p role="status" className="rounded-xl border border-line bg-surface-raised p-6 text-center text-sm text-fg-muted">
+            No rider has been paid yet.
+          </p>
+        ) : null}
+        <ul className="space-y-2" aria-label="Payout list">
+          {payouts.rows.map((p) => (
+            <li key={p.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-xl border border-line bg-surface-raised p-3 text-sm">
+              <span className="min-w-0">
+                <span className="font-semibold text-fg-strong">
+                  {p.number} · {p.riderName}
+                </span>{' '}
+                · {p.method}
+                {p.reference === null ? '' : ` · ${p.reference}`}
+                <span className="block text-xs text-fg-muted">Paid on {p.paidOn}{p.note === null ? '' : ` · ${p.note}`}</span>
+              </span>
+              <span className="font-mono font-semibold text-fg-strong">
+                {p.currency} {p.amount}
+              </span>
+            </li>
+          ))}
+        </ul>
+        {payouts.cursor !== null ? (
+          <button type="button" className={buttonClass} onClick={payouts.loadMore} disabled={payouts.phase === 'more'}>
+            {payouts.phase === 'more' ? 'Loading…' : 'Show more'}
+          </button>
+        ) : null}
+      </section>
+    </>
+  );
+}
+
+function AccountsPanel({ books, onSaved, onNotice, onPosted }: { books: Books; onSaved: (a: Books['accounts']) => void; onNotice: (n: Notice) => void; onPosted: () => void }) {
+  const [expense, setExpense] = useState<Choice | null>(books.accounts.expenseGlAccountId === null ? null : { id: books.accounts.expenseGlAccountId, label: books.accounts.expenseName ?? '' });
+  const [payable, setPayable] = useState<Choice | null>(books.accounts.payableGlAccountId === null ? null : { id: books.accounts.payableGlAccountId, label: books.accounts.payableName ?? '' });
+  const [busy, setBusy] = useState(false);
+  return (
+    <section aria-label="In the books" className={`${cardClass} space-y-3`}>
+      <h3 className="text-sm font-bold text-fg-strong">In the books</h3>
+      <p className="text-xs text-fg-muted">
+        Rider pay is booked as a cost the moment it is earned, and as owed to the rider until you pay them. Choose the two accounts once. Nothing is booked before the books are live.
+        {books.unposted > 0 ? ` ${String(books.unposted)} ${books.unposted === 1 ? 'entry is' : 'entries are'} waiting to be booked.` : ''}
+      </p>
+      <ChoicePicker label="Account rider pay is booked to" source="delivery-cost-accounts" choice={expense} onChoice={setExpense} placeholder="Choose the cost account (for example rider pay)" />
+      <ChoicePicker label="Account that holds what is owed to riders" source="delivery-cost-accounts" choice={payable} onChoice={setPayable} placeholder="Choose the payable account" />
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          className={primaryClass}
+          disabled={busy || expense === null || payable === null}
+          onClick={() => {
+            void (async () => {
+              setBusy(true);
+              const r = await attempt(setCostAccountsAction({ expenseGlAccountId: expense?.id ?? '', payableGlAccountId: payable?.id ?? '', expectedVersion: books.accounts.version }));
+              setBusy(false);
+              if (r.ok) onSaved(r.data);
+              else onNotice({ kind: 'error', text: r.error });
+            })();
+          }}
+        >
+          Save
+        </button>
+        <button
+          type="button"
+          className={buttonClass}
+          disabled={busy}
+          onClick={() => {
+            void (async () => {
+              setBusy(true);
+              const r = await attempt(postCostsNowAction());
+              setBusy(false);
+              if (!r.ok) onNotice({ kind: 'error', text: r.error });
+              else {
+                onNotice({ kind: 'ok', text: r.data.posted === 0 && r.data.waiting === 0 && r.data.failed === 0 ? 'Everything is already booked.' : `${String(r.data.posted)} booked, ${String(r.data.waiting)} waiting for the accounts or the books to be ready, ${String(r.data.failed)} could not be booked.` });
+                onPosted();
+              }
+            })();
+          }}
+        >
+          Book what is waiting now
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function PayRow({ owed, onPaid, onError }: { owed: OwedView; onPaid: (v: PayoutView) => void; onError: (text: string) => void }) {
+  const uid = useId();
+  const [open, setOpen] = useState(false);
+  const [method, setMethod] = useState<Choice | null>(null);
+  const [reference, setReference] = useState('');
+  const [busy, setBusy] = useState(false);
+  const pays = Number(owed.owed) > 0;
+  return (
+    <li className="space-y-2 rounded-lg border border-line bg-surface p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="font-semibold text-fg-strong">{owed.name}</span>
+        <span className="font-mono text-lg font-bold text-fg-strong">KSh {owed.owed}</span>
+      </div>
+      <p className="text-xs text-fg-muted">
+        {owed.entries} {owed.entries === 1 ? 'entry' : 'entries'} not yet paid out{pays ? '' : '. Nothing can be paid until more is earned.'}
+      </p>
+      {pays && !open ? (
+        <button type="button" className={primaryClass} onClick={() => setOpen(true)} aria-label={`Pay ${owed.name}`}>
+          Pay {owed.name}
+        </button>
+      ) : null}
+      {pays && open ? (
+        <form
+          aria-label={`Pay ${owed.name}`}
+          className="space-y-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void (async () => {
+              setBusy(true);
+              const r = await attempt(payRiderAction({ riderId: owed.riderId, paymentMethodId: method?.id ?? '', reference }));
+              setBusy(false);
+              if (!r.ok) {
+                onError(r.error);
+                return;
+              }
+              setOpen(false);
+              onPaid(r.data);
+            })();
+          }}
+        >
+          <ChoicePicker label="Paid by" source="rider-payout-methods" choice={method} onChoice={setMethod} placeholder="Cash, M-Pesa or bank" />
+          <Field id={`${uid}-ref`} label="Reference (M-Pesa code, cheque or slip number)">
+            <input id={`${uid}-ref`} className={fieldClass} value={reference} onChange={(e) => setReference(e.target.value)} maxLength={100} autoComplete="off" />
+          </Field>
+          <div className="flex flex-wrap gap-2">
+            <button type="submit" className={primaryClass} disabled={busy || method === null}>
+              {busy ? 'Saving…' : `Pay KSh ${owed.owed}`}
+            </button>
+            <button type="button" className={buttonClass} disabled={busy} onClick={() => setOpen(false)}>
+              Cancel
+            </button>
+          </div>
+        </form>
       ) : null}
     </li>
   );

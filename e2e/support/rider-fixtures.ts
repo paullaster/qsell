@@ -7,6 +7,7 @@
  *   tsx e2e/support/rider-fixtures.ts door-setup <any>  makes sure there is a payment method of kind cash to receive cash at the door through, and prints its name
  *   tsx e2e/support/rider-fixtures.ts door <delivery number>  what cash at the door did: the order's payment, the custody entries and whether the sale was queued for the books
  *   tsx e2e/support/rider-fixtures.ts mpesa-sent <delivery number>  makes it look as if the rider had sent an M-Pesa prompt for the delivery that is still waiting for the customer
+ *   tsx e2e/support/rider-fixtures.ts pay-accounts <any>  makes the two books accounts rider pay goes to (a cost and what is owed to riders) and prints their names, and the name of the cash method a rider can be paid through
  *   tsx e2e/support/rider-fixtures.ts reset <tag>   ends every rider and puts the choice of rider kinds back to the default (staff only), so other tests are not asked about riders
  */
 import { execFileSync } from 'node:child_process';
@@ -79,7 +80,7 @@ async function doorSetup(): Promise<Record<string, string>> {
   if (riders === undefined) throw new Error('e2e fixture: the cash with riders method could not be made');
   // Start from "not chosen yet", so the test chooses it on the screen.
   await db.delete(deliveryDoorSettings).where(eq(deliveryDoorSettings.companyId, company.id));
-  return { name: riders.name, id: riders.id, till: tillBank?.name ?? '', variance: 'Cash over and short E2E' };
+  return { name: riders.name, id: riders.id, till: tillBank?.name ?? '', tillMethod: till.name, variance: 'Cash over and short E2E' };
 }
 
 async function doorState(number: string): Promise<Record<string, string>> {
@@ -121,6 +122,21 @@ async function mpesaSent(number: string): Promise<Record<string, string>> {
   return { attemptId: attempt.id };
 }
 
+async function payAccounts(): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { glAccounts, paymentMethods, deliveryPaySettings } = await import('@/server/db/drizzle/schema');
+  const { and, eq } = await import('drizzle-orm');
+  const company = await getContainer().companySettings.ensureSeeded();
+  await db.insert(glAccounts).values({ companyId: company.id, no: '6277E2E', name: 'Rider pay E2E', type: 'posting', category: 'expense', normalBalance: 'debit' }).onConflictDoNothing();
+  await db.insert(glAccounts).values({ companyId: company.id, no: '2199E2E', name: 'Owed to riders E2E', type: 'posting', category: 'liabilities', normalBalance: 'credit' }).onConflictDoNothing();
+  // Not chosen yet, so the test chooses them on the screen.
+  await db.update(deliveryPaySettings).set({ expenseGlAccountId: null, payableGlAccountId: null }).where(eq(deliveryPaySettings.companyId, company.id));
+  const [till] = await db.select({ name: paymentMethods.name }).from(paymentMethods).where(and(eq(paymentMethods.companyId, company.id), eq(paymentMethods.kind, 'cash'), eq(paymentMethods.code, 'CASH')));
+  const [any] = till === undefined ? await db.select({ name: paymentMethods.name }).from(paymentMethods).where(and(eq(paymentMethods.companyId, company.id), eq(paymentMethods.kind, 'cash'))) : [till];
+  return { expense: 'Rider pay E2E', payable: 'Owed to riders E2E', method: any?.name ?? '' };
+}
+
 async function reset(): Promise<Record<string, string>> {
   const { getContainer } = await import('@/server/di/container');
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
@@ -144,8 +160,9 @@ async function main(): Promise<void> {
   if (command === 'door-setup') result = await doorSetup();
   if (command === 'door' && tag !== undefined) result = await doorState(tag);
   if (command === 'mpesa-sent' && tag !== undefined) result = await mpesaSent(tag);
+  if (command === 'pay-accounts') result = await payAccounts();
   if (command === 'reset') result = await reset();
-  if (result === null) throw new Error('usage: rider-fixtures staff <tag> | code <delivery number> | token <order number> | proof <rule> | door-setup | door <delivery number> | mpesa-sent <delivery number> | reset');
+  if (result === null) throw new Error('usage: rider-fixtures staff <tag> | code <delivery number> | token <order number> | proof <rule> | door-setup | door <delivery number> | mpesa-sent <delivery number> | pay-accounts <any> | reset');
   process.stdout.write(`FIXTURE ${JSON.stringify(result)}\n`);
 }
 
