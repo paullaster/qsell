@@ -55,6 +55,10 @@ export interface ApplicationRow {
   invoiceNo: string;
   amount: string;
   order?: string | null;
+  /** The order behind the invoice, so the numbers can link to it. */
+  orderId?: string | null;
+  /** A tax invoice was issued for that order; if not, the title names the order itself. */
+  invoiceIssued?: boolean;
   lines?: { text: string; total: string }[];
   moreLines?: number;
 }
@@ -64,7 +68,7 @@ export interface ApplicationGroup {
   at: string;
   undone: boolean;
   totalCents: number;
-  rows: { invoiceNo: string; amount: string; order: string | null; lines: { text: string; total: string }[]; moreLines: number }[];
+  rows: { invoiceNo: string; amount: string; order: string | null; orderId: string | null; invoiceIssued: boolean; lines: { text: string; total: string }[]; moreLines: number }[];
 }
 
 /** One application can cover several invoices; it is shown, and undone, as a whole. */
@@ -73,7 +77,7 @@ export function groupApplications(rows: readonly ApplicationRow[]): ApplicationG
   for (const a of rows) {
     const g = groups.get(a.applicationId) ?? { applicationId: a.applicationId, at: a.at, undone: a.undone, totalCents: 0, rows: [] };
     g.totalCents += toCents(a.amount);
-    g.rows.push({ invoiceNo: a.invoiceNo, amount: a.amount, order: a.order ?? null, lines: a.lines ?? [], moreLines: a.moreLines ?? 0 });
+    g.rows.push({ invoiceNo: a.invoiceNo, amount: a.amount, order: a.order ?? null, orderId: a.orderId ?? null, invoiceIssued: a.invoiceIssued ?? false, lines: a.lines ?? [], moreLines: a.moreLines ?? 0 });
     groups.set(a.applicationId, g);
   }
   return [...groups.values()];

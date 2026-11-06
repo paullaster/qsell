@@ -19,22 +19,35 @@ import { OrderDetailsModal, type FulfilmentChange } from './orders/OrderDetailsM
 import { OrderInvoicePreview } from './orders/OrderInvoicePreview';
 import { OrderStatusBadge } from './orders/OrderStatusBadge';
 
+/** The order (and invoice preview) the address asked to open, read on the server. */
+export interface OpenTarget {
+  order: Order | null;
+  invoice: boolean;
+  /** An order was named but could not be found (or is not this company's). */
+  missing: boolean;
+}
+
+export const NO_TARGET: Promise<OpenTarget> = Promise.resolve({ order: null, invoice: false, missing: false });
+
 interface AdminOrdersProps {
   /** The first page, already on its way when the screen is drawn. */
   firstPage: Promise<PageResult<Order>>;
   companyPromise: Promise<PublicCompany>;
   /** Whether the person may update products: order lines then offer a shortcut to the product's edit window. */
   canEditProductsPromise: Promise<boolean>;
+  /** Opens one order, or its invoice, at once: the address of a link from another screen. */
+  targetPromise?: Promise<OpenTarget>;
 }
 
 const messageOf = (error: unknown, fallback: string): string =>
   error instanceof Error ? error.message : fallback;
 
 /** The orders, a page at a time: search, narrow by state, and open one to fulfil, invoice, take payment on or credit. */
-export function AdminOrders({ firstPage, companyPromise, canEditProductsPromise }: AdminOrdersProps) {
+export function AdminOrders({ firstPage, companyPromise, canEditProductsPromise, targetPromise = NO_TARGET }: AdminOrdersProps) {
   const first = use(firstPage);
   const company = use(companyPromise);
   const canEditProducts = use(canEditProductsPromise);
+  const target = use(targetPromise);
 
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<Choice | null>(null);
@@ -48,14 +61,18 @@ export function AdminOrders({ firstPage, companyPromise, canEditProductsPromise 
 
   // What was changed on screen shows in the list at once, without reading every page again.
   const [patched, setPatched] = useState<Record<string, Order>>({});
-  const [selected, setSelected] = useState<Order | null>(null);
-  const [previewing, setPreviewing] = useState(false);
+  const [selected, setSelected] = useState<Order | null>(target.order);
+  const [previewing, setPreviewing] = useState(target.invoice && target.order !== null);
   const [busy, setBusy] = useState(false);
   const [invoiceBusy, setInvoiceBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(target.missing ? 'That order could not be found.' : null);
   const [notice, setNotice] = useState<string | null>(null);
   const rows = list.rows.map((o) => patched[o.id] ?? o);
 
+  /** Once the order that a link named is closed, its address no longer asks for it again on a reload. */
+  const forgetTarget = () => {
+    if (window.location.search.includes('order=')) window.history.replaceState(null, '', window.location.pathname);
+  };
   const open = (order: Order) => {
     setSelected(order);
     setError(null);
@@ -350,7 +367,10 @@ export function AdminOrders({ firstPage, companyPromise, canEditProductsPromise 
           invoiceBusy={invoiceBusy}
           error={error}
           notice={notice}
-          onClose={() => setSelected(null)}
+          onClose={() => {
+            setSelected(null);
+            forgetTarget();
+          }}
           onPreview={() => setPreviewing(true)}
           onInvoice={(action, type) => void invoice(action, type, selected.id)}
           onSave={(change) => void save(selected, change)}
@@ -365,7 +385,10 @@ export function AdminOrders({ firstPage, companyPromise, canEditProductsPromise 
           canEditProducts={canEditProducts}
           company={company}
           busy={invoiceBusy}
-          onClose={() => setPreviewing(false)}
+          onClose={() => {
+            setPreviewing(false);
+            forgetTarget();
+          }}
           onEmail={() => void invoice('email', 'tax_invoice', selected.id)}
           onDownload={(type) => void invoice('download', type, selected.id)}
         />
