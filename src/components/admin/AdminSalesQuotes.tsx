@@ -302,6 +302,7 @@ export function AdminSalesQuotes({
       return (
         <AdminSectionTemplates
           products={editorData.products}
+          canEditProducts={capabilities.canEditProducts}
           canCreate={capabilities.canCreate}
           canUpdate={capabilities.canUpdate}
           canDelete={capabilities.canDelete}
@@ -313,6 +314,7 @@ export function AdminSalesQuotes({
     return (
       <AdminSalesQuoteTemplates
         products={editorData.products}
+        canEditProducts={capabilities.canEditProducts}
         canCreate={capabilities.canCreate}
         canUpdate={capabilities.canUpdate}
         canDelete={capabilities.canDelete}
