@@ -1,5 +1,5 @@
 import { has, orElse } from '@/lib/values';
-import { invoiceTitle, lineText, printableLines } from '@/lib/invoice-reference';
+import { printableLines } from '@/lib/invoice-reference';
 import type { CompanyProfile } from '@/server/ports/communications';
 import { fromCents, toCents } from '../domain/receivables';
 import { FinanceError } from '../errors';
@@ -24,21 +24,33 @@ export interface ReceiptDocument {
   payer: string | null;
   narration: string | null;
   cheque: { number: string; bank: string; drawer: string; date: string } | null;
-  applications: {
-    /** "Invoice INV-0001" when one was issued, otherwise "Order ORD-1"; never the order number passed off as an invoice number. */
-    title: string;
-    /** The order behind an issued invoice, when there is one. */
-    order: string | null;
-    amount: string;
-    lines: { text: string; total: string }[];
-    /** Lines left out of the printout to keep it one page of reading. */
-    moreLines: number;
-  }[];
+  /**
+   * What the money paid for, line by line. A receipt names no invoice or order number: it shows the items, the quantity, the price
+   * and the amount, so the customer sees what they paid for and the books keep the references.
+   */
+  items: ReceiptItem[];
+  /** Items left out of the printout to keep it readable; the total still counts them. */
+  moreItems: number;
+  /** The value of all the items listed, before looking at how much of it this receipt paid. */
+  itemsTotal: string;
+  /** What this receipt applied to those items. */
+  applied: string;
   unapplied: string;
   isDeposit: boolean;
   receivedBy: string | null;
   reversedOn: string | null;
 }
+
+export interface ReceiptItem {
+  description: string;
+  /** "35 PCS", or empty for a line that has no quantity (a payment on a sale whose lines are not known). */
+  quantity: string;
+  unitPrice: string | null;
+  amount: string;
+}
+
+/** Items printed on one receipt before the rest are summarised. */
+const MAX_ITEMS = 200;
 
 const text = (value: string | undefined): string | null => (has(value) ? value.trim() : null);
 
@@ -71,12 +83,7 @@ export function buildReceiptDocument(detail: Detail, company: CompanyProfile): R
     payer: text(r.payerName ?? undefined),
     narration: text(r.narration ?? undefined),
     cheque: chequeNo === null ? null : { number: chequeNo, bank: orElse(cp.bank, ''), drawer: orElse(cp.drawer, ''), date: orElse(cp.chequeDate, '') },
-    applications: live.map((a) => {
-      const ref = a.ref ?? { documentNo: a.document_no, invoiceNo: null, orderNumber: null, lines: [] };
-      const { title, order } = invoiceTitle(ref);
-      const { shown, more } = printableLines(ref.lines);
-      return { title, order, amount: a.amount, lines: shown.map((l) => ({ text: lineText(l), total: l.total })), moreLines: more };
-    }),
+    ...itemsOf(live),
     unapplied: fromCents(detail.unappliedCents),
     isDeposit: r.isDeposit,
     receivedBy: has(r.postedBy) ? (detail.actors[r.postedBy] ?? null) : null,
@@ -84,9 +91,45 @@ export function buildReceiptDocument(detail: Detail, company: CompanyProfile): R
   };
 }
 
+type Live = Detail['applications'][number];
+
+/** The items behind every live application, in order, with no invoice or order number anywhere. */
+function itemsOf(live: Live[]): Pick<ReceiptDocument, 'items' | 'moreItems' | 'itemsTotal' | 'applied'> {
+  const items: ReceiptItem[] = [];
+  let more = 0;
+  let totalCents = 0;
+  let appliedCents = 0;
+  for (const a of live) {
+    appliedCents += toCents(a.amount);
+    const lines = a.ref?.lines ?? [];
+    if (lines.length === 0) {
+      // The sale's lines are not known: say what was paid, not which document it was.
+      items.push({ description: 'Goods and services sold', quantity: '', unitPrice: null, amount: a.amount });
+      totalCents += toCents(a.amount);
+      continue;
+    }
+    const { shown, more: left } = printableLines(lines, MAX_ITEMS);
+    more += left;
+    for (const l of lines) totalCents += toCents(l.total);
+    for (const l of shown) {
+      items.push({
+        description: `${l.name}${l.gift ? ' (free gift)' : ''}`,
+        quantity: has(l.unit ?? undefined) ? `${trimQuantity(l.quantity)} ${l.unit ?? ''}` : trimQuantity(l.quantity),
+        unitPrice: l.unitPrice,
+        amount: l.total,
+      });
+    }
+  }
+  return { items, moreItems: more, itemsTotal: fromCents(totalCents), applied: fromCents(appliedCents) };
+}
+
+/** "35.0000" prints as "35"; "2.5000" as "2.5". */
+export function trimQuantity(quantity: string): string {
+  const n = Number(quantity);
+  return Number.isFinite(n) ? String(Number(n.toFixed(4))) : quantity;
+}
+
 /** `Receipt PAY-0001.pdf`-style name, safe in a header and on any file system. */
 export function receiptFileName(number: string): string {
   return `Receipt-${number.replace(/[^A-Za-z0-9._-]+/g, '-')}.pdf`;
 }
-
-export const applicationsTotal = (doc: ReceiptDocument): string => fromCents(doc.applications.reduce((sum, a) => sum + toCents(a.amount), 0));
