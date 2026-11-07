@@ -138,6 +138,11 @@ async function ready(orderNumber: string, mode?: string): Promise<Record<string,
   const id = made.data.id;
   // `draft` stops here, for a test that goes on from the screen; `door` lets the delivery of an unpaid order go out to be paid at the door.
   if (mode === 'draft') return { number: made.data.number, id };
+  // `pod`: the order was placed to be paid on delivery, so the delivery is marked to be paid at the door as it is made, the way the office's screen does.
+  if (mode === 'pod') {
+    const marked = await c.doorPayments.markIfPayOnDelivery(actor, id);
+    if (marked?.ok !== true) throw new Error(`e2e fixture: ${marked?.ok === false ? marked.message : 'the order is not a pay on delivery order'}`);
+  }
   if (mode === 'door') {
     const marked = await c.doorPayments.mark(actor, id, { reason: 'Customer pays at the door (end-to-end test)' });
     if (!marked.ok) throw new Error(`e2e fixture: ${marked.message}`);

@@ -11,6 +11,9 @@ const LINE = '#E5E7EB';
 const money = (amount: string, currency: string): string =>
   `${currency} ${Number(amount).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+/** An amount in a table cell: the currency is in the column heading. */
+const num = (amount: string): string => Number(amount).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 const nonEmpty = (parts: (string | null | undefined)[]): string[] =>
   parts.filter((p): p is string => has(p));
 
@@ -224,7 +227,7 @@ export function renderReceiptPdf(receipt: ReceiptDocument, generatedOn: string):
       .fillColor(accent)
       .font('Helvetica-Bold')
       .fontSize(9)
-      .text(receipt.isDeposit ? 'ADVANCE PAYMENT' : 'APPLIED TO', M, y, { lineBreak: false });
+      .text(receipt.isDeposit ? 'ADVANCE PAYMENT' : 'ITEMS PAID FOR', M, y, { lineBreak: false });
     y += 14;
     if (receipt.isDeposit) {
       doc
@@ -238,7 +241,7 @@ export function renderReceiptPdf(receipt: ReceiptDocument, generatedOn: string):
           { width: CW },
         );
       y = doc.y + 6;
-    } else if (receipt.applications.length === 0) {
+    } else if (receipt.items.length === 0) {
       doc
         .fillColor(INK)
         .font('Helvetica')
@@ -248,63 +251,59 @@ export function renderReceiptPdf(receipt: ReceiptDocument, generatedOn: string):
         });
       y = doc.y + 6;
     } else {
-      doc.rect(M, y, CW, 20).fill(primary);
-      doc
-        .fillColor('#FFFFFF')
-        .font('Helvetica-Bold')
-        .fontSize(8)
-        .text('INVOICE AND WHAT IT WAS FOR', M + 8, y + 6, { lineBreak: false });
-      doc.text('AMOUNT PAID', M, y + 6, { width: CW - 8, align: 'right', lineBreak: false });
-      y += 20;
+      // Item, quantity, unit price and amount, as on any invoice or sales receipt. No invoice or order number is printed.
+      const col = { qty: CW * 0.52, price: CW * 0.68, amount: CW * 0.84 };
+      const head = () => {
+        doc.rect(M, y, CW, 20).fill(primary);
+        doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(8);
+        doc.text('ITEM', M + 8, y + 6, { lineBreak: false });
+        doc.text('QTY', M + col.qty, y + 6, { width: CW * 0.16 - 8, align: 'right', lineBreak: false });
+        doc.text(`PRICE (${receipt.currency})`, M + col.price, y + 6, { width: CW * 0.16 - 8, align: 'right', lineBreak: false });
+        doc.text(`AMOUNT (${receipt.currency})`, M + col.amount, y + 6, { width: CW * 0.16 - 8, align: 'right', lineBreak: false });
+        y += 20;
+      };
       const room = (needed: number) => {
         if (y + needed > H - 120) {
           doc.addPage();
           bar();
           y = 30;
+          head();
         }
       };
-      for (const [i, a] of receipt.applications.entries()) {
-        room(22);
-        if (i % 2 === 0) doc.rect(M, y, CW, 20 + a.lines.length * 11 + (a.moreLines > 0 ? 11 : 0)).fill('#F9FAFB');
-        doc
-          .fillColor(INK)
-          .font('Helvetica-Bold')
-          .fontSize(9)
-          .text(a.title, M + 8, y + 6, { lineBreak: false });
-        if (a.order !== null) {
-          doc
-            .fillColor(MUTED)
-            .font('Helvetica')
-            .fontSize(8)
-            .text(a.order, M + 8 + doc.widthOfString(a.title) + 8, y + 7, { lineBreak: false });
-        }
-        doc
-          .fillColor(INK)
-          .font('Helvetica')
-          .fontSize(9)
-          .text(money(a.amount, receipt.currency), M, y + 6, {
-            width: CW - 8,
-            align: 'right',
-            lineBreak: false,
-          });
-        y += 20;
-        // What the invoice was for, so the payer can see what this money settled.
-        for (const line of a.lines) {
-          room(12);
-          doc
-            .fillColor(MUTED)
-            .font('Helvetica')
-            .fontSize(8)
-            .text(line.text, M + 16, y, { width: CW * 0.7, lineBreak: false, ellipsis: true });
-          doc.text(money(line.total, receipt.currency), M, y, { width: CW - 8, align: 'right', lineBreak: false });
-          y += 11;
-        }
-        if (a.moreLines > 0) {
-          room(12);
-          doc.fillColor(MUTED).font('Helvetica-Oblique').fontSize(8).text(`and ${String(a.moreLines)} more ${a.moreLines === 1 ? 'line' : 'lines'}`, M + 16, y, { lineBreak: false });
-          y += 11;
-        }
-        y += 2;
+      head();
+      for (const [i, item] of receipt.items.entries()) {
+        doc.font('Helvetica').fontSize(9);
+        const itemW = CW * 0.52 - 16;
+        const height = Math.max(doc.heightOfString(item.description, { width: itemW }), 11) + 10;
+        room(height);
+        if (i % 2 === 0) doc.rect(M, y, CW, height).fill('#F9FAFB');
+        doc.fillColor(INK).text(item.description, M + 8, y + 5, { width: itemW });
+        doc.text(item.quantity, M + col.qty, y + 5, { width: CW * 0.16 - 8, align: 'right', lineBreak: false });
+        doc.text(item.unitPrice === null ? '' : num(item.unitPrice), M + col.price, y + 5, { width: CW * 0.16 - 8, align: 'right', lineBreak: false });
+        doc.text(num(item.amount), M + col.amount, y + 5, { width: CW * 0.16 - 8, align: 'right', lineBreak: false });
+        y += height;
+      }
+      if (receipt.moreItems > 0) {
+        room(14);
+        doc.fillColor(MUTED).font('Helvetica-Oblique').fontSize(8).text(`and ${String(receipt.moreItems)} more ${receipt.moreItems === 1 ? 'item' : 'items'} (included in the total)`, M + 8, y + 4, { lineBreak: false });
+        y += 16;
+      }
+      doc.moveTo(M, y).lineTo(M + CW, y).strokeColor(LINE).lineWidth(1).stroke();
+      y += 10;
+
+      // Totals, right-aligned under the amount column.
+      const balance = Number(receipt.itemsTotal) - Number(receipt.applied);
+      const totals: [string, string, boolean][] = [
+        ['Total of items', money(receipt.itemsTotal, receipt.currency), false],
+        ['Amount received', money(receipt.applied, receipt.currency), true],
+        ...(balance > 0.004 ? [['Not covered by this receipt', money(balance.toFixed(2), receipt.currency), false] as [string, string, boolean]] : []),
+      ];
+      room(totals.length * 16 + 10);
+      for (const [label, value, strong] of totals) {
+        doc.fillColor(strong ? INK : MUTED).font(strong ? 'Helvetica-Bold' : 'Helvetica').fontSize(strong ? 10 : 9);
+        doc.text(label, M + CW * 0.5, y, { width: CW * 0.28, lineBreak: false });
+        doc.text(value, M + CW * 0.78, y, { width: CW * 0.22 - 8, align: 'right', lineBreak: false });
+        y += 16;
       }
       y += 6;
     }

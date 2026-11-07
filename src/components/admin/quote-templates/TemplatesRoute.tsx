@@ -15,6 +15,7 @@ import type { SectionTemplateListRow } from '@/server/domains/quotes/section-tem
 type EditorData = Awaited<ReturnType<typeof getSalesQuoteEditorDataAction>>;
 
 interface Capabilities {
+  canEditProducts: boolean;
   canCreate: boolean;
   canUpdate: boolean;
   canDelete: boolean;
@@ -65,6 +66,7 @@ export function TemplatesRoute({
 
   const shared = {
     products: data.products,
+    canEditProducts: capabilities.canEditProducts,
     canCreate: capabilities.canCreate,
     canUpdate: capabilities.canUpdate,
     canDelete: capabilities.canDelete,

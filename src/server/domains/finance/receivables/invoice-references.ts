@@ -49,6 +49,7 @@ export async function loadInvoiceReferences(db: DrizzleDb | Tx, companyId: strin
       documentNo: e.documentNo,
       invoiceNo: has(e.orderId) ? (invoiceNo.get(e.orderId) ?? null) : null,
       orderNumber: has(e.orderId) ? (orderNumber.get(e.orderId) ?? null) : null,
+      orderId: has(e.orderId) ? e.orderId : null,
       lines: has(e.orderId) ? (lines.get(e.orderId) ?? []) : [],
     });
   }

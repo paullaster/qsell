@@ -442,6 +442,30 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'Approve or refuse a hand-in whose count came out short or over by more than the limit (never your own)',
   },
+  'delivery_costs:manage': {
+    resource: 'delivery_costs',
+    action: 'manage',
+    category: 'Orders & Sales',
+    description: 'Set what riders are paid, record what a courier charged, take a delivery cost back with a reason, and see what delivery costs',
+  },
+  'delivery_slots:manage': {
+    resource: 'delivery_slots',
+    action: 'manage',
+    category: 'Orders & Sales',
+    description: 'Set the delivery slots each branch offers, with their room and cut-offs, and close days on which no slot is offered',
+  },
+  'visits:manage': {
+    resource: 'visits',
+    action: 'manage',
+    category: 'Orders & Sales',
+    description: 'Book, move and cancel a visit to a customer, assign its crew and checklist, and see every visit',
+  },
+  'visits:work': {
+    resource: 'visits',
+    action: 'work',
+    category: 'Orders & Sales',
+    description: 'On the visits you are assigned to: say you are on site, tick the checklist, mark the work done and record the customer\'s sign-off',
+  },
   'deliveries:handover': {
     resource: 'deliveries',
     action: 'handover',

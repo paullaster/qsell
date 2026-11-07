@@ -38,6 +38,8 @@ async function main(): Promise<void> {
     .values([
       { code: 'KES', name: 'Kenyan Shilling', symbol: 'KSh', isBaseCurrency: true },
       { code: 'USD', name: 'US Dollar', symbol: '$' },
+      // Nothing else in the tests is booked in francs, so a books rate for it can be set and changed freely.
+      { code: 'CHF', name: 'Swiss Franc', symbol: 'CHF' },
     ])
     .onConflictDoNothing();
   const itemTypeId = `it_e2e_${randomUUID().slice(0, 8)}`;
@@ -207,7 +209,22 @@ async function main(): Promise<void> {
   await seedStatementPull();
   await seedReversal();
   await seedVendors();
+  await assertBooksAgree();
   console.warn('e2e seed: done');
+}
+
+/**
+ * The seed writes some ledger rows itself. If one of them disagrees with its history, the nightly integrity check would raise an
+ * alert in every test run, so a seed that leaves one is stopped here, naming it, rather than shipping a false alarm.
+ */
+async function assertBooksAgree(): Promise<void> {
+  const { getContainer } = await import('@/server/di/container');
+  const container = getContainer();
+  const company = await container.companySettings.ensureSeeded();
+  const drift = await container.finance.customerLedger.drift(company.id);
+  if (drift.length > 0) {
+    throw new Error(`e2e seed: ${String(drift.length)} customer ledger entries disagree with their history: ${drift.map((d) => d.document_no).join(', ')}. Post them through customerLedger.addEntry.`);
+  }
 }
 
 /**
@@ -436,7 +453,8 @@ async function seedUnitDocuments(): Promise<void> {
     const company = await container.companySettings.ensureSeeded();
     const [buyer] = await db.insert(schema.customers).values({ companyId: company.id, number: `E2E-INV-${label.toUpperCase()}`, name: `Invoiced buyer ${label}`, phone: label === 'Desktop' ? '0744100001' : '0744100002', accountType: 'cash', creditLimit: '0' }).returning();
     if (buyer === undefined) throw new Error('e2e seed: the invoiced customer was not created');
-    await db.insert(schema.customerLedgerEntries).values({ companyId: company.id, customerId: buyer.id, orderId: id, documentType: 'invoice', documentNo: number, description: 'Cash invoice', amount: '18000.00', remainingAmount: '18000.00', postingDate: '2026-10-01', currency: 'KES' });
+    // Posted the way the app posts an invoice, so the entry carries its opening detailed entry: the nightly integrity check compares them.
+    await container.finance.customerLedger.addEntry(db, { companyId: company.id, customerId: buyer.id, orderId: id, documentType: 'invoice', documentNo: number, description: 'Cash invoice', amountCents: 1_800_000, postingDate: '2026-10-01', currency: 'KES' });
     await db.insert(schema.invoiceDocuments).values({ orderId: id, orderNumber: number, invoiceNumber: `E2E-TI-${label.toUpperCase()}`, documentType: 'tax_invoice', customerEmail: 'crate@e2e.test', customerName: `Crate buyer ${label}`, currency: 'KES', subtotal: '18000', tax: '0', shippingFee: '0', totalAmount: '18000', pdfStorageKey: 'x.pdf', emailStatus: 'not_sent', meta: {} });
   }
 }

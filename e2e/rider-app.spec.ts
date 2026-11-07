@@ -2,7 +2,7 @@ import { expect, test, type Browser, type Page } from '@playwright/test';
 import { clickUntilVisible, followLink, noHorizontalScroll, noInnerHorizontalScroll, noNativeSelect, open } from './support/page';
 import { pick } from './support/quotes';
 import { deliveryTool } from './support/delivery-fixtures';
-import { placeDeliveredOrder } from './support/delivery-shop';
+import { placeDeliveredOrder, placePayOnDeliveryOrder } from './support/delivery-shop';
 import { riderTool } from './support/rider-fixtures';
 
 // The choice of rider kinds is company-wide, so the steps run one after another and put it back at the end.
@@ -232,7 +232,6 @@ test.describe('the rider app', () => {
 
       const phone = await otherBrowserPage(browser, page);
       await signInAndChoosePassword(phone, staff.email ?? '', staff.password ?? '', 'E2eStaffDoor-Pass4', /\/rider$/);
-      const runs = phone.getByRole('region', { name: 'To do' });
       await openRun(phone, run);
       const stops = phone.getByRole('list', { name: 'Stops' });
       await expect(stops).toContainText('Out for delivery');
@@ -648,6 +647,162 @@ test.describe('the rider app', () => {
       await phone.context().close();
 
       expect(riderTool('door', delivery)).toMatchObject({ status: 'delivered', paymentStatus: 'paid', paymentMethod: 'mpesa_daraja', custody: '0' });
+    } finally {
+      deliveryTool('close', tag);
+    }
+  });
+
+  test('pay on delivery at checkout: the shopper places the order unpaid, its delivery is marked for the door, and the rider takes the cash', async ({ page, browser }, testInfo) => {
+    test.slow();
+    const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}`;
+    const staff = riderTool('staff', tag);
+    const name = staff.name ?? '';
+    riderTool('proof', 'none');
+    const setup = riderTool('door-setup', 'x');
+    deliveryTool('open', tag);
+    try {
+      // The office chooses how cash is received and lets shoppers pay on delivery, with no limit.
+      await open(page, '/admin/delivery/door-payments', 'Door payments');
+      await noNativeSelect(page);
+      const how = page.getByRole('region', { name: 'How cash is received' });
+      await pick(page, how.getByRole('combobox', { name: 'Payment method' }), setup.name ?? '', new RegExp(setup.name ?? ''));
+      await how.getByRole('button', { name: 'Save' }).click();
+      await expect(page.getByText(/Cash taken at doors is received through this method/)).toBeVisible({ timeout: 30_000 });
+      const pod = page.getByRole('region', { name: 'Pay on delivery' });
+      await pod.getByLabel('Let shoppers pay on delivery').check();
+      await pod.getByRole('button', { name: 'Save' }).click();
+      await expect(page.getByText('Saved. Shoppers can now choose to pay on delivery.')).toBeVisible({ timeout: 30_000 });
+      await noHorizontalScroll(page);
+
+      // The shopper chooses it, and the order is placed with nothing to pay now.
+      const orderNumber = await placePayOnDeliveryOrder(page);
+      const done = page.getByRole('region', { name: 'Order confirmation' });
+      await expect(done).toContainText('Your order is placed');
+      await expect(done).toContainText(/You pay when your order arrives/);
+      await expect(done).toContainText('Total to pay on delivery');
+      await noHorizontalScroll(page);
+
+      // The office makes the delivery: it is marked to be paid at the door because of what the shopper chose.
+      await makeStaffRider(page, name);
+      const made = deliveryTool('ready', orderNumber, 'pod');
+      const delivery = made.number ?? '';
+      await open(page, `/admin/delivery/deliveries/${made.id ?? ''}`, new RegExp(`^Delivery ${delivery}`));
+      const doorPanel = page.getByRole('region', { name: 'Paid at the door' });
+      await expect(doorPanel).toContainText(/The rider will collect KSh [\d.]+ in cash/);
+      await expect(doorPanel).toContainText('The customer chose to pay on delivery at checkout');
+      const amount = /KSh ([\d.]+) in cash/.exec(await doorPanel.innerText())?.[1] ?? '';
+
+      const run = await planRunForReady(page, tag, name, delivery);
+      await startRun(page, run);
+      const phone = await otherBrowserPage(browser, page);
+      await signInAndChoosePassword(phone, staff.email ?? '', staff.password ?? '', 'E2eStaffPod-Pass1', /\/rider$/);
+      await openRun(phone, run);
+      const stops = phone.getByRole('list', { name: 'Stops' });
+      await clickUntilVisible(stops.getByRole('button', { name: 'Delivered' }), phone.getByRole('form', { name: 'Mark delivered' }));
+      const form = phone.getByRole('form', { name: 'Mark delivered' });
+      await expect(form).toContainText(`KSh ${amount} is to be paid at this door`);
+      await form.getByLabel('Cash collected (KSh)').fill(amount);
+      await form.getByRole('button', { name: 'Confirm delivered' }).click();
+      await expect(stops).toContainText('Delivered', { timeout: 30_000 });
+      await phone.context().close();
+      expect(riderTool('door', delivery)).toMatchObject({ status: 'delivered', paymentStatus: 'paid', custody: '1', custodyAmount: amount, queued: '1' });
+    } finally {
+      deliveryTool('close', tag);
+    }
+  });
+
+  test('rider pay: the office sets what a rider earns, the rider delivers and finishes the run, the pay is counted once and a cost can be taken back', async ({ page, browser }, testInfo) => {
+    test.slow();
+    const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}`;
+    const staff = riderTool('staff', tag);
+    const name = staff.name ?? '';
+    riderTool('proof', 'none');
+    deliveryTool('open', tag);
+    try {
+      await open(page, '/admin/delivery/costs', 'Delivery costs');
+      await noNativeSelect(page);
+      await noHorizontalScroll(page);
+      const rules = page.getByRole('region', { name: 'Rider pay' });
+      await rules.getByLabel('For each delivery (KSh)').fill('50');
+      await rules.getByLabel('For each day on a run (KSh)').fill('200');
+      await rules.getByRole('button', { name: 'Save' }).click();
+      await expect(page.getByText(/Riders earn this from now on/)).toBeVisible({ timeout: 30_000 });
+
+      await makeStaffRider(page, name);
+      const { run, delivery, deliveryId } = await planRunFor(page, tag, name);
+      await startRun(page, run);
+      const phone = await otherBrowserPage(browser, page);
+      await signInAndChoosePassword(phone, staff.email ?? '', staff.password ?? '', 'E2eStaffPay-Pass1', /\/rider$/);
+      await openRun(phone, run);
+      const stops = phone.getByRole('list', { name: 'Stops' });
+      await clickUntilVisible(stops.getByRole('button', { name: 'Delivered' }), phone.getByRole('form', { name: 'Mark delivered' }));
+      await phone.getByRole('form', { name: 'Mark delivered' }).getByRole('button', { name: 'Confirm delivered' }).click();
+      await expect(stops).toContainText('Delivered', { timeout: 30_000 });
+      const finish = phone.getByRole('region', { name: 'Finish the run' });
+      await finish.getByRole('button', { name: 'Finish this run' }).click();
+      await phone.getByRole('button', { name: 'Confirm: Finish this run' }).click();
+      await expect(phone.getByText('Completed')).toBeVisible({ timeout: 30_000 });
+      await phone.context().close();
+
+      // The pay is counted: for the delivery, and for the day.
+      await open(page, '/admin/delivery/costs', 'Delivery costs');
+      const list = page.getByRole('list', { name: 'Cost list' });
+      await expect(list).toContainText('Rider pay for a delivery', { timeout: 30_000 });
+      await expect(list).toContainText(`${delivery} · ${name}`);
+      await expect(list).toContainText('KES 50.00');
+      await expect(list).toContainText('Rider pay for a day on a run');
+      await expect(list).toContainText('KES 200.00');
+      await noHorizontalScroll(page);
+      await noInnerHorizontalScroll(page);
+
+      // It is on the delivery's own screen, too.
+      await open(page, `/admin/delivery/deliveries/${deliveryId}`, new RegExp(`^Delivery ${delivery}`));
+      await expect(page.getByRole('region', { name: 'What it cost' })).toContainText('KES 50.00', { timeout: 30_000 });
+
+      // Taken back, with a reason: the entry stays and a reversal sits beside it.
+      await open(page, '/admin/delivery/costs', 'Delivery costs');
+      const day = list.getByRole('listitem').filter({ hasText: 'Rider pay for a day on a run' }).first();
+      await day.getByLabel('Why it is being taken back').fill('The rider did not work that day');
+      await day.getByRole('button', { name: /^Take back the rider pay for a day/ }).click();
+      await day.getByRole('button', { name: /^Confirm: Take back/ }).click();
+      await expect(page.getByText('The cost is taken back.')).toBeVisible({ timeout: 30_000 });
+      await expect(list).toContainText('KES -200.00');
+      await expect(list).toContainText('Was taken back');
+
+      // In the books: the two accounts are chosen, and the rider is paid what is owed (the delivery pay; the day pay and its reversal cancel).
+      const accounts = riderTool('pay-accounts', 'x');
+      await open(page, '/admin/delivery/costs', 'Delivery costs');
+      const books = page.getByRole('region', { name: 'In the books' });
+      await pick(page, books.getByRole('combobox', { name: 'Account rider pay is booked to' }), accounts.expense ?? '', new RegExp(accounts.expense ?? ''));
+      await pick(page, books.getByRole('combobox', { name: 'Account that holds what is owed to riders' }), accounts.payable ?? '', new RegExp(accounts.payable ?? ''));
+      await books.getByRole('button', { name: 'Save' }).click();
+      await expect(page.getByText(/Rider pay is booked to these accounts from now on/)).toBeVisible({ timeout: 30_000 });
+      const owed = page.getByRole('region', { name: 'Owed to riders' });
+      await expect(owed).toContainText(name, { timeout: 30_000 });
+      await expect(owed).toContainText('KSh 50.00');
+      await owed.getByRole('button', { name: `Pay ${name}` }).click();
+      const payForm = owed.getByRole('form', { name: `Pay ${name}` });
+      await pick(page, payForm.getByRole('combobox', { name: 'Paid by' }), accounts.method ?? '', new RegExp(accounts.method ?? ''));
+      await payForm.getByLabel(/Reference/).fill('SLIP-E2E-1');
+      await payForm.getByRole('button', { name: 'Pay KSh 50.00' }).click();
+      await expect(page.getByText(/RPY-.*KSh 50\.00 paid to/)).toBeVisible({ timeout: 30_000 });
+      await expect(owed).toContainText('Nothing is owed to any rider');
+      await expect(page.getByRole('list', { name: 'Payout list' })).toContainText('SLIP-E2E-1');
+      await noHorizontalScroll(page);
+      await noInnerHorizontalScroll(page);
+
+      // The report: the shared test shop has other deliveries in these days, so what is checked is this rider's own row (one delivery, the
+      // pay for it, the day pay having been taken back) and that the totals are shown; the sums themselves are proved against the database.
+      await open(page, '/admin/delivery/reports', 'Delivery report');
+      const margin = page.getByRole('region', { name: 'Margin' });
+      await expect(margin).toContainText('Customers paid for delivery');
+      await expect(margin).toContainText(/Rider pay [\d.]+ · courier [\d.]+ · other [\d.]+/);
+      const mine = page.getByRole('region', { name: 'By rider' }).getByRole('listitem').filter({ hasText: name });
+      await expect(mine).toContainText('KSh 50.00');
+      await expect(mine).toContainText(/Delivered:?\s*1/);
+      await noNativeSelect(page);
+      await noHorizontalScroll(page);
+      await noInnerHorizontalScroll(page);
     } finally {
       deliveryTool('close', tag);
     }

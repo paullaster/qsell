@@ -111,6 +111,15 @@ describe('receipt page arithmetic', () => {
     expect(groups[1]?.undone).toBe(true);
   });
 
+  it('keeps the order each invoice belongs to, so its number can link to it', () => {
+    const [group] = groupApplications([
+      { applicationId: 'x', at: 't', undone: false, invoiceNo: 'Invoice INV-1', amount: '5', orderId: 'ord_1', invoiceIssued: true, order: 'Order ORD-1' },
+      { applicationId: 'x', at: 't', undone: false, invoiceNo: 'Order ORD-2', amount: '5', orderId: 'ord_2', invoiceIssued: false },
+      { applicationId: 'x', at: 't', undone: false, invoiceNo: 'LEDGER-9', amount: '5' },
+    ]);
+    expect(group?.rows.map((r) => [r.orderId, r.invoiceIssued])).toEqual([['ord_1', true], ['ord_2', false], [null, false]]);
+  });
+
   it('words the result of posting and knows which reasons need a comment', () => {
     expect(postedMessage('0', true, String)).toBe('Posted.');
     expect(postedMessage('25.00', false, (v) => `KES ${v}`)).toBe('Posted and applied KES 25.00 to invoices (general ledger posting is not switched on yet).');

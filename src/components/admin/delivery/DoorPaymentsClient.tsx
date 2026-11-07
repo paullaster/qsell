@@ -1,7 +1,7 @@
 'use client';
 
 import { use, useEffect, useId, useState } from 'react';
-import { approveHandInAction, doorBalancesAction, doorEntriesAction, finishDoorPostingAction, handInsAction, recordHandInAction, refuseHandInAction, setDoorCashMethodAction, setDoorDifferencesAction, type doorSettingsAction } from '@/server/domains/delivery/door-payment-actions';
+import { approveHandInAction, doorBalancesAction, doorEntriesAction, finishDoorPostingAction, handInsAction, recordHandInAction, refuseHandInAction, setDoorCashMethodAction, setDoorDifferencesAction, setPayOnDeliveryAction, type doorSettingsAction } from '@/server/domains/delivery/door-payment-actions';
 import type { HandInView } from '@/server/domains/delivery/door-hand-ins';
 import type { CustodyEntryView, CustodyRiderView, DoorSettingsView } from '@/server/domains/delivery/door-payments';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
@@ -69,6 +69,14 @@ function Screen({ initial }: { initial: Settings }) {
           // The method and the differences share one saved record, so one version: a save of either moves both.
           setSettings({ ...settings, ...s, differences: { ...settings.differences, version: s.version } });
           setNotice({ kind: 'ok', text: 'Saved. Cash taken at doors is received through this method from now on.' });
+        }}
+        onError={(text) => setNotice({ kind: 'error', text })}
+      />
+      <PayOnDeliveryPanel
+        settings={settings}
+        onSaved={(s) => {
+          setSettings({ ...settings, ...s, differences: { ...settings.differences, version: s.version } });
+          setNotice({ kind: 'ok', text: s.payOnDelivery ? 'Saved. Shoppers can now choose to pay on delivery.' : 'Saved. Shoppers can no longer choose to pay on delivery.' });
         }}
         onError={(text) => setNotice({ kind: 'error', text })}
       />
@@ -394,5 +402,37 @@ function HandInRow({ h, canApprove, onDone, onError }: { h: HandInView; canAppro
         </div>
       ) : null}
     </li>
+  );
+}
+
+function PayOnDeliveryPanel({ settings, onSaved, onError }: { settings: Settings; onSaved: (s: DoorSettingsView) => void; onError: (text: string) => void }) {
+  const uid = useId();
+  const [on, setOn] = useState(settings.payOnDelivery);
+  const [max, setMax] = useState(settings.payOnDeliveryMax ?? '');
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    setBusy(true);
+    const result = await attempt(setPayOnDeliveryAction({ enabled: on, max: max.trim() === '' ? null : Number(max), expectedVersion: settings.version }));
+    setBusy(false);
+    if (result.ok) onSaved(result.data);
+    else onError(result.error);
+  };
+  return (
+    <section aria-label="Pay on delivery" className={`${cardClass} space-y-3`}>
+      <h3 className="text-sm font-bold text-fg-strong">Pay on delivery at checkout</h3>
+      <p className="text-xs text-fg-muted">
+        Shoppers who choose delivery by your own riders can place the order now and pay the rider when it arrives, in cash or by M-Pesa. Their delivery is marked to be paid at the door for them. It needs cash at the door to be set up above.
+      </p>
+      <label htmlFor={`${uid}-on`} className="flex min-h-10 items-start gap-3">
+        <input id={`${uid}-on`} type="checkbox" className="mt-1 h-5 w-5" checked={on} onChange={(e) => setOn(e.target.checked)} />
+        <span className="text-sm font-semibold text-fg-strong">Let shoppers pay on delivery</span>
+      </label>
+      <Field id={`${uid}-max`} label="Largest order taken this way (KSh, empty for no limit)" hint="A larger order must be paid another way. Cash at a door is a risk you may want to limit.">
+        <input id={`${uid}-max`} className={fieldClass} inputMode="decimal" value={max} onChange={(e) => setMax(e.target.value)} autoComplete="off" />
+      </Field>
+      <button type="button" className={primaryClass} disabled={busy || (on === settings.payOnDelivery && (max.trim() === '' ? null : max) === settings.payOnDeliveryMax)} onClick={() => void save()}>
+        Save
+      </button>
+    </section>
   );
 }

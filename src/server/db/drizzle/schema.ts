@@ -13,6 +13,7 @@ import {
   numeric,
   date,
   smallint,
+  unique,
   uniqueIndex,
   index,
   check,
@@ -530,6 +531,90 @@ export const orderCollections = pgTable(
 export type OrderCollectionRow = typeof orderCollections.$inferSelect;
 
 /**
+ * A delivery slot: a window on certain weekdays at a branch, with room for so many deliveries a day and a cut-off before which it must be
+ * booked. A slot is stopped, never deleted, because deliveries that were promised it point at it.
+ */
+export const deliverySlots = pgTable(
+  'delivery_slots',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    branchId: uuid('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'restrict' }),
+    name: text('name').notNull(),
+    /** ISO weekdays the slot runs on: Monday is 1, Sunday is 7. */
+    weekdays: integer('weekdays').array().notNull(),
+    /** Nairobi clock times, "HH:MM". */
+    startsAt: text('starts_at').notNull(),
+    endsAt: text('ends_at').notNull(),
+    capacity: integer('capacity').notNull(),
+    cutoffMinutes: integer('cutoff_minutes').notNull().default(0),
+    /** The most the deliveries of a slot may weigh together in a day, in kg. Null: no limit by weight. */
+    maxWeightKg: numeric('max_weight_kg', { precision: 10, scale: 2 }),
+    isActive: boolean('is_active').notNull().default(true),
+    version: integer('version').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_slots_branch_name_uidx').on(t.companyId, t.branchId, t.name),
+    index('delivery_slots_branch_idx').on(t.companyId, t.branchId, t.isActive),
+    check('delivery_slots_times_chk', sql`${t.startsAt} ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$' AND ${t.endsAt} ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$' AND ${t.endsAt} > ${t.startsAt}`),
+    check('delivery_slots_weight_chk', sql`${t.maxWeightKg} IS NULL OR ${t.maxWeightKg} > 0`),
+    check('delivery_slots_capacity_chk', sql`${t.capacity} BETWEEN 1 AND 10000 AND ${t.cutoffMinutes} BETWEEN 0 AND 10080`),
+    check('delivery_slots_weekdays_chk', sql`cardinality(${t.weekdays}) BETWEEN 1 AND 7 AND ${t.weekdays} <@ ARRAY[1,2,3,4,5,6,7]`),
+  ],
+);
+export type DeliverySlotRow = typeof deliverySlots.$inferSelect;
+
+/**
+ * The least time from the order to the goods being ready to go, for a delivery zone or for an item (fresh fish, made to order, large
+ * goods). A delivery cannot be promised a slot that starts before the longest of these that apply to it, with the branch's own lead time.
+ */
+export const deliveryLeadTimes = pgTable(
+  'delivery_lead_times',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    kind: text('kind').$type<'zone' | 'item'>().notNull(),
+    /** The zone's id or the product's id. */
+    refId: text('ref_id').notNull(),
+    minutes: integer('minutes').notNull(),
+    note: text('note'),
+    updatedBy: text('updated_by').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_lead_times_ref_uidx').on(t.companyId, t.kind, t.refId),
+    check('delivery_lead_times_kind_chk', sql`${t.kind} IN ('zone','item')`),
+    check('delivery_lead_times_minutes_chk', sql`${t.minutes} BETWEEN 1 AND 43200`),
+  ],
+);
+
+/** A day on which no slot is offered (a public holiday, a stocktake): for one branch, or for all of them when the branch is empty. */
+export const deliveryClosedDays = pgTable(
+  'delivery_closed_days',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'cascade' }),
+    day: date('day').notNull(),
+    reason: text('reason').notNull(),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique('delivery_closed_days_uidx').on(t.companyId, t.branchId, t.day).nullsNotDistinct(), index('delivery_closed_days_day_idx').on(t.companyId, t.day)],
+);
+
+/**
  * A delivery of an order: what is got ready and sent, in one go. An order can have several (what is on the shelf now, the rest
  * later). The order's delivery status is worked out from them, never stored. Its history is `delivery_events`, which is kept.
  */
@@ -571,6 +656,13 @@ export const deliveries = pgTable(
     codeTries: integer('code_tries').notNull().default(0),
     /** The day it is to be tried again, after a failed attempt: asked for by the customer or the office. Null when nobody asked. */
     scheduledFor: date('scheduled_for'),
+    /** The slot the customer was promised, the day, and the window it means (kept as promised, whatever happens to the slot later). All or none. */
+    slotId: uuid('slot_id').references((): AnyPgColumn => deliverySlots.id, { onDelete: 'restrict' }),
+    slotDay: date('slot_day'),
+    windowStart: timestamp('window_start', { withTimezone: true }),
+    windowEnd: timestamp('window_end', { withTimezone: true }),
+    slotBookedAt: timestamp('slot_booked_at', { withTimezone: true }),
+    slotBookedBy: text('slot_booked_by'),
     /** Cash to be collected at the door: the order's total, set when the office marks the delivery to be paid there. Null when it is not. */
     doorAmount: numeric('door_amount', { precision: 14, scale: 2 }),
     doorMarkedBy: text('door_marked_by'),
@@ -598,6 +690,8 @@ export const deliveries = pgTable(
     check('deliveries_attempts_chk', sql`${t.failedAttempts} >= 0`),
     check('deliveries_version_chk', sql`${t.version} >= 1`),
     check('deliveries_door_chk', sql`(${t.doorAmount} IS NULL) = (${t.doorMarkedAt} IS NULL) AND (${t.doorAmount} IS NULL OR ${t.doorAmount} > 0)`),
+    check('deliveries_slot_chk', sql`(${t.slotId} IS NULL) = (${t.slotDay} IS NULL) AND (${t.slotId} IS NULL) = (${t.windowStart} IS NULL) AND (${t.slotId} IS NULL) = (${t.windowEnd} IS NULL) AND (${t.windowEnd} IS NULL OR ${t.windowEnd} > ${t.windowStart})`),
+    index('deliveries_slot_day_idx').on(t.slotId, t.slotDay).where(sql`${t.slotId} IS NOT NULL`),
     check('deliveries_code_tries_chk', sql`${t.codeTries} >= 0`),
     check('deliveries_handover_code_chk', sql`${t.handoverCode} IS NULL OR ${t.handoverCode} ~ '^[0-9]{6}$'`),
     // Delivered means delivered at a time; a finished delivery (delivered, returned, cancelled) has a closing time.
@@ -605,6 +699,59 @@ export const deliveries = pgTable(
     check('deliveries_closed_chk', sql`${t.status} NOT IN ('delivered','returned','cancelled') OR ${t.closedAt} IS NOT NULL`),
   ],
 );
+
+/** When a delivery is told it is at risk, late or still late, and how much slack the dispatcher gets before the supervisor is told. */
+export const deliverySlaSettings = pgTable(
+  'delivery_sla_settings',
+  {
+    companyId: uuid('company_id')
+      .primaryKey()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    atRiskMinutes: integer('at_risk_minutes').notNull().default(60),
+    escalateAfterMinutes: integer('escalate_after_minutes').notNull().default(60),
+    version: integer('version').notNull().default(1),
+    updatedBy: text('updated_by'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check('delivery_sla_settings_chk', sql`${t.atRiskMinutes} BETWEEN 0 AND 1440 AND ${t.escalateAfterMinutes} BETWEEN 1 AND 1440`)],
+);
+
+/**
+ * A delivery reaching a lateness level against the window it was promised: once for each delivery, level and window (a delivery given a new
+ * window starts again). Kept for good; the worker raises them, people acknowledge them (`delivery_sla_acks`).
+ */
+export const deliverySlaEvents = pgTable(
+  'delivery_sla_events',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    deliveryId: uuid('delivery_id')
+      .notNull()
+      .references(() => deliveries.id, { onDelete: 'restrict' }),
+    level: text('level').$type<'at_risk' | 'late' | 'escalated'>().notNull(),
+    /** The window's end as promised when this was raised. */
+    windowEnd: timestamp('window_end', { withTimezone: true }).notNull(),
+    minutesLate: integer('minutes_late').notNull().default(0),
+    raisedAt: timestamp('raised_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_sla_events_once_uidx').on(t.deliveryId, t.level, t.windowEnd),
+    index('delivery_sla_events_company_idx').on(t.companyId, t.raisedAt.desc()),
+    check('delivery_sla_events_level_chk', sql`${t.level} IN ('at_risk','late','escalated')`),
+  ],
+);
+
+/** Someone saying they have seen it and what is being done. */
+export const deliverySlaAcks = pgTable('delivery_sla_acks', {
+  eventId: uuid('event_id')
+    .primaryKey()
+    .references(() => deliverySlaEvents.id, { onDelete: 'restrict' }),
+  acknowledgedBy: text('acknowledged_by').notNull(),
+  acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }).notNull().defaultNow(),
+  note: text('note'),
+});
 
 /** A rider's trip: several ready deliveries taken out together, in an order. Planned, then on the road, then closed. */
 export const deliveryRuns = pgTable(
@@ -768,6 +915,9 @@ export const deliveryDoorSettings = pgTable('delivery_door_settings', {
     .primaryKey()
     .references(() => companySettings.id, { onDelete: 'cascade' }),
   cashMethodId: uuid('cash_method_id').references(() => paymentMethods.id, { onDelete: 'restrict' }),
+  /** Shoppers may choose "Pay on delivery" at checkout, and the largest order taken that way (null: no limit). */
+  payOnDelivery: boolean('pay_on_delivery').notNull().default(false),
+  payOnDeliveryMax: numeric('pay_on_delivery_max', { precision: 14, scale: 2 }),
   /** A hand-in that comes out short or over by no more than this posts at once; a bigger difference waits for a second person. */
   varianceLimit: numeric('variance_limit', { precision: 14, scale: 2 }).notNull().default('0'),
   /** Where a difference at a hand-in is written (a cash over and short account). */
@@ -817,6 +967,249 @@ export const cashCustodyEntries = pgTable(
   ],
 );
 export type CashCustodyEntryRow = typeof cashCustodyEntries.$inferSelect;
+
+/** What the company pays riders: an amount for each delivery made and an amount for each day a rider works a run (each may be nothing). */
+export const deliveryPaySettings = pgTable(
+  'delivery_pay_settings',
+  {
+    companyId: uuid('company_id')
+      .primaryKey()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    perDelivery: numeric('per_delivery', { precision: 14, scale: 2 }).notNull().default('0'),
+    perDay: numeric('per_day', { precision: 14, scale: 2 }).notNull().default('0'),
+    /** Where rider pay is booked: the cost, and what is owed to riders until it is paid out. Both are needed before anything posts. */
+    expenseGlAccountId: uuid('expense_gl_account_id').references(() => glAccounts.id, { onDelete: 'restrict' }),
+    payableGlAccountId: uuid('payable_gl_account_id').references(() => glAccounts.id, { onDelete: 'restrict' }),
+    version: integer('version').notNull().default(1),
+    updatedBy: text('updated_by'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check('delivery_pay_settings_chk', sql`${t.perDelivery} >= 0 AND ${t.perDay} >= 0`)],
+);
+
+/**
+ * What delivery cost the company: rider pay earned (for a delivery made, and for a day on a run), what a courier charged, anything
+ * else. Kept for good (a trigger refuses any change): a mistake is put right by a reversing entry with its reason, never by editing.
+ * `key` makes each cost happen once however often it is sent.
+ */
+export const deliveryCosts = pgTable(
+  'delivery_costs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    kind: text('kind').$type<'rider_delivery' | 'rider_day' | 'courier' | 'other'>().notNull(),
+    /** Positive is a cost; a reversal carries the opposite sign. */
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    currency: text('currency').notNull(),
+    deliveryId: uuid('delivery_id').references(() => deliveries.id, { onDelete: 'restrict' }),
+    runId: uuid('run_id').references(() => deliveryRuns.id, { onDelete: 'restrict' }),
+    riderId: uuid('rider_id').references(() => deliveryRiders.id, { onDelete: 'restrict' }),
+    courierName: text('courier_name'),
+    note: text('note'),
+    key: text('key').notNull(),
+    /** The cost this entry takes back. */
+    reversesId: uuid('reverses_id').references((): AnyPgColumn => deliveryCosts.id, { onDelete: 'restrict' }),
+    actorId: text('actor_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_costs_key_uidx').on(t.companyId, t.key),
+    index('delivery_costs_delivery_idx').on(t.deliveryId),
+    index('delivery_costs_rider_idx').on(t.riderId, t.createdAt),
+    index('delivery_costs_company_time_idx').on(t.companyId, t.createdAt),
+    check('delivery_costs_kind_chk', sql`${t.kind} IN ('rider_delivery','rider_day','courier','other')`),
+    check('delivery_costs_amount_chk', sql`${t.amount} <> 0`),
+    check('delivery_costs_rider_chk', sql`${t.kind} NOT IN ('rider_delivery','rider_day') OR ${t.riderId} IS NOT NULL`),
+    check('delivery_costs_delivery_chk', sql`${t.kind} NOT IN ('rider_delivery','courier') OR ${t.deliveryId} IS NOT NULL`),
+    check('delivery_costs_courier_chk', sql`${t.kind} <> 'courier' OR ${t.courierName} IS NOT NULL`),
+    // A cost is positive; only a reversal is negative, and it names the cost it takes back.
+    check('delivery_costs_reversal_chk', sql`(${t.reversesId} IS NULL) = (${t.amount} > 0)`),
+  ],
+);
+export type DeliveryCostRow = typeof deliveryCosts.$inferSelect;
+
+/**
+ * Whether a rider-pay cost has reached the books. A queue: the cost is saved first and posted afterwards, retrying with a growing
+ * delay, so a mistake in the accounts can never stop a rider's delivery. One row for each cost.
+ */
+export const deliveryCostPostings = pgTable(
+  'delivery_cost_postings',
+  {
+    costId: uuid('cost_id')
+      .primaryKey()
+      .references(() => deliveryCosts.id, { onDelete: 'restrict' }),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    status: text('status').$type<'posted' | 'failed'>().notNull(),
+    registerId: uuid('register_id'),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+    lastError: text('last_error'),
+    postedAt: timestamp('posted_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('delivery_cost_postings_due_idx').on(t.status, t.nextAttemptAt), check('delivery_cost_postings_chk', sql`(${t.status} = 'posted') = (${t.registerId} IS NOT NULL OR ${t.postedAt} IS NOT NULL)`)],
+);
+
+/** Pay handed to a rider: all that was owed them at the time, in one payout. Kept for good; each cost is in at most one payout. */
+export const deliveryPayPayouts = pgTable(
+  'delivery_pay_payouts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    number: text('number').notNull(),
+    riderId: uuid('rider_id')
+      .notNull()
+      .references(() => deliveryRiders.id, { onDelete: 'restrict' }),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    currency: text('currency').notNull(),
+    paymentMethodId: uuid('payment_method_id')
+      .notNull()
+      .references(() => paymentMethods.id, { onDelete: 'restrict' }),
+    bankAccountId: uuid('bank_account_id')
+      .notNull()
+      .references(() => bankAccounts.id, { onDelete: 'restrict' }),
+    paidOn: date('paid_on', { mode: 'string' }).notNull(),
+    reference: text('reference'),
+    note: text('note'),
+    paidBy: text('paid_by').notNull(),
+    registerId: uuid('register_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('delivery_pay_payouts_number_uidx').on(t.companyId, t.number), index('delivery_pay_payouts_rider_idx').on(t.riderId, t.createdAt), check('delivery_pay_payouts_amount_chk', sql`${t.amount} > 0`)],
+);
+export type DeliveryPayPayoutRow = typeof deliveryPayPayouts.$inferSelect;
+
+/**
+ * A booked visit: a crew goes to the customer's address at an agreed time for an order, for example to install what was bought. An
+ * order has at most one live visit (a cancelled one can be replaced). The state moves along fixed steps (see `src/lib/visit.ts`),
+ * each with its time, and a step is also a stage on the order's timeline.
+ */
+export const orderVisits = pgTable(
+  'order_visits',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    orderId: text('order_id')
+      .notNull()
+      .references(() => orders.id, { onDelete: 'restrict' }),
+    status: text('status').$type<'scheduled' | 'crew_assigned' | 'on_site' | 'completed' | 'signed_off' | 'cancelled'>().notNull().default('scheduled'),
+    startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
+    endsAt: timestamp('ends_at', { withTimezone: true }).notNull(),
+    address: text('address').notNull(),
+    contactName: text('contact_name'),
+    contactPhone: text('contact_phone'),
+    notes: text('notes'),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    signedOffAt: timestamp('signed_off_at', { withTimezone: true }),
+    signedOffBy: text('signed_off_by'),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    cancelReason: text('cancel_reason'),
+    version: integer('version').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('order_visits_company_start_idx').on(t.companyId, t.startsAt, t.id),
+    index('order_visits_company_status_idx').on(t.companyId, t.status),
+    uniqueIndex('order_visits_one_live_per_order_idx').on(t.orderId).where(sql`${t.status} <> 'cancelled'`),
+    check('order_visits_status_chk', sql`${t.status} IN ('scheduled','crew_assigned','on_site','completed','signed_off','cancelled')`),
+    check('order_visits_window_chk', sql`${t.endsAt} > ${t.startsAt}`),
+    check('order_visits_signoff_chk', sql`(${t.status} = 'signed_off') = (${t.signedOffAt} IS NOT NULL AND ${t.signedOffBy} IS NOT NULL)`),
+    check('order_visits_cancel_chk', sql`(${t.status} = 'cancelled') = (${t.cancelledAt} IS NOT NULL AND ${t.cancelReason} IS NOT NULL)`),
+  ],
+);
+export type OrderVisitRow = typeof orderVisits.$inferSelect;
+
+/** Who goes on a visit. */
+export const orderVisitCrew = pgTable(
+  'order_visit_crew',
+  {
+    visitId: uuid('visit_id')
+      .notNull()
+      .references(() => orderVisits.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    name: text('name').notNull(),
+    addedAt: timestamp('added_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.visitId, t.userId] }), index('order_visit_crew_user_idx').on(t.userId)],
+);
+
+/**
+ * Materials a crew used on a visit, taken from a stock location. Kept for good: a line is never edited; material that was not used
+ * comes back as a negative line that points at the line it undoes, and the stock moves with each (see OrderVisits).
+ */
+export const orderVisitMaterials = pgTable(
+  'order_visit_materials',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    visitId: uuid('visit_id')
+      .notNull()
+      .references(() => orderVisits.id, { onDelete: 'restrict' }),
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    locationId: uuid('location_id')
+      .notNull()
+      .references(() => stockLocations.id, { onDelete: 'restrict' }),
+    /** Positive: used. Negative: given back (and then `reversesId` is the line it undoes). */
+    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    unitCost: numeric('unit_cost', { precision: 14, scale: 4 }).notNull().default('0'),
+    reversesId: uuid('reverses_id'),
+    note: text('note'),
+    recordedBy: text('recorded_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('order_visit_materials_visit_idx').on(t.visitId, t.createdAt),
+    uniqueIndex('order_visit_materials_reverses_idx').on(t.reversesId).where(sql`${t.reversesId} IS NOT NULL`),
+    check('order_visit_materials_qty_chk', sql`${t.quantity} <> 0 AND ((${t.reversesId} IS NULL) = (${t.quantity} > 0))`),
+  ],
+);
+
+/** What the crew does on a visit, in order, each ticked when done. */
+export const orderVisitItems = pgTable(
+  'order_visit_items',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    visitId: uuid('visit_id')
+      .notNull()
+      .references(() => orderVisits.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull(),
+    label: text('label').notNull(),
+    done: boolean('done').notNull().default(false),
+    doneAt: timestamp('done_at', { withTimezone: true }),
+    doneBy: text('done_by'),
+  },
+  (t) => [
+    uniqueIndex('order_visit_items_position_idx').on(t.visitId, t.position),
+    check('order_visit_items_done_chk', sql`${t.done} = (${t.doneAt} IS NOT NULL)`),
+  ],
+);
+
+export const deliveryPayPayoutItems = pgTable(
+  'delivery_pay_payout_items',
+  {
+    payoutId: uuid('payout_id')
+      .notNull()
+      .references(() => deliveryPayPayouts.id, { onDelete: 'restrict' }),
+    costId: uuid('cost_id')
+      .notNull()
+      .references(() => deliveryCosts.id, { onDelete: 'restrict' }),
+  },
+  (t) => [primaryKey({ columns: [t.payoutId, t.costId] }), uniqueIndex('delivery_pay_payout_items_cost_uidx').on(t.costId)],
+);
 
 /**
  * An M-Pesa prompt a rider sent from a door, for the amount the delivery is to be paid at the door. The payment attempt itself (and the

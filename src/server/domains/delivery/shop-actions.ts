@@ -11,6 +11,19 @@ import type { AddressWords } from '@/lib/delivery-zones';
 import { choosePolicy } from './domain/select';
 import { leadTimeWords } from '@/lib/delivery-methods';
 import { toHeader } from './charge-policies';
+import type { PayOnDeliveryOffer } from '@/lib/pay-on-delivery';
+
+/** Whether the checkout may offer "Pay on delivery", and the largest order taken that way. Public: it says nothing private. */
+export async function payOnDeliveryOfferAction(): Promise<ShopResult<PayOnDeliveryOffer>> {
+  try {
+    const c = getContainer();
+    const company = await c.companySettings.ensureSeeded();
+    return { ok: true, data: await c.doorPayments.payOnDeliveryOffer(company.id) };
+  } catch (error) {
+    console.error('[delivery] pay on delivery offer', error);
+    return { ok: false, error: 'Pay on delivery could not be checked just now.' };
+  }
+}
 
 /** What the shop's delivery section answers: data, never a thrown error (a server action's error text is hidden in production). */
 export type ShopResult<T> = { ok: true; data: T } | { ok: false; error: string };

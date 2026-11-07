@@ -3,6 +3,7 @@ import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { cashCustodyEntries, deliveries, deliveryLines, deliveryDoorSettings, deliveryRiders, financeSettings, orderItems, orders, paymentMethods } from '@/server/db/drizzle/schema';
 import { CUSTODY_WORDS, custodyBalance, doorAmount, fromCents, markProblem, toCents, type CustodyKind } from '@/lib/door-payment';
 import { isLive } from '@/lib/delivery-document';
+import { payOnDeliveryProblem, type PayOnDeliveryOffer } from '@/lib/pay-on-delivery';
 import { firstNonZero } from '@/lib/values';
 import { OrderStages } from '@/server/domains/orders/stages';
 import { InventoryReservationService } from '@/server/domains/inventory/reservation-service';
@@ -21,6 +22,9 @@ const PAGE = 25;
 export interface DoorSettingsView {
   cashMethodId: string | null;
   cashMethodName: string | null;
+  /** Shoppers may choose "Pay on delivery" at checkout, and the largest order taken that way (null: no limit). */
+  payOnDelivery: boolean;
+  payOnDeliveryMax: string | null;
   version: number;
 }
 
@@ -70,7 +74,7 @@ export class DoorPayments {
       .from(deliveryDoorSettings)
       .leftJoin(paymentMethods, eq(paymentMethods.id, deliveryDoorSettings.cashMethodId))
       .where(eq(deliveryDoorSettings.companyId, companyId));
-    return { cashMethodId: row?.s.cashMethodId ?? null, cashMethodName: row?.name ?? null, version: row?.s.version ?? 0 };
+    return { cashMethodId: row?.s.cashMethodId ?? null, cashMethodName: row?.name ?? null, payOnDelivery: row?.s.payOnDelivery ?? false, payOnDeliveryMax: row?.s.payOnDeliveryMax ?? null, version: row?.s.version ?? 0 };
   }
 
   /** A payment method of kind cash that is switched on. Its account is where the cash is booked until it is handed in. */
@@ -91,8 +95,47 @@ export class DoorPayments {
         await tx.update(deliveryDoorSettings).set({ cashMethodId: methodId, version: row.version + 1, updatedBy: actor.userId, updatedAt: new Date() }).where(eq(deliveryDoorSettings.companyId, actor.companyId));
         await this.decisions.record({ companyId: actor.companyId, subject: { type: 'door_payments', id: actor.companyId }, action: 'door_payments.method_set', actor: { type: 'user', id: actor.userId }, from: row.cashMethodId, to: methodId }, tx);
       }
-      return { ok: true, data: { cashMethodId: methodId, cashMethodName: method.name, version: row.cashMethodId === methodId ? row.version : row.version + 1 } };
+      return { ok: true, data: { cashMethodId: methodId, cashMethodName: method.name, payOnDelivery: row.payOnDelivery, payOnDeliveryMax: row.payOnDeliveryMax, version: row.cashMethodId === methodId ? row.version : row.version + 1 } };
     });
+  }
+
+  /**
+   * Switches "Pay on delivery" at the shop's checkout on or off, with the largest order taken that way (empty: no limit). It needs cash at
+   * the door to be set up first, since that is where the money is booked. Versioned, and every change is in the decision log.
+   */
+  async setPayOnDelivery(actor: DocActor, input: { enabled?: unknown; max?: unknown; expectedVersion?: unknown }): Promise<DocResult<DoorSettingsView>> {
+    if (typeof input.enabled !== 'boolean') return fail('bad_input', 'Choose whether shoppers may pay on delivery.');
+    let max: string | null = null;
+    if (input.max !== null && input.max !== undefined && input.max !== '') {
+      if (typeof input.max !== 'number' || !Number.isFinite(input.max) || input.max <= 0) return fail('bad_input', 'The largest order must be more than nothing, or left empty for no limit.');
+      max = fromCents(toCents(input.max));
+    }
+    const enabled = input.enabled;
+    const version = typeof input.expectedVersion === 'number' ? input.expectedVersion : 0;
+    return await this.db.transaction(async (tx): Promise<DocResult<DoorSettingsView>> => {
+      await tx.insert(deliveryDoorSettings).values({ companyId: actor.companyId }).onConflictDoNothing();
+      const [row] = await tx.select().from(deliveryDoorSettings).where(eq(deliveryDoorSettings.companyId, actor.companyId)).for('update');
+      if (row === undefined) return fail('not_found', 'The setting could not be found.');
+      if (version !== 0 && version !== row.version) return fail('conflict', 'Someone else changed this while you were looking. Reload to see their change.');
+      if (enabled && row.cashMethodId === null) return fail('not_allowed', 'Choose how cash at the door is received first: that is where the money is booked.');
+      if (row.payOnDelivery !== enabled || row.payOnDeliveryMax !== max) {
+        await tx.update(deliveryDoorSettings).set({ payOnDelivery: enabled, payOnDeliveryMax: max, version: row.version + 1, updatedBy: actor.userId, updatedAt: new Date() }).where(eq(deliveryDoorSettings.companyId, actor.companyId));
+        await this.decisions.record({ companyId: actor.companyId, subject: { type: 'door_payments', id: actor.companyId }, action: 'door_payments.pay_on_delivery_set', actor: { type: 'user', id: actor.userId }, from: `${String(row.payOnDelivery)} ${row.payOnDeliveryMax ?? 'no limit'}`, to: `${String(enabled)} ${max ?? 'no limit'}` }, tx);
+      }
+      const [method] = row.cashMethodId === null ? [] : await tx.select({ name: paymentMethods.name }).from(paymentMethods).where(eq(paymentMethods.id, row.cashMethodId));
+      return { ok: true, data: { cashMethodId: row.cashMethodId, cashMethodName: method?.name ?? null, payOnDelivery: enabled, payOnDeliveryMax: max, version: row.payOnDelivery !== enabled || row.payOnDeliveryMax !== max ? row.version + 1 : row.version } };
+    });
+  }
+
+  /** What the shop's checkout may offer: on when the company switched it on and cash at the door is set up. Public: it says nothing private. */
+  async payOnDeliveryOffer(companyId: string): Promise<PayOnDeliveryOffer> {
+    const [door, [fin]] = await Promise.all([this.settings(companyId), this.db.select({ base: financeSettings.baseCurrency }).from(financeSettings).where(eq(financeSettings.companyId, companyId))]);
+    return { on: door.payOnDelivery && door.cashMethodId !== null, max: door.payOnDeliveryMax === null ? null : Number(door.payOnDeliveryMax), currency: fin?.base ?? 'KES' };
+  }
+
+  /** The words for why an order may not be placed to be paid on delivery, or null: the same rule the checkout showed, checked on the server. */
+  async checkPayOnDelivery(companyId: string, order: { deliveryMethod: string | null; currency: string; total: number }): Promise<string | null> {
+    return payOnDeliveryProblem(await this.payOnDeliveryOffer(companyId), order);
   }
 
   // ── Marking a delivery to be paid at the door ────────────────────────────────────────────────────────────────────
@@ -160,6 +203,17 @@ export class DoorPayments {
       await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery', id: deliveryId }, action: 'delivery.door_marked', actor: { type: 'user', id: actor.userId }, reason: { text: reason }, outcome: { amount } }, tx);
       return { ok: true, data: { amount } };
     });
+  }
+
+  /**
+   * A delivery made for an order the customer chose to pay on delivery is marked to be paid at the door as it is made, with that as the
+   * reason, so it needs no one's memory. It is refused, as any marking is, when the delivery does not carry the whole order; then the
+   * person releasing it is told to put everything on one delivery, or to take the payment another way. Null when nothing was to be done.
+   */
+  async markIfPayOnDelivery(actor: DocActor, deliveryId: string): Promise<DocResult<{ amount: string }> | null> {
+    const [row] = await this.db.select({ method: orders.paymentMethod }).from(deliveries).innerJoin(orders, eq(orders.id, deliveries.orderId)).where(and(eq(deliveries.id, deliveryId), eq(deliveries.companyId, actor.companyId)));
+    if (row?.method !== 'pay_on_delivery') return null;
+    return await this.mark(actor, deliveryId, { reason: 'The customer chose to pay on delivery at checkout' });
   }
 
   /** Takes it back, before the delivery goes out. After that the rider already has the amount to collect. */

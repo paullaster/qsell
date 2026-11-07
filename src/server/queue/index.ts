@@ -31,10 +31,14 @@ export async function startWorker(): Promise<void> {
       '47 3 * * * expire-loyalty-points',
       // Sales reach the ledger within a minute; failures retry with a growing delay.
       '* * * * * finance-post-sales',
+      '* * * * * delivery-cost-post',
+      // Deliveries promised a window that is at risk or late are raised once each, for the dispatcher and then the supervisor.
+      '* * * * * delivery-sla-scan',
       '* * * * * finance-post-inventory',
       '7 3 * * * finance-ensure-partitions',
       '12 4 * * * wallet-expiry',
       '20 * * * * fx-reverse-revaluations',
+      '40 * * * * currency-sync-rates',
       '32 4 * * * expire-gift-cards',
       '57 3 * * * finance-integrity-check',
       '2 4 * * * reseal-provider-credentials',

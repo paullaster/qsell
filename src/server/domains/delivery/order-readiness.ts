@@ -15,6 +15,9 @@ export function orderReadinessProblem(order: { status: string; paymentStatus: st
     return { reason: 'on_hold', message: 'This order is waiting for approval, so it is not handed over yet.' };
   }
   // A sale on account is paid later, on its invoice; every other order must be paid for first.
+  if (order.paymentStatus !== 'paid' && order.paymentMethod === 'pay_on_delivery' && options.paidAtDoor !== true) {
+    return { reason: 'not_paid', message: 'The customer chose to pay on delivery. Mark this delivery to be paid at the door first (Paid at the door, on the delivery\'s screen), with the whole order on it.' };
+  }
   if (order.paymentStatus !== 'paid' && order.paymentMethod !== 'on_account' && options.paidAtDoor !== true) {
     return { reason: 'not_paid', message: 'This order has not been paid for, so it is not handed over.' };
   }

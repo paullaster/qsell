@@ -1,9 +1,16 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useCustomerCreated } from '@/components/admin/customer-created';
 import { Copy, Plus, Star, X } from 'lucide-react';
-import { buildCatalogueIndex, type CatalogueProduct } from '@/lib/catalogue-entry';
+import type { CatalogueProduct } from '@/lib/catalogue-entry';
+import { ProductEditLink } from '@/components/admin/ProductEditLink';
+import { ReplaceProductDialog } from './quote-layout/ReplaceProductDialog';
+import { ReplaceLineButton } from './quote-layout/ReplaceLineButton';
+import { ReplacedNotice } from './quote-layout/ReplacedNotice';
+import { useLineReplace } from './quote-layout/useLineReplace';
+import { useRefreshedProducts } from './quote-layout/useRefreshedProducts';
+import { replaceTemplateLineProduct } from '@/lib/quote-replace';
 import { QuoteLayoutBoard } from './quote-layout/QuoteLayoutBoard';
 import { CataloguePicker } from './quote-layout/CataloguePicker';
 import { QuickAdd } from './quote-layout/QuickAdd';
@@ -123,6 +130,7 @@ function templateInput(template: SalesQuoteTemplate): QuoteTemplateInput {
 
 export function AdminSalesQuoteTemplates({
   products,
+  canEditProducts = false,
   canCreate,
   canUpdate,
   canDelete,
@@ -135,6 +143,8 @@ export function AdminSalesQuoteTemplates({
   initialPage,
 }: {
   products: CatalogueProduct[];
+  /** The person may update products: each item then offers a shortcut to the product's edit window. */
+  canEditProducts?: boolean;
   canCreate: boolean;
   canUpdate: boolean;
   canDelete: boolean;
@@ -438,6 +448,7 @@ export function AdminSalesQuoteTemplates({
           base={editing ? null : base}
           canBase={!editing}
           products={products}
+          canEditProducts={canEditProducts}
           onClose={() => {
             setEditorOpen(false);
             setBase(null);
@@ -490,6 +501,7 @@ function TemplateEditor({
   base: initialBase,
   canBase,
   products,
+  canEditProducts,
   onClose,
   onSave,
 }: {
@@ -498,6 +510,7 @@ function TemplateEditor({
   /** Only a new template can be based on a quote. */
   canBase: boolean;
   products: CatalogueProduct[];
+  canEditProducts: boolean;
   onClose: () => void;
   onSave: (input: QuoteTemplateInput) => Promise<void>;
 }) {
@@ -508,8 +521,8 @@ function TemplateEditor({
   const [error, setError] = useState<string | null>(null);
   const [catalogSectionId, setCatalogSectionId] = useState<string | null>(null);
   const [catalogOpen, setCatalogOpen] = useState(false);
-  const catalogueIndex = useMemo(() => buildCatalogueIndex(products), [products]);
-  const productById = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
+  // A product saved from an item's Edit shortcut is read again, so the editor shows its new name, price and cost.
+  const { catalogueIndex, productById } = useRefreshedProducts(products);
   const [bulkOpen, setBulkOpen] = useState(false);
   const lastAdded = useRef<{ productId: string; sectionId: string | null } | null>(null);
   const [focusLine, setFocusLine] = useState<{ index: number; nonce: number } | null>(null);
@@ -599,6 +612,13 @@ function TemplateEditor({
       'lines',
       input.lines.map((line, i) => (i === index ? { ...line, ...patch } : line)),
     );
+  const swap = useLineReplace({
+    lines: input.lines,
+    setLines: (lines) => update('lines', lines),
+    nameOf: (id) => productById.get(id)?.name ?? 'the item',
+    swap: replaceTemplateLineProduct,
+    onTouched: (index) => setFocusLine((c) => ({ index, nonce: (c?.nonce ?? 0) + 1 })),
+  });
   /** The server fills the template's defaults from the customer chosen (or clears them). */
   const chooseCustomer = async (option: LookupOption | null) => {
     try {
@@ -911,6 +931,14 @@ function TemplateEditor({
               />
             </label>
           </div>
+          {swap.replaced !== null && (
+            <ReplacedNotice
+              replaced={swap.replaced}
+              detail="Quantity and discount kept; a fixed price is dropped, so the item follows the catalogue price."
+              onUndo={swap.undo}
+              onDismiss={swap.dismiss}
+            />
+          )}
           <section className="space-y-3 rounded-xl border border-line p-3 sm:p-4">
             <header>
               <h3 className="font-semibold text-fg-strong">Reusable item bundle</h3>
@@ -982,7 +1010,13 @@ function TemplateEditor({
                 return (
                   <>
                     <td className="p-3">
-                      <div className="font-medium text-fg-strong">{name}</div>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="font-medium text-fg-strong">{name}</div>
+                        <div className="flex shrink-0 items-center">
+                          <ReplaceLineButton name={name} onClick={() => swap.open(index)} />
+                          <ProductEditLink productId={line.productId} name={name} canEdit={canEditProducts} />
+                        </div>
+                      </div>
                       <div className="text-xs text-fg-muted">
                         {product?.sku} · current cost{' '}
                         {amount(product?.costPrice ?? 0, input.currency)}
@@ -1169,6 +1203,16 @@ function TemplateEditor({
           </footer>
         </form>
       </section>
+      {swap.replacing !== null && input.lines[swap.replacing] !== undefined && (
+        <ReplaceProductDialog
+          index={catalogueIndex}
+          currency={input.currency}
+          current={{ id: input.lines[swap.replacing].productId, name: productById.get(input.lines[swap.replacing].productId)?.name ?? 'item' }}
+          onHere={(productId) => heldIn(productId, input.lines[swap.replacing ?? 0].sectionId ?? null)}
+          onChoose={(product) => swap.replaceProduct(swap.replacing ?? 0, product)}
+          onClose={swap.close}
+        />
+      )}
       {catalogOpen && (
         <CataloguePicker
           title="Browse product catalogue"

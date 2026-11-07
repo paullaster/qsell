@@ -7,6 +7,7 @@ import { MAX_CODE_TRIES, codesMatch, isClientKey, isProofRule, normaliseCode, pl
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { DeliveryDocuments, DocActor, DocRefusal, DocResult } from './documents';
 import { collectedProblem } from '@/lib/door-payment';
+import type { DeliveryCosts } from './costs';
 import type { DoorPayments } from './door-payments';
 import type { DeliveryRuns } from './runs';
 import type { RiderSelf } from './riders';
@@ -82,6 +83,7 @@ export class DoorWork {
     private readonly runs: Pick<DeliveryRuns, 'complete'>,
     private readonly decisions: DecisionLog,
     private readonly payments: Pick<DoorPayments, 'collectIn' | 'followUp'>,
+    private readonly costs: Pick<DeliveryCosts, 'accrueDeliveryIn'>,
   ) {}
 
   async deliver(self: RiderSelf, input: DoorDeliverInput, now: Date = new Date()): Promise<DocResult<DoorResult>> {
@@ -133,6 +135,8 @@ export class DoorWork {
       if (problem !== null) return fail('bad_input', problem);
       const done = await this.documents.deliver({ companyId: self.companyId, userId: self.userId }, ctx.row.id, { receivedBy, note: input.note, accepted: acceptance.whole ? null : given }, undefined, tx);
       if (!done.ok) return done;
+      // The rider earns what the company pays for a delivery, counted in this same transaction.
+      await this.costs.accrueDeliveryIn(tx, { companyId: self.companyId, deliveryId: ctx.row.id, runId: ctx.runId, riderId: self.riderId, actorId: self.userId });
       if (takesCash) {
         // The cash goes into the rider's custody and the order is paid in the same transaction as the delivery: both or neither.
         const taken = await this.payments.collectIn(tx, self, ctx.row);
@@ -186,7 +190,7 @@ export class DoorWork {
     self: RiderSelf,
     input: DoorInput,
     now: Date,
-    work: (tx: Tx, ctx: { row: typeof deliveries.$inferSelect }) => Promise<DocResult<{ result: string; receivedBy: string | null; kept: ('code' | 'photo')[]; photoId: string | null; status: DeliveryStatus; taken: TakenLine[] }>>,
+    work: (tx: Tx, ctx: { row: typeof deliveries.$inferSelect; runId: string }) => Promise<DocResult<{ result: string; receivedBy: string | null; kept: ('code' | 'photo')[]; photoId: string | null; status: DeliveryStatus; taken: TakenLine[] }>>,
   ): Promise<DocResult<DoorResult>> {
     if (typeof input.runId !== 'string' || !UUID.test(input.runId) || typeof input.deliveryId !== 'string' || !UUID.test(input.deliveryId)) return fail('not_found', NOT_FOUND);
     if (!isClientKey(input.clientKey)) return fail('bad_input', 'This try could not be told apart from another. Reload the app and try again.');
@@ -211,7 +215,7 @@ export class DoorWork {
       if (row === undefined) return fail('not_found', NOT_FOUND);
       if (row.status !== 'out_for_delivery') return fail('not_allowed', `This stop is ${STATUS_WORDS[row.status].toLowerCase()}, so it cannot be done again.`);
 
-      const outcome = await work(tx, { row });
+      const outcome = await work(tx, { row, runId });
       if (!outcome.ok) return outcome;
       const place = placeFrom(input.lat, input.lng);
       const [{ n } = { n: 0 }] = await tx.select({ n: sql<number>`count(*)::int` }).from(deliveryAttempts).where(eq(deliveryAttempts.deliveryId, deliveryId));

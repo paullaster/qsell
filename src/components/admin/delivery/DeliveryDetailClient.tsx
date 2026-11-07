@@ -1,12 +1,15 @@
 'use client';
 
-import { use, useId, useState } from 'react';
+import { use, useEffect, useId, useState } from 'react';
 import Link from 'next/link';
 import { deliveryAction, deliveryStepAction, proofPhotoLinkAction } from '@/server/domains/delivery/document-actions';
+import { deliveryCostsAction, recordCourierChargeAction } from '@/server/domains/delivery/cost-actions';
+import type { CostView } from '@/server/domains/delivery/costs';
 import { markDoorPaymentAction, unmarkDoorPaymentAction } from '@/server/domains/delivery/door-payment-actions';
 import { courierNewsAction, deliveryExtrasAction } from '@/server/domains/delivery/run-actions';
 import type { DeliveryView } from '@/server/domains/delivery/documents';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { DeliverySlotPanel } from './DeliverySlotPanel';
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
 import { METHOD_WORDS } from '@/lib/delivery-methods';
@@ -62,7 +65,7 @@ export function DeliveryDetailClient({ viewPromise, canFulfil, extras }: { viewP
   const res: Loaded = use(viewPromise);
   const allowed = use(canFulfil);
   const more = use(extras);
-  return res.ok ? <DeliveryScreen initial={res.data} canFulfil={allowed} initialExtras={more.ok ? more.data : { shipment: null, run: null, canDispatch: false, messages: [], canAllowDoor: false }} /> : <LoadFailed error={res.error} />;
+  return res.ok ? <DeliveryScreen initial={res.data} canFulfil={allowed} initialExtras={more.ok ? more.data : { shipment: null, run: null, canDispatch: false, messages: [], canAllowDoor: false, canCosts: false }} /> : <LoadFailed error={res.error} />;
 }
 
 function whereTo(view: DeliveryView): string {
@@ -309,6 +312,10 @@ function DeliveryScreen({ initial, canFulfil, initialExtras }: { initial: Delive
         ) : null}
       </section>
 
+      {extra.canCosts ? <CostsPanel view={view} onError={(text) => setNotice({ kind: 'error', text })} /> : null}
+      {extra.canDispatch && ['draft', 'released', 'picking', 'packed', 'ready', 'failed_attempt'].includes(view.status) ? (
+        <DeliverySlotPanel deliveryId={view.id} onError={(text) => setNotice({ kind: 'error', text })} onDone={(text) => setNotice({ kind: 'ok', text })} />
+      ) : null}
       <DoorPanel view={view} canAllow={extra.canAllowDoor} onChanged={(next, text) => { setView(next); setNotice({ kind: 'ok', text }); }} onError={(text) => setNotice({ kind: 'error', text })} />
 
       {canFulfil && view.actions.length > 0 ? (
@@ -632,6 +639,83 @@ function DoorPanel({ view, canAllow, onChanged, onError }: { view: DeliveryView;
             {view.door === null ? 'Mark to be paid at the door' : 'Take that back'}
           </button>
         </div>
+      ) : null}
+    </section>
+  );
+}
+
+/** What this delivery cost: rider pay earned for it, and what a courier charged (typed in here for a delivery sent with a courier). */
+function CostsPanel({ view, onError }: { view: DeliveryView; onError: (text: string) => void }) {
+  const uid = useId();
+  const [costs, setCosts] = useState<CostView[] | null>(null);
+  const [amount, setAmount] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const reload = (): void => {
+    void attempt(deliveryCostsAction(view.id)).then((r) => {
+      if (r.ok) setCosts(r.data);
+      else onError(r.error);
+    });
+  };
+  useEffect(reload, [view.id, view.version]); // eslint-disable-line react-hooks/exhaustive-deps
+  const total = (costs ?? []).reduce((n, c) => n + Math.round(Number(c.amount) * 100), 0) / 100;
+  const courierOut = view.method === 'courier' && view.status !== 'draft' && view.courierName !== null;
+  if (costs !== null && costs.length === 0 && !courierOut) return null;
+  return (
+    <section aria-label="What it cost" className={`${cardClass} space-y-3`}>
+      <h2 className="text-sm font-bold text-fg-strong">What it cost</h2>
+      {costs === null ? (
+        <p role="status" className="text-sm text-fg-muted">
+          Loading…
+        </p>
+      ) : (
+        <ul className="space-y-1 text-sm" aria-label="Costs of this delivery">
+          {costs.map((c) => (
+            <li key={c.id} className="flex flex-wrap items-baseline justify-between gap-2">
+              <span>
+                {c.kindWords}
+                {c.riderName === null ? '' : ` · ${c.riderName}`}
+                {c.courierName === null ? '' : ` · ${c.courierName}`}
+                {c.note === null ? '' : ` · ${c.note}`}
+              </span>
+              <span className="font-mono">
+                {c.currency} {c.amount}
+              </span>
+            </li>
+          ))}
+          {costs.length === 0 ? <li className="text-fg-muted">Nothing yet.</li> : <li className="flex justify-between border-t border-line pt-1 font-semibold"><span>Total</span><span className="font-mono">{total.toFixed(2)}</span></li>}
+        </ul>
+      )}
+      {courierOut ? (
+        <form
+          aria-label="Record the courier's charge"
+          className="space-y-2 rounded-lg border border-line bg-surface p-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void (async () => {
+              setBusy(true);
+              const r = await attempt(recordCourierChargeAction({ deliveryId: view.id, amount: Number(amount), note }));
+              setBusy(false);
+              if (!r.ok) {
+                onError(r.error);
+                return;
+              }
+              setAmount('');
+              setNote('');
+              reload();
+            })();
+          }}
+        >
+          <Field id={`${uid}-ca`} label="What the courier charged (KSh)">
+            <input id={`${uid}-ca`} className={fieldClass} inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} required autoComplete="off" />
+          </Field>
+          <Field id={`${uid}-cn`} label="A note (waybill, what it was for)">
+            <input id={`${uid}-cn`} className={fieldClass} value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} autoComplete="off" />
+          </Field>
+          <button type="submit" className={primaryClass} disabled={busy}>
+            Record the charge
+          </button>
+        </form>
       ) : null}
     </section>
   );
