@@ -1,7 +1,7 @@
 import { and, asc, eq, gte, inArray, isNull, notInArray, or, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, deliveries, deliveryClosedDays, deliverySlots } from '@/server/db/drizzle/schema';
-import { UNAVAILABLE_WORDS, checkSlot, daysFrom, isDay, nairobiDay, unavailable, weekdayOf, weekdaysWords, windowOf, type SlotRule, type Unavailable } from '@/lib/delivery-slot';
+import { branches, deliveries, deliveryClosedDays, deliveryLeadTimes, deliveryLines, deliveryMethods, deliverySlots, deliveryZones, orderDeliveries, orders, products } from '@/server/db/drizzle/schema';
+import { UNAVAILABLE_WORDS, checkLead, checkSlot, daysFrom, earliestReady, isDay, leadWords, nairobiDay, unavailable, weekdayOf, weekdaysWords, windowOf, type Lead, type SlotExtra, type SlotRule } from '@/lib/delivery-slot';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { DocActor, DocRefusal, DocResult } from './documents';
 
@@ -18,6 +18,7 @@ export interface SlotView {
   endsAt: string;
   capacity: number;
   cutoffMinutes: number;
+  maxWeightKg: number | null;
   isActive: boolean;
   version: number;
 }
@@ -37,6 +38,8 @@ export interface OfferedSlot {
   endsAt: string;
   capacity: number;
   left: number;
+  /** What the slot can still carry that day in kg, when it has a weight limit. */
+  weightLeftKg: number | null;
   available: boolean;
   why: string | null;
 }
@@ -45,6 +48,23 @@ export interface OfferedDay {
   day: string;
   closedReason: string | null;
   slots: OfferedSlot[];
+}
+
+export interface LeadTimeView {
+  id: string;
+  kind: 'zone' | 'item';
+  refId: string;
+  name: string;
+  minutes: number;
+  words: string;
+  note: string | null;
+}
+
+/** What is known of a delivery for booking: what it weighs and when its goods can first be ready, and what held them. */
+interface Facts {
+  weightKg: number;
+  earliest: Date;
+  by: string | null;
 }
 
 /** The slot a delivery holds, in words, or null when it holds none. */
@@ -72,7 +92,10 @@ const OFF = ['cancelled', 'returned'] as const;
 /** The deliveries whose slot can still be chosen: not out, not over. */
 const BOOKABLE = ['draft', 'released', 'picking', 'packed', 'ready', 'failed_attempt'];
 
-const ruleOf = (s: typeof deliverySlots.$inferSelect): SlotRule => ({ weekdays: s.weekdays, startsAt: s.startsAt, endsAt: s.endsAt, capacity: s.capacity, cutoffMinutes: s.cutoffMinutes, isActive: s.isActive });
+const kgOf = (value: string | null): number | null => (value === null ? null : Number(value));
+const ruleOf = (s: typeof deliverySlots.$inferSelect): SlotRule => ({ weekdays: s.weekdays, startsAt: s.startsAt, endsAt: s.endsAt, capacity: s.capacity, cutoffMinutes: s.cutoffMinutes, maxWeightKg: kgOf(s.maxWeightKg), isActive: s.isActive });
+const storedKg = (kg: number | null): string | null => (kg === null ? null : kg.toFixed(2));
+const nairobiWords = (d: Date): string => d.toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Nairobi' });
 
 /**
  * Delivery slots with room for so many deliveries a day. Booking locks the slot while it counts, so two people booking the last place at the
@@ -95,7 +118,7 @@ export class DeliverySlots {
   }
 
   private view(s: typeof deliverySlots.$inferSelect, branchName: string): SlotView {
-    return { id: s.id, branchId: s.branchId, branchName, name: s.name, weekdays: s.weekdays, weekdaysWords: weekdaysWords(s.weekdays), startsAt: s.startsAt, endsAt: s.endsAt, capacity: s.capacity, cutoffMinutes: s.cutoffMinutes, isActive: s.isActive, version: s.version };
+    return { id: s.id, branchId: s.branchId, branchName, name: s.name, weekdays: s.weekdays, weekdaysWords: weekdaysWords(s.weekdays), startsAt: s.startsAt, endsAt: s.endsAt, capacity: s.capacity, cutoffMinutes: s.cutoffMinutes, maxWeightKg: kgOf(s.maxWeightKg), isActive: s.isActive, version: s.version };
   }
 
   async list(companyId: string, input: { branchId?: unknown } = {}): Promise<SlotView[]> {
@@ -120,7 +143,7 @@ export class DeliverySlots {
       if (branch?.isActive !== true) return fail('bad_input', 'Choose one of your open branches.');
       const [same] = await tx.select({ id: deliverySlots.id }).from(deliverySlots).where(and(eq(deliverySlots.companyId, actor.companyId), eq(deliverySlots.branchId, branchId), eq(deliverySlots.name, checked.value.name)));
       if (same !== undefined) return fail('conflict', 'This branch already has a slot with that name.');
-      const [made] = await tx.insert(deliverySlots).values({ companyId: actor.companyId, branchId, ...checked.value, createdBy: actor.userId }).returning();
+      const [made] = await tx.insert(deliverySlots).values({ companyId: actor.companyId, branchId, ...checked.value, maxWeightKg: storedKg(checked.value.maxWeightKg), createdBy: actor.userId }).returning();
       if (made === undefined) throw new Error('The slot was not saved.');
       await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_slot', id: made.id }, action: 'delivery.slot_created', actor: { type: 'user', id: actor.userId }, inputs: { ...checked.value, branchId } }, tx);
       return { ok: true, data: this.view(made, branch.name) };
@@ -138,7 +161,7 @@ export class DeliverySlots {
       if (input.expectedVersion !== row.version) return fail('conflict', 'Someone else changed this slot. Reload to see the latest.');
       const [same] = await tx.select({ id: deliverySlots.id }).from(deliverySlots).where(and(eq(deliverySlots.companyId, actor.companyId), eq(deliverySlots.branchId, row.branchId), eq(deliverySlots.name, checked.value.name)));
       if (same !== undefined && same.id !== id) return fail('conflict', 'This branch already has a slot with that name.');
-      const [saved] = await tx.update(deliverySlots).set({ ...checked.value, version: row.version + 1, updatedAt: this.clock() }).where(eq(deliverySlots.id, id)).returning();
+      const [saved] = await tx.update(deliverySlots).set({ ...checked.value, maxWeightKg: storedKg(checked.value.maxWeightKg), version: row.version + 1, updatedAt: this.clock() }).where(eq(deliverySlots.id, id)).returning();
       if (saved === undefined) throw new Error('The slot was not saved.');
       const [branch] = await tx.select({ name: branches.name }).from(branches).where(eq(branches.id, row.branchId));
       await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_slot', id }, action: 'delivery.slot_changed', actor: { type: 'user', id: actor.userId }, inputs: { before: { name: row.name, weekdays: row.weekdays, startsAt: row.startsAt, endsAt: row.endsAt, capacity: row.capacity, cutoffMinutes: row.cutoffMinutes }, after: checked.value } }, tx);
@@ -209,15 +232,52 @@ export class DeliverySlots {
     });
   }
 
-  /** How many deliveries hold each (slot, day), in one query for all of them. A delivery's own hold is left out when it is the one being booked. */
-  private async taken(db: DrizzleDb | Tx, slotIds: string[], days: string[], except?: string): Promise<Map<string, number>> {
+  /** How many deliveries hold each (slot, day), and what they weigh, in one query for all of them. A delivery's own hold is left out when it is the one being booked. */
+  private async taken(db: DrizzleDb | Tx, slotIds: string[], days: string[], except?: string): Promise<Map<string, { n: number; kg: number }>> {
     if (slotIds.length === 0 || days.length === 0) return new Map();
     const rows = await db
-      .select({ slotId: deliveries.slotId, day: deliveries.slotDay, n: sql<number>`count(*)::int` })
+      .select({ slotId: deliveries.slotId, day: deliveries.slotDay, n: sql<number>`count(distinct ${deliveries.id})::int`, kg: sql<string>`coalesce(sum(${deliveryLines.quantity} * ${products.weight}), 0)::text` })
       .from(deliveries)
+      .leftJoin(deliveryLines, eq(deliveryLines.deliveryId, deliveries.id))
+      .leftJoin(products, eq(products.id, deliveryLines.productId))
       .where(and(inArray(deliveries.slotId, slotIds), inArray(deliveries.slotDay, days), notInArray(deliveries.status, [...OFF]), except === undefined ? undefined : sql`${deliveries.id} <> ${except}::uuid`))
       .groupBy(deliveries.slotId, deliveries.slotDay);
-    return new Map(rows.map((r) => [`${r.slotId ?? ''}|${r.day ?? ''}`, r.n]));
+    return new Map(rows.map((r) => [`${r.slotId ?? ''}|${r.day ?? ''}`, { n: r.n, kg: Number(r.kg) }]));
+  }
+
+  /** What a delivery weighs (goods without a weight count as nothing), and the earliest its goods can be ready: the order's time plus the longest of the branch's handling time, its zone's and its items'. */
+  private async factsOf(db: DrizzleDb | Tx, companyId: string, deliveryId: string): Promise<Facts | null> {
+    const [d] = await db
+      .select({ branchId: deliveries.branchId, method: deliveries.method, orderId: deliveries.orderId, orderedAt: orders.createdAt, charge: orderDeliveries.charge })
+      .from(deliveries)
+      .innerJoin(orders, eq(orders.id, deliveries.orderId))
+      .leftJoin(orderDeliveries, eq(orderDeliveries.orderId, deliveries.orderId))
+      .where(and(eq(deliveries.id, deliveryId), eq(deliveries.companyId, companyId)));
+    if (d === undefined) return null;
+    const lines = await db.select({ productId: deliveryLines.productId, quantity: deliveryLines.quantity, weight: products.weight, name: products.name }).from(deliveryLines).innerJoin(products, eq(products.id, deliveryLines.productId)).where(eq(deliveryLines.deliveryId, deliveryId));
+    const zoneId = d.charge?.zone?.id ?? null;
+    const refs = [...(zoneId === null ? [] : [zoneId]), ...lines.map((l) => l.productId)];
+    const [method, leads] = await Promise.all([
+      db.select({ minutes: deliveryMethods.leadTimeMinutes }).from(deliveryMethods).where(and(eq(deliveryMethods.branchId, d.branchId), eq(deliveryMethods.method, d.method))),
+      refs.length === 0 ? Promise.resolve([]) : db.select().from(deliveryLeadTimes).where(and(eq(deliveryLeadTimes.companyId, companyId), inArray(deliveryLeadTimes.refId, refs))),
+    ]);
+    const all: Lead[] = [{ label: 'The branch\'s own handling time', minutes: method[0]?.minutes ?? 0 }];
+    for (const l of leads) {
+      if (l.kind === 'zone' && l.refId === zoneId) all.push({ label: `The ${d.charge?.zone?.name ?? 'delivery'} zone`, minutes: l.minutes });
+      if (l.kind === 'item') all.push({ label: lines.find((x) => x.productId === l.refId)?.name ?? 'An item', minutes: l.minutes });
+    }
+    const ready = earliestReady(d.orderedAt, all);
+    return { weightKg: lines.reduce((n, l) => n + Number(l.quantity) * Number(l.weight ?? 0), 0), earliest: ready.at, by: ready.by };
+  }
+
+  /** The words for why a slot cannot be taken, with the time the goods are ready when that is why. */
+  private whyWords(why: NonNullable<ReturnType<typeof unavailable>>, facts: Facts | null): string {
+    if (why === 'too_soon' && facts !== null) return `The goods will not be ready until ${nairobiWords(facts.earliest)}${facts.by === null ? '' : ` (${facts.by})`}.`;
+    return UNAVAILABLE_WORDS[why];
+  }
+
+  private extraFor(facts: Facts | null, takenKg: number): SlotExtra {
+    return facts === null ? {} : { earliest: facts.earliest, weight: { kg: facts.weightKg, takenKg } };
   }
 
   private async closures(db: DrizzleDb | Tx, companyId: string, branchId: string, days: string[]): Promise<Map<string, string>> {
@@ -229,25 +289,80 @@ export class DeliverySlots {
   }
 
   /** The slots a branch offers over some days from a day on, with the room left in each. */
-  async offer(companyId: string, input: { branchId: unknown; from?: unknown; days?: unknown }): Promise<OfferedDay[]> {
+  async offer(companyId: string, input: { branchId: unknown; from?: unknown; days?: unknown; deliveryId?: unknown }): Promise<OfferedDay[]> {
     if (typeof input.branchId !== 'string' || !UUID.test(input.branchId)) return [];
     const now = this.clock();
     const today = nairobiDay(now);
     const from = isDay(input.from) && input.from >= today ? input.from : today;
     const days = daysFrom(from, typeof input.days === 'number' ? input.days : 7);
     const slots = await this.db.select().from(deliverySlots).where(and(eq(deliverySlots.companyId, companyId), eq(deliverySlots.branchId, input.branchId), eq(deliverySlots.isActive, true))).orderBy(asc(deliverySlots.startsAt), asc(deliverySlots.name));
-    const [taken, closed] = await Promise.all([this.taken(this.db, slots.map((s) => s.id), days), this.closures(this.db, companyId, input.branchId, days)]);
+    const deliveryId = typeof input.deliveryId === 'string' && UUID.test(input.deliveryId) ? input.deliveryId : undefined;
+    const [taken, closed, facts] = await Promise.all([this.taken(this.db, slots.map((s) => s.id), days, deliveryId), this.closures(this.db, companyId, input.branchId, days), deliveryId === undefined ? Promise.resolve(null) : this.factsOf(this.db, companyId, deliveryId)]);
     return days.map((day) => ({
       day,
       closedReason: closed.get(day) ?? null,
       slots: slots
         .filter((s) => s.weekdays.includes(weekdayOf(day)))
         .map((s) => {
-          const used = taken.get(`${s.id}|${day}`) ?? 0;
-          const why: Unavailable | null = unavailable(ruleOf(s), day, now, used, closed.get(day) ?? null);
-          return { slotId: s.id, name: s.name, startsAt: s.startsAt, endsAt: s.endsAt, capacity: s.capacity, left: Math.max(0, s.capacity - used), available: why === null, why: why === null ? null : UNAVAILABLE_WORDS[why] };
+          const used = taken.get(`${s.id}|${day}`) ?? { n: 0, kg: 0 };
+          const rule = ruleOf(s);
+          const why = unavailable(rule, day, now, used.n, closed.get(day) ?? null, this.extraFor(facts, used.kg));
+          return { slotId: s.id, name: s.name, startsAt: s.startsAt, endsAt: s.endsAt, capacity: s.capacity, left: Math.max(0, s.capacity - used.n), weightLeftKg: rule.maxWeightKg === null ? null : Math.max(0, Math.round((rule.maxWeightKg - used.kg) * 100) / 100), available: why === null, why: why === null ? null : this.whyWords(why, facts) };
         }),
     }));
+  }
+
+  /** The lead times set for zones and items, with the names they stand for. */
+  async leadTimes(companyId: string): Promise<LeadTimeView[]> {
+    const rows = await this.db.select().from(deliveryLeadTimes).where(eq(deliveryLeadTimes.companyId, companyId)).orderBy(asc(deliveryLeadTimes.kind), asc(deliveryLeadTimes.updatedAt)).limit(500);
+    const zoneIds = rows.filter((r) => r.kind === 'zone' && UUID.test(r.refId)).map((r) => r.refId);
+    const itemIds = rows.filter((r) => r.kind === 'item').map((r) => r.refId);
+    const [zones, items] = await Promise.all([
+      zoneIds.length === 0 ? Promise.resolve([]) : this.db.select({ id: deliveryZones.id, name: deliveryZones.name }).from(deliveryZones).where(inArray(deliveryZones.id, zoneIds)),
+      itemIds.length === 0 ? Promise.resolve([]) : this.db.select({ id: products.id, name: products.name }).from(products).where(inArray(products.id, itemIds)),
+    ]);
+    const names = new Map([...zones, ...items].map((x) => [x.id, x.name]));
+    return rows.map((r) => ({ id: r.id, kind: r.kind, refId: r.refId, name: names.get(r.refId) ?? r.refId, minutes: r.minutes, words: leadWords(r.minutes), note: r.note }));
+  }
+
+  /** Sets how long the goods need before a delivery to a zone, or of an item, can go: a new one or a change to the one there. */
+  async setLead(actor: DocActor, input: { kind: unknown; refId: unknown; minutes: unknown; note?: unknown }): Promise<DocResult<LeadTimeView>> {
+    if (input.kind !== 'zone' && input.kind !== 'item') return fail('bad_input', 'Say whether the time is for a zone or an item.');
+    const checked = checkLead(input.minutes, input.note);
+    if (!checked.ok) return fail('bad_input', checked.error);
+    if (typeof input.refId !== 'string' || input.refId === '' || input.refId.length > 100 || (input.kind === 'zone' && !UUID.test(input.refId))) return fail('bad_input', `Choose the ${input.kind}.`);
+    const kind = input.kind;
+    const refId = input.refId;
+    return await this.run(async (tx) => {
+      let name: string;
+      if (kind === 'zone') {
+        const [z] = await tx.select({ name: deliveryZones.name }).from(deliveryZones).where(and(eq(deliveryZones.id, refId), eq(deliveryZones.companyId, actor.companyId)));
+        if (z === undefined) return fail('bad_input', 'Choose one of your delivery zones.');
+        name = z.name;
+      } else {
+        const [p] = await tx.select({ name: products.name }).from(products).where(and(eq(products.id, refId), isNull(products.deletedAt)));
+        if (p === undefined) return fail('bad_input', 'Choose one of your products.');
+        name = p.name;
+      }
+      const [saved] = await tx
+        .insert(deliveryLeadTimes)
+        .values({ companyId: actor.companyId, kind, refId, minutes: checked.minutes, note: checked.note, updatedBy: actor.userId })
+        .onConflictDoUpdate({ target: [deliveryLeadTimes.companyId, deliveryLeadTimes.kind, deliveryLeadTimes.refId], set: { minutes: checked.minutes, note: checked.note, updatedBy: actor.userId, updatedAt: this.clock() } })
+        .returning();
+      if (saved === undefined) throw new Error('The lead time was not saved.');
+      await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_lead_time', id: saved.id }, action: 'delivery.lead_time_set', actor: { type: 'user', id: actor.userId }, inputs: { kind, refId, minutes: checked.minutes } }, tx);
+      return { ok: true, data: { id: saved.id, kind, refId, name, minutes: saved.minutes, words: leadWords(saved.minutes), note: saved.note } };
+    });
+  }
+
+  async removeLead(actor: DocActor, id: string): Promise<DocResult<{ id: string }>> {
+    if (!UUID.test(id)) return fail('not_found', 'That lead time could not be found.');
+    return await this.run(async (tx) => {
+      const gone = await tx.delete(deliveryLeadTimes).where(and(eq(deliveryLeadTimes.id, id), eq(deliveryLeadTimes.companyId, actor.companyId))).returning({ kind: deliveryLeadTimes.kind, refId: deliveryLeadTimes.refId });
+      if (gone.length === 0) return fail('not_found', 'That lead time could not be found.');
+      await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_lead_time', id }, action: 'delivery.lead_time_removed', actor: { type: 'user', id: actor.userId }, inputs: gone[0] }, tx);
+      return { ok: true, data: { id } };
+    });
   }
 
   /** The slot a delivery holds now, or null. */
@@ -276,9 +391,10 @@ export class DeliverySlots {
       const [slot] = await tx.select().from(deliverySlots).where(and(eq(deliverySlots.id, slotId), eq(deliverySlots.companyId, actor.companyId))).for('update');
       if (slot === undefined) return fail('not_found', 'That slot could not be found.');
       if (slot.branchId !== d.branchId) return fail('bad_input', 'This delivery leaves from another branch, so it cannot take that branch\'s slot.');
-      const [taken, closed] = await Promise.all([this.taken(tx, [slotId], [day], deliveryId), this.closures(tx, actor.companyId, slot.branchId, [day])]);
-      const why = unavailable(ruleOf(slot), day, this.clock(), taken.get(`${slotId}|${day}`) ?? 0, closed.get(day) ?? null);
-      if (why !== null) return fail(why === 'full' ? 'conflict' : 'not_allowed', UNAVAILABLE_WORDS[why]);
+      const [taken, closed, facts] = await Promise.all([this.taken(tx, [slotId], [day], deliveryId), this.closures(tx, actor.companyId, slot.branchId, [day]), this.factsOf(tx, actor.companyId, deliveryId)]);
+      const used = taken.get(`${slotId}|${day}`) ?? { n: 0, kg: 0 };
+      const why = unavailable(ruleOf(slot), day, this.clock(), used.n, closed.get(day) ?? null, this.extraFor(facts, used.kg));
+      if (why !== null) return fail(why === 'full' || why === 'too_heavy' ? 'conflict' : 'not_allowed', this.whyWords(why, facts));
       const w = windowOf(day, slot);
       const now = this.clock();
       await tx.update(deliveries).set({ slotId, slotDay: day, windowStart: w.start, windowEnd: w.end, slotBookedAt: now, slotBookedBy: actor.userId, scheduledFor: day, version: d.version + 1, updatedAt: now }).where(eq(deliveries.id, deliveryId));

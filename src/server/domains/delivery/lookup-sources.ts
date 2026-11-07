@@ -398,6 +398,38 @@ const visitLocations = tableSource({
   toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.code), badge: null }),
 });
 
+/** Products a lead time can be set for: any product still sold. */
+const leadProducts = tableSource({
+  key: 'lead-time-products',
+  permission: 'delivery_slots:manage',
+  table: products,
+  id: products.id,
+  label: products.name,
+  searchColumns: [products.name, products.sku, products.stockCode],
+  select: { sku: products.sku },
+  scope: ({ filters }) => {
+    acceptFilters(filters, {});
+    return [isNull(products.deletedAt)];
+  },
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.sku) === '' ? null : text(row.sku), badge: null }),
+});
+
+/** The company's open delivery zones, for setting a lead time. */
+const leadZones = tableSource({
+  key: 'lead-time-zones',
+  permission: 'delivery_slots:manage',
+  table: deliveryZones,
+  id: deliveryZones.id,
+  label: deliveryZones.name,
+  searchColumns: [deliveryZones.code, deliveryZones.name],
+  select: { code: deliveryZones.code },
+  scope: ({ filters, companyId }) => {
+    acceptFilters(filters, {});
+    return [and(eq(deliveryZones.companyId, companyId), eq(deliveryZones.isActive, true)) ?? sql`false`];
+  },
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.code), badge: null }),
+});
+
 const costKinds = staticSource({
   key: 'delivery-cost-kinds',
   permission: 'delivery_costs:manage',
@@ -407,4 +439,4 @@ const costKinds = staticSource({
   },
 });
 
-export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts, deliveryStatuses, deliveryFailureReasons, stockIssueMoments, returnDispositions, openRuns, runStatuses, courierNews, riders, staffToRide, riderKinds, riderStatuses, doorCashMethods, handInAccounts, handInWitnesses, varianceAccounts, costKinds, payoutMethods, costAccounts, visitCrew, visitOrders, visitProducts, visitLocations];
+export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts, deliveryStatuses, deliveryFailureReasons, stockIssueMoments, returnDispositions, openRuns, runStatuses, courierNews, riders, staffToRide, riderKinds, riderStatuses, doorCashMethods, handInAccounts, handInWitnesses, varianceAccounts, costKinds, payoutMethods, costAccounts, visitCrew, visitOrders, visitProducts, visitLocations, leadProducts, leadZones];

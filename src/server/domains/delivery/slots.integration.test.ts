@@ -39,6 +39,7 @@ describe.skipIf(!has(url))('delivery slots (database)', () => {
   let branchId = '';
   let otherBranchId = '';
   let locationId = '';
+  let lastProduct = '';
   const tag = randomUUID().slice(0, 6).toUpperCase();
   let n = 0;
   const code = () => `SL${tag}${String((n += 1)).padStart(3, '0')}`;
@@ -54,9 +55,10 @@ describe.skipIf(!has(url))('delivery slots (database)', () => {
   };
   const slot = async (over: Record<string, unknown> = {}) => await must(c.deliverySlots.create(actor(), { branchId, name: `Slot ${code()}`, weekdays: [1, 2, 3, 4, 5, 6, 7], startsAt: '09:00', endsAt: '12:00', capacity: 3, cutoffMinutes: 60, ...over }));
   /** A paid order delivered by the shop's own riders from the test branch, with its delivery made (a draft). */
-  const delivery = async () => {
+  const delivery = async (opts: { weight?: number } = {}) => {
     const productId = `prod_sl_${randomUUID()}`;
-    await db.insert(schema.products).values({ id: productId, sku: `SL-${randomUUID().slice(0, 8)}`.toUpperCase(), stockCode: `SLS-${randomUUID().slice(0, 8)}`.toUpperCase(), name: `Slotted ${productId.slice(-6)}`, slug: `sl-${randomUUID()}`, itemTypeId, price: '1000', costPrice: '10', taxRate: '0', isTaxInclusive: false, stockQuantity: 0 });
+    await db.insert(schema.products).values({ id: productId, sku: `SL-${randomUUID().slice(0, 8)}`.toUpperCase(), stockCode: `SLS-${randomUUID().slice(0, 8)}`.toUpperCase(), name: `Slotted ${productId.slice(-6)}`, slug: `sl-${randomUUID()}`, itemTypeId, price: '1000', costPrice: '10', taxRate: '0', isTaxInclusive: false, stockQuantity: 0, ...(opts.weight === undefined ? {} : { weight: String(opts.weight) }) });
+    lastProduct = productId;
     await db.transaction((tx) => c.stockLedger.post(tx, { companyId, productId, locationId, type: 'receipt', quantity: 50, unitCost: 10, actor: { type: 'job' } }));
     const r = await createOrder({
       orderNumber: `SL-${randomUUID()}`, customerName: 'Wanjiru Buyer', customerEmail: `sl-${randomUUID()}@slots.test`, customerPhone: '0700123456',
@@ -247,5 +249,88 @@ describe.skipIf(!has(url))('delivery slots (database)', () => {
     await db.update(schema.deliveries).set({ status: 'out_for_delivery', dispatchedAt: new Date() }).where(eq(schema.deliveries.id, id));
     expect(await c.deliverySlots.book(actor(), id, { slotId: s.id, day: ahead(2) })).toMatchObject({ ok: false, reason: 'not_allowed' });
     expect(await rowOf(id)).toMatchObject({ slotId: null });
+  });
+
+  it('limits a slot by what its deliveries weigh, and a delivery heavier than the limit never fits', async () => {
+    const s = await slot({ name: `Heavy ${code()}`, capacity: 10, maxWeightKg: 100 });
+    expect(s.maxWeightKg).toBe(100);
+    expect(await c.deliverySlots.create(actor(), { branchId, name: `Bad ${code()}`, weekdays: [1], startsAt: '09:00', endsAt: '10:00', capacity: 1, cutoffMinutes: 0, maxWeightKg: -4 })).toMatchObject({ ok: false, reason: 'bad_input' });
+    const [a, b, d, huge] = [await delivery({ weight: 60 }), await delivery({ weight: 40 }), await delivery({ weight: 1 }), await delivery({ weight: 150 })];
+    await must(c.deliverySlots.book(actor(), a, { slotId: s.id, day: ahead(2) }));
+    await must(c.deliverySlots.book(actor(), b, { slotId: s.id, day: ahead(2) }));
+    expect(await c.deliverySlots.book(actor(), d, { slotId: s.id, day: ahead(2) })).toMatchObject({ ok: false, reason: 'conflict', message: 'This slot cannot carry that much more that day.' });
+    const shown = (await c.deliverySlots.offer(companyId, { branchId, from: ahead(2), days: 1, deliveryId: d }))[0]?.slots.find((x) => x.slotId === s.id);
+    expect(shown).toMatchObject({ available: false, weightLeftKg: 0 });
+    // Another day is empty; letting a place go makes room; a delivery over the limit alone never fits.
+    await must(c.deliverySlots.book(actor(), d, { slotId: s.id, day: ahead(3) }));
+    expect(await c.deliverySlots.book(actor(), huge, { slotId: s.id, day: ahead(8) })).toMatchObject({ ok: false, message: 'This slot cannot carry that much more that day.' });
+    await must(c.deliverySlots.release(actor(), a, { reason: 'Customer will be away' }));
+    const after = (await c.deliverySlots.offer(companyId, { branchId, from: ahead(2), days: 1, deliveryId: d }))[0]?.slots.find((x) => x.slotId === s.id);
+    expect(after).toMatchObject({ available: true, weightLeftKg: 60 });
+    // Goods with no weight count as nothing, and a slot with no limit takes any weight.
+    const free = await slot({ name: `Free ${code()}`, capacity: 5 });
+    await must(c.deliverySlots.book(actor(), huge, { slotId: free.id, day: ahead(2) }));
+  });
+
+  it('keeps a slot from starting before the goods can be ready: an item, a zone and the branch\'s own handling time', async () => {
+    const s = await slot({ name: `Soon ${code()}`, startsAt: '00:30', endsAt: '23:00', cutoffMinutes: 0 });
+    // An item that needs three days.
+    const a = await delivery();
+    const item = await must(c.deliverySlots.setLead(actor(), { kind: 'item', refId: lastProduct, minutes: 4320, note: 'Fresh fish' }));
+    expect(item).toMatchObject({ kind: 'item', minutes: 4320, words: '3 days', note: 'Fresh fish' });
+    const refused = await c.deliverySlots.book(actor(), a, { slotId: s.id, day: ahead(1) });
+    expect(refused).toMatchObject({ ok: false, reason: 'not_allowed' });
+    expect(!refused.ok && refused.message).toMatch(/will not be ready until .*\(Slotted /);
+    const offered = (await c.deliverySlots.offer(companyId, { branchId, from: ahead(1), days: 9, deliveryId: a })).flatMap((d) => d.slots.filter((x) => x.slotId === s.id).map((x) => ({ day: d.day, ok: x.available })));
+    expect(offered.find((x) => x.day === ahead(1))?.ok).toBe(false);
+    expect(offered.find((x) => x.day === ahead(8))?.ok).toBe(true);
+    await must(c.deliverySlots.book(actor(), a, { slotId: s.id, day: ahead(8) }));
+    // The same item, changed to a shorter time, is one row, not two.
+    await must(c.deliverySlots.setLead(actor(), { kind: 'item', refId: lastProduct, minutes: 60 }));
+    expect((await c.deliverySlots.leadTimes(companyId)).filter((l) => l.refId === lastProduct)).toHaveLength(1);
+    await must(c.deliverySlots.book(actor(), a, { slotId: s.id, day: ahead(1) }));
+
+    // A zone: a delivery inside it has the zone on its charge; a lead time for the zone holds the delivery back.
+    const zone = (await db.insert(schema.deliveryZones).values({ companyId, code: code(), name: `Far zone ${code()}`, centreLatitude: PIN.latitude, centreLongitude: PIN.longitude, radiusKm: '50.00' }).returning())[0];
+    const b = await delivery();
+    const [row] = await db.select({ orderId: schema.deliveries.orderId }).from(schema.deliveries).where(eq(schema.deliveries.id, b));
+    const [od] = await db.select({ charge: schema.orderDeliveries.charge }).from(schema.orderDeliveries).where(eq(schema.orderDeliveries.orderId, row?.orderId ?? ''));
+    expect(od?.charge.zone?.id).toBe(zone?.id);
+    const lead = await must(c.deliverySlots.setLead(actor(), { kind: 'zone', refId: zone?.id ?? '', minutes: 3000 }));
+    try {
+      const far = await c.deliverySlots.book(actor(), b, { slotId: s.id, day: ahead(1) });
+      expect(far).toMatchObject({ ok: false });
+      expect(!far.ok && far.message).toContain('Far zone');
+      await must(c.deliverySlots.book(actor(), b, { slotId: s.id, day: ahead(9) }));
+    } finally {
+      await must(c.deliverySlots.removeLead(actor(), lead.id));
+      await db.update(schema.deliveryZones).set({ isActive: false }).where(eq(schema.deliveryZones.id, zone?.id ?? ''));
+    }
+
+    // The branch's own handling time counts too.
+    await db.update(schema.deliveryMethods).set({ leadTimeMinutes: 5000 }).where(eq(schema.deliveryMethods.branchId, branchId));
+    try {
+      const e = await delivery();
+      const slow = await c.deliverySlots.book(actor(), e, { slotId: s.id, day: ahead(2) });
+      expect(!slow.ok && slow.message).toContain('branch\'s own handling time');
+    } finally {
+      await db.update(schema.deliveryMethods).set({ leadTimeMinutes: 0 }).where(eq(schema.deliveryMethods.branchId, branchId));
+    }
+  });
+
+  it('sets, lists with names, changes and removes lead times, and refuses a bad one', async () => {
+    const zone = (await db.insert(schema.deliveryZones).values({ companyId, code: code(), name: `Lead zone ${code()}` }).returning())[0];
+    await delivery();
+    const made = await must(c.deliverySlots.setLead(actor(), { kind: 'zone', refId: zone?.id ?? '', minutes: 90 }));
+    expect(made).toMatchObject({ kind: 'zone', words: '1 hour 30 min', name: zone?.name });
+    expect((await c.deliverySlots.leadTimes(companyId)).find((l) => l.id === made.id)).toMatchObject({ name: zone?.name, minutes: 90 });
+    for (const bad of [{ kind: 'branch', refId: 'x', minutes: 60 }, { kind: 'zone', refId: zone?.id, minutes: 0 }, { kind: 'zone', refId: 'not-a-uuid', minutes: 60 }, { kind: 'zone', refId: randomUUID(), minutes: 60 }, { kind: 'item', refId: 'no-such-product', minutes: 60 }, { kind: 'item', refId: lastProduct, minutes: 99_999 }]) {
+      expect(await c.deliverySlots.setLead(actor(), bad)).toMatchObject({ ok: false, reason: 'bad_input' });
+    }
+    expect(await c.deliverySlots.setLead({ ...actor(), companyId: randomUUID() }, { kind: 'zone', refId: zone?.id, minutes: 60 })).toMatchObject({ ok: false, reason: 'bad_input' });
+    await must(c.deliverySlots.removeLead(actor(), made.id));
+    expect((await c.deliverySlots.leadTimes(companyId)).some((l) => l.id === made.id)).toBe(false);
+    expect(await c.deliverySlots.removeLead(actor(), made.id)).toMatchObject({ ok: false, reason: 'not_found' });
+    expect(await c.deliverySlots.removeLead(actor(), 'nope')).toMatchObject({ ok: false, reason: 'not_found' });
   });
 });

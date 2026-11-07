@@ -24,16 +24,22 @@ test.describe('delivery slots', () => {
       await form.getByLabel('Ends (Nairobi)').fill('09:00');
       await form.getByLabel('Deliveries a day').fill('1');
       await form.getByLabel('Closes (minutes before)').fill('0');
+      await form.getByLabel(/Most it can carry in a day/).fill('heavy');
       for (const day of ['Sat', 'Sun']) await form.getByRole('checkbox', { name: day }).check();
       await form.getByRole('button', { name: 'Add the slot' }).click();
       await expect(page.getByRole('alert').filter({ hasText: 'The slot must end after it starts.' })).toBeVisible({ timeout: 30_000 });
       await form.getByLabel('Starts (Nairobi)').fill('09:00');
       await form.getByLabel('Ends (Nairobi)').fill('23:00');
       await form.getByRole('button', { name: 'Add the slot' }).click();
+      await expect(page.getByRole('alert').filter({ hasText: 'The weight limit is more than nothing' })).toBeVisible({ timeout: 30_000 });
+      await form.getByLabel(/Most it can carry in a day/).fill('500');
+      await form.getByLabel('Starts (Nairobi)').fill('09:00');
+      await form.getByLabel('Ends (Nairobi)').fill('23:00');
+      await form.getByRole('button', { name: 'Add the slot' }).click();
       await expect(page.getByText('The slot is added.')).toBeVisible({ timeout: 30_000 });
       const row = page.getByRole('list', { name: 'Slot list' }).getByRole('listitem').filter({ hasText: `Morning · Delivery ${tag}` }).first();
       await expect(row).toContainText('Every day');
-      await expect(row).toContainText('room for 1 a day');
+      await expect(row).toContainText('room for 1 a day, up to 500 kg');
 
       // A day with no slots, for this branch.
       const closing = page.getByRole('form', { name: 'Close a day' });
@@ -43,6 +49,19 @@ test.describe('delivery slots', () => {
       await closing.getByRole('button', { name: 'Close the day' }).click();
       await expect(page.getByText('The day is closed: no slot is offered on it.')).toBeVisible({ timeout: 30_000 });
       await expect(page.getByRole('list', { name: 'Closed day list' })).toContainText('Stocktake');
+
+      // How long an item needs before it can go.
+      const lead = page.getByRole('form', { name: 'Lead time for an item' });
+      await pick(page, lead.getByRole('combobox', { name: 'Item' }), 'Salt 500g', /Salt 500g/);
+      await lead.getByLabel('Minutes the item needs').fill('0');
+      await lead.getByRole('button', { name: /lead time/ }).click();
+      await expect(page.getByRole('alert').filter({ hasText: 'Give the time in whole minutes' })).toBeVisible({ timeout: 30_000 });
+      await lead.getByLabel('Minutes the item needs').fill('30');
+      await lead.getByLabel('Note').fill('Packed fresh');
+      await lead.getByRole('button', { name: /lead time/ }).click();
+      await expect(page.getByText('The lead time is saved.')).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByRole('list', { name: 'Lead time list' })).toContainText('Salt 500g');
+      await expect(page.getByRole('list', { name: 'Lead time list' })).toContainText('30 minutes');
       await noHorizontalScroll(page);
       await noInnerHorizontalScroll(page);
 
@@ -75,6 +94,12 @@ test.describe('delivery slots', () => {
       const full = again.getByRole('button', { name: /This slot is full that day/ }).first();
       await expect(full).toBeVisible({ timeout: 30_000 });
       await expect(full).toBeDisabled();
+
+      // The lead time is taken off again so the shop's other tests are not held back by it.
+      await open(page, '/admin/delivery/slots', 'Delivery slots');
+      await page.getByRole('button', { name: 'Remove the lead time of Salt 500g' }).click();
+      await page.getByRole('button', { name: 'Confirm: Remove the lead time of Salt 500g' }).click();
+      await expect(page.getByText('The lead time is removed.')).toBeVisible({ timeout: 30_000 });
     } finally {
       deliveryTool('close', tag);
     }

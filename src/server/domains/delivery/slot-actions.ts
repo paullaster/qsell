@@ -18,8 +18,8 @@ const PATHS = ['/admin/delivery/slots', '/admin/delivery/deliveries'];
 export async function slotsScreenAction() {
   return await runDelivery('delivery_slots:manage', async (ctx) => {
     const s = getContainer().deliverySlots;
-    const [slots, closed] = await Promise.all([s.list(ctx.companyId), s.closedDays(ctx.companyId)]);
-    return { slots, closed };
+    const [slots, closed, leads] = await Promise.all([s.list(ctx.companyId), s.closedDays(ctx.companyId), s.leadTimes(ctx.companyId)]);
+    return { slots, closed, leads };
   });
 }
 
@@ -41,6 +41,14 @@ export async function setSlotActiveAction(raw: unknown) {
   }, PATHS);
 }
 
+export async function setLeadTimeAction(raw: unknown) {
+  return await runDelivery('delivery_slots:manage', async (ctx) => dataOf(await getContainer().deliverySlots.setLead({ companyId: ctx.companyId, userId: ctx.userId }, objectOf(raw) as { kind: unknown; refId: unknown; minutes: unknown; note?: unknown })), PATHS);
+}
+
+export async function removeLeadTimeAction(raw: unknown) {
+  return await runDelivery('delivery_slots:manage', async (ctx) => dataOf(await getContainer().deliverySlots.removeLead({ companyId: ctx.companyId, userId: ctx.userId }, idOf(objectOf(raw).id, 'lead time'))), PATHS);
+}
+
 export async function closeDayAction(raw: unknown) {
   return await runDelivery('delivery_slots:manage', async (ctx) => dataOf(await getContainer().deliverySlots.close({ companyId: ctx.companyId, userId: ctx.userId }, objectOf(raw) as { day: unknown; branchId?: unknown; reason: unknown })), PATHS);
 }
@@ -57,7 +65,7 @@ export async function deliverySlotAction(raw: unknown) {
     const c = getContainer();
     const delivery = await c.deliveryDocuments.get(ctx.companyId, deliveryId);
     if (delivery === null) throw new DeliveryError('That delivery could not be found.', 'NOT_FOUND');
-    const [held, offer] = await Promise.all([c.deliverySlots.heldBy(ctx.companyId, deliveryId), c.deliverySlots.offer(ctx.companyId, { branchId: delivery.branch.id, from: i.from, days: 7 })]);
+    const [held, offer] = await Promise.all([c.deliverySlots.heldBy(ctx.companyId, deliveryId), c.deliverySlots.offer(ctx.companyId, { branchId: delivery.branch.id, from: i.from, days: 7, deliveryId })]);
     return { held, offer };
   });
 }

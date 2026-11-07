@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { addDays, checkSlot, daysFrom, instantOf, isDay, nairobiDay, unavailable, weekdayOf, weekdaysWords, windowOf, type SlotRule } from './delivery-slot';
+import { addDays, checkLead, checkSlot, earliestReady, leadWords, daysFrom, instantOf, isDay, nairobiDay, unavailable, weekdayOf, weekdaysWords, windowOf, type SlotRule } from './delivery-slot';
 
-const rule: SlotRule = { weekdays: [1, 2, 3, 4, 5], startsAt: '09:00', endsAt: '12:00', capacity: 2, cutoffMinutes: 120, isActive: true };
+const rule: SlotRule = { weekdays: [1, 2, 3, 4, 5], startsAt: '09:00', endsAt: '12:00', capacity: 2, cutoffMinutes: 120, maxWeightKg: null, isActive: true };
 // Thursday 2026-11-05, 06:00 in Nairobi.
 const now = new Date('2026-11-05T03:00:00Z');
 
@@ -21,12 +21,14 @@ describe('days in Nairobi', () => {
 
 describe('a slot as typed', () => {
   it('is accepted with a name, days, window, room and cut-off', () => {
-    expect(checkSlot({ name: ' Morning ', weekdays: [3, 1, 1], startsAt: '09:00', endsAt: '12:00', capacity: 5, cutoffMinutes: 60 })).toEqual({ ok: true, value: { name: 'Morning', weekdays: [1, 3], startsAt: '09:00', endsAt: '12:00', capacity: 5, cutoffMinutes: 60 } });
+    expect(checkSlot({ name: ' Morning ', weekdays: [3, 1, 1], startsAt: '09:00', endsAt: '12:00', capacity: 5, cutoffMinutes: 60 })).toEqual({ ok: true, value: { name: 'Morning', weekdays: [1, 3], startsAt: '09:00', endsAt: '12:00', capacity: 5, cutoffMinutes: 60, maxWeightKg: null } });
+    expect(checkSlot({ name: 'Heavy', weekdays: [1], startsAt: '09:00', endsAt: '12:00', capacity: 5, cutoffMinutes: 60, maxWeightKg: 250.5 })).toMatchObject({ ok: true, value: { maxWeightKg: 250.5 } });
+    expect(checkSlot({ name: 'Heavy', weekdays: [1], startsAt: '09:00', endsAt: '12:00', capacity: 5, cutoffMinutes: 60, maxWeightKg: '' })).toMatchObject({ ok: true, value: { maxWeightKg: null } });
   });
 
   it('is refused when something is missing or does not make sense', () => {
     const good = { name: 'Morning', weekdays: [1], startsAt: '09:00', endsAt: '12:00', capacity: 5, cutoffMinutes: 60 };
-    const bad: Record<string, unknown>[] = [{ name: 'M' }, { weekdays: [] }, { weekdays: [8] }, { weekdays: ['1'] }, { startsAt: '9am' }, { endsAt: '08:00' }, { endsAt: '09:00' }, { capacity: 0 }, { capacity: 2.5 }, { capacity: 20_000 }, { cutoffMinutes: -1 }, { cutoffMinutes: 99_999 }];
+    const bad: Record<string, unknown>[] = [{ name: 'M' }, { weekdays: [] }, { weekdays: [8] }, { weekdays: ['1'] }, { startsAt: '9am' }, { endsAt: '08:00' }, { endsAt: '09:00' }, { capacity: 0 }, { capacity: 2.5 }, { capacity: 20_000 }, { cutoffMinutes: -1 }, { cutoffMinutes: 99_999 }, { maxWeightKg: 0 }, { maxWeightKg: -5 }, { maxWeightKg: 'heavy' }, { maxWeightKg: 1.234 }, { maxWeightKg: 2_000_000 }];
     for (const change of bad) expect(checkSlot({ ...good, ...change })).toMatchObject({ ok: false });
   });
 });
@@ -58,5 +60,45 @@ describe('when a slot can be booked', () => {
     expect(weekdaysWords([7, 6])).toBe('Weekends');
     expect(weekdaysWords([1, 2, 3, 4, 5, 6, 7])).toBe('Every day');
     expect(weekdaysWords([5, 1])).toBe('Mon, Fri');
+  });
+});
+
+describe('weight and lead times', () => {
+  it('stops a slot taking more than it can carry in a day, to the gram, and lets a delivery that fits in', () => {
+    const limited: SlotRule = { ...rule, maxWeightKg: 100 };
+    expect(unavailable(limited, '2026-11-06', now, 0, null, { weight: { kg: 40, takenKg: 60 } })).toBeNull();
+    expect(unavailable(limited, '2026-11-06', now, 0, null, { weight: { kg: 40.01, takenKg: 60 } })).toBe('too_heavy');
+    expect(unavailable(limited, '2026-11-06', now, 0, null, { weight: { kg: 150, takenKg: 0 } })).toBe('too_heavy');
+    // No limit set, or no delivery to weigh: weight does not matter.
+    expect(unavailable(rule, '2026-11-06', now, 0, null, { weight: { kg: 5000, takenKg: 0 } })).toBeNull();
+    expect(unavailable(limited, '2026-11-06', now, 0, null)).toBeNull();
+    // Full comes before heavy.
+    expect(unavailable(limited, '2026-11-06', now, 2, null, { weight: { kg: 1, takenKg: 0 } })).toBe('full');
+  });
+
+  it('keeps a slot from starting before the goods can be ready', () => {
+    const early = new Date('2026-11-06T07:00:00Z');
+    expect(unavailable(rule, '2026-11-06', now, 0, null, { earliest: early })).toBe('too_soon');
+    expect(unavailable(rule, '2026-11-06', now, 0, null, { earliest: new Date('2026-11-06T06:00:00Z') })).toBeNull();
+    expect(unavailable(rule, '2026-11-06', now, 0, null, { earliest: null })).toBeNull();
+  });
+
+  it('works out when the goods are ready from the longest lead time, and says which held them', () => {
+    const ordered = new Date('2026-11-05T06:00:00Z');
+    expect(earliestReady(ordered, [])).toEqual({ at: ordered, by: null });
+    expect(earliestReady(ordered, [{ label: 'Standard handling', minutes: 30 }, { label: 'Frozen fish', minutes: 180 }, { label: 'Rural zone', minutes: 120 }])).toEqual({ at: new Date('2026-11-05T09:00:00Z'), by: 'Frozen fish' });
+    expect(earliestReady(ordered, [{ label: 'None', minutes: 0 }])).toEqual({ at: ordered, by: null });
+  });
+
+  it('says a lead time in words and checks one as typed', () => {
+    expect(leadWords(1)).toBe('1 minute');
+    expect(leadWords(45)).toBe('45 minutes');
+    expect(leadWords(120)).toBe('2 hours');
+    expect(leadWords(1620)).toBe('1 day 3 hours');
+    expect(leadWords(90)).toBe('1 hour 30 min');
+    expect(checkLead(120, ' Fresh fish ')).toEqual({ ok: true, minutes: 120, note: 'Fresh fish' });
+    expect(checkLead(60, '')).toEqual({ ok: true, minutes: 60, note: null });
+    for (const bad of [0, -5, 1.5, 'two hours', 50_000, null]) expect(checkLead(bad, null)).toMatchObject({ ok: false });
+    expect(checkLead(60, 'x'.repeat(201))).toMatchObject({ ok: false });
   });
 });

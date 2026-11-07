@@ -552,6 +552,8 @@ export const deliverySlots = pgTable(
     endsAt: text('ends_at').notNull(),
     capacity: integer('capacity').notNull(),
     cutoffMinutes: integer('cutoff_minutes').notNull().default(0),
+    /** The most the deliveries of a slot may weigh together in a day, in kg. Null: no limit by weight. */
+    maxWeightKg: numeric('max_weight_kg', { precision: 10, scale: 2 }),
     isActive: boolean('is_active').notNull().default(true),
     version: integer('version').notNull().default(1),
     createdBy: text('created_by').notNull(),
@@ -562,11 +564,38 @@ export const deliverySlots = pgTable(
     uniqueIndex('delivery_slots_branch_name_uidx').on(t.companyId, t.branchId, t.name),
     index('delivery_slots_branch_idx').on(t.companyId, t.branchId, t.isActive),
     check('delivery_slots_times_chk', sql`${t.startsAt} ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$' AND ${t.endsAt} ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$' AND ${t.endsAt} > ${t.startsAt}`),
+    check('delivery_slots_weight_chk', sql`${t.maxWeightKg} IS NULL OR ${t.maxWeightKg} > 0`),
     check('delivery_slots_capacity_chk', sql`${t.capacity} BETWEEN 1 AND 10000 AND ${t.cutoffMinutes} BETWEEN 0 AND 10080`),
     check('delivery_slots_weekdays_chk', sql`cardinality(${t.weekdays}) BETWEEN 1 AND 7 AND ${t.weekdays} <@ ARRAY[1,2,3,4,5,6,7]`),
   ],
 );
 export type DeliverySlotRow = typeof deliverySlots.$inferSelect;
+
+/**
+ * The least time from the order to the goods being ready to go, for a delivery zone or for an item (fresh fish, made to order, large
+ * goods). A delivery cannot be promised a slot that starts before the longest of these that apply to it, with the branch's own lead time.
+ */
+export const deliveryLeadTimes = pgTable(
+  'delivery_lead_times',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    kind: text('kind').$type<'zone' | 'item'>().notNull(),
+    /** The zone's id or the product's id. */
+    refId: text('ref_id').notNull(),
+    minutes: integer('minutes').notNull(),
+    note: text('note'),
+    updatedBy: text('updated_by').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_lead_times_ref_uidx').on(t.companyId, t.kind, t.refId),
+    check('delivery_lead_times_kind_chk', sql`${t.kind} IN ('zone','item')`),
+    check('delivery_lead_times_minutes_chk', sql`${t.minutes} BETWEEN 1 AND 43200`),
+  ],
+);
 
 /** A day on which no slot is offered (a public holiday, a stocktake): for one branch, or for all of them when the branch is empty. */
 export const deliveryClosedDays = pgTable(

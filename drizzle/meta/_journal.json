@@ -1030,6 +1030,13 @@
       "when": 1794030210895,
       "tag": "0146_delivery_slots",
       "breakpoints": true
+    },
+    {
+      "idx": 147,
+      "version": "7",
+      "when": 1794033943583,
+      "tag": "0147_delivery_slot_weight_and_leads",
+      "breakpoints": true
     }
   ]
 }

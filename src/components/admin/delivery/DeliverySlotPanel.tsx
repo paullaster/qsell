@@ -12,7 +12,7 @@ type Data = Extract<Loaded, { ok: true }>['data'];
 const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' });
 const dayWords = (day: string): string => new Date(`${day}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
 
-const roomWords = (s: { available: boolean; left: number; why: string | null }): string => (s.available ? `${String(s.left)} left` : (s.why ?? 'not available'));
+const roomWords = (s: { available: boolean; left: number; weightLeftKg: number | null; why: string | null }): string => (s.available ? `${String(s.left)} left${s.weightLeftKg === null ? '' : `, ${String(s.weightLeftKg)} kg`}` : (s.why ?? 'not available'));
 
 /** The slot a delivery is promised, and the slots its branch offers over a week, with the room left in each. */
 export function DeliverySlotPanel({ deliveryId, onError, onDone }: { deliveryId: string; onError: (text: string) => void; onDone: (text: string) => void }) {

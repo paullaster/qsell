@@ -1,7 +1,7 @@
 'use client';
 
 import { use, useId, useState } from 'react';
-import { closeDayAction, createSlotAction, reopenDayAction, setSlotActiveAction, slotsScreenAction, updateSlotAction } from '@/server/domains/delivery/slot-actions';
+import { closeDayAction, createSlotAction, removeLeadTimeAction, reopenDayAction, setLeadTimeAction, setSlotActiveAction, slotsScreenAction, updateSlotAction } from '@/server/domains/delivery/slot-actions';
 import type { SlotView } from '@/server/domains/delivery/slots';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
@@ -47,6 +47,7 @@ function Body({ initial }: { initial: Screen }) {
         </ul>
       </section>
       <ClosedDays closed={data.closed} onChanged={(t) => void reload(t)} onError={fail} />
+      <LeadTimes leads={data.leads} onChanged={(t) => void reload(t)} onError={fail} />
     </div>
   );
 }
@@ -60,11 +61,12 @@ function SlotForm({ slot, onSaved, onError }: { slot?: SlotView; onSaved: (text:
   const [endsAt, setEndsAt] = useState(slot?.endsAt ?? '12:00');
   const [capacity, setCapacity] = useState(String(slot?.capacity ?? 10));
   const [cutoff, setCutoff] = useState(String(slot?.cutoffMinutes ?? 120));
+  const [maxWeight, setMaxWeight] = useState(slot?.maxWeightKg == null ? '' : String(slot.maxWeightKg));
   const [busy, setBusy] = useState(false);
   const saveWords = slot === undefined ? 'Add the slot' : 'Save the slot';
   const save = async () => {
     setBusy(true);
-    const body = { name, weekdays, startsAt, endsAt, capacity: Number(capacity), cutoffMinutes: Number(cutoff) };
+    const body = { name, weekdays, startsAt, endsAt, capacity: Number(capacity), cutoffMinutes: Number(cutoff), maxWeightKg: maxWeight.trim() === '' ? null : Number(maxWeight) };
     const r = await attempt(slot === undefined ? createSlotAction({ ...body, branchId: branch?.id ?? '' }) : updateSlotAction({ ...body, id: slot.id, expectedVersion: slot.version }));
     setBusy(false);
     if (r.ok) onSaved(slot === undefined ? 'The slot is added.' : 'The slot is saved. Deliveries already promised it keep the window they were promised.');
@@ -109,6 +111,9 @@ function SlotForm({ slot, onSaved, onError }: { slot?: SlotView; onSaved: (text:
           <input id={`${uid}-o`} inputMode="numeric" className={fieldClass} value={cutoff} onChange={(e) => setCutoff(e.target.value)} required />
         </Field>
       </div>
+      <Field id={`${uid}-w`} label="Most it can carry in a day, in kg (empty for no limit)">
+        <input id={`${uid}-w`} inputMode="decimal" className={fieldClass} value={maxWeight} onChange={(e) => setMaxWeight(e.target.value)} autoComplete="off" />
+      </Field>
       <button type="submit" className={primaryClass} disabled={busy}>
         {busy ? 'Saving…' : saveWords}
       </button>
@@ -134,7 +139,7 @@ function SlotRow({ slot, onSaved, onError }: { slot: SlotView; onSaved: (text: s
             {slot.name} · {slot.branchName}
           </p>
           <p className="text-sm text-fg">
-            {slot.weekdaysWords} · {slot.startsAt} to {slot.endsAt} · room for {slot.capacity} a day · closes {slot.cutoffMinutes} minutes before
+            {slot.weekdaysWords} · {slot.startsAt} to {slot.endsAt} · room for {slot.capacity} a day{slot.maxWeightKg === null ? '' : `, up to ${String(slot.maxWeightKg)} kg`} · closes {slot.cutoffMinutes} minutes before
           </p>
         </div>
         <Chip tone={slot.isActive ? 'green' : 'gray'}>{slot.isActive ? 'Offered' : 'Stopped'}</Chip>
@@ -224,5 +229,86 @@ function ClosedDays({ closed, onChanged, onError }: { closed: Screen['closed']; 
         </ul>
       )}
     </section>
+  );
+}
+
+/** How long the goods need before they can go, for a zone or an item: a slot cannot start before the longest that applies to a delivery. */
+function LeadTimes({ leads, onChanged, onError }: { leads: Screen['leads']; onChanged: (text: string) => void; onError: (text: string) => void }) {
+  return (
+    <section aria-label="Lead times" className={`${cardClass} space-y-3`}>
+      <h3 className="text-sm font-bold text-fg-strong">How long the goods need</h3>
+      <p className="text-xs text-fg-muted">The least time from the order to the goods being ready, for a delivery zone (far away) or for an item (fresh fish, made to order, large goods). A delivery cannot be promised a slot that starts before the longest of these that apply to it and the branch&apos;s own handling time.</p>
+      <LeadForm kind="zone" onChanged={onChanged} onError={onError} />
+      <LeadForm kind="item" onChanged={onChanged} onError={onError} />
+      {leads.length === 0 ? (
+        <p role="status" className="text-sm text-fg-muted">
+          No lead time is set.
+        </p>
+      ) : (
+        <ul className="divide-y divide-line text-sm" aria-label="Lead time list">
+          {leads.map((l) => (
+            <li key={l.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+              <span>
+                <strong>{l.name}</strong> ({l.kind === 'zone' ? 'zone' : 'item'}) · {l.words}
+                {l.note === null ? '' : ` · ${l.note}`}
+              </span>
+              <InlineConfirm
+                label={`Remove the lead time of ${l.name}`}
+                action="Remove"
+                confirm="Yes, remove it"
+                onConfirm={() => {
+                  void (async () => {
+                    const r = await attempt(removeLeadTimeAction({ id: l.id }));
+                    if (r.ok) onChanged('The lead time is removed.');
+                    else onError(r.error);
+                  })();
+                }}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function LeadForm({ kind, onChanged, onError }: { kind: 'zone' | 'item'; onChanged: (text: string) => void; onError: (text: string) => void }) {
+  const uid = useId();
+  const [pick, setPick] = useState<Choice | null>(null);
+  const [minutes, setMinutes] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const word = kind === 'zone' ? 'zone' : 'item';
+  const save = async () => {
+    setBusy(true);
+    const r = await attempt(setLeadTimeAction({ kind, refId: pick?.id ?? '', minutes: Number(minutes), note }));
+    setBusy(false);
+    if (r.ok) {
+      setPick(null);
+      setMinutes('');
+      setNote('');
+      onChanged('The lead time is saved.');
+    } else onError(r.error);
+  };
+  return (
+    <form
+      aria-label={`Lead time for ${kind === 'zone' ? 'a zone' : 'an item'}`}
+      className="grid grid-cols-1 items-end gap-3 sm:grid-cols-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void save();
+      }}
+    >
+      <ChoicePicker label={kind === 'zone' ? 'Zone' : 'Item'} source={kind === 'zone' ? 'lead-time-zones' : 'lead-time-products'} choice={pick} onChoice={setPick} placeholder={kind === 'zone' ? 'Choose a zone' : 'Search products'} />
+      <Field id={`${uid}-m`} label={`Minutes the ${word} needs`}>
+        <input id={`${uid}-m`} inputMode="numeric" className={fieldClass} value={minutes} onChange={(e) => setMinutes(e.target.value)} required />
+      </Field>
+      <Field id={`${uid}-n`} label="Note">
+        <input id={`${uid}-n`} className={fieldClass} value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} autoComplete="off" />
+      </Field>
+      <button type="submit" className={primaryClass} disabled={busy}>
+        Save the {word}&apos;s lead time
+      </button>
+    </form>
   );
 }
