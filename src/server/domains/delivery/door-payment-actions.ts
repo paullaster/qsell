@@ -30,6 +30,11 @@ export async function setDoorCashMethodAction(raw: unknown) {
   return await runDelivery('door_payments:manage', async (ctx) => dataOf(await getContainer().doorPayments.setCashMethod({ companyId: ctx.companyId, userId: ctx.userId }, objectOf(raw))), SETTINGS_PATHS);
 }
 
+/** Lets shoppers choose "Pay on delivery" at checkout, with the largest order taken that way. */
+export async function setPayOnDeliveryAction(raw: unknown) {
+  return await runDelivery('door_payments:manage', async (ctx) => dataOf(await getContainer().doorPayments.setPayOnDelivery({ companyId: ctx.companyId, userId: ctx.userId }, objectOf(raw))), SETTINGS_PATHS);
+}
+
 /** What each rider holds now. */
 export async function doorBalancesAction() {
   return await runDelivery('door_payments:manage', async (ctx) => await getContainer().doorPayments.balances(ctx.companyId, businessDate()));

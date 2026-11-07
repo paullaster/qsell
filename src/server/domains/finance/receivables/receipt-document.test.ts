@@ -30,25 +30,34 @@ describe('receipt document', () => {
 
   it('lists only applications that still stand, and names who received it', () => {
     const doc = buildReceiptDocument(detail({}, [{ document_no: 'INV-1', amount: '1000.00', undone: false }, { document_no: 'INV-2', amount: '500.00', undone: true }]), company);
-    expect(doc.applications).toEqual([{ title: 'INV-1', order: null, amount: '1000.00', lines: [], moreLines: 0 }]);
+    expect(doc.items).toEqual([{ description: 'Goods and services sold', quantity: '', unitPrice: null, amount: '1000.00' }]);
+    expect(doc.applied).toBe('1000.00');
     expect(doc.receivedBy).toBe('Wanjiru');
     expect(doc.rate).toBeNull();
     expect(doc.reversedOn).toBeNull();
   });
 
-  it('names the invoice the customer was given and what it was for, never the order number as an invoice number', () => {
-    const line = (name: string, quantity: string, total: string) => ({ name, sku: 'S', quantity, unit: null, unitPrice: '1.00', total, gift: false });
-    const issued = { documentNo: 'ORD-77', invoiceNo: 'INV-0042', orderNumber: 'ORD-77', lines: [line('Blue shirt', '2', '1000.00'), line('Cap', '1', '500.00')] };
-    const unissued = { documentNo: 'ORD-78', invoiceNo: null, orderNumber: 'ORD-78', lines: [line('Socks', '3', '300.00')] };
+  it('lists the items with quantity, price and amount, and never an invoice or order number', () => {
+    const line = (name: string, quantity: string, unitPrice: string, total: string, extra: Record<string, unknown> = {}) => ({ name, sku: 'S', quantity, unit: null, unitPrice, total, gift: false, ...extra });
+    const issued = { documentNo: 'ORD-77', invoiceNo: 'INV-0042', orderNumber: 'ORD-77', lines: [line('Blue shirt', '2.0000', '500.00', '1000.00'), line('Cap', '1', '500.00', '500.00')] };
+    const unissued = { documentNo: 'ORD-78', invoiceNo: null, orderNumber: 'ORD-78', lines: [line('Socks', '3', '100.00', '300.00', { unit: 'PCS' }), line('Free bag', '1', '0.00', '0.00', { gift: true })] };
     const doc = buildReceiptDocument(
       detail({}, [
         { document_no: 'ORD-77', amount: '1500.00', undone: false, ref: issued },
-        { document_no: 'ORD-78', amount: '300.00', undone: false, ref: unissued },
+        { document_no: 'ORD-78', amount: '200.00', undone: false, ref: unissued },
       ]),
       company,
     );
-    expect(doc.applications[0]).toMatchObject({ title: 'Invoice INV-0042', order: 'Order ORD-77', lines: [{ text: '2 × Blue shirt', total: '1000.00' }, { text: '1 × Cap', total: '500.00' }] });
-    expect(doc.applications[1]).toMatchObject({ title: 'Order ORD-78', order: null });
+    expect(doc.items).toEqual([
+      { description: 'Blue shirt', quantity: '2', unitPrice: '500.00', amount: '1000.00' },
+      { description: 'Cap', quantity: '1', unitPrice: '500.00', amount: '500.00' },
+      { description: 'Socks', quantity: '3 PCS', unitPrice: '100.00', amount: '300.00' },
+      { description: 'Free bag (free gift)', quantity: '1', unitPrice: '0.00', amount: '0.00' },
+    ]);
+    // The items are worth 1,800 and this receipt paid 1,700 of it.
+    expect(doc.itemsTotal).toBe('1800.00');
+    expect(doc.applied).toBe('1700.00');
+    expect(JSON.stringify(doc)).not.toMatch(/INV-0042|ORD-77|ORD-78/);
   });
 
   it('carries cheque details, the foreign rate and the reversal date', () => {
@@ -70,7 +79,7 @@ describe('receipt document', () => {
     }
   });
 
-  it('pages a long list of applications', async () => {
+  it('pages a long list of items', async () => {
     const apps = Array.from({ length: 80 }, (_, i) => ({ document_no: `INV-${String(i)}`, amount: '10.00', undone: false }));
     const pdf = await renderReceiptPdf(buildReceiptDocument(detail({}, apps), company), '2026-10-22');
     expect((pdf.toString('latin1').match(/\/Type \/Page\b/g) ?? []).length).toBeGreaterThan(1);

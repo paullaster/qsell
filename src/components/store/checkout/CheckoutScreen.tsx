@@ -30,7 +30,7 @@ type Stage =
       method: PaymentProvider;
     }
   | { name: 'payment_failed'; order: Order; message: string; method: PaymentProvider }
-  | { name: 'done'; order: Order; receipt: string | null; onAccount: boolean };
+  | { name: 'done'; order: Order; receipt: string | null; onAccount: boolean; payOnDelivery: boolean };
 
 /** The checkout, as a page: the form, then the wait for the payment, then the confirmation. */
 export function CheckoutScreen({ cartHandoff }: { cartHandoff?: string }) {
@@ -101,7 +101,7 @@ export function CheckoutScreen({ cartHandoff }: { cartHandoff?: string }) {
 
   /** Where a payment goes next: waiting for the provider, or failed with a reason. */
   const route = (order: Order, payment: CheckoutPayment, method: PaymentProvider): Stage => {
-    if (payment.kind === 'none') return { name: 'done', order, receipt: null, onAccount: true };
+    if (payment.kind === 'none') return { name: 'done', order, receipt: null, onAccount: method === 'on_account', payOnDelivery: method === 'pay_on_delivery' };
     if (payment.kind === 'failed')
       return { name: 'payment_failed', order, message: payment.message, method };
     if (payment.kind === 'hosted' && payment.redirectUrl !== null)
@@ -144,6 +144,7 @@ export function CheckoutScreen({ cartHandoff }: { cartHandoff?: string }) {
       order: confirmed?.ok === true && confirmed.data !== null ? confirmed.data : order,
       receipt,
       onAccount: false,
+      payOnDelivery: false,
     });
   };
 
@@ -179,7 +180,7 @@ export function CheckoutScreen({ cartHandoff }: { cartHandoff?: string }) {
 
   if (stage.name === 'done')
     return (
-      <OrderComplete order={stage.order} receipt={stage.receipt} onAccount={stage.onAccount} />
+      <OrderComplete order={stage.order} receipt={stage.receipt} onAccount={stage.onAccount} payOnDelivery={stage.payOnDelivery} />
     );
   if (stage.name === 'paying') {
     return (

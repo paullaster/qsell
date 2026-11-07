@@ -78,7 +78,11 @@ export async function createDeliveryAction(raw: unknown) {
             return { productId: typeof r.productId === 'string' ? r.productId : '', quantity: typeof r.quantity === 'number' ? r.quantity : Number.NaN };
           })
         : null;
-      return dataOf(await getContainer().deliveryDocuments.create({ companyId: ctx.companyId, userId: ctx.userId }, idOf(i.orderId, 'order'), { lines, notes: i.notes }));
+      const actor = { companyId: ctx.companyId, userId: ctx.userId };
+      const made = dataOf(await getContainer().deliveryDocuments.create(actor, idOf(i.orderId, 'order'), { lines, notes: i.notes }));
+      // An order the customer chose to pay on delivery goes out to be paid at the door; if that cannot be marked the delivery screen says why.
+      await getContainer().doorPayments.markIfPayOnDelivery(actor, made.id);
+      return made;
     },
     PATHS,
   );

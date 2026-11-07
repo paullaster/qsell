@@ -11,6 +11,7 @@ import type { EmailPort } from '@/server/ports/communications';
 import { StockReissue } from '@/server/domains/delivery/reissue';
 import { DeliveryRiders } from '@/server/domains/delivery/riders';
 import { DoorPayments } from '@/server/domains/delivery/door-payments';
+import { DeliveryCosts } from '@/server/domains/delivery/costs';
 import { DoorWork } from '@/server/domains/delivery/door';
 import type { CustomerMasterService } from '@/server/domains/customers/master-service';
 import { RiderRuns } from '@/server/domains/delivery/rider-runs';
@@ -62,9 +63,10 @@ export function createDeliveryServices(input: {
   const deliveryDocuments = new DeliveryDocuments(input.db, input.decisionLog, input.numbering, input.stockReservations, deliveryMessages);
   const deliveryRiders = new DeliveryRiders(input.db, input.decisionLog, input.usersAdmin);
   const riderRuns = new RiderRuns(input.db);
-  const deliveryRuns = new DeliveryRuns(input.db, input.decisionLog, input.numbering, deliveryDocuments, deliveryRiders);
+  const deliveryCosts = new DeliveryCosts(input.db, input.decisionLog);
+  const deliveryRuns = new DeliveryRuns(input.db, input.decisionLog, input.numbering, deliveryDocuments, deliveryRiders, deliveryCosts);
   const doorPayments = new DoorPayments(input.db, input.decisionLog, deliveryDocuments, input.customers);
-  const doorWork = new DoorWork(input.db, deliveryDocuments, deliveryRuns, input.decisionLog, doorPayments);
+  const doorWork = new DoorWork(input.db, deliveryDocuments, deliveryRuns, input.decisionLog, doorPayments, deliveryCosts);
   const courierShipments = new CourierShipments(input.db, deliveryDocuments);
   const trackedOrders = new TrackedOrders(input.db, input.companySettings, deliveryDocuments, orderCollections);
   const stockReissue = new StockReissue(input.db, input.decisionLog, input.stockReservations);
@@ -90,6 +92,7 @@ export function createDeliveryServices(input: {
     riderRuns,
     doorWork,
     doorPayments,
+    deliveryCosts,
     courierShipments,
     deliveryBilling,
   };

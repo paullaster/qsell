@@ -16,6 +16,8 @@ export interface InvoiceReferenceView {
   /** The tax invoice number issued for the order, when one has been issued. */
   invoiceNo: string | null;
   orderNumber: string | null;
+  /** The order's own id, for a link to it. */
+  orderId?: string | null;
   lines: InvoiceLineView[];
 }
 

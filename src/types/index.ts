@@ -211,6 +211,11 @@ export interface CurrencyConfig {
   symbolPosition: 'prefix' | 'suffix';
   isEnabled: boolean;
   flagEmoji?: string;
+  /**
+   * Set when the books' rate for this currency decides the one above: the books' rate (base currency per one unit of this one) and the
+   * day it started. Only the admin screens read it.
+   */
+  financeRate?: { rate: string; since: string } | null;
   updatedAt: string;
 }
 
@@ -244,7 +249,7 @@ export interface InventoryLedgerEntry {
 }
 
 export type PaymentProvider =
-  'mpesa_daraja' | 'pesapal_v3' | 'jenga_hq' | 'kcb_buni' | 'card_direct' | 'on_account';
+  'mpesa_daraja' | 'pesapal_v3' | 'jenga_hq' | 'kcb_buni' | 'card_direct' | 'on_account' | 'pay_on_delivery';
 
 export interface PaymentGatewayConfig {
   id: string;

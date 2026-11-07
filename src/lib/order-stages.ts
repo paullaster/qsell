@@ -146,6 +146,7 @@ export const CHECKOUT_REFUSALS = [
   'cannot_be_priced',
   'coupon_refused',
   'credit_limit',
+  'pay_on_delivery',
   'approval_needed',
   'kit_error',
   'delivery_unavailable',

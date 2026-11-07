@@ -1,8 +1,15 @@
 'use client';
 
-import { useId, useMemo, useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { Copy, Plus, X } from 'lucide-react';
-import { buildCatalogueIndex, type CatalogueProduct } from '@/lib/catalogue-entry';
+import type { CatalogueProduct } from '@/lib/catalogue-entry';
+import { ProductEditLink } from '@/components/admin/ProductEditLink';
+import { ReplaceProductDialog } from './quote-layout/ReplaceProductDialog';
+import { ReplaceLineButton } from './quote-layout/ReplaceLineButton';
+import { ReplacedNotice } from './quote-layout/ReplacedNotice';
+import { useLineReplace } from './quote-layout/useLineReplace';
+import { useRefreshedProducts } from './quote-layout/useRefreshedProducts';
+import { replaceTemplateLineProduct } from '@/lib/quote-replace';
 import {
   firstUnpricedFixed,
   priceOnModeChange,
@@ -88,6 +95,7 @@ const inputOf = (template: SectionTemplate): SectionTemplateInput => ({
 /** Reusable sections: a titled group of items a quote can add as a section in one step. */
 export function AdminSectionTemplates({
   products,
+  canEditProducts = false,
   canCreate,
   canUpdate,
   canDelete,
@@ -98,6 +106,8 @@ export function AdminSectionTemplates({
   initialPage,
 }: {
   products: CatalogueProduct[];
+  /** The person may update products: each item then offers a shortcut to the product's edit window. */
+  canEditProducts?: boolean;
   canCreate: boolean;
   canUpdate: boolean;
   canDelete: boolean;
@@ -277,6 +287,7 @@ export function AdminSectionTemplates({
         <SectionTemplateEditor
           initial={editing ? inputOf(editing) : emptyInput()}
           products={products}
+          canEditProducts={canEditProducts}
           onClose={() => {
             setEditorOpen(false);
             onEditorClose?.(false);
@@ -368,11 +379,13 @@ function Actions({
 function SectionTemplateEditor({
   initial,
   products,
+  canEditProducts,
   onClose,
   onSave,
 }: {
   initial: SectionTemplateInput;
   products: CatalogueProduct[];
+  canEditProducts: boolean;
   onClose: () => void;
   onSave: (input: SectionTemplateInput) => Promise<void>;
 }) {
@@ -385,8 +398,8 @@ function SectionTemplateEditor({
   const [bulkOpen, setBulkOpen] = useState(false);
   const [focusLine, setFocusLine] = useState<{ index: number; nonce: number } | null>(null);
   const lastAdded = useRef<{ productId: string } | null>(null);
-  const catalogueIndex = useMemo(() => buildCatalogueIndex(products), [products]);
-  const productById = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
+  // A product saved from an item's Edit shortcut is read again, so the editor shows its new name and price.
+  const { catalogueIndex, productById } = useRefreshedProducts(products);
 
   const update = <K extends keyof SectionTemplateInput>(key: K, value: SectionTemplateInput[K]) =>
     setInput((current) => ({ ...current, [key]: value }));
@@ -395,6 +408,13 @@ function SectionTemplateEditor({
       'lines',
       input.lines.map((line, i) => (i === index ? { ...line, ...patch } : line)),
     );
+  const swap = useLineReplace({
+    lines: input.lines,
+    setLines: (lines) => update('lines', lines),
+    nameOf: (id) => productById.get(id)?.name ?? 'the item',
+    swap: replaceTemplateLineProduct,
+    onTouched: (index) => setFocusLine((c) => ({ index, nonce: (c?.nonce ?? 0) + 1 })),
+  });
   const heldIn = (productId: string) => {
     const here = input.lines.filter((line) => line.productId === productId);
     return here.length === 0 ? null : here.reduce((sum, line) => sum + line.quantity, 0);
@@ -559,6 +579,14 @@ function SectionTemplateEditor({
             </label>
           </fieldset>
 
+          {swap.replaced !== null && (
+            <ReplacedNotice
+              replaced={swap.replaced}
+              detail="Quantity and discount kept; a fixed price is dropped, so the item follows the catalogue price."
+              onUndo={swap.undo}
+              onDismiss={swap.dismiss}
+            />
+          )}
           <section className="space-y-3 rounded-xl border border-line p-3 sm:p-4">
             <h3 className="font-semibold text-fg-strong">Items</h3>
             <QuoteLayoutBoard<BoardItem, never>
@@ -608,7 +636,13 @@ function SectionTemplateEditor({
                 return (
                   <>
                     <td className="p-3">
-                      <div className="font-medium text-fg-strong">{name}</div>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="font-medium text-fg-strong">{name}</div>
+                        <div className="flex shrink-0 items-center">
+                          <ReplaceLineButton name={name} onClick={() => swap.open(index)} />
+                          <ProductEditLink productId={line.productId} name={name} canEdit={canEditProducts} />
+                        </div>
+                      </div>
                       <div className="text-xs text-fg-muted">
                         {product?.sku} ·{' '}
                         {product?.price == null ? 'Price list' : amount(product.price)}
@@ -708,6 +742,16 @@ function SectionTemplateEditor({
           </footer>
         </form>
       </section>
+      {swap.replacing !== null && input.lines[swap.replacing] !== undefined && (
+        <ReplaceProductDialog
+          index={catalogueIndex}
+          currency={CURRENCY}
+          current={{ id: input.lines[swap.replacing].productId, name: productById.get(input.lines[swap.replacing].productId)?.name ?? 'item' }}
+          onHere={heldIn}
+          onChoose={(product) => swap.replaceProduct(swap.replacing ?? 0, product)}
+          onClose={swap.close}
+        />
+      )}
       {catalogOpen && (
         <CataloguePicker
           title="Browse product catalogue"

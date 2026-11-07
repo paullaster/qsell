@@ -584,6 +584,12 @@ export const OrderWriteService = {
     const deliveryTax = delivered?.quote.split.tax ?? 0;
     const orderTax = Math.round((tax + deliveryTax) * 100) / 100;
     const totalAmount = delivered === null ? goodsTotals.totalAmount : Math.round((subtotal + orderTax + shippingFee) * 100) / 100;
+    // Pay on delivery is for orders the shop's own rider takes, within the company's limit: checked here, on the priced order, before anything is held.
+    if (params.paymentMethod === 'pay_on_delivery') {
+      const { doorPayments, companySettings: settingsForDoor } = getContainer();
+      const refusal = await doorPayments.checkPayOnDelivery((await settingsForDoor.ensureSeeded()).id, { deliveryMethod: params.delivery?.method ?? null, currency: params.currency, total: totalAmount });
+      if (refusal !== null) return { success: false, error: refusal, code: 'pay_on_delivery' };
+    }
     // The branch that processes a delivered order is the one chosen for it; stock is held from it first.
     const branchId = delivered?.branch.id ?? params.branchId;
     const orderId =

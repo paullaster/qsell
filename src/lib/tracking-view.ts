@@ -47,6 +47,8 @@ export interface TrackedDelivery {
   canReschedule: boolean;
   /** The day it is wanted again, once chosen. */
   scheduledFor: string | null;
+  /** The window the customer was promised, when a slot was booked. */
+  window?: { start: string; end: string } | null;
 }
 
 export interface TrackedCollection {

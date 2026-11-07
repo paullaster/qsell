@@ -284,6 +284,8 @@ export async function receiptDetailAction(id: string) {
         applicationId: a.application_id,
         invoiceNo: named.title,
         order: named.order,
+        orderId: ref.orderId ?? null,
+        invoiceIssued: has(ref.invoiceNo ?? undefined),
         lines: shown.map((l) => ({ text: lineText(l), total: l.total })),
         moreLines: more,
         amount: a.amount,

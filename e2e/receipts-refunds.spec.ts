@@ -107,9 +107,20 @@ test.describe('receipts', () => {
     await page.getByRole('button', { name: 'Save and post' }).click();
     await expect(page).toHaveURL(/\/admin\/finance\/receipts\/[0-9a-f-]{36}$/, { timeout: 30_000 });
     await expect(page.getByText('Applied to invoices')).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText(`Invoice E2E-TI-${label.toUpperCase()}`, { exact: true }).first()).toBeVisible();
+    // The numbers are links: the order opens that order, the invoice opens that invoice's preview.
+    const receiptUrl = page.url();
+    const orderLink = page.getByRole('link', { name: `Open Order E2E-CR-${label.toUpperCase()}` });
+    await expect(orderLink).toHaveAttribute('href', /^\/admin\/orders\?order=[\w-]+$/);
+    await expect(page.getByRole('link', { name: `Open Invoice E2E-TI-${label.toUpperCase()}` })).toHaveAttribute('href', /^\/admin\/orders\?order=[\w-]+&invoice=1$/);
     await expect(page.getByText(/Fish kg Shop/).first()).toBeVisible();
     await noHorizontalScroll(page);
+    await orderLink.click();
+    await expect(page.getByRole('dialog', { name: new RegExp(`Order Details: .*E2E-CR-${label.toUpperCase()}`) })).toBeVisible({ timeout: 60_000 });
+    await page.goto(receiptUrl);
+    await page.getByRole('link', { name: `Open Invoice E2E-TI-${label.toUpperCase()}` }).click();
+    await expect(page.getByRole('dialog', { name: 'Tax invoice preview' })).toBeVisible({ timeout: 60_000 });
+    await page.goto(receiptUrl);
+    await expect(page.getByText('Applied to invoices')).toBeVisible({ timeout: 30_000 });
     const href = (await page.getByRole('link', { name: /^Download receipt/ }).getAttribute('href')) ?? '';
     const file = await request.get(href);
     expect(file.status()).toBe(200);

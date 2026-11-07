@@ -7,6 +7,9 @@
  *   tsx e2e/support/rider-fixtures.ts door-setup <any>  makes sure there is a payment method of kind cash to receive cash at the door through, and prints its name
  *   tsx e2e/support/rider-fixtures.ts door <delivery number>  what cash at the door did: the order's payment, the custody entries and whether the sale was queued for the books
  *   tsx e2e/support/rider-fixtures.ts mpesa-sent <delivery number>  makes it look as if the rider had sent an M-Pesa prompt for the delivery that is still waiting for the customer
+ *   tsx e2e/support/rider-fixtures.ts pay-accounts <any>  makes the two books accounts rider pay goes to (a cost and what is owed to riders) and prints their names, and the name of the cash method a rider can be paid through
+ *   tsx e2e/support/rider-fixtures.ts paid-order <tag>  places an order for the test shop's salt and marks it paid, and prints its number and the customer's name (for a visit to be booked for it)
+ *   tsx e2e/support/rider-fixtures.ts late <delivery number>  promises a delivery a window that ended an hour ago (as if its slot had been booked) and runs the lateness scan, so it is late and has been raised
  *   tsx e2e/support/rider-fixtures.ts reset <tag>   ends every rider and puts the choice of rider kinds back to the default (staff only), so other tests are not asked about riders
  */
 import { execFileSync } from 'node:child_process';
@@ -79,7 +82,7 @@ async function doorSetup(): Promise<Record<string, string>> {
   if (riders === undefined) throw new Error('e2e fixture: the cash with riders method could not be made');
   // Start from "not chosen yet", so the test chooses it on the screen.
   await db.delete(deliveryDoorSettings).where(eq(deliveryDoorSettings.companyId, company.id));
-  return { name: riders.name, id: riders.id, till: tillBank?.name ?? '', variance: 'Cash over and short E2E' };
+  return { name: riders.name, id: riders.id, till: tillBank?.name ?? '', tillMethod: till.name, variance: 'Cash over and short E2E' };
 }
 
 async function doorState(number: string): Promise<Record<string, string>> {
@@ -121,6 +124,66 @@ async function mpesaSent(number: string): Promise<Record<string, string>> {
   return { attemptId: attempt.id };
 }
 
+async function payAccounts(): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { glAccounts, paymentMethods, deliveryPaySettings } = await import('@/server/db/drizzle/schema');
+  const { and, eq } = await import('drizzle-orm');
+  const company = await getContainer().companySettings.ensureSeeded();
+  await db.insert(glAccounts).values({ companyId: company.id, no: '6277E2E', name: 'Rider pay E2E', type: 'posting', category: 'expense', normalBalance: 'debit' }).onConflictDoNothing();
+  await db.insert(glAccounts).values({ companyId: company.id, no: '2199E2E', name: 'Owed to riders E2E', type: 'posting', category: 'liabilities', normalBalance: 'credit' }).onConflictDoNothing();
+  // Not chosen yet, so the test chooses them on the screen.
+  await db.update(deliveryPaySettings).set({ expenseGlAccountId: null, payableGlAccountId: null }).where(eq(deliveryPaySettings.companyId, company.id));
+  const [till] = await db.select({ name: paymentMethods.name }).from(paymentMethods).where(and(eq(paymentMethods.companyId, company.id), eq(paymentMethods.kind, 'cash'), eq(paymentMethods.code, 'CASH')));
+  const [any] = till === undefined ? await db.select({ name: paymentMethods.name }).from(paymentMethods).where(and(eq(paymentMethods.companyId, company.id), eq(paymentMethods.kind, 'cash'))) : [till];
+  return { expense: 'Rider pay E2E', payable: 'Owed to riders E2E', method: any?.name ?? '' };
+}
+
+async function paidOrder(tag: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { products } = await import('@/server/db/drizzle/schema');
+  const { eq } = await import('drizzle-orm');
+  const { OrderWriteService } = await import('@/server/domains/orders/write-service');
+  const { OrderStages } = await import('@/server/domains/orders/stages');
+  const [salt] = await db.select({ id: products.id }).from(products).where(eq(products.name, 'Salt 500g'));
+  if (salt === undefined) throw new Error('The test shop has no Salt 500g.');
+  // Some salt on the main shelf in the stock ledger, so a visit has something to use.
+  const container = (await import('@/server/di/container')).getContainer();
+  const company = await container.companySettings.ensureSeeded();
+  const shelf = await container.stockLocations.ensureDefault(company.id);
+  await db.transaction((tx) => container.stockLedger.post(tx, { companyId: company.id, productId: salt.id, locationId: shelf.id, type: 'receipt', quantity: 20, unitCost: 10, actor: { type: 'job' } }));
+  const orderNumber = `VST-${tag}-${String(Date.now()).slice(-6)}`;
+  const made = await OrderWriteService.createOrder({
+    orderNumber,
+    customerName: `Visit Buyer ${tag}`,
+    customerEmail: `visit-${tag}-${String(Date.now())}@example.test`.toLowerCase(),
+    customerPhone: '0711000333',
+    shippingAddress: { street: '1 Test Rd', city: 'Nairobi', countyOrState: 'Nairobi', country: 'KE' },
+    items: [{ productId: salt.id, quantity: 1 }],
+    currency: 'KES',
+    paymentMethod: 'mpesa_daraja',
+  });
+  if (!made.success || made.order === undefined) throw new Error(made.error);
+  await OrderStages.move(db, made.order.id, 'payment_confirmed', 'succeeded', {});
+  return { orderNumber, customer: `Visit Buyer ${tag}` };
+}
+
+async function lateWindow(number: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { deliveries, deliverySlots } = await import('@/server/db/drizzle/schema');
+  const { eq } = await import('drizzle-orm');
+  const { getContainer } = await import('@/server/di/container');
+  const company = await getContainer().companySettings.ensureSeeded();
+  const [d] = await db.select({ id: deliveries.id, branchId: deliveries.branchId }).from(deliveries).where(eq(deliveries.number, number));
+  if (d === undefined) throw new Error(`There is no delivery ${number}.`);
+  const [slot] = await db.insert(deliverySlots).values({ companyId: company.id, branchId: d.branchId, name: `Late ${number}`, weekdays: [1, 2, 3, 4, 5, 6, 7], startsAt: '09:00', endsAt: '12:00', capacity: 5, createdBy: 'e2e' }).returning({ id: deliverySlots.id });
+  const now = Date.now();
+  const start = new Date(now - 3 * 3_600_000);
+  await db.update(deliveries).set({ slotId: slot?.id ?? null, slotDay: new Date(now + 3 * 3_600_000).toISOString().slice(0, 10), windowStart: start, windowEnd: new Date(now - 3_600_000), slotBookedAt: new Date(now), slotBookedBy: 'e2e' }).where(eq(deliveries.id, d.id));
+  const r = await getContainer().deliverySla.scan();
+  return { raised: String(r.raised) };
+}
+
 async function reset(): Promise<Record<string, string>> {
   const { getContainer } = await import('@/server/di/container');
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
@@ -144,8 +207,11 @@ async function main(): Promise<void> {
   if (command === 'door-setup') result = await doorSetup();
   if (command === 'door' && tag !== undefined) result = await doorState(tag);
   if (command === 'mpesa-sent' && tag !== undefined) result = await mpesaSent(tag);
+  if (command === 'pay-accounts') result = await payAccounts();
+  if (command === 'paid-order' && tag !== undefined) result = await paidOrder(tag);
+  if (command === 'late' && tag !== undefined) result = await lateWindow(tag);
   if (command === 'reset') result = await reset();
-  if (result === null) throw new Error('usage: rider-fixtures staff <tag> | code <delivery number> | token <order number> | proof <rule> | door-setup | door <delivery number> | mpesa-sent <delivery number> | reset');
+  if (result === null) throw new Error('usage: rider-fixtures staff <tag> | code <delivery number> | token <order number> | proof <rule> | door-setup | door <delivery number> | mpesa-sent <delivery number> | pay-accounts <any> | reset');
   process.stdout.write(`FIXTURE ${JSON.stringify(result)}\n`);
 }
 

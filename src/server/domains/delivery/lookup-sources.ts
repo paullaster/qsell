@@ -1,6 +1,7 @@
 import { DISPOSITION_WORDS, ISSUE_MOMENTS, ISSUE_MOMENT_WORDS, RETURN_DISPOSITIONS } from '@/lib/stock-issue';
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { branches, customerGroups, deliveryRiderSettings, deliveryRiders, bankAccounts, deliveryRuns, deliveryZones, glAccounts, paymentMethods, products, users } from '@/server/db/drizzle/schema';
+import { stockLocations, orders, orderVisits, branches, customerGroups, deliveryRiderSettings, deliveryRiders, bankAccounts, deliveryRuns, deliveryZones, glAccounts, paymentMethods, products, users } from '@/server/db/drizzle/schema';
+import { COST_KINDS, COST_WORDS } from '@/lib/delivery-cost';
 import { RIDER_KINDS, RIDER_KIND_WORDS, RIDER_STATUSES, RIDER_STATUS_WORDS } from '@/lib/delivery-rider';
 import { RUN_STATUSES, RUN_STATUS_WORDS } from '@/lib/dispatch-run';
 import { DELIVERY_STATUSES, FAILURE_REASONS, STATUS_WORDS } from '@/lib/delivery-document';
@@ -296,4 +297,146 @@ const varianceAccounts = tableSource({
   toOption: (row) => ({ id: text(row.id), label: `${text(row.no)} ${text(row.label)}`.trim(), description: null, badge: null }),
 });
 
-export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts, deliveryStatuses, deliveryFailureReasons, stockIssueMoments, returnDispositions, openRuns, runStatuses, courierNews, riders, staffToRide, riderKinds, riderStatuses, doorCashMethods, handInAccounts, handInWitnesses, varianceAccounts];
+/** Books accounts rider pay can be booked to: open accounts that take postings. */
+const costAccounts = tableSource({
+  key: 'delivery-cost-accounts',
+  permission: 'delivery_costs:manage',
+  table: glAccounts,
+  id: glAccounts.id,
+  label: glAccounts.name,
+  searchColumns: [glAccounts.name, glAccounts.no],
+  select: { no: glAccounts.no },
+  scope: ({ filters, companyId }) => {
+    acceptFilters(filters, {});
+    return [and(eq(glAccounts.companyId, companyId), eq(glAccounts.type, 'posting'), eq(glAccounts.blocked, false)) ?? sql`false`];
+  },
+  toOption: (row) => ({ id: text(row.id), label: `${text(row.no)} ${text(row.label)}`.trim(), description: null, badge: null }),
+});
+
+/** Payment methods a rider can be paid through: cash, mobile money or the bank, switched on. */
+const payoutMethods = tableSource({
+  key: 'rider-payout-methods',
+  permission: 'delivery_costs:manage',
+  table: paymentMethods,
+  id: paymentMethods.id,
+  label: paymentMethods.name,
+  searchColumns: [paymentMethods.name, paymentMethods.code],
+  select: { code: paymentMethods.code, kind: paymentMethods.kind },
+  scope: ({ filters, companyId }) => {
+    acceptFilters(filters, {});
+    return [and(eq(paymentMethods.companyId, companyId), eq(paymentMethods.enabled, true), sql`${paymentMethods.kind} IN ('cash','mobile_money','bank_transfer','bank_deposit')`) ?? sql`false`];
+  },
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.code), badge: text(row.kind) }),
+});
+
+/** Staff who can go on a visit's crew: active members of staff. */
+const visitCrew = tableSource({
+  key: 'visit-crew',
+  permission: 'visits:manage',
+  table: users,
+  id: users.id,
+  label: users.name,
+  searchColumns: [users.name, users.email],
+  select: { email: users.email },
+  scope: ({ filters }) => {
+    acceptFilters(filters, {});
+    return [and(eq(users.status, 'active'), eq(users.isActive, true), sql`(${users.role} = 'super_admin' OR EXISTS (SELECT 1 FROM roles r WHERE r.key = ${users.role} AND r.is_staff AND r.is_active))`) ?? sql`false`];
+  },
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.email), badge: null }),
+});
+
+/** Orders a visit can be booked for: not closed, not delivered, and without a live visit already. */
+const visitOrders = tableSource({
+  key: 'visit-orders',
+  permission: 'visits:manage',
+  table: orders,
+  id: orders.id,
+  label: orders.orderNumber,
+  searchColumns: [orders.orderNumber, orders.customerName, orders.customerPhone],
+  select: { customer: orders.customerName },
+  scope: ({ filters }) => {
+    acceptFilters(filters, {});
+    return [
+      and(
+        sql`${orders.status} NOT IN ('cancelled','refunded','failed','delivered','completed')`,
+        sql`NOT EXISTS (SELECT 1 FROM ${orderVisits} v WHERE v.order_id = ${orders.id} AND v.status <> 'cancelled')`,
+      ) ?? sql`false`,
+    ];
+  },
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.customer), badge: null }),
+});
+
+/** Products whose stock a crew can use on a visit: products that hold stock. */
+const visitProducts = tableSource({
+  key: 'visit-products',
+  permission: 'visits:work',
+  table: products,
+  id: products.id,
+  label: products.name,
+  searchColumns: [products.name, products.sku, products.stockCode],
+  select: { sku: products.sku },
+  scope: ({ filters }) => {
+    acceptFilters(filters, {});
+    return [and(isNull(products.deletedAt), eq(products.inventoryKind, 'inventory')) ?? sql`false`];
+  },
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.sku) === '' ? null : text(row.sku), badge: null }),
+});
+
+/** Where the materials are taken from: the company's open places that hold stock. */
+const visitLocations = tableSource({
+  key: 'visit-locations',
+  permission: 'visits:work',
+  table: stockLocations,
+  id: stockLocations.id,
+  label: stockLocations.name,
+  searchColumns: [stockLocations.code, stockLocations.name],
+  select: { code: stockLocations.code },
+  scope: ({ filters, companyId }) => {
+    acceptFilters(filters, {});
+    return [and(eq(stockLocations.companyId, companyId), eq(stockLocations.isActive, true), sql`${stockLocations.kind} NOT IN ('transit','damaged','quarantine')`) ?? sql`false`];
+  },
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.code), badge: null }),
+});
+
+/** Products a lead time can be set for: any product still sold. */
+const leadProducts = tableSource({
+  key: 'lead-time-products',
+  permission: 'delivery_slots:manage',
+  table: products,
+  id: products.id,
+  label: products.name,
+  searchColumns: [products.name, products.sku, products.stockCode],
+  select: { sku: products.sku },
+  scope: ({ filters }) => {
+    acceptFilters(filters, {});
+    return [isNull(products.deletedAt)];
+  },
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.sku) === '' ? null : text(row.sku), badge: null }),
+});
+
+/** The company's open delivery zones, for setting a lead time. */
+const leadZones = tableSource({
+  key: 'lead-time-zones',
+  permission: 'delivery_slots:manage',
+  table: deliveryZones,
+  id: deliveryZones.id,
+  label: deliveryZones.name,
+  searchColumns: [deliveryZones.code, deliveryZones.name],
+  select: { code: deliveryZones.code },
+  scope: ({ filters, companyId }) => {
+    acceptFilters(filters, {});
+    return [and(eq(deliveryZones.companyId, companyId), eq(deliveryZones.isActive, true)) ?? sql`false`];
+  },
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.code), badge: null }),
+});
+
+const costKinds = staticSource({
+  key: 'delivery-cost-kinds',
+  permission: 'delivery_costs:manage',
+  items: ({ filters }) => {
+    acceptFilters(filters, {});
+    return COST_KINDS.map((id) => ({ id, label: COST_WORDS[id], description: null, badge: null }));
+  },
+});
+
+export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts, deliveryStatuses, deliveryFailureReasons, stockIssueMoments, returnDispositions, openRuns, runStatuses, courierNews, riders, staffToRide, riderKinds, riderStatuses, doorCashMethods, handInAccounts, handInWitnesses, varianceAccounts, costKinds, payoutMethods, costAccounts, visitCrew, visitOrders, visitProducts, visitLocations, leadProducts, leadZones];

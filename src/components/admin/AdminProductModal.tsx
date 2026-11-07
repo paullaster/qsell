@@ -39,6 +39,7 @@ import {
 import { discardMediaUploadsAction } from '@/server/domains/media/actions';
 import { ProductMediaManager } from '@/components/admin/ProductMediaManager';
 import { ProductEtimsPanel } from '@/components/admin/ProductEtimsPanel';
+import { useModalKeys } from '@/components/ui/useModalKeys';
 import {
   ProductUnitsSection,
   type PackagingRowState,
@@ -608,6 +609,8 @@ function AdminProductModalForm({
     closing.current = false;
     onClose();
   };
+  // Escape closes the window the way the Close button does (discarding uploads nothing uses), Tab stays inside it, and focus goes back to the opener.
+  const dialogRef = useModalKeys<HTMLDivElement>(() => void handleClose());
 
   const goNext = () => {
     const next = visibleTabs[tabIndex + 1];
@@ -632,6 +635,7 @@ function AdminProductModalForm({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-backdrop/80 p-3 backdrop-blur-md sm:p-5">
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="product-modal-title"

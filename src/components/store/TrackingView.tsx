@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { RescheduleForm } from './RescheduleForm';
 import { CUSTOMER_STATUS_WORDS, HEADLINE, collectionWords, customerTone, trackingSteps, type TrackedOrder } from '@/lib/tracking-view';
+import { windowWords } from '@/lib/delivery-sla';
 
 const TONE: Record<ReturnType<typeof customerTone>, string> = {
   progress: 'bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200',
@@ -68,6 +69,11 @@ export function TrackingView({ order, heading, token }: { order: TrackedOrder; h
               <p className="text-xs text-fg-muted">
                 With {d.courier.name}
                 {d.courier.trackingNumber === null ? '' : `, their tracking number is ${d.courier.trackingNumber}`}.
+              </p>
+            )}
+            {d.window == null || d.status === 'delivered' ? null : (
+              <p className="text-sm text-fg" role="note">
+                Promised: <strong>{windowWords(new Date(d.window.start), new Date(d.window.end))}</strong>
               </p>
             )}
             {d.scheduledFor === null || d.status === 'delivered' ? null : (

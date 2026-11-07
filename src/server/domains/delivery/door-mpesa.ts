@@ -1,6 +1,6 @@
-import { and, count, desc, eq, isNull } from 'drizzle-orm';
+import { and, asc, count, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { deliveries, deliveryDoorPrompts, deliveryRunStops, deliveryRuns, orders, paymentAttempts } from '@/server/db/drizzle/schema';
+import { deliveries, deliveryDoorPrompts, deliveryRunStops, deliveryRuns, orders, paymentAttempts, paymentMethods, paymentProviderConfigs } from '@/server/db/drizzle/schema';
 import { MAX_DOOR_PROMPTS, PROMPT_FAILED_WORDS, promptProblem, promptState, type PromptState } from '@/lib/door-payment';
 import { toKenyanMsisdn } from '@/lib/phone';
 import type { RateRuleName } from '@/lib/rate-limit';
@@ -94,8 +94,17 @@ export class DoorMpesa {
       const limited = await this.deps.limit(rule, subject);
       if (limited !== null) return fail('not_allowed', limited);
     }
-    // The books find the method by what the order says it is paid with: this payment is an M-Pesa one, whatever the order began as.
-    await this.db.update(orders).set({ paymentMethod: 'mpesa_daraja', paymentMethodId: null, updatedAt: new Date() }).where(eq(orders.id, order.id));
+    // The books find the method this is paid through by the order's payment method id: this payment is an M-Pesa one, whatever the order
+    // began as. The order's own words ("pay on delivery") are left alone, so the sweep that gives back stock for a payment that failed
+    // (it looks at online methods) never touches goods that are still on the rider's truck.
+    const [mpesa] = await this.db
+      .select({ id: paymentMethods.id })
+      .from(paymentMethods)
+      .innerJoin(paymentProviderConfigs, eq(paymentProviderConfigs.id, paymentMethods.providerId))
+      .where(and(eq(paymentMethods.companyId, self.companyId), eq(paymentMethods.enabled, true), sql`(${paymentMethods.legacyCodes} ? 'mpesa_daraja' OR ${paymentProviderConfigs.providerCode} = 'mpesa_daraja')`))
+      .orderBy(asc(paymentMethods.sortOrder))
+      .limit(1);
+    if (mpesa !== undefined) await this.db.update(orders).set({ paymentMethodId: mpesa.id, updatedAt: new Date() }).where(eq(orders.id, order.id));
     let started: StartedPayment;
     try {
       started = await this.deps.start({ orderId: order.id, providerCode: 'mpesa_daraja', payerPhone: phone, source: 'rider_app' });

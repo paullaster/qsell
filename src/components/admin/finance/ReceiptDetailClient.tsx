@@ -20,6 +20,7 @@ import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { ReceiptPdfActions } from './ReceiptPdfActions';
 import { CHEQUE_STATUS, RECEIPT_STATUS, statusInfo } from '@/lib/finance-statuses';
 import { has, plain, recordValue } from '@/lib/finance-history';
+import { invoiceHref, orderHref } from '@/lib/order-links';
 import { allocationFor, applications, canApply, fromCents, groupApplications, needsComment, postedMessage } from '@/lib/receipt-detail';
 import type { Choice } from '@/lib/payment-options';
 import { Chip, Field, LoadFailed, Message, PageHeader, buttonClass, cardClass, dangerClass, fieldClass, money, primaryClass, today, type Notice, attempt } from './ui';
@@ -271,7 +272,17 @@ function ReceiptDetailView({ view, postingFailed }: { view: View; postingFailed?
                     {g.rows.map((x) => (
                       <tr key={x.invoiceNo} className="border-t border-line align-top">
                         <td className="py-1.5 pr-3">
-                          <span className="font-semibold">{x.invoiceNo}</span>{x.order !== null ? <span className="ml-2 text-fg-muted">{x.order}</span> : null}
+                          {x.orderId === null ? (
+                            <>
+                              <span className="font-semibold">{x.invoiceNo}</span>{x.order !== null ? <span className="ml-2 text-fg-muted">{x.order}</span> : null}
+                            </>
+                          ) : (
+                            <>
+                              {/* The invoice opens that invoice, the order opens that order; an order with no invoice yet is named as the order. */}
+                              <Link href={x.invoiceIssued ? invoiceHref(x.orderId) : orderHref(x.orderId)} className="font-semibold text-indigo-600 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-indigo-500" aria-label={`Open ${x.invoiceNo}`}>{x.invoiceNo}</Link>
+                              {x.order !== null ? <Link href={orderHref(x.orderId)} className="ml-2 text-indigo-600 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-indigo-500" aria-label={`Open ${x.order}`}>{x.order}</Link> : null}
+                            </>
+                          )}
                           {x.lines.length > 0 ? (
                             <ul className="mt-1 space-y-0.5 text-fg">
                               {x.lines.map((l, i) => <li key={`${l.text}-${String(i)}`} className="flex justify-between gap-3"><span className="min-w-0 break-words">{l.text}</span><span className="tabular-nums">{money(l.total)}</span></li>)}

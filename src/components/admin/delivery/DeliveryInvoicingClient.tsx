@@ -1,23 +1,26 @@
 'use client';
 
-import { use, useId, useState } from 'react';
+import { use, useCallback, useId, useState } from 'react';
+import { ProductEditLink } from '@/components/admin/ProductEditLink';
+import { useProductUpdated } from '@/components/admin/product-updated';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
 import { DELIVERY_BILLING_MODES, DELIVERY_BILLING_WORDS, type DeliveryBillingMode } from '@/lib/delivery-invoicing';
 import type { Choice } from '@/lib/payment-options';
-import { saveDeliveryBillingAction, type deliveryBillingPageAction } from '@/server/domains/delivery/billing-actions';
+import { deliveryBillingPageAction as readBilling, saveDeliveryBillingAction, type deliveryBillingPageAction } from '@/server/domains/delivery/billing-actions';
 import { InvoicePreview } from './InvoicePreview';
 
 type Page = Awaited<ReturnType<typeof deliveryBillingPageAction>>;
 type View = Extract<Page, { ok: true }>['data'];
 
-export function DeliveryInvoicingClient({ data, canManage }: { data: ReturnType<typeof deliveryBillingPageAction>; canManage: Promise<boolean> }) {
+export function DeliveryInvoicingClient({ data, canManage, canEditProducts }: { data: ReturnType<typeof deliveryBillingPageAction>; canManage: Promise<boolean>; canEditProducts: Promise<boolean> }) {
   const page = use(data);
   const may = use(canManage);
-  return page.ok ? <InvoicingView first={page.data} may={may} /> : <LoadFailed error={page.error} />;
+  const mayEditProducts = use(canEditProducts);
+  return page.ok ? <InvoicingView first={page.data} may={may} mayEditProducts={mayEditProducts} /> : <LoadFailed error={page.error} />;
 }
 
-function InvoicingView({ first, may }: { first: View; may: boolean }) {
+function InvoicingView({ first, may, mayEditProducts }: { first: View; may: boolean; mayEditProducts: boolean }) {
   const uid = useId();
   const [saved, setSaved] = useState<View>(first);
   const [mode, setMode] = useState<DeliveryBillingMode>(first.mode);
@@ -28,6 +31,22 @@ function InvoicingView({ first, may }: { first: View; may: boolean }) {
 
   const changed = mode !== saved.mode || (item?.id ?? null) !== (saved.serviceItem?.id ?? null);
   const shown = saved.serviceItem !== null && item?.id === saved.serviceItem.id ? saved.serviceItem : null;
+
+  // The item was changed in its edit window (opened from here): read what this screen says about it again (registered with KRA, its tax).
+  // Only that is taken; the choice being made and the version the save is checked against stay as they are.
+  const serviceItemId = saved.serviceItem?.id ?? null;
+  const itemSaved = useCallback(
+    (productId: string) => {
+      if (productId !== serviceItemId) return;
+      void readBilling()
+        .then((fresh) => {
+          if (fresh.ok) setSaved((s) => ({ ...s, serviceItem: fresh.data.serviceItem, taxMismatches: fresh.data.taxMismatches }));
+        })
+        .catch(() => undefined);
+    },
+    [serviceItemId],
+  );
+  useProductUpdated(itemSaved);
 
   const save = async () => {
     setBusy(true);
@@ -70,6 +89,7 @@ function InvoicingView({ first, may }: { first: View; may: boolean }) {
         <div className="max-w-md">
           <ChoicePicker label="Delivery service item" source="delivery-service-products" choice={item} onChoice={setItem} placeholder="Search services by name or code" clearable />
         </div>
+        {item === null ? null : <ProductEditLink productId={item.id} name={item.label} canEdit={mayEditProducts} className="w-fit border border-line" />}
         {item === null ? (
           <p role="status" className="text-sm text-amber-700">No item chosen. Orders with a delivery charge cannot be signed for KRA until one is.</p>
         ) : null}

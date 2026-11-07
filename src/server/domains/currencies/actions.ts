@@ -3,11 +3,17 @@
 import { requirePermission } from '@/server/domains/access-control/guard';
 
 import { revalidatePath } from 'next/cache';
-import { CurrencyDomainService } from './service';
+import { CurrencyDomainService, type FinanceLink } from './service';
 import type { CurrencyConfig } from '@/types/index';
 
 export async function listCurrenciesAction(): Promise<CurrencyConfig[]> {
   return CurrencyDomainService.getAll();
+}
+
+/** The currencies screen: each currency, marked with the books' rate that decides its rate when there is one, and how the two bases compare. */
+export async function listCurrenciesAdminAction(): Promise<{ currencies: CurrencyConfig[]; link: FinanceLink }> {
+  await requirePermission('currencies:manage');
+  return CurrencyDomainService.getAllForAdmin();
 }
 
 export async function createCurrencyAction(data: CurrencyConfig): Promise<CurrencyConfig> {

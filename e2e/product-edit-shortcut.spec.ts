@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { noHorizontalScroll } from './support/page';
-import { editor, openNewQuote } from './support/quotes';
+import { editor, gotoAdmin, openNewQuote } from './support/quotes';
 
 /** The product edit window that opens on top of the screen the person was working on. */
 const productWindow = (page: Page) =>
@@ -67,6 +67,80 @@ test.describe('replacing the item on a quote line', () => {
     await dialog.getByRole('button', { name: 'Undo' }).click();
     await expect(dialog.getByRole('spinbutton', { name: 'Quantity of Flour 2kg' })).toHaveValue('3');
     await expect(dialog.getByRole('spinbutton', { name: 'Quantity of Salt 500g' })).toHaveCount(0);
+    await noHorizontalScroll(page);
+  });
+});
+
+/** Adds Flour 2kg to the editor that is open, with the quick add, as a person would. */
+async function addFlour(page: Page, editorDialog: ReturnType<Page['getByRole']>, destination: string) {
+  await editorDialog.getByRole('combobox', { name: `Quick add to ${destination}` }).fill('Flour');
+  await page.getByRole('option', { name: /Flour 2kg/ }).first().click();
+  await editorDialog.getByRole('button', { name: 'Add', exact: true }).first().click();
+  await expect(editorDialog.getByRole('spinbutton', { name: 'Quantity of Flour 2kg' })).toBeVisible();
+}
+
+/** Swaps Flour 2kg for Salt 500g on a line and checks the quantity stayed and Undo brings Flour back. */
+async function replaceAndUndo(page: Page, editorDialog: ReturnType<Page['getByRole']>) {
+  await editorDialog.getByRole('spinbutton', { name: 'Quantity of Flour 2kg' }).fill('3');
+  await expect(async () => {
+    await editorDialog.getByRole('button', { name: 'Replace Flour 2kg' }).click();
+    await expect(page.getByRole('dialog', { name: 'Replace Flour 2kg' })).toBeVisible({ timeout: 5000 });
+  }).toPass({ timeout: 30_000 });
+  const picker = page.getByRole('dialog', { name: 'Replace Flour 2kg' });
+  await picker.getByRole('combobox').fill('Salt');
+  await picker.getByRole('option', { name: /Salt 500g/ }).getByRole('button').click();
+  await expect(picker).toBeHidden();
+  await expect(editorDialog.getByRole('status').filter({ hasText: 'Replaced Flour 2kg with Salt 500g' })).toBeVisible();
+  await expect(editorDialog.getByRole('spinbutton', { name: 'Quantity of Salt 500g' })).toHaveValue('3');
+  await expect(editorDialog.getByRole('spinbutton', { name: 'Quantity of Flour 2kg' })).toHaveCount(0);
+  await editorDialog.getByRole('button', { name: 'Undo' }).click();
+  await expect(editorDialog.getByRole('spinbutton', { name: 'Quantity of Flour 2kg' })).toHaveValue('3');
+  await expect(editorDialog.getByRole('spinbutton', { name: 'Quantity of Salt 500g' })).toHaveCount(0);
+}
+
+/** Opens a template's create route and waits for its editor. */
+async function openNewTemplate(page: Page, path: string, dialogName: RegExp) {
+  await gotoAdmin(page, path, /Quote templates|Section templates/);
+  const dialog = page.getByRole('dialog', { name: dialogName });
+  await expect(dialog).toBeVisible({ timeout: 30_000 });
+  return dialog;
+}
+
+test.describe('the same shortcuts in quote templates and section templates', () => {
+  test('a quote template item is replaced in place, undone, and can open its product', async ({ page }) => {
+    const dialog = await openNewTemplate(page, '/admin/quotes/templates/new', /Quote template editor/);
+    await addFlour(page, dialog, 'the individual items');
+    await replaceAndUndo(page, dialog);
+
+    const link = dialog.getByRole('link', { name: 'Edit product Flour 2kg' });
+    await expect(link).toBeVisible();
+    // One tap, then wait: the product page may still be compiling, and a second tap would stack another navigation on the first.
+    await link.click();
+    await expect(productWindow(page)).toBeVisible({ timeout: 90_000 });
+    await expect(page).toHaveURL(/\/admin\/products\/.+quick=1/);
+    // The template being written is still there underneath.
+    await expect(dialog).toBeAttached();
+    await noHorizontalScroll(page);
+  });
+
+  test('a section template item is replaced in place and undone, and a saved product price reaches the editor', async ({ page }, testInfo) => {
+    const newPrice = testInfo.project.name === 'phone' ? '243' : '241';
+    const dialog = await openNewTemplate(page, '/admin/quotes/section-templates/new', /New section template/);
+    await addFlour(page, dialog, 'the section');
+    await replaceAndUndo(page, dialog);
+
+    const link = dialog.getByRole('link', { name: 'Edit product Flour 2kg' });
+    // One tap, then wait: the product page may still be compiling, and a second tap would stack another navigation on the first.
+    await link.click();
+    await expect(productWindow(page)).toBeVisible({ timeout: 90_000 });
+    const product = productWindow(page);
+    await product.getByRole('button', { name: 'Pricing' }).click();
+    await product.getByPlaceholder('Leave empty for none').first().fill(newPrice);
+    await product.getByRole('button', { name: 'Save Changes' }).click();
+
+    await expect(productWindow(page)).toBeHidden({ timeout: 30_000 });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText(new RegExp(`${newPrice}\\.00`), { timeout: 30_000 });
     await noHorizontalScroll(page);
   });
 });

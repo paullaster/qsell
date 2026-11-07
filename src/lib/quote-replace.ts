@@ -36,3 +36,11 @@ export function replaceLineProduct<L extends ReplaceableLine>(line: L, product: 
     fromSectionTemplate: false,
   } as L;
 }
+
+/**
+ * The same template line with another product in it. A template line keeps its place, section, quantity and discount; a fixed price was
+ * set for the old item, so the line goes back to following the catalogue price until someone fixes a price for the new one.
+ */
+export function replaceTemplateLineProduct<L extends { productId: string; priceMode: 'catalog' | 'fixed'; unitPrice?: number | null }>(line: L, product: Pick<CatalogueProduct, 'id'>): L {
+  return { ...line, productId: product.id, priceMode: 'catalog', unitPrice: null };
+}

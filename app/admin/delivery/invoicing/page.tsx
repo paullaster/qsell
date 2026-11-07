@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { deliveryBillingPageAction } from '@/server/domains/delivery/billing-actions';
 import { canPermission } from '@/server/domains/access-control/guard';
+import { canEditProductsAction } from '@/server/domains/catalog/actions';
 import { DeliveryInvoicingClient } from '@/components/admin/delivery/DeliveryInvoicingClient';
 import { SettingsFrame } from '@/components/admin/settings/frame';
 
@@ -11,7 +12,7 @@ export default function DeliveryInvoicingPage() {
   const canManage = canPermission('deliveries:manage');
   return (
     <SettingsFrame label="delivery invoicing">
-      <DeliveryInvoicingClient data={data} canManage={canManage} />
+      <DeliveryInvoicingClient data={data} canManage={canManage} canEditProducts={canEditProductsAction()} />
     </SettingsFrame>
   );
 }

@@ -988,6 +988,62 @@
       "when": 1793881463568,
       "tag": "0140_delivery_door_prompts",
       "breakpoints": true
+    },
+    {
+      "idx": 141,
+      "version": "7",
+      "when": 1793888661468,
+      "tag": "0141_delivery_pay_on_delivery",
+      "breakpoints": true
+    },
+    {
+      "idx": 142,
+      "version": "7",
+      "when": 1793935022367,
+      "tag": "0142_delivery_costs",
+      "breakpoints": true
+    },
+    {
+      "idx": 143,
+      "version": "7",
+      "when": 1793953046039,
+      "tag": "0143_delivery_pay_books",
+      "breakpoints": true
+    },
+    {
+      "idx": 144,
+      "version": "7",
+      "when": 1793962452231,
+      "tag": "0144_delivery_visits",
+      "breakpoints": true
+    },
+    {
+      "idx": 145,
+      "version": "7",
+      "when": 1794025000478,
+      "tag": "0145_delivery_visit_materials",
+      "breakpoints": true
+    },
+    {
+      "idx": 146,
+      "version": "7",
+      "when": 1794030210895,
+      "tag": "0146_delivery_slots",
+      "breakpoints": true
+    },
+    {
+      "idx": 147,
+      "version": "7",
+      "when": 1794033943583,
+      "tag": "0147_delivery_slot_weight_and_leads",
+      "breakpoints": true
+    },
+    {
+      "idx": 148,
+      "version": "7",
+      "when": 1794035861202,
+      "tag": "0148_delivery_sla",
+      "breakpoints": true
     }
   ]
 }

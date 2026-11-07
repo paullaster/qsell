@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canReplaceLine, replaceLineProduct } from './quote-replace';
+import { canReplaceLine, replaceLineProduct, replaceTemplateLineProduct } from './quote-replace';
 
 const line = { productId: 'a', quantity: 3, discountPercent: 10, sectionId: 's1', unitPrice: 99, priceMode: 'manual' as const, unitId: 'crate', unitCode: 'CRT', fromTemplate: true, fromSectionTemplate: true };
 
@@ -25,5 +25,23 @@ describe('replaceLineProduct', () => {
   it('refuses to treat a free gift as the person\'s line', () => {
     expect(canReplaceLine({ isGift: true })).toBe(false);
     expect(canReplaceLine({})).toBe(true);
+  });
+});
+
+describe('replaceTemplateLineProduct', () => {
+  const line = { sectionId: 's1', productId: 'prod_old', quantity: 4, priceMode: 'fixed' as const, unitPrice: 900, discountPercent: 5 };
+
+  it('puts the new product in the same place with the same quantity and discount', () => {
+    const next = replaceTemplateLineProduct(line, { id: 'prod_new' });
+    expect(next).toMatchObject({ sectionId: 's1', productId: 'prod_new', quantity: 4, discountPercent: 5 });
+  });
+
+  it('drops a fixed price that was set for the old item, so the line follows the catalogue again', () => {
+    expect(replaceTemplateLineProduct(line, { id: 'prod_new' })).toMatchObject({ priceMode: 'catalog', unitPrice: null });
+  });
+
+  it('leaves the original line as it was', () => {
+    replaceTemplateLineProduct(line, { id: 'prod_new' });
+    expect(line).toMatchObject({ productId: 'prod_old', priceMode: 'fixed', unitPrice: 900 });
   });
 });

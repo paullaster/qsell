@@ -28,6 +28,24 @@ export function checkRate(rate: string): string | null {
   return null;
 }
 
+/**
+ * The multiplier the shop uses to show a price in a foreign currency, from the books' rate for it: finance says "129.5 shillings for one
+ * dollar", the shop wants "0.00772201 dollars for one shilling". The exact inverse, to the 8 decimals the shop's column holds (half up).
+ * Null when the inverse would round to nothing, which means the rate is too large to show a price with.
+ */
+export function displayRate(rate: string): string | null {
+  const text = rate.trim();
+  if (!/^\d+(\.\d{1,8})?$/.test(text)) return null;
+  const [whole = '0', fraction = ''] = text.split('.');
+  const scaled = BigInt(whole + fraction.padEnd(8, '0'));
+  if (scaled === 0n) return null;
+  const unit = 10n ** 16n;
+  const inverse = (unit + scaled / 2n) / scaled;
+  if (inverse === 0n) return null;
+  const digits = inverse.toString().padStart(9, '0');
+  return `${digits.slice(0, -8)}.${digits.slice(-8)}`;
+}
+
 /** An amount in the foreign currency, in the books' currency at the rate; four decimals, half-even, as the ledgers hold it. */
 export function baseValue(amount: string, rate: string): Scaled {
   return convert(parseAmount(amount), rate);
