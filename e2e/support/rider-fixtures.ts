@@ -8,6 +8,7 @@
  *   tsx e2e/support/rider-fixtures.ts door <delivery number>  what cash at the door did: the order's payment, the custody entries and whether the sale was queued for the books
  *   tsx e2e/support/rider-fixtures.ts mpesa-sent <delivery number>  makes it look as if the rider had sent an M-Pesa prompt for the delivery that is still waiting for the customer
  *   tsx e2e/support/rider-fixtures.ts pay-accounts <any>  makes the two books accounts rider pay goes to (a cost and what is owed to riders) and prints their names, and the name of the cash method a rider can be paid through
+ *   tsx e2e/support/rider-fixtures.ts paid-order <tag>  places an order for the test shop's salt and marks it paid, and prints its number and the customer's name (for a visit to be booked for it)
  *   tsx e2e/support/rider-fixtures.ts reset <tag>   ends every rider and puts the choice of rider kinds back to the default (staff only), so other tests are not asked about riders
  */
 import { execFileSync } from 'node:child_process';
@@ -137,6 +138,30 @@ async function payAccounts(): Promise<Record<string, string>> {
   return { expense: 'Rider pay E2E', payable: 'Owed to riders E2E', method: any?.name ?? '' };
 }
 
+async function paidOrder(tag: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { products } = await import('@/server/db/drizzle/schema');
+  const { eq } = await import('drizzle-orm');
+  const { OrderWriteService } = await import('@/server/domains/orders/write-service');
+  const { OrderStages } = await import('@/server/domains/orders/stages');
+  const [salt] = await db.select({ id: products.id }).from(products).where(eq(products.name, 'Salt 500g'));
+  if (salt === undefined) throw new Error('The test shop has no Salt 500g.');
+  const orderNumber = `VST-${tag}-${String(Date.now()).slice(-6)}`;
+  const made = await OrderWriteService.createOrder({
+    orderNumber,
+    customerName: `Visit Buyer ${tag}`,
+    customerEmail: `visit-${tag}-${String(Date.now())}@example.test`.toLowerCase(),
+    customerPhone: '0711000333',
+    shippingAddress: { street: '1 Test Rd', city: 'Nairobi', countyOrState: 'Nairobi', country: 'KE' },
+    items: [{ productId: salt.id, quantity: 1 }],
+    currency: 'KES',
+    paymentMethod: 'mpesa_daraja',
+  });
+  if (!made.success || made.order === undefined) throw new Error(made.error);
+  await OrderStages.move(db, made.order.id, 'payment_confirmed', 'succeeded', {});
+  return { orderNumber, customer: `Visit Buyer ${tag}` };
+}
+
 async function reset(): Promise<Record<string, string>> {
   const { getContainer } = await import('@/server/di/container');
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
@@ -161,6 +186,7 @@ async function main(): Promise<void> {
   if (command === 'door' && tag !== undefined) result = await doorState(tag);
   if (command === 'mpesa-sent' && tag !== undefined) result = await mpesaSent(tag);
   if (command === 'pay-accounts') result = await payAccounts();
+  if (command === 'paid-order' && tag !== undefined) result = await paidOrder(tag);
   if (command === 'reset') result = await reset();
   if (result === null) throw new Error('usage: rider-fixtures staff <tag> | code <delivery number> | token <order number> | proof <rule> | door-setup | door <delivery number> | mpesa-sent <delivery number> | pay-accounts <any> | reset');
   process.stdout.write(`FIXTURE ${JSON.stringify(result)}\n`);

@@ -938,6 +938,87 @@ export const deliveryPayPayouts = pgTable(
 );
 export type DeliveryPayPayoutRow = typeof deliveryPayPayouts.$inferSelect;
 
+/**
+ * A booked visit: a crew goes to the customer's address at an agreed time for an order, for example to install what was bought. An
+ * order has at most one live visit (a cancelled one can be replaced). The state moves along fixed steps (see `src/lib/visit.ts`),
+ * each with its time, and a step is also a stage on the order's timeline.
+ */
+export const orderVisits = pgTable(
+  'order_visits',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    orderId: text('order_id')
+      .notNull()
+      .references(() => orders.id, { onDelete: 'restrict' }),
+    status: text('status').$type<'scheduled' | 'crew_assigned' | 'on_site' | 'completed' | 'signed_off' | 'cancelled'>().notNull().default('scheduled'),
+    startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
+    endsAt: timestamp('ends_at', { withTimezone: true }).notNull(),
+    address: text('address').notNull(),
+    contactName: text('contact_name'),
+    contactPhone: text('contact_phone'),
+    notes: text('notes'),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    signedOffAt: timestamp('signed_off_at', { withTimezone: true }),
+    signedOffBy: text('signed_off_by'),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    cancelReason: text('cancel_reason'),
+    version: integer('version').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('order_visits_company_start_idx').on(t.companyId, t.startsAt, t.id),
+    index('order_visits_company_status_idx').on(t.companyId, t.status),
+    uniqueIndex('order_visits_one_live_per_order_idx').on(t.orderId).where(sql`${t.status} <> 'cancelled'`),
+    check('order_visits_status_chk', sql`${t.status} IN ('scheduled','crew_assigned','on_site','completed','signed_off','cancelled')`),
+    check('order_visits_window_chk', sql`${t.endsAt} > ${t.startsAt}`),
+    check('order_visits_signoff_chk', sql`(${t.status} = 'signed_off') = (${t.signedOffAt} IS NOT NULL AND ${t.signedOffBy} IS NOT NULL)`),
+    check('order_visits_cancel_chk', sql`(${t.status} = 'cancelled') = (${t.cancelledAt} IS NOT NULL AND ${t.cancelReason} IS NOT NULL)`),
+  ],
+);
+export type OrderVisitRow = typeof orderVisits.$inferSelect;
+
+/** Who goes on a visit. */
+export const orderVisitCrew = pgTable(
+  'order_visit_crew',
+  {
+    visitId: uuid('visit_id')
+      .notNull()
+      .references(() => orderVisits.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    name: text('name').notNull(),
+    addedAt: timestamp('added_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.visitId, t.userId] }), index('order_visit_crew_user_idx').on(t.userId)],
+);
+
+/** What the crew does on a visit, in order, each ticked when done. */
+export const orderVisitItems = pgTable(
+  'order_visit_items',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    visitId: uuid('visit_id')
+      .notNull()
+      .references(() => orderVisits.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull(),
+    label: text('label').notNull(),
+    done: boolean('done').notNull().default(false),
+    doneAt: timestamp('done_at', { withTimezone: true }),
+    doneBy: text('done_by'),
+  },
+  (t) => [
+    uniqueIndex('order_visit_items_position_idx').on(t.visitId, t.position),
+    check('order_visit_items_done_chk', sql`${t.done} = (${t.doneAt} IS NOT NULL)`),
+  ],
+);
+
 export const deliveryPayPayoutItems = pgTable(
   'delivery_pay_payout_items',
   {

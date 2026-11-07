@@ -468,6 +468,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'delivery_costs:manage',
       },
       {
+        id: 'delivery-visits',
+        title: 'Visits',
+        name: 'delivery-visits',
+        href: '/admin/delivery/visits',
+        description: 'Book a crew to visit a customer at an agreed time, tick the checklist on site, and record the customer\'s sign-off',
+        icon: 'CalendarClock',
+        permission: 'visits:work',
+      },
+      {
         id: 'delivery-report',
         title: 'Delivery report',
         name: 'delivery-report',

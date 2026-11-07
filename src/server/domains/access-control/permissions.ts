@@ -448,6 +448,18 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'Set what riders are paid, record what a courier charged, take a delivery cost back with a reason, and see what delivery costs',
   },
+  'visits:manage': {
+    resource: 'visits',
+    action: 'manage',
+    category: 'Orders & Sales',
+    description: 'Book, move and cancel a visit to a customer, assign its crew and checklist, and see every visit',
+  },
+  'visits:work': {
+    resource: 'visits',
+    action: 'work',
+    category: 'Orders & Sales',
+    description: 'On the visits you are assigned to: say you are on site, tick the checklist, mark the work done and record the customer\'s sign-off',
+  },
   'deliveries:handover': {
     resource: 'deliveries',
     action: 'handover',

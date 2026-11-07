@@ -1009,6 +1009,13 @@
       "when": 1793953046039,
       "tag": "0143_delivery_pay_books",
       "breakpoints": true
+    },
+    {
+      "idx": 144,
+      "version": "7",
+      "when": 1793962452231,
+      "tag": "0144_delivery_visits",
+      "breakpoints": true
     }
   ]
 }

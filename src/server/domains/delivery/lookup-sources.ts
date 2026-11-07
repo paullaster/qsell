@@ -1,6 +1,6 @@
 import { DISPOSITION_WORDS, ISSUE_MOMENTS, ISSUE_MOMENT_WORDS, RETURN_DISPOSITIONS } from '@/lib/stock-issue';
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { branches, customerGroups, deliveryRiderSettings, deliveryRiders, bankAccounts, deliveryRuns, deliveryZones, glAccounts, paymentMethods, products, users } from '@/server/db/drizzle/schema';
+import { orders, orderVisits, branches, customerGroups, deliveryRiderSettings, deliveryRiders, bankAccounts, deliveryRuns, deliveryZones, glAccounts, paymentMethods, products, users } from '@/server/db/drizzle/schema';
 import { COST_KINDS, COST_WORDS } from '@/lib/delivery-cost';
 import { RIDER_KINDS, RIDER_KIND_WORDS, RIDER_STATUSES, RIDER_STATUS_WORDS } from '@/lib/delivery-rider';
 import { RUN_STATUSES, RUN_STATUS_WORDS } from '@/lib/dispatch-run';
@@ -329,6 +329,43 @@ const payoutMethods = tableSource({
   toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.code), badge: text(row.kind) }),
 });
 
+/** Staff who can go on a visit's crew: active members of staff. */
+const visitCrew = tableSource({
+  key: 'visit-crew',
+  permission: 'visits:manage',
+  table: users,
+  id: users.id,
+  label: users.name,
+  searchColumns: [users.name, users.email],
+  select: { email: users.email },
+  scope: ({ filters }) => {
+    acceptFilters(filters, {});
+    return [and(eq(users.status, 'active'), eq(users.isActive, true), sql`(${users.role} = 'super_admin' OR EXISTS (SELECT 1 FROM roles r WHERE r.key = ${users.role} AND r.is_staff AND r.is_active))`) ?? sql`false`];
+  },
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.email), badge: null }),
+});
+
+/** Orders a visit can be booked for: not closed, not delivered, and without a live visit already. */
+const visitOrders = tableSource({
+  key: 'visit-orders',
+  permission: 'visits:manage',
+  table: orders,
+  id: orders.id,
+  label: orders.orderNumber,
+  searchColumns: [orders.orderNumber, orders.customerName, orders.customerPhone],
+  select: { customer: orders.customerName },
+  scope: ({ filters }) => {
+    acceptFilters(filters, {});
+    return [
+      and(
+        sql`${orders.status} NOT IN ('cancelled','refunded','failed','delivered','completed')`,
+        sql`NOT EXISTS (SELECT 1 FROM ${orderVisits} v WHERE v.order_id = ${orders.id} AND v.status <> 'cancelled')`,
+      ) ?? sql`false`,
+    ];
+  },
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.customer), badge: null }),
+});
+
 const costKinds = staticSource({
   key: 'delivery-cost-kinds',
   permission: 'delivery_costs:manage',
@@ -338,4 +375,4 @@ const costKinds = staticSource({
   },
 });
 
-export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts, deliveryStatuses, deliveryFailureReasons, stockIssueMoments, returnDispositions, openRuns, runStatuses, courierNews, riders, staffToRide, riderKinds, riderStatuses, doorCashMethods, handInAccounts, handInWitnesses, varianceAccounts, costKinds, payoutMethods, costAccounts];
+export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts, deliveryStatuses, deliveryFailureReasons, stockIssueMoments, returnDispositions, openRuns, runStatuses, courierNews, riders, staffToRide, riderKinds, riderStatuses, doorCashMethods, handInAccounts, handInWitnesses, varianceAccounts, costKinds, payoutMethods, costAccounts, visitCrew, visitOrders];
