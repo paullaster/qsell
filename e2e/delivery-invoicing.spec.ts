@@ -46,6 +46,18 @@ test.describe('delivery invoicing', () => {
     // Once saved, the item is checked: whether KRA knows it and what tax it carries.
     await expect(page.getByLabel('About this item')).toContainText('Not registered with KRA yet');
 
+    // The item can be opened in its edit window from here (it is registered or taxed there), and closing it comes back to this screen.
+    const itemLink = page.getByRole('link', { name: /^Edit product E2E Delivery service/ });
+    await expect(itemLink).toBeVisible();
+    await itemLink.click();
+    const productWindow = page.getByRole('dialog').filter({ has: page.getByRole('button', { name: 'Save Changes' }) });
+    await expect(productWindow).toBeVisible({ timeout: 90_000 });
+    await expect(page).toHaveURL(/\/admin\/products\/.+quick=1/);
+    await page.keyboard.press('Escape');
+    await expect(productWindow).toBeHidden({ timeout: 30_000 });
+    await expect(page).toHaveURL(/\/admin\/delivery\/invoicing/);
+    await expect(page.getByRole('form', { name: 'Save delivery invoicing' })).toBeVisible();
+
     // It is kept.
     await page.reload();
     await expect(page.getByRole('radio', { name: /On its own invoice/ })).toBeChecked({ timeout: 30_000 });
