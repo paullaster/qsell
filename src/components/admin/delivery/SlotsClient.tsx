@@ -1,7 +1,7 @@
 'use client';
 
 import { use, useId, useState } from 'react';
-import { closeDayAction, createSlotAction, removeLeadTimeAction, reopenDayAction, setLeadTimeAction, setSlotActiveAction, slotsScreenAction, updateSlotAction } from '@/server/domains/delivery/slot-actions';
+import { closeDayAction, createSlotAction, removeLeadTimeAction, reopenDayAction, setLeadTimeAction, setSlaSettingsAction, setSlotActiveAction, slotsScreenAction, updateSlotAction } from '@/server/domains/delivery/slot-actions';
 import type { SlotView } from '@/server/domains/delivery/slots';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
@@ -48,6 +48,7 @@ function Body({ initial }: { initial: Screen }) {
       </section>
       <ClosedDays closed={data.closed} onChanged={(t) => void reload(t)} onError={fail} />
       <LeadTimes leads={data.leads} onChanged={(t) => void reload(t)} onError={fail} />
+      <SlaPanel sla={data.sla} onChanged={(t) => void reload(t)} onError={fail} />
     </div>
   );
 }
@@ -309,6 +310,46 @@ function LeadForm({ kind, onChanged, onError }: { kind: 'zone' | 'item'; onChang
       <button type="submit" className={primaryClass} disabled={busy}>
         Save the {word}&apos;s lead time
       </button>
+    </form>
+  );
+}
+
+/** When a delivery is told it is at risk, and when a late one goes up to the supervisor. */
+function SlaPanel({ sla, onChanged, onError }: { sla: Screen['sla']; onChanged: (text: string) => void; onError: (text: string) => void }) {
+  const uid = useId();
+  const [atRisk, setAtRisk] = useState(String(sla.atRiskMinutes));
+  const [escalate, setEscalate] = useState(String(sla.escalateAfterMinutes));
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    setBusy(true);
+    const r = await attempt(setSlaSettingsAction({ atRiskMinutes: Number(atRisk), escalateAfterMinutes: Number(escalate), expectedVersion: sla.version }));
+    setBusy(false);
+    if (r.ok) onChanged('Saved. The Late deliveries screen uses these from now on.');
+    else onError(r.error);
+  };
+  return (
+    <form
+      key={sla.version}
+      aria-label="Lateness"
+      className={`${cardClass} space-y-3`}
+      onSubmit={(e) => {
+        e.preventDefault();
+        void save();
+      }}
+    >
+      <h3 className="text-sm font-bold text-fg-strong">When a delivery counts as late</h3>
+      <p className="text-xs text-fg-muted">A delivery promised a window is at risk when it is this close to the end of the window (or the window has begun and it is not on its way), late once the window has ended, and goes up to the supervisor after being late for the second time below.</p>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <Field id={`${uid}-a`} label="At risk this many minutes before the window ends">
+          <input id={`${uid}-a`} inputMode="numeric" className={fieldClass} value={atRisk} onChange={(e) => setAtRisk(e.target.value)} required />
+        </Field>
+        <Field id={`${uid}-e`} label="Tell the supervisor after this many minutes late">
+          <input id={`${uid}-e`} inputMode="numeric" className={fieldClass} value={escalate} onChange={(e) => setEscalate(e.target.value)} required />
+        </Field>
+        <button type="submit" className={`${primaryClass} self-end`} disabled={busy}>
+          Save
+        </button>
+      </div>
     </form>
   );
 }

@@ -468,6 +468,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'delivery_costs:manage',
       },
       {
+        id: 'delivery-late',
+        title: 'Late deliveries',
+        name: 'delivery-late',
+        href: '/admin/delivery/late',
+        description: 'Deliveries at risk or late against the window the customer was promised, and what is being done about them',
+        icon: 'Route',
+        permission: 'deliveries:dispatch',
+      },
+      {
         id: 'delivery-slots',
         title: 'Delivery slots',
         name: 'delivery-slots',

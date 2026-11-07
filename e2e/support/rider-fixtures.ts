@@ -9,6 +9,7 @@
  *   tsx e2e/support/rider-fixtures.ts mpesa-sent <delivery number>  makes it look as if the rider had sent an M-Pesa prompt for the delivery that is still waiting for the customer
  *   tsx e2e/support/rider-fixtures.ts pay-accounts <any>  makes the two books accounts rider pay goes to (a cost and what is owed to riders) and prints their names, and the name of the cash method a rider can be paid through
  *   tsx e2e/support/rider-fixtures.ts paid-order <tag>  places an order for the test shop's salt and marks it paid, and prints its number and the customer's name (for a visit to be booked for it)
+ *   tsx e2e/support/rider-fixtures.ts late <delivery number>  promises a delivery a window that ended an hour ago (as if its slot had been booked) and runs the lateness scan, so it is late and has been raised
  *   tsx e2e/support/rider-fixtures.ts reset <tag>   ends every rider and puts the choice of rider kinds back to the default (staff only), so other tests are not asked about riders
  */
 import { execFileSync } from 'node:child_process';
@@ -167,6 +168,22 @@ async function paidOrder(tag: string): Promise<Record<string, string>> {
   return { orderNumber, customer: `Visit Buyer ${tag}` };
 }
 
+async function lateWindow(number: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { deliveries, deliverySlots } = await import('@/server/db/drizzle/schema');
+  const { eq } = await import('drizzle-orm');
+  const { getContainer } = await import('@/server/di/container');
+  const company = await getContainer().companySettings.ensureSeeded();
+  const [d] = await db.select({ id: deliveries.id, branchId: deliveries.branchId }).from(deliveries).where(eq(deliveries.number, number));
+  if (d === undefined) throw new Error(`There is no delivery ${number}.`);
+  const [slot] = await db.insert(deliverySlots).values({ companyId: company.id, branchId: d.branchId, name: `Late ${number}`, weekdays: [1, 2, 3, 4, 5, 6, 7], startsAt: '09:00', endsAt: '12:00', capacity: 5, createdBy: 'e2e' }).returning({ id: deliverySlots.id });
+  const now = Date.now();
+  const start = new Date(now - 3 * 3_600_000);
+  await db.update(deliveries).set({ slotId: slot?.id ?? null, slotDay: new Date(now + 3 * 3_600_000).toISOString().slice(0, 10), windowStart: start, windowEnd: new Date(now - 3_600_000), slotBookedAt: new Date(now), slotBookedBy: 'e2e' }).where(eq(deliveries.id, d.id));
+  const r = await getContainer().deliverySla.scan();
+  return { raised: String(r.raised) };
+}
+
 async function reset(): Promise<Record<string, string>> {
   const { getContainer } = await import('@/server/di/container');
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
@@ -192,6 +209,7 @@ async function main(): Promise<void> {
   if (command === 'mpesa-sent' && tag !== undefined) result = await mpesaSent(tag);
   if (command === 'pay-accounts') result = await payAccounts();
   if (command === 'paid-order' && tag !== undefined) result = await paidOrder(tag);
+  if (command === 'late' && tag !== undefined) result = await lateWindow(tag);
   if (command === 'reset') result = await reset();
   if (result === null) throw new Error('usage: rider-fixtures staff <tag> | code <delivery number> | token <order number> | proof <rule> | door-setup | door <delivery number> | mpesa-sent <delivery number> | pay-accounts <any> | reset');
   process.stdout.write(`FIXTURE ${JSON.stringify(result)}\n`);

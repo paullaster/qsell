@@ -700,6 +700,59 @@ export const deliveries = pgTable(
   ],
 );
 
+/** When a delivery is told it is at risk, late or still late, and how much slack the dispatcher gets before the supervisor is told. */
+export const deliverySlaSettings = pgTable(
+  'delivery_sla_settings',
+  {
+    companyId: uuid('company_id')
+      .primaryKey()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    atRiskMinutes: integer('at_risk_minutes').notNull().default(60),
+    escalateAfterMinutes: integer('escalate_after_minutes').notNull().default(60),
+    version: integer('version').notNull().default(1),
+    updatedBy: text('updated_by'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check('delivery_sla_settings_chk', sql`${t.atRiskMinutes} BETWEEN 0 AND 1440 AND ${t.escalateAfterMinutes} BETWEEN 1 AND 1440`)],
+);
+
+/**
+ * A delivery reaching a lateness level against the window it was promised: once for each delivery, level and window (a delivery given a new
+ * window starts again). Kept for good; the worker raises them, people acknowledge them (`delivery_sla_acks`).
+ */
+export const deliverySlaEvents = pgTable(
+  'delivery_sla_events',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    deliveryId: uuid('delivery_id')
+      .notNull()
+      .references(() => deliveries.id, { onDelete: 'restrict' }),
+    level: text('level').$type<'at_risk' | 'late' | 'escalated'>().notNull(),
+    /** The window's end as promised when this was raised. */
+    windowEnd: timestamp('window_end', { withTimezone: true }).notNull(),
+    minutesLate: integer('minutes_late').notNull().default(0),
+    raisedAt: timestamp('raised_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_sla_events_once_uidx').on(t.deliveryId, t.level, t.windowEnd),
+    index('delivery_sla_events_company_idx').on(t.companyId, t.raisedAt.desc()),
+    check('delivery_sla_events_level_chk', sql`${t.level} IN ('at_risk','late','escalated')`),
+  ],
+);
+
+/** Someone saying they have seen it and what is being done. */
+export const deliverySlaAcks = pgTable('delivery_sla_acks', {
+  eventId: uuid('event_id')
+    .primaryKey()
+    .references(() => deliverySlaEvents.id, { onDelete: 'restrict' }),
+  acknowledgedBy: text('acknowledged_by').notNull(),
+  acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }).notNull().defaultNow(),
+  note: text('note'),
+});
+
 /** A rider's trip: several ready deliveries taken out together, in an order. Planned, then on the road, then closed. */
 export const deliveryRuns = pgTable(
   'delivery_runs',

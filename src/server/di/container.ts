@@ -127,6 +127,7 @@ import type { StockReissue } from '@/server/domains/delivery/reissue';
 import { DeliveryCostBooks } from '@/server/domains/delivery/cost-books';
 import { OrderVisits } from '@/server/domains/delivery/visits';
 import { DeliverySlots } from '@/server/domains/delivery/slots';
+import { DeliverySla } from '@/server/domains/delivery/sla';
 import { DeliveryReports } from '@/server/domains/delivery/reports';
 import type { DeliveryCosts } from '@/server/domains/delivery/costs';
 import { DoorHandIns } from '@/server/domains/delivery/door-hand-ins';
@@ -307,6 +308,7 @@ export interface AppContainer {
   deliveryReports: DeliveryReports;
   orderVisits: OrderVisits;
   deliverySlots: DeliverySlots;
+  deliverySla: DeliverySla;
   doorHandIns: DoorHandIns;
   doorMpesa: DoorMpesa;
   courierShipments: CourierShipments;
@@ -664,6 +666,7 @@ export function getContainer(): AppContainer {
     deliveryReports: new DeliveryReports(drizzleDb),
     orderVisits: new OrderVisits(drizzleDb, decisionLog, stockLedger),
     deliverySlots: new DeliverySlots(drizzleDb, decisionLog),
+    deliverySla: new DeliverySla(drizzleDb, decisionLog),
     doorHandIns: new DoorHandIns(drizzleDb, decisionLog, finance.engine, numbering),
     doorMpesa: new DoorMpesa(drizzleDb, {
       // Loaded when used: starting a payment reads the container, so it is not imported while the container is being made.

@@ -6,6 +6,9 @@ import { courierNewsAction, createRunAction, dispatchBoardAction, runStepAction 
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
 import type { Choice } from '@/lib/payment-options';
+import { SLA_WORDS, windowWords } from '@/lib/delivery-sla';
+
+const PROMISE_TONE = { on_track: 'sky', at_risk: 'amber', late: 'red', met: 'green', missed: 'red' } as const;
 
 type Loaded = Awaited<ReturnType<typeof dispatchBoardAction>>;
 type Board = Extract<Loaded, { ok: true }>['data'];
@@ -144,6 +147,7 @@ function Board({ initial }: { initial: Board }) {
                     {d.number}
                   </Link>
                   {d.scheduledFor === null ? null : <Chip tone="sky">{`Wanted ${d.scheduledFor}`}</Chip>}
+                  {d.promised === null ? null : <Chip tone={PROMISE_TONE[d.promised.state]}>{`Promised ${windowWords(new Date(d.promised.start), new Date(d.promised.end))}${d.promised.state === 'late' || d.promised.state === 'at_risk' ? ` · ${SLA_WORDS[d.promised.state]}` : ''}`}</Chip>}
                   {d.waiting === null ? null : <Chip tone={d.waiting.late ? 'red' : 'gray'}>{d.waiting.late ? `Waiting ${String(d.waiting.hours)}h` : `${String(d.waiting.hours)}h`}</Chip>}
                 </div>
                 <p className="text-sm text-fg-strong">{d.customerName}</p>

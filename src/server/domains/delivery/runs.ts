@@ -1,4 +1,5 @@
 import type { DeliveryCosts } from './costs';
+import { DEFAULT_AT_RISK_MINUTES, slaState, type SlaState } from '@/lib/delivery-sla';
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { branches, deliveries, deliveryLines, deliveryRunStops, deliveryRuns, deliveryShipments, orderItems, orders, products } from '@/server/db/drizzle/schema';
@@ -78,6 +79,8 @@ export interface ReadyDelivery {
   waiting: { hours: number; late: boolean } | null;
   /** The day someone asked for it to be tried again, after a failed attempt. */
   scheduledFor: string | null;
+  /** The window the customer was promised and where it stands against it, when a slot was booked. */
+  promised: { start: string; end: string; state: SlaState } | null;
 }
 
 export interface WithCourier {
@@ -100,6 +103,12 @@ export interface DispatchBoard {
   /** Deliveries out with a courier. */
   withCouriers: WithCourier[];
 }
+
+/** The window a delivery was promised and where it stands against it now (at the default warning time: the board does not read the company's setting for every row). */
+const promisedOf = (d: { windowStart: Date | null; windowEnd: Date | null; status: string; deliveredAt: Date | null }, now: Date): ReadyDelivery['promised'] => {
+  const state = slaState({ windowStart: d.windowStart, windowEnd: d.windowEnd, status: d.status, deliveredAt: d.deliveredAt, now, atRiskMinutes: DEFAULT_AT_RISK_MINUTES });
+  return d.windowStart === null || d.windowEnd === null || state === null ? null : { start: d.windowStart.toISOString(), end: d.windowEnd.toISOString(), state };
+};
 
 const areaOf = (destination: { address: { area?: string | null; town?: string | null } | null }): string => [destination.address?.area, destination.address?.town].filter((p): p is string => typeof p === 'string' && p.trim() !== '').join(', ');
 
@@ -479,7 +488,7 @@ export class DeliveryRuns {
     ]);
     const [facts, counts] = await Promise.all([this.loadFacts(this.db, ready.map((r) => ({ deliveryId: r.d.id, orderId: r.d.orderId }))), this.stopCounts(open.map((o) => o.r.id))]);
     return {
-      ready: ready.map((r) => ({ deliveryId: r.d.id, number: r.d.number, orderNumber: r.orderNumber, customerName: r.customerName, area: areaOf(r.d.destination), branchId: r.d.branchId, branchName: r.branchName, units: facts.get(r.d.id)?.units ?? 0, value: facts.get(r.d.id)?.value ?? 0, waiting: waitingSince(r.d.readyAt, now), scheduledFor: r.d.scheduledFor })),
+      ready: ready.map((r) => ({ deliveryId: r.d.id, number: r.d.number, orderNumber: r.orderNumber, customerName: r.customerName, area: areaOf(r.d.destination), branchId: r.d.branchId, branchName: r.branchName, units: facts.get(r.d.id)?.units ?? 0, value: facts.get(r.d.id)?.value ?? 0, waiting: waitingSince(r.d.readyAt, now), scheduledFor: r.d.scheduledFor, promised: promisedOf(r.d, now) })),
       runs: open.map((o) => ({ id: o.r.id, number: o.r.number, runDate: o.r.runDate, riderName: o.r.riderName, branchName: o.branchName, status: o.r.status, statusWords: RUN_STATUS_WORDS[o.r.status], stops: counts.get(o.r.id) ?? 0 })),
       withCouriers: couriers.map((c) => ({ deliveryId: c.d.id, number: c.d.number, orderNumber: c.orderNumber, customerName: c.customerName, courierName: c.s.courierName, trackingNumber: c.s.trackingNumber, status: c.s.status, lastNote: c.s.lastNote, lastUpdateAt: c.s.lastUpdateAt.toISOString() })),
     };
