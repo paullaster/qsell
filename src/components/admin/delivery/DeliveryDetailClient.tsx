@@ -9,6 +9,7 @@ import { markDoorPaymentAction, unmarkDoorPaymentAction } from '@/server/domains
 import { courierNewsAction, deliveryExtrasAction } from '@/server/domains/delivery/run-actions';
 import type { DeliveryView } from '@/server/domains/delivery/documents';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { DeliverySlotPanel } from './DeliverySlotPanel';
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
 import { METHOD_WORDS } from '@/lib/delivery-methods';
@@ -312,6 +313,9 @@ function DeliveryScreen({ initial, canFulfil, initialExtras }: { initial: Delive
       </section>
 
       {extra.canCosts ? <CostsPanel view={view} onError={(text) => setNotice({ kind: 'error', text })} /> : null}
+      {extra.canDispatch && ['draft', 'released', 'picking', 'packed', 'ready', 'failed_attempt'].includes(view.status) ? (
+        <DeliverySlotPanel deliveryId={view.id} onError={(text) => setNotice({ kind: 'error', text })} onDone={(text) => setNotice({ kind: 'ok', text })} />
+      ) : null}
       <DoorPanel view={view} canAllow={extra.canAllowDoor} onChanged={(next, text) => { setView(next); setNotice({ kind: 'ok', text }); }} onError={(text) => setNotice({ kind: 'error', text })} />
 
       {canFulfil && view.actions.length > 0 ? (

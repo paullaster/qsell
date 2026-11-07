@@ -13,6 +13,7 @@ import {
   numeric,
   date,
   smallint,
+  unique,
   uniqueIndex,
   index,
   check,
@@ -530,6 +531,61 @@ export const orderCollections = pgTable(
 export type OrderCollectionRow = typeof orderCollections.$inferSelect;
 
 /**
+ * A delivery slot: a window on certain weekdays at a branch, with room for so many deliveries a day and a cut-off before which it must be
+ * booked. A slot is stopped, never deleted, because deliveries that were promised it point at it.
+ */
+export const deliverySlots = pgTable(
+  'delivery_slots',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    branchId: uuid('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'restrict' }),
+    name: text('name').notNull(),
+    /** ISO weekdays the slot runs on: Monday is 1, Sunday is 7. */
+    weekdays: integer('weekdays').array().notNull(),
+    /** Nairobi clock times, "HH:MM". */
+    startsAt: text('starts_at').notNull(),
+    endsAt: text('ends_at').notNull(),
+    capacity: integer('capacity').notNull(),
+    cutoffMinutes: integer('cutoff_minutes').notNull().default(0),
+    isActive: boolean('is_active').notNull().default(true),
+    version: integer('version').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_slots_branch_name_uidx').on(t.companyId, t.branchId, t.name),
+    index('delivery_slots_branch_idx').on(t.companyId, t.branchId, t.isActive),
+    check('delivery_slots_times_chk', sql`${t.startsAt} ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$' AND ${t.endsAt} ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$' AND ${t.endsAt} > ${t.startsAt}`),
+    check('delivery_slots_capacity_chk', sql`${t.capacity} BETWEEN 1 AND 10000 AND ${t.cutoffMinutes} BETWEEN 0 AND 10080`),
+    check('delivery_slots_weekdays_chk', sql`cardinality(${t.weekdays}) BETWEEN 1 AND 7 AND ${t.weekdays} <@ ARRAY[1,2,3,4,5,6,7]`),
+  ],
+);
+export type DeliverySlotRow = typeof deliverySlots.$inferSelect;
+
+/** A day on which no slot is offered (a public holiday, a stocktake): for one branch, or for all of them when the branch is empty. */
+export const deliveryClosedDays = pgTable(
+  'delivery_closed_days',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'cascade' }),
+    day: date('day').notNull(),
+    reason: text('reason').notNull(),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique('delivery_closed_days_uidx').on(t.companyId, t.branchId, t.day).nullsNotDistinct(), index('delivery_closed_days_day_idx').on(t.companyId, t.day)],
+);
+
+/**
  * A delivery of an order: what is got ready and sent, in one go. An order can have several (what is on the shelf now, the rest
  * later). The order's delivery status is worked out from them, never stored. Its history is `delivery_events`, which is kept.
  */
@@ -571,6 +627,13 @@ export const deliveries = pgTable(
     codeTries: integer('code_tries').notNull().default(0),
     /** The day it is to be tried again, after a failed attempt: asked for by the customer or the office. Null when nobody asked. */
     scheduledFor: date('scheduled_for'),
+    /** The slot the customer was promised, the day, and the window it means (kept as promised, whatever happens to the slot later). All or none. */
+    slotId: uuid('slot_id').references((): AnyPgColumn => deliverySlots.id, { onDelete: 'restrict' }),
+    slotDay: date('slot_day'),
+    windowStart: timestamp('window_start', { withTimezone: true }),
+    windowEnd: timestamp('window_end', { withTimezone: true }),
+    slotBookedAt: timestamp('slot_booked_at', { withTimezone: true }),
+    slotBookedBy: text('slot_booked_by'),
     /** Cash to be collected at the door: the order's total, set when the office marks the delivery to be paid there. Null when it is not. */
     doorAmount: numeric('door_amount', { precision: 14, scale: 2 }),
     doorMarkedBy: text('door_marked_by'),
@@ -598,6 +661,8 @@ export const deliveries = pgTable(
     check('deliveries_attempts_chk', sql`${t.failedAttempts} >= 0`),
     check('deliveries_version_chk', sql`${t.version} >= 1`),
     check('deliveries_door_chk', sql`(${t.doorAmount} IS NULL) = (${t.doorMarkedAt} IS NULL) AND (${t.doorAmount} IS NULL OR ${t.doorAmount} > 0)`),
+    check('deliveries_slot_chk', sql`(${t.slotId} IS NULL) = (${t.slotDay} IS NULL) AND (${t.slotId} IS NULL) = (${t.windowStart} IS NULL) AND (${t.slotId} IS NULL) = (${t.windowEnd} IS NULL) AND (${t.windowEnd} IS NULL OR ${t.windowEnd} > ${t.windowStart})`),
+    index('deliveries_slot_day_idx').on(t.slotId, t.slotDay).where(sql`${t.slotId} IS NOT NULL`),
     check('deliveries_code_tries_chk', sql`${t.codeTries} >= 0`),
     check('deliveries_handover_code_chk', sql`${t.handoverCode} IS NULL OR ${t.handoverCode} ~ '^[0-9]{6}$'`),
     // Delivered means delivered at a time; a finished delivery (delivered, returned, cancelled) has a closing time.

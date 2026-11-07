@@ -448,6 +448,12 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'Set what riders are paid, record what a courier charged, take a delivery cost back with a reason, and see what delivery costs',
   },
+  'delivery_slots:manage': {
+    resource: 'delivery_slots',
+    action: 'manage',
+    category: 'Orders & Sales',
+    description: 'Set the delivery slots each branch offers, with their room and cut-offs, and close days on which no slot is offered',
+  },
   'visits:manage': {
     resource: 'visits',
     action: 'manage',

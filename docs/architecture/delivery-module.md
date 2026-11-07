@@ -703,3 +703,17 @@ D-1a the delivery document, D-1b stock timing and returns (with corrections, ord
 **Verified.** 3 more database tests (materials on site and not before or after sign-off, stock and cost on the movement, refusals leaving no trace, giving back once and the guard); the browser test (desktop and phone) now also tries more than there is, records 2, and gives them back. Whole run: 186 files, 1,882 tests.
 
 **Not built.** Posting the materials' cost to the books (finance posts sales from the sale itself, not from stock movements, so the cost of materials is in the stock ledger, not yet in the general ledger); materials as part of the invoice; a planned list of materials with the booking; scanning.
+
+## 48. D-5a: delivery slots with capacity, cut-offs and closed days (2026-11-07)
+
+D-5 is built in slices: **D-5a slots** (this section), D-5b promised windows, lateness and escalation, with the slot choice at checkout, D-5c the courier adapter port, D-5d analytics (on-time rate).
+
+**Slots** (*Delivery › Delivery slots*, `delivery_slots:manage`, migration 0146). A slot belongs to a branch: a name, the weekdays it runs on, a window in Nairobi time, **room for so many deliveries a day**, and a **cut-off** (minutes before it starts after which it can no longer be booked). A slot is stopped, never deleted (deliveries promised it point at it); edits use a version and say plainly that deliveries already promised keep the window they were promised. **Days with no slots** (a public holiday, a stocktake) close one branch or all branches; deliveries already promised that day are not moved.
+
+**Booking** (a delivery's screen, *Delivery slot*, `deliveries:dispatch`). The panel shows the branch's slots over a week with the room left in each, and why one cannot be taken (stopped, wrong day, closed, past, cut off, more than 60 days ahead, full). A delivery can take a slot of the branch it leaves from only, until it is out for delivery; booking again replaces the slot it held, and a place can be let go with a reason. The delivery keeps the **window as promised** (`window_start`, `window_end`, set all together or not at all by a database check) and its "wanted on" day is set to the slot's day. Cancelled and returned deliveries no longer take a place.
+
+**Capacity holds under load.** Booking locks the slot while it counts who holds it, so the last place goes to one of two people booking at the same moment (a test books three deliveries into a slot of one at once: exactly one wins). Counts for every slot and day of a screen are one grouped query, behind an index on (slot, day).
+
+**Verified.** 7 rules tests; 6 database tests (making, changing and stopping with versions; the offer by day with room left; the promised window surviving a later change to the slot; capacity, a delivery counted once, letting go, cancelling; the race for the last place; every refusal); a browser test on desktop and phone (a bad slot refused in words, a slot added, a day closed, a delivery promised the slot, the next delivery finding it full). Whole run: 188 files, 1,895 tests.
+
+**Not built (D-5b onward).** The shop customer choosing a slot at checkout and seeing the earliest one; capacity by weight or vehicle (count only); lead times per zone and per item; the window shown on the dispatch board and tracking page; lateness and escalation (D-5b).

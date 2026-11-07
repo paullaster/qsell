@@ -468,6 +468,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'delivery_costs:manage',
       },
       {
+        id: 'delivery-slots',
+        title: 'Delivery slots',
+        name: 'delivery-slots',
+        href: '/admin/delivery/slots',
+        description: 'The delivery windows each branch can promise, with room for so many a day, cut-offs and days with no slots',
+        icon: 'CalendarClock',
+        permission: 'delivery_slots:manage',
+      },
+      {
         id: 'delivery-visits',
         title: 'Visits',
         name: 'delivery-visits',

@@ -135,9 +135,10 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'delivery margin and delivery reports',
       'installation and scheduled visits with a crew and checklist',
       'customer sign-off on installation',
+      'delivery time slots with capacity and cut-off times',
       'courier parcel tracking',
     ],
-    subModules: ['Deliveries', 'Dispatch board', 'Delivery runs', 'Riders', 'Door payments', 'Delivery costs', 'Delivery report', 'Visits', 'Delivery zones', 'Delivery charges', 'Delivery methods', 'Delivery invoicing', 'Stock timing', 'Map service'],
+    subModules: ['Deliveries', 'Dispatch board', 'Delivery runs', 'Riders', 'Door payments', 'Delivery costs', 'Delivery report', 'Visits', 'Delivery slots', 'Delivery zones', 'Delivery charges', 'Delivery methods', 'Delivery invoicing', 'Stock timing', 'Map service'],
   },
   {
     navId: 'products-inventory',
