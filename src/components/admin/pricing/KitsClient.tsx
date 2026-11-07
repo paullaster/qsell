@@ -53,7 +53,7 @@ export function KitsClient({ kits, canManage }: { kits: KitView[]; canManage: bo
   const parts = draft
     ? draft.components.map((c) => ({
         productId: c.productId,
-        quantity: Math.trunc(Number(c.quantity)) || 0,
+        quantity: Math.round(Number(c.quantity) * 1000) / 1000 || 0,
         weight: c.weight === '' ? null : Number(c.weight),
       }))
     : [];
@@ -61,7 +61,7 @@ export function KitsClient({ kits, canManage }: { kits: KitView[]; canManage: bo
 
   // Shows how today's price would be split, as the kit is set up.
   useEffect(() => {
-    if (!draft?.price || parts.length === 0 || parts.some((p) => p.quantity < 1)) {
+    if (!draft?.price || parts.length === 0 || parts.some((p) => p.quantity <= 0)) {
       setSplit([]);
       return;
     }
@@ -187,7 +187,8 @@ export function KitsClient({ kits, canManage }: { kits: KitView[]; canManage: bo
                   <input
                     id={`${uid}-q${i}`}
                     type="number"
-                    min={1}
+                    min={0.001}
+                    step="any"
                     className={`${fieldClass} w-28`}
                     value={c.quantity}
                     onChange={(e) =>
@@ -238,7 +239,7 @@ export function KitsClient({ kits, canManage }: { kits: KitView[]; canManage: bo
               value=""
               onPick={(p) =>
                 draft.components.some((x) => x.productId === p.id)
-                  ? undefined
+                  ? setMessage({ kind: 'error', text: `${p.name} is already in this kit. Change its units instead.` })
                   : setDraft({
                       ...draft,
                       components: [
@@ -379,7 +380,7 @@ export function KitsClient({ kits, canManage }: { kits: KitView[]; canManage: bo
                   <p className="text-xs text-fg-muted">
                     {k.price != null ? `Sells for ${money(k.price)}` : 'No selling price yet'} ·
                     components sold separately come to {money(k.componentsWorth)} ·{' '}
-                    {k.buildable.toLocaleString()} can be made from stock
+                    {k.buildable.toLocaleString()} can be made from the stock of all locations
                   </p>
                   <ul className="mt-1 list-disc pl-5 text-sm text-fg">
                     {k.components.map((c) => (
@@ -387,7 +388,8 @@ export function KitsClient({ kits, canManage }: { kits: KitView[]; canManage: bo
                         {c.quantity} × {c.name}{' '}
                         <span className="text-xs text-fg-muted">
                           ({c.stock.toLocaleString()} in stock)
-                        </span>
+                        </span>{' '}
+                        {c.unavailable ? <Chip tone="red">Switched off or deleted: this kit cannot be sold</Chip> : null}
                       </li>
                     ))}
                   </ul>

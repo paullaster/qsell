@@ -71,7 +71,9 @@ export async function previewShopBasket(items: readonly { productId: string; qua
       stock = expansion.lines.map((l) => ({ productId: l.productId, quantity: l.quantity }));
       taxed = expansion.lines.map((l) => ({ productId: l.productId, quantity: l.quantity, unitPrice: l.quantity > 0 ? l.totalPrice / l.quantity : 0, taxRate: l.taxRate, isTaxInclusive: l.isTaxInclusive }));
     } catch {
-      return { ok: false, error: 'Something in your basket cannot be sold right now.' };
+      // The message names the kit (not the part), so the shopper knows which line to take out.
+      const kit = priceable.find((l) => kitDefs.has(l.item.productId) && kitDefs.get(l.item.productId)?.components.some((c) => c.unavailable) === true);
+      return { ok: false, error: kit === undefined ? 'Something in your basket cannot be sold right now.' : `${kit.product.name} cannot be sold right now. Please take it out of your basket.` };
     }
   }
 

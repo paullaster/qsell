@@ -477,8 +477,11 @@ export const OrderWriteService = {
     const kitDefs = await getContainer().kits.forProducts(
       (await getContainer().companySettings.ensureSeeded()).id,
       orderItems.map((i) => i.productId),
+      // Read fresh: a sale must never use a kit another server has just changed.
+      { fresh: true },
     );
     if (kitDefs.size > 0) {
+      const soldKit = orderItems.some((i) => kitDefs.has(i.productId));
       try {
         const expansion = expandKits(
           orderItems.map((item, i) => ({
@@ -518,6 +521,14 @@ export const OrderWriteService = {
       } catch (error) {
         if (error instanceof KitError) return { success: false, error: error.message, code: 'kit_error' };
         throw error;
+      }
+      // A quote's totals stand, but its kit lines are split by the kit as it is now. If the kit has changed since, the parts no
+      // longer add up to what was quoted: refuse, so the quote is made again, rather than book parts that disagree with the total.
+      if (soldKit && params.quotedTotals !== undefined) {
+        const again = computeCheckoutTotals(pricedLines);
+        if (Math.abs(again.subtotal - params.quotedTotals.subtotal) > 0.05 || Math.abs(again.tax - params.quotedTotals.tax) > 0.05) {
+          return { success: false, error: 'A kit in this quote has changed since it was quoted, so its parts no longer add up to the quoted total. Please make the quote again.', code: 'kit_error' };
+        }
       }
     }
     // Stock is held only for inventory-managed lines; service/non-inventory lines remain commercial order lines.

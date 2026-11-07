@@ -82,7 +82,7 @@ export function expandKits(
 ): Expansion {
   const out: Array<SaleLine & LineTax> = [];
   const expanded: Expansion['kits'] = [];
-  const add = (line: SaleLine & LineTax) => {
+  const add = (line: SaleLine & LineTax, plainName: string) => {
     const same = out.find(
       (o) =>
         o.productId === line.productId &&
@@ -91,6 +91,11 @@ export function expandKits(
         Boolean(o.isGift) === Boolean(line.isGift),
     );
     if (!same) return void out.push(line);
+    // Folded from more than one source (alone and in a kit, or in two kits): the line is the product, so it is named as the product.
+    if (same.productName !== line.productName) {
+      same.productName = plainName;
+      if (same.priceTrace) same.priceTrace = { ...same.priceTrace, steps: [...same.priceTrace.steps, `Also includes ${line.quantity} from ${line.productName}.`] };
+    }
     same.quantity += line.quantity;
     same.totalPrice = round2(same.totalPrice + line.totalPrice);
     same.unitPrice = same.quantity > 0 ? round2(same.totalPrice / same.quantity) : 0;
@@ -99,7 +104,7 @@ export function expandKits(
   for (const line of lines) {
     const kit = kits.get(line.productId);
     if (!kit) {
-      add({ ...line });
+      add({ ...line }, line.productName);
       continue;
     }
     const gone = kit.components.find((c) => c.unavailable);
@@ -147,7 +152,7 @@ export function expandKits(
             total: line.totalPrice,
           },
         },
-      });
+      }, comp.name);
     }
   }
   return { lines: out, kits: expanded };
@@ -174,9 +179,9 @@ export class KitService {
   }
 
   /** Every active kit in a company. Kits are few next to products, so one cached read serves a sale. */
-  async all(companyId: string): Promise<Map<string, Kit>> {
+  async all(companyId: string, options: { fresh?: boolean } = {}): Promise<Map<string, Kit>> {
     const hit = this.cache.get(companyId);
-    if (hit && Date.now() - hit.at < TTL_MS) return hit.value;
+    if (options.fresh !== true && hit && Date.now() - hit.at < TTL_MS) return hit.value;
     const kits = await this.db
       .select()
       .from(productKits)
@@ -236,8 +241,8 @@ export class KitService {
   }
 
   /** The kits among these products. */
-  async forProducts(companyId: string, productIds: string[]): Promise<Map<string, Kit>> {
-    const all = await this.all(companyId);
+  async forProducts(companyId: string, productIds: string[], options: { fresh?: boolean } = {}): Promise<Map<string, Kit>> {
+    const all = await this.all(companyId, options);
     if (all.size === 0) return all;
     return new Map(productIds.filter((id) => all.has(id)).map((id) => [id, all.get(id)!]));
   }
@@ -261,6 +266,8 @@ export interface KitView {
     price: number | null;
     cost: number;
     stock: number;
+    /** The component is switched off or deleted, so the kit cannot be sold. */
+    unavailable: boolean;
   }>;
   /** What the components would sell for separately. */
   componentsWorth: number;
@@ -311,6 +318,8 @@ export class KitConfigService {
           cost: products.costPrice,
           stock: products.stockQuantity,
           reserved: products.reservedQuantity,
+          active: products.isActive,
+          deleted: products.deletedAt,
         })
         .from(productKitComponents)
         .innerJoin(products, eq(products.id, productKitComponents.productId))
@@ -344,9 +353,10 @@ export class KitConfigService {
           price: c.price == null ? null : Number(c.price),
           cost: Number(c.cost ?? 0),
           stock: c.stock - c.reserved,
+          unavailable: c.deleted != null || !c.active,
         })),
         componentsWorth: round2(mine.reduce((n, c) => n + Number(c.price ?? 0) * c.quantity, 0)),
-        buildable: mine.length
+        buildable: mine.length > 0 && !mine.some((c) => c.deleted != null || !c.active)
           ? Math.max(
               0,
               Math.min(...mine.map((c) => Math.floor((c.stock - c.reserved) / c.quantity))),

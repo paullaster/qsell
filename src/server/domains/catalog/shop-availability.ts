@@ -35,8 +35,10 @@ async function withLedgerAvailability(products: PublicProduct[]): Promise<Public
 }
 
 /** How many of a kit the stock of its parts can make: the scarcest part decides. A part that is not counted never limits it. */
-export function kitsBuildable(kit: Pick<Kit, 'components'>, parts: ReadonlyMap<string, { stock: number; reserved: number; managed: boolean }>): number {
+export function kitsBuildable(kit: { components: Pick<Kit['components'][number], 'productId' | 'quantity' | 'unavailable'>[] }, parts: ReadonlyMap<string, { stock: number; reserved: number; managed: boolean }>): number {
   let most = Number.POSITIVE_INFINITY;
+  // A part that is switched off or deleted cannot be sold, so neither can the kit.
+  if (kit.components.some((c) => c.unavailable)) return 0;
   for (const c of kit.components) {
     const part = parts.get(c.productId);
     if (part === undefined || c.quantity <= 0) return 0;

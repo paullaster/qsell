@@ -16,6 +16,10 @@ describe('how many of a kit the shop can offer', () => {
     expect(kitsBuildable(kit, new Map([['a', part(9)]]))).toBe(0);
     expect(kitsBuildable(kit, new Map([['a', part(9, 20)], ['b', part(10)]]))).toBe(0);
   });
+  it('is zero when a part is switched off or deleted', () => {
+    const off = { components: [{ productId: 'a', quantity: 1, unavailable: true }] };
+    expect(kitsBuildable(off, new Map([['a', part(50)]]))).toBe(0);
+  });
   it('ignores a part that is not counted, and is unlimited when none is', () => {
     expect(kitsBuildable(kit, new Map([['a', part(9)], ['b', part(0, 0, false)]]))).toBe(4);
     expect(kitsBuildable(kit, new Map([['a', part(0, 0, false)], ['b', part(0, 0, false)]]))).toBe(Number.POSITIVE_INFINITY);
