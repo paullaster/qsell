@@ -60,18 +60,22 @@ export async function previewShopBasket(items: readonly { productId: string; qua
 
   const kitDefs = await kits.forProducts(company.id, priceable.map((l) => l.item.productId));
   let stock = priceable.map((l) => ({ productId: l.item.productId, quantity: l.item.quantity }));
+  // What is taxed: the lines as the order will have them. A kit is taxed part by part, each at its own rate.
+  let taxed = priceable.map((l) => ({ productId: l.item.productId, quantity: l.item.quantity, unitPrice: l.unitPrice, taxRate: l.product.taxRate ?? 0, isTaxInclusive: l.product.isTaxInclusive !== false }));
   if (kitDefs.size > 0) {
     try {
-      stock = expandKits(
+      const expansion = expandKits(
         priceable.map((l) => ({ productId: l.item.productId, productName: l.product.name, sku: l.product.sku, quantity: l.item.quantity, unitPrice: l.unitPrice, totalPrice: l.total, imageUrl: l.product.imageUrl, taxRate: l.product.taxRate ?? 0, isTaxInclusive: l.product.isTaxInclusive !== false })),
         kitDefs,
-      ).lines.map((l) => ({ productId: l.productId, quantity: l.quantity }));
+      );
+      stock = expansion.lines.map((l) => ({ productId: l.productId, quantity: l.quantity }));
+      taxed = expansion.lines.map((l) => ({ productId: l.productId, quantity: l.quantity, unitPrice: l.quantity > 0 ? l.totalPrice / l.quantity : 0, taxRate: l.taxRate, isTaxInclusive: l.isTaxInclusive }));
     } catch {
       return { ok: false, error: 'Something in your basket cannot be sold right now.' };
     }
   }
 
-  const totals = computeCheckoutTotals(priceable.map((l) => ({ productId: l.item.productId, quantity: l.item.quantity, unitPrice: l.unitPrice, taxRate: l.product.taxRate ?? 0, isTaxInclusive: l.product.isTaxInclusive !== false })));
+  const totals = computeCheckoutTotals(taxed);
   const productFacts = await drizzleDb.select({ id: productsTable.id, weight: productsTable.weight, inventoryKind: productsTable.inventoryKind }).from(productsTable).where(inArray(productsTable.id, [...new Set(stock.map((s) => s.productId))]));
   const factsById = new Map(productFacts.map((product) => [product.id, { weightKg: Number(product.weight ?? 0), inventoryKind: product.inventoryKind }]));
   const inventoryLines = inventoryStockLines(stock, new Map(productFacts.map((product) => [product.id, product.inventoryKind])));

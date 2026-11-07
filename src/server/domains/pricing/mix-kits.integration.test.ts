@@ -251,6 +251,46 @@ describe.skipIf(!url)('kits, gifts and mix deals (database)', () => {
       expect((await row(k)).reservedQuantity).toBe(0);
     });
 
+    it('the basket preview taxes a kit part by part, so it shows what the order will charge', async () => {
+      const { previewShopBasket } = await import('@/server/domains/orders/basket-preview');
+      const k = await product({ price: '1000', taxRate: '16', stockQuantity: 0 });
+      const wine = await product({ price: '500', taxRate: '16', stockQuantity: 10 });
+      const bread = await product({ price: '500', taxRate: '0', stockQuantity: 10 });
+      await makeKit(k, [
+        { productId: wine, quantity: 1 },
+        { productId: bread, quantity: 1 },
+      ]);
+      const preview = await previewShopBasket([{ productId: k, quantity: 1 }], null);
+      expect(preview.ok).toBe(true);
+      const res = await order((await customer()).email!, [[k, 1]]);
+      expect(res.success).toBe(true);
+      if (preview.ok) {
+        expect(preview.tax).toBe(res.order!.tax);
+        expect(preview.subtotal).toBe(res.order!.subtotal);
+      }
+    });
+
+    it('the shop is shown how many can be made from the parts, not the kit product’s own stock', async () => {
+      const { withShopAvailability } = await import('@/server/domains/catalog/shop-availability');
+      const { availableOf } = await import('@/lib/cart-quantity');
+      const k = await product({ price: '2000', stockQuantity: 0 });
+      const wine = await product({ price: '1500', stockQuantity: 10 });
+      const cheese = await product({ price: '400', stockQuantity: 9 });
+      await makeKit(k, [
+        { productId: wine, quantity: 1 },
+        { productId: cheese, quantity: 2 },
+      ]);
+      const shown = async () => {
+        const { CatalogService } = await import('@/server/domains/catalog/service');
+        const found = await CatalogService.getProductsByIds([k]);
+        const out = await withShopAvailability(found.map((p) => ({ ...p })) as never);
+        return availableOf(out[0] as never);
+      };
+      expect(await shown()).toBe(4);
+      await db.update(schema.products).set({ stockQuantity: 1 }).where(eq(schema.products.id, cheese));
+      expect(await shown()).toBe(0);
+    });
+
     it('is refused when a component is out of stock, and nothing stays held', async () => {
       const cust = await customer();
       const k = await product({ price: '1000', stockQuantity: 0 });
