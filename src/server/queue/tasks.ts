@@ -327,6 +327,12 @@ export const deliveryCostPost = async (_payload: unknown, helpers: JobHelpers) =
   if (r.posted > 0 || r.failed > 0) helpers.logger.info(`Rider pay posting: ${r.posted} posted, ${r.failed} waiting to be fixed`);
 };
 
+/** Worker cron task: deliveries that reached at risk, late or still late against the window they were promised are raised once each. */
+export const deliverySlaScan = async (_payload: unknown, helpers: JobHelpers) => {
+  const r = await getContainer().deliverySla.scan();
+  if (r.raised > 0) helpers.logger.info(`Delivery lateness: ${r.raised} raised from ${r.checked} watched`);
+};
+
 /** Worker cron task: customer credit nobody used for as long as the policy allows lapses (once for each last use). */
 export const walletExpiry = async (_payload: unknown, helpers: JobHelpers) => {
   const r = await getContainer().finance.creditAdjustments.expireDormant(new Date());
@@ -343,6 +349,16 @@ export const financePostInventory = async (_payload: unknown, helpers: JobHelper
 export const fxReverseRevaluations = async (_payload: unknown, helpers: JobHelpers) => {
   const n = await getContainer().finance.fx.reverseDue();
   if (n > 0) helpers.logger.info(`Foreign-currency revaluation: ${n} undone`);
+};
+
+/**
+ * Worker cron task: the shop shows prices at the books' exchange rate of the day. A rate set ahead for tomorrow starts when the day
+ * starts, with nobody saving anything, so this brings the shop's rates in line every hour (it writes only what differs).
+ */
+export const currencySyncRates = async (_payload: unknown, helpers: JobHelpers) => {
+  const { CurrencyDomainService } = await import('@/server/domains/currencies/service');
+  const changed = await CurrencyDomainService.syncWithBooks();
+  if (changed.length > 0) helpers.logger.info(`Shop rates brought in line with the books: ${changed.join(', ')}`);
 };
 
 /** Worker cron task: gift cards past their date lose what is left on them (once each). */
@@ -410,9 +426,11 @@ export const tasks = {
   'expire-loyalty-points': expireLoyaltyPoints,
   'finance-post-sales': financePostSales,
   'delivery-cost-post': deliveryCostPost,
+  'delivery-sla-scan': deliverySlaScan,
   'wallet-expiry': walletExpiry,
   'finance-post-inventory': financePostInventory,
   'fx-reverse-revaluations': fxReverseRevaluations,
+  'currency-sync-rates': currencySyncRates,
   'expire-gift-cards': expireGiftCards,
   'finance-ensure-partitions': financeEnsurePartitions,
   'finance-integrity-check': financeIntegrityCheck,

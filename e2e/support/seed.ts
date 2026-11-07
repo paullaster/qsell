@@ -38,6 +38,8 @@ async function main(): Promise<void> {
     .values([
       { code: 'KES', name: 'Kenyan Shilling', symbol: 'KSh', isBaseCurrency: true },
       { code: 'USD', name: 'US Dollar', symbol: '$' },
+      // Nothing else in the tests is booked in francs, so a books rate for it can be set and changed freely.
+      { code: 'CHF', name: 'Swiss Franc', symbol: 'CHF' },
     ])
     .onConflictDoNothing();
   const itemTypeId = `it_e2e_${randomUUID().slice(0, 8)}`;

@@ -28,14 +28,42 @@ import {
   setBaseCurrencyAction,
 } from '@/server/actions';
 import { formatPriceWithCurrency } from '@/lib/currency';
+import Link from 'next/link';
+import type { FinanceLink } from '@/server/domains/currencies/service';
+
+/** Under a currency's rate: whether the books' rate decides it (and links to it) or it is typed on this screen. */
+function RateSource({ currency, financeBase }: { currency: CurrencyConfig; financeBase: string | null }) {
+  if (currency.isBaseCurrency) return null;
+  if (currency.financeRate == null) {
+    return (
+      <p className="mt-0.5 text-[10px] text-fg-subtle">
+        Typed here. No rate in Finance yet, so documents in {currency.code} cannot be booked.
+      </p>
+    );
+  }
+  return (
+    <p className="mt-0.5 text-[10px] text-fg-muted">
+      <Link href={FINANCE_RATES} className="font-semibold text-indigo-600 hover:underline focus-visible:outline-2 focus-visible:outline-indigo-500" aria-label={`The rate of ${currency.code} comes from Finance, exchange rates`}>
+        From Finance
+      </Link>
+      : 1 {currency.code} = {Number(currency.financeRate.rate)} {financeBase ?? ''} since {currency.financeRate.since}
+    </p>
+  );
+}
 
 interface AdminCurrenciesProps {
   currenciesPromise: Promise<CurrencyConfig[]>;
+  /** How the shop's base currency compares with the books': the shop follows the books' exchange rates only when they are the same. */
+  linkPromise?: Promise<FinanceLink>;
   onRefreshAll: () => void;
 }
 
-export function AdminCurrencies({ currenciesPromise, onRefreshAll }: AdminCurrenciesProps) {
+const FINANCE_RATES = '/admin/finance/exchange-rates';
+const UNLINKED: Promise<FinanceLink> = Promise.resolve({ financeBase: null, displayBase: null, basesDiffer: false });
+
+export function AdminCurrencies({ currenciesPromise, linkPromise = UNLINKED, onRefreshAll }: AdminCurrenciesProps) {
   const resolvedCurrencies = use(currenciesPromise);
+  const link = use(linkPromise);
   const [currencies, setCurrencies] = useState<CurrencyConfig[]>(resolvedCurrencies);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -129,7 +157,7 @@ export function AdminCurrencies({ currenciesPromise, onRefreshAll }: AdminCurren
       setFormError('Currency name is required.');
       return;
     }
-    if (!formData.exchangeRate || formData.exchangeRate <= 0) {
+    if (editingCurrency?.financeRate == null && (!formData.exchangeRate || formData.exchangeRate <= 0)) {
       setFormError('Exchange rate multiplier must be greater than zero.');
       return;
     }
@@ -141,7 +169,7 @@ export function AdminCurrencies({ currenciesPromise, onRefreshAll }: AdminCurren
         setCurrencies((prev) =>
           prev.map((c) =>
             c.code === updated.code
-              ? updated
+              ? { ...updated, financeRate: c.financeRate }
               : formData.isBaseCurrency
                 ? { ...c, isBaseCurrency: false }
                 : c,
@@ -232,6 +260,16 @@ export function AdminCurrencies({ currenciesPromise, onRefreshAll }: AdminCurren
           </button>
         </div>
       </div>
+
+      {link.basesDiffer && (
+        <div role="alert" className="rounded-xl border border-amber-400 bg-amber-50 p-4 text-sm text-amber-900">
+          <p className="font-semibold">The shop and the books use different base currencies</p>
+          <p className="mt-1">
+            The shop&apos;s base currency is {link.displayBase} and the books&apos; is {link.financeBase}. Until they are the same, the shop cannot follow the exchange
+            rates set in Finance, so the rates below are the ones typed here and can disagree with the rate a sale is booked at.
+          </p>
+        </div>
+      )}
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -440,6 +478,7 @@ export function AdminCurrencies({ currenciesPromise, onRefreshAll }: AdminCurren
                         <span className="ml-1 text-[10px] text-fg-subtle">
                           (per 1 {baseCurrency?.code || 'KES'})
                         </span>
+                        <RateSource currency={currency} financeBase={link.financeBase} />
                       </td>
 
                       <td className="px-4 py-3.5">
@@ -615,7 +654,22 @@ export function AdminCurrencies({ currenciesPromise, onRefreshAll }: AdminCurren
                 </div>
               </div>
 
-              {/* Exchange Rate Configuration with Helper */}
+              {/* The books' rate decides it when there is one; otherwise it is typed here. */}
+              {editingCurrency?.financeRate != null ? (
+                <div className="space-y-1 rounded-xl border border-line bg-surface/70 p-4 text-xs" role="note" aria-label="Where this rate comes from">
+                  <p className="font-semibold text-fg-strong">Exchange rate</p>
+                  <p className="text-fg">
+                    1 {editingCurrency.code} = {Number(editingCurrency.financeRate.rate)} {link.financeBase ?? ''}, from {editingCurrency.financeRate.since}.
+                  </p>
+                  <p className="text-fg-muted">
+                    This rate is set under{' '}
+                    <Link href={FINANCE_RATES} className="font-semibold text-indigo-600 hover:underline focus-visible:outline-2 focus-visible:outline-indigo-500">
+                      Finance, exchange rates
+                    </Link>
+                    , and the shop follows it, so a price shown and a sale booked use the same number. Change it there.
+                  </p>
+                </div>
+              ) : (
               <div className="space-y-3 rounded-xl border border-line bg-surface/70 p-4">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-semibold text-fg-strong">
@@ -679,6 +733,8 @@ export function AdminCurrencies({ currenciesPromise, onRefreshAll }: AdminCurren
                   </div>
                 )}
               </div>
+
+              )}
 
               <div className="grid grid-cols-2 gap-3">
                 <div>

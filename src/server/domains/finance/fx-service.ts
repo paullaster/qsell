@@ -1,10 +1,10 @@
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { exchangeRates, financeSettings, fxRevaluations, customerReceipts, ledgerRegisters, type ExchangeRateRow, type FxRevaluationRow } from '@/server/db/drizzle/schema';
+import { currencies, exchangeRates, financeSettings, fxRevaluations, customerReceipts, ledgerRegisters, type ExchangeRateRow, type FxRevaluationRow } from '@/server/db/drizzle/schema';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import { formatAmount, parseAmount } from './domain/amount';
-import { baseValue, checkRate, pickRate, revaluationDifference, toCentsRounded } from './domain/fx';
+import { baseValue, checkRate, displayRate, pickRate, revaluationDifference, toCentsRounded } from './domain/fx';
 import type { PostingRequest } from './domain/types';
 import type { PostingEngine, Tx } from './engine';
 import { FinanceError, type FinanceContext } from './errors';
@@ -70,6 +70,8 @@ export class FxService {
         [row] = await tx.insert(exchangeRates).values({ companyId: ctx.companyId, currency, effectiveOn: input.effectiveOn, rate, note: input.note ?? null, createdBy: ctx.actor.id ?? 'system' }).returning();
       }
       await this.decisions.record({ companyId: ctx.companyId, subject: { type: 'exchange_rate', id: row.id }, action: existing ? 'finance.exchange_rate_changed' : 'finance.exchange_rate_set', actor: ctx.actor, inputs: { origin: ctx.origin, currency, day: input.effectiveOn }, outcome: { rate, before: existing?.rate ?? null } }, tx);
+      // The shop shows prices at this rate from today, in the same step: the two never disagree for a moment.
+      await this.syncDisplayRates(tx, ctx.companyId);
       return row;
     });
   }
@@ -88,6 +90,7 @@ export class FxService {
       await this.refuseIfUsed(tx, ctx.companyId, r.currency, r.effectiveOn);
       await tx.delete(exchangeRates).where(eq(exchangeRates.id, id));
       await this.decisions.record({ companyId: ctx.companyId, subject: { type: 'exchange_rate', id }, action: 'finance.exchange_rate_removed', actor: ctx.actor, inputs: { origin: ctx.origin, currency: r.currency, day: r.effectiveOn }, outcome: { rate: r.rate } }, tx);
+      await this.syncDisplayRates(tx, ctx.companyId);
     });
   }
 
@@ -121,6 +124,49 @@ export class FxService {
       .from(exchangeRates)
       .where(and(eq(exchangeRates.companyId, companyId), sql`${exchangeRates.effectiveOn} <= ${businessDate()}::date`))
       .orderBy(exchangeRates.currency, desc(exchangeRates.effectiveOn));
+  }
+
+  /**
+   * Which foreign currencies the books' rate decides, and what that rate is. The shop's display rate is a multiplier against the shop's
+   * base currency, so it can follow the books only when the two bases are the same currency; when they are not, nothing is decided and
+   * `basesDiffer` says so (someone has to make them the same before the two can agree).
+   */
+  async governing(w: Pick<DrizzleDb, 'select' | 'selectDistinctOn' | 'execute'>, companyId: string): Promise<{ financeBase: string | null; displayBase: string | null; basesDiffer: boolean; rates: Map<string, { rate: string; since: string }> }> {
+    const [s] = await w.select({ base: financeSettings.baseCurrency }).from(financeSettings).where(eq(financeSettings.companyId, companyId));
+    const [displayBase] = await w.select({ code: currencies.code }).from(currencies).where(eq(currencies.isBaseCurrency, true)).limit(1);
+    const financeBase = s?.base ?? null;
+    const shopBase = displayBase?.code ?? null;
+    const basesDiffer = financeBase !== null && shopBase !== null && financeBase !== shopBase;
+    if (financeBase === null || shopBase === null || basesDiffer) return { financeBase, displayBase: shopBase, basesDiffer, rates: new Map() };
+    const inForce = await w
+      .selectDistinctOn([exchangeRates.currency])
+      .from(exchangeRates)
+      .where(and(eq(exchangeRates.companyId, companyId), sql`${exchangeRates.effectiveOn} <= ${businessDate()}::date`))
+      .orderBy(exchangeRates.currency, desc(exchangeRates.effectiveOn));
+    return { financeBase, displayBase: shopBase, basesDiffer, rates: new Map(inForce.map((r) => [r.currency, { rate: r.rate, since: r.effectiveOn }])) };
+  }
+
+  /**
+   * Makes the shop's display rate of every foreign currency the inverse of the books' rate in force today. The books' rate is the one
+   * that is dated, audited and locked once used; the shop follows it, so a price shown to a shopper and a sale booked in the ledger
+   * come from one number. A currency with no books' rate keeps the rate typed on the currencies screen. Safe to run again and again:
+   * it writes only what differs. Returns the currencies it changed.
+   */
+  async syncDisplayRates(w: Pick<DrizzleDb, 'select' | 'selectDistinctOn' | 'execute' | 'update'>, companyId: string): Promise<string[]> {
+    const { rates } = await this.governing(w, companyId);
+    if (rates.size === 0) return [];
+    const shop = await w.select().from(currencies);
+    const changed: string[] = [];
+    for (const row of shop) {
+      if (row.isBaseCurrency) continue;
+      const books = rates.get(row.code);
+      if (books === undefined) continue;
+      const next = displayRate(books.rate);
+      if (next === null || Number(next) === Number(row.exchangeRate)) continue;
+      await w.update(currencies).set({ exchangeRate: next, updatedAt: new Date() }).where(eq(currencies.code, row.code));
+      changed.push(row.code);
+    }
+    return changed;
   }
 
   /** The rate in force on a date, or null when none had started. */
