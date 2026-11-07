@@ -660,7 +660,7 @@ export function getContainer(): AppContainer {
     deliveryCosts: deliveryServices.deliveryCosts,
     deliveryCostBooks: new DeliveryCostBooks(drizzleDb, decisionLog, finance.engine, numbering),
     deliveryReports: new DeliveryReports(drizzleDb),
-    orderVisits: new OrderVisits(drizzleDb, decisionLog),
+    orderVisits: new OrderVisits(drizzleDb, decisionLog, stockLedger),
     doorHandIns: new DoorHandIns(drizzleDb, decisionLog, finance.engine, numbering),
     doorMpesa: new DoorMpesa(drizzleDb, {
       // Loaded when used: starting a payment reads the container, so it is not imported while the container is being made.

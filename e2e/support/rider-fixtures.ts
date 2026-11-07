@@ -146,6 +146,11 @@ async function paidOrder(tag: string): Promise<Record<string, string>> {
   const { OrderStages } = await import('@/server/domains/orders/stages');
   const [salt] = await db.select({ id: products.id }).from(products).where(eq(products.name, 'Salt 500g'));
   if (salt === undefined) throw new Error('The test shop has no Salt 500g.');
+  // Some salt on the main shelf in the stock ledger, so a visit has something to use.
+  const container = (await import('@/server/di/container')).getContainer();
+  const company = await container.companySettings.ensureSeeded();
+  const shelf = await container.stockLocations.ensureDefault(company.id);
+  await db.transaction((tx) => container.stockLedger.post(tx, { companyId: company.id, productId: salt.id, locationId: shelf.id, type: 'receipt', quantity: 20, unitCost: 10, actor: { type: 'job' } }));
   const orderNumber = `VST-${tag}-${String(Date.now()).slice(-6)}`;
   const made = await OrderWriteService.createOrder({
     orderNumber,

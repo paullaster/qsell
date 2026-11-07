@@ -57,6 +57,24 @@ test.describe('visits', () => {
     await expect(first).toBeDisabled();
     await card.getByRole('button', { name: 'Crew is on site' }).click();
     await expect(card).toContainText('On site', { timeout: 30_000 });
+
+    // Materials: taken from stock while on site, refused when there is not enough, and given back with a reason.
+    const used = card.getByRole('form', { name: `Use a material on order ${orderNumber}` });
+    await pick(page, used.getByRole('combobox', { name: 'Material' }), 'Salt 500g', /Salt 500g/);
+    await used.getByLabel('How much was used').fill('100000');
+    await used.getByRole('button', { name: 'Take it from stock' }).click();
+    await expect(page.getByRole('alert').filter({ hasText: /more than nothing|not enough stock/ })).toBeVisible({ timeout: 30_000 });
+    await used.getByLabel('How much was used').fill('2');
+    await used.getByRole('button', { name: 'Take it from stock' }).click();
+    await expect(page.getByText('The material is recorded and taken from stock.')).toBeVisible({ timeout: 30_000 });
+    const materials = card.getByRole('list', { name: `Materials list for order ${orderNumber}` });
+    await expect(materials).toContainText('Used 2 × Salt 500g', { timeout: 30_000 });
+    await materials.getByLabel('Why it is being given back').fill('Not needed after all');
+    await materials.getByRole('button', { name: 'Give back Salt 500g' }).click();
+    await materials.getByRole('button', { name: 'Confirm: Give back Salt 500g' }).click();
+    await expect(page.getByText('The material is back in stock.')).toBeVisible({ timeout: 30_000 });
+    await expect(materials).toContainText('Was given back', { timeout: 30_000 });
+    await expect(materials).toContainText('Given back 2 × Salt 500g');
     await card.getByRole('button', { name: 'Mark the work done' }).click();
     await expect(page.getByRole('alert').filter({ hasText: '2 items are not ticked on the checklist yet.' })).toBeVisible({ timeout: 30_000 });
     await card.getByRole('checkbox', { name: 'Fit the unit' }).click();

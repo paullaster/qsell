@@ -1,8 +1,8 @@
 'use client';
 
 import { use, useId, useState } from 'react';
-import { assignCrewAction, bookVisitAction, cancelVisitAction, completeVisitAction, moveVisitAction, signOffVisitAction, startVisitAction, tickVisitItemAction, visitsPageAction } from '@/server/domains/delivery/visit-actions';
-import type { VisitView } from '@/server/domains/delivery/visits';
+import { assignCrewAction, bookVisitAction, cancelVisitAction, completeVisitAction, giveBackMaterialAction, moveVisitAction, recordMaterialAction, signOffVisitAction, startVisitAction, tickVisitItemAction, visitsPageAction } from '@/server/domains/delivery/visit-actions';
+import type { MaterialView, VisitView } from '@/server/domains/delivery/visits';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
@@ -253,6 +253,10 @@ function VisitCard({ visit, onDone, onError }: { visit: VisitView; onDone: (text
         {visit.cancelReason === null ? '' : ` · cancelled: ${visit.cancelReason}`}
       </p>
 
+      {visit.materials.length === 0 && visit.status !== 'on_site' && visit.status !== 'completed' ? null : (
+        <MaterialsPanel visit={visit} busy={busy} onDone={onDone} onError={onError} />
+      )}
+
       {actions.length === 0 ? null : (
         <div className="flex flex-wrap gap-2">
           {actions.includes('assign') ? (
@@ -354,6 +358,105 @@ function VisitCard({ visit, onDone, onError }: { visit: VisitView; onDone: (text
             confirm="Yes, cancel it"
             busy={busy}
             onConfirm={() => void go(cancelVisitAction({ id: visit.id, reason, expectedVersion: visit.version }), 'The visit is cancelled.')}
+          />
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+/** What the crew used on the visit, and the form to add more or give some back while the visit is open for it. */
+function MaterialsPanel({ visit, busy, onDone, onError }: { visit: VisitView; busy: boolean; onDone: (text: string) => void; onError: (text: string) => void }) {
+  const uid = useId();
+  const open = visit.status === 'on_site' || visit.status === 'completed';
+  const [product, setProduct] = useState<Choice | null>(null);
+  const [location, setLocation] = useState<Choice | null>(null);
+  const [quantity, setQuantity] = useState('');
+  const [note, setNote] = useState('');
+  const [working, setWorking] = useState(false);
+  const add = async () => {
+    setWorking(true);
+    const r = await attempt(recordMaterialAction({ id: visit.id, productId: product?.id ?? '', locationId: location?.id ?? '', quantity: Number(quantity), note }));
+    setWorking(false);
+    if (r.ok) {
+      setProduct(null);
+      setLocation(null);
+      setQuantity('');
+      setNote('');
+      onDone('The material is recorded and taken from stock.');
+    } else onError(r.error);
+  };
+  return (
+    <section aria-label={`Materials for order ${visit.orderNumber}`} className="space-y-2 rounded-lg border border-line p-3">
+      <h4 className="text-sm font-bold text-fg-strong">Materials used</h4>
+      {visit.materials.length === 0 ? (
+        <p className="text-sm text-fg-muted">None recorded.</p>
+      ) : (
+        <ul className="divide-y divide-line text-sm" aria-label={`Materials list for order ${visit.orderNumber}`}>
+          {visit.materials.map((m) => (
+            <MaterialRow key={m.id} visitId={visit.id} material={m} open={open} busy={busy || working} onDone={onDone} onError={onError} />
+          ))}
+        </ul>
+      )}
+      {open ? (
+        <form
+          aria-label={`Use a material on order ${visit.orderNumber}`}
+          className="space-y-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void add();
+          }}
+        >
+          <ChoicePicker label="Material" source="visit-products" choice={product} onChoice={setProduct} placeholder="Search products that hold stock" />
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field id={`${uid}-q`} label="How much was used">
+              <input id={`${uid}-q`} inputMode="decimal" className={fieldClass} value={quantity} onChange={(e) => setQuantity(e.target.value)} autoComplete="off" required />
+            </Field>
+            <ChoicePicker label="Taken from (the main shelf if left empty)" source="visit-locations" choice={location} onChoice={setLocation} placeholder="Choose a place" clearable />
+          </div>
+          <Field id={`${uid}-n`} label="Note">
+            <input id={`${uid}-n`} className={fieldClass} value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} autoComplete="off" />
+          </Field>
+          <button type="submit" className={primaryClass} disabled={busy || working}>
+            {working ? 'Saving…' : 'Take it from stock'}
+          </button>
+        </form>
+      ) : null}
+    </section>
+  );
+}
+
+function MaterialRow({ visitId, material, open, busy, onDone, onError }: { visitId: string; material: MaterialView; open: boolean; busy: boolean; onDone: (text: string) => void; onError: (text: string) => void }) {
+  const uid = useId();
+  const [reason, setReason] = useState('');
+  const back = material.quantity < 0;
+  return (
+    <li className="space-y-1 py-2">
+      <p className="flex flex-wrap items-center gap-2">
+        <span className="font-semibold text-fg-strong">
+          {back ? 'Given back' : 'Used'} {Math.abs(material.quantity)} × {material.productName}
+        </span>
+        <span className="text-xs text-fg-muted">from {material.locationName}</span>
+        {material.givenBack ? <Chip tone="gray">Was given back</Chip> : null}
+      </p>
+      {material.note === null ? null : <p className="text-xs text-fg-muted">{material.note}</p>}
+      {open && material.canGiveBack ? (
+        <div className="flex flex-wrap items-end gap-2">
+          <Field id={`${uid}-r`} label="Why it is being given back">
+            <input id={`${uid}-r`} className={fieldClass} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={200} autoComplete="off" />
+          </Field>
+          <InlineConfirm
+            label={`Give back ${material.productName}`}
+            action="Give it back"
+            confirm="Yes, give it back"
+            busy={busy}
+            onConfirm={() => {
+              void (async () => {
+                const r = await attempt(giveBackMaterialAction({ id: visitId, materialId: material.id, reason }));
+                if (r.ok) onDone('The material is back in stock.');
+                else onError(r.error);
+              })();
+            }}
           />
         </div>
       ) : null}

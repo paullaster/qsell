@@ -73,6 +73,20 @@ export async function completeVisitAction(raw: unknown) {
   return await runDelivery('visits:work', async (ctx) => dataOf(await getContainer().orderVisits.complete(await actorOf(ctx), idOf(objectOf(raw).id, 'visit'))), PATHS);
 }
 
+export async function recordMaterialAction(raw: unknown) {
+  return await runDelivery('visits:work', async (ctx) => {
+    const i = objectOf(raw);
+    return dataOf(await getContainer().orderVisits.useMaterial(await actorOf(ctx), idOf(i.id, 'visit'), { productId: i.productId, locationId: i.locationId, quantity: i.quantity, note: i.note }));
+  }, PATHS);
+}
+
+export async function giveBackMaterialAction(raw: unknown) {
+  return await runDelivery('visits:work', async (ctx) => {
+    const i = objectOf(raw);
+    return dataOf(await getContainer().orderVisits.giveBackMaterial(await actorOf(ctx), idOf(i.id, 'visit'), idOf(i.materialId, 'material'), { reason: i.reason }));
+  }, PATHS);
+}
+
 export async function signOffVisitAction(raw: unknown) {
   return await runDelivery('visits:work', async (ctx) => {
     const i = objectOf(raw);

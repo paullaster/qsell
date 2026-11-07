@@ -1,7 +1,9 @@
 import { and, asc, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { orderVisitCrew, orderVisitItems, orderVisits, orders, users } from '@/server/db/drizzle/schema';
+import { orderVisitCrew, orderVisitItems, orderVisitMaterials, orderVisits, orders, products, stockLocations, users } from '@/server/db/drizzle/schema';
 import { checkCrew, checkItems, checkWindow, checklistProblem, nextVisitStatus, reasonProblem, signOffProblem, type VisitAction, type VisitStatus } from '@/lib/visit';
+import type { StockLedger } from '@/server/domains/stock/ledger';
+import { StockError } from '@/server/domains/stock/errors';
 import { OrderStages } from '@/server/domains/orders/stages';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { decodeCursor, encodeCursor } from '@/server/domains/lookups/request';
@@ -30,12 +32,27 @@ export interface VisitView {
   notes: string | null;
   crew: { userId: string; name: string }[];
   items: { id: string; label: string; done: boolean }[];
+  materials: MaterialView[];
   startedAt: string | null;
   completedAt: string | null;
   signedOffAt: string | null;
   signedOffBy: string | null;
   cancelReason: string | null;
   version: number;
+}
+
+export interface MaterialView {
+  id: string;
+  productId: string;
+  productName: string;
+  locationName: string;
+  /** Positive: used. Negative: given back. */
+  quantity: number;
+  note: string | null;
+  givenBack: boolean;
+  /** This line can still be given back (it is a use, not already undone). */
+  canGiveBack: boolean;
+  at: string;
 }
 
 export interface VisitPage {
@@ -66,6 +83,7 @@ export class OrderVisits {
   constructor(
     private readonly db: DrizzleDb,
     private readonly decisions: DecisionLog,
+    private readonly ledger: StockLedger,
     private readonly clock: () => Date = () => new Date(),
   ) {}
 
@@ -98,10 +116,18 @@ export class OrderVisits {
       .limit(limit);
     if (rows.length === 0) return [];
     const ids = rows.map((r) => r.v.id);
-    const [crew, items] = await Promise.all([
+    const [crew, items, materials] = await Promise.all([
       db.select().from(orderVisitCrew).where(inArray(orderVisitCrew.visitId, ids)).orderBy(asc(orderVisitCrew.addedAt), asc(orderVisitCrew.name)),
       db.select().from(orderVisitItems).where(inArray(orderVisitItems.visitId, ids)).orderBy(asc(orderVisitItems.position)),
+      db
+        .select({ m: orderVisitMaterials, productName: products.name, locationName: stockLocations.name })
+        .from(orderVisitMaterials)
+        .innerJoin(products, eq(products.id, orderVisitMaterials.productId))
+        .innerJoin(stockLocations, eq(stockLocations.id, orderVisitMaterials.locationId))
+        .where(inArray(orderVisitMaterials.visitId, ids))
+        .orderBy(asc(orderVisitMaterials.createdAt), asc(orderVisitMaterials.id)),
     ]);
+    const undone = new Set(materials.map((r) => r.m.reversesId).filter((x): x is string => x !== null));
     return rows.map(({ v, orderNumber }) => ({
       id: v.id,
       orderId: v.orderId,
@@ -115,6 +141,9 @@ export class OrderVisits {
       notes: v.notes,
       crew: crew.filter((c) => c.visitId === v.id).map((c) => ({ userId: c.userId, name: c.name })),
       items: items.filter((i) => i.visitId === v.id).map((i) => ({ id: i.id, label: i.label, done: i.done })),
+      materials: materials
+        .filter((r) => r.m.visitId === v.id)
+        .map((r) => ({ id: r.m.id, productId: r.m.productId, productName: r.productName, locationName: r.locationName, quantity: Number(r.m.quantity), note: r.m.note, givenBack: undone.has(r.m.id), canGiveBack: Number(r.m.quantity) > 0 && !undone.has(r.m.id), at: r.m.createdAt.toISOString() })),
       startedAt: v.startedAt?.toISOString() ?? null,
       completedAt: v.completedAt?.toISOString() ?? null,
       signedOffAt: v.signedOffAt?.toISOString() ?? null,
@@ -319,6 +348,72 @@ export class OrderVisits {
       // A crew had been sent: that is a delivery that did not happen, with its reason, on the order's timeline.
       if (row.status !== 'scheduled') await OrderStages.moveIn(tx, row.orderId, 'delivery_failed', 'failed', { actor: { type: 'user', id: actor.userId }, reasonCode: 'visit_cancelled', message: `The visit was cancelled: ${reason}`, ref: { type: 'visit', id }, detail: { method: 'scheduled_visit' } });
       await this.note(tx, actor, row.orderId, id, 'cancelled', {}, reason);
+      return await this.reloaded(tx, actor, id);
+    });
+  }
+
+  /** Materials are used while the crew is on site, and until the work is signed off. */
+  private async materialsOpen(tx: Tx, actor: VisitActor, id: string): Promise<typeof orderVisits.$inferSelect> {
+    if (!UUID.test(id)) throw new Refused(fail('not_found', 'That visit could not be found.'));
+    const [row] = await tx.select().from(orderVisits).where(and(eq(orderVisits.id, id), eq(orderVisits.companyId, actor.companyId))).for('update');
+    if (row === undefined) throw new Refused(fail('not_found', 'That visit could not be found.'));
+    if (actor.crewOnly) {
+      const [mine] = await tx.select({ u: orderVisitCrew.userId }).from(orderVisitCrew).where(and(eq(orderVisitCrew.visitId, id), eq(orderVisitCrew.userId, actor.userId)));
+      if (mine === undefined) throw new Refused(fail('not_found', 'That visit could not be found.'));
+    }
+    if (row.status !== 'on_site' && row.status !== 'completed') throw new Refused(fail('not_allowed', 'Materials are recorded once the crew is on site, until the work is signed off.'));
+    return row;
+  }
+
+  /** Takes materials from a stock location for the visit: the stock leaves the shelf now, once for each line, and costs what the product costs now. */
+  async useMaterial(actor: VisitActor, id: string, input: { productId: unknown; locationId?: unknown; quantity: unknown; note?: unknown }): Promise<DocResult<VisitView>> {
+    const quantity = typeof input.quantity === 'number' ? input.quantity : Number.NaN;
+    if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 100_000 || Math.abs(quantity * 1000 - Math.round(quantity * 1000)) > 1e-6) return fail('bad_input', 'Say how much was used: more than nothing, to at most three decimals.');
+    if (typeof input.productId !== 'string' || input.productId === '' || input.productId.length > 100) return fail('bad_input', 'Choose the product that was used.');
+    const productId = input.productId;
+    if (input.locationId !== undefined && input.locationId !== null && input.locationId !== '' && (typeof input.locationId !== 'string' || !UUID.test(input.locationId))) return fail('bad_input', 'Choose where the materials were taken from.');
+    return await this.run(async (tx) => {
+      const row = await this.materialsOpen(tx, actor, id);
+      const locationId = typeof input.locationId === 'string' && input.locationId !== '' ? input.locationId : (await this.ledger.defaultLocationIn(tx)).locationId;
+      const [product] = await tx.select({ cost: products.costPrice, name: products.name }).from(products).where(eq(products.id, productId));
+      if (product === undefined) return fail('not_found', 'That product could not be found.');
+      const [made] = await tx
+        .insert(orderVisitMaterials)
+        .values({ visitId: id, productId, locationId, quantity: String(quantity), unitCost: product.cost, note: text(input.note, 200), recordedBy: actor.userId })
+        .returning({ id: orderVisitMaterials.id });
+      if (made === undefined) throw new Error('The material was not saved.');
+      try {
+        await this.ledger.post(tx, { companyId: actor.companyId, productId, locationId, type: 'sale_issue', quantity: -quantity, unitCost: Number(product.cost), documentType: 'visit', documentId: id, documentLineId: made.id, actor: { type: 'user', id: actor.userId }, note: `Used on the visit to order ${row.orderId}` });
+      } catch (e) {
+        // Thrown, not returned: the line just written must roll back with the refusal.
+        if (e instanceof StockError) throw new Refused(fail(e.code === 'INSUFFICIENT' || e.code === 'NOT_FOUND' || e.code === 'INACTIVE' || e.code === 'NOT_INVENTORY' ? 'bad_input' : 'not_allowed', e.message));
+        throw e;
+      }
+      await this.note(tx, actor, row.orderId, id, 'material_used', { productId, locationId, quantity });
+      return await this.reloaded(tx, actor, id);
+    });
+  }
+
+  /** Material that was not used goes back to where it came from. A line can be given back once, and in full. */
+  async giveBackMaterial(actor: VisitActor, id: string, materialId: string, input: { reason: unknown }): Promise<DocResult<VisitView>> {
+    if (!UUID.test(materialId)) return fail('not_found', 'That material could not be found.');
+    const why = reasonProblem(input.reason, 'it is given back');
+    if (why !== null) return fail('bad_input', why);
+    const reason = String(input.reason).trim().slice(0, 200);
+    return await this.run(async (tx) => {
+      const row = await this.materialsOpen(tx, actor, id);
+      const [line] = await tx.select().from(orderVisitMaterials).where(and(eq(orderVisitMaterials.id, materialId), eq(orderVisitMaterials.visitId, id))).for('update');
+      if (line === undefined) return fail('not_found', 'That material is not on this visit.');
+      if (Number(line.quantity) <= 0) return fail('not_allowed', 'That line is already a giving back.');
+      const [again] = await tx.select({ id: orderVisitMaterials.id }).from(orderVisitMaterials).where(eq(orderVisitMaterials.reversesId, materialId));
+      if (again !== undefined) return fail('conflict', 'That material was already given back.');
+      const [made] = await tx
+        .insert(orderVisitMaterials)
+        .values({ visitId: id, productId: line.productId, locationId: line.locationId, quantity: String(-Number(line.quantity)), unitCost: line.unitCost, reversesId: line.id, note: reason, recordedBy: actor.userId })
+        .returning({ id: orderVisitMaterials.id });
+      if (made === undefined) throw new Error('The giving back was not saved.');
+      await this.ledger.post(tx, { companyId: actor.companyId, productId: line.productId, locationId: line.locationId, type: 'sale_return', quantity: Number(line.quantity), unitCost: Number(line.unitCost), documentType: 'visit', documentId: id, documentLineId: made.id, actor: { type: 'user', id: actor.userId }, note: `Given back from the visit to order ${row.orderId}: ${reason}` });
+      await this.note(tx, actor, row.orderId, id, 'material_given_back', { materialId, quantity: Number(line.quantity) }, reason);
       return await this.reloaded(tx, actor, id);
     });
   }

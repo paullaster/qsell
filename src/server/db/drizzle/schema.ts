@@ -999,6 +999,38 @@ export const orderVisitCrew = pgTable(
   (t) => [primaryKey({ columns: [t.visitId, t.userId] }), index('order_visit_crew_user_idx').on(t.userId)],
 );
 
+/**
+ * Materials a crew used on a visit, taken from a stock location. Kept for good: a line is never edited; material that was not used
+ * comes back as a negative line that points at the line it undoes, and the stock moves with each (see OrderVisits).
+ */
+export const orderVisitMaterials = pgTable(
+  'order_visit_materials',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    visitId: uuid('visit_id')
+      .notNull()
+      .references(() => orderVisits.id, { onDelete: 'restrict' }),
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    locationId: uuid('location_id')
+      .notNull()
+      .references(() => stockLocations.id, { onDelete: 'restrict' }),
+    /** Positive: used. Negative: given back (and then `reversesId` is the line it undoes). */
+    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    unitCost: numeric('unit_cost', { precision: 14, scale: 4 }).notNull().default('0'),
+    reversesId: uuid('reverses_id'),
+    note: text('note'),
+    recordedBy: text('recorded_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('order_visit_materials_visit_idx').on(t.visitId, t.createdAt),
+    uniqueIndex('order_visit_materials_reverses_idx').on(t.reversesId).where(sql`${t.reversesId} IS NOT NULL`),
+    check('order_visit_materials_qty_chk', sql`${t.quantity} <> 0 AND ((${t.reversesId} IS NULL) = (${t.quantity} > 0))`),
+  ],
+);
+
 /** What the crew does on a visit, in order, each ticked when done. */
 export const orderVisitItems = pgTable(
   'order_visit_items',

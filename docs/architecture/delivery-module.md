@@ -691,3 +691,15 @@ D-1a the delivery document, D-1b stock timing and returns (with corrections, ord
 **Verified.** 10 rules tests; 8 database tests (booking and refusals, the whole walk with timeline and order status, crew and time changes and the one dispatch, old copies and bad crews, cancelling before and after a crew goes, who may act on what and no delete, listing); browser tests on desktop and phone (booking with a past time refused, naming the crew, ticking, work done refused until all ticked, sign-off refused without a name then recorded, found under Signed off; move with a reason and cancel with a reason). Whole run: 186 files, 1,879 tests.
 
 **Not built.** Materials the crew uses issued from stock (the goods of the order are unchanged; a visit's extra materials are D-4b); photos on a visit; crew time and travel as a cost (D-3e's cost kinds exist, no screen types one in); the customer seeing or moving the visit on their tracking page; checking the crew is free at that time; checkout offering "a booked visit" as a method (visits are booked by staff for an existing order); crew seeing only their own list in a rider-style phone page (they use this screen, which shows only theirs).
+
+## 47. D-4b: materials used on a visit (2026-11-07)
+
+**What it does.** While the crew is on site, and until the work is signed off, the crew (or the office) records the materials used on the visit: a product that holds stock, how much (to three decimals) and where it was taken from (the main shelf when left empty). The stock leaves that location **at once**, as a `sale_issue` movement tied to the visit and priced at the product's cost now (`order_visit_materials`, migration 0145; each line moves stock once, keyed by the line). Not enough stock (or a stopped or wrong place) refuses the line in words and **leaves nothing behind**: the line and its stock move are one transaction (a test caught a refusal that had kept the line, and it now rolls back).
+
+**Giving back.** Material not used is given back with a reason: a negative line that points at the one it undoes, a `sale_return` movement to the same place, once and in full. A line that is itself a giving back cannot be given back. Lines are kept for good (database guard: no edit, no delete).
+
+**Who and where.** `visits:work` on the crew's own visits, `visits:manage` on all; the screen shows the lines and the form on the visit's card (*Delivery › Visits*); the pickers (`visit-products`, `visit-locations`) are read with `visits:work` and never hold the whole list.
+
+**Verified.** 3 more database tests (materials on site and not before or after sign-off, stock and cost on the movement, refusals leaving no trace, giving back once and the guard); the browser test (desktop and phone) now also tries more than there is, records 2, and gives them back. Whole run: 186 files, 1,882 tests.
+
+**Not built.** Posting the materials' cost to the books (finance posts sales from the sale itself, not from stock movements, so the cost of materials is in the stock ledger, not yet in the general ledger); materials as part of the invoice; a planned list of materials with the booking; scanning.

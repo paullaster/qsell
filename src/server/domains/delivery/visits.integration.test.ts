@@ -70,6 +70,23 @@ describe.skipIf(!has(url))('booked visits (database)', () => {
   };
   const stagesOf = async (orderId: string) => (await db.select().from(schema.orderStageEvents).where(eq(schema.orderStageEvents.orderId, orderId))).map((e) => `${e.stage}:${e.outcome}`);
 
+  /** A product with 20 on the default shelf, for materials. */
+  const stocked = async () => {
+    const productId = `prod_vm_${randomUUID()}`;
+    await db.insert(schema.products).values({ id: productId, sku: `VM-${randomUUID().slice(0, 8)}`.toUpperCase(), stockCode: `VMS-${randomUUID().slice(0, 8)}`.toUpperCase(), name: `Cable ${productId.slice(-6)}`, slug: `vm-${randomUUID()}`, itemTypeId, price: '100', costPrice: '12', taxRate: '0', isTaxInclusive: false, stockQuantity: 0 });
+    const loc = await c.stockLocations.ensureDefault(companyId);
+    await db.transaction((tx) => c.stockLedger.post(tx, { companyId, productId, locationId: loc.id, type: 'receipt', quantity: 20, unitCost: 12, actor: { type: 'job' } }));
+    return { productId, locationId: loc.id };
+  };
+  const onHand = async (productId: string): Promise<number> => (await db.select().from(schema.stockBalances).where(eq(schema.stockBalances.productId, productId))).reduce((n, b) => n + b.onHand, 0);
+  /** A visit with a crew member, already on site. */
+  const onSite = async () => {
+    const a = await staff();
+    const v = await must(book(await order(), { crewIds: [a] }));
+    await must(c.orderVisits.start(crewOf(a), v.id));
+    return { v, a };
+  };
+
   beforeAll(async () => {
     releaseLedgerSwitch = await holdLedgerSwitch(url);
     process.env.DATA_ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString('base64');
@@ -228,18 +245,88 @@ describe.skipIf(!has(url))('booked visits (database)', () => {
     await expect(db.delete(schema.orderVisits).where(eq(schema.orderVisits.id, v.id))).rejects.toThrow();
   });
 
+  /** Every visit of a list, a page at a time, in the order they come. */
+  const allOf = async (status?: 'live' | 'cancelled') => {
+    const ids: string[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < 20; page += 1) {
+      const got: Awaited<ReturnType<typeof c.orderVisits.list>> = await c.orderVisits.list(office(), { ...(status === undefined ? {} : { status }), cursor });
+      ids.push(...got.rows.map((r) => r.id));
+      cursor = got.nextCursor;
+      if (cursor === null) break;
+    }
+    return ids;
+  };
+
   it('is listed soonest first, a page at a time, live ones by default and a state on request', async () => {
     const a = await order();
     const b = await order();
     const early = await must(book(a, { startsAt: day(5, 7), endsAt: day(5, 9) }));
     const later = await must(book(b, { startsAt: day(5, 13), endsAt: day(5, 15) }));
-    const page = await c.orderVisits.list(office());
-    const ids = page.rows.map((r) => r.id);
+    const ids = await allOf();
+    expect(ids.indexOf(early.id)).toBeGreaterThanOrEqual(0);
     expect(ids.indexOf(early.id)).toBeLessThan(ids.indexOf(later.id));
+    expect(new Set(ids).size).toBe(ids.length);
     await must(c.orderVisits.cancel(office(), later.id, { reason: 'Not needed now', expectedVersion: later.version }));
-    expect((await c.orderVisits.list(office())).rows.some((r) => r.id === later.id)).toBe(false);
-    expect((await c.orderVisits.list(office(), { status: 'cancelled' })).rows.some((r) => r.id === later.id)).toBe(true);
+    expect(await allOf()).not.toContain(later.id);
+    expect(await allOf('cancelled')).toContain(later.id);
     const first = await c.orderVisits.list(office(), { cursor: 'not-a-cursor' });
     expect(first.rows.length).toBeGreaterThan(0);
+  });
+
+  it('uses materials from stock while the crew is on site, and not before or after', async () => {
+    const { productId } = await stocked();
+    const a = await staff();
+    const v = await must(book(await order(), { crewIds: [a] }));
+    expect(await c.orderVisits.useMaterial(crewOf(a), v.id, { productId, quantity: 2 })).toMatchObject({ ok: false, reason: 'not_allowed' });
+    await must(c.orderVisits.start(crewOf(a), v.id));
+    const used = await must(c.orderVisits.useMaterial(crewOf(a), v.id, { productId, quantity: 2.5, note: 'Cable for the unit' }));
+    expect(used.materials).toHaveLength(1);
+    expect(used.materials[0]).toMatchObject({ productId, quantity: 2.5, canGiveBack: true, givenBack: false, note: 'Cable for the unit' });
+    expect(await onHand(productId)).toBe(17.5);
+    const [line] = await db.select().from(schema.stockMovements).where(eq(schema.stockMovements.documentId, v.id));
+    expect(line).toMatchObject({ movementType: 'sale_issue', documentType: 'visit' });
+    expect(Number(line?.unitCost)).toBe(12);
+
+    const [first, second] = used.items;
+    await must(c.orderVisits.tick(crewOf(a), v.id, first?.id ?? '', true));
+    await must(c.orderVisits.tick(crewOf(a), v.id, second?.id ?? '', true));
+    await must(c.orderVisits.complete(crewOf(a), v.id));
+    // Still open for materials until it is signed off, and then closed.
+    expect((await c.orderVisits.useMaterial(crewOf(a), v.id, { productId, quantity: 1 })).ok).toBe(true);
+    await must(c.orderVisits.signOff(crewOf(a), v.id, { name: 'Mama Wanjiku' }));
+    expect(await c.orderVisits.useMaterial(crewOf(a), v.id, { productId, quantity: 1 })).toMatchObject({ ok: false, reason: 'not_allowed' });
+    expect(await onHand(productId)).toBe(16.5);
+  });
+
+  it('refuses materials that are not there, a bad amount, a stranger on the crew list and a visit that is not theirs', async () => {
+    const { productId } = await stocked();
+    const { v, a } = await onSite();
+    expect(await c.orderVisits.useMaterial(crewOf(a), v.id, { productId, quantity: 500 })).toMatchObject({ ok: false, reason: 'bad_input', message: expect.stringMatching(/not enough stock/) as string });
+    for (const quantity of [0, -1, 'two', 0.0004, Number.NaN]) expect(await c.orderVisits.useMaterial(crewOf(a), v.id, { productId, quantity })).toMatchObject({ ok: false, reason: 'bad_input' });
+    expect(await c.orderVisits.useMaterial(crewOf(a), v.id, { productId: 'no-such-product', quantity: 1 })).toMatchObject({ ok: false, reason: 'not_found' });
+    expect(await c.orderVisits.useMaterial(crewOf(a), v.id, { productId, locationId: 'nowhere', quantity: 1 })).toMatchObject({ ok: false, reason: 'bad_input' });
+    expect(await c.orderVisits.useMaterial(crewOf(await staff()), v.id, { productId, quantity: 1 })).toMatchObject({ ok: false, reason: 'not_found' });
+    expect(await onHand(productId)).toBe(20);
+    // A refused line leaves no trace in the visit.
+    expect(await db.select().from(schema.orderVisitMaterials).where(eq(schema.orderVisitMaterials.visitId, v.id))).toHaveLength(0);
+  });
+
+  it('gives material back once and in full, to where it came from, with a reason', async () => {
+    const { productId } = await stocked();
+    const { v, a } = await onSite();
+    const used = await must(c.orderVisits.useMaterial(crewOf(a), v.id, { productId, quantity: 4 }));
+    const lineId = used.materials[0]?.id ?? '';
+    expect(await c.orderVisits.giveBackMaterial(crewOf(a), v.id, lineId, { reason: 'no' })).toMatchObject({ ok: false, reason: 'bad_input' });
+    const back = await must(c.orderVisits.giveBackMaterial(crewOf(a), v.id, lineId, { reason: 'Not needed after all' }));
+    expect(back.materials.map((m) => m.quantity)).toEqual([4, -4]);
+    expect(back.materials[0]).toMatchObject({ givenBack: true, canGiveBack: false });
+    expect(await onHand(productId)).toBe(20);
+    expect(await c.orderVisits.giveBackMaterial(crewOf(a), v.id, lineId, { reason: 'Again, by mistake' })).toMatchObject({ ok: false, reason: 'conflict' });
+    const undoLine = back.materials[1]?.id ?? '';
+    expect(await c.orderVisits.giveBackMaterial(crewOf(a), v.id, undoLine, { reason: 'Back of a giving back' })).toMatchObject({ ok: false, reason: 'not_allowed' });
+    expect(await c.orderVisits.giveBackMaterial(crewOf(a), v.id, randomUUID(), { reason: 'Not on this visit' })).toMatchObject({ ok: false, reason: 'not_found' });
+    await expect(db.update(schema.orderVisitMaterials).set({ quantity: '1' }).where(eq(schema.orderVisitMaterials.id, lineId))).rejects.toThrow();
+    await expect(db.delete(schema.orderVisitMaterials).where(eq(schema.orderVisitMaterials.id, lineId))).rejects.toThrow();
   });
 });
