@@ -1293,9 +1293,12 @@ export class SalesQuoteService {
     const verdict = await getContainer().priceGuard.assess(companyId, userId, guardLines);
     if (verdict.blocked.length > 0) throw new Error(verdict.blocked[0]);
     lines.forEach((l, i) => {
+      const { quotedAsKit: _stale, ...trace } = l.priceTrace ?? handTypedTrace(l, input.currency);
+      const kit = l.productId === null ? undefined : kitDefs.get(l.productId);
       l.priceTrace = {
-        ...(l.priceTrace ?? handTypedTrace(l, input.currency)),
+        ...trace,
         guard: verdict.lines[i]!,
+        ...(kit === undefined ? {} : { quotedAsKit: { kitId: kit.id, name: l.description } }),
       };
     });
     // What the discounts gave, kept on the quote so converting it records their use.
@@ -1718,6 +1721,18 @@ export class SalesQuoteService {
     const address = quote.deliveryAddress;
     if (!address.street || !address.city || !address.countyOrState || !address.country) {
       throw new Error('Add a complete delivery address to the quote before converting it.');
+    }
+    // A product quoted as a kit that has stopped being one would be sold as an ordinary product from its own stock. Refuse.
+    const kitLines = quote.lines.filter((line) => line.priceTrace?.quotedAsKit !== undefined);
+    if (kitLines.length > 0) {
+      const now = await getContainer().kits.forProducts(
+        (await getContainer().companySettings.ensureSeeded()).id,
+        kitLines.flatMap((line) => (line.productId === null ? [] : [line.productId])),
+        { fresh: true },
+      );
+      const gone = kitLines.find((line) => line.productId === null || !now.has(line.productId));
+      if (gone !== undefined)
+        throw new Error(`${gone.description} was a kit when this quote was made and is not one now. Please make the quote again.`);
     }
     const orderLines = mergeLinesForOrder(quote.lines);
     const items = orderLines.map((line) => ({

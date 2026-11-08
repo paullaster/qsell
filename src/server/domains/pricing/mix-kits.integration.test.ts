@@ -678,6 +678,25 @@ describe.skipIf(!url)('kits, gifts and mix deals (database)', () => {
       expect((await c.discountConfig.getRuleView(companyId, r.id)).uses).toBe(1);
     });
 
+    it('a quote of a kit that has been switched off since is not converted into a sale of the bare product', async () => {
+      const svc = await service();
+      const author = await user();
+      const cust = await customer();
+      const k = await product({ price: '1000', stockQuantity: 5, name: 'Spring hamper' });
+      const a = await product({ price: '600', stockQuantity: 10 });
+      const b = await product({ price: '400', stockQuantity: 10 });
+      await makeKit(k, [
+        { productId: a, quantity: 1 },
+        { productId: b, quantity: 1 },
+      ]);
+      const q = await svc.create(author.id, quoteInput(cust.id, [{ productId: k, quantity: 1, discountPercent: 0 }]) as never);
+      expect(q.lines[0]!.priceTrace?.quotedAsKit).toMatchObject({ name: 'Spring hamper' });
+      await c.kitConfig.save(companyId, { productId: k, allocation: 'list_price', components: [{ productId: a, quantity: 1 }, { productId: b, quantity: 1 }], isActive: false }, actor, reason);
+      await db.update(schema.salesQuotes).set({ status: 'accepted', deliveryAddress: { street: '1 Rd', city: 'Nairobi', countyOrState: 'Nairobi', country: 'KE' } as never }).where(eq(schema.salesQuotes.id, q.id));
+      await expect(svc.convertToOrder(author.id, q.id)).rejects.toThrow(/Spring hamper was a kit when this quote was made/);
+      expect((await row(k)).reservedQuantity).toBe(0);
+    });
+
     it('a quote is not converted when its kit has changed so the parts no longer add up to the quoted total', async () => {
       const svc = await service();
       const author = await user();
