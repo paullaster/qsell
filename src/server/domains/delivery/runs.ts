@@ -93,6 +93,8 @@ export interface WithCourier {
   status: string;
   lastNote: string | null;
   lastUpdateAt: string;
+  /** What is wrong between us and the courier's system (a booking or cancellation that failed), or null. */
+  problem: string | null;
 }
 
 export interface DispatchBoard {
@@ -490,7 +492,7 @@ export class DeliveryRuns {
     return {
       ready: ready.map((r) => ({ deliveryId: r.d.id, number: r.d.number, orderNumber: r.orderNumber, customerName: r.customerName, area: areaOf(r.d.destination), branchId: r.d.branchId, branchName: r.branchName, units: facts.get(r.d.id)?.units ?? 0, value: facts.get(r.d.id)?.value ?? 0, waiting: waitingSince(r.d.readyAt, now), scheduledFor: r.d.scheduledFor, promised: promisedOf(r.d, now) })),
       runs: open.map((o) => ({ id: o.r.id, number: o.r.number, runDate: o.r.runDate, riderName: o.r.riderName, branchName: o.branchName, status: o.r.status, statusWords: RUN_STATUS_WORDS[o.r.status], stops: counts.get(o.r.id) ?? 0 })),
-      withCouriers: couriers.map((c) => ({ deliveryId: c.d.id, number: c.d.number, orderNumber: c.orderNumber, customerName: c.customerName, courierName: c.s.courierName, trackingNumber: c.s.trackingNumber, status: c.s.status, lastNote: c.s.lastNote, lastUpdateAt: c.s.lastUpdateAt.toISOString() })),
+      withCouriers: couriers.map((c) => ({ deliveryId: c.d.id, number: c.d.number, orderNumber: c.orderNumber, customerName: c.customerName, courierName: c.s.courierName, trackingNumber: c.s.trackingNumber, status: c.s.status, lastNote: c.s.lastNote, lastUpdateAt: c.s.lastUpdateAt.toISOString(), problem: c.s.syncState === 'book_failed' || c.s.syncState === 'cancel_failed' ? (c.s.syncError ?? 'The courier could not be reached.') : null })),
     };
   }
 }

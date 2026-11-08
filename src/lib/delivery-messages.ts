@@ -1,7 +1,7 @@
 import type { DeliveryAction } from './delivery-document';
 
 /** The messages a customer gets as their delivery moves. Pure: the words and the rules; the sending is the server's. */
-export const MESSAGE_KINDS = ['out_for_delivery', 'delivered', 'part_delivered', 'attempt_failed', 'returned'] as const;
+export const MESSAGE_KINDS = ['out_for_delivery', 'delivered', 'part_delivered', 'attempt_failed', 'returned', 'slot_not_kept'] as const;
 export type MessageKind = (typeof MESSAGE_KINDS)[number];
 export const isMessageKind = (value: unknown): value is MessageKind => typeof value === 'string' && (MESSAGE_KINDS as readonly string[]).includes(value);
 
@@ -14,7 +14,7 @@ export function kindForStep(action: DeliveryAction, whole: boolean): MessageKind
 const SENT_BY_STEP: Partial<Record<DeliveryAction, MessageKind>> = { dispatch: 'out_for_delivery', fail_attempt: 'attempt_failed', return: 'returned' };
 
 /** What each message is, for the shop's own list of what was sent. */
-export const KIND_WORDS: Record<MessageKind, string> = { out_for_delivery: 'On its way', delivered: 'Delivered', part_delivered: 'Part delivered', attempt_failed: 'Could not deliver', returned: 'Coming back to us' };
+export const KIND_WORDS: Record<MessageKind, string> = { out_for_delivery: 'On its way', delivered: 'Delivered', part_delivered: 'Part delivered', attempt_failed: 'Could not deliver', returned: 'Coming back to us', slot_not_kept: 'Chosen time not kept' };
 
 /** One message for one thing that happened, however often the step is retried: the same key is the same message. */
 export const messageKey = (deliveryId: string, kind: MessageKind, attempt: number): string => `${deliveryId}:${kind}:${String(attempt)}`;
@@ -82,6 +82,15 @@ export function messageContent(kind: MessageKind, f: MessageFacts): MessageConte
       return { subject: `Part of your order ${f.orderNumber} was delivered · ${store}`, heading: 'Part of your order was delivered', greeting, body: 'Part of your order has been delivered. The rest will follow on another delivery, and you will hear from us when it leaves.', details: base, cta: 'See my delivery' };
     case 'attempt_failed':
       return { subject: `We could not deliver your order ${f.orderNumber} · ${store}`, heading: 'We could not deliver your order', greeting, body: `We tried to deliver your order, but ${reasonForCustomer(f.reasonCode)}.${f.triesLeft !== null && f.triesLeft > 0 ? ' We will try again; please keep your phone on.' : ' Please contact us so we can arrange it.'}`, details: base, cta: 'See my delivery' };
+    case 'slot_not_kept':
+      return {
+        subject: `About the delivery time for your order ${f.orderNumber} · ${store}`,
+        heading: 'We could not keep the delivery time you chose',
+        greeting,
+        body: 'The delivery time you chose for your order has since been taken or closed, so we could not hold it for you. Your order is still going ahead. We will be in touch to agree another time, and you can follow it on your tracking page.',
+        details: base,
+        cta: 'Track my delivery',
+      };
     case 'returned':
       return { subject: `Your order ${f.orderNumber} is coming back to us · ${store}`, heading: 'We could not deliver, and it is coming back to us', greeting, body: 'We were not able to deliver your order and it is being returned to us. Please contact us so we can arrange another delivery or put it right.', details: base, cta: 'See my delivery' };
   }

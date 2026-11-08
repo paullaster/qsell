@@ -63,7 +63,8 @@ export async function orderDeliveriesAction(orderId: unknown) {
     const found = await getContainer().deliveryDocuments.forOrder(ctx.companyId, idOf(orderId, 'order'));
     if (found === null) throw new DeliveryError('That order could not be found.', 'NOT_FOUND');
     // Whether to show the forms: the person who may only look is not offered buttons that would be refused.
-    return { ...found, canFulfil: await canPermission('deliveries:fulfil') };
+    const [canFulfil, chosen] = await Promise.all([canPermission('deliveries:fulfil'), getContainer().deliverySlots.requestFor(ctx.companyId, idOf(orderId, 'order'))]);
+    return { ...found, canFulfil, chosen };
   });
 }
 
@@ -119,7 +120,7 @@ export async function deliveryStepAction(raw: unknown) {
         case 'mark_ready':
           return dataOf(await docs.markReady(actor, id, version));
         case 'dispatch':
-          return sent(dataOf(await docs.dispatch(actor, id, { courierName: i.courierName, trackingNumber: i.trackingNumber }, version)));
+          return sent(dataOf(await docs.dispatch(actor, id, { courierName: i.courierName, trackingNumber: i.trackingNumber, courierAccountId: i.courierAccountId }, version)));
         case 'deliver':
           return sent(dataOf(await docs.deliver(actor, id, { receivedBy: i.receivedBy, note: i.note }, version)));
         case 'fail_attempt':

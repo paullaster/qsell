@@ -139,7 +139,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'late delivery alerts and delivery SLA',
       'courier parcel tracking',
     ],
-    subModules: ['Deliveries', 'Dispatch board', 'Delivery runs', 'Riders', 'Door payments', 'Delivery costs', 'Delivery report', 'Visits', 'Delivery slots', 'Late deliveries', 'Delivery zones', 'Delivery charges', 'Delivery methods', 'Delivery invoicing', 'Stock timing', 'Map service'],
+    subModules: ['Deliveries', 'Dispatch board', 'Delivery runs', 'Riders', 'Door payments', 'Delivery costs', 'Delivery report', 'Visits', 'Delivery slots', 'Late deliveries', 'Couriers', 'Delivery zones', 'Delivery charges', 'Delivery methods', 'Delivery invoicing', 'Stock timing', 'Map service'],
   },
   {
     navId: 'products-inventory',

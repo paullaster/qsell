@@ -486,6 +486,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'delivery_slots:manage',
       },
       {
+        id: 'delivery-couriers',
+        title: 'Couriers',
+        name: 'delivery-couriers',
+        href: '/admin/delivery/couriers',
+        description: 'Connect the couriers you send parcels with, so each is booked, followed and cancelled without typing, and keep their keys sealed',
+        icon: 'Truck',
+        permission: 'couriers:manage',
+      },
+      {
         id: 'delivery-visits',
         title: 'Visits',
         name: 'delivery-visits',

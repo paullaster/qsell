@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, deliveries, deliveryAttemptLines, deliveryAttempts, deliveryEvents, deliveryProofs, deliveryRiderSettings, deliveryRiders, deliveryShipments, deliveryLines, deliveryReturns, orderDeliveries, orderItems, orders, products, stockReservations, stockSettings, unitsOfMeasure, type ReturnEffects } from '@/server/db/drizzle/schema';
+import { branches, courierAccounts, deliveries, deliveryAttemptLines, deliveryAttempts, deliveryEvents, deliveryProofs, deliveryRiderSettings, deliveryRiders, deliveryShipments, deliveryLines, deliveryReturns, orderDeliveries, orderItems, orders, products, stockReservations, stockSettings, unitsOfMeasure, type ReturnEffects } from '@/server/db/drizzle/schema';
 import {
   ACTION_WORDS,
   FAILURE_REASONS,
@@ -201,7 +201,7 @@ export class DeliveryDocuments {
     private readonly stock: Pick<StockReservations, 'consumePartIn' | 'receiveGoodsBackIn' | 'undoReceiptIn'>,
     private readonly messages: Pick<DeliveryMessages, 'enqueueIn'>,
     /** Books the slot a shopper chose at the checkout when the delivery is made. Optional: a delivery needs no slot. */
-    private readonly slots?: { honourRequest(tx: Tx, companyId: string, orderId: string, deliveryId: string): Promise<void> },
+    private readonly slots?: { honourRequest(tx: Tx, companyId: string, orderId: string, deliveryId: string): Promise<'none' | 'booked' | 'unavailable'> },
   ) {}
 
   // ── Making a delivery ────────────────────────────────────────────────────────────────────────────────────────────
@@ -250,7 +250,8 @@ export class DeliveryDocuments {
       });
       await tx.insert(deliveryLines).values(made.lines.map((l) => ({ deliveryId: id, productId: l.productId, quantity: String(l.quantity) })));
       await this.event(tx, id, 'created', actor, null, 'draft', { detail: { lines: made.lines.length } });
-      await this.slots?.honourRequest(tx, actor.companyId, orderId, id);
+      // A time the shopper chose is booked now; if it has gone, the customer is told, in this same transaction, and the delivery still goes ahead.
+      if ((await this.slots?.honourRequest(tx, actor.companyId, orderId, id)) === 'unavailable') await this.messages.enqueueIn(tx, { companyId: actor.companyId, orderId, deliveryId: id, kind: 'slot_not_kept', key: messageKey(id, 'slot_not_kept', 0) });
       await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery', id }, action: 'delivery.document_created', actor: { type: 'user', id: actor.userId }, to: 'draft', inputs: { orderId, number } }, tx);
       return { ok: true, data: { id, number } };
     });
@@ -312,7 +313,7 @@ export class DeliveryDocuments {
    * shipment is recorded with it. A run passes its own words (`note`, `detail`) so the history says which run took it. With `tx` the
    * step is made inside the caller's transaction (a run starts all its stops or none).
    */
-  async dispatch(actor: DocActor, id: string, input: { courierName?: unknown; trackingNumber?: unknown; note?: string; detail?: Record<string, unknown> }, expectedVersion?: number, tx?: Tx) {
+  async dispatch(actor: DocActor, id: string, input: { courierName?: unknown; trackingNumber?: unknown; courierAccountId?: unknown; note?: string; detail?: Record<string, unknown> }, expectedVersion?: number, tx?: Tx) {
     return await this.step(
       actor,
       id,
@@ -321,14 +322,26 @@ export class DeliveryDocuments {
       async (inner, ctx) => {
         const problem = orderReadinessProblem(ctx.order, { paidAtDoor: ctx.row.doorAmount !== null });
         if (problem !== null) return fail('order_not_ready', problem.message);
-        const courierName = text(input.courierName, 120);
+        let courierName = text(input.courierName, 120);
+        // A courier that is connected is chosen from the company's list; its name is the one it was saved under, and its system books the parcel afterwards.
+        let account: typeof courierAccounts.$inferSelect | null = null;
+        if (ctx.row.method === 'courier' && typeof input.courierAccountId === 'string' && input.courierAccountId !== '') {
+          const [found] = /^[0-9a-f-]{36}$/i.test(input.courierAccountId) ? await inner.select().from(courierAccounts).where(and(eq(courierAccounts.id, input.courierAccountId), eq(courierAccounts.companyId, actor.companyId))) : [];
+          if (found?.isActive !== true) return fail('bad_input', 'Choose one of your couriers that is still in use.');
+          account = found;
+          courierName = found.name;
+        }
         if (ctx.row.method === 'courier' && courierName === null) return fail('bad_input', 'Say which courier has it.');
         const trackingNumber = ctx.row.method === 'courier' ? text(input.trackingNumber, 120) : null;
         if (ctx.row.method === 'courier' && courierName !== null) {
+          const connected = account !== null && account.adapter === 'http_json';
+          const now = new Date();
+          // A parcel for a connected courier with no tracking number yet is booked afterwards by the worker; the dispatch itself never waits for the courier.
+          const sync = { accountId: account?.id ?? null, adapter: account?.adapter ?? 'manual', labelUrl: null, trackingUrl: null, podUrl: null, podName: null, syncState: connected && trackingNumber === null ? ('book_pending' as const) : ('idle' as const), syncTries: 0, syncError: null, syncNextAt: connected ? new Date(now.getTime() + (trackingNumber === null ? 0 : 15 * 60_000)) : null };
           await inner
             .insert(deliveryShipments)
-            .values({ companyId: actor.companyId, deliveryId: id, courierName, trackingNumber, status: 'in_transit' })
-            .onConflictDoUpdate({ target: deliveryShipments.deliveryId, set: { courierName, trackingNumber, status: 'in_transit', lastUpdateAt: new Date() } });
+            .values({ companyId: actor.companyId, deliveryId: id, courierName, trackingNumber, status: 'in_transit', ...sync })
+            .onConflictDoUpdate({ target: deliveryShipments.deliveryId, set: { courierName, trackingNumber, status: 'in_transit', lastUpdateAt: now, ...sync } });
         }
         // A delivery the shop's own rider carries gets the customer's code when the company asks for it as proof; a second try keeps the first.
         const [proofRow] = ctx.row.method === 'own_fleet' ? await inner.select({ proof: deliveryRiderSettings.proof }).from(deliveryRiderSettings).where(eq(deliveryRiderSettings.companyId, actor.companyId)) : [];

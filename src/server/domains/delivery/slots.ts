@@ -466,14 +466,15 @@ export class DeliverySlots {
    * When a delivery is made for an order whose shopper chose a slot: books it. If the slot has filled or closed since, the delivery is made without
    * one and the request records why, so dispatch can call the customer; the sale and the delivery are never held back for a slot.
    */
-  async honourRequest(tx: Tx, companyId: string, orderId: string, deliveryId: string): Promise<void> {
+  async honourRequest(tx: Tx, companyId: string, orderId: string, deliveryId: string): Promise<'none' | 'booked' | 'unavailable'> {
     const [req] = await tx.select().from(orderSlotRequests).where(and(eq(orderSlotRequests.orderId, orderId), eq(orderSlotRequests.companyId, companyId), eq(orderSlotRequests.outcome, 'pending'))).for('update');
-    if (req === undefined) return;
+    if (req === undefined) return 'none';
     const now = this.clock();
     // A booking that fails writes nothing before it fails, so the transaction carries on with the delivery.
     const result = await this.bookIn(tx, companyId, deliveryId, req.slotId, req.day, { type: 'system', id: null }, req.requestedAt);
     await tx.update(orderSlotRequests).set(result.ok ? { outcome: 'booked', deliveryId, settledAt: now } : { outcome: 'unavailable', deliveryId, outcomeNote: result.message.slice(0, 300), settledAt: now }).where(eq(orderSlotRequests.orderId, orderId));
     if (!result.ok) await this.decisions.record({ companyId, subject: { type: 'delivery', id: deliveryId }, action: 'delivery.slot_request_unavailable', actor: { type: 'system', id: null }, reason: { code: result.reason, text: result.message }, inputs: { slotId: req.slotId, day: req.day, orderId } }, tx);
+    return result.ok ? 'booked' : 'unavailable';
   }
 
   /** What the shopper asked for on an order and what became of it, or null when they chose nothing. */

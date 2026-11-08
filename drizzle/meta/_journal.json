@@ -1051,6 +1051,13 @@
       "when": 1794046583964,
       "tag": "0149_order_slot_requests",
       "breakpoints": true
+    },
+    {
+      "idx": 150,
+      "version": "7",
+      "when": 1794115539680,
+      "tag": "0150_delivery_couriers",
+      "breakpoints": true
     }
   ]
 }

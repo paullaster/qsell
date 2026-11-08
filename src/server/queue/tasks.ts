@@ -370,6 +370,12 @@ export const expireGiftCards = async (_payload: unknown, helpers: JobHelpers) =>
 /** Worker cron task: documents past their date are marked expired, and vendors are reminded at the days each type asks for. */
 export const vendorDocumentExpiry = async (_payload: unknown, helpers: JobHelpers) => {
   const container = getContainer();
+/** Worker cron task: parcels are booked with their couriers, asked about on the road and cancelled when their delivery is; a courier that is down never stops the rest. */
+export const courierSync = async (_payload: unknown, helpers: JobHelpers) => {
+  const r = await getContainer().courierSync.run();
+  if (r.booked + r.cancelled + r.failed > 0) helpers.logger.info(`Couriers: ${r.booked} booked, ${r.polled} asked, ${r.cancelled} cancelled, ${r.failed} to try again or fix`);
+};
+
   const today = businessDate();
   const r = await container.vendorExpiry.run(today);
   if (r.expired > 0 || r.reminded > 0) helpers.logger.info(`Vendor documents: ${r.expired} expired, ${r.reminded} reminders sent`);
@@ -447,3 +453,4 @@ export const tasks = {
   'payables-check': payablesCheck,
   'payables-fx-reverse': payablesFxReverse,
 };
+  'courier-sync': courierSync,

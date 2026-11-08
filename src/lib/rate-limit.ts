@@ -27,18 +27,20 @@ export const RATE_RULES = {
   door_prompt_rider: { limit: 12, seconds: 900 },
   /** A shopper pricing their delivery, and searching places or naming a pin on the map (each can call a map service). */
   shop_delivery_quote_ip: { limit: 120, seconds: 600 },
+  /** A courier's system pushing news of parcels to its address: per source address, since one courier sends many a minute. */
+  courier_webhook_ip: { limit: 600, seconds: 60 },
   shop_map_search_ip: { limit: 40, seconds: 600 },
   /** A customer looking up the code to collect an order: per address, and per order number so the number and contact cannot be guessed. */
   collection_lookup_ip: { limit: 30, seconds: 600 },
   collection_lookup_order: { limit: 8, seconds: 600 },
-  /** A customer opening their tracking page: per address, and per link so a link cannot be hammered. */
-  tracking_ip: { limit: 60, seconds: 600 },
   /** Placing orders at the shop: per address and per phone, so one visitor cannot hold all the stock. */
   checkout_ip: { limit: 40, seconds: 900 },
   checkout_contact: { limit: 10, seconds: 3600 },
   /** Looking up an order by its number and the phone or email it was placed with: the number and contact cannot be guessed. */
   order_lookup_ip: { limit: 30, seconds: 600 },
   order_lookup_order: { limit: 8, seconds: 600 },
+  /** A customer opening their tracking page: per address, and per link so a link cannot be hammered. */
+  tracking_ip: { limit: 60, seconds: 600 },
   tracking_token: { limit: 40, seconds: 600 },
   /** A signed-in vendor sending files or documents. */
   vendor_upload: { limit: 60, seconds: 600 },

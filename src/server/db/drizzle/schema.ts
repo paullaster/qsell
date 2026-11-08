@@ -1448,6 +1448,36 @@ export const deliveryMessages = pgTable(
 export type DeliveryMessageRow = typeof deliveryMessages.$inferSelect;
 
 /** What a courier company has told us about a delivery sent with them. One per delivery; the courier's own news is typed in until an adapter brings it. */
+/** A courier the company sends parcels with, and how we talk to it. The key and the webhook secret are kept sealed and are never read back to a screen. */
+export const courierAccounts = pgTable(
+  'courier_accounts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    adapter: text('adapter').$type<'manual' | 'http_json'>().notNull().default('manual'),
+    /** Everything about the connection that is not a secret: the address, the paths, the mapping of its answers. */
+    settings: jsonb('settings').$type<Record<string, unknown>>().notNull().default({}),
+    secretsSealed: jsonb('secrets_sealed').$type<EncryptedCredentialsBlob>(),
+    /** The unguessable part of the address the courier pushes its news to. */
+    webhookKey: text('webhook_key').notNull(),
+    isActive: boolean('is_active').notNull().default(true),
+    version: integer('version').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    updatedBy: text('updated_by'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('courier_accounts_name_uidx').on(t.companyId, sql`lower(${t.name})`),
+    uniqueIndex('courier_accounts_webhook_uidx').on(t.webhookKey),
+    check('courier_accounts_adapter_chk', sql`${t.adapter} IN ('manual','http_json')`),
+  ],
+);
+export type CourierAccountRow = typeof courierAccounts.$inferSelect;
+
 export const deliveryShipments = pgTable(
   'delivery_shipments',
   {
@@ -1465,14 +1495,54 @@ export const deliveryShipments = pgTable(
     lastNote: text('last_note'),
     lastUpdateAt: timestamp('last_update_at', { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    /** The courier's own connection used for this parcel, if it has one; a parcel with none is followed by hand. */
+    accountId: uuid('account_id').references(() => courierAccounts.id, { onDelete: 'restrict' }),
+    labelUrl: text('label_url'),
+    trackingUrl: text('tracking_url'),
+    podUrl: text('pod_url'),
+    podName: text('pod_name'),
+    /** What the background worker owes this parcel: booking it, cancelling it, or nothing. */
+    syncState: text('sync_state').$type<'idle' | 'book_pending' | 'book_failed' | 'cancel_pending' | 'cancel_failed' | 'cancelled'>().notNull().default('idle'),
+    syncTries: integer('sync_tries').notNull().default(0),
+    /** When the worker next looks at this parcel: to try a booking again, or to ask the courier for news. */
+    syncNextAt: timestamp('sync_next_at', { withTimezone: true }),
+    syncError: text('sync_error'),
   },
   (t) => [
     uniqueIndex('delivery_shipments_delivery_uidx').on(t.deliveryId),
     index('delivery_shipments_company_idx').on(t.companyId, t.status),
+    index('delivery_shipments_sync_idx').on(t.syncNextAt).where(sql`${t.accountId} IS NOT NULL AND ${t.syncNextAt} IS NOT NULL`),
+    index('delivery_shipments_tracking_idx').on(t.accountId, t.trackingNumber).where(sql`${t.accountId} IS NOT NULL`),
     check('delivery_shipments_status_chk', sql`${t.status} IN ('booked','in_transit','delivered','exception')`),
+    check('delivery_shipments_sync_chk', sql`${t.syncState} IN ('idle','book_pending','book_failed','cancel_pending','cancel_failed','cancelled')`),
   ],
 );
 export type DeliveryShipmentRow = typeof deliveryShipments.$inferSelect;
+
+/** Every piece of news a courier gave us, as it came (pushed or asked for). The same piece sent twice is kept once. Kept for good. */
+export const courierEvents = pgTable(
+  'courier_events',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    shipmentId: uuid('shipment_id')
+      .notNull()
+      .references(() => deliveryShipments.id, { onDelete: 'restrict' }),
+    source: text('source').$type<'webhook' | 'poll'>().notNull(),
+    dedupKey: text('dedup_key').notNull(),
+    state: text('state').notNull(),
+    note: text('note'),
+    /** The courier's own time for it, beside ours; never used to order anything. */
+    courierAt: timestamp('courier_at', { withTimezone: true }),
+    receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('courier_events_once_uidx').on(t.shipmentId, t.dedupKey),
+    check('courier_events_source_chk', sql`${t.source} IN ('webhook','poll')`),
+  ],
+);
 
 /** What a delivery carries, product by product: planned, then picked (possibly short), then delivered. */
 export const deliveryLines = pgTable(

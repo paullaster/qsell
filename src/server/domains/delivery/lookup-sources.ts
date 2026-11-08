@@ -1,6 +1,7 @@
 import { DISPOSITION_WORDS, ISSUE_MOMENTS, ISSUE_MOMENT_WORDS, RETURN_DISPOSITIONS } from '@/lib/stock-issue';
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { stockLocations, orders, orderVisits, branches, customerGroups, deliveryRiderSettings, deliveryRiders, bankAccounts, deliveryRuns, deliveryZones, glAccounts, paymentMethods, products, users } from '@/server/db/drizzle/schema';
+import { courierAccounts, stockLocations, orders, orderVisits, branches, customerGroups, deliveryRiderSettings, deliveryRiders, bankAccounts, deliveryRuns, deliveryZones, glAccounts, paymentMethods, products, users } from '@/server/db/drizzle/schema';
+import { ADAPTER_WORDS, COURIER_ADAPTER_IDS } from '@/server/adapters/courier/registry';
 import { COST_KINDS, COST_WORDS } from '@/lib/delivery-cost';
 import { RIDER_KINDS, RIDER_KIND_WORDS, RIDER_STATUSES, RIDER_STATUS_WORDS } from '@/lib/delivery-rider';
 import { RUN_STATUSES, RUN_STATUS_WORDS } from '@/lib/dispatch-run';
@@ -430,6 +431,32 @@ const leadZones = tableSource({
   toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.code), badge: null }),
 });
 
+/** The couriers the company has connected and not stopped, for choosing who has a parcel when it is sent out. */
+const activeCouriers = tableSource({
+  key: 'delivery-couriers',
+  permission: 'deliveries:dispatch',
+  table: courierAccounts,
+  id: courierAccounts.id,
+  label: courierAccounts.name,
+  searchColumns: [courierAccounts.name],
+  select: { adapter: courierAccounts.adapter },
+  scope: ({ filters, companyId }) => {
+    acceptFilters(filters, {});
+    return [and(eq(courierAccounts.companyId, companyId), eq(courierAccounts.isActive, true)) ?? sql`false`];
+  },
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.adapter) === 'manual' ? 'Typed in by hand' : 'Followed by its own system', badge: null }),
+});
+
+/** How a courier can be connected. */
+const courierKinds = staticSource({
+  key: 'courier-adapters',
+  permission: 'couriers:manage',
+  items: ({ filters }) => {
+    acceptFilters(filters, {});
+    return COURIER_ADAPTER_IDS.map((id) => ({ id, label: ADAPTER_WORDS[id], description: null, badge: null }));
+  },
+});
+
 const costKinds = staticSource({
   key: 'delivery-cost-kinds',
   permission: 'delivery_costs:manage',
@@ -439,4 +466,4 @@ const costKinds = staticSource({
   },
 });
 
-export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts, deliveryStatuses, deliveryFailureReasons, stockIssueMoments, returnDispositions, openRuns, runStatuses, courierNews, riders, staffToRide, riderKinds, riderStatuses, doorCashMethods, handInAccounts, handInWitnesses, varianceAccounts, costKinds, payoutMethods, costAccounts, visitCrew, visitOrders, visitProducts, visitLocations, leadProducts, leadZones];
+export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts, deliveryStatuses, deliveryFailureReasons, stockIssueMoments, returnDispositions, openRuns, runStatuses, courierNews, riders, staffToRide, riderKinds, riderStatuses, doorCashMethods, handInAccounts, handInWitnesses, varianceAccounts, costKinds, payoutMethods, costAccounts, visitCrew, visitOrders, visitProducts, visitLocations, leadProducts, leadZones, activeCouriers, courierKinds];

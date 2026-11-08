@@ -4,6 +4,8 @@ import { DeliveryBilling } from '@/server/domains/delivery/billing';
 import { DeliveryMethods } from '@/server/domains/delivery/methods';
 import { OrderCollections } from '@/server/domains/delivery/collection';
 import { DeliverySlots } from '@/server/domains/delivery/slots';
+import { CourierAccounts } from '@/server/domains/delivery/courier-accounts';
+import { CourierSync } from '@/server/domains/delivery/courier-sync';
 import { DeliveryDocuments } from '@/server/domains/delivery/documents';
 import { DeliveryMessages } from '@/server/domains/delivery/messages';
 import { TrackingLinks } from '@/server/domains/delivery/tracking-links';
@@ -70,6 +72,8 @@ export function createDeliveryServices(input: {
   const doorPayments = new DoorPayments(input.db, input.decisionLog, deliveryDocuments, input.customers);
   const doorWork = new DoorWork(input.db, deliveryDocuments, deliveryRuns, input.decisionLog, doorPayments, deliveryCosts);
   const courierShipments = new CourierShipments(input.db, deliveryDocuments);
+  const courierAccounts = new CourierAccounts(input.db, input.decisionLog);
+  const courierSync = new CourierSync(input.db, courierAccounts, courierShipments, deliveryDocuments);
   const trackedOrders = new TrackedOrders(input.db, input.companySettings, deliveryDocuments, orderCollections);
   const stockReissue = new StockReissue(input.db, input.decisionLog, input.stockReservations);
   const deliveryBilling = new DeliveryBilling(input.db, input.decisionLog);
@@ -97,6 +101,8 @@ export function createDeliveryServices(input: {
     doorPayments,
     deliveryCosts,
     courierShipments,
+    courierAccounts,
+    courierSync,
     deliveryBilling,
   };
 }

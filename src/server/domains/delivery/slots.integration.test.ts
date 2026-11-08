@@ -519,6 +519,9 @@ describe.skipIf(!has(url))('delivery slots (database)', () => {
     // Dispatch is told on the delivery's own screen's data, and the history keeps the refusal.
     const [log] = await db.select().from(schema.decisionLog).where(and(eq(schema.decisionLog.subjectId, doc.data.id), eq(schema.decisionLog.action, 'delivery.slot_request_unavailable')));
     expect(log).toBeDefined();
+    // The customer is told in the same step, once.
+    const told = await db.select({ kind: schema.deliveryMessages.kind }).from(schema.deliveryMessages).where(eq(schema.deliveryMessages.deliveryId, doc.data.id));
+    expect(told.filter((m) => m.kind === 'slot_not_kept')).toHaveLength(1);
     // Making a second delivery for the same order does not try again.
     const again = await c.deliveryDocuments.create(actor(), orderId, { lines: null });
     expect(again.ok || again.reason === 'nothing_left').toBe(true);

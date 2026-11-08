@@ -127,6 +127,8 @@ import type { StockReissue } from '@/server/domains/delivery/reissue';
 import { DeliveryCostBooks } from '@/server/domains/delivery/cost-books';
 import { OrderVisits } from '@/server/domains/delivery/visits';
 import { DeliverySlots } from '@/server/domains/delivery/slots';
+import type { CourierAccounts } from '@/server/domains/delivery/courier-accounts';
+import type { CourierSync } from '@/server/domains/delivery/courier-sync';
 import { DeliverySla } from '@/server/domains/delivery/sla';
 import { DeliveryReports } from '@/server/domains/delivery/reports';
 import type { DeliveryCosts } from '@/server/domains/delivery/costs';
@@ -312,6 +314,8 @@ export interface AppContainer {
   doorHandIns: DoorHandIns;
   doorMpesa: DoorMpesa;
   courierShipments: CourierShipments;
+  courierAccounts: CourierAccounts;
+  courierSync: CourierSync;
   trackingLinks: TrackingLinks;
   deliveryMessages: DeliveryMessages;
   trackedOrders: TrackedOrders;
@@ -681,6 +685,8 @@ export function getContainer(): AppContainer {
       },
     }),
     courierShipments: deliveryServices.courierShipments,
+    courierAccounts: deliveryServices.courierAccounts,
+    courierSync: deliveryServices.courierSync,
     trackingLinks: deliveryServices.trackingLinks,
     deliveryMessages: deliveryServices.deliveryMessages,
     trackedOrders: deliveryServices.trackedOrders,
