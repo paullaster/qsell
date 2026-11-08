@@ -270,6 +270,27 @@ describe.skipIf(!url)('kits, gifts and mix deals (database)', () => {
       }
     });
 
+    it('the shop shows a kit at the tax rate its parts come to, so the screen total is the order total', async () => {
+      const { withShopAvailability } = await import('@/server/domains/catalog/shop-availability');
+      const { CatalogService } = await import('@/server/domains/catalog/service');
+      const { cartTotals } = await import('@/lib/cartMoney');
+      for (const inclusive of [true, false]) {
+        const k = await product({ price: '1000', taxRate: '16', isTaxInclusive: inclusive, stockQuantity: 0 });
+        const wine = await product({ price: '500', taxRate: '16', stockQuantity: 10 });
+        const bread = await product({ price: '500', taxRate: '0', stockQuantity: 10 });
+        await makeKit(k, [
+          { productId: wine, quantity: 1 },
+          { productId: bread, quantity: 1 },
+        ]);
+        const shown = (await withShopAvailability((await CatalogService.getProductsByIds([k])).map((p) => ({ ...p })) as never))[0]!;
+        const onScreen = cartTotals([{ product: shown, quantity: 1 }]);
+        const res = await order((await customer()).email!, [[k, 1]]);
+        expect(res.success).toBe(true);
+        expect(onScreen.tax).toBeCloseTo(res.order!.tax, 1);
+        expect(onScreen.totalAmount).toBeCloseTo(res.order!.totalAmount, 1);
+      }
+    });
+
     it('the shop is shown how many can be made from the parts, not the kit product’s own stock', async () => {
       const { withShopAvailability } = await import('@/server/domains/catalog/shop-availability');
       const { availableOf } = await import('@/lib/cart-quantity');
