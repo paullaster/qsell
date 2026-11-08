@@ -77,9 +77,9 @@ async function withKitAvailability(products: PublicProduct[]): Promise<PublicPro
     if (kit === undefined) return p;
     const made = kitsBuildable(kit, parts);
     // The shop works out tax on the product it shows, but the order taxes a kit part by part. So the kit is shown at the one rate
-    // that comes to the same tax: the shares of the price are fixed fractions, so this holds at any price and quantity.
-    const priced = typeof p.price === 'number' && p.price > 0 ? kitTax(p.price, 1, kit, p.isTaxInclusive !== false) : null;
-    const taxRate = priced === null || priced.net <= 0 ? p.taxRate : Math.round((priced.tax / priced.net) * 100_000) / 1000;
+    // that comes to the same tax: the shares of the price are fixed fractions, so this holds at any price and quantity (a price that comes only from a price list included).
+    const priced = kitTax(100, 1, kit, p.isTaxInclusive !== false);
+    const taxRate = priced.net <= 0 ? p.taxRate : Math.round((priced.tax / priced.net) * 100_000) / 1000;
     const shown = { ...p, ...(taxRate === undefined ? {} : { taxRate }) };
     // Parts nobody counts never run out, so neither does the kit.
     return Number.isFinite(made) ? { ...shown, inventoryKind: 'inventory', stockQuantity: made, reservedQuantity: 0 } : { ...shown, inventoryKind: 'non_inventory' };
