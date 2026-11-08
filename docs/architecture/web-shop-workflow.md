@@ -59,7 +59,8 @@ All of it reads through `StorefrontCatalog`, which sees **live products only** (
 
 ## 5. The cart
 
-* **The browser keeps only product ids, quantities and the price last seen** (`qsell_cart_v2`). The older key is read once and dropped. Another tab changing the cart updates this one.
+* **A signed-in shopper's cart is also kept on their account** (table `shop_carts`, one row per shopper: ids and quantities only). On arrival the browser's cart is joined with the account's (a product in both keeps the larger quantity, never the sum, so joining twice changes nothing), and from then on every change is sent to the account 0.4 s later. A guest's cart therefore joins the account at sign-in, and a cart made on a phone is there on a laptop; coming back to a tab picks up what another device changed. If the account cannot be reached the browser's cart still works and nothing is sent, so an empty browser can never wipe a saved cart. Placing an order empties the saved cart. A staff or vendor session has no shop cart.
+* **The browser keeps product ids, quantities and the price last seen** (`qsell_cart_v2`). The older key is read once and dropped. Another tab changing the cart updates this one.
 * **On arrival and when checkout opens, every line is checked against the shop** (`reconcileCart`): current price and stock, withdrawn products removed, quantities cut to what is left or raised to the least that can be bought, price changes announced ("The price of X changed from A to B"). Nothing moves without a notice. If the shop cannot be reached the cart is kept and the shopper told prices are checked at checkout.
 * **A price can depend on quantity** (price list breaks), so after a quantity changes the prices are read again quietly 400 ms later.
 * **Packaging options** (items marked as checkout packaging) are offered in the cart and at checkout, with suggestions that fit the goods; the order refuses a packaging selection that does not fit.
@@ -163,7 +164,8 @@ Everything below is on the **order timeline**: every stage has a server time, an
 * **Register** (`/register`, also as a modal over the shop): name, email, password (policy checked on the server), rate limited 10 per hour per address. No session is made until the address is verified from the emailed link. **Sign in** is rate limited per address (100 per 15 min) and per account (8 per 15 min); an unverified account is told so only after the password matched. **Password reset** and **resend verification** are mailed (3 per hour per account, 10 per address) and answer the same whether or not the address exists.
 * **My orders / order details** (`/profile/orders`, `/profile/orders/[id]`): the owner is taken from the session only; an order that is not theirs is "not found".
 * **Addresses:** add, edit, delete, make default; all scoped to the signed-in customer's own record.
-* **Wishlist:** server-side for signed-in shoppers (capped at 200), in the browser for guests, merged once at sign-in; a share link can be made.
+* **Wishlist:** server-side for signed-in shoppers (capped at 200), in the browser for guests, merged once at sign-in; a share link can be made. With the cart (section 5) this is what "follows a shopper between devices" means: both follow the account. A guest has no identity to follow, so a guest's list stays in that browser (a share link carries it to another).
+* **Cart reminders:** a signed-in shopper whose cart has something in it and has not changed for 3 hours (but is under 7 days old), who has not ordered since, gets one email, "Your cart is waiting" (what is in it, a button back to checkout, nothing is held for them). At most one per cart state and one a week per shopper; never to an unverified address or a suspended account; every mail carries a link to a page where a button stops them for good (the link alone changes nothing). The sweep runs every 15 minutes and queues one job per cart; the rules are checked again when the mail is sent, and the reminder is recorded only after the mail was accepted, so a mail server that is down means a retry.
 * **Newsletter:** double opt-in; asking only creates a pending row and sends a confirmation link; the link opens a page with a button (mail scanners open links). 3 per hour per email. **Sending:** Admin › Customers › Newsletter has "Write to the list" (permission `newsletter:manage`): a subject and a plain-text message, "Send me a test", and "Send to N subscribers" (asks once). The message goes to everyone who confirmed, 25 at a time through the worker (each slice queues the next; a slice whose mails all fail is retried), every message carries its own unsubscribe link, and the decision log records when it was queued and how many were reached. One message to be sent has one id, so pressing twice sends once.
 * **Help, policies, platform** pages are built from the company's own content.
 
@@ -177,6 +179,8 @@ Everything below is on the **order timeline**: every stage has a server time, an
 | `delivery-messages-sweep` | minute | Sends queued customer delivery mails. |
 | `delivery-sla-scan`, `order-sla-sweep` | minute, 5 min | Raises late deliveries and orders held too long in a stage (for example payment not confirmed after 30 min, paid but not dispatched after 24 h). |
 | `order-stage-backfill` | 5 min | Rebuilds timelines for old orders. |
+| `shop-cart-reminder-sweep` | 15 min | Finds carts left behind and queues one reminder job for each. |
+| `shop-cart-reminder` | on demand | Writes to one shopper about the cart they left (retried; rules checked again at sending). |
 | `shop-order-email` | on demand | Sends "we have your order" and "payment received" to the shopper, retrying. |
 | `newsletter-slice` | on demand | Sends 25 newsletter mails, then queues the next slice. |
 | `purge-checkout-attempts` | daily | Removes old attempt records. |
@@ -262,11 +266,9 @@ Severity: **High** can lose money or expose data; **Medium** gives wrong results
 
 ## 17. Not built
 
-Built since the first version of this page: the order and payment mails, the automatic tax invoice (online payment, on account, cash at the door), shop promotions and promo codes, sending the newsletter, the clock on unpaid stock holds.
+Built since the first version of this page: the saved cart for signed-in shoppers (and with it a cart and wishlist that follow the shopper between devices), abandoned-cart reminders, the order and payment mails, the automatic tax invoice (online payment, on account, cash at the door), shop promotions and promo codes, sending the newsletter, the clock on unpaid stock holds.
 
 Still not built, and why:
 
 * **SMS.** There is no SMS provider in the system. Adding one is a port, an adapter for a chosen provider (and its account and cost), and the same triggers as the mails.
-* **A saved cart on the server for signed-in shoppers, and so a cart (or wishlist) that follows a shopper between devices.** Needs a table (a migration). Held back because another migration (`0150`, couriers) is not yet committed; adding mine now would tangle the journal.
-* **Abandoned-cart recovery.** Needs the server cart above (a cart the server can see), then a job that writes once to a signed-in shopper with a cart and no order after some hours.
 * **More than one currency on the shop.** The books and the display rates are tied, but a web order is priced, taxed, paid (M-Pesa is KES only) and invoiced (KRA) in KES. Selling in another currency needs the pricing engine, the payment methods that can take it, the tax invoice and the ledger to agree on one rule; it is a design of its own.

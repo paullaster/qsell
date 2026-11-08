@@ -15,6 +15,8 @@ import { paymentUsesPhone, resolvePaymentPhone } from '@/lib/payment-phone';
 import { clientAddress, waitMessage } from '@/lib/rate-limit';
 import { proveOrder } from './order-proof';
 import { enqueueOrderEmail } from '@/server/queue/worker';
+import { auth } from '@/auth';
+import { ShopCartService } from '@/server/domains/cart/service';
 import { InventoryReservationService } from '@/server/domains/inventory/reservation-service';
 import type { Order } from '@/types/index';
 
@@ -126,6 +128,13 @@ export async function placeOrderAction(raw: unknown): Promise<CheckoutResult<Che
   revalidatePath('/admin/customers');
   revalidatePath('/admin/inventory');
   revalidatePath('/');
+  // The order holds the cart's stock, so a signed-in shopper's saved cart is spent too (it must not come back on another device or be sent as a reminder).
+  try {
+    const user = (await auth())?.user;
+    if (user?.role === 'customer') await ShopCartService.clear(user.id);
+  } catch (error) {
+    console.error('[checkout] could not clear the saved cart', error);
+  }
   // The shopper is written to that the order is held; a queue that is down never stops the order.
   if (order.customerEmail.trim() !== '') await enqueueOrderEmail(order.id, 'placed').catch((error: unknown) => console.error('[checkout] could not queue the order mail', error));
   // An order on account is invoiced as it is placed, so its tax invoice is issued now (numbering is once per order; KRA signing follows the company's rules).

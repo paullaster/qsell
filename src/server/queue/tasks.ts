@@ -87,6 +87,24 @@ export const shopOrderEmail = async (payload: unknown, helpers: JobHelpers) => {
   helpers.logger.info(`Order mail ${kind} for ${orderId}: ${outcome}`);
 };
 
+/** Looks for carts left behind and queues one reminder for each. */
+export const shopCartReminderSweep = async (_payload: unknown, helpers: JobHelpers) => {
+  const { dueCartReminders } = await import('@/server/domains/cart/reminders');
+  const { enqueueCartReminder } = await import('./worker');
+  const due = await dueCartReminders(new Date());
+  for (const cart of due) await enqueueCartReminder(cart.userId, cart.updatedAt);
+  if (due.length > 0) helpers.logger.info(`Cart reminders queued: ${due.length}`);
+};
+
+/** The reminder to one shopper about the cart they left. A failure is thrown so the worker tries again later. */
+export const shopCartReminder = async (payload: unknown, helpers: JobHelpers) => {
+  const { userId, updatedAt } = (payload ?? {}) as { userId?: unknown; updatedAt?: unknown };
+  if (typeof userId !== 'string' || typeof updatedAt !== 'string' || Number.isNaN(Date.parse(updatedAt))) return;
+  const { sendCartReminder } = await import('@/server/domains/cart/reminders');
+  const outcome = await sendCartReminder(userId, new Date(updatedAt), new Date());
+  helpers.logger.info(`Cart reminder for ${userId}: ${outcome}`);
+};
+
 /** One slice of a newsletter; when more people are left it queues the next slice, and at the end it records how many were reached. */
 export const newsletterSlice = async (payload: unknown, helpers: JobHelpers) => {
   const step = payload as { campaignId?: unknown; subject?: unknown; body?: unknown; after?: unknown; sent?: unknown; failed?: unknown };
@@ -503,6 +521,8 @@ export const tasks = {
   'delivery-messages-sweep': deliveryMessagesSweep,
   'provider-pull-sweep': providerPullSweep,
   'shop-order-email': shopOrderEmail,
+  'shop-cart-reminder-sweep': shopCartReminderSweep,
+  'shop-cart-reminder': shopCartReminder,
   'newsletter-slice': newsletterSlice,
   'vendor-document-expiry': vendorDocumentExpiry,
   'vendor-bank-promote': vendorBankPromote,

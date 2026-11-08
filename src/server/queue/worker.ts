@@ -79,6 +79,12 @@ export async function enqueueOrderEmail(orderId: string, kind: 'placed' | 'paid'
   await utils.addJob('shop-order-email', { orderId, kind }, { jobKey: `shop-order-email:${kind}:${orderId}`, jobKeyMode: 'preserve_run_at', maxAttempts: 8 });
 }
 
+/** Enqueue the reminder about one left cart. The key is the shopper and the state of the cart, so a repeated sweep never sends it twice. */
+export async function enqueueCartReminder(userId: string, updatedAt: Date): Promise<void> {
+  const utils = await getWorkerUtils();
+  await utils.addJob('shop-cart-reminder', { userId, updatedAt: updatedAt.toISOString() }, { jobKey: `shop-cart-reminder:${userId}:${updatedAt.getTime()}`, jobKeyMode: 'preserve_run_at', maxAttempts: 6 });
+}
+
 /** Enqueue one slice of a newsletter. The key is the campaign and the place in the list, so a repeated call never sends a slice twice. */
 export async function enqueueNewsletterSlice(step: { campaignId: string; subject: string; body: string; after: { k: string; id: string } | null; sent: number; failed: number }): Promise<void> {
   const utils = await getWorkerUtils();

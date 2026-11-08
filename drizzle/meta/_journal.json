@@ -1058,6 +1058,13 @@
       "when": 1794115539680,
       "tag": "0150_delivery_couriers",
       "breakpoints": true
+    },
+    {
+      "idx": 152,
+      "version": "7",
+      "when": 1794172454962,
+      "tag": "0152_shop_carts",
+      "breakpoints": true
     }
   ]
 }

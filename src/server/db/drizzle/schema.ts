@@ -11131,6 +11131,36 @@ export const wishlistItems = pgTable(
 );
 
 /**
+ * A signed-in shopper's cart, kept on the server so it follows them to another phone or computer and so the shop can remind them
+ * of what they left. One row per shopper: product ids and quantities only (prices and stock are read fresh whenever it is
+ * shown). `lines` is replaced whole on every save; an empty cart is an empty list, the row stays so the choice to stop
+ * reminders is not forgotten. `reminded_at` is when the one reminder for the cart as it stood was sent.
+ */
+export const shopCarts = pgTable(
+  'shop_carts',
+  {
+    userId: uuid('user_id')
+      .primaryKey()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    lines: jsonb('lines').notNull().default(sql`'[]'::jsonb`),
+    /** When the shopper last changed the cart (set by the server, never by the browser). */
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    remindedAt: timestamp('reminded_at', { withTimezone: true }),
+    remindersOff: boolean('reminders_off').notNull().default(false),
+    /** Opaque, in the stop-reminders link of every reminder. */
+    optoutToken: text('optout_token').notNull(),
+  },
+  (t) => [
+    uniqueIndex('shop_carts_optout_token_uidx').on(t.optoutToken),
+    // The reminder sweep: carts with something in them, oldest change first.
+    index('shop_carts_sweep_idx')
+      .on(t.updatedAt)
+      .where(sql`${t.remindersOff} = false AND ${t.lines} <> '[]'::jsonb`),
+    check('shop_carts_lines_chk', sql`jsonb_typeof(${t.lines}) = 'array' AND jsonb_array_length(${t.lines}) <= 100`),
+  ],
+);
+
+/**
  * People who asked for the shop's news. Double opt-in: a row is `pending` until its link is followed, so nobody can be
  * signed up by someone else. Every message carries the `token` for a one-click unsubscribe.
  */

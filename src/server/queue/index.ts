@@ -28,6 +28,7 @@ export async function startWorker(): Promise<void> {
       '* * * * * stock-backfill',
       '7 5 * * * stock-shadow-check',
       '* * * * * stock-reservation-expiry',
+      '*/15 * * * * shop-cart-reminder-sweep',
       '47 3 * * * expire-loyalty-points',
       // Sales reach the ledger within a minute; failures retry with a growing delay.
       '* * * * * finance-post-sales',

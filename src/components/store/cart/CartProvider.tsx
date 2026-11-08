@@ -6,6 +6,8 @@ import { packagingProductsByIdsAction, productsByIdsAction } from '@/server/doma
 import { addToCart, keepAddedDuringLoad, reconcileCart, savedLines, setCartQuantity, type AddOutcome, type CartLine } from '@/lib/cart-lines';
 import { CART_STORAGE_KEY, LEGACY_CART_STORAGE_KEY, parseSavedCart, serializeCart, type SavedCartLine } from '@/lib/cart-storage';
 import { cartBadgeCount } from '@/lib/cart-quantity';
+import { mergeServerCartAction, saveServerCartAction, serverCartAction } from '@/server/domains/cart/actions';
+import { sameCartLines } from '@/lib/shop-cart';
 import { useStore } from '@/components/store/StoreContext';
 import { useToast } from '@/components/store/ToastProvider';
 
@@ -39,7 +41,8 @@ function readSaved(): SavedCartLine[] {
  * the shop whenever the cart is loaded, so a stale price can never reach checkout without the shopper being told.
  */
 export function CartProvider({ children }: { children: ReactNode }) {
-  const { money } = useStore();
+  const { money, sessionName } = useStore();
+  const signedIn = sessionName !== null;
   const toast = useToast();
   const [lines, setLines] = useState<CartLine[]>([]);
   const [ready, setReady] = useState(false);
@@ -51,16 +54,30 @@ export function CartProvider({ children }: { children: ReactNode }) {
     toastRef.current = toast;
   }, [money, toast]);
 
+  // A signed-in shopper's cart is also kept on their account (so it follows them to another device). It is set once the account's
+  // cart has been joined with the browser's; until then nothing is sent, so an empty browser can never wipe a saved cart.
+  const accountBacked = useRef(false);
+  const saveTimer = useRef<number | null>(null);
+  const saveToAccount = useCallback((next: CartLine[]) => {
+    if (!accountBacked.current) return;
+    if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(() => {
+      saveTimer.current = null;
+      saveServerCartAction(savedLines(next).map((line) => ({ productId: line.productId, quantity: line.quantity }))).catch(() => undefined);
+    }, 400);
+  }, []);
+
   const commit = useCallback((next: CartLine[]) => {
     linesRef.current = next;
     setLines(next);
+    saveToAccount(next);
     try {
       window.localStorage.setItem(CART_STORAGE_KEY, serializeCart(savedLines(next)));
       window.localStorage.removeItem(LEGACY_CART_STORAGE_KEY);
     } catch {
       /* a browser that keeps nothing still has a working cart for this visit */
     }
-  }, []);
+  }, [saveToAccount]);
 
   /**
    * `keepAdded`: on arrival the cart is read before the shopper can do anything, but the shop's answer takes a moment and the
@@ -99,15 +116,53 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }, [commit]);
 
   useEffect(() => {
+    let cancelled = false;
+    accountBacked.current = false;
+    const start = async () => {
+      const local = readSaved();
+      if (!signedIn) {
+        await load(local, { keepAdded: true });
+        return;
+      }
+      // Signed in: the browser's cart joins the account's, and from then on the account keeps it.
+      let joined = local;
+      try {
+        const merged = await mergeServerCartAction(local.map((line) => ({ productId: line.productId, quantity: line.quantity })));
+        if (merged.ok) {
+          const priceSeen = new Map(local.map((line) => [line.productId, line.price]));
+          joined = merged.data.map((line) => ({ productId: line.productId, quantity: line.quantity, price: priceSeen.get(line.productId) ?? null }));
+          accountBacked.current = true;
+        }
+      } catch {
+        /* the account could not be reached: this visit works from the browser's cart */
+      }
+      if (cancelled) return;
+      await load(joined, { keepAdded: true });
+    };
     // The saved cart exists only in the browser, so it can only be read here, after the page is drawn.
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- reading browser storage once on arrival
-    void load(readSaved(), { keepAdded: true });
+    void start();
     const onStorage = (event: StorageEvent) => {
       if (event.key === CART_STORAGE_KEY) void load(readSaved());
     };
+    // Coming back to this tab: a cart changed on another device is picked up, unless this tab has a change not yet sent.
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible' || !accountBacked.current || saveTimer.current !== null) return;
+      serverCartAction()
+        .then((result) => {
+          if (!result.ok || result.data === null || saveTimer.current !== null) return;
+          const here = savedLines(linesRef.current).map((line) => ({ productId: line.productId, quantity: line.quantity }));
+          if (!sameCartLines(here, result.data)) return load(result.data.map((line) => ({ ...line, price: null })));
+        })
+        .catch(() => undefined);
+    };
     window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
-  }, [load]);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('storage', onStorage);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [load, signedIn]);
 
   // A price can depend on the quantity (price lists have quantity breaks), so after the shopper changes a quantity the prices are
   // read again, quietly, a moment later: the shopper changed it themselves, so there is nothing to be told.
@@ -130,6 +185,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   useEffect(
     () => () => {
       if (repriceTimer.current !== null) window.clearTimeout(repriceTimer.current);
+      if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
     },
     [],
   );
