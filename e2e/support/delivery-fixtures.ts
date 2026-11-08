@@ -246,6 +246,27 @@ async function messages(orderNumber: string): Promise<Record<string, string>> {
   return { list: rows.map((r) => `${r.kind}:${r.status}`).join(',') };
 }
 
+/** A ready delivery promised a window that ends an hour from now (`ontime`) or ended an hour ago (`late`), then sent out and delivered now. */
+async function deliverPromised(number: string, mode: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { deliveries, deliverySlots } = await import('@/server/db/drizzle/schema');
+  const c = getContainer();
+  const company = await c.companySettings.ensureSeeded();
+  const [d] = await db.select({ id: deliveries.id, branchId: deliveries.branchId }).from(deliveries).where(eq(deliveries.number, number));
+  if (d === undefined) throw new Error(`e2e fixture: no delivery ${number}`);
+  const [slot] = await db.insert(deliverySlots).values({ companyId: company.id, branchId: d.branchId, name: `Performance ${number}`, weekdays: [1, 2, 3, 4, 5, 6, 7], startsAt: '09:00', endsAt: '12:00', capacity: 5, createdBy: 'e2e' }).returning({ id: deliverySlots.id });
+  const now = Date.now();
+  const end = new Date(now + (mode === 'late' ? -1 : 1) * 3_600_000);
+  await db.update(deliveries).set({ slotId: slot?.id ?? null, slotDay: new Date(now).toISOString().slice(0, 10), windowStart: new Date(end.getTime() - 3 * 3_600_000), windowEnd: end, slotBookedAt: new Date(now), slotBookedBy: 'e2e' }).where(eq(deliveries.id, d.id));
+  const actor = { companyId: company.id, userId: 'e2e' };
+  for (const step of [() => c.deliveryDocuments.dispatch(actor, d.id, {}), () => c.deliveryDocuments.deliver(actor, d.id, { receivedBy: 'Mama' })]) {
+    const r = await step();
+    if (!r.ok) throw new Error(`e2e fixture: ${r.message}`);
+  }
+  return { delivered: number };
+}
+
 async function main(): Promise<void> {
   const [command, tag, extra] = process.argv.slice(2);
   if (tag === undefined) throw new Error('usage: delivery-fixtures open|close|order|billing|service|pay|collection <tag>');
@@ -262,6 +283,7 @@ async function main(): Promise<void> {
   if (command === 'advance' && extra !== undefined) result = await advance(tag, extra);
   if (command === 'set-email' && extra !== undefined) result = await setEmail(tag, extra);
   if (command === 'messages') result = await messages(tag);
+  if (command === 'deliver-promised' && extra !== undefined) result = await deliverPromised(tag, extra);
   if (command === 'courier-order') result = await courierOrder(tag);
   if (command === 'service') result = { id: await serviceItem(), name: SERVICE_NAME };
   if (result === null) throw new Error('usage: delivery-fixtures open|close|order|billing|service|pay|collection <tag>');

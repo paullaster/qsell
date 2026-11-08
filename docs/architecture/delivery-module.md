@@ -765,3 +765,18 @@ D-5 is built in slices: **D-5a slots** (this section), D-5b promised windows, la
 **Verified.** Rules (`courier-http.test.ts`), the adapter against a stand-in for the courier's system (`http-json.test.ts`), 10 database tests (`couriers.integration.test.ts`: sealing, versions, booking, failures and retries, asking, pushed news, cancelling, hand-typed news still working), the message words, and the browser tests (`e2e/couriers.spec.ts`).
 
 **Not built.** A specific courier's own adapter (waits for the choice of couriers and their documents); courier invoice matching to the shipments and the courier's cost fetched from its system; printing a label inside our own pages (the courier's label opens from its link); a "send a test parcel" button on the courier screen.
+
+## 52. D-5d: delivery performance (2026-11-08)
+
+**The screen** (*Delivery › Delivery performance*, `deliveries:dispatch`, `DeliveryPerformanceReports`, no migration: it reads what the earlier slices already keep). For the days chosen (the last 30 by default, at most a year) a delivery counts on the day it was delivered.
+
+- **Overall.** Delivered; **delivered on time** (by the end of the window the customer was promised; a delivery promised nothing is left out of the rate, never counted as on time); **delivered at the first try** (no failed attempt before); average time from going out to delivered; how late the late ones were; and from release to delivered. Each rate carries a plain tone (95% and over good, 80% and over to watch, below that poor).
+- **By rider.** Delivered, on time, first try and average time on the road, for the rider who handed the delivery over.
+- **By courier.** The parcels sent in the days, and what has become of them so far: delivered, on time, average time taken, attempts that did not get through, and parcels that could not be booked or cancelled with the courier's system.
+- **Delivery times.** For each slot: the places offered (its capacity for each day in the period it runs and is not closed), the places booked (cancelled and returned deliveries hold none), the days it was full and the share used; and how many times customers chose at checkout and how many of those had gone by the time the delivery was made. The capacity used is today's, so a slot whose capacity was changed shows the new capacity for older days.
+
+All counts are company-scoped, read in parallel, and the rates come from small pure rules (`delivery-performance.ts`). Nothing is stored, so a rate can never disagree with the deliveries it comes from.
+
+**Verified.** Rules tests (`delivery-performance.test.ts`); 5 database tests added to `reports.integration.test.ts` (in time, late and promised nothing counted apart, with the rider's first try; a delivery sent again not counted as first try; a courier's row with a parcel that could not be booked; a slot's places, a full day, a closed day taking the room away, a cancelled delivery freeing a place, and a time chosen that was not kept; empty and impossible days); a browser test (`e2e/delivery-performance.spec.ts`, desktop and phone).
+
+**Not built.** Trends over time (a day-by-day line) and comparing two periods; on-time rate by zone; a rider's own view of their figures in the rider app; the company's own thresholds for good and poor (they are fixed at 95% and 80%); exporting the figures.

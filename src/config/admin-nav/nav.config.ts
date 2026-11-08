@@ -513,6 +513,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'delivery_costs:manage',
       },
       {
+        id: 'delivery-performance',
+        title: 'Delivery performance',
+        name: 'delivery-performance',
+        href: '/admin/delivery/performance',
+        description: 'How well delivery is doing: deliveries on time, first-time success, rider and courier performance, and how full the delivery times run',
+        icon: 'Activity',
+        permission: 'deliveries:dispatch',
+      },
+      {
         id: 'delivery-charges',
         title: 'Delivery charges',
         name: 'delivery-charges',

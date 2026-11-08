@@ -110,3 +110,8 @@ export async function setSlaSettingsAction(raw: unknown) {
     return dataOf(await getContainer().deliverySla.setSettings({ companyId: ctx.companyId, userId: ctx.userId }, { atRiskMinutes: i.atRiskMinutes, escalateAfterMinutes: i.escalateAfterMinutes, expectedVersion: i.expectedVersion }));
   }, PATHS);
 }
+
+/** How well delivery is doing over a stretch of days: on time, first-time success, riders, couriers and how full the delivery times run. */
+export async function deliveryPerformanceAction(raw?: unknown) {
+  return await runDelivery('deliveries:dispatch', async (ctx) => dataOf(await getContainer().deliveryPerformance.summary(ctx.companyId, objectOf(raw))));
+}
