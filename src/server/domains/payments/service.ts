@@ -350,6 +350,8 @@ export class PaymentService implements AttemptSettler {
         detail: { provider: attempt.providerCode, reason: held.error },
       });
     }
+    // The shopper is told the payment was received (for the shop's own orders; the job is idempotent and retried by the worker).
+    void import('@/server/queue/worker').then(({ enqueueOrderEmail }) => enqueueOrderEmail(attempt.orderId, 'paid')).catch((error: unknown) => console.error('[payments] could not queue the payment mail', attempt.orderId, error));
     // The tax invoice is issued as the sale is paid, not when someone first asks for the PDF. Numbering is once per order and the
     // KRA signing follows the company's rules; neither may hold up the payment.
     void getContainer().invoices.generatePdf(attempt.orderId, 'tax_invoice').catch((error: unknown) => console.error('[payments] tax invoice not issued at payment', attempt.orderId, error));

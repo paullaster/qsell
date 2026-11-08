@@ -4,6 +4,7 @@ import { headers } from 'next/headers';
 import { auth } from '@/auth';
 import { getContainer } from '@/server/di/container';
 import { previewShopBasket } from '@/server/domains/orders/basket-preview';
+import { parseCouponCodes } from '@/lib/checkout-input';
 import { readGeoPoint, type GeoPoint } from '@/lib/geo';
 import { clientAddress, waitMessage, type RateRuleName } from '@/lib/rate-limit';
 import { isRecord } from '@/lib/values';
@@ -169,7 +170,8 @@ async function planShopDelivery(raw: unknown): Promise<ShopPlanned> {
   if (wait !== null) return { ok: false, error: wait };
   const session = await auth();
   const customerId = session?.user.customerStoreId ?? null;
-  const basket = await previewShopBasket(lines, customerId);
+  const coupons = parseCouponCodes(raw.couponCodes);
+  const basket = await previewShopBasket(lines, customerId, { couponCodes: coupons.ok ? coupons.value : [] });
   if (!basket.ok) return { ok: false, error: basket.error };
   const { deliveryPlans, pricing, companySettings } = getContainer();
   const company = await companySettings.ensureSeeded();

@@ -158,3 +158,14 @@ describe('collecting an order from a branch', () => {
   });
 });
 
+
+describe('promo codes', () => {
+  it('are capitals, short, up to five, and none twice', async () => {
+    const { parseCouponCodes } = await import('./checkout-input');
+    expect(parseCouponCodes(undefined)).toEqual({ ok: true, value: [] });
+    expect(parseCouponCodes([' save10 ', 'SAVE10', '', 'eid'])).toEqual({ ok: true, value: ['SAVE10', 'EID'] });
+    expect(parseCouponCodes(['a', 'b', 'c', 'd', 'e', 'f']).ok).toBe(false);
+    expect(parseCouponCodes(['x'.repeat(41)]).ok).toBe(false);
+    expect(parseCouponCodes('SAVE').ok).toBe(false);
+  });
+});

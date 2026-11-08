@@ -44,12 +44,13 @@ interface Input {
   town: string;
   area: string;
   country: string;
+  couponCodes?: string[];
 }
 
 /** The question the server is asked, from the request the hook keeps as text: the same one for the price and for the delivery times. */
 function askOf(asked: string) {
-  const body = JSON.parse(asked) as { method: Method; pickupBranchId: string | null; pin: GeoPoint | null; county: string; town: string; area: string; country: string; items: Input['items'] };
-  return { method: body.method, pickupBranchId: body.pickupBranchId, pin: body.pin, address: { county: body.county, town: body.town, area: body.area, country: body.country }, items: body.items };
+  const body = JSON.parse(asked) as { method: Method; pickupBranchId: string | null; pin: GeoPoint | null; county: string; town: string; area: string; country: string; items: Input['items']; couponCodes: string[] };
+  return { couponCodes: body.couponCodes, method: body.method, pickupBranchId: body.pickupBranchId, pin: body.pin, address: { county: body.county, town: body.town, area: body.area, country: body.country }, items: body.items };
 }
 
 /**
@@ -113,7 +114,7 @@ export function useShopDelivery(input: Input): ShopDelivery {
     // The basket is compared by its content, not by identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [method, basketKey]);
-  const request = JSON.stringify({ method, pickupBranchId: method === 'pickup' ? chosenBranch : null, pin, county: input.county.trim(), town: input.town.trim(), area: input.area.trim(), country: input.country.trim(), items: input.items });
+  const request = JSON.stringify({ method, pickupBranchId: method === 'pickup' ? chosenBranch : null, pin, county: input.county.trim(), town: input.town.trim(), area: input.area.trim(), country: input.country.trim(), items: input.items, couponCodes: input.couponCodes ?? [] });
   const asked = useDebouncedValue(request, 700);
   const active = options !== null && options.methods.length > 0 && (method === 'pickup' ? chosenBranch !== null : hasPlace) && input.items.length > 0;
 

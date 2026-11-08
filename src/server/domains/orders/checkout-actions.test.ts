@@ -11,6 +11,8 @@ vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 vi.mock('@sentry/nextjs', () => ({}));
 vi.mock('@/auth', () => ({ auth: vi.fn() }));
 vi.mock('@/server/di/container', () => ({ getContainer: () => ({ rateLimits: { hit: (...a: unknown[]) => hit(...a) as unknown }, orders: { getById: (...a: unknown[]) => getById(...a) as unknown, findByNumberAndContact: (...a: unknown[]) => getById(...a) as unknown } }) }));
+const enqueueOrderEmail = vi.fn(() => Promise.resolve());
+vi.mock('@/server/queue/worker', () => ({ enqueueOrderEmail: (...a: unknown[]) => (enqueueOrderEmail as (...x: unknown[]) => unknown)(...a) }));
 const rehold = vi.fn(() => Promise.resolve({ ok: true } as { ok: true } | { ok: false; error: string }));
 vi.mock('@/server/domains/inventory/reservation-service', () => ({ InventoryReservationService: { reholdOrder: (...a: unknown[]) => (rehold as (...x: unknown[]) => unknown)(...a) } }));
 vi.mock('@/server/domains/payments/start-payment', () => ({ startOrderPayment: (...a: unknown[]) => startOrderPayment(...a) as unknown }));
@@ -53,7 +55,7 @@ beforeEach(() => {
   for (const f of [startOrderPayment, createCheckout, hit, getById, attemptStart, attemptRefuse, attemptPlaced]) f.mockReset();
   attemptStart.mockResolvedValue({ id: 'att1', startedAt: new Date('2026-01-01T10:00:00Z') });
   hit.mockResolvedValue({ allowed: true, retryAfterSeconds: 0 });
-  createCheckout.mockResolvedValue({ id: 'o1', orderNumber: 'ORD-1', customerPhone: '0711 111 111' });
+  createCheckout.mockResolvedValue({ id: 'o1', orderNumber: 'ORD-1', customerEmail: '', customerPhone: '0711 111 111' });
   startOrderPayment.mockResolvedValue({ attemptId: 'a1', status: 'pending', customerMessage: 'Enter your PIN.' });
 });
 
@@ -94,6 +96,16 @@ describe('placing an order paid by a phone prompt', () => {
     await actions.placeOrderAction(form({ paymentMethod: 'pesapal_v3', paymentPhone: '0722222222' }));
     expect(startOrderPayment).toHaveBeenCalledWith({ orderId: 'o1', providerCode: 'pesapal_v3', payerPhone: '254722222222', source: 'shop' });
     expect(hit).not.toHaveBeenCalledWith('payment_prompt_ip', expect.anything());
+  });
+
+  it('queues the mail that says the order is held, only when there is an address to write to', async () => {
+    createCheckout.mockResolvedValue({ id: 'o1', orderNumber: 'SO-1', customerEmail: 'a@x.co', customerPhone: '0711111111' });
+    await actions.placeOrderAction(form({ paymentMethod: 'pay_on_delivery' }));
+    expect(enqueueOrderEmail).toHaveBeenCalledWith('o1', 'placed');
+    enqueueOrderEmail.mockClear();
+    createCheckout.mockResolvedValue({ id: 'o2', orderNumber: 'SO-2', customerEmail: '', customerPhone: '0711111111' });
+    await actions.placeOrderAction(form({ paymentMethod: 'pay_on_delivery' }));
+    expect(enqueueOrderEmail).not.toHaveBeenCalled();
   });
 
   it('limits how many orders one address and one phone can place', async () => {

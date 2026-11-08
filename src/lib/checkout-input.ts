@@ -31,6 +31,8 @@ export interface CheckoutInput {
   shippingAddress: { street: string; city: string; countyOrState: string; country: string };
   items: { productId: string; quantity: number }[];
   paymentMethod: PaymentProvider;
+  /** Promo codes the shopper typed (at most 5). The server decides whether each can be used. */
+  couponCodes?: string[];
   /** Absent for an order that is not delivered by the shop's own delivery rules. */
   delivery?: DeliveryInput;
 }
@@ -83,6 +85,19 @@ function parseDelivery(raw: unknown): DeliveryParsed {
   return { ok: true, value: { method: raw.method, pickupBranchId: null, pin, address, recipient, notes: notes === '' ? null : notes, expectedCharge: typeof expected === 'number' ? expected : null, slot } };
 }
 
+/** The promo codes the shopper typed: up to 5, each short, in capitals, and none twice. */
+export function parseCouponCodes(raw: unknown): { ok: true; value: string[] } | { ok: false; error: string } {
+  if (raw === undefined || raw === null) return { ok: true, value: [] };
+  if (!Array.isArray(raw) || raw.length > 5) return { ok: false, error: 'You can use up to 5 promo codes.' };
+  const codes: string[] = [];
+  for (const item of raw) {
+    if (typeof item !== 'string' || item.length > 40) return { ok: false, error: 'That promo code could not be read.' };
+    const code = item.trim().toUpperCase();
+    if (code !== '' && !codes.includes(code)) codes.push(code);
+  }
+  return { ok: true, value: codes };
+}
+
 type Parsed = { ok: true; value: CheckoutInput } | { ok: false; error: string };
 
 const MAX_ITEMS = 100;
@@ -115,6 +130,8 @@ export function parseCheckoutInput(raw: unknown): Parsed {
   if (street === null || county === null || country === null || city === null || (!collecting && (street === '' || city === ''))) {
     return { ok: false, error: 'Please enter your delivery address.' };
   }
+  const coupons = parseCouponCodes(raw.couponCodes);
+  if (!coupons.ok) return { ok: false, error: coupons.error };
   const delivery = parseDelivery(raw.delivery);
   if (!delivery.ok) return { ok: false, error: delivery.error };
   const method = PAYMENT_PROVIDERS.find((provider) => provider === raw.paymentMethod);
@@ -147,6 +164,7 @@ export function parseCheckoutInput(raw: unknown): Parsed {
       shippingAddress: { street, city, countyOrState: county, country },
       items,
       paymentMethod: method,
+      ...(coupons.value.length === 0 ? {} : { couponCodes: coupons.value }),
       ...(delivery.value === undefined ? {} : { delivery: delivery.value }),
     },
   };

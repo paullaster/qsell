@@ -746,4 +746,43 @@ describe.skipIf(!url)('kits, gifts and mix deals (database)', () => {
       expect((await row(cake)).reservedQuantity).toBe(0);
     });
   });
+
+  describe('promotions and promo codes at the shop', () => {
+    const shopOrder = (email: string, items: Array<[string, number]>, over: Record<string, unknown> = {}) => order(email, items, { salesModule: 'ecommerce', ...over });
+
+    it('a promotion takes its share off a shop order, and the basket preview says the same', async () => {
+      const { previewShopBasket } = await import('@/server/domains/orders/basket-preview');
+      const p = await product({ price: '100', taxRate: '16', stockQuantity: 20 });
+      await activeRule({ target: { productIds: [p] }, reward: { type: 'percent', value: 10 } });
+      const preview = await previewShopBasket([{ productId: p, quantity: 2 }], null);
+      expect(preview.ok).toBe(true);
+      const res = await shopOrder(`shop-${randomUUID()}@x.test`, [[p, 2]]);
+      expect(res.success).toBe(true);
+      expect(res.order!.totalAmount).toBe(180);
+      if (preview.ok) {
+        expect(preview.promotions.discount).toBeCloseTo(20, 2);
+        expect(preview.subtotal).toBe(res.order!.subtotal);
+        expect(preview.tax).toBe(res.order!.tax);
+      }
+    });
+
+    it('a promo code is needed for a code promotion; a wrong one is refused and said so before the order', async () => {
+      const { previewShopBasket } = await import('@/server/domains/orders/basket-preview');
+      const p = await product({ price: '100', stockQuantity: 20 });
+      const r = await c.discountConfig.createRule(companyId, baseRule({ target: { productIds: [p] }, reward: { type: 'percent', value: 20 }, requiresCoupon: true }) as never, actor, reason);
+      const code = `SAVE${randomUUID().slice(0, 6)}`.toUpperCase();
+      await c.discountConfig.createCoupons(companyId, r.id, { codes: [code] }, actor, reason);
+      await c.discountConfig.activate(companyId, r.id, actor, reason);
+      const none = await shopOrder(`shop-${randomUUID()}@x.test`, [[p, 1]]);
+      expect(none.order!.totalAmount).toBe(100);
+      const withCode = await shopOrder(`shop-${randomUUID()}@x.test`, [[p, 1]], { couponCodes: [code] });
+      expect(withCode.order!.totalAmount).toBe(80);
+      const wrong = await shopOrder(`shop-${randomUUID()}@x.test`, [[p, 1]], { couponCodes: ['NOPE123'] });
+      expect(wrong).toMatchObject({ success: false, code: 'coupon_refused' });
+      const preview = await previewShopBasket([{ productId: p, quantity: 1 }], null, { couponCodes: ['NOPE123'] });
+      expect(preview.ok && preview.promotions.couponProblems.length).toBe(1);
+      const good = await previewShopBasket([{ productId: p, quantity: 1 }], null, { couponCodes: [code] });
+      expect(good.ok && good.promotions.discount).toBeCloseTo(20, 2);
+    });
+  });
 });

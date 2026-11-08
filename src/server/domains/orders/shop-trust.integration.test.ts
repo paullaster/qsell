@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { has, nth, required } from '@/lib/values';
 import type * as mod_server_di_container from '@/server/di/container';
@@ -81,5 +81,20 @@ describe.skipIf(!has(url))('the shop does not trust a typed email (database)', (
     await InventoryReservationService.releaseOrder(id, 'payment_callback_failed', 'payment:mpesa_daraja');
     const again = await InventoryReservationService.reholdOrder(id);
     expect(again.ok).toBe(false);
+  });
+
+  it('the shopper is written to that the order is held and, later, that the payment was received', async () => {
+    const { sendOrderEmail } = await import('./order-emails');
+    const send = vi.spyOn(c.email, 'send').mockResolvedValue({ ok: true } as never);
+    const email = `mail-${randomUUID()}@x.test`;
+    const placed = await place(email, 'mpesa_daraja', { identityVerified: false, salesModule: 'ecommerce' });
+    const id = required(placed.order, 'the order').id;
+    expect(await sendOrderEmail(id, 'placed')).toBe('sent');
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ to: email, subject: expect.stringContaining('We have your order') as string }));
+    expect(await sendOrderEmail(id, 'paid')).toBe('sent');
+    expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ subject: expect.stringContaining('Payment received') as string }));
+    const noAddress = await place('', 'mpesa_daraja', { identityVerified: false, customerPhone: '0733000111', salesModule: 'ecommerce' });
+    expect(await sendOrderEmail(required(noAddress.order, 'the order').id, 'placed')).toBe('no_address');
+    send.mockRestore();
   });
 });

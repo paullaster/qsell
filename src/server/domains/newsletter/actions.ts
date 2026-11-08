@@ -6,8 +6,10 @@ import { runSetting, type SettingsResult } from '@/server/domains/settings/actio
 import { SettingsError } from '@/server/domains/settings/errors';
 import { siteBaseUrl } from '@/server/domains/storefront/site';
 import { clientAddress, waitMessage } from '@/lib/rate-limit';
-import { csvCell, isNewsletterToken, newsletterEmail } from '@/lib/newsletter';
-import { newsletterConfirmEmail } from './emails';
+import { csvCell, isNewsletterToken, newsletterEmail, parseNewsletterDraft } from '@/lib/newsletter';
+import { auth } from '@/auth';
+import { enqueueNewsletterSlice } from '@/server/queue/worker';
+import { newsletterConfirmEmail, newsletterMessageEmail } from './emails';
 import { NewsletterService, type SubscriberStatus } from './service';
 
 type Result = { ok: true; message: string } | { ok: false; error: string };
@@ -77,5 +79,29 @@ export async function exportNewsletterAction(): Promise<SettingsResult<string>> 
     const rows = await NewsletterService.confirmedEmails();
     if (rows.length > 100_000) throw new SettingsError('The list is too large to export here.');
     return ['Email,Confirmed', ...rows.map((row) => `${csvCell(row.email)},${csvCell(row.confirmedAt?.toISOString() ?? '')}`)].join('\r\n');
+  });
+}
+
+/**
+ * Writes the news. `test` sends one copy to the person writing it, to see it as a reader will. `all` queues it for everyone who
+ * confirmed, a slice at a time; the campaign id comes from the screen so pressing twice sends once. Plain text only.
+ */
+export async function sendNewsletterAction(raw: unknown): Promise<SettingsResult<{ queued: boolean; sentTo: string | null }>> {
+  const input = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
+  return runSetting('newsletter:manage', async (ctx) => {
+    const draft = parseNewsletterDraft(input);
+    if (!draft.ok) throw new SettingsError(draft.error);
+    const base = await siteBaseUrl();
+    if (input.mode === 'test') {
+      const to = (await auth())?.user.email ?? '';
+      if (newsletterEmail(to) === null) throw new SettingsError('Your account has no email address to send the test to.');
+      await getContainer().email.send(newsletterMessageEmail({ to, storeName: ctx.company.tradingName, ...draft.value, unsubscribeUrl: `${base}/newsletter/unsubscribe?token=${'x'.repeat(43)}` }));
+      return { queued: false, sentTo: to };
+    }
+    const campaignId = typeof input.campaignId === 'string' && /^[0-9a-f-]{36}$/i.test(input.campaignId) ? input.campaignId : null;
+    if (campaignId === null) throw new SettingsError('This message could not be sent. Reload the page and try again.');
+    await enqueueNewsletterSlice({ campaignId, ...draft.value, after: null, sent: 0, failed: 0 });
+    await getContainer().decisionLog.record({ companyId: ctx.companyId, subject: { type: 'newsletter', id: campaignId }, action: 'newsletter.queued', actor: { type: 'user', id: ctx.userId }, from: '', to: draft.value.subject, reason: { text: `Newsletter "${draft.value.subject}" was queued for everyone who confirmed.` } });
+    return { queued: true, sentTo: null };
   });
 }

@@ -72,3 +72,15 @@ export async function enqueueRetry(job: RetryFailedCallJob): Promise<string> {
   });
   return jobId;
 }
+
+/** Enqueue a mail to the shopper about their order. One job for each order and kind, so a repeated call sends one mail; the worker retries it if the mail server is down. */
+export async function enqueueOrderEmail(orderId: string, kind: 'placed' | 'paid'): Promise<void> {
+  const utils = await getWorkerUtils();
+  await utils.addJob('shop-order-email', { orderId, kind }, { jobKey: `shop-order-email:${kind}:${orderId}`, jobKeyMode: 'preserve_run_at', maxAttempts: 8 });
+}
+
+/** Enqueue one slice of a newsletter. The key is the campaign and the place in the list, so a repeated call never sends a slice twice. */
+export async function enqueueNewsletterSlice(step: { campaignId: string; subject: string; body: string; after: { k: string; id: string } | null; sent: number; failed: number }): Promise<void> {
+  const utils = await getWorkerUtils();
+  await utils.addJob('newsletter-slice', step, { jobKey: `newsletter:${step.campaignId}:${step.after === null ? 'start' : step.after.id}`, jobKeyMode: 'preserve_run_at', maxAttempts: 10 });
+}

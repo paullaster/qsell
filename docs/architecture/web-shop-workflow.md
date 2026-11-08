@@ -85,6 +85,14 @@ The summary shows the lines, tax rows, the delivery charge and the total. It add
 * **Pay on delivery** is offered only for own-rider deliveries and up to the company's limit; the server checks both again on the priced order.
 * Rate limits: `shop_delivery_quote_ip` 120 per 10 min, `shop_map_search_ip` 40 per 10 min.
 
+### 6.2 Promotions and promo codes
+
+* A box "Promo code" in the order review takes up to 5 codes (capitals, 40 characters). Nothing the shopper types is trusted: the server decides which can be used.
+* The order review asks the server what the basket comes to (`shopBasketAction`, after a 400 ms pause, rate limited with the delivery quote): the same prices, the same discount rules for this customer, branch, channel and payment method, and the codes typed. It shows "Subtotal after promotions", "Promotions (codes) you save X", free gifts, tax and the total, and the delivery charge is worked out from the discounted value.
+* A code that cannot be used (unknown, expired, used up, not for this customer) shows its reason under the box and the pay button stays off until it is removed. The server refuses an order with such a code as well (`coupon_refused`).
+* Rule use and coupon use are counted in the order's own transaction and given back if the order is released.
+* Promotions are not shown on product cards or in the cart drawer; they appear in the order review, where the shopper pays.
+
 ## 7. Placing the order (one server call)
 
 `placeOrderAction` (`checkout-actions.ts`) answers **as data** (server-action errors are masked in production). Only refusals the shop wrote for the shopper (`CheckoutRefused`) are shown; anything else is logged and answered "We could not place your order just now…".
@@ -98,11 +106,11 @@ Order of work, each step able to refuse:
    1. Read the products; check any packaging selection fits.
    2. Check each quantity against the product's unit; check minimum and maximum order quantities over the whole basket.
    3. **Price every line with the engine** (channel `ecommerce`, the signed-in customer only; an email typed in a form never unlocks another customer's prices). A line that cannot be priced refuses the order.
-   4. **Discounts and coupons do not apply to the shop**: the discount engine runs only for staff channels, and the shop sends no coupon. Price floors likewise apply to staff channels only.
+   4. **Promotions and promo codes apply to the shop** (see 6.2): the discount engine runs for every channel's price-list lines, with the codes the shopper typed. Price floors still apply to staff channels only.
    5. **Kits are expanded** into one line per component, each with its share of the price, its own tax and its own stock; a switched-off component refuses the sale ([kits-and-hampers.md](kits-and-hampers.md)). Kits are read fresh from the database, not the 10-second cache.
    6. Work out subtotal and tax per line (tax-inclusive or exclusive per line).
    7. **Delivery:** plan the delivery on the server, compare the charge to the one the shopper was shown (`expectedCharge`); if it differs by more than half a cent the order is **refused and nothing saved** ("The delivery charge is now X and not the Y you were shown"); check the chosen slot; check pay-on-delivery rules. The delivery charge splits into net (the order's shipping fee) and tax (added to the order's tax).
-   8. **Hold the stock** for inventory-managed lines (kits: per component). With the per-location ledger on, the hold is placed at a location chosen for the channel and branch; an online-payment order gets an **expiry** if the company set an unpaid-hold time (`unpaid_hold_minutes`; the default is 0, which means no expiry). Without the ledger the product counters are used and **never expire**. A short line refuses the order and leaves earlier lines untouched.
+   8. **Hold the stock** for inventory-managed lines (kits: per component). With the per-location ledger on, the hold is placed at a location chosen for the channel and branch; an online-payment order gets an **expiry** (the company's unpaid-hold time, 60 minutes until chosen; 0 means no limit). Without the ledger the counters are used, and the `stock-reservation-expiry` job gives back the stock of unpaid online-payment orders older than the hold time. A short line refuses the order and leaves earlier lines untouched.
    9. **Find or make the customer** (`prepareSale`): by email, or by phone for a guest with no email; the card's name, phone and PIN are updated from what was typed (see edge case W2); a blocked customer is refused; "On account" requires a credit customer and checks the credit limit.
    10. Assign the dimension set, then **save the order, its lines, its delivery record, its collection code (if collecting), its slot request, its number from the sales-order series, and the first timeline event, in one transaction.** Also in the transaction: rebate accrual and loyalty points.
    11. Post the invoice to the customer's ledger (receivable) after the transaction.
@@ -135,7 +143,7 @@ Order of work, each step able to refuse:
 * **Download tax invoice** and **Email tax invoice** (the email goes to the address on the order).
 * A reminder to keep the order number: follow it any time from Track my order or My orders.
 
-**No confirmation email, receipt email or SMS is sent automatically at checkout.** The customer's emails are: account verification and password reset, the invoice when asked for, delivery progress messages (going out, delivered or part delivered, failed attempt with reason, return), newsletter confirmation. M-Pesa's own SMS is Safaricom's. **[code]**
+**Mails to the shopper about the order** (when the order has an email address; the worker sends them, retries up to 8 times if the mail server is down, and a repeated trigger sends one): **"We have your order"** when it is placed (what is held, the lines, totals, how it is paid, a link to follow it; for pay on delivery and on account it says nothing is due now) and **"Payment received"** when the payment is confirmed or cash is taken at the door (with the payment reference). Only the shop's own orders get these. Other mails: account verification and password reset, the invoice when asked for, delivery progress messages, newsletter confirmation. There is **no SMS**: the system has no SMS provider; M-Pesa's own message is Safaricom's. **[tested]**
 
 ## 10. After payment (back office and workers)
 
@@ -147,7 +155,7 @@ Everything below is on the **order timeline**: every stage has a server time, an
 4. **Fulfilment:** a delivery document is made (released, picking, packed, ready, out for delivery, delivered; a failed attempt can be tried up to 3 times, then returned), on a rider's run or with a courier; or the collection counter hands over against the code (5 wrong codes lock it; an ID check can override with a reason).
 5. **Customer tracking:** every order has one link `/track/<token>` (24 random bytes, kept sealed and as a keyed hash, rate limited by address and link). It shows steps, contents and who received it; **never** an address, phone, price, rider or stock detail.
 6. **Messages:** a delivery step queues a message in the same transaction; a sweep sends it (5 tries with growing waits).
-7. **Tax invoice and KRA:** the tax invoice is issued as an online payment is confirmed; for other orders (on account, pay on delivery, staff) it is issued when its PDF is first generated. That fixes its number (one per order and type; repeats return the same number) and starts KRA signing in the background, according to the customer's flag and the company's rules. A shopper can fetch it only for a paid order (or one on account or to be paid on delivery).
+7. **Tax invoice and KRA:** the tax invoice is issued as an online payment is confirmed, as an order on account is placed, and as cash is taken at the door; for staff orders it is issued when its PDF is first generated. That fixes its number (one per order and type; repeats return the same number) and starts KRA signing in the background, according to the customer's flag and the company's rules. A shopper can fetch it only for a paid order (or one on account or to be paid on delivery).
 8. **Returns and refunds:** goods that come back after a sale are received against a credit note; a delivery that never reached the customer is returned to stock or the order; money goes back through the refund flow. See [core-finance-module.md](core-finance-module.md) and [delivery-module.md](delivery-module.md) §31.
 
 ## 11. The account side
@@ -156,19 +164,21 @@ Everything below is on the **order timeline**: every stage has a server time, an
 * **My orders / order details** (`/profile/orders`, `/profile/orders/[id]`): the owner is taken from the session only; an order that is not theirs is "not found".
 * **Addresses:** add, edit, delete, make default; all scoped to the signed-in customer's own record.
 * **Wishlist:** server-side for signed-in shoppers (capped at 200), in the browser for guests, merged once at sign-in; a share link can be made.
-* **Newsletter:** double opt-in; asking only creates a pending row and sends a confirmation link; the link opens a page with a button (mail scanners open links). 3 per hour per email.
+* **Newsletter:** double opt-in; asking only creates a pending row and sends a confirmation link; the link opens a page with a button (mail scanners open links). 3 per hour per email. **Sending:** Admin › Customers › Newsletter has "Write to the list" (permission `newsletter:manage`): a subject and a plain-text message, "Send me a test", and "Send to N subscribers" (asks once). The message goes to everyone who confirmed, 25 at a time through the worker (each slice queues the next; a slice whose mails all fail is retried), every message carries its own unsubscribe link, and the decision log records when it was queued and how many were reached. One message to be sent has one id, so pressing twice sends once.
 * **Help, policies, platform** pages are built from the company's own content.
 
 ## 12. The clock: what runs in the background
 
 | Job | Every | Does |
 |---|---|---|
-| `stock-reservation-expiry` | minute | Releases holds whose time passed (only online-payment orders when `unpaid_hold_minutes` > 0, ledger mode); marks the unpaid order `payment_failed` ("hold_expired"). |
+| `stock-reservation-expiry` | minute | Gives back the stock of unpaid online-payment orders older than the hold time (with the ledger: holds that ran out; without it: orders older than the time) and marks them `payment_failed` ("hold_expired"). |
 | `provider-sweep`, `provider-pull-sweep` | minute, 10 min | Picks up half-finished payments; compares with what the provider received. |
 | `finance-post-sales` | minute | Posts queued sales to the ledger, retrying failures. |
 | `delivery-messages-sweep` | minute | Sends queued customer delivery mails. |
 | `delivery-sla-scan`, `order-sla-sweep` | minute, 5 min | Raises late deliveries and orders held too long in a stage (for example payment not confirmed after 30 min, paid but not dispatched after 24 h). |
 | `order-stage-backfill` | 5 min | Rebuilds timelines for old orders. |
+| `shop-order-email` | on demand | Sends "we have your order" and "payment received" to the shopper, retrying. |
+| `newsletter-slice` | on demand | Sends 25 newsletter mails, then queues the next slice. |
 | `purge-checkout-attempts` | daily | Removes old attempt records. |
 | `wallet-expiry`, `expire-loyalty-points`, `expire-gift-cards` | daily | Lapses unused credit, points and gift cards. |
 | `currency-sync-rates` | hourly | Keeps the shop's display rates equal to the books' rate. |
@@ -206,11 +216,11 @@ Severity: **High** can lose money or expose data; **Medium** gives wrong results
 
 **W3 [fixed, tested] High. Paying again after a provider-reported failure sells stock that was released.** *`reholdOrder` runs before any retry and before a late payment is issued. With the ledger the stock is held again (refused in words if it has gone). Without the ledger a released hold cannot be taken again, so the retry is refused with "Please place the order again". Still true: in counters mode a provider-reported failure therefore ends the order; the ledger gives the better experience.*
 
-**W4 [fixed] Medium. The tax invoice and KRA signing happen only when someone asks for the PDF.** *`PaymentService.succeed` now issues the tax invoice (numbering once per order, KRA signing by the company's rules) in the background as the payment is confirmed. Orders on account and pay on delivery get theirs when someone asks, as before.*
+**W4 [fixed] Medium. The tax invoice and KRA signing happen only when someone asks for the PDF.** *`PaymentService.succeed` now issues the tax invoice (numbering once per order, KRA signing by the company's rules) in the background as the payment is confirmed. An order on account gets its invoice as it is placed, and a pay-on-delivery order as the rider takes the payment at the door.*
 
 **W5 [fixed, tested] Medium. A tax invoice can be generated for an unpaid, failed or cancelled order.** *A person who is not staff is given a tax invoice only for an order that is paid, on account or to be paid on delivery, and never one cancelled or failed (`taxInvoiceRefusal`). Staff keep their existing rules.*
 
-**W6 [partly fixed, tested] Medium. Nothing limits how many orders a visitor can place, and unpaid stock holds do not expire by default.** *Placing an order is now limited to 40 per address per 15 minutes and 10 per phone per hour (`checkout_ip`, `checkout_contact`), recorded as a refused checkout. Not changed: the default hold time stays 0 (no expiry) because it is a company setting; set Stock › unpaid hold time. Pay-on-delivery orders still hold stock until released or cancelled.*
+**W6 [fixed, tested] Medium. Nothing limited how many orders a visitor could place, and unpaid stock holds did not expire by default.** *Placing an order is limited to 40 per address per 15 minutes and 10 per phone per hour (`checkout_ip`, `checkout_contact`), recorded as a refused checkout. An unpaid shop order to be paid at once now holds stock for **60 minutes** unless the company chose otherwise (a company that has never set it; one that chose 0 keeps "no limit"), set on Delivery › Stock timing › Unpaid orders (needs the stock switch-over permission, kept in the decision log). The clock works with the per-location ledger (hold expiry) and without it (the `stock-reservation-expiry` job now finds unpaid online-payment orders older than the hold time and gives their stock back, marking them failed with the reason `hold_expired`). Pay-on-delivery and on-account orders are not given back by the clock: the shop accepted them, and staff cancel one that is not real. A shop that already has a stock-settings row with 0 keeps its choice until it changes it on that screen.*
 
 **W7 [fixed, tested] Medium. Looking up an order by number and contact is not rate limited.** *Both look-ups go through `proveOrder`: 30 per address and 8 per order number per 10 minutes, and the Track my order box shows the wait message.*
 
@@ -224,7 +234,7 @@ Severity: **High** can lose money or expose data; **Medium** gives wrong results
 
 **W12 [code] Medium. A web order is always KES, whatever the shop shows.** If a company sells in a base currency other than KES the order still says `KES`. It is not an issue for a KES shop.
 
-**W13 [code] Low. The checkout state is in memory.** Refreshing during the payment wait, or closing the tab, loses the page. The order is saved, the cart is already cleared, and the customer must use Track my order or My orders. There is no automatic message (no confirmation email, no SMS) to tell them it went through (section 9).
+**W13 [code] Low. The checkout state is in memory.** Refreshing during the payment wait, or closing the tab, loses the page. The order is saved, the cart is already cleared, and the customer must use Track my order or My orders. They are also written to by mail (when they gave an address) that the order is held and, later, that the payment was received (section 9); there is no SMS.
 
 **W14 [code] Low. Where a guest's pricing is concerned, only a signed-in customer gets their own prices.** A guest known by email to be a wholesale customer pays the public price. That is intended (an email typed into a form must not unlock prices), but the customer should sign in.
 
@@ -238,7 +248,7 @@ Severity: **High** can lose money or expose data; **Medium** gives wrong results
 
 **W19 [code] Low. The pay-from number is rate limited by number, not by order.** Four retries per 15 min per number stand even if they are for different orders.
 
-**W20 [by design] Discounts, coupons and price floors do not apply to web orders.** Promotions run on the staff channels; the shop takes the engine's price. If the company expects shop promotions, they are not applied (and the shop sends no coupon). A customer-specific price on the shop comes from the price lists only.
+**W20 [fixed] Discounts, coupons and price floors did not apply to web orders.** *Promotions and promo codes now apply (6.2). Price floors still belong to the staff channels: a shop order is never refused for being under a floor, because the shop shows the price it will charge.*
 
 **W21 [by design] Collecting an order does not expire it,** and the code is not emailed. The customer sees it on the confirmation page and in Track my order.
 
@@ -252,11 +262,11 @@ Severity: **High** can lose money or expose data; **Medium** gives wrong results
 
 ## 17. Not built
 
-* Order confirmation or payment receipt email or SMS at checkout.
-* Automatic tax invoice at payment.
-* Shop promotions and coupons.
-* Abandoned-cart recovery.
-* A saved cart on the server for signed-in shoppers (the cart is per browser).
-* Multiple currencies on the shop.
-* Sending the newsletter (the list and its opt-in exist).
-* A wishlist or cart that follows a guest between devices.
+Built since the first version of this page: the order and payment mails, the automatic tax invoice (online payment, on account, cash at the door), shop promotions and promo codes, sending the newsletter, the clock on unpaid stock holds.
+
+Still not built, and why:
+
+* **SMS.** There is no SMS provider in the system. Adding one is a port, an adapter for a chosen provider (and its account and cost), and the same triggers as the mails.
+* **A saved cart on the server for signed-in shoppers, and so a cart (or wishlist) that follows a shopper between devices.** Needs a table (a migration). Held back because another migration (`0150`, couriers) is not yet committed; adding mine now would tangle the journal.
+* **Abandoned-cart recovery.** Needs the server cart above (a cart the server can see), then a job that writes once to a signed-in shopper with a cart and no order after some hours.
+* **More than one currency on the shop.** The books and the display rates are tied, but a web order is priced, taxed, paid (M-Pesa is KES only) and invoiced (KRA) in KES. Selling in another currency needs the pricing engine, the payment methods that can take it, the tax invoice and the ledger to agree on one rule; it is a design of its own.

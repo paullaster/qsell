@@ -311,7 +311,8 @@ export const OrderWriteService = {
         prod.price,
         item.quantity,
       );
-      if (priced && !quoted && channel !== 'ecommerce') {
+      // Promotions and coupons apply to every channel's price-list lines, the shop's included (price floors stay with the staff channels).
+      if (priced && !quoted) {
         guarded.push({
           itemIndex: orderItems.length,
           productId: prod.id,
@@ -413,7 +414,7 @@ export const OrderWriteService = {
     // Price floors. A sale below a floor needs approval (or is refused outright by a "refuse"
     // floor). A till sale cannot wait for anyone, so it is refused. Measured after discounts.
     let floorBreach: { text: string; shortfallPercent: number } | null = null;
-    if (guarded.length > 0) {
+    if (guarded.length > 0 && channel !== 'ecommerce') {
       const { companySettings: cs, priceGuard } = getContainer();
       const companyForGuard = await cs.ensureSeeded();
       const guardLines: GuardLine[] = guarded.map((g) => {

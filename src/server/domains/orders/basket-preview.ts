@@ -10,6 +10,16 @@ import { firstFilled, nth, orElse } from '@/lib/values';
 import { lineAmounts } from './write-service';
 import { inventoryStockLines } from '@/lib/inventory-kind';
 
+export interface BasketPromotions {
+  /** Taken off the goods (tax included in the same basis the prices are in). */
+  discount: number;
+  /** The promotions that gave it, by name, and the codes that were used. */
+  applied: { name: string; code: string }[];
+  gifts: { name: string; quantity: number }[];
+  /** Promo codes that cannot be used, with why. The order is refused while one is typed. */
+  couponProblems: { code: string; reason: string }[];
+}
+
 export type BasketPreview =
   | {
       ok: true;
@@ -20,6 +30,8 @@ export type BasketPreview =
       weightKg: number;
       /** What leaves the shelves, with kits broken into their parts. */
       stockLines: { productId: string; quantity: number }[];
+      /** What promotions and promo codes did to this basket, as the order will apply them. */
+      promotions: BasketPromotions;
       currency: 'KES';
     }
   | { ok: false; error: string };
@@ -29,8 +41,8 @@ export type BasketPreview =
  * branch), so the value and the weight a delivery charge is worked from are the ones the order will have. The order is the
  * authority; if anything here differs, the order's own charge differs and the shopper is told before paying.
  */
-export async function previewShopBasket(items: readonly { productId: string; quantity: number }[], customerId: string | null): Promise<BasketPreview> {
-  const { companySettings, organizations, branches, pricing, kits } = getContainer();
+export async function previewShopBasket(items: readonly { productId: string; quantity: number }[], customerId: string | null, options: { couponCodes?: readonly string[]; paymentMethod?: string | null } = {}): Promise<BasketPreview> {
+  const { companySettings, organizations, branches, pricing, kits, discounts } = getContainer();
   const company = await companySettings.ensureSeeded();
   const { branch } = await organizations.ensureDefaultOrgAndBranch(company.id, orElse(firstFilled(company.tradingName, company.legalName), 'Company'));
   const sellingBranch = (await branches.getDefault(company.id)) ?? branch;
@@ -53,13 +65,34 @@ export async function previewShopBasket(items: readonly { productId: string; qua
     const result = priced[n];
     if (result?.unitPrice == null && (product.price == null || !Number.isFinite(product.price) || product.price <= 0)) return null;
     const { unitPrice, total } = lineAmounts(undefined, result, product.price, item.quantity);
-    return { item, product, unitPrice, total };
+    return { item, product, unitPrice, total, result };
   });
   if (lines.some((l) => l === null)) return { ok: false, error: 'Something in your basket cannot be priced right now.' };
   const priceable = lines.flatMap((l) => (l === null ? [] : [l]));
 
+  // Promotions and promo codes, worked out as the order works them out, so what is shown is what is charged.
+  const discounted = await discounts.evaluate(
+    company.id,
+    { customerId, branchId: sellingBranch.id, salesType: 'cash', channel: 'ecommerce', paymentMethod: options.paymentMethod ?? null },
+    priceable.map((l) => ({ productId: l.item.productId, quantity: l.item.quantity, unitPrice: l.unitPrice, lineTotal: l.total, taxRate: l.product.taxRate ?? 0, lineTaxInclusive: l.product.isTaxInclusive !== false, explicitFloorUnit: l.result?.trace.floorPrice ?? null, trace: l.result?.trace ?? null })),
+    { couponCodes: [...(options.couponCodes ?? [])] },
+  );
+  priceable.forEach((l, n) => {
+    const b = discounted.lines[n];
+    if (b !== undefined && b.lineDiscount + b.orderDiscount > 0) {
+      l.unitPrice = b.unitPriceAfter;
+      l.total = b.lineTotalAfter;
+    }
+  });
+  const promotions: BasketPromotions = {
+    discount: discounted.totalDiscount,
+    applied: discounted.applications.map((a) => ({ name: a.couponCode ?? a.code, code: a.code })),
+    gifts: discounted.gifts.map((g) => ({ name: g.productName, quantity: g.quantity })),
+    couponProblems: discounted.couponProblems,
+  };
+
   const kitDefs = await kits.forProducts(company.id, priceable.map((l) => l.item.productId));
-  let stock = priceable.map((l) => ({ productId: l.item.productId, quantity: l.item.quantity }));
+  let stock = [...priceable.map((l) => ({ productId: l.item.productId, quantity: l.item.quantity })), ...discounted.gifts.map((g) => ({ productId: g.productId, quantity: g.quantity }))];
   // What is taxed: the lines as the order will have them. A kit is taxed part by part, each at its own rate.
   let taxed = priceable.map((l) => ({ productId: l.item.productId, quantity: l.item.quantity, unitPrice: l.unitPrice, taxRate: l.product.taxRate ?? 0, isTaxInclusive: l.product.isTaxInclusive !== false }));
   if (kitDefs.size > 0) {
@@ -91,6 +124,7 @@ export async function previewShopBasket(items: readonly { productId: string; qua
       return facts?.inventoryKind === 'service' ? kg : kg + (facts?.weightKg ?? 0) * line.quantity;
     }, 0),
     stockLines: inventoryLines,
+    promotions,
     currency: 'KES',
   };
 }

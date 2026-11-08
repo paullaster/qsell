@@ -19,3 +19,19 @@ describe('csvCell', () => {
     for (const bad of ['=1+1', '+1', '-1', '@SUM(A1)']) expect(csvCell(bad)).toBe(`"'${bad}"`);
   });
 });
+
+describe('a newsletter to send', () => {
+  it('needs a subject and a message of sensible size', async () => {
+    const { parseNewsletterDraft } = await import('./newsletter');
+    expect(parseNewsletterDraft({ subject: ' Eid   offers ', body: 'Dear friend,\r\nTen percent off.' })).toEqual({ ok: true, value: { subject: 'Eid offers', body: 'Dear friend,\nTen percent off.' } });
+    expect(parseNewsletterDraft({ subject: 'x', body: 'long enough text' }).ok).toBe(false);
+    expect(parseNewsletterDraft({ subject: 'Hello', body: 'short' }).ok).toBe(false);
+    expect(parseNewsletterDraft({ subject: 'x'.repeat(151), body: 'long enough text' }).ok).toBe(false);
+    expect(parseNewsletterDraft({ subject: 'Hello', body: 'y'.repeat(10_001) }).ok).toBe(false);
+    expect(parseNewsletterDraft(null).ok).toBe(false);
+  });
+  it('is sent as text: markup is escaped and paragraphs are kept', async () => {
+    const { newsletterBodyHtml } = await import('./newsletter');
+    expect(newsletterBodyHtml('Hi <b>you</b>\nline two\n\nSecond & last')).toBe('<p style="margin:0 0 14px">Hi &lt;b&gt;you&lt;/b&gt;<br>line two</p><p style="margin:0 0 14px">Second &amp; last</p>');
+  });
+});

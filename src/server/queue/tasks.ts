@@ -78,6 +78,33 @@ export const deliveryMessagesSweep = async (_payload: unknown, helpers: JobHelpe
   if (sent > 0) helpers.logger.info(`Delivery messages sent: ${String(sent)}`);
 };
 
+/** A mail to a shopper about their order (placed, payment received). A failure is thrown so the worker tries again later. */
+export const shopOrderEmail = async (payload: unknown, helpers: JobHelpers) => {
+  const { orderId, kind } = (payload ?? {}) as { orderId?: unknown; kind?: unknown };
+  if (typeof orderId !== 'string' || typeof kind !== 'string') return;
+  const { sendOrderEmail } = await import('@/server/domains/orders/order-emails');
+  const outcome = await sendOrderEmail(orderId, kind);
+  helpers.logger.info(`Order mail ${kind} for ${orderId}: ${outcome}`);
+};
+
+/** One slice of a newsletter; when more people are left it queues the next slice, and at the end it records how many were reached. */
+export const newsletterSlice = async (payload: unknown, helpers: JobHelpers) => {
+  const step = payload as { campaignId?: unknown; subject?: unknown; body?: unknown; after?: unknown; sent?: unknown; failed?: unknown };
+  if (typeof step.campaignId !== 'string' || typeof step.subject !== 'string' || typeof step.body !== 'string') return;
+  const after = typeof step.after === 'object' && step.after !== null ? (step.after as { k: string; id: string }) : null;
+  const { sendCampaignSlice } = await import('@/server/domains/newsletter/campaign');
+  const r = await sendCampaignSlice({ campaignId: step.campaignId, subject: step.subject, body: step.body, after, sent: Number(step.sent ?? 0), failed: Number(step.failed ?? 0) });
+  if (r.next !== null) {
+    const { enqueueNewsletterSlice } = await import('./worker');
+    await enqueueNewsletterSlice(r.next);
+    return;
+  }
+  const c = getContainer();
+  const company = await c.companySettings.ensureSeeded();
+  await c.decisionLog.record({ companyId: company.id, subject: { type: 'newsletter', id: step.campaignId }, action: 'newsletter.sent', actor: { type: 'job', id: 'newsletter-slice' }, from: '', to: `${String(r.sent)} sent, ${String(r.failed)} failed`, reason: { text: `Newsletter "${step.subject}" reached ${String(r.sent)} people; ${String(r.failed)} could not be sent.` } });
+  helpers.logger.info(`Newsletter ${step.campaignId}: ${String(r.sent)} sent, ${String(r.failed)} failed`);
+};
+
 /** Worker cron task: pick up whatever a lost job or a restart left half done. */
 export const providerSweep = async (_payload: unknown, helpers: JobHelpers) => {
   const r = await getContainer().paymentEngine.sweep();
@@ -219,9 +246,37 @@ export const stockBackfill = async (_payload: unknown, helpers: JobHelpers) => {
  * Worker cron task: stock holds whose time has run out are given back, and an order that was still unpaid is marked failed, with the
  * reason on its timeline. Only holds that were given a time (shop orders paid at once, when the company sets a hold time) can run out.
  */
+/** Shop orders to be paid at once, still unpaid after the hold time, in the old counters: their stock is given back and the order marked failed with the reason. */
+async function expireCounterHolds(helpers: JobHelpers): Promise<void> {
+  const container = getContainer();
+  const minutes = (await container.stockSettings.get()).unpaidHoldMinutes;
+  if (minutes <= 0) return;
+  const { drizzleDb } = await import('@/server/db/drizzle/client');
+  const { orders } = await import('@/server/db/drizzle/schema');
+  const { and, eq, inArray, lt } = await import('drizzle-orm');
+  const { ONLINE_PAYMENT_METHODS, InventoryReservationService } = await import('@/server/domains/inventory/reservation-service');
+  const { OrderStages } = await import('@/server/domains/orders/stages');
+  const due = await drizzleDb
+    .select({ id: orders.id })
+    .from(orders)
+    .where(and(eq(orders.status, 'pending'), inArray(orders.paymentStatus, ['unpaid', 'pending_verification']), inArray(orders.paymentMethod, [...ONLINE_PAYMENT_METHODS]), lt(orders.createdAt, new Date(Date.now() - minutes * 60_000))))
+    .limit(100);
+  for (const order of due) {
+    try {
+      await InventoryReservationService.releaseOrder(order.id, 'expired: the hold ran out', 'stock-reservation-expiry');
+      await OrderStages.move(drizzleDb, order.id, 'payment_failed', 'failed', { source: 'worker', reasonCode: 'hold_expired', message: 'The stock held for this order ran out before it was paid.' });
+    } catch (error) {
+      helpers.logger.error(`Stock hold expiry (counters): order ${order.id} could not be released: ${String(error)}`);
+    }
+  }
+  if (due.length > 0) helpers.logger.info(`Stock holds expired (counters): ${String(due.length)} orders`);
+}
+
 export const stockReservationExpiry = async (_payload: unknown, helpers: JobHelpers) => {
   const container = getContainer();
   const company = await container.companySettings.ensureSeeded();
+  // Without the per-location ledger a hold has no time of its own, so the orders that waited longer than the company allows are found here.
+  if (!(await container.stockSettings.isLedgerMode())) await expireCounterHolds(helpers);
   const expired = await container.stockReservations.expireDue(company.id, new Date());
   if (expired.length === 0) return;
   const { OrderStages } = await import('@/server/domains/orders/stages');
@@ -447,6 +502,8 @@ export const tasks = {
   'provider-sweep': providerSweep,
   'delivery-messages-sweep': deliveryMessagesSweep,
   'provider-pull-sweep': providerPullSweep,
+  'shop-order-email': shopOrderEmail,
+  'newsletter-slice': newsletterSlice,
   'vendor-document-expiry': vendorDocumentExpiry,
   'vendor-bank-promote': vendorBankPromote,
   'rfq-deadlines': rfqDeadlines,

@@ -19,6 +19,8 @@ import { OrderSummary } from '@/components/store/checkout/OrderSummary';
 import { PackagingOptions } from '@/components/store/PackagingOptions';
 import { DeliverySection, type Recipient } from '@/components/store/checkout/DeliverySection';
 import { useShopDelivery } from '@/components/store/checkout/useShopDelivery';
+import { useShopBasket } from '@/components/store/checkout/useShopBasket';
+import { PromoCode } from '@/components/store/checkout/PromoCode';
 import type { DeliveryInput } from '@/lib/checkout-input';
 
 export interface CheckoutSubmission {
@@ -30,6 +32,8 @@ export interface CheckoutSubmission {
   buyerKraPin?: string;
   shippingAddress: { street: string; city: string; countyOrState: string; country: string };
   paymentMethod: PaymentProvider;
+  /** Promo codes the shopper typed; the server decides which can be used. */
+  couponCodes?: string[];
   /** Present when the shop works out delivery: where to, who receives it, and the charge the shopper was shown. */
   delivery?: DeliveryInput;
 }
@@ -111,6 +115,7 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
   const [useNewAddress, setUseNewAddress] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [lookedUp, setLookedUp] = useState<LookedUp | null>(null);
+  const [couponCodes, setCouponCodes] = useState<string[]>([]);
 
   const isSignedIn = customer !== null && has(customer.email);
   // A lookup answer only counts while the email field still holds an address.
@@ -180,12 +185,16 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
   };
 
   const totals = cartTotals(lines);
-  const delivery = useShopDelivery({ items: lines.map((l) => ({ productId: l.product.id, quantity: l.quantity })), county: countyOrState, town: city, area, country });
+  const items = lines.map((l) => ({ productId: l.product.id, quantity: l.quantity }));
+  const delivery = useShopDelivery({ items, county: countyOrState, town: city, area, country, couponCodes });
+  const basketPhase = useShopBasket({ items, couponCodes, paymentMethod: chosenMethod });
+  const basket = basketPhase.phase === 'ok' ? basketPhase.basket : null;
+  const codeProblem = basket !== null && basket.promotions.couponProblems.length > 0;
   const deliveryOn = delivery.options !== null && delivery.options.methods.length > 0;
   /** Collecting from a branch: there is no delivery address, and the branch is where the order goes. */
   const collecting = deliveryOn && delivery.method === 'pickup';
   const deliveryQuote = delivery.quote.phase === 'ok' ? delivery.quote.quote : null;
-  const payable = totals.totalAmount + (deliveryQuote?.gross ?? 0);
+  const payable = (basket === null ? totals.totalAmount : basket.goodsTotal) + (deliveryQuote?.gross ?? 0);
   const enabled = providers ?? [];
   const creditAvailable = accountCustomer?.accountType === 'credit' ? accountCustomer.creditLimit - accountCustomer.balance : 0;
   const canPayOnAccount = accountCustomer?.found === true && accountCustomer.accountType === 'credit' && !accountCustomer.blocked && creditAvailable >= payable;
@@ -323,6 +332,7 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
       // An order to be collected is addressed to the branch by the server; no address of the customer's goes with it.
       shippingAddress: collecting ? { street: '', city: '', countyOrState: '', country } : { street, city, countyOrState, country },
       paymentMethod,
+      ...(couponCodes.length === 0 ? {} : { couponCodes }),
       ...(deliveryInput === null ? {} : { delivery: deliveryInput }),
     });
   };
@@ -477,10 +487,11 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
       <aside aria-label="Order summary" className="space-y-5 self-start rounded-xl border border-line bg-surface p-4 sm:p-5 lg:sticky lg:top-24 lg:col-span-5">
         <h2 className="border-b border-line pb-2 text-base font-bold text-fg-strong">Order review ({lines.length} {lines.length === 1 ? 'item' : 'items'})</h2>
         <PackagingOptions />
-        <OrderSummary lines={lines} collecting={collecting} delivery={deliveryQuote === null ? null : { gross: deliveryQuote.gross, net: deliveryQuote.net, tax: deliveryQuote.tax, branchName: deliveryQuote.branchName }} />
+        <PromoCode codes={couponCodes} onCodes={setCouponCodes} basket={basket} />
+        <OrderSummary lines={lines} basket={basket} collecting={collecting} delivery={deliveryQuote === null ? null : { gross: deliveryQuote.gross, net: deliveryQuote.net, tax: deliveryQuote.tax, branchName: deliveryQuote.branchName }} />
         <button
           type="submit"
-          disabled={submitting || providers === null || (deliveryOn && delivery.quote.phase === 'loading')}
+          disabled={submitting || providers === null || codeProblem || (deliveryOn && delivery.quote.phase === 'loading')}
           className="flex min-h-12 w-full cursor-pointer items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-600/20 transition-all hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {submitting ? (

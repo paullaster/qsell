@@ -14,6 +14,7 @@ import { orElse } from '@/lib/values';
 import { paymentUsesPhone, resolvePaymentPhone } from '@/lib/payment-phone';
 import { clientAddress, waitMessage } from '@/lib/rate-limit';
 import { proveOrder } from './order-proof';
+import { enqueueOrderEmail } from '@/server/queue/worker';
 import { InventoryReservationService } from '@/server/domains/inventory/reservation-service';
 import type { Order } from '@/types/index';
 
@@ -125,6 +126,10 @@ export async function placeOrderAction(raw: unknown): Promise<CheckoutResult<Che
   revalidatePath('/admin/customers');
   revalidatePath('/admin/inventory');
   revalidatePath('/');
+  // The shopper is written to that the order is held; a queue that is down never stops the order.
+  if (order.customerEmail.trim() !== '') await enqueueOrderEmail(order.id, 'placed').catch((error: unknown) => console.error('[checkout] could not queue the order mail', error));
+  // An order on account is invoiced as it is placed, so its tax invoice is issued now (numbering is once per order; KRA signing follows the company's rules).
+  if (method === 'on_account') void getContainer().invoices.generatePdf(order.id, 'tax_invoice').catch((error: unknown) => console.error('[checkout] tax invoice not issued', order.id, error));
   // On account is paid on its invoice; pay on delivery is paid to the rider at the door. Neither starts a payment now.
   if (method === 'on_account' || method === 'pay_on_delivery') return { ok: true, data: { order, payment: { kind: 'none' } } };
   // Card payments go through the hosted checkout, as before.
