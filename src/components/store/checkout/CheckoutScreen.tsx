@@ -162,7 +162,8 @@ export function CheckoutScreen({ cartHandoff }: { cartHandoff?: string }) {
     setSubmitting(true);
     try {
       const result = await retryPaymentAction({
-        orderId: order.id,
+        orderNumber: order.orderNumber,
+        contact: order.customerEmail.trim() === '' ? order.customerPhone : order.customerEmail,
         providerCode: method,
         ...(chosen === '' ? {} : { paymentPhone: chosen }),
       });

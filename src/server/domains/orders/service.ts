@@ -47,6 +47,10 @@ export class OrdersService {
         };
   }): Promise<Order> {
     const session = await auth();
+    // The shop knows who is buying only from the session. An email typed into the form proves nothing, so it may neither charge a
+    // customer's credit account nor change a registered customer's card; only the signed-in person with that email may.
+    const typedEmail = params.customerEmail.trim().toLowerCase();
+    const identityVerified = typedEmail !== '' && session?.user.email.trim().toLowerCase() === typedEmail;
     const { organizations, companySettings, branches } = getContainer();
     const company = await companySettings.ensureSeeded();
     const { branch } = await organizations.ensureDefaultOrgAndBranch(
@@ -59,6 +63,7 @@ export class OrdersService {
       userId: params.userId || session?.user?.customerStoreId || session?.user?.id || null,
       customerId: session?.user.customerStoreId ?? null,
       checkoutStartedAt: params.checkoutStartedAt ?? null,
+      identityVerified,
       branchId: sellingBranch.id,
       customerName: params.customerName,
       customerEmail: params.customerEmail,

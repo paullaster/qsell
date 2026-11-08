@@ -97,9 +97,13 @@ function OpenTracker({ onClose }: { onClose: () => void }) {
     setHasSearched(true);
 
     try {
-      const found = await lookupOrderAction(searchTerm.trim().toUpperCase(), contact.trim());
+      const answer = await lookupOrderAction(searchTerm.trim().toUpperCase(), contact.trim());
+      const found = answer.ok ? answer.data : null;
 
-      if (found) {
+      if (!answer.ok) {
+        setMatchedOrder(null);
+        setSearchError(answer.error);
+      } else if (found) {
         setMatchedOrder(found);
       } else {
         setMatchedOrder(null);

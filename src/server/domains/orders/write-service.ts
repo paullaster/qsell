@@ -142,6 +142,11 @@ export const OrderWriteService = {
      * for approval when a workflow says so; without one (a shop checkout) they never are.
      */
     requestedBy?: string;
+    /**
+     * False when the buyer's identity is not proven (a shop guest who typed an email): a registered customer's card is then left as
+     * it is, and a credit account cannot be used. Left out for staff and other callers, which are trusted.
+     */
+    identityVerified?: boolean;
     /** Coupon codes the customer gave. A code that cannot be used refuses the order, saying why. */
     couponCodes?: string[];
     /**
@@ -162,6 +167,11 @@ export const OrderWriteService = {
     const contact = readOptionalEmail(raw.customerEmail);
     if (!contact.ok) return { success: false, error: contact.error, code: 'invalid_input' };
     const params = { ...raw, customerEmail: contact.email };
+    // A credit account is charged only for a buyer who has proven who they are (the shop passes `false` for anyone not signed in as
+    // that customer; staff and other trusted callers leave it out).
+    if (params.paymentMethod === 'on_account' && params.identityVerified === false) {
+      return { success: false, error: 'On account is for customers who are signed in with their account email. Please sign in, or choose another way to pay.', code: 'credit_limit' };
+    }
     const orderItems: OrderItem[] = [];
     const pricedLines: {
       productId: string;
@@ -682,6 +692,7 @@ export const OrderWriteService = {
         amount: totalAmount,
         onAccount,
         allowOverLimit: gated,
+        updateExisting: params.identityVerified !== false || has(params.requestedBy),
       });
       const overCreditLimit =
         tradeCustomer.accountType === 'credit' &&

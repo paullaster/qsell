@@ -66,14 +66,22 @@ export async function initiateBranchPaymentAction(input: {
   orderId: string;
   providerCode: PaymentProviderCode;
 }): Promise<StartedPayment> {
+  // Staff only: the shop's own checkout starts payments through its server code, with the order proved by number and contact.
+  await requirePermission('orders:update');
   // The prompt goes to the number the order already holds; the caller cannot name another (see startOrderPayment).
   return await startOrderPayment({ orderId: input.orderId, providerCode: input.providerCode, source: 'staff' });
 }
 
-export async function getPaymentAttemptStatusAction(attemptId: string) {
-  const { paymentAttempts } = getContainer();
+/**
+ * Where a payment stands, for the person paying: the attempt id (unguessable) together with the order's number and the phone or
+ * email it was placed with, so knowing one of them is not enough to read a receipt number.
+ */
+export async function getPaymentAttemptStatusAction(attemptId: string, proof: { orderNumber: string; contact: string }) {
+  const { paymentAttempts, orders } = getContainer();
   const attempt = await paymentAttempts.getById(attemptId);
   if (!attempt) throw new Error('Payment attempt not found');
+  const order = typeof proof.orderNumber === 'string' && typeof proof.contact === 'string' && proof.orderNumber.length <= 60 && proof.contact.length <= 254 ? await orders.findByNumberAndContact(proof.orderNumber, proof.contact) : null;
+  if (order?.id !== attempt.orderId) throw new Error('Payment attempt not found');
   return {
     id: attempt.id,
     status: attempt.status,

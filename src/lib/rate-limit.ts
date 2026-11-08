@@ -33,6 +33,12 @@ export const RATE_RULES = {
   collection_lookup_order: { limit: 8, seconds: 600 },
   /** A customer opening their tracking page: per address, and per link so a link cannot be hammered. */
   tracking_ip: { limit: 60, seconds: 600 },
+  /** Placing orders at the shop: per address and per phone, so one visitor cannot hold all the stock. */
+  checkout_ip: { limit: 40, seconds: 900 },
+  checkout_contact: { limit: 10, seconds: 3600 },
+  /** Looking up an order by its number and the phone or email it was placed with: the number and contact cannot be guessed. */
+  order_lookup_ip: { limit: 30, seconds: 600 },
+  order_lookup_order: { limit: 8, seconds: 600 },
   tracking_token: { limit: 40, seconds: 600 },
   /** A signed-in vendor sending files or documents. */
   vendor_upload: { limit: 60, seconds: 600 },

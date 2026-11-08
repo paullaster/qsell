@@ -55,8 +55,6 @@ export {
 export {
   listOrdersAction,
   getOrderAction,
-  createOrderAction,
-  createCheckoutOrderAction,
 } from '@/server/domains/orders/actions';
 
 export {
