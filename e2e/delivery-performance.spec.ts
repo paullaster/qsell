@@ -18,8 +18,7 @@ test.describe('delivery performance', () => {
       await expect(overall).toBeVisible({ timeout: 30_000 });
 
       expect(deliveryTool('deliver-promised', number, 'late').delivered).toBe(number);
-      await page.reload();
-      await expect(page.getByRole('heading', { name: 'Delivery performance' })).toBeVisible({ timeout: 30_000 });
+      await open(page, '/admin/delivery/performance', 'Delivery performance');
       await expect(overall).toContainText('Delivered on time', { timeout: 30_000 });
       await expect(overall).toContainText(/\d+ of \d+ promised a window/);
       await expect(page.getByRole('region', { name: 'Delivery times' })).toContainText(`Performance ${number}`);
