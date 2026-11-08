@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { has } from '@/lib/values';
 import { addDays, nairobiDay } from '@/lib/delivery-slot';
 import type * as mod_server_di_container from '@/server/di/container';
@@ -55,7 +55,7 @@ describe.skipIf(!has(url))('delivery slots (database)', () => {
   };
   const slot = async (over: Record<string, unknown> = {}) => await must(c.deliverySlots.create(actor(), { branchId, name: `Slot ${code()}`, weekdays: [1, 2, 3, 4, 5, 6, 7], startsAt: '09:00', endsAt: '12:00', capacity: 3, cutoffMinutes: 60, ...over }));
   /** A paid order delivered by the shop's own riders from the test branch, with its delivery made (a draft). */
-  const delivery = async (opts: { weight?: number } = {}) => {
+  const placeOrder = async (opts: { weight?: number; slot?: { slotId: string; day: string } } = {}) => {
     const productId = `prod_sl_${randomUUID()}`;
     await db.insert(schema.products).values({ id: productId, sku: `SL-${randomUUID().slice(0, 8)}`.toUpperCase(), stockCode: `SLS-${randomUUID().slice(0, 8)}`.toUpperCase(), name: `Slotted ${productId.slice(-6)}`, slug: `sl-${randomUUID()}`, itemTypeId, price: '1000', costPrice: '10', taxRate: '0', isTaxInclusive: false, stockQuantity: 0, ...(opts.weight === undefined ? {} : { weight: String(opts.weight) }) });
     lastProduct = productId;
@@ -63,13 +63,24 @@ describe.skipIf(!has(url))('delivery slots (database)', () => {
     const r = await createOrder({
       orderNumber: `SL-${randomUUID()}`, customerName: 'Wanjiru Buyer', customerEmail: `sl-${randomUUID()}@slots.test`, customerPhone: '0700123456',
       shippingAddress: { street: '1 Test Rd', city: 'Nairobi', countyOrState: 'Nairobi', country: 'KE' },
-      items: [{ productId, quantity: 1 }], currency: 'KES', paymentMethod: 'mpesa_daraja', delivery: { method: 'own_fleet', pin: PIN },
+      items: [{ productId, quantity: 1 }], currency: 'KES', paymentMethod: 'mpesa_daraja', delivery: { method: 'own_fleet', pin: PIN, ...(opts.slot === undefined ? {} : { slot: opts.slot }) },
     });
+    return r;
+  };
+  const delivery = async (opts: { weight?: number; slot?: { slotId: string; day: string } } = {}) => {
+    const r = await placeOrder(opts);
     if (!r.success || r.order === undefined) throw new Error(r.error);
     await OrderStages.move(db, r.order.id, 'payment_confirmed', 'succeeded', {});
     const doc = await c.deliveryDocuments.create(actor(), r.order.id, { lines: null });
     if (!doc.ok) throw new Error(doc.message);
     return doc.data.id;
+  };
+  /** An order placed with a slot chosen, paid but with no delivery made yet. */
+  const orderWithSlot = async (slotChoice: { slotId: string; day: string }) => {
+    const r = await placeOrder({ slot: slotChoice });
+    if (!r.success || r.order === undefined) throw new Error(r.error);
+    await OrderStages.move(db, r.order.id, 'payment_confirmed', 'succeeded', {});
+    return r.order.id;
   };
   const rowOf = async (id: string) => (await db.select().from(schema.deliveries).where(eq(schema.deliveries.id, id)))[0];
 
@@ -434,5 +445,106 @@ describe.skipIf(!has(url))('delivery slots (database)', () => {
       expect(await c.deliverySla.setSettings(actor(), { ...bad, expectedVersion: stale.version })).toMatchObject({ ok: false, reason: 'bad_input' });
     }
     await setSla(60, 60);
+  });
+
+  it('offers slots for a basket before any order exists, with the earliest free time and the goods\' lead time respected', async () => {
+    const s = await slot({ name: `Basket ${code()}`, capacity: 1, startsAt: '00:30', endsAt: '23:00', cutoffMinutes: 0 });
+    const full = await delivery();
+    await must(c.deliverySlots.book(actor(), full, { slotId: s.id, day: ahead(2) }));
+    const product = lastProduct;
+    const days = await c.deliverySlots.offer(companyId, { branchId, from: ahead(2), days: 3, basket: { method: 'own_fleet', zone: null, lines: [{ productId: product, quantity: 2 }] } });
+    expect(days[0]?.slots.find((x) => x.slotId === s.id)).toMatchObject({ available: false, why: 'This slot is full that day.' });
+    expect(days[1]?.slots.find((x) => x.slotId === s.id)).toMatchObject({ available: true });
+    // An item that takes three days keeps every earlier day from being offered.
+    await must(c.deliverySlots.setLead(actor(), { kind: 'item', refId: product, minutes: 4320 }));
+    try {
+      const slow = await c.deliverySlots.offer(companyId, { branchId, from: ahead(1), days: 6, basket: { method: 'own_fleet', zone: null, lines: [{ productId: product, quantity: 1 }] } });
+      expect(slow[0]?.slots.find((x) => x.slotId === s.id)?.available).toBe(false);
+      expect(slow[0]?.slots.find((x) => x.slotId === s.id)?.why).toContain('will not be ready until');
+      expect(slow[5]?.slots.find((x) => x.slotId === s.id)?.available).toBe(true);
+    } finally {
+      const l = (await c.deliverySlots.leadTimes(companyId)).find((x) => x.refId === product);
+      if (l !== undefined) await must(c.deliverySlots.removeLead(actor(), l.id));
+    }
+  });
+
+  it('keeps the slot a shopper chose with the order and books it when the delivery is made', async () => {
+    const s = await slot({ name: `Chosen ${code()}`, capacity: 2 });
+    const orderId = await orderWithSlot({ slotId: s.id, day: ahead(3) });
+    expect(await c.deliverySlots.requestFor(companyId, orderId)).toMatchObject({ outcome: 'pending', slotName: s.name, day: ahead(3) });
+    const doc = await c.deliveryDocuments.create(actor(), orderId, { lines: null });
+    if (!doc.ok) throw new Error(doc.message);
+    const held = await c.deliverySlots.heldBy(companyId, doc.data.id);
+    expect(held).toMatchObject({ slotId: s.id, day: ahead(3) });
+    expect((await rowOf(doc.data.id))?.slotBookedBy).toBeNull();
+    expect(await c.deliverySlots.requestFor(companyId, orderId)).toMatchObject({ outcome: 'booked', note: null });
+    const [req] = await db.select().from(schema.orderSlotRequests).where(eq(schema.orderSlotRequests.orderId, orderId));
+    expect(req).toMatchObject({ deliveryId: doc.data.id, outcome: 'booked' });
+    expect(req?.settledAt).not.toBeNull();
+    // The booking counts against the slot's room like any other.
+    expect((await c.deliverySlots.offer(companyId, { branchId, from: ahead(3), days: 1 }))[0]?.slots.find((x) => x.slotId === s.id)).toMatchObject({ left: 1 });
+  });
+
+  it('refuses an order whose chosen time is not free, another branch\'s slot or not a slot at all, and saves nothing', async () => {
+    const s = await slot({ name: `Tight ${code()}`, capacity: 1 });
+    const holder = await delivery();
+    await must(c.deliverySlots.book(actor(), holder, { slotId: s.id, day: ahead(10) }));
+    const orderNumber = `SL-${randomUUID()}`;
+    const productId = lastProduct;
+    const tryOrder = async (choice: { slotId: string; day: string }, number = orderNumber) =>
+      await createOrder({ orderNumber: number, customerName: 'Wanjiru Buyer', customerEmail: `sl-${randomUUID()}@slots.test`, customerPhone: '0700123456', shippingAddress: { street: '1 Test Rd', city: 'Nairobi', countyOrState: 'Nairobi', country: 'KE' }, items: [{ productId, quantity: 1 }], currency: 'KES', paymentMethod: 'mpesa_daraja', delivery: { method: 'own_fleet', pin: PIN, slot: choice } });
+    const filled = await tryOrder({ slotId: s.id, day: ahead(10) });
+    expect(filled).toMatchObject({ success: false, code: 'slot_unavailable' });
+    expect(filled.error).toContain('Please choose another delivery time');
+    expect(await db.select({ id: schema.orders.id }).from(schema.orders).where(eq(schema.orders.orderNumber, orderNumber))).toHaveLength(0);
+    // Another branch's slot is not one for this order.
+    const far = await must(c.deliverySlots.create(actor(), { branchId: otherBranchId, name: `Far ${code()}`, weekdays: [1, 2, 3, 4, 5, 6, 7], startsAt: '09:00', endsAt: '12:00', capacity: 5, cutoffMinutes: 0 }));
+    expect(await tryOrder({ slotId: far.id, day: ahead(10) })).toMatchObject({ success: false, code: 'slot_unavailable' });
+    expect(await tryOrder({ slotId: randomUUID(), day: ahead(10) })).toMatchObject({ success: false, code: 'slot_unavailable' });
+    // A free day on the same slot is fine.
+    expect(await tryOrder({ slotId: s.id, day: ahead(11) })).toMatchObject({ success: true });
+  });
+
+  it('makes the delivery without the slot when it has filled since the order, says why, and never holds the delivery back', async () => {
+    const s = await slot({ name: `Racing ${code()}`, capacity: 1 });
+    const orderId = await orderWithSlot({ slotId: s.id, day: ahead(6) });
+    const taker = await delivery();
+    await must(c.deliverySlots.book(actor(), taker, { slotId: s.id, day: ahead(6) }));
+    const doc = await c.deliveryDocuments.create(actor(), orderId, { lines: null });
+    if (!doc.ok) throw new Error(doc.message);
+    expect(await c.deliverySlots.heldBy(companyId, doc.data.id)).toBeNull();
+    const asked = await c.deliverySlots.requestFor(companyId, orderId);
+    expect(asked).toMatchObject({ outcome: 'unavailable' });
+    expect(asked?.note).toBe('This slot is full that day.');
+    // Dispatch is told on the delivery's own screen's data, and the history keeps the refusal.
+    const [log] = await db.select().from(schema.decisionLog).where(and(eq(schema.decisionLog.subjectId, doc.data.id), eq(schema.decisionLog.action, 'delivery.slot_request_unavailable')));
+    expect(log).toBeDefined();
+    // Making a second delivery for the same order does not try again.
+    const again = await c.deliveryDocuments.create(actor(), orderId, { lines: null });
+    expect(again.ok || again.reason === 'nothing_left').toBe(true);
+  });
+
+  it('judges a shopper\'s cut-off when they chose, not when the delivery is made, but never books a day that has gone', async () => {
+    const s = await slot({ name: `Cutoff ${code()}`, cutoffMinutes: 3000 });
+    // Tomorrow is inside the cut-off now, so the shopper could not choose it now; they chose it three days ago.
+    const r = await placeOrder();
+    if (!r.success || r.order === undefined) throw new Error(r.error);
+    await OrderStages.move(db, r.order.id, 'payment_confirmed', 'succeeded', {});
+    const orderId = r.order.id;
+    await db.transaction((tx) => c.deliverySlots.recordRequest(tx, companyId, orderId, { slotId: s.id, day: ahead(1) }, { type: 'user', id: null }));
+    await db.update(schema.orderSlotRequests).set({ requestedAt: new Date(Date.now() - 3 * 86_400_000) }).where(eq(schema.orderSlotRequests.orderId, orderId));
+    const doc = await c.deliveryDocuments.create(actor(), orderId, { lines: null });
+    if (!doc.ok) throw new Error(doc.message);
+    expect(await c.deliverySlots.heldBy(companyId, doc.data.id)).toMatchObject({ day: ahead(1) });
+    // A day that has already gone is not booked.
+    const late = await placeOrder();
+    if (!late.success || late.order === undefined) throw new Error(late.error);
+    await OrderStages.move(db, late.order.id, 'payment_confirmed', 'succeeded', {});
+    const lateId = late.order.id;
+    await db.transaction((tx) => c.deliverySlots.recordRequest(tx, companyId, lateId, { slotId: s.id, day: addDays(today(), -2) }, { type: 'user', id: null }));
+    const lateDoc = await c.deliveryDocuments.create(actor(), lateId, { lines: null });
+    if (!lateDoc.ok) throw new Error(lateDoc.message);
+    expect(await c.deliverySlots.heldBy(companyId, lateDoc.data.id)).toBeNull();
+    expect(await c.deliverySlots.requestFor(companyId, lateId)).toMatchObject({ outcome: 'unavailable', note: 'That slot has already passed.' });
   });
 });

@@ -59,6 +59,7 @@ export function reasonWords(code: string | null): string {
     kit_error: 'Set contents problem',
     delivery_unavailable: 'Could not be delivered',
     delivery_changed: 'The delivery charge changed',
+    slot_unavailable: 'The delivery time chosen was no longer free',
     payment_start_failed: 'The payment could not be started',
     payment_failed: 'The payment did not go through',
     payout_returned: 'The refund payout came back',

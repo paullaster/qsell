@@ -17,6 +17,8 @@ export interface DeliveryInput {
   recipient: { name: string; phone: string } | null;
   notes: string | null;
   expectedCharge: number | null;
+  /** The delivery time the shopper chose, if the shop offers any. The server checks it against the slot's rules; it is only a request. */
+  slot: { slotId: string; day: string } | null;
 }
 
 export interface CheckoutInput {
@@ -46,7 +48,7 @@ function parseDelivery(raw: unknown): DeliveryParsed {
     if (branch === null) return { ok: false, error: 'Choose the branch you will collect from.' };
     const charge = raw.expectedCharge;
     if (charge !== undefined && charge !== null && (typeof charge !== 'number' || !Number.isFinite(charge) || charge < 0 || charge > 1_000_000_000)) return { ok: false, error: 'Your collection details could not be read. Please look at your order again.' };
-    return { ok: true, value: { method: 'pickup', pickupBranchId: branch, pin: null, address: null, recipient: null, notes: null, expectedCharge: typeof charge === 'number' ? charge : null } };
+    return { ok: true, value: { method: 'pickup', pickupBranchId: branch, pin: null, address: null, recipient: null, notes: null, expectedCharge: typeof charge === 'number' ? charge : null, slot: null } };
   }
   let pin: GeoPoint | null = null;
   if (raw.pin !== undefined && raw.pin !== null) {
@@ -70,9 +72,15 @@ function parseDelivery(raw: unknown): DeliveryParsed {
   }
   const notes = text(raw.notes ?? '', 300);
   if (notes === null) return { ok: false, error: 'The note for the rider is too long.' };
+  let slot: DeliveryInput['slot'] = null;
+  if (raw.slot !== undefined && raw.slot !== null) {
+    const chosen = isRecord(raw.slot) && typeof raw.slot.slotId === 'string' && /^[0-9a-f-]{36}$/i.test(raw.slot.slotId) && typeof raw.slot.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw.slot.day) ? { slotId: raw.slot.slotId, day: raw.slot.day } : null;
+    if (chosen === null) return { ok: false, error: 'The delivery time you chose could not be read. Please choose it again.' };
+    slot = chosen;
+  }
   const expected = raw.expectedCharge;
   if (expected !== undefined && expected !== null && (typeof expected !== 'number' || !Number.isFinite(expected) || expected < 0 || expected > 1_000_000_000)) return { ok: false, error: 'Your delivery charge could not be read. Please look at your order again.' };
-  return { ok: true, value: { method: raw.method, pickupBranchId: null, pin, address, recipient, notes: notes === '' ? null : notes, expectedCharge: typeof expected === 'number' ? expected : null } };
+  return { ok: true, value: { method: raw.method, pickupBranchId: null, pin, address, recipient, notes: notes === '' ? null : notes, expectedCharge: typeof expected === 'number' ? expected : null, slot } };
 }
 
 type Parsed = { ok: true; value: CheckoutInput } | { ok: false; error: string };

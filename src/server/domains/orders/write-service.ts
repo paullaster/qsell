@@ -125,6 +125,8 @@ export const OrderWriteService = {
       notes?: string | null;
       /** What delivery cost on the screen the shopper saw (tax included). If the charge worked out now is different, the order is refused so nobody pays an amount they were not shown. */
       expectedCharge?: number | null;
+      /** The delivery time the shopper chose. Checked against the slot's rules here; kept with the order and booked when its delivery is made. */
+      slot?: { slotId: string; day: string } | null;
     };
     orderId?: string;
     orderNumber?: string;
@@ -582,6 +584,11 @@ export const OrderWriteService = {
       if (expected !== undefined && expected !== null && Math.abs(expected - planned.quote.split.gross) > 0.005) {
         return { success: false, error: `The delivery charge is now ${planned.quote.split.gross.toFixed(2)} and not the ${expected.toFixed(2)} you were shown. Please look at your order again before you pay.`, code: 'delivery_changed' };
       }
+      // The delivery time the shopper chose is looked at now, so a slot that has filled since they saw it is refused while they can still pick another.
+      if (params.delivery.slot !== undefined && params.delivery.slot !== null && params.delivery.method !== 'pickup') {
+        const refusal = await getContainer().deliverySlots.checkRequest(companyId, { branchId: planned.branch.id, basket: { method: params.delivery.method, zone: planned.quote.zone === null ? null : { id: planned.quote.zone.id, name: planned.quote.zone.name }, lines: orderItems.map((i) => ({ productId: i.productId, quantity: i.quantity })) }, slotId: params.delivery.slot.slotId, day: params.delivery.slot.day });
+        if (refusal !== null) return { success: false, error: refusal, code: 'slot_unavailable' };
+      }
       delivered = planned;
     }
     // An order to be collected is addressed to the branch, as the server knows it; the customer's own address is not touched.
@@ -745,6 +752,7 @@ export const OrderWriteService = {
           if (delivered !== null && params.delivery !== undefined) {
             const actor = { type: 'user' as const, id: params.requestedBy ?? params.customerId ?? null };
             await getContainer().orderDeliveries.record(tx, { companyId: company.id, orderId: saved.id, method: params.delivery.method, plan: delivered, currency: params.currency, recipient: params.delivery.recipient ?? null, notes: params.delivery.notes ?? null, actor });
+            if (params.delivery.slot !== undefined && params.delivery.slot !== null && params.delivery.method !== 'pickup') await getContainer().deliverySlots.recordRequest(tx, company.id, saved.id, params.delivery.slot, actor);
             // An order collected from a branch gets its code in the same transaction, so there is never one without the other.
             if (params.delivery.method === 'pickup') await getContainer().orderCollections.issue(tx, { companyId: company.id, orderId: saved.id, branchId: delivered.branch.id, actor });
             await OrderStages.moveIn(tx, saved.id, 'charge_quoted', 'succeeded', {

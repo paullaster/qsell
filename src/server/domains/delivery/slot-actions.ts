@@ -65,8 +65,8 @@ export async function deliverySlotAction(raw: unknown) {
     const c = getContainer();
     const delivery = await c.deliveryDocuments.get(ctx.companyId, deliveryId);
     if (delivery === null) throw new DeliveryError('That delivery could not be found.', 'NOT_FOUND');
-    const [held, offer] = await Promise.all([c.deliverySlots.heldBy(ctx.companyId, deliveryId), c.deliverySlots.offer(ctx.companyId, { branchId: delivery.branch.id, from: i.from, days: 7, deliveryId })]);
-    return { held, offer };
+    const [held, offer, asked] = await Promise.all([c.deliverySlots.heldBy(ctx.companyId, deliveryId), c.deliverySlots.offer(ctx.companyId, { branchId: delivery.branch.id, from: i.from, days: 7, deliveryId }), c.deliverySlots.requestFor(ctx.companyId, delivery.orderId)]);
+    return { held, offer, asked };
   });
 }
 

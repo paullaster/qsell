@@ -455,6 +455,27 @@ describe.skipIf(!has(url))('delivery for orders (database)', () => {
       expect((await c.orderDeliveries.forOrder(companyId, placed.order?.id ?? ''))?.branchId).toBe(a);
     });
 
+    it('offers the delivery times for the basket from the branch that would send it, with the earliest, and no room counts', async () => {
+      const a = await branch(NAIROBI);
+      const p = await product(1);
+      await stock(a, p, 10);
+      await flatFor([a], 250, { taxRate: 16 });
+      const made = await c.deliverySlots.create({ companyId, userId: 'tester' }, { branchId: a, name: `Shop ${randomUUID().slice(0, 4)}`, weekdays: [1, 2, 3, 4, 5, 6, 7], startsAt: '09:00', endsAt: '12:00', capacity: 4, cutoffMinutes: 0 });
+      expect(made.ok).toBe(true);
+      const r = await shop.shopDeliverySlotsAction({ method: 'own_fleet', pin: CUSTOMER, items: basket(p, 2) });
+      expect(r.ok, r.ok ? '' : r.error).toBe(true);
+      if (!r.ok) return;
+      expect(r.data.days.length).toBeGreaterThan(0);
+      expect(r.data.earliest).not.toBeNull();
+      expect(r.data.earliest?.words).toMatch(/09:00 to 12:00$/);
+      // The shopper is told when a time is free and why one is not, never how many places are left.
+      expect(JSON.stringify(r.data)).not.toMatch(/capacity|left|weight/i);
+      // Collecting has no delivery times; a bad question is refused in words.
+      expect(await shop.shopDeliverySlotsAction({ method: 'pickup', pickupBranchId: a, items: basket(p) })).toMatchObject({ ok: true, data: { days: [], earliest: null } });
+      expect(await shop.shopDeliverySlotsAction({ method: 'own_fleet', items: basket(p) })).toMatchObject({ ok: false, error: expect.stringContaining('Drop a pin') as string });
+      expect(await shop.shopDeliverySlotsAction('nonsense')).toMatchObject({ ok: false });
+    });
+
     it('says in words when it cannot quote, and reads nothing it should not trust', async () => {
       const a = await branch(NAIROBI);
       const p = await product();

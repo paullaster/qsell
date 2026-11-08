@@ -69,7 +69,7 @@ export class OrdersService {
       items: params.items,
       currency: params.currency || 'KES',
       paymentMethod: params.paymentMethod,
-      ...(params.delivery === undefined ? {} : { delivery: { method: params.delivery.method, ...(params.delivery.pickupBranchId === null ? {} : { pickupBranchId: params.delivery.pickupBranchId }), pin: params.delivery.pin, ...(params.delivery.address === null ? {} : { address: params.delivery.address }), recipient: params.delivery.recipient, notes: params.delivery.notes, expectedCharge: params.delivery.expectedCharge } }),
+      ...(params.delivery === undefined ? {} : { delivery: { method: params.delivery.method, ...(params.delivery.pickupBranchId === null ? {} : { pickupBranchId: params.delivery.pickupBranchId }), pin: params.delivery.pin, ...(params.delivery.address === null ? {} : { address: params.delivery.address }), recipient: params.delivery.recipient, notes: params.delivery.notes, expectedCharge: params.delivery.expectedCharge, slot: params.delivery.slot } }),
       dimensionFields: params.dimensionFields,
     });
 

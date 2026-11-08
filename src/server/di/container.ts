@@ -665,7 +665,7 @@ export function getContainer(): AppContainer {
     deliveryCostBooks: new DeliveryCostBooks(drizzleDb, decisionLog, finance.engine, numbering),
     deliveryReports: new DeliveryReports(drizzleDb),
     orderVisits: new OrderVisits(drizzleDb, decisionLog, stockLedger),
-    deliverySlots: new DeliverySlots(drizzleDb, decisionLog),
+    deliverySlots: deliveryServices.deliverySlots,
     deliverySla: new DeliverySla(drizzleDb, decisionLog),
     doorHandIns: new DoorHandIns(drizzleDb, decisionLog, finance.engine, numbering),
     doorMpesa: new DoorMpesa(drizzleDb, {

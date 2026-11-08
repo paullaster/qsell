@@ -10,6 +10,7 @@ import { isRecord } from '@/lib/values';
 import type { AddressWords } from '@/lib/delivery-zones';
 import { choosePolicy } from './domain/select';
 import { leadTimeWords } from '@/lib/delivery-methods';
+import { shopOffer, type ShopSlotOffer } from '@/lib/delivery-slot';
 import { toHeader } from './charge-policies';
 import type { PayOnDeliveryOffer } from '@/lib/pay-on-delivery';
 
@@ -150,13 +151,12 @@ export interface ShopDeliveryQuote {
   caution: string | null;
 }
 
-/**
- * Public: what delivering this basket to this pin or address costs, and from which branch. Worked out here from the shop's own
- * prices, stock and policies; the browser supplies only the basket's product ids and quantities and where it is going.
- */
-export async function shopQuoteDeliveryAction(raw: unknown): Promise<ShopResult<ShopDeliveryQuote>> {
+type ShopPlanned = { ok: true; plan: Extract<Awaited<ReturnType<ReturnType<typeof getContainer>['deliveryPlans']['plan']>>, { ok: true }>; method: 'own_fleet' | 'courier' | 'pickup'; companyId: string; lines: { productId: string; quantity: number }[] } | { ok: false; error: string };
+
+/** What the basket and place the browser sent come to on the server: the branch, the charge and the goods. Shared by the price and the delivery times. */
+async function planShopDelivery(raw: unknown): Promise<ShopPlanned> {
   if (!isRecord(raw)) return { ok: false, error: 'Your delivery could not be read.' };
-  const method = raw.method === 'courier' ? 'courier' : raw.method === 'pickup' ? 'pickup' : 'own_fleet';
+  const method = raw.method === 'courier' || raw.method === 'pickup' ? raw.method : 'own_fleet';
   const pin = method === 'pickup' ? null : pointOf(raw.pin);
   const address = method === 'pickup' ? undefined : addressWordsOf(raw.address);
   const pickupBranchId = method === 'pickup' && typeof raw.pickupBranchId === 'string' && raw.pickupBranchId.length <= 100 ? raw.pickupBranchId : null;
@@ -167,32 +167,42 @@ export async function shopQuoteDeliveryAction(raw: unknown): Promise<ShopResult<
   if (lines.length === 0 || lines.length !== items.length) return { ok: false, error: 'Your basket could not be read.' };
   const wait = await limited('shop_delivery_quote_ip');
   if (wait !== null) return { ok: false, error: wait };
+  const session = await auth();
+  const customerId = session?.user.customerStoreId ?? null;
+  const basket = await previewShopBasket(lines, customerId);
+  if (!basket.ok) return { ok: false, error: basket.error };
+  const { deliveryPlans, pricing, companySettings } = getContainer();
+  const company = await companySettings.ensureSeeded();
+  const country = isRecord(raw.address) ? word(raw.address.country, 100) : null;
+  const plan = await deliveryPlans.plan(company.id, {
+    at: new Date(),
+    currency: basket.currency,
+    channel: 'ecommerce',
+    method,
+    ...(pickupBranchId === null ? {} : { pickupBranchId }),
+    lines: basket.stockLines,
+    customerId,
+    customerGroupId: await pricing.groupFor(company.id, customerId),
+    salesType: 'cash',
+    country,
+    ...(address === undefined ? {} : { address }),
+    pin,
+    weightKg: basket.weightKg,
+    orderValue: basket.goodsTotal,
+  });
+  if (!plan.ok) return { ok: false, error: plan.message };
+  return { ok: true, plan, method, companyId: company.id, lines };
+}
 
+/**
+ * Public: what delivering this basket to this pin or address costs, and from which branch. Worked out here from the shop's own
+ * prices, stock and policies; the browser supplies only the basket's product ids and quantities and where it is going.
+ */
+export async function shopQuoteDeliveryAction(raw: unknown): Promise<ShopResult<ShopDeliveryQuote>> {
   try {
-    const session = await auth();
-    const customerId = session?.user.customerStoreId ?? null;
-    const basket = await previewShopBasket(lines, customerId);
-    if (!basket.ok) return { ok: false, error: basket.error };
-    const { deliveryPlans, pricing, companySettings } = getContainer();
-    const company = await companySettings.ensureSeeded();
-    const country = isRecord(raw.address) ? word(raw.address.country, 100) : null;
-    const plan = await deliveryPlans.plan(company.id, {
-      at: new Date(),
-      currency: basket.currency,
-      channel: 'ecommerce',
-      method,
-      ...(pickupBranchId === null ? {} : { pickupBranchId }),
-      lines: basket.stockLines,
-      customerId,
-      customerGroupId: await pricing.groupFor(company.id, customerId),
-      salesType: 'cash',
-      country,
-      ...(address === undefined ? {} : { address }),
-      pin,
-      weightKg: basket.weightKg,
-      orderValue: basket.goodsTotal,
-    });
-    if (!plan.ok) return { ok: false, error: plan.message };
+    const planned = await planShopDelivery(raw);
+    if (!planned.ok) return { ok: false, error: planned.error };
+    const { plan, method } = planned;
     const q = plan.quote;
     const guess = q.route?.approximate === true || plan.destination.approximate;
     const estimated = q.route !== null && q.route.provider === 'builtin';
@@ -217,6 +227,26 @@ export async function shopQuoteDeliveryAction(raw: unknown): Promise<ShopResult<
   } catch (error) {
     console.error('[shop delivery] quote', error);
     return { ok: false, error: 'We could not work out your delivery just now. Please try again.' };
+  }
+}
+
+/**
+ * Public: the delivery times this basket can be given, and the earliest. The branch, the zone and the goods are worked out here, the same way
+ * as the price; the browser supplies only the basket and the place. Collecting from a branch has no delivery times.
+ */
+export async function shopDeliverySlotsAction(raw: unknown): Promise<ShopResult<ShopSlotOffer>> {
+  if (isRecord(raw) && raw.method === 'pickup') return { ok: true, data: { days: [], earliest: null } };
+  try {
+    const planned = await planShopDelivery(raw);
+    if (!planned.ok) return { ok: false, error: planned.error };
+    if (planned.method === 'pickup') return { ok: true, data: { days: [], earliest: null } };
+    const { plan, companyId, lines } = planned;
+    const zone = plan.quote.zone;
+    const days = await getContainer().deliverySlots.offer(companyId, { branchId: plan.branch.id, days: 10, basket: { method: planned.method, zone: zone === null ? null : { id: zone.id, name: zone.name }, lines } });
+    return { ok: true, data: shopOffer(days) };
+  } catch (error) {
+    console.error('[shop delivery] slots', error);
+    return { ok: false, error: 'The delivery times could not be loaded just now.' };
   }
 }
 

@@ -300,7 +300,7 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
     let deliveryInput: DeliveryInput | null = null;
     if (deliveryOn && deliveryQuote !== null) {
       if (collecting) {
-        deliveryInput = { method: 'pickup', pickupBranchId: delivery.pickup.chosen, pin: null, address: null, recipient: null, notes: null, expectedCharge: deliveryQuote.gross };
+        deliveryInput = { method: 'pickup', pickupBranchId: delivery.pickup.chosen, pin: null, address: null, recipient: null, notes: null, expectedCharge: deliveryQuote.gross, slot: null };
       } else {
         deliveryInput = {
           method: deliveryQuote.method === 'pickup' ? 'own_fleet' : deliveryQuote.method,
@@ -310,6 +310,7 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
           recipient: recipient.on ? { name: recipient.name.trim(), phone: recipient.phone.trim() } : null,
           notes: notes.trim() === '' ? null : notes.trim(),
           expectedCharge: deliveryQuote.gross,
+          slot: delivery.slots.chosen,
         };
       }
     }

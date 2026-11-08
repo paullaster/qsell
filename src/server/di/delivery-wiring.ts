@@ -3,6 +3,7 @@ import type { CompanySettingsRepository } from '@/server/domains/company/reposit
 import { DeliveryBilling } from '@/server/domains/delivery/billing';
 import { DeliveryMethods } from '@/server/domains/delivery/methods';
 import { OrderCollections } from '@/server/domains/delivery/collection';
+import { DeliverySlots } from '@/server/domains/delivery/slots';
 import { DeliveryDocuments } from '@/server/domains/delivery/documents';
 import { DeliveryMessages } from '@/server/domains/delivery/messages';
 import { TrackingLinks } from '@/server/domains/delivery/tracking-links';
@@ -60,7 +61,8 @@ export function createDeliveryServices(input: {
   const orderCollections = new OrderCollections(input.db, input.decisionLog);
   const trackingLinks = new TrackingLinks(input.db, input.decisionLog);
   const deliveryMessages = new DeliveryMessages(input.db, input.email, input.companySettings, trackingLinks);
-  const deliveryDocuments = new DeliveryDocuments(input.db, input.decisionLog, input.numbering, input.stockReservations, deliveryMessages);
+  const deliverySlots = new DeliverySlots(input.db, input.decisionLog);
+  const deliveryDocuments = new DeliveryDocuments(input.db, input.decisionLog, input.numbering, input.stockReservations, deliveryMessages, deliverySlots);
   const deliveryRiders = new DeliveryRiders(input.db, input.decisionLog, input.usersAdmin);
   const riderRuns = new RiderRuns(input.db);
   const deliveryCosts = new DeliveryCosts(input.db, input.decisionLog);
@@ -83,6 +85,7 @@ export function createDeliveryServices(input: {
     orderDeliveries,
     orderCollections,
     deliveryDocuments,
+    deliverySlots,
     trackingLinks,
     deliveryMessages,
     trackedOrders,

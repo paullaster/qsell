@@ -200,6 +200,8 @@ export class DeliveryDocuments {
     private readonly numbering: Pick<NumberSeriesService, 'assign'>,
     private readonly stock: Pick<StockReservations, 'consumePartIn' | 'receiveGoodsBackIn' | 'undoReceiptIn'>,
     private readonly messages: Pick<DeliveryMessages, 'enqueueIn'>,
+    /** Books the slot a shopper chose at the checkout when the delivery is made. Optional: a delivery needs no slot. */
+    private readonly slots?: { honourRequest(tx: Tx, companyId: string, orderId: string, deliveryId: string): Promise<void> },
   ) {}
 
   // ── Making a delivery ────────────────────────────────────────────────────────────────────────────────────────────
@@ -248,6 +250,7 @@ export class DeliveryDocuments {
       });
       await tx.insert(deliveryLines).values(made.lines.map((l) => ({ deliveryId: id, productId: l.productId, quantity: String(l.quantity) })));
       await this.event(tx, id, 'created', actor, null, 'draft', { detail: { lines: made.lines.length } });
+      await this.slots?.honourRequest(tx, actor.companyId, orderId, id);
       await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery', id }, action: 'delivery.document_created', actor: { type: 'user', id: actor.userId }, to: 'draft', inputs: { orderId, number } }, tx);
       return { ok: true, data: { id, number } };
     });

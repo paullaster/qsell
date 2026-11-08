@@ -106,6 +106,16 @@ describe('the delivery part of a checkout', () => {
     expect(parse('nonsense')).toMatchObject({ ok: false });
   });
 
+  it('reads the delivery time the shopper chose, takes none as none, and refuses one that is not a slot and a day', () => {
+    const slotId = '0ad80fea-d977-49bc-ac49-970a70e974f7';
+    expect(parse(delivery({ slot: { slotId, day: '2026-11-09' } }))).toMatchObject({ ok: true, value: { delivery: { slot: { slotId, day: '2026-11-09' } } } });
+    expect(parse(delivery())).toMatchObject({ ok: true, value: { delivery: { slot: null } } });
+    expect(parse(delivery({ slot: null }))).toMatchObject({ ok: true, value: { delivery: { slot: null } } });
+    for (const bad of [{ slotId: 'nope', day: '2026-11-09' }, { slotId, day: 'tomorrow' }, { slotId }, 'morning', 7]) {
+      expect(parse(delivery({ slot: bad }))).toMatchObject({ ok: false, error: expect.stringContaining('delivery time') as string });
+    }
+  });
+
   it('does not make a recipient of a blank name', () => {
     expect(parse(delivery({ recipient: { name: '  ', phone: '' } }))).toMatchObject({ ok: true, value: { delivery: { recipient: null } } });
   });

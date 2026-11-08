@@ -5,6 +5,7 @@ import { useId } from 'react';
 import { LocateFixed, Search } from 'lucide-react';
 import { useStore } from '@/components/store/StoreContext';
 import type { ShopDelivery } from '@/components/store/checkout/useShopDelivery';
+import { DeliveryTimes } from '@/components/store/checkout/DeliveryTimes';
 import { PickupSection } from '@/components/store/checkout/PickupSection';
 
 // The map is drawn only in the browser, and only for a shop whose map service has one.
@@ -204,6 +205,7 @@ export function DeliverySection({ delivery, recipient, onRecipient, notes, onNot
           </div>
         ) : null}
       </div>
+      {quote.phase === 'ok' ? <DeliveryTimes slots={delivery.slots} /> : null}
       </>
       )}
     </div>

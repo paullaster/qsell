@@ -753,6 +753,35 @@ export const deliverySlaAcks = pgTable('delivery_sla_acks', {
   note: text('note'),
 });
 
+/**
+ * The slot a shopper asked for at checkout. It sits beside the order's frozen delivery record and is turned into a booking when the delivery is
+ * made; a slot that has filled up by then leaves the delivery unbooked and says so here, and the sale is never held back for it.
+ */
+export const orderSlotRequests = pgTable(
+  'order_slot_requests',
+  {
+    orderId: text('order_id')
+      .primaryKey()
+      .references(() => orders.id, { onDelete: 'cascade' }),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    slotId: uuid('slot_id')
+      .notNull()
+      .references(() => deliverySlots.id, { onDelete: 'restrict' }),
+    day: date('day').notNull(),
+    requestedAt: timestamp('requested_at', { withTimezone: true }).notNull().defaultNow(),
+    outcome: text('outcome').$type<'pending' | 'booked' | 'unavailable'>().notNull().default('pending'),
+    deliveryId: uuid('delivery_id').references(() => deliveries.id, { onDelete: 'set null' }),
+    outcomeNote: text('outcome_note'),
+    settledAt: timestamp('settled_at', { withTimezone: true }),
+  },
+  (t) => [
+    check('order_slot_requests_outcome_chk', sql`${t.outcome} IN ('pending','booked','unavailable')`),
+    index('order_slot_requests_slot_idx').on(t.slotId, t.day),
+  ],
+);
+
 /** A rider's trip: several ready deliveries taken out together, in an order. Planned, then on the road, then closed. */
 export const deliveryRuns = pgTable(
   'delivery_runs',
