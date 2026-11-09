@@ -79,6 +79,19 @@ export const NewsletterService = {
     };
   },
 
+  /** The next few confirmed subscribers after a place in the list (oldest first), each with the token for their unsubscribe link. */
+  async batchAfter(after: { k: string; id: string } | null, size: number, db: DrizzleDb = drizzleDb): Promise<{ rows: { email: string; token: string }[]; next: { k: string; id: string } | null }> {
+    const rows = await db
+      .select({ id: newsletterSubscribers.id, email: newsletterSubscribers.email, token: newsletterSubscribers.token, sortKey: stamp.as('sort_key') })
+      .from(newsletterSubscribers)
+      .where(and(eq(newsletterSubscribers.status, 'subscribed'), after === null ? undefined : sql`(${newsletterSubscribers.createdAt}, ${newsletterSubscribers.id}) > (${after.k}::timestamptz, ${after.id}::uuid)`))
+      .orderBy(newsletterSubscribers.createdAt, newsletterSubscribers.id)
+      .limit(size + 1);
+    const page = rows.slice(0, size);
+    const last = page.at(-1);
+    return { rows: page.map((r) => ({ email: r.email, token: r.token })), next: rows.length > size && last !== undefined ? { k: last.sortKey, id: last.id } : null };
+  },
+
   /** Every confirmed address, oldest first, for sending from the company's own mail tool. */
   async confirmedEmails(db: DrizzleDb = drizzleDb): Promise<{ email: string; confirmedAt: Date | null }[]> {
     return await db.select({ email: newsletterSubscribers.email, confirmedAt: newsletterSubscribers.confirmedAt }).from(newsletterSubscribers).where(eq(newsletterSubscribers.status, 'subscribed')).orderBy(newsletterSubscribers.createdAt);

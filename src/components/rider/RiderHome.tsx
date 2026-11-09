@@ -43,6 +43,10 @@ function Home({ data }: { data: Extract<Awaited<ReturnType<typeof myRunsAction>>
           You are holding <strong>KSh {held}</strong> in cash collected at doors. Hand it in to the shop.
         </p>
       ) : null}
+      <Link href="/rider/pay" className="flex min-h-12 items-center justify-between gap-3 rounded-xl border border-line bg-surface-raised p-4 text-sm font-semibold text-fg-strong">
+        <span>My pay</span>
+        <span aria-hidden="true">→</span>
+      </Link>
       <RunList title="To do" runs={open} empty="You have no run to do. When the shop gives you one, it shows here." />
       {recent.length > 0 ? <RunList title="Finished lately" runs={recent} empty="" /> : null}
     </div>

@@ -1,6 +1,6 @@
 import { and, asc, eq, gte, inArray, isNull, notInArray, or, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, deliveries, deliveryClosedDays, deliveryLeadTimes, deliveryLines, deliveryMethods, deliverySlots, deliveryZones, orderDeliveries, orders, products } from '@/server/db/drizzle/schema';
+import { branches, deliveries, deliveryClosedDays, deliveryLeadTimes, deliveryLines, deliveryMethods, deliverySlots, deliveryZones, orderDeliveries, orderSlotRequests, orders, products } from '@/server/db/drizzle/schema';
 import { UNAVAILABLE_WORDS, checkLead, checkSlot, daysFrom, earliestReady, isDay, leadWords, nairobiDay, unavailable, weekdayOf, weekdaysWords, windowOf, type Lead, type SlotExtra, type SlotRule } from '@/lib/delivery-slot';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { DocActor, DocRefusal, DocResult } from './documents';
@@ -65,6 +65,22 @@ interface Facts {
   weightKg: number;
   earliest: Date;
   by: string | null;
+}
+
+/** Goods and where they go, before any delivery exists. */
+interface Basket {
+  branchId: string;
+  method: typeof deliveryMethods.$inferSelect['method'];
+  zone: { id: string; name: string } | null;
+  orderedAt: Date;
+  lines: { productId: string; quantity: number }[];
+}
+
+/** What the shop's checkout knows of a basket, so slots can be offered for it. */
+export interface BasketForSlots {
+  method: Basket['method'];
+  zone: Basket['zone'];
+  lines: Basket['lines'];
 }
 
 /** The slot a delivery holds, in words, or null when it holds none. */
@@ -248,26 +264,34 @@ export class DeliverySlots {
   /** What a delivery weighs (goods without a weight count as nothing), and the earliest its goods can be ready: the order's time plus the longest of the branch's handling time, its zone's and its items'. */
   private async factsOf(db: DrizzleDb | Tx, companyId: string, deliveryId: string): Promise<Facts | null> {
     const [d] = await db
-      .select({ branchId: deliveries.branchId, method: deliveries.method, orderId: deliveries.orderId, orderedAt: orders.createdAt, charge: orderDeliveries.charge })
+      .select({ branchId: deliveries.branchId, method: deliveries.method, orderedAt: orders.createdAt, charge: orderDeliveries.charge })
       .from(deliveries)
       .innerJoin(orders, eq(orders.id, deliveries.orderId))
       .leftJoin(orderDeliveries, eq(orderDeliveries.orderId, deliveries.orderId))
       .where(and(eq(deliveries.id, deliveryId), eq(deliveries.companyId, companyId)));
     if (d === undefined) return null;
-    const lines = await db.select({ productId: deliveryLines.productId, quantity: deliveryLines.quantity, weight: products.weight, name: products.name }).from(deliveryLines).innerJoin(products, eq(products.id, deliveryLines.productId)).where(eq(deliveryLines.deliveryId, deliveryId));
-    const zoneId = d.charge?.zone?.id ?? null;
-    const refs = [...(zoneId === null ? [] : [zoneId]), ...lines.map((l) => l.productId)];
+    const lines = await db.select({ productId: deliveryLines.productId, quantity: deliveryLines.quantity }).from(deliveryLines).where(eq(deliveryLines.deliveryId, deliveryId));
+    return await this.factsFrom(db, companyId, { branchId: d.branchId, method: d.method, zone: d.charge?.zone ?? null, orderedAt: d.orderedAt, lines: lines.map((l) => ({ productId: l.productId, quantity: Number(l.quantity) })) });
+  }
+
+  /** The same facts for goods that have no delivery yet: a basket being offered slots at the checkout, or an order about to be placed. */
+  private async factsFrom(db: DrizzleDb | Tx, companyId: string, b: Basket): Promise<Facts> {
+    const ids = [...new Set(b.lines.map((l) => l.productId))];
+    const items = ids.length === 0 ? [] : await db.select({ id: products.id, weight: products.weight, name: products.name }).from(products).where(inArray(products.id, ids));
+    const itemOf = new Map(items.map((i) => [i.id, i]));
+    const zoneId = b.zone?.id ?? null;
+    const refs = [...(zoneId === null ? [] : [zoneId]), ...ids];
     const [method, leads] = await Promise.all([
-      db.select({ minutes: deliveryMethods.leadTimeMinutes }).from(deliveryMethods).where(and(eq(deliveryMethods.branchId, d.branchId), eq(deliveryMethods.method, d.method))),
+      db.select({ minutes: deliveryMethods.leadTimeMinutes }).from(deliveryMethods).where(and(eq(deliveryMethods.branchId, b.branchId), eq(deliveryMethods.method, b.method))),
       refs.length === 0 ? Promise.resolve([]) : db.select().from(deliveryLeadTimes).where(and(eq(deliveryLeadTimes.companyId, companyId), inArray(deliveryLeadTimes.refId, refs))),
     ]);
     const all: Lead[] = [{ label: 'The branch\'s own handling time', minutes: method[0]?.minutes ?? 0 }];
     for (const l of leads) {
-      if (l.kind === 'zone' && l.refId === zoneId) all.push({ label: `The ${d.charge?.zone?.name ?? 'delivery'} zone`, minutes: l.minutes });
-      if (l.kind === 'item') all.push({ label: lines.find((x) => x.productId === l.refId)?.name ?? 'An item', minutes: l.minutes });
+      if (l.kind === 'zone' && l.refId === zoneId) all.push({ label: `The ${b.zone?.name ?? 'delivery'} zone`, minutes: l.minutes });
+      if (l.kind === 'item') all.push({ label: itemOf.get(l.refId)?.name ?? 'An item', minutes: l.minutes });
     }
-    const ready = earliestReady(d.orderedAt, all);
-    return { weightKg: lines.reduce((n, l) => n + Number(l.quantity) * Number(l.weight ?? 0), 0), earliest: ready.at, by: ready.by };
+    const ready = earliestReady(b.orderedAt, all);
+    return { weightKg: b.lines.reduce((n, l) => n + l.quantity * Number(itemOf.get(l.productId)?.weight ?? 0), 0), earliest: ready.at, by: ready.by };
   }
 
   /** The words for why a slot cannot be taken, with the time the goods are ready when that is why. */
@@ -288,8 +312,13 @@ export class DeliverySlots {
     return new Map(rows.map((r) => [r.day, r.reason]));
   }
 
+  private async factsForOffer(companyId: string, branchId: string, deliveryId: string | undefined, basket: BasketForSlots | undefined, now: Date): Promise<Facts | null> {
+    if (deliveryId !== undefined) return await this.factsOf(this.db, companyId, deliveryId);
+    return basket === undefined ? null : await this.factsFrom(this.db, companyId, { ...basket, branchId, orderedAt: now });
+  }
+
   /** The slots a branch offers over some days from a day on, with the room left in each. */
-  async offer(companyId: string, input: { branchId: unknown; from?: unknown; days?: unknown; deliveryId?: unknown }): Promise<OfferedDay[]> {
+  async offer(companyId: string, input: { branchId: unknown; from?: unknown; days?: unknown; deliveryId?: unknown; basket?: BasketForSlots }): Promise<OfferedDay[]> {
     if (typeof input.branchId !== 'string' || !UUID.test(input.branchId)) return [];
     const now = this.clock();
     const today = nairobiDay(now);
@@ -297,7 +326,7 @@ export class DeliverySlots {
     const days = daysFrom(from, typeof input.days === 'number' ? input.days : 7);
     const slots = await this.db.select().from(deliverySlots).where(and(eq(deliverySlots.companyId, companyId), eq(deliverySlots.branchId, input.branchId), eq(deliverySlots.isActive, true))).orderBy(asc(deliverySlots.startsAt), asc(deliverySlots.name));
     const deliveryId = typeof input.deliveryId === 'string' && UUID.test(input.deliveryId) ? input.deliveryId : undefined;
-    const [taken, closed, facts] = await Promise.all([this.taken(this.db, slots.map((s) => s.id), days, deliveryId), this.closures(this.db, companyId, input.branchId, days), deliveryId === undefined ? Promise.resolve(null) : this.factsOf(this.db, companyId, deliveryId)]);
+    const [taken, closed, facts] = await Promise.all([this.taken(this.db, slots.map((s) => s.id), days, deliveryId), this.closures(this.db, companyId, input.branchId, days), this.factsForOffer(companyId, input.branchId, deliveryId, input.basket, now)]);
     return days.map((day) => ({
       day,
       closedReason: closed.get(day) ?? null,
@@ -384,23 +413,78 @@ export class DeliverySlots {
     if (!isDay(input.day)) return fail('bad_input', 'Choose the day.');
     const slotId = input.slotId;
     const day = input.day;
-    return await this.run(async (tx) => {
-      const [d] = await tx.select({ id: deliveries.id, status: deliveries.status, branchId: deliveries.branchId, version: deliveries.version, scheduledFor: deliveries.scheduledFor, orderId: deliveries.orderId }).from(deliveries).where(and(eq(deliveries.id, deliveryId), eq(deliveries.companyId, actor.companyId))).for('update');
-      if (d === undefined) return fail('not_found', 'That delivery could not be found.');
-      if (!BOOKABLE.includes(d.status)) return fail('not_allowed', 'This delivery is already out or over, so its slot cannot be chosen.');
-      const [slot] = await tx.select().from(deliverySlots).where(and(eq(deliverySlots.id, slotId), eq(deliverySlots.companyId, actor.companyId))).for('update');
-      if (slot === undefined) return fail('not_found', 'That slot could not be found.');
-      if (slot.branchId !== d.branchId) return fail('bad_input', 'This delivery leaves from another branch, so it cannot take that branch\'s slot.');
-      const [taken, closed, facts] = await Promise.all([this.taken(tx, [slotId], [day], deliveryId), this.closures(tx, actor.companyId, slot.branchId, [day]), this.factsOf(tx, actor.companyId, deliveryId)]);
-      const used = taken.get(`${slotId}|${day}`) ?? { n: 0, kg: 0 };
-      const why = unavailable(ruleOf(slot), day, this.clock(), used.n, closed.get(day) ?? null, this.extraFor(facts, used.kg));
-      if (why !== null) return fail(why === 'full' || why === 'too_heavy' ? 'conflict' : 'not_allowed', this.whyWords(why, facts));
-      const w = windowOf(day, slot);
-      const now = this.clock();
-      await tx.update(deliveries).set({ slotId, slotDay: day, windowStart: w.start, windowEnd: w.end, slotBookedAt: now, slotBookedBy: actor.userId, scheduledFor: day, version: d.version + 1, updatedAt: now }).where(eq(deliveries.id, deliveryId));
-      await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery', id: deliveryId }, action: 'delivery.slot_booked', actor: { type: 'user', id: actor.userId }, inputs: { slotId, day, windowStart: w.start.toISOString(), windowEnd: w.end.toISOString(), orderId: d.orderId } }, tx);
-      return { ok: true, data: { slotId, name: slot.name, day, windowStart: w.start.toISOString(), windowEnd: w.end.toISOString(), bookedAt: now.toISOString() } };
-    });
+    return await this.run(async (tx) => await this.bookIn(tx, actor.companyId, deliveryId, slotId, day, { type: 'user', id: actor.userId }));
+  }
+
+  /**
+   * The booking itself, inside a transaction the caller owns. `asOf` is the time cut-offs are judged at: a shopper's choice is judged at the time they
+   * made it, so the hours staff take to make the delivery do not cost them the slot (a day already gone is still refused).
+   */
+  private async bookIn(tx: Tx, companyId: string, deliveryId: string, slotId: string, day: string, by: { type: 'user' | 'system'; id: string | null }, asOf?: Date): Promise<DocResult<HeldSlot>> {
+    const now = this.clock();
+    const [d] = await tx.select({ id: deliveries.id, status: deliveries.status, branchId: deliveries.branchId, version: deliveries.version, scheduledFor: deliveries.scheduledFor, orderId: deliveries.orderId }).from(deliveries).where(and(eq(deliveries.id, deliveryId), eq(deliveries.companyId, companyId))).for('update');
+    if (d === undefined) return fail('not_found', 'That delivery could not be found.');
+    if (!BOOKABLE.includes(d.status)) return fail('not_allowed', 'This delivery is already out or over, so its slot cannot be chosen.');
+    const [slot] = await tx.select().from(deliverySlots).where(and(eq(deliverySlots.id, slotId), eq(deliverySlots.companyId, companyId))).for('update');
+    if (slot === undefined) return fail('not_found', 'That slot could not be found.');
+    if (slot.branchId !== d.branchId) return fail('bad_input', 'This delivery leaves from another branch, so it cannot take that branch\'s slot.');
+    const w = windowOf(day, slot);
+    if (asOf !== undefined && w.end <= now) return fail('not_allowed', 'That slot has already passed.');
+    const [taken, closed, facts] = await Promise.all([this.taken(tx, [slotId], [day], deliveryId), this.closures(tx, companyId, slot.branchId, [day]), this.factsOf(tx, companyId, deliveryId)]);
+    const used = taken.get(`${slotId}|${day}`) ?? { n: 0, kg: 0 };
+    const why = unavailable(ruleOf(slot), day, asOf ?? now, used.n, closed.get(day) ?? null, this.extraFor(facts, used.kg));
+    if (why !== null) return fail(why === 'full' || why === 'too_heavy' ? 'conflict' : 'not_allowed', this.whyWords(why, facts));
+    await tx.update(deliveries).set({ slotId, slotDay: day, windowStart: w.start, windowEnd: w.end, slotBookedAt: now, slotBookedBy: by.id, scheduledFor: day, version: d.version + 1, updatedAt: now }).where(eq(deliveries.id, deliveryId));
+    await this.decisions.record({ companyId, subject: { type: 'delivery', id: deliveryId }, action: 'delivery.slot_booked', actor: by, inputs: { slotId, day, windowStart: w.start.toISOString(), windowEnd: w.end.toISOString(), orderId: d.orderId, ...(asOf === undefined ? {} : { chosenAt: asOf.toISOString() }) } }, tx);
+    return { ok: true, data: { slotId, name: slot.name, day, windowStart: w.start.toISOString(), windowEnd: w.end.toISOString(), bookedAt: now.toISOString() } };
+  }
+
+  // ── The shopper's choice at the checkout ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Before an order is placed: whether the slot a shopper chose can take these goods from this branch. Nothing is held yet, so this is a look,
+   * not a promise; the answer is the reason in words, or null when the slot is fine.
+   */
+  async checkRequest(companyId: string, input: { branchId: string; basket: BasketForSlots; slotId: unknown; day: unknown }): Promise<string | null> {
+    if (typeof input.slotId !== 'string' || !UUID.test(input.slotId) || !isDay(input.day)) return 'Choose one of the delivery times shown.';
+    const now = this.clock();
+    const [slot] = await this.db.select().from(deliverySlots).where(and(eq(deliverySlots.id, input.slotId), eq(deliverySlots.companyId, companyId), eq(deliverySlots.branchId, input.branchId)));
+    if (slot === undefined) return 'That delivery time is not offered for your order. Please choose another.';
+    const [taken, closed, facts] = await Promise.all([this.taken(this.db, [slot.id], [input.day]), this.closures(this.db, companyId, slot.branchId, [input.day]), this.factsFrom(this.db, companyId, { ...input.basket, branchId: input.branchId, orderedAt: now })]);
+    const used = taken.get(`${slot.id}|${input.day}`) ?? { n: 0, kg: 0 };
+    const why = unavailable(ruleOf(slot), input.day, now, used.n, closed.get(input.day) ?? null, this.extraFor(facts, used.kg));
+    return why === null ? null : `${this.whyWords(why, facts)} Please choose another delivery time.`;
+  }
+
+  /** Keeps the shopper's choice with the order, in the order's own transaction. It becomes a booking when the delivery is made. */
+  async recordRequest(tx: Tx, companyId: string, orderId: string, input: { slotId: string; day: string }, actor: { type: 'user' | 'system'; id: string | null }): Promise<void> {
+    await tx.insert(orderSlotRequests).values({ orderId, companyId, slotId: input.slotId, day: input.day });
+    await this.decisions.record({ companyId, subject: { type: 'order', id: orderId }, action: 'order.slot_requested', actor, inputs: { slotId: input.slotId, day: input.day } }, tx);
+  }
+
+  /**
+   * When a delivery is made for an order whose shopper chose a slot: books it. If the slot has filled or closed since, the delivery is made without
+   * one and the request records why, so dispatch can call the customer; the sale and the delivery are never held back for a slot.
+   */
+  async honourRequest(tx: Tx, companyId: string, orderId: string, deliveryId: string): Promise<'none' | 'booked' | 'unavailable'> {
+    const [req] = await tx.select().from(orderSlotRequests).where(and(eq(orderSlotRequests.orderId, orderId), eq(orderSlotRequests.companyId, companyId), eq(orderSlotRequests.outcome, 'pending'))).for('update');
+    if (req === undefined) return 'none';
+    const now = this.clock();
+    // A booking that fails writes nothing before it fails, so the transaction carries on with the delivery.
+    const result = await this.bookIn(tx, companyId, deliveryId, req.slotId, req.day, { type: 'system', id: null }, req.requestedAt);
+    await tx.update(orderSlotRequests).set(result.ok ? { outcome: 'booked', deliveryId, settledAt: now } : { outcome: 'unavailable', deliveryId, outcomeNote: result.message.slice(0, 300), settledAt: now }).where(eq(orderSlotRequests.orderId, orderId));
+    if (!result.ok) await this.decisions.record({ companyId, subject: { type: 'delivery', id: deliveryId }, action: 'delivery.slot_request_unavailable', actor: { type: 'system', id: null }, reason: { code: result.reason, text: result.message }, inputs: { slotId: req.slotId, day: req.day, orderId } }, tx);
+    return result.ok ? 'booked' : 'unavailable';
+  }
+
+  /** What the shopper asked for on an order and what became of it, or null when they chose nothing. */
+  async requestFor(companyId: string, orderId: string): Promise<{ day: string; slotName: string; startsAt: string; endsAt: string; outcome: 'pending' | 'booked' | 'unavailable'; note: string | null } | null> {
+    const [r] = await this.db
+      .select({ day: orderSlotRequests.day, name: deliverySlots.name, startsAt: deliverySlots.startsAt, endsAt: deliverySlots.endsAt, outcome: orderSlotRequests.outcome, note: orderSlotRequests.outcomeNote })
+      .from(orderSlotRequests)
+      .innerJoin(deliverySlots, eq(deliverySlots.id, orderSlotRequests.slotId))
+      .where(and(eq(orderSlotRequests.orderId, orderId), eq(orderSlotRequests.companyId, companyId)));
+    return r === undefined ? null : { day: r.day, slotName: r.name, startsAt: r.startsAt, endsAt: r.endsAt, outcome: r.outcome, note: r.note };
   }
 
   /** Lets go of the slot a delivery holds, with a reason, so another can have it. */

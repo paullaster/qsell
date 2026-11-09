@@ -7,7 +7,7 @@ import { roundQty } from '@/lib/decimal';
 import { getContainer } from '@/server/di/container';
 import { OrderStages } from '@/server/domains/orders/stages';
 import { broadcastRealtime } from '@/server/realtime';
-import type { SalesChannel } from '@/lib/stock';
+import { isSalesChannel, type SalesChannel } from '@/lib/stock';
 
 /** Payment methods where the shopper pays at once: an unpaid order of these holds stock only for the hold time. */
 export const ONLINE_PAYMENT_METHODS = ['mpesa_daraja', 'pesapal_v3', 'jenga_hq', 'kcb_buni', 'card_direct'] as const;
@@ -427,6 +427,46 @@ export class InventoryReservationService {
     for (const order of failed) {
       await this.releaseOrder(order.id, 'payment failed');
     }
+  }
+
+  /**
+   * Makes sure an order that is about to be paid (again) still has its stock held. A payment the provider reported as failed gives its
+   * hold back, so paying again without holding first would take the money and leave the stock free to sell twice. With the per-location
+   * ledger the hold is placed again (refused, in words, if the stock has gone). Without it, a hold that was given back cannot be taken
+   * again (the journal settles an order once), so the order cannot be paid and the shopper places it again.
+   */
+  static async reholdOrder(orderId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    const items = await this.orderLines(orderId);
+    if (items.length === 0) return { ok: true };
+    const container = getContainer();
+    if (!(await container.stockSettings.isLedgerMode())) {
+      const issued = await container.catalog.hasSettlementMovement(orderId, ['order_fulfillment']);
+      const given = await container.catalog.hasSettlementMovement(orderId, ['order_cancellation_release']);
+      return given && !issued
+        ? { ok: false, error: 'The items held for this order were given back after the payment failed, so it cannot be paid now. Please place the order again.' }
+        : { ok: true };
+    }
+    const held = await drizzleDb
+      .select({ id: stockReservations.id })
+      .from(stockReservations)
+      .where(and(eq(stockReservations.refType, 'order'), eq(stockReservations.refId, orderId), inArray(stockReservations.state, ['held', 'partly_consumed', 'consumed'])))
+      .limit(1);
+    if (held.length > 0) return { ok: true };
+    const company = await container.companySettings.ensureSeeded();
+    const [order] = await drizzleDb.select({ branchId: orders.branchId, salesModule: orders.salesModule }).from(orders).where(eq(orders.id, orderId)).limit(1);
+    const result = await container.stockReservations.reserve({
+      companyId: company.id,
+      refType: 'order',
+      refId: orderId,
+      lines: items,
+      channel: order !== undefined && isSalesChannel(order.salesModule) ? order.salesModule : 'ecommerce',
+      branchId: order?.branchId ?? null,
+      expiresAt: null,
+      actor: 'payment_retry',
+    });
+    if (!result.ok) return { ok: false, error: 'Some of the items in this order are no longer available, so it cannot be paid now. Please place the order again.' };
+    await this.recordReserved(orderId, items);
+    return { ok: true };
   }
 
   /** Order lines as { productId, quantity } straight from Postgres. */

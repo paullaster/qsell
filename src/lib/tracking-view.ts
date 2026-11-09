@@ -36,7 +36,7 @@ export interface TrackedDelivery {
   number: string;
   status: DeliveryStatus;
   items: { name: string; quantity: number }[];
-  courier: { name: string; trackingNumber: string | null } | null;
+  courier: { name: string; trackingNumber: string | null; /** The courier's own page for the parcel, an https address, when its system gave one. */ trackingUrl: string | null } | null;
   /** Who received it and when, once delivered. */
   receivedBy: string | null;
   deliveredAt: string | null;

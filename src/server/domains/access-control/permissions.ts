@@ -454,6 +454,12 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'Set the delivery slots each branch offers, with their room and cut-offs, and close days on which no slot is offered',
   },
+  'couriers:manage': {
+    resource: 'couriers',
+    action: 'manage',
+    category: 'Orders & Sales',
+    description: 'Connect the couriers the company sends parcels with, keep their keys and settings, and see what each courier has told us',
+  },
   'visits:manage': {
     resource: 'visits',
     action: 'manage',

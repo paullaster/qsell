@@ -162,3 +162,62 @@ export function weekdaysWords(weekdays: readonly number[]): string {
   if (key === '6,7') return 'Weekends';
   return [...weekdays].sort((a, b) => a - b).map((w) => (WEEKDAY_WORDS[w] ?? '').slice(0, 3)).join(', ');
 }
+
+/** A day as a shopper reads it: "Fri 6 Nov". */
+export function dayWords(day: string): string {
+  return new Date(`${day}T12:00:00+03:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Africa/Nairobi' });
+}
+
+export interface OfferedSlotLike {
+  slotId: string;
+  name: string;
+  startsAt: string;
+  endsAt: string;
+  available: boolean;
+  why: string | null;
+}
+
+export interface OfferedDayLike {
+  day: string;
+  closedReason: string | null;
+  slots: OfferedSlotLike[];
+}
+
+export interface ShopSlot {
+  slotId: string;
+  label: string;
+  available: boolean;
+  /** Why it cannot be chosen, in words for the shopper. */
+  note: string | null;
+}
+
+export interface ShopSlotDay {
+  day: string;
+  label: string;
+  slots: ShopSlot[];
+}
+
+export interface ShopSlotOffer {
+  days: ShopSlotDay[];
+  /** The first delivery time that can be chosen, so the shopper sees at once when the order can arrive. */
+  earliest: { day: string; slotId: string; words: string } | null;
+}
+
+/**
+ * What a shopper is shown of the slots offered: only days the branch delivers, each time with its window, and the earliest one that is free.
+ * No capacity numbers go out; a time that cannot be chosen says why.
+ */
+export function shopOffer(days: readonly OfferedDayLike[]): ShopSlotOffer {
+  const shown = days
+    .filter((d) => d.closedReason === null && d.slots.length > 0)
+    .map((d) => ({
+      day: d.day,
+      label: dayWords(d.day),
+      slots: d.slots.map((s) => ({ slotId: s.slotId, label: `${s.name}, ${s.startsAt} to ${s.endsAt}`, available: s.available, note: s.available ? null : s.why })),
+    }));
+  for (const d of shown) {
+    const first = d.slots.find((s) => s.available);
+    if (first !== undefined) return { days: shown, earliest: { day: d.day, slotId: first.slotId, words: `${d.label}, ${first.label}` } };
+  }
+  return { days: shown, earliest: null };
+}

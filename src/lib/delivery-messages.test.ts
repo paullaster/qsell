@@ -44,6 +44,13 @@ describe('the words', () => {
     expect(reasonForCustomer('something_new')).toBe('something prevented the delivery');
     expect(reasonForCustomer(null)).toBe('something prevented the delivery');
   });
+  it('tells the customer their chosen time could not be kept, without promising a time it cannot give', () => {
+    const m = messageContent('slot_not_kept', facts);
+    expect(m.heading).toContain('could not keep the delivery time');
+    expect(m.body).toContain('still going ahead');
+    expect(m.body).toContain('be in touch');
+    expect(m.details).toContainEqual(['Order', facts.orderNumber]);
+  });
   it('never carries an address, a phone number or a payment detail', () => {
     const everything = MESSAGE_KINDS.map((k) => JSON.stringify(messageContent(k, { ...facts, courierName: 'Swift', receivedBy: 'Gate guard', reasonCode: 'refused', triesLeft: 1 }))).join(' ');
     expect(everything).not.toMatch(/\b0[17]\d{8}\b|\+254|street|road|mpesa|card/i);

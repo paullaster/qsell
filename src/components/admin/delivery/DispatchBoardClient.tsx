@@ -187,6 +187,11 @@ function Board({ initial }: { initial: Board }) {
                     {w.courierName}
                     {w.trackingNumber === null ? '' : ` · ${w.trackingNumber}`} · {w.lastNote ?? 'No news yet'}
                   </p>
+                  {w.problem === null ? null : (
+                    <p className="text-xs">
+                      <Chip tone="red">Courier not booked</Chip> <span className="text-fg-muted">{w.problem} Open the delivery to try again or type its news in.</span>
+                    </p>
+                  )}
                   <details className="text-sm">
                     <summary className="min-h-10 cursor-pointer py-2 font-semibold text-indigo-500">Record the courier’s news for {w.number}</summary>
                     <div className="grid grid-cols-1 gap-3 pt-2">

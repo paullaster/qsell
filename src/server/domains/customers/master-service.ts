@@ -525,6 +525,8 @@ export class CustomerMasterService {
     onAccount: boolean;
     /** Let an order over the credit limit through; the caller must then get it approved. */
     allowOverLimit?: boolean;
+    /** False for a buyer who has not proven who they are: an existing card is then used as it is, never changed. Default true. */
+    updateExisting?: boolean;
   }): Promise<CustomerRow> {
     let customer =
       input.email.trim() === ''
@@ -548,7 +550,7 @@ export class CustomerMasterService {
         buyerKraPin: pin,
         dimensionCodes: emptyDimensionCodes(),
       });
-    } else {
+    } else if (input.updateExisting !== false) {
       customer = await this.saveCustomer(input.companyId, {
         id: customer.id,
         profileId: customer.profileId,
@@ -592,11 +594,13 @@ export class CustomerMasterService {
       }
     }
 
+    // A buyer who has not proven who they are is told nothing about the card: not its name, not its kind.
+    const known = input.updateExisting !== false;
     if (!customer.isActive || customer.blocked === 'invoice' || customer.blocked === 'all') {
-      throw new Error(`${customer.name} is blocked and cannot be invoiced.`);
+      throw new Error(known ? `${customer.name} is blocked and cannot be invoiced.` : 'This order could not be placed. Please contact us.');
     }
     if (input.onAccount && customer.accountType !== 'credit') {
-      throw new Error(`${customer.name} is a cash customer and must pay at the invoice.`);
+      throw new Error(known ? `${customer.name} is a cash customer and must pay at the invoice.` : 'On account is not available. Please choose another way to pay.');
     }
 
     if (customer.accountType === 'credit') {

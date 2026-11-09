@@ -6,6 +6,7 @@ import { InlineConfirm } from '@/components/ui/InlineConfirm';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { Chip, LoadFailed, Message, PageHeader, attempt, cardClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
 import type { IssueMoment } from '@/lib/stock-issue';
+import { UnpaidHoldPanel } from '@/components/admin/delivery/UnpaidHoldPanel';
 
 type Loaded = Awaited<ReturnType<typeof stockTimingAction>>;
 
@@ -58,6 +59,7 @@ function Screen({ initial }: { initial: Extract<Loaded, { ok: true }>['data'] })
         )}
       </section>
       {saved !== 'payment' && initial.canChange ? <ReissuePanel saved={saved} /> : null}
+      <UnpaidHoldPanel />
     </div>
   );
 }

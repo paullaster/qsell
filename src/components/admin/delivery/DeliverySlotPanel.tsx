@@ -59,6 +59,15 @@ export function DeliverySlotPanel({ deliveryId, onError, onDone }: { deliveryId:
           Loading…
         </p>
       ) : null}
+      {data?.asked == null ? null : (
+        <p className="flex flex-wrap items-center gap-2 text-sm" role="status">
+          <Chip tone={data.asked.outcome === 'unavailable' ? 'amber' : 'sky'}>{data.asked.outcome === 'unavailable' ? 'Customer\'s time not kept' : 'Customer chose'}</Chip>
+          <span>
+            {dayWords(data.asked.day)}, {data.asked.slotName} {data.asked.startsAt} to {data.asked.endsAt}
+            {data.asked.note === null ? '' : `. ${data.asked.note} Please let the customer know.`}
+          </span>
+        </p>
+      )}
       {data?.held == null ? (
         <p className="text-sm text-fg-muted">No slot is promised for this delivery yet.</p>
       ) : (

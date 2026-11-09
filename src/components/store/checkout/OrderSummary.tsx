@@ -5,12 +5,16 @@ import { cartQuantityWords, perUnitSuffix } from '@/lib/cart-quantity';
 import { cartTaxRows, cartTotals } from '@/lib/cartMoney';
 import { AppImage } from '@/components/ui/AppImage';
 import { useStore } from '@/components/store/StoreContext';
+import type { ShopBasketView } from '@/server/domains/orders/shop-basket-actions';
 
 /** The lines of an order with tax, shipping and the total, as the shopper will be charged. */
-export function OrderSummary({ lines, delivery = null, collecting = false }: { lines: CartLine[]; delivery?: { gross: number; net: number; tax: number; branchName: string } | null; /** The order is collected from the branch, not delivered. */ collecting?: boolean }) {
+export function OrderSummary({ lines, basket = null, delivery = null, collecting = false }: { lines: CartLine[]; /** What the server says the basket comes to, with promotions; the figures below use it when it is there. */ basket?: ShopBasketView | null; delivery?: { gross: number; net: number; tax: number; branchName: string } | null; /** The order is collected from the branch, not delivered. */ collecting?: boolean }) {
   const { money } = useStore();
   const totals = cartTotals(lines);
-  const taxRows = cartTaxRows(lines);
+  const taxRows = basket === null ? cartTaxRows(lines) : [{ key: 'tax', label: 'Tax', amount: basket.tax }];
+  const subtotal = basket === null ? totals.subtotal : basket.subtotal;
+  const goodsTotal = basket === null ? totals.totalAmount : basket.goodsTotal;
+  const promotions = basket?.promotions ?? null;
   return (
     <div className="space-y-4">
       <ul className="space-y-3" aria-label="Items in your order">
@@ -32,9 +36,21 @@ export function OrderSummary({ lines, delivery = null, collecting = false }: { l
       </ul>
       <dl className="space-y-2 border-t border-line pt-3 text-sm text-fg-muted">
         <div className="flex justify-between">
-          <dt>Subtotal</dt>
-          <dd className="font-mono text-fg-strong">{money(totals.subtotal)}</dd>
+          <dt>{promotions !== null && promotions.discount > 0 ? 'Subtotal after promotions' : 'Subtotal'}</dt>
+          <dd className="font-mono text-fg-strong">{money(subtotal)}</dd>
         </div>
+        {promotions === null || promotions.discount <= 0 ? null : (
+          <div className="flex justify-between gap-3 text-emerald-700 dark:text-emerald-400">
+            <dt className="min-w-0 truncate">Promotions{promotions.applied.length === 0 ? '' : ` (${promotions.applied.map((a) => a.code).join(', ')})`}</dt>
+            <dd className="shrink-0 font-mono">you save {money(promotions.discount)}</dd>
+          </div>
+        )}
+        {promotions === null || promotions.gifts.length === 0 ? null : (
+          <div className="text-emerald-700 dark:text-emerald-400">
+            <dt className="sr-only">Free gifts</dt>
+            <dd>{promotions.gifts.map((g) => `${String(g.quantity)} × ${g.name} free`).join(', ')}</dd>
+          </div>
+        )}
         {taxRows.map((row) => (
           <div key={row.key} className="flex justify-between gap-3">
             <dt className="min-w-0 truncate">{row.label}</dt>
@@ -55,7 +71,7 @@ export function OrderSummary({ lines, delivery = null, collecting = false }: { l
         ) : null}
         <div className="flex justify-between border-t border-line pt-2 text-base font-bold text-fg-strong">
           <dt>Total</dt>
-          <dd className="font-mono">{money(totals.totalAmount + (delivery?.gross ?? 0))}</dd>
+          <dd className="font-mono">{money(goodsTotal + (delivery?.gross ?? 0))}</dd>
         </div>
       </dl>
     </div>

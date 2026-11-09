@@ -2,7 +2,8 @@
 
 import { useId, useState } from 'react';
 import { Download } from 'lucide-react';
-import { exportNewsletterAction, newsletterPageAction } from '@/server/domains/newsletter/actions';
+import { exportNewsletterAction, newsletterPageAction, sendNewsletterAction } from '@/server/domains/newsletter/actions';
+import { InlineConfirm } from '@/components/ui/InlineConfirm';
 import { attempt, buttonClass, cardClass, fieldClass, Message, PageHeader, type Notice } from '@/components/ui/screen-kit';
 import { SegmentedChoice } from '@/components/ui/SegmentedChoice';
 import { usePagedList } from '@/components/ui/usePagedList';
@@ -24,6 +25,10 @@ export function AdminNewsletterClient() {
   const [totals, setTotals] = useState<Record<Status, number> | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [busy, setBusy] = useState(false);
+  const [subject, setSubject] = useState('');
+  const [body, setBody] = useState('');
+  // One id for each message being written, so pressing send twice sends it once.
+  const [campaignId, setCampaignId] = useState(() => crypto.randomUUID());
 
   const list = usePagedList<Row, { status: Status; query: string }>({
     load: async (filters, cursor) => {
@@ -53,6 +58,27 @@ export function AdminNewsletterClient() {
     setNotice({ kind: 'ok', text: 'The confirmed addresses were downloaded.' });
   };
 
+  const send = async (mode: 'test' | 'all') => {
+    setBusy(true);
+    setNotice(null);
+    const result = await attempt(sendNewsletterAction({ mode, subject, body, campaignId }));
+    setBusy(false);
+    if (!result.ok) {
+      setNotice({ kind: 'error', text: result.error });
+      return;
+    }
+    if (mode === 'test') {
+      setNotice({ kind: 'ok', text: `A test copy was sent to ${result.data.sentTo ?? 'you'}.` });
+      return;
+    }
+    setNotice({ kind: 'ok', text: 'Your message is on its way to everyone who confirmed. It goes out a few at a time, so it can take a while for a long list.' });
+    setSubject('');
+    setBody('');
+    setCampaignId(crypto.randomUUID());
+  };
+  const ready = subject.trim().length >= 3 && body.trim().length >= 10;
+  const audience = totals?.subscribed ?? 0;
+
   return (
     <div className="max-w-4xl space-y-5">
       <PageHeader
@@ -61,6 +87,26 @@ export function AdminNewsletterClient() {
         actions={<button type="button" className={buttonClass} disabled={busy} onClick={() => void download()}><Download className="mr-1.5 inline h-4 w-4" aria-hidden="true" />Download confirmed (CSV)</button>}
       />
       <Message notice={notice} />
+      <section className={`${cardClass} space-y-3`} aria-label="Write to the list">
+        <h2 className="text-base font-semibold text-fg-strong">Write to the list</h2>
+        <p className="text-sm text-fg-muted">Plain text. Every message carries a link to unsubscribe. Send yourself a test first.</p>
+        <div>
+          <label htmlFor={`${uid}-subject`} className="mb-1 block text-sm font-medium text-fg">Subject</label>
+          <input id={`${uid}-subject`} value={subject} maxLength={150} onChange={(e) => setSubject(e.target.value)} className={fieldClass} autoComplete="off" />
+        </div>
+        <div>
+          <label htmlFor={`${uid}-body`} className="mb-1 block text-sm font-medium text-fg">Message</label>
+          <textarea id={`${uid}-body`} value={body} maxLength={10000} rows={8} onChange={(e) => setBody(e.target.value)} className={fieldClass} />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" className={buttonClass} disabled={busy || !ready} onClick={() => void send('test')}>Send me a test</button>
+          {ready && audience > 0 ? (
+            <InlineConfirm label={`Send this message to ${String(audience)} subscribers`} action={`Send to ${String(audience)} subscribers`} confirm="Yes, send it" busy={busy} onConfirm={() => void send('all')} />
+          ) : (
+            <span className="text-xs text-fg-muted">{audience === 0 ? 'Nobody has confirmed yet.' : 'Write a subject and a message to send.'}</span>
+          )}
+        </div>
+      </section>
       {totals === null ? null : <p role="status" className="text-sm text-fg-muted">{totals.subscribed} subscribed · {totals.pending} waiting to confirm · {totals.unsubscribed} unsubscribed</p>}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <SegmentedChoice label="Show" value={status} options={OPTIONS} onChange={setStatus} />

@@ -127,8 +127,14 @@ import type { StockReissue } from '@/server/domains/delivery/reissue';
 import { DeliveryCostBooks } from '@/server/domains/delivery/cost-books';
 import { OrderVisits } from '@/server/domains/delivery/visits';
 import { DeliverySlots } from '@/server/domains/delivery/slots';
+import type { CourierAccounts } from '@/server/domains/delivery/courier-accounts';
+import type { CourierSync } from '@/server/domains/delivery/courier-sync';
 import { DeliverySla } from '@/server/domains/delivery/sla';
 import { DeliveryReports } from '@/server/domains/delivery/reports';
+import { CourierInvoices } from '@/server/domains/delivery/courier-invoices';
+import { DeliverySlaNotices } from '@/server/domains/delivery/sla-notices';
+import { RiderPay } from '@/server/domains/delivery/rider-pay';
+import { DeliveryPerformanceReports } from '@/server/domains/delivery/performance';
 import type { DeliveryCosts } from '@/server/domains/delivery/costs';
 import { DoorHandIns } from '@/server/domains/delivery/door-hand-ins';
 import type { DoorPayments } from '@/server/domains/delivery/door-payments';
@@ -306,12 +312,18 @@ export interface AppContainer {
   deliveryCosts: DeliveryCosts;
   deliveryCostBooks: DeliveryCostBooks;
   deliveryReports: DeliveryReports;
+  deliveryPerformance: DeliveryPerformanceReports;
+  riderPay: RiderPay;
   orderVisits: OrderVisits;
   deliverySlots: DeliverySlots;
   deliverySla: DeliverySla;
+  deliverySlaNotices: DeliverySlaNotices;
+  courierInvoices: CourierInvoices;
   doorHandIns: DoorHandIns;
   doorMpesa: DoorMpesa;
   courierShipments: CourierShipments;
+  courierAccounts: CourierAccounts;
+  courierSync: CourierSync;
   trackingLinks: TrackingLinks;
   deliveryMessages: DeliveryMessages;
   trackedOrders: TrackedOrders;
@@ -664,9 +676,13 @@ export function getContainer(): AppContainer {
     deliveryCosts: deliveryServices.deliveryCosts,
     deliveryCostBooks: new DeliveryCostBooks(drizzleDb, decisionLog, finance.engine, numbering),
     deliveryReports: new DeliveryReports(drizzleDb),
+    deliveryPerformance: new DeliveryPerformanceReports(drizzleDb),
+    riderPay: new RiderPay(drizzleDb),
     orderVisits: new OrderVisits(drizzleDb, decisionLog, stockLedger),
-    deliverySlots: new DeliverySlots(drizzleDb, decisionLog),
+    deliverySlots: deliveryServices.deliverySlots,
     deliverySla: new DeliverySla(drizzleDb, decisionLog),
+    deliverySlaNotices: new DeliverySlaNotices(drizzleDb, email, companySettings),
+    courierInvoices: new CourierInvoices(drizzleDb, decisionLog),
     doorHandIns: new DoorHandIns(drizzleDb, decisionLog, finance.engine, numbering),
     doorMpesa: new DoorMpesa(drizzleDb, {
       // Loaded when used: starting a payment reads the container, so it is not imported while the container is being made.
@@ -681,6 +697,8 @@ export function getContainer(): AppContainer {
       },
     }),
     courierShipments: deliveryServices.courierShipments,
+    courierAccounts: deliveryServices.courierAccounts,
+    courierSync: deliveryServices.courierSync,
     trackingLinks: deliveryServices.trackingLinks,
     deliveryMessages: deliveryServices.deliveryMessages,
     trackedOrders: deliveryServices.trackedOrders,

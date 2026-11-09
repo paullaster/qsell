@@ -19,6 +19,8 @@ export interface DeliveryReport {
   charge: string;
   riderPay: string;
   courierCharges: string;
+  fuelCosts: string;
+  vehicleCosts: string;
   otherCosts: string;
   cost: string;
   margin: string;
@@ -98,9 +100,11 @@ export class DeliveryReports {
     const kind = new Map<string, number>(costs.map((r) => [String(r.kind), cents(r.total)]));
     const riderPay = (kind.get('rider_delivery') ?? 0) + (kind.get('rider_day') ?? 0);
     const courier = kind.get('courier') ?? 0;
+    const fuel = kind.get('fuel') ?? 0;
+    const vehicle = kind.get('vehicle') ?? 0;
     const other = kind.get('other') ?? 0;
     const chargeCents = cents(charges[0]?.charge);
-    const costCents = riderPay + courier + other;
+    const costCents = riderPay + courier + fuel + vehicle + other;
     const margin = marginCents(chargeCents, costCents);
     return {
       ok: true,
@@ -112,6 +116,8 @@ export class DeliveryReports {
         charge: money(chargeCents),
         riderPay: money(riderPay),
         courierCharges: money(courier),
+        fuelCosts: money(fuel),
+        vehicleCosts: money(vehicle),
         otherCosts: money(other),
         cost: money(costCents),
         margin: money(margin),

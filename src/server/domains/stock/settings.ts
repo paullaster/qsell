@@ -25,6 +25,9 @@ export interface StockMode {
 
 const MAX_HOLD_MINUTES = 7 * 24 * 60;
 
+/** How long an unpaid shop order holds stock when the company has not chosen: long enough to find a phone and enter a PIN, short enough that an abandoned checkout does not keep stock from buyers. */
+export const DEFAULT_UNPAID_HOLD_MINUTES = 60;
+
 /**
  * Which way stock is kept: the old counters alone, the old counters with the new ledger mirroring them (shadow), or the ledger as the
  * truth with the counters following it. Read on every reservation, so it is one indexed row and nothing is cached.
@@ -40,7 +43,7 @@ export class StockSettingsService {
     const [row] = await this.db.select().from(stockSettings).where(eq(stockSettings.companyId, id)).limit(1);
     const ledgerMode = row?.ledgerMode ?? false;
     const moment = row?.issueMoment;
-    return { shadowWrite: row?.shadowWrite ?? false, ledgerMode, unpaidHoldMinutes: row?.unpaidHoldMinutes ?? 0, issueMoment: ledgerMode && isIssueMoment(moment) ? moment : 'payment' };
+    return { shadowWrite: row?.shadowWrite ?? false, ledgerMode, unpaidHoldMinutes: row === undefined ? DEFAULT_UNPAID_HOLD_MINUTES : row.unpaidHoldMinutes, issueMoment: ledgerMode && isIssueMoment(moment) ? moment : 'payment' };
   }
 
   /**
@@ -87,7 +90,7 @@ export class StockSettingsService {
       .where(eq(stockSettings.companyId, companyId));
   }
 
-  /** How long an unpaid shop order holds stock; 0 holds it until the order is settled or released. */
+  /** How long an unpaid shop order holds stock; 0 holds it until the order is settled or released. Until a company chooses, it is the default above. */
   async setUnpaidHoldMinutes(companyId: string, minutes: number): Promise<void> {
     if (!Number.isInteger(minutes) || minutes < 0 || minutes > MAX_HOLD_MINUTES) throw new StockError('Choose a whole number of minutes from 0 to 10080 (7 days). 0 keeps the hold until the order is settled.', 'BAD_HOLD');
     await this.db.insert(stockSettings).values({ companyId }).onConflictDoNothing();

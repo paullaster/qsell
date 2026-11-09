@@ -32,6 +32,7 @@ export function PaymentWait({
   // The newest callbacks, so a re-render of the parent does not restart the polling.
   const paid = useRef(onPaid);
   const failed = useRef(onFailed);
+  const proof = useRef({ orderNumber: order.orderNumber, contact: order.customerEmail.trim() === '' ? order.customerPhone : order.customerEmail });
   useEffect(() => {
     paid.current = onPaid;
     failed.current = onFailed;
@@ -40,7 +41,7 @@ export function PaymentWait({
   useEffect(() => {
     const tick = setInterval(() => setSeconds((s) => Math.max(0, s - 1)), 1000);
     const poll = setInterval(() => {
-      getPaymentAttemptStatusAction(payment.attemptId)
+      getPaymentAttemptStatusAction(payment.attemptId, { orderNumber: proof.current.orderNumber, contact: proof.current.contact })
         .then((attempt) => {
           if (attempt.status === 'successful') {
             clearInterval(poll);

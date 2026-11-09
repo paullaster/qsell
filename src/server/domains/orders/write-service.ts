@@ -125,6 +125,8 @@ export const OrderWriteService = {
       notes?: string | null;
       /** What delivery cost on the screen the shopper saw (tax included). If the charge worked out now is different, the order is refused so nobody pays an amount they were not shown. */
       expectedCharge?: number | null;
+      /** The delivery time the shopper chose. Checked against the slot's rules here; kept with the order and booked when its delivery is made. */
+      slot?: { slotId: string; day: string } | null;
     };
     orderId?: string;
     orderNumber?: string;
@@ -140,6 +142,11 @@ export const OrderWriteService = {
      * for approval when a workflow says so; without one (a shop checkout) they never are.
      */
     requestedBy?: string;
+    /**
+     * False when the buyer's identity is not proven (a shop guest who typed an email): a registered customer's card is then left as
+     * it is, and a credit account cannot be used. Left out for staff and other callers, which are trusted.
+     */
+    identityVerified?: boolean;
     /** Coupon codes the customer gave. A code that cannot be used refuses the order, saying why. */
     couponCodes?: string[];
     /**
@@ -160,6 +167,11 @@ export const OrderWriteService = {
     const contact = readOptionalEmail(raw.customerEmail);
     if (!contact.ok) return { success: false, error: contact.error, code: 'invalid_input' };
     const params = { ...raw, customerEmail: contact.email };
+    // A credit account is charged only for a buyer who has proven who they are (the shop passes `false` for anyone not signed in as
+    // that customer; staff and other trusted callers leave it out).
+    if (params.paymentMethod === 'on_account' && params.identityVerified === false) {
+      return { success: false, error: 'On account is for customers who are signed in with their account email. Please sign in, or choose another way to pay.', code: 'credit_limit' };
+    }
     const orderItems: OrderItem[] = [];
     const pricedLines: {
       productId: string;
@@ -299,7 +311,8 @@ export const OrderWriteService = {
         prod.price,
         item.quantity,
       );
-      if (priced && !quoted && channel !== 'ecommerce') {
+      // Promotions and coupons apply to every channel's price-list lines, the shop's included (price floors stay with the staff channels).
+      if (priced && !quoted) {
         guarded.push({
           itemIndex: orderItems.length,
           productId: prod.id,
@@ -401,7 +414,7 @@ export const OrderWriteService = {
     // Price floors. A sale below a floor needs approval (or is refused outright by a "refuse"
     // floor). A till sale cannot wait for anyone, so it is refused. Measured after discounts.
     let floorBreach: { text: string; shortfallPercent: number } | null = null;
-    if (guarded.length > 0) {
+    if (guarded.length > 0 && channel !== 'ecommerce') {
       const { companySettings: cs, priceGuard } = getContainer();
       const companyForGuard = await cs.ensureSeeded();
       const guardLines: GuardLine[] = guarded.map((g) => {
@@ -477,8 +490,11 @@ export const OrderWriteService = {
     const kitDefs = await getContainer().kits.forProducts(
       (await getContainer().companySettings.ensureSeeded()).id,
       orderItems.map((i) => i.productId),
+      // Read fresh: a sale must never use a kit another server has just changed.
+      { fresh: true },
     );
     if (kitDefs.size > 0) {
+      const soldKit = orderItems.some((i) => kitDefs.has(i.productId));
       try {
         const expansion = expandKits(
           orderItems.map((item, i) => ({
@@ -518,6 +534,14 @@ export const OrderWriteService = {
       } catch (error) {
         if (error instanceof KitError) return { success: false, error: error.message, code: 'kit_error' };
         throw error;
+      }
+      // A quote's totals stand, but its kit lines are split by the kit as it is now. If the kit has changed since, the parts no
+      // longer add up to what was quoted: refuse, so the quote is made again, rather than book parts that disagree with the total.
+      if (soldKit && params.quotedTotals !== undefined) {
+        const again = computeCheckoutTotals(pricedLines);
+        if (Math.abs(again.subtotal - params.quotedTotals.subtotal) > 0.05 || Math.abs(again.tax - params.quotedTotals.tax) > 0.05) {
+          return { success: false, error: 'A kit in this quote has changed since it was quoted, so its parts no longer add up to the quoted total. Please make the quote again.', code: 'kit_error' };
+        }
       }
     }
     // Stock is held only for inventory-managed lines; service/non-inventory lines remain commercial order lines.
@@ -570,6 +594,11 @@ export const OrderWriteService = {
       const expected = params.delivery.expectedCharge;
       if (expected !== undefined && expected !== null && Math.abs(expected - planned.quote.split.gross) > 0.005) {
         return { success: false, error: `The delivery charge is now ${planned.quote.split.gross.toFixed(2)} and not the ${expected.toFixed(2)} you were shown. Please look at your order again before you pay.`, code: 'delivery_changed' };
+      }
+      // The delivery time the shopper chose is looked at now, so a slot that has filled since they saw it is refused while they can still pick another.
+      if (params.delivery.slot !== undefined && params.delivery.slot !== null && params.delivery.method !== 'pickup') {
+        const refusal = await getContainer().deliverySlots.checkRequest(companyId, { branchId: planned.branch.id, basket: { method: params.delivery.method, zone: planned.quote.zone === null ? null : { id: planned.quote.zone.id, name: planned.quote.zone.name }, lines: orderItems.map((i) => ({ productId: i.productId, quantity: i.quantity })) }, slotId: params.delivery.slot.slotId, day: params.delivery.slot.day });
+        if (refusal !== null) return { success: false, error: refusal, code: 'slot_unavailable' };
       }
       delivered = planned;
     }
@@ -664,6 +693,7 @@ export const OrderWriteService = {
         amount: totalAmount,
         onAccount,
         allowOverLimit: gated,
+        updateExisting: params.identityVerified !== false || has(params.requestedBy),
       });
       const overCreditLimit =
         tradeCustomer.accountType === 'credit' &&
@@ -734,6 +764,7 @@ export const OrderWriteService = {
           if (delivered !== null && params.delivery !== undefined) {
             const actor = { type: 'user' as const, id: params.requestedBy ?? params.customerId ?? null };
             await getContainer().orderDeliveries.record(tx, { companyId: company.id, orderId: saved.id, method: params.delivery.method, plan: delivered, currency: params.currency, recipient: params.delivery.recipient ?? null, notes: params.delivery.notes ?? null, actor });
+            if (params.delivery.slot !== undefined && params.delivery.slot !== null && params.delivery.method !== 'pickup') await getContainer().deliverySlots.recordRequest(tx, company.id, saved.id, params.delivery.slot, actor);
             // An order collected from a branch gets its code in the same transaction, so there is never one without the other.
             if (params.delivery.method === 'pickup') await getContainer().orderCollections.issue(tx, { companyId: company.id, orderId: saved.id, branchId: delivered.branch.id, actor });
             await OrderStages.moveIn(tx, saved.id, 'charge_quoted', 'succeeded', {

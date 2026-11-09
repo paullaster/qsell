@@ -251,6 +251,106 @@ describe.skipIf(!url)('kits, gifts and mix deals (database)', () => {
       expect((await row(k)).reservedQuantity).toBe(0);
     });
 
+    it('the basket preview taxes a kit part by part, so it shows what the order will charge', async () => {
+      const { previewShopBasket } = await import('@/server/domains/orders/basket-preview');
+      const k = await product({ price: '1000', taxRate: '16', stockQuantity: 0 });
+      const wine = await product({ price: '500', taxRate: '16', stockQuantity: 10 });
+      const bread = await product({ price: '500', taxRate: '0', stockQuantity: 10 });
+      await makeKit(k, [
+        { productId: wine, quantity: 1 },
+        { productId: bread, quantity: 1 },
+      ]);
+      const preview = await previewShopBasket([{ productId: k, quantity: 1 }], null);
+      expect(preview.ok).toBe(true);
+      const res = await order((await customer()).email!, [[k, 1]]);
+      expect(res.success).toBe(true);
+      if (preview.ok) {
+        expect(preview.tax).toBe(res.order!.tax);
+        expect(preview.subtotal).toBe(res.order!.subtotal);
+      }
+    });
+
+    it('the shop shows a kit at the tax rate its parts come to, so the screen total is the order total', async () => {
+      const { withShopAvailability } = await import('@/server/domains/catalog/shop-availability');
+      const { CatalogService } = await import('@/server/domains/catalog/service');
+      const { cartTotals } = await import('@/lib/cartMoney');
+      for (const inclusive of [true, false]) {
+        const k = await product({ price: '1000', taxRate: '16', isTaxInclusive: inclusive, stockQuantity: 0 });
+        const wine = await product({ price: '500', taxRate: '16', stockQuantity: 10 });
+        const bread = await product({ price: '500', taxRate: '0', stockQuantity: 10 });
+        await makeKit(k, [
+          { productId: wine, quantity: 1 },
+          { productId: bread, quantity: 1 },
+        ]);
+        const shown = (await withShopAvailability((await CatalogService.getProductsByIds([k])).map((p) => ({ ...p })) as never))[0]!;
+        const onScreen = cartTotals([{ product: shown, quantity: 1 }]);
+        const res = await order((await customer()).email!, [[k, 1]]);
+        expect(res.success).toBe(true);
+        expect(onScreen.tax).toBeCloseTo(res.order!.tax, 1);
+        expect(onScreen.totalAmount).toBeCloseTo(res.order!.totalAmount, 1);
+      }
+    });
+
+    it('the shop is shown how many can be made from the parts, not the kit product’s own stock', async () => {
+      const { withShopAvailability } = await import('@/server/domains/catalog/shop-availability');
+      const { availableOf } = await import('@/lib/cart-quantity');
+      const k = await product({ price: '2000', stockQuantity: 0 });
+      const wine = await product({ price: '1500', stockQuantity: 10 });
+      const cheese = await product({ price: '400', stockQuantity: 9 });
+      await makeKit(k, [
+        { productId: wine, quantity: 1 },
+        { productId: cheese, quantity: 2 },
+      ]);
+      const shown = async () => {
+        const { CatalogService } = await import('@/server/domains/catalog/service');
+        const found = await CatalogService.getProductsByIds([k]);
+        const out = await withShopAvailability(found.map((p) => ({ ...p })) as never);
+        return availableOf(out[0] as never);
+      };
+      expect(await shown()).toBe(4);
+      await db.update(schema.products).set({ stockQuantity: 1 }).where(eq(schema.products.id, cheese));
+      expect(await shown()).toBe(0);
+    });
+
+    it('a component switched off is flagged on the kits screen and the shop shows the kit as sold out', async () => {
+      const { withShopAvailability } = await import('@/server/domains/catalog/shop-availability');
+      const { availableOf } = await import('@/lib/cart-quantity');
+      const { previewShopBasket } = await import('@/server/domains/orders/basket-preview');
+      const k = await product({ price: '1000', stockQuantity: 0, name: 'Gift hamper' });
+      const a = await product({ price: '600', stockQuantity: 10 });
+      const b = await product({ price: '400', stockQuantity: 10 });
+      await makeKit(k, [
+        { productId: a, quantity: 1 },
+        { productId: b, quantity: 1 },
+      ]);
+      await db.update(schema.products).set({ isActive: false }).where(eq(schema.products.id, b));
+      const view = (await c.kitConfig.list(companyId)).find((x) => x.productId === k)!;
+      expect(view.components.find((x) => x.productId === b)!.unavailable).toBe(true);
+      expect(view.buildable).toBe(0);
+      const { CatalogService } = await import('@/server/domains/catalog/service');
+      const shown = await withShopAvailability((await CatalogService.getProductsByIds([k])).map((p) => ({ ...p })) as never);
+      expect(availableOf(shown[0] as never)).toBe(0);
+      c.kits.invalidate();
+      const preview = await previewShopBasket([{ productId: k, quantity: 1 }], null);
+      expect(preview).toMatchObject({ ok: false });
+      if (!preview.ok) expect(preview.error).toContain('Gift hamper');
+    });
+
+    it('a part also bought alone is named as the product, not as the first kit it came from', async () => {
+      const k = await product({ price: '1000', stockQuantity: 0 });
+      const a = await product({ price: '600', stockQuantity: 10, name: 'Plain wine' });
+      const b = await product({ price: '400', stockQuantity: 10 });
+      await makeKit(k, [
+        { productId: a, quantity: 1 },
+        { productId: b, quantity: 1 },
+      ]);
+      const res = await order((await customer()).email!, [[k, 1], [a, 1]]);
+      expect(res.success).toBe(true);
+      const line = res.order!.items.find((i) => i.productId === a)!;
+      expect(line.quantity).toBe(2);
+      expect(line.productName).toBe('Plain wine');
+    });
+
     it('is refused when a component is out of stock, and nothing stays held', async () => {
       const cust = await customer();
       const k = await product({ price: '1000', stockQuantity: 0 });
@@ -597,6 +697,92 @@ describe.skipIf(!url)('kits, gifts and mix deals (database)', () => {
       expect((await row(k)).reservedQuantity).toBe(0);
       // The gift's use is counted when the quote becomes an order, not when it was saved.
       expect((await c.discountConfig.getRuleView(companyId, r.id)).uses).toBe(1);
+    });
+
+    it('a quote of a kit that has been switched off since is not converted into a sale of the bare product', async () => {
+      const svc = await service();
+      const author = await user();
+      const cust = await customer();
+      const k = await product({ price: '1000', stockQuantity: 5, name: 'Spring hamper' });
+      const a = await product({ price: '600', stockQuantity: 10 });
+      const b = await product({ price: '400', stockQuantity: 10 });
+      await makeKit(k, [
+        { productId: a, quantity: 1 },
+        { productId: b, quantity: 1 },
+      ]);
+      const q = await svc.create(author.id, quoteInput(cust.id, [{ productId: k, quantity: 1, discountPercent: 0 }]) as never);
+      expect(q.lines[0]!.priceTrace?.quotedAsKit).toMatchObject({ name: 'Spring hamper' });
+      await c.kitConfig.save(companyId, { productId: k, allocation: 'list_price', components: [{ productId: a, quantity: 1 }, { productId: b, quantity: 1 }], isActive: false }, actor, reason);
+      await db.update(schema.salesQuotes).set({ status: 'accepted', deliveryAddress: { street: '1 Rd', city: 'Nairobi', countyOrState: 'Nairobi', country: 'KE' } as never }).where(eq(schema.salesQuotes.id, q.id));
+      await expect(svc.convertToOrder(author.id, q.id)).rejects.toThrow(/Spring hamper was a kit when this quote was made/);
+      expect((await row(k)).reservedQuantity).toBe(0);
+    });
+
+    it('a quote is not converted when its kit has changed so the parts no longer add up to the quoted total', async () => {
+      const svc = await service();
+      const author = await user();
+      const cust = await customer();
+      const k = await product({ price: '1000', taxRate: '16', stockQuantity: 0 });
+      const wine = await product({ price: '500', taxRate: '16', stockQuantity: 10 });
+      const bread = await product({ price: '500', taxRate: '0', stockQuantity: 10 });
+      const cake = await product({ price: '500', taxRate: '0', stockQuantity: 10 });
+      await makeKit(k, [
+        { productId: wine, quantity: 1 },
+        { productId: bread, quantity: 1 },
+      ]);
+      const q = await svc.create(author.id, quoteInput(cust.id, [{ productId: k, quantity: 1, discountPercent: 0 }]) as never);
+      // The wine (taxed) is replaced by a cake (not taxed): the quoted tax is no longer what the parts carry.
+      await makeKit(k, [
+        { productId: cake, quantity: 1 },
+        { productId: bread, quantity: 1 },
+      ]);
+      const { mergeLinesForOrder } = await import('@/server/domains/quotes/order-lines');
+      const lines = mergeLinesForOrder(q.lines);
+      const res = await order(cust.email!, lines.map((l) => [l.productId!, Number(l.quantity)] as [string, number]), {
+        quotedItems: lines.map((l) => ({ productId: l.productId!, quantity: Number(l.quantity), productName: l.description, sku: l.sku, lineAmount: Number(l.lineAmount), taxRate: Number(l.taxRate), isTaxInclusive: l.isTaxInclusive, priceTrace: l.priceTrace ?? null, isGift: l.isGift })),
+        quotedTotals: { subtotal: Number(q.subtotal), tax: Number(q.taxAmount), shippingFee: 0, totalAmount: Number(q.totalAmount) },
+      });
+      expect(res).toMatchObject({ success: false, code: 'kit_error', error: expect.stringContaining('changed since') });
+      expect((await row(cake)).reservedQuantity).toBe(0);
+    });
+  });
+
+  describe('promotions and promo codes at the shop', () => {
+    const shopOrder = (email: string, items: Array<[string, number]>, over: Record<string, unknown> = {}) => order(email, items, { salesModule: 'ecommerce', ...over });
+
+    it('a promotion takes its share off a shop order, and the basket preview says the same', async () => {
+      const { previewShopBasket } = await import('@/server/domains/orders/basket-preview');
+      const p = await product({ price: '100', taxRate: '16', stockQuantity: 20 });
+      await activeRule({ target: { productIds: [p] }, reward: { type: 'percent', value: 10 } });
+      const preview = await previewShopBasket([{ productId: p, quantity: 2 }], null);
+      expect(preview.ok).toBe(true);
+      const res = await shopOrder(`shop-${randomUUID()}@x.test`, [[p, 2]]);
+      expect(res.success).toBe(true);
+      expect(res.order!.totalAmount).toBe(180);
+      if (preview.ok) {
+        expect(preview.promotions.discount).toBeCloseTo(20, 2);
+        expect(preview.subtotal).toBe(res.order!.subtotal);
+        expect(preview.tax).toBe(res.order!.tax);
+      }
+    });
+
+    it('a promo code is needed for a code promotion; a wrong one is refused and said so before the order', async () => {
+      const { previewShopBasket } = await import('@/server/domains/orders/basket-preview');
+      const p = await product({ price: '100', stockQuantity: 20 });
+      const r = await c.discountConfig.createRule(companyId, baseRule({ target: { productIds: [p] }, reward: { type: 'percent', value: 20 }, requiresCoupon: true }) as never, actor, reason);
+      const code = `SAVE${randomUUID().slice(0, 6)}`.toUpperCase();
+      await c.discountConfig.createCoupons(companyId, r.id, { codes: [code] }, actor, reason);
+      await c.discountConfig.activate(companyId, r.id, actor, reason);
+      const none = await shopOrder(`shop-${randomUUID()}@x.test`, [[p, 1]]);
+      expect(none.order!.totalAmount).toBe(100);
+      const withCode = await shopOrder(`shop-${randomUUID()}@x.test`, [[p, 1]], { couponCodes: [code] });
+      expect(withCode.order!.totalAmount).toBe(80);
+      const wrong = await shopOrder(`shop-${randomUUID()}@x.test`, [[p, 1]], { couponCodes: ['NOPE123'] });
+      expect(wrong).toMatchObject({ success: false, code: 'coupon_refused' });
+      const preview = await previewShopBasket([{ productId: p, quantity: 1 }], null, { couponCodes: ['NOPE123'] });
+      expect(preview.ok && preview.promotions.couponProblems.length).toBe(1);
+      const good = await previewShopBasket([{ productId: p, quantity: 1 }], null, { couponCodes: [code] });
+      expect(good.ok && good.promotions.discount).toBeCloseTo(20, 2);
     });
   });
 });

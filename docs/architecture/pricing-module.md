@@ -396,6 +396,7 @@ Code: `src/server/domains/pricing/` (pure engine in `domain/`, `service.ts` read
 - **Free gifts**: a rule with a trigger (order value and/or quantity of matching goods) adds zero-price `is_gift` lines. Gift stock is held, its value counts against the rule budget, cancelling gives both back.
 - **Kits and hampers** (`product_kits`, `product_kit_components`): priced as one line, expanded at order creation into component lines with their share of the price (list price, cost or explicit weights), own tax rate, own stock. Same-product lines merge. Kits cannot nest; a component cannot be permanently deleted while in a kit. Kit price floor uses the sum of component cost.
 - Screens: Pricing > Kits and hampers; discount form gains product deal and free gift kinds.
+- The full working of kits, with every edge case found, is in [kits-and-hampers.md](kits-and-hampers.md).
 - Not in P-3: pre-assembled kit stock, choice slots, gift tax/deemed supply, free shipping.
 
 ## What P-4 delivers: rebates, loyalty points, gift cards (built 2026-10)

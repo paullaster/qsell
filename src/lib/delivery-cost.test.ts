@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { byKind, costPostingLines, courierChargeProblem, dayPayKey, deliveryPayKey, isCostKind, isPayoutMethodKind, isRiderPay, money, marginCents, payoutPostingLines, payoutProblem, readPayRules, readPeriod, retryAfterSeconds, sharePercent, reversalKey, totalCents } from './delivery-cost';
+import { byKind, costPostingLines, courierChargeProblem, dayPayKey, deliveryPayKey, isCostKind, isPayoutMethodKind, isRiderPay, money, marginCents, payoutPostingLines, payoutProblem, readPayRules, readPeriod, retryAfterSeconds, runningCostProblem, sharePercent, reversalKey, totalCents } from './delivery-cost';
 
 describe('rider pay rules', () => {
   it('are two amounts, each nothing or more, kept to the cent', () => {
@@ -16,7 +16,7 @@ describe('rider pay rules', () => {
 describe('costs', () => {
   it('know their kinds, make a key that is the same every time, and take back what was counted', () => {
     expect(isCostKind('courier')).toBe(true);
-    expect(isCostKind('fuel')).toBe(false);
+    expect(isCostKind('petrol')).toBe(false);
     expect(deliveryPayKey('d1')).toBe(deliveryPayKey('d1'));
     expect(dayPayKey('r1', '2026-11-05')).not.toBe(dayPayKey('r1', '2026-11-06'));
     expect(reversalKey('c1')).toBe('reverse:c1');
@@ -25,7 +25,7 @@ describe('costs', () => {
   it('add up with reversals as the opposite sign', () => {
     const lines = [{ kind: 'rider_delivery' as const, cents: 5000 }, { kind: 'rider_delivery' as const, cents: 5000 }, { kind: 'rider_delivery' as const, cents: -5000 }, { kind: 'courier' as const, cents: 30000 }];
     expect(totalCents(lines)).toBe(35000);
-    expect(byKind(lines)).toEqual({ rider_delivery: 5000, rider_day: 0, courier: 30000, other: 0 });
+    expect(byKind(lines)).toEqual({ rider_delivery: 5000, rider_day: 0, courier: 30000, fuel: 0, vehicle: 0, other: 0 });
     expect(money(35000)).toBe('350.00');
   });
 
@@ -80,5 +80,29 @@ describe('report arithmetic and days', () => {
     expect(readPeriod('2026-11-05', '2026-11-01', '2026-11-06')).toMatchObject({ ok: false });
     expect(readPeriod('2024-01-01', '2026-11-01', '2026-11-06')).toMatchObject({ ok: false, error: expect.stringMatching(/a year/) as string });
     expect(readPeriod('junk', 'junk', '2026-11-06')).toEqual({ ok: true, period: { from: '2026-10-08', to: '2026-11-06' } });
+  });
+});
+
+describe('fuel and vehicle costs', () => {
+  it('reads a running cost, to the cent, with the words of what it was for', () => {
+    expect(runningCostProblem('fuel', 4500.555, '  KDA 123X, Thika road ')).toEqual({ kind: 'fuel', cents: 450056, note: 'KDA 123X, Thika road' });
+    expect(runningCostProblem('vehicle', 800, 'Puncture repair')).toMatchObject({ kind: 'vehicle', cents: 80000 });
+    expect(runningCostProblem('other', 10, 'Parking')).toMatchObject({ kind: 'other' });
+  });
+
+  it('refuses a kind that is not typed in, no or silly money, and no words', () => {
+    expect(runningCostProblem('rider_day', 100, 'Pay')).toHaveProperty('error');
+    expect(runningCostProblem('courier', 100, 'Waybill')).toHaveProperty('error');
+    for (const bad of [0, -5, Number.NaN, 20_000_000, '300', null]) expect(runningCostProblem('fuel', bad, 'Diesel')).toHaveProperty('error');
+    expect(runningCostProblem('fuel', 100, '  ')).toHaveProperty('error');
+    expect(runningCostProblem('fuel', 100, 'ab')).toHaveProperty('error');
+  });
+
+  it('keeps the note to 300 characters, adds fuel and vehicle by kind, and does not pay riders', () => {
+    const long = runningCostProblem('fuel', 1, 'x'.repeat(500));
+    expect('note' in long && long.note.length).toBe(300);
+    expect(byKind([{ kind: 'fuel', cents: 100 }, { kind: 'vehicle', cents: 250 }, { kind: 'fuel', cents: -100 }])).toMatchObject({ fuel: 0, vehicle: 250, other: 0 });
+    expect(isRiderPay('fuel')).toBe(false);
+    expect(isCostKind('vehicle')).toBe(true);
   });
 });

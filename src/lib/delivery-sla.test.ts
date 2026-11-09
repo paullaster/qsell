@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkSlaSettings, lateWords, levelsReached, slaState, windowWords } from './delivery-sla';
+import { audienceFor, checkSlaSettings, readAddressList, lateWords, levelsReached, slaState, windowWords } from './delivery-sla';
 
 const start = new Date('2026-11-06T06:00:00Z'); // 09:00 Nairobi
 const end = new Date('2026-11-06T09:00:00Z'); // 12:00 Nairobi
@@ -61,5 +61,29 @@ describe('words and settings', () => {
     expect(checkSlaSettings({ atRiskMinutes: 45, escalateAfterMinutes: 30 })).toEqual({ ok: true, atRiskMinutes: 45, escalateAfterMinutes: 30 });
     expect(checkSlaSettings({ atRiskMinutes: 0, escalateAfterMinutes: 1 })).toMatchObject({ ok: true });
     for (const bad of [{ atRiskMinutes: -1, escalateAfterMinutes: 30 }, { atRiskMinutes: 2000, escalateAfterMinutes: 30 }, { atRiskMinutes: 30, escalateAfterMinutes: 0 }, { atRiskMinutes: 30, escalateAfterMinutes: 'x' }, { atRiskMinutes: 1.5, escalateAfterMinutes: 30 }, {}]) expect(checkSlaSettings(bad)).toMatchObject({ ok: false });
+  });
+});
+
+describe('who is mailed about lateness', () => {
+  it('reads addresses typed with commas, spaces, semicolons or new lines, in lower case and none twice', () => {
+    expect(readAddressList(' Ops@Shop.co.ke, ops@shop.co.ke;\n boss@shop.co.ke ')).toEqual({ ok: true, addresses: ['ops@shop.co.ke', 'boss@shop.co.ke'] });
+    expect(readAddressList(['a@b.co'])).toEqual({ ok: true, addresses: ['a@b.co'] });
+    for (const empty of [undefined, null, '', '  , ; ']) expect(readAddressList(empty)).toEqual({ ok: true, addresses: [] });
+  });
+
+  it('refuses what is not an address, too many, and things that are not text', () => {
+    expect(readAddressList('ops@shop.co.ke, nobody')).toMatchObject({ ok: false, error: expect.stringContaining('nobody') as string });
+    expect(readAddressList('a@b')).toMatchObject({ ok: false });
+    expect(readAddressList(Array.from({ length: 11 }, (_, i) => `u${String(i)}@x.co`).join(','))).toMatchObject({ ok: false });
+    expect(readAddressList(Array.from({ length: 10 }, (_, i) => `u${String(i)}@x.co`).join(','))).toMatchObject({ ok: true });
+    expect(readAddressList(42)).toMatchObject({ ok: false });
+    expect(readAddressList([1, 2])).toMatchObject({ ok: false });
+    expect(readAddressList(`${'x'.repeat(250)}@x.co`)).toMatchObject({ ok: false });
+  });
+
+  it('mails the dispatchers for the first two levels and the supervisors for the third', () => {
+    expect(audienceFor('at_risk')).toBe('dispatch');
+    expect(audienceFor('late')).toBe('dispatch');
+    expect(audienceFor('escalated')).toBe('supervisor');
   });
 });

@@ -324,6 +324,49 @@ describe.skipIf(!has(url))('rider pay in the books (database)', () => {
     });
   });
 
+  describe("a rider's own pay", () => {
+    it('shows only their own earnings, what is owed, what was taken back without the office\'s reason, and what was paid', async () => {
+      await goLive(true);
+      const rider = await staffRider();
+      const other = await staffRider();
+      await earn(rider);
+      await earn(rider);
+      await earn(other);
+      const me = await selfOf(rider.userId);
+      const before = await c.riderPay.mine(me);
+      expect(before.owed).toBe('100.00');
+      expect(before.earnedThisMonth).toBe('100.00');
+      expect(before.entries).toHaveLength(2);
+      expect(before.entries.every((e) => !e.paid && !e.takenBack && e.deliveryNumber !== null)).toBe(true);
+      expect(before.payouts).toEqual([]);
+      // Another rider's pay is not in it, and theirs does not show mine.
+      expect((await c.riderPay.mine(await selfOf(other.userId))).owed).toBe('50.00');
+      // The office takes one back for its own reason: the rider sees that it was taken back, not why.
+      const first = before.entries[0];
+      expect((await c.deliveryCosts.reverse(dispatcher(), first?.id ?? '', { reason: 'Internal: wrong rider on the run' })).ok).toBe(true);
+      const after = await c.riderPay.mine(me);
+      expect(after.owed).toBe('50.00');
+      expect(after.entries.filter((e) => e.takenBack)).toHaveLength(1);
+      expect(JSON.stringify(after)).not.toContain('wrong rider');
+      expect(after.entries.find((e) => e.takenBack)?.words).toBe('Taken back by the office');
+      // Paid: nothing owed, the entries say paid, and the payout is listed with how it was paid.
+      const paid = await c.deliveryCostBooks.pay(dispatcher(), { riderId: rider.id, paymentMethodId: cashMethod, reference: 'SLIP-RIDER-1' });
+      expect(paid.ok).toBe(true);
+      const done = await c.riderPay.mine(me);
+      expect(done.owed).toBe('0.00');
+      expect(done.earnedThisMonth).toBe('50.00');
+      expect(done.entries.every((e) => e.paid)).toBe(true);
+      expect(done.payouts).toHaveLength(1);
+      expect(done.payouts[0]).toMatchObject({ amount: '50.00', reference: 'SLIP-RIDER-1' });
+      expect(done.payouts[0]?.number).toMatch(/^RPY-/);
+    });
+
+    it('is empty and says so for a rider who has earned nothing', async () => {
+      const rider = await staffRider();
+      expect(await c.riderPay.mine(await selfOf(rider.userId))).toMatchObject({ owed: '0.00', earnedThisMonth: '0.00', entries: [], payouts: [], moreEntries: false });
+    });
+  });
+
   describe('what is owed, and paying it', () => {
     it('is the pay earned less anything taken back, for each rider, and paying clears it once', async () => {
       await goLive(true);
